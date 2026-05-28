@@ -848,6 +848,56 @@ class MainWindow(FluentWindow):
         self.zapret_page.set_error(message)
         self._show_status("error", f"Zapret: {message}")
 
+    @staticmethod
+    def _format_update_notes(notes: str, max_items: int = 4) -> str:
+        if not notes:
+            return ""
+
+        lines = notes.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        items: list[str] = []
+        capture_main = False
+        saw_relevant_heading = False
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            heading = line.lstrip("#").strip().lower() if line.startswith("#") else ""
+            if heading:
+                if any(marker in heading for marker in ("глав", "измен", "changes", "changelog")):
+                    capture_main = True
+                    saw_relevant_heading = True
+                    continue
+                if capture_main and saw_relevant_heading:
+                    break
+                continue
+
+            is_bullet = line.startswith(("-", "*", "•"))
+            if not capture_main and saw_relevant_heading:
+                continue
+            if not is_bullet and not capture_main:
+                continue
+
+            clean = line.lstrip("-*• ").strip().replace("`", "").strip()
+            if clean:
+                items.append(clean)
+            if len(items) >= max_items:
+                break
+
+        if not items:
+            for raw_line in lines:
+                clean = raw_line.strip().lstrip("-*•# ").replace("`", "").strip()
+                if clean:
+                    items.append(clean)
+                if len(items) >= max_items:
+                    break
+
+        if not items:
+            return ""
+
+        return "Главное:\n" + "\n".join(f"- {item}" for item in items[:max_items])
+
     def _check_updates(self, silent: bool = False) -> None:
         if getattr(self, "_update_in_progress", False):
             return
@@ -886,7 +936,8 @@ class MainWindow(FluentWindow):
             return
 
         self._pending_update = update
-        self.updates_page.show_update_available(update.version)
+        notes = self._format_update_notes(update.notes)
+        self.updates_page.show_update_available(update.version, notes)
         try:
             self.updates_page.download_btn.clicked.disconnect()
         except TypeError:
@@ -896,16 +947,38 @@ class MainWindow(FluentWindow):
         )
 
         if silent:
+            note_lines = notes.splitlines()
+            first_note = note_lines[1].lstrip("- ").strip() if len(note_lines) > 1 else ""
+            content = f"Доступна версия v{update.version}. "
+            if first_note:
+                content += f"{first_note}. "
+            content += "Откройте «Обновления», чтобы скачать и установить."
+            InfoBar.info(
+                "Обновление",
+                content,
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=8000,
+                parent=self,
+            )
+            if self.tray is not None:
+                self.tray.showMessage(
+                    APP_NAME,
+                    f"Доступна версия v{update.version}. Можно скачать и установить обновление.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    8000,
+                )
             return
 
         # Switch to Updates page and show dialog
         self.switchTo(self.updates_page)
 
         from qfluentwidgets import MessageBox
+        notes_block = f"\n\n{notes}" if notes else ""
         box = MessageBox(
             "Доступно обновление",
             f"Доступна новая версия v{update.version}.\n"
-            f"Текущая: v{APP_VERSION}\n\n"
+            f"Текущая: v{APP_VERSION}"
+            f"{notes_block}\n\n"
             f"Приложение скачает обновление, закроется и перезапустится автоматически.",
             self,
         )

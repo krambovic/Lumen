@@ -50,6 +50,12 @@ class UpdatesPage(QWidget):
         self._app_status.setStyleSheet(self._neutral_status_style)
         app_box.addWidget(self._app_status)
 
+        self._app_notes = CaptionLabel("", self)
+        self._app_notes.setWordWrap(True)
+        self._app_notes.setStyleSheet("color: #666;")
+        self._app_notes.hide()
+        app_box.addWidget(self._app_notes)
+
         # Progress bar
         self._app_progress = ProgressBar(self)
         self._app_progress.setFixedHeight(4)
@@ -119,6 +125,7 @@ class UpdatesPage(QWidget):
     def set_app_status(self, text: str) -> None:
         self._app_status.setStyleSheet(self._neutral_status_style)
         self._app_status.setText(text)
+        self._app_notes.hide()
 
     def set_xray_status(self, text: str) -> None:
         self._xray_status.setStyleSheet(self._neutral_status_style)
@@ -127,6 +134,7 @@ class UpdatesPage(QWidget):
     def set_app_error(self, text: str) -> None:
         self._app_status.setStyleSheet(self._error_status_style)
         self._app_status.setText(text)
+        self._app_notes.hide()
 
     def set_xray_error(self, text: str) -> None:
         self._xray_status.setStyleSheet(self._error_status_style)
@@ -138,6 +146,7 @@ class UpdatesPage(QWidget):
 
     def show_checking(self) -> None:
         self._app_progress.hide()
+        self._app_notes.hide()
         self._app_spinner.show()
         self._app_spinner.start()
         self.check_app_btn.setEnabled(False)
@@ -146,6 +155,7 @@ class UpdatesPage(QWidget):
 
     def show_download_progress(self, percent: int) -> None:
         self._app_spinner.hide()
+        self._app_notes.hide()
         self._app_progress.show()
         self._app_progress.setValue(percent)
         self._app_status.setStyleSheet(self._neutral_status_style)
@@ -160,13 +170,19 @@ class UpdatesPage(QWidget):
         self._app_progress.setValue(0)
         self.check_app_btn.setEnabled(True)
         self.download_btn.hide()
+        self._app_notes.hide()
 
-    def show_update_available(self, version: str) -> None:
+    def show_update_available(self, version: str, notes: str = "") -> None:
         self._app_spinner.stop()
         self._app_spinner.hide()
         self.check_app_btn.setEnabled(True)
         self._app_status.setText(f"Доступна новая версия: v{version}")
         self._app_status.setStyleSheet(self._success_status_style)
+        if notes:
+            self._app_notes.setText(notes)
+            self._app_notes.show()
+        else:
+            self._app_notes.hide()
         self.download_btn.show()
         self.download_btn.setText(f"Скачать v{version} и установить")
 
