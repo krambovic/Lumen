@@ -162,9 +162,16 @@ class SettingsPage(QWidget):
             FIF.PALETTE, "Цвет акцента", "Выберите цвет акцента для элементов интерфейса",
             parent=appearance_group,
         )
+        self.compact_mode_card = SwitchSettingCard(
+            FIF.VIEW,
+            "Компактный режим",
+            "Показывать только основные действия: прокси, VPN/TUN, Zapret и серверы",
+            parent=appearance_group,
+        )
 
         appearance_group.addSettingCard(self.theme_card)
         appearance_group.addSettingCard(self.accent_card)
+        appearance_group.addSettingCard(self.compact_mode_card)
         root.addWidget(appearance_group)
 
         # ============================================================
@@ -339,6 +346,13 @@ class SettingsPage(QWidget):
         security_group.addSettingCard(self.auto_lock_card)
         root.addWidget(security_group)
 
+        self._advanced_groups = [
+            auto_switch_group,
+            paths_group,
+            data_group,
+            security_group,
+        ]
+
         root.addStretch(1)
 
         # ============================================================
@@ -366,6 +380,7 @@ class SettingsPage(QWidget):
         # --- Auto-save connections ---
         self.theme_card.combo.currentIndexChanged.connect(self._auto_save)
         self.accent_card.picker.colorChanged.connect(self._auto_save)
+        self.compact_mode_card.checkedChanged.connect(self._auto_save)
         self.proxy_bypass_lan_card.checkedChanged.connect(self._auto_save)
         self.xray_path_card.edit.editingFinished.connect(self._auto_save)
         self.singbox_path_card.edit.editingFinished.connect(self._auto_save)
@@ -395,6 +410,7 @@ class SettingsPage(QWidget):
 
         self._select_combo_data(self.theme_card.combo, settings.theme)
         self.accent_card.picker.setColor(QColor(settings.accent_color or "#0078D4"))
+        self.compact_mode_card.setChecked(settings.interface_mode == "compact")
         self.proxy_bypass_lan_card.setChecked(settings.system_proxy_bypass_lan)
         self.xray_path_card.edit.setText(
             normalize_configured_path(
@@ -430,6 +446,10 @@ class SettingsPage(QWidget):
 
     def set_encryption_active(self, active: bool) -> None:
         self.encryption_card.buttons[1].setEnabled(active)  # Disable encryption btn
+
+    def set_compact_mode(self, enabled: bool) -> None:
+        for group in self._advanced_groups:
+            group.setVisible(not enabled)
 
     # ================================================================
     # Private slots
@@ -487,6 +507,7 @@ class SettingsPage(QWidget):
         data = deepcopy(self._settings)
         data.theme = str(self.theme_card.combo.currentData() or "system")
         data.accent_color = self.accent_card.picker.color.name() or "#0078D4"
+        data.interface_mode = "compact" if self.compact_mode_card.isChecked() else "full"
         data.system_proxy_bypass_lan = self.proxy_bypass_lan_card.isChecked()
         data.xray_path = normalize_configured_path(
             self.xray_path_card.edit.text(),

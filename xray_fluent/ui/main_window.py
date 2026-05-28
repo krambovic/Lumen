@@ -61,6 +61,7 @@ class MainWindow(FluentWindow):
         self.tray_mode_global: QAction | None = None
         self.tray_mode_rule: QAction | None = None
         self.tray_mode_direct: QAction | None = None
+        self._navigation_items: dict[str, object] = {}
 
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QIcon(":/qfluentwidgets/images/logo.png"))
@@ -93,6 +94,7 @@ class MainWindow(FluentWindow):
         loaded = self._load_with_passphrase()
         if loaded:
             self._load_config_editor_documents()
+            self._apply_interface_mode(self.controller.state.settings.interface_mode)
 
         unlocked = True
         if loaded and self.controller.state.security.enabled:
@@ -121,15 +123,17 @@ class MainWindow(FluentWindow):
     def _create_navigation(self) -> None:
         self.navigationInterface.setMinimumExpandWidth(700)
         self.navigationInterface.setExpandWidth(200)
-        self.addSubInterface(self.dashboard_page, FIF.SPEED_HIGH, "Панель")
-        self.addSubInterface(self.nodes_page, FIF.LINK, "Серверы")
-        self.addSubInterface(self.configs_page, FIF.CODE, "Конфиги")
-        self.addSubInterface(self.zapret_page, FIF.COMMAND_PROMPT, "Zapret")
-        self.addSubInterface(self.logs_page, FIF.DOCUMENT, "Логи")
-        self.addSubInterface(self.history_page, FIF.HISTORY, "История")
-        self.addSubInterface(self.about_page, FIF.INFO, "О проекте", NavigationItemPosition.BOTTOM)
-        self.addSubInterface(self.updates_page, FIF.UPDATE, "Обновления", NavigationItemPosition.BOTTOM)
-        self.addSubInterface(self.settings_page, FIF.SETTING, "Настройки", NavigationItemPosition.BOTTOM)
+        self._navigation_items = {
+            "dashboard": self.addSubInterface(self.dashboard_page, FIF.SPEED_HIGH, "Панель"),
+            "nodes": self.addSubInterface(self.nodes_page, FIF.LINK, "Серверы"),
+            "configs": self.addSubInterface(self.configs_page, FIF.CODE, "Конфиги"),
+            "zapret": self.addSubInterface(self.zapret_page, FIF.COMMAND_PROMPT, "Zapret"),
+            "logs": self.addSubInterface(self.logs_page, FIF.DOCUMENT, "Логи"),
+            "history": self.addSubInterface(self.history_page, FIF.HISTORY, "История"),
+            "about": self.addSubInterface(self.about_page, FIF.INFO, "О проекте", NavigationItemPosition.BOTTOM),
+            "updates": self.addSubInterface(self.updates_page, FIF.UPDATE, "Обновления", NavigationItemPosition.BOTTOM),
+            "settings": self.addSubInterface(self.settings_page, FIF.SETTING, "Настройки", NavigationItemPosition.BOTTOM),
+        }
 
     def _create_tray(self) -> None:
         if not self._tray_available:
@@ -318,6 +322,7 @@ class MainWindow(FluentWindow):
         self.settings_page.set_values(settings, self.controller.state.security)
         self.settings_page.set_encryption_active(self.controller.is_data_encrypted())
         self.dashboard_page.set_settings_snapshot(settings)
+        self._apply_interface_mode(settings.interface_mode)
         self._apply_window_geometry(settings)
         self._apply_theme(settings.theme, settings.accent_color)
         routing_controls_enabled = bool(settings.tun_mode and settings.tun_engine == "tun2socks")
@@ -325,6 +330,26 @@ class MainWindow(FluentWindow):
             if action is not None:
                 action.setEnabled(routing_controls_enabled)
         self._refresh_tray_tooltip()
+
+    def _apply_interface_mode(self, mode: str) -> None:
+        compact = str(mode or "full").lower() == "compact"
+        hidden_routes = {"configs", "logs", "history", "about"}
+        for route, item in self._navigation_items.items():
+            if route in hidden_routes:
+                item.setVisible(not compact)
+
+        self.dashboard_page.set_compact_mode(compact)
+        self.nodes_page.set_compact_mode(compact)
+        self.settings_page.set_compact_mode(compact)
+
+        current = self.stackedWidget.currentWidget()
+        if compact and current in {
+            self.configs_page,
+            self.logs_page,
+            self.history_page,
+            self.about_page,
+        }:
+            self.switchTo(self.dashboard_page)
 
     def _on_ping_updated(self, node_id: str, ping_ms: int | None) -> None:
         self.nodes_page.update_ping(node_id, ping_ms)

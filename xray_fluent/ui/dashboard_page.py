@@ -93,10 +93,11 @@ class DashboardPage(QWidget):
         self._down_history: deque[float] = deque(maxlen=300)
         self._up_history: deque[float] = deque(maxlen=300)
         self._last_process_stats: list | None = None
+        self._compact_mode = False
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
-        self._refresh_timer.setInterval(30)
+        self._refresh_timer.setInterval(80)
         self._refresh_timer.timeout.connect(self._do_refresh_dashboard)
 
         # ── Outer layout with QStackedWidget ──────────────────
@@ -471,6 +472,9 @@ class DashboardPage(QWidget):
         if self._connection_phase in {"idle", "running"}:
             self._connection_message = self._default_connection_message()
         self._sync_switches()
+        self._proc_traffic_card.setVisible(not self._compact_mode and self._settings.tun_mode)
+        if not self._proc_traffic_card.isVisible() and self._stack.currentIndex() == 2:
+            self._show_main_page()
         self._refresh_dashboard()
 
     def set_routing_snapshot(self, routing: RoutingSettings) -> None:
@@ -496,18 +500,34 @@ class DashboardPage(QWidget):
         self._refresh_dashboard()
 
     def set_process_stats(self, stats: list | None) -> None:
+        if self._compact_mode:
+            self._last_process_stats = None
+            self._clear_process_tables()
+            return
         if stats is None:
             self._last_process_stats = None
             self._clear_process_tables()
             return
         self._last_process_stats = list(stats)
-        self._apply_process_stats_to_table(self._proc_traffic_table, stats)
+        if self._proc_traffic_card.isVisible():
+            self._apply_process_stats_to_table(self._proc_traffic_table, stats)
         if self._stack.currentIndex() == 2:
             self._apply_process_stats_to_table(self._proc_detail_table, stats)
 
     def set_transition_busy(self, busy: bool) -> None:
         self._transition_busy = busy
         self._apply_interaction_state()
+
+    def set_compact_mode(self, enabled: bool) -> None:
+        self._compact_mode = bool(enabled)
+        self.routing_card.setVisible(not self._compact_mode)
+        self._proc_traffic_card.setVisible(not self._compact_mode and self._settings.tun_mode)
+        if self._compact_mode and self._stack.currentIndex() == 2:
+            self._show_main_page()
+        if self._compact_mode:
+            self._last_process_stats = None
+            self._clear_process_tables()
+        self._refresh_dashboard()
 
     @staticmethod
     def _format_bytes(b: int) -> str:

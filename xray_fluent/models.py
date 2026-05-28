@@ -163,6 +163,7 @@ class SecuritySettings:
 class AppSettings:
     theme: str = "system"  # system | light | dark
     accent_color: str = "#0078D4"
+    interface_mode: str = "full"  # compact | full
     auto_connect_last: bool = True
     start_minimized: bool = False
     enable_system_proxy: bool = True
@@ -200,6 +201,7 @@ class AppSettings:
         return {
             "theme": self.theme,
             "accent_color": self.accent_color,
+            "interface_mode": self.interface_mode,
             "auto_connect_last": self.auto_connect_last,
             "start_minimized": self.start_minimized,
             "enable_system_proxy": self.enable_system_proxy,
@@ -239,6 +241,7 @@ class AppSettings:
         return AppSettings(
             theme=str(data.get("theme") or "system"),
             accent_color=str(data.get("accent_color") or "#0078D4"),
+            interface_mode=str(data.get("interface_mode") or "full"),
             auto_connect_last=bool(data.get("auto_connect_last", True)),
             start_minimized=bool(data.get("start_minimized", False)),
             enable_system_proxy=bool(data.get("enable_system_proxy", True)),

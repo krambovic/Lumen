@@ -78,6 +78,7 @@ class NodesPage(QWidget):
         self._active_speed_progress: dict[str, int] = {}
         self._speed_test_running = False
         self._speed_test_stopping = False
+        self._compact_mode = False
 
         # Stack: page 0 = server list, page 1 = node detail
         self._stack = QStackedWidget(self)
@@ -315,6 +316,20 @@ class NodesPage(QWidget):
         if self._stack.currentIndex() == 1:
             self._detail_widget.refresh()
 
+    def set_compact_mode(self, enabled: bool) -> None:
+        self._compact_mode = bool(enabled)
+        for widget in (
+            self.sort_combo,
+            self.sort_order_btn,
+            self.bulk_edit_btn,
+            self.export_outbound_btn,
+            self.export_runtime_btn,
+            self.move_up_btn,
+            self.move_down_btn,
+        ):
+            widget.setVisible(not self._compact_mode)
+        self._emit_selection()
+
     # ── Filter combos ──
 
     def _rebuild_filter_combos(self) -> None:
@@ -417,7 +432,10 @@ class NodesPage(QWidget):
         self._apply_activity_widgets()
 
     def update_speed_progress(self, node_id: str, percent: int) -> None:
-        self._active_speed_progress[node_id] = max(0, min(100, int(percent)))
+        normalized = max(0, min(100, int(percent)))
+        if self._active_speed_progress.get(node_id) == normalized:
+            return
+        self._active_speed_progress[node_id] = normalized
         self._table_model.set_speed_busy(node_id, True)
         self._sync_activity_for_node(node_id)
 
@@ -592,10 +610,10 @@ class NodesPage(QWidget):
 
     def _emit_selection(self) -> None:
         ids = self._selected_ids()
-        self.bulk_edit_btn.setVisible(len(ids) > 1)
+        self.bulk_edit_btn.setVisible((not self._compact_mode) and len(ids) > 1)
         is_manual = self.sort_combo.currentText() == "Вручную"
-        self.move_up_btn.setEnabled(is_manual and len(ids) == 1)
-        self.move_down_btn.setEnabled(is_manual and len(ids) == 1)
+        self.move_up_btn.setEnabled((not self._compact_mode) and is_manual and len(ids) == 1)
+        self.move_down_btn.setEnabled((not self._compact_mode) and is_manual and len(ids) == 1)
         if len(ids) == 1:
             self.selected_node_changed.emit(next(iter(ids)))
 
