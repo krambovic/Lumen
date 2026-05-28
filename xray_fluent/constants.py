@@ -48,34 +48,11 @@ SINGBOX_PATH_DEFAULT = BASE_DIR / "core" / "sing-box.exe"
 SINGBOX_CLASH_API_PORT = 19090
 SINGBOX_XRAY_RELAY_PORT = 11808
 
-SPEED_TEST_URLS_BY_COUNTRY: dict[str, str] = {
-    "nl": "https://ams.download.datapacket.com/100mb.bin",
-    "de": "https://fra.download.datapacket.com/100mb.bin",
-    "gb": "https://lon.download.datapacket.com/100mb.bin",
-    "uk": "https://lon.download.datapacket.com/100mb.bin",
-    "fr": "https://par.download.datapacket.com/100mb.bin",
-    "se": "https://sto.download.datapacket.com/100mb.bin",
-    "no": "https://osl.download.datapacket.com/100mb.bin",
-    "dk": "https://sto.download.datapacket.com/100mb.bin",
-    "fi": "https://sto.download.datapacket.com/100mb.bin",
-    "at": "https://fra.download.datapacket.com/100mb.bin",
-    "ch": "https://fra.download.datapacket.com/100mb.bin",
-    "be": "https://ams.download.datapacket.com/100mb.bin",
-    "lu": "https://fra.download.datapacket.com/100mb.bin",
-    "pl": "https://ber.download.datapacket.com/100mb.bin",
-    "cz": "https://ber.download.datapacket.com/100mb.bin",
-    "ie": "https://lon.download.datapacket.com/100mb.bin",
-    "ru": "https://speedtest.selectel.ru/100MB",
-    "us": "https://ams.download.datapacket.com/100mb.bin",
-}
-SPEED_TEST_DEFAULT_URL = "https://fra.download.datapacket.com/100mb.bin"
-SPEED_TEST_TIMEOUT = 20  # seconds per single measurement
-SPEED_TEST_ROUNDS = 3    # number of measurements per node (best avg of N-1)
-SPEED_TEST_BATCH_SIZE = 8
-SPEED_TEST_MAX_WORKERS = 6
+SPEED_TEST_DEFAULT_URL = "https://cachefly.cachefly.net/50mb.test"
+SPEED_TEST_PING_URL = "https://www.google.com/generate_204"
+SPEED_TEST_TIMEOUT = 10  # v2rayN-style timeout per speed test
+SPEED_TEST_MIXED_CONCURRENCY = 5
 SPEED_TEST_STARTUP_TIMEOUT = 5.0
-SPEED_TEST_MIN_SAMPLE_SECONDS = 3.0
-SPEED_TEST_MAX_SAMPLE_BYTES = 8 * 1024 * 1024
 
 SS_PROTECT_PORT_START = 19200
 SS_PROTECT_PORT_END = 19300

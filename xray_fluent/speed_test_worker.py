@@ -1,4 +1,4 @@
-"""Worker for measuring download speed through proxy nodes."""
+"""Worker for v2rayN-style speed testing through temporary xray cores."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import json
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 from urllib.request import ProxyHandler, Request
@@ -17,15 +18,11 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import (
     PROXY_HOST,
-    SPEED_TEST_BATCH_SIZE,
     SPEED_TEST_DEFAULT_URL,
-    SPEED_TEST_MAX_SAMPLE_BYTES,
-    SPEED_TEST_MAX_WORKERS,
-    SPEED_TEST_MIN_SAMPLE_SECONDS,
-    SPEED_TEST_ROUNDS,
+    SPEED_TEST_MIXED_CONCURRENCY,
+    SPEED_TEST_PING_URL,
     SPEED_TEST_STARTUP_TIMEOUT,
     SPEED_TEST_TIMEOUT,
-    SPEED_TEST_URLS_BY_COUNTRY,
 )
 from .http_utils import build_opener
 from .models import Node, RoutingSettings
@@ -37,12 +34,8 @@ class _SpeedTestTarget:
     http_port: int
 
 
-def _get_speed_url(country_code: str) -> str:
-    return SPEED_TEST_URLS_BY_COUNTRY.get(country_code.lower(), SPEED_TEST_DEFAULT_URL)
-
-
 class SpeedTestWorker(QThread):
-    """Tests download speed for proxy nodes using batched temporary xray configs."""
+    """Tests nodes like v2rayN Mixedtest: ping first, then one speed download."""
 
     result = pyqtSignal(str, object, bool)   # node_id, speed_mbps (float|None), is_alive
     progress = pyqtSignal(int, int)          # current, total
@@ -63,16 +56,22 @@ class SpeedTestWorker(QThread):
         self._timeout = timeout
         self._cancelled = False
         self._completed_nodes = 0
-        self._current_proc: subprocess.Popen | None = None
+        self._processes: set[subprocess.Popen] = set()
+        self._process_lock = threading.Lock()
 
     def cancel(self) -> None:
         self._cancelled = True
-        proc = self._current_proc
-        if proc and proc.poll() is None:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
+        self._terminate_all_processes()
+
+    def _terminate_all_processes(self) -> None:
+        with self._process_lock:
+            processes = list(self._processes)
+        for proc in processes:
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
 
     @property
     def completed_nodes(self) -> int:
@@ -96,34 +95,30 @@ class SpeedTestWorker(QThread):
             for node in self._nodes:
                 self.node_progress.emit(node.id, 0)
 
-            for start in range(0, total, max(1, SPEED_TEST_BATCH_SIZE)):
+            max_workers = min(max(1, SPEED_TEST_MIXED_CONCURRENCY), max(1, len(self._nodes)))
+            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speed-test") as executor:
+                pending: set[Future[tuple[Node, float | None, bool]]] = {
+                    executor.submit(self._test_node, node)
+                    for node in self._nodes
+                }
+
+                while pending and not self._cancelled:
+                    done, pending = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        if self._cancelled:
+                            break
+                        try:
+                            node, speed, alive = future.result()
+                        except Exception:
+                            continue
+                        self._emit_node_result(node, speed, alive, total)
+
                 if self._cancelled:
-                    break
-                batch = self._nodes[start:start + max(1, SPEED_TEST_BATCH_SIZE)]
-                self._test_batch_with_fallback(batch, total)
+                    for future in pending:
+                        future.cancel()
         finally:
+            self._terminate_all_processes()
             self.completed.emit()
-
-    def _test_batch_with_fallback(self, nodes: list[Node], total: int) -> None:
-        if not nodes or self._cancelled:
-            return
-
-        results = self._test_batch(nodes)
-        if results is None:
-            if self._cancelled:
-                return
-            if len(nodes) == 1:
-                self._emit_node_result(nodes[0], None, False, total)
-                return
-            midpoint = len(nodes) // 2
-            self._test_batch_with_fallback(nodes[:midpoint], total)
-            self._test_batch_with_fallback(nodes[midpoint:], total)
-            return
-
-        for node, speed, alive in results:
-            if self._cancelled:
-                return
-            self._emit_node_result(node, speed, alive, total)
 
     def _emit_node_result(self, node: Node, speed: float | None, alive: bool, total: int) -> None:
         self._completed_nodes += 1
@@ -131,26 +126,26 @@ class SpeedTestWorker(QThread):
         self.result.emit(node.id, speed, alive)
         self.progress.emit(self._completed_nodes, total)
 
-    def _test_batch(self, nodes: list[Node]) -> list[tuple[Node, float | None, bool]] | None:
-        ports, reservations = self._reserve_ports(len(nodes))
-        targets = [_SpeedTestTarget(node=node, http_port=port) for node, port in zip(nodes, ports)]
+    def _test_node(self, node: Node) -> tuple[Node, float | None, bool]:
+        port, reservation = self._reserve_port()
+        target = _SpeedTestTarget(node=node, http_port=port)
         tmp = None
         proc = None
 
         try:
-            config = self._build_batch_config(targets)
+            config = self._build_config(target)
             tmp = tempfile.NamedTemporaryFile(
                 mode="w",
                 suffix=".json",
-                prefix="xray_speed_batch_",
+                prefix="xray_speed_",
                 delete=False,
                 encoding="utf-8",
             )
             json.dump(config, tmp, ensure_ascii=True)
             tmp.close()
 
-            self._close_reserved_ports(reservations)
-            reservations = []
+            self._close_reserved_ports([reservation])
+            reservation = None
 
             proc = subprocess.Popen(
                 [self._xray_path, "run", "-c", tmp.name],
@@ -158,56 +153,44 @@ class SpeedTestWorker(QThread):
                 stderr=subprocess.DEVNULL,
                 creationflags=0x08000000,  # CREATE_NO_WINDOW
             )
-            self._current_proc = proc
+            self._register_process(proc)
 
-            if not self._wait_for_batch_ready(proc, targets):
-                return None
+            if not self._wait_for_ready(proc, target):
+                return node, None, False
 
-            return self._measure_batch(targets)
+            delay_ms = self._real_ping(target)
+            if self._cancelled:
+                return node, None, False
+            if delay_ms <= 0:
+                return node, None, False
+
+            self.node_progress.emit(node.id, 35)
+            speed = self._measure_speed(target)
+            return node, speed, bool(speed and speed > 0)
 
         except Exception:
-            if self._cancelled:
-                return []
-            return None
+            return node, None, False
         finally:
-            self._current_proc = None
-            self._close_reserved_ports(reservations)
-            if proc and proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+            if reservation is not None:
+                self._close_reserved_ports([reservation])
+            if proc is not None:
+                self._unregister_process(proc)
+                self._stop_process(proc)
             if tmp:
                 try:
                     Path(tmp.name).unlink(missing_ok=True)
                 except Exception:
                     pass
 
-    def _build_batch_config(self, targets: list[_SpeedTestTarget]) -> dict:
-        inbounds: list[dict] = []
-        outbounds: list[dict] = [
-            {
-                "tag": "direct",
-                "protocol": "freedom",
-                "settings": {},
-            },
-            {
-                "tag": "block",
-                "protocol": "blackhole",
-                "settings": {},
-            },
-        ]
-        rules: list[dict] = []
+    def _build_config(self, target: _SpeedTestTarget) -> dict:
+        inbound_tag = "speed-http"
+        outbound_tag = "speed-proxy"
+        proxy_outbound = deepcopy(target.node.outbound)
+        proxy_outbound["tag"] = outbound_tag
 
-        for index, target in enumerate(targets):
-            suffix = f"{index}-{target.node.id[:8]}"
-            inbound_tag = f"speed-http-{suffix}"
-            outbound_tag = f"speed-proxy-{suffix}"
-            proxy_outbound = deepcopy(target.node.outbound)
-            proxy_outbound["tag"] = outbound_tag
-
-            inbounds.append(
+        return {
+            "log": {"loglevel": "none"},
+            "inbounds": [
                 {
                     "tag": inbound_tag,
                     "listen": PROXY_HOST,
@@ -220,153 +203,132 @@ class SpeedTestWorker(QThread):
                         "routeOnly": True,
                     },
                 }
-            )
-            outbounds.append(proxy_outbound)
-            rules.append(
-                {
-                    "type": "field",
-                    "inboundTag": [inbound_tag],
-                    "outboundTag": outbound_tag,
-                }
-            )
-
-        return {
-            "log": {"loglevel": "none"},
-            "inbounds": inbounds,
-            "outbounds": outbounds,
+            ],
+            "outbounds": [
+                proxy_outbound,
+                {"tag": "direct", "protocol": "freedom", "settings": {}},
+                {"tag": "block", "protocol": "blackhole", "settings": {}},
+            ],
             "routing": {
                 "domainStrategy": "AsIs",
-                "rules": rules,
+                "rules": [
+                    {
+                        "type": "field",
+                        "inboundTag": [inbound_tag],
+                        "outboundTag": outbound_tag,
+                    }
+                ],
             },
         }
 
-    def _measure_batch(self, targets: list[_SpeedTestTarget]) -> list[tuple[Node, float | None, bool]]:
-        results: dict[str, tuple[Node, float | None, bool]] = {}
-        max_workers = min(max(1, SPEED_TEST_MAX_WORKERS), len(targets))
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speed-test") as executor:
-            pending: set[Future[tuple[Node, float | None, bool]]] = {
-                executor.submit(self._test_target, target)
-                for target in targets
-            }
+    def _real_ping(self, target: _SpeedTestTarget) -> int:
+        opener = self._build_proxy_opener(target.http_port)
+        req = Request(SPEED_TEST_PING_URL, headers={"User-Agent": "BebraVPN/SpeedTest"})
+        self.node_progress.emit(target.node.id, 20)
+        started = time.perf_counter()
+        try:
+            with opener.open(req, timeout=self._timeout) as resp:
+                resp.read(16)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            self.node_progress.emit(target.node.id, 30)
+            return max(1, elapsed_ms)
+        except Exception:
+            return -1
 
-            while pending and not self._cancelled:
-                done, pending = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
-                for future in done:
-                    try:
-                        node, speed, alive = future.result()
-                    except Exception:
-                        continue
-                    results[node.id] = (node, speed, alive)
-
-            if self._cancelled:
-                for future in pending:
-                    future.cancel()
-
-        return [
-            results.get(target.node.id, (target.node, None, False))
-            for target in targets
-        ]
-
-    def _test_target(self, target: _SpeedTestTarget) -> tuple[Node, float | None, bool]:
-        url = _get_speed_url(target.node.country_code)
-        rounds = max(1, SPEED_TEST_ROUNDS)
-        results: list[float] = []
-
-        for round_index in range(rounds):
-            if self._cancelled:
-                break
-            speed = self._measure_speed(url, target.node.id, target.http_port, round_index, rounds)
-            if speed is not None and speed > 0:
-                results.append(speed)
-
-        if not results or self._cancelled:
-            return target.node, None, False
-
-        if len(results) > 1:
-            results.sort()
-            results = results[1:]
-        return target.node, round(sum(results) / len(results), 2), True
-
-    def _measure_speed(
-        self,
-        url: str,
-        node_id: str,
-        http_port: int,
-        round_index: int,
-        total_rounds: int,
-    ) -> float | None:
-        proxy_url = f"http://{PROXY_HOST}:{http_port}"
-        handler = ProxyHandler({"http": proxy_url, "https": proxy_url})
-        opener = build_opener(handler)
-        req = Request(url, headers={"User-Agent": "BebraVPN/SpeedTest"})
+    def _measure_speed(self, target: _SpeedTestTarget) -> float | None:
+        opener = self._build_proxy_opener(target.http_port)
+        req = Request(SPEED_TEST_DEFAULT_URL, headers={"User-Agent": "BebraVPN/SpeedTest"})
 
         try:
-            start = time.perf_counter()
+            started = time.perf_counter()
+            last_update = started
             total_bytes = 0
-            percent_start = 20 + int(70 * round_index / max(total_rounds, 1))
-            percent_end = 20 + int(70 * (round_index + 1) / max(total_rounds, 1))
-            with opener.open(req, timeout=self._timeout) as resp:
-                length_header = resp.headers.get("Content-Length") or ""
-                try:
-                    total_length = int(length_header)
-                except (TypeError, ValueError):
-                    total_length = 0
+            window_bytes = 0
+            max_speed = 0.0
 
-                while True:
+            with opener.open(req, timeout=self._timeout) as resp:
+                while not self._cancelled:
                     chunk = resp.read(64 * 1024)
+                    now = time.perf_counter()
                     if not chunk:
                         break
+
                     total_bytes += len(chunk)
-                    elapsed = time.perf_counter() - start
-                    if self._cancelled:
-                        return None
-
-                    if total_length > 0:
-                        fraction = min(1.0, total_bytes / total_length)
-                    else:
-                        fraction = min(1.0, elapsed / max(self._timeout, 0.1))
-
-                    percent = percent_start + int((percent_end - percent_start) * fraction)
-                    self.node_progress.emit(node_id, max(percent_start, min(percent_end, percent)))
-
-                    if elapsed > self._timeout:
-                        break
-                    if elapsed >= SPEED_TEST_MIN_SAMPLE_SECONDS and total_bytes >= SPEED_TEST_MAX_SAMPLE_BYTES:
+                    window_bytes += len(chunk)
+                    elapsed = now - started
+                    if elapsed >= self._timeout:
                         break
 
-            elapsed = time.perf_counter() - start
-            if elapsed <= 0 or total_bytes <= 0:
+                    window_elapsed = now - last_update
+                    if window_elapsed >= 1.0:
+                        speed = (window_bytes / (1000 * 1000)) / max(window_elapsed, 0.001)
+                        max_speed = max(max_speed, speed)
+                        window_bytes = 0
+                        last_update = now
+                        percent = 35 + int(60 * min(1.0, elapsed / max(self._timeout, 0.1)))
+                        self.node_progress.emit(target.node.id, max(35, min(95, percent)))
+
+            elapsed_total = time.perf_counter() - started
+            if window_bytes > 0:
+                speed = (window_bytes / (1000 * 1000)) / max(time.perf_counter() - last_update, 0.001)
+                max_speed = max(max_speed, speed)
+
+            if total_bytes <= 0 or elapsed_total <= 0:
                 return None
 
-            self.node_progress.emit(node_id, percent_end)
-            speed_mbps = (total_bytes / (1024 * 1024)) / elapsed
-            return round(speed_mbps, 2)
+            if max_speed <= 0:
+                max_speed = (total_bytes / (1000 * 1000)) / elapsed_total
+
+            self.node_progress.emit(target.node.id, 95)
+            return round(max_speed, 1)
 
         except Exception:
             return None
 
-    def _wait_for_batch_ready(self, proc: subprocess.Popen, targets: list[_SpeedTestTarget]) -> bool:
+    def _wait_for_ready(self, proc: subprocess.Popen, target: _SpeedTestTarget) -> bool:
         deadline = time.perf_counter() + SPEED_TEST_STARTUP_TIMEOUT
-        ready_ports: set[int] = set()
-
         while time.perf_counter() < deadline:
             if self._cancelled:
                 return False
             if proc.poll() is not None:
                 return False
-
-            for target in targets:
-                if target.http_port in ready_ports:
-                    continue
-                if self._is_port_ready(target.http_port):
-                    ready_ports.add(target.http_port)
-                    self.node_progress.emit(target.node.id, 15)
-
-            if len(ready_ports) == len(targets):
+            if self._is_port_ready(target.http_port):
+                self.node_progress.emit(target.node.id, 10)
                 return True
             time.sleep(0.05)
-
         return False
+
+    @staticmethod
+    def _build_proxy_opener(http_port: int):
+        proxy_url = f"http://{PROXY_HOST}:{http_port}"
+        return build_opener(ProxyHandler({"http": proxy_url, "https": proxy_url}))
+
+    def _register_process(self, proc: subprocess.Popen) -> None:
+        with self._process_lock:
+            self._processes.add(proc)
+
+    def _unregister_process(self, proc: subprocess.Popen) -> None:
+        with self._process_lock:
+            self._processes.discard(proc)
+
+    @staticmethod
+    def _stop_process(proc: subprocess.Popen) -> None:
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    def _reserve_port(self) -> tuple[int, socket.socket]:
+        sockets: list[socket.socket] = []
+        try:
+            ports, sockets = self._reserve_ports(1)
+            return ports[0], sockets[0]
+        except Exception:
+            self._close_reserved_ports(sockets)
+            raise
 
     def _reserve_ports(self, count: int) -> tuple[list[int], list[socket.socket]]:
         sockets: list[socket.socket] = []
