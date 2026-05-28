@@ -1,8 +1,8 @@
-# sing-box Runtime Config In Zapret KVN
+# sing-box Runtime Config In Bebra VPN
 
 ## Scope
 
-This document describes the `sing-box` JSON shape that Zapret KVN actually
+This document describes the `sing-box` JSON shape that Bebra VPN actually
 builds today.
 
 ## Current Runtime Model
@@ -60,7 +60,7 @@ The upstream configuration root supports many top-level sections:
 }
 ```
 
-Zapret KVN currently emits only this subset:
+Bebra VPN currently emits only this subset:
 
 - `log`
 - `inbounds`

@@ -299,13 +299,13 @@ class NodesPage(QWidget):
         self._pending_ping_ids.discard(node_id)
         self._table_model.set_ping_busy(node_id, False)
         self._table_model.refresh_ping(node_id)
-        self._apply_activity_widgets()
+        self._sync_activity_for_node(node_id)
 
     def update_speed(self, node_id: str, speed_mbps: float | None) -> None:
         self._active_speed_progress.pop(node_id, None)
         self._table_model.set_speed_busy(node_id, False)
         self._table_model.refresh_speed(node_id)
-        self._apply_activity_widgets()
+        self._sync_activity_for_node(node_id)
 
     def update_alive_status(self, node_id: str, is_alive: bool | None) -> None:
         self._table_model.refresh_alive_status(node_id)
@@ -419,7 +419,7 @@ class NodesPage(QWidget):
     def update_speed_progress(self, node_id: str, percent: int) -> None:
         self._active_speed_progress[node_id] = max(0, min(100, int(percent)))
         self._table_model.set_speed_busy(node_id, True)
-        self._apply_activity_widgets()
+        self._sync_activity_for_node(node_id)
 
     def finish_ping_activity(self) -> None:
         if not self._pending_ping_ids:
@@ -446,6 +446,13 @@ class NodesPage(QWidget):
         for row, node_id in enumerate(self._visible_node_ids):
             self._sync_activity_widget(row, 6, node_id in self._pending_ping_ids)
             self._sync_speed_widget(row, node_id)
+
+    def _sync_activity_for_node(self, node_id: str) -> None:
+        row = self._table_model.row_for_node(node_id)
+        if row is None:
+            return
+        self._sync_activity_widget(row, 6, node_id in self._pending_ping_ids)
+        self._sync_speed_widget(row, node_id)
 
     def _sync_speed_test_controls(self) -> None:
         running = self._speed_test_running

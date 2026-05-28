@@ -3,7 +3,7 @@
 ## Purpose
 
 This document defines the first template format for editing `sing-box` configs
-inside Zapret KVN through a plain text editor.
+inside Bebra VPN through a plain text editor.
 
 This format is intentionally simple:
 

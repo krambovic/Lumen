@@ -2,7 +2,7 @@
 
 Целевая версия: sing-box 1.14.x
 
-Документированы только типы, которые использует XrayFluent: vless, vmess,
+Документированы только типы, которые использует Bebra VPN: vless, vmess,
 trojan, shadowsocks, socks, http, direct, block.
 
 ---

@@ -27,6 +27,7 @@ def ping_nodes(controller: AppController, node_ids: set[str] | None = None) -> N
 
     controller._ping_total = len(nodes)
     controller._ping_completed = 0
+    controller._ping_node_map = {node.id: node for node in nodes}
     controller.bulk_task_progress.emit("ping", 0, controller._ping_total, False)
     controller._ping_worker = PingWorker(nodes)
     controller._ping_worker.result.connect(controller._on_ping_result)
@@ -56,6 +57,7 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
 
     controller._speed_total = len(nodes)
     controller._speed_completed = 0
+    controller._speed_node_map = {node.id: node for node in nodes}
     controller.bulk_task_progress.emit("speed", 0, controller._speed_total, False)
     controller._speed_worker = SpeedTestWorker(
         nodes,
@@ -98,16 +100,15 @@ def test_connectivity(controller: AppController, url: str | None = None) -> None
 def on_ping_result(controller: AppController, node_id: str, ping_ms: int | None) -> None:
     if controller.sender() is not controller._ping_worker:
         return
-    for node in controller.state.nodes:
-        if node.id == node_id:
-            node.ping_ms = ping_ms
-            if ping_ms is not None or node.is_alive is None:
-                node.is_alive = ping_ms is not None
-            ts = datetime.now(timezone.utc).isoformat()
-            node.ping_history.append((ts, ping_ms))
-            if len(node.ping_history) > 50:
-                node.ping_history = node.ping_history[-50:]
-            break
+    node = getattr(controller, "_ping_node_map", {}).get(node_id)
+    if node is not None:
+        node.ping_ms = ping_ms
+        if ping_ms is not None or node.is_alive is None:
+            node.is_alive = ping_ms is not None
+        ts = datetime.now(timezone.utc).isoformat()
+        node.ping_history.append((ts, ping_ms))
+        if len(node.ping_history) > 50:
+            node.ping_history = node.ping_history[-50:]
     controller.ping_updated.emit(node_id, ping_ms)
 
 
@@ -123,23 +124,23 @@ def on_ping_complete(controller: AppController) -> None:
         return
     controller.bulk_task_progress.emit("ping", controller._ping_completed, controller._ping_total, True)
     controller._ping_worker = None
+    controller._ping_node_map = {}
     controller.save()
 
 
 def on_speed_result(controller: AppController, node_id: str, speed_mbps: float | None, is_alive: bool) -> None:
     if controller.sender() is not controller._speed_worker:
         return
-    for node in controller.state.nodes:
-        if node.id == node_id:
-            node.speed_mbps = speed_mbps
-            if is_alive or node.is_alive is None:
-                node.is_alive = is_alive
-            ts = datetime.now(timezone.utc).isoformat()
-            node.speed_history.append((ts, speed_mbps))
-            if len(node.speed_history) > 50:
-                node.speed_history = node.speed_history[-50:]
-            break
-    controller.save()
+    node = getattr(controller, "_speed_node_map", {}).get(node_id)
+    if node is not None:
+        node.speed_mbps = speed_mbps
+        if is_alive or node.is_alive is None:
+            node.is_alive = is_alive
+        ts = datetime.now(timezone.utc).isoformat()
+        node.speed_history.append((ts, speed_mbps))
+        if len(node.speed_history) > 50:
+            node.speed_history = node.speed_history[-50:]
+        controller.schedule_save()
     controller.speed_updated.emit(node_id, speed_mbps, is_alive)
 
 
@@ -167,6 +168,8 @@ def on_speed_complete(controller: AppController) -> None:
         controller.speed_test_cancelled.emit(completed, controller._speed_total)
     controller.bulk_task_progress.emit("speed", completed, controller._speed_total, True)
     controller._speed_worker = None
+    controller._speed_node_map = {}
+    controller.save()
     if cancelled:
         controller.status.emit("info", f"Тест скорости остановлен ({completed}/{controller._speed_total})")
     else:

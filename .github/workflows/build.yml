@@ -105,7 +105,7 @@ jobs:
         shell: pwsh
         run: |
           python -m PyInstaller main.py `
-            --name ZapretKVN `
+            --name BebraVPN `
             --noconfirm --clean --console --onedir `
             --uac-admin `
             --manifest uac_admin.manifest `
@@ -114,27 +114,27 @@ jobs:
             --hidden-import win32comext.shell.shellcon `
             --hidden-import encodings.idna
 
-          Copy-Item -Recurse core dist/ZapretKVN/core
+          Copy-Item -Recurse core dist/BebraVPN/core
 
           # Copy zapret/ (presets, binaries, lists — tracked in git)
           if (Test-Path zapret) {
-            Copy-Item -Recurse zapret dist/ZapretKVN/zapret
+            Copy-Item -Recurse zapret dist/BebraVPN/zapret
           }
 
           # Copy raw config templates for first-run users
           if (Test-Path data/templates) {
-            New-Item -ItemType Directory -Force -Path dist/ZapretKVN/data | Out-Null
-            Copy-Item -Recurse data/templates dist/ZapretKVN/data/templates
+            New-Item -ItemType Directory -Force -Path dist/BebraVPN/data | Out-Null
+            Copy-Item -Recurse data/templates dist/BebraVPN/data/templates
           }
 
           Write-Host "Build complete:"
-          Get-ChildItem dist/ZapretKVN/ | Format-Table Name, Length
+          Get-ChildItem dist/BebraVPN/ | Format-Table Name, Length
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ZapretKVN-portable
-          path: dist/ZapretKVN/
+          name: BebraVPN-portable
+          path: dist/BebraVPN/
 
       # ── Release on push to main ──
 
@@ -142,20 +142,20 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: pwsh
         run: |
-          cd dist/ZapretKVN
+          cd dist/BebraVPN
 
           # Self-extracting exe for manual install
-          7z a -t7z -mx=5 -sfx "../ZapretKVN-v$env:VERSION-windows-x64.exe" *
+          7z a -t7z -mx=5 -sfx "../BebraVPN-v$env:VERSION-windows-x64.exe" *
 
           # Zip for auto-updater
-          7z a -tzip -mx=5 "../ZapretKVN-v$env:VERSION-windows-x64.zip" *
+          7z a -tzip -mx=5 "../BebraVPN-v$env:VERSION-windows-x64.zip" *
 
-          $zipPath = "../ZapretKVN-v$env:VERSION-windows-x64.zip"
+          $zipPath = "../BebraVPN-v$env:VERSION-windows-x64.zip"
           $zipHash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
           Set-Content "$zipPath.sha256" -Value $zipHash -Encoding ASCII
 
           # 7z archive
-          7z a -t7z -mx=5 "../ZapretKVN-v$env:VERSION-windows-x64.7z" *
+          7z a -t7z -mx=5 "../BebraVPN-v$env:VERSION-windows-x64.7z" *
 
           cd ..
           Write-Host "Release archives:"
@@ -166,14 +166,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "Zapret KVN ${{ env.RELEASE_TAG }}"
-          generate_release_notes: true
+          name: "Bebra VPN ${{ env.RELEASE_TAG }}"
+          body: |
+            ## Изменения
+            - Автоматическая релизная сборка Bebra VPN для Windows x64.
+            - Архив `.zip` подходит для автообновления приложения.
+            - Файл `.sha256` содержит контрольную сумму zip-архива.
+          generate_release_notes: false
           make_latest: true
           files: |
-            dist/ZapretKVN-*-windows-x64.exe
-            dist/ZapretKVN-*-windows-x64.zip
-            dist/ZapretKVN-*-windows-x64.7z
-            dist/ZapretKVN-*-windows-x64.zip.sha256
+            dist/BebraVPN-*-windows-x64.exe
+            dist/BebraVPN-*-windows-x64.zip
+            dist/BebraVPN-*-windows-x64.7z
+            dist/BebraVPN-*-windows-x64.zip.sha256
 
       - name: Commit version bump
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'

@@ -1,5 +1,5 @@
 """
-Build XrayFluent portable exe via PyInstaller.
+Build Bebra VPN portable exe via PyInstaller.
 
 Usage:  python build.py          — full build (clean + compile + pack zip)
         python build.py --no-zip — skip zip creation
@@ -22,7 +22,7 @@ VENV_DIR = ROOT / ".venv"
 VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 VENV_PIP = VENV_DIR / "Scripts" / "pip.exe"
 
-APP_NAME = "ZapretKVN"
+APP_NAME = "BebraVPN"
 
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
@@ -90,11 +90,11 @@ def clean() -> None:
         try:
             shutil.rmtree(BUILD_DIR)
         except PermissionError:
-            _print(f"ERROR: Cannot remove {BUILD_DIR} — is XrayFluent.exe still running?")
+            _print(f"ERROR: Cannot remove {BUILD_DIR} — is BebraVPN.exe still running?")
             _print("Close the app (tray -> Quit) and try again.")
             raise SystemExit(1)
 
-    # dist/XrayFluent/ — remove everything EXCEPT data/, core/, zapret/
+    # dist/BebraVPN/ — remove everything EXCEPT data/, core/, zapret/
     # core/ and zapret/ are kept because running binaries (xray.exe) lock them;
     # they will be merged/overwritten in build_exe() instead.
     keep_dirs = {"data", "core", "zapret"}
@@ -178,7 +178,7 @@ def pack_zip() -> None:
 
 # ------------------------------------------------------------------
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build XrayFluent portable exe")
+    parser = argparse.ArgumentParser(description="Build Bebra VPN portable exe")
     parser.add_argument("--no-zip", action="store_true", help="skip zip creation")
     parser.add_argument("--clean", action="store_true", help="only clean build artefacts")
     args = parser.parse_args()

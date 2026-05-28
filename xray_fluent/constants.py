@@ -4,8 +4,8 @@ from pathlib import Path
 import sys
 
 
-APP_NAME = "zapret kvn"
-APP_VERSION = "0.5.0"
+APP_NAME = "Bebra VPN"
+APP_VERSION = "0.5.1"
 STATE_SCHEMA_VERSION = 1
 
 PROXY_HOST = "127.0.0.1"

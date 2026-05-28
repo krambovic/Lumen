@@ -104,7 +104,7 @@ def _setup_bootstrap_logging() -> None:
 
 
 def _fatal_error_message() -> str:
-    return f"zapret kvn не удалось запустить.\n\nПодробности записаны в:\n{STARTUP_LOG_PATH}"
+    return f"Bebra VPN не удалось запуститься.\n\nПодробности записаны в:\n{STARTUP_LOG_PATH}"
 
 
 def _show_fatal_message_box() -> None:
@@ -113,7 +113,7 @@ def _show_fatal_message_box() -> None:
     try:
         import ctypes
 
-        ctypes.windll.user32.MessageBoxW(None, _fatal_error_message(), "zapret kvn", 0x10)
+        ctypes.windll.user32.MessageBoxW(None, _fatal_error_message(), "Bebra VPN", 0x10)
     except Exception:
         pass
 
@@ -176,9 +176,17 @@ def _disable_system_proxy_on_exit() -> None:
     # Disable leftover TUN adapter if our interface is still present.
     try:
         r = run_text(["netsh", "interface", "show", "interface"], timeout=5, creationflags=0x08000000)
-        if "ZapretKVN_TUN" in result_output_text(r):
+        interfaces = result_output_text(r)
+        for interface_name in ("BebraVPN_TUN", "ZapretKVN_TUN"):
+            if interface_name not in interfaces:
+                continue
             import subprocess as _sp
-            _sp.run(["netsh", "interface", "set", "interface", "ZapretKVN_TUN", "admin=disable"], capture_output=True, timeout=5, creationflags=0x08000000)
+            _sp.run(
+                ["netsh", "interface", "set", "interface", interface_name, "admin=disable"],
+                capture_output=True,
+                timeout=5,
+                creationflags=0x08000000,
+            )
             _bootstrap_logger.info("TUN adapter disabled on exit (safety)")
     except Exception:
         pass
@@ -252,7 +260,7 @@ def _enforce_frozen() -> None:
         raise SystemExit(
             "ОШИБКА: Прямой запуск не поддерживается.\n"
             "Сначала соберите приложение:  python build.py\n"
-            "Затем запустите:              dist\\ZapretKVN\\ZapretKVN.exe"
+            "Затем запустите:              dist\\BebraVPN\\BebraVPN.exe"
         )
 
 
@@ -263,7 +271,7 @@ def main() -> int:
     _enforce_frozen()
     _hide_console_if_needed()
 
-    parser = argparse.ArgumentParser(description="zapret kvn")
+    parser = argparse.ArgumentParser(description="Bebra VPN")
     parser.add_argument("--tray", action="store_true", help="start in tray")
     args = parser.parse_args()
 

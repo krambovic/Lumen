@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This folder documents the subset of `sing-box` that matters for Zapret KVN and
+This folder documents the subset of `sing-box` that matters for Bebra VPN and
 for the planned migration from GUI-first routing controls to a text editor
 inside the app.
 

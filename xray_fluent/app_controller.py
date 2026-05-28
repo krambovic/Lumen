@@ -241,6 +241,8 @@ class AppController(QObject):
         self._country_resolver: CountryResolver | None = None
         self._ping_worker: PingWorker | None = None
         self._speed_worker: SpeedTestWorker | None = None
+        self._ping_node_map: dict[str, Node] = {}
+        self._speed_node_map: dict[str, Node] = {}
         self._connectivity_worker: ConnectivityTestWorker | None = None
         self._metrics_worker: LiveMetricsWorker | None = None
         self._xray_update_worker: XrayCoreUpdateWorker | None = None
@@ -1037,9 +1039,12 @@ class AppController(QObject):
                 timeout=5,
                 creationflags=0x08000000,
             )
-            if "ZapretKVN_TUN" in result_output_text(result):
+            interfaces = result_output_text(result)
+            for interface_name in ("BebraVPN_TUN", "ZapretKVN_TUN"):
+                if interface_name not in interfaces:
+                    continue
                 _sp.run(
-                    ["netsh", "interface", "set", "interface", "ZapretKVN_TUN", "admin=disable"],
+                    ["netsh", "interface", "set", "interface", interface_name, "admin=disable"],
                     capture_output=True, timeout=5,
                     creationflags=0x08000000,
                 )

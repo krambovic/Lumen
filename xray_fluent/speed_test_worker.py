@@ -298,7 +298,7 @@ class SpeedTestWorker(QThread):
         proxy_url = f"http://{PROXY_HOST}:{http_port}"
         handler = ProxyHandler({"http": proxy_url, "https": proxy_url})
         opener = build_opener(handler)
-        req = Request(url, headers={"User-Agent": "ZapretKVN/SpeedTest"})
+        req = Request(url, headers={"User-Agent": "BebraVPN/SpeedTest"})
 
         try:
             start = time.perf_counter()

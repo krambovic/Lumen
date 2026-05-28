@@ -25,9 +25,9 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import APP_VERSION, BASE_DIR
 
-GITHUB_REPO = "youtubediscord/zapret-kvn"
+GITHUB_REPO = "krambovic/bebra-kvn"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-USER_AGENT = f"ZapretKVN/{APP_VERSION}"
+USER_AGENT = f"BebraVPN/{APP_VERSION}"
 
 
 def _powershell_literal(value: str) -> str:
@@ -376,7 +376,7 @@ class UpdateDownloader(QThread):
     def run(self) -> None:
         tmp_dir: Path | None = None
         try:
-            tmp_dir = Path(tempfile.mkdtemp(prefix="zapretkvn_update_"))
+            tmp_dir = Path(tempfile.mkdtemp(prefix="bebravpn_update_"))
             zip_path = tmp_dir / "update.zip"
 
             downloaded_ok = False
@@ -442,10 +442,10 @@ class UpdateDownloader(QThread):
             with zipfile.ZipFile(zip_path, "r") as zf:
                 zf.extractall(extract_dir)
 
-            exe_name = "ZapretKVN.exe"
+            exe_name = "BebraVPN.exe"
             source_dir = _resolve_extracted_app_dir(extract_dir, exe_name)
             if not (source_dir / exe_name).is_file():
-                self.error.emit("Архив обновления не содержит ZapretKVN.exe")
+                self.error.emit("Архив обновления не содержит BebraVPN.exe")
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
 

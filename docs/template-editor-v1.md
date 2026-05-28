@@ -3,7 +3,7 @@
 ## Purpose
 
 This document fixes the intended editor model for runtime engine configs in
-Zapret KVN.
+Bebra VPN.
 
 The design goal is explicit:
 
@@ -269,7 +269,7 @@ Examples:
 
 ## V1 Direction
 
-This is the chosen V1 direction for config editing in Zapret KVN:
+This is the chosen V1 direction for config editing in Bebra VPN:
 
 - one text editor;
 - template files;

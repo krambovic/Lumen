@@ -4,6 +4,7 @@ import time
 from urllib.request import ProxyHandler, Request
 
 from .http_utils import build_opener
+from .constants import APP_VERSION
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -32,7 +33,7 @@ class ConnectivityTestWorker(QThread):
                 )
             )
 
-        request = Request(self._url, headers={"User-Agent": "ZapretKVN/0.4"})
+        request = Request(self._url, headers={"User-Agent": f"BebraVPN/{APP_VERSION}"})
         started = time.perf_counter()
         try:
             with opener.open(request, timeout=self._timeout) as response:
