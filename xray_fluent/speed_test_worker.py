@@ -19,8 +19,14 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from .constants import (
     PROXY_HOST,
     SPEED_TEST_DEFAULT_URL,
+    SPEED_TEST_DOWNLOAD_IDLE_TIMEOUT,
+    SPEED_TEST_MAX_PING_MS,
+    SPEED_TEST_MIN_BYTES_AFTER_GRACE,
+    SPEED_TEST_MIN_MBPS_AFTER_GRACE,
     SPEED_TEST_MIXED_CONCURRENCY,
     SPEED_TEST_PING_URL,
+    SPEED_TEST_PING_TIMEOUT,
+    SPEED_TEST_SLOW_GRACE_SECONDS,
     SPEED_TEST_STARTUP_TIMEOUT,
     SPEED_TEST_TIMEOUT,
 )
@@ -227,9 +233,11 @@ class SpeedTestWorker(QThread):
         self.node_progress.emit(target.node.id, 20)
         started = time.perf_counter()
         try:
-            with opener.open(req, timeout=self._timeout) as resp:
+            with opener.open(req, timeout=min(self._timeout, SPEED_TEST_PING_TIMEOUT)) as resp:
                 resp.read(16)
             elapsed_ms = int((time.perf_counter() - started) * 1000)
+            if elapsed_ms > SPEED_TEST_MAX_PING_MS:
+                return -1
             self.node_progress.emit(target.node.id, 30)
             return max(1, elapsed_ms)
         except Exception:
@@ -246,7 +254,8 @@ class SpeedTestWorker(QThread):
             window_bytes = 0
             max_speed = 0.0
 
-            with opener.open(req, timeout=self._timeout) as resp:
+            idle_timeout = min(self._timeout, SPEED_TEST_DOWNLOAD_IDLE_TIMEOUT)
+            with opener.open(req, timeout=idle_timeout) as resp:
                 while not self._cancelled:
                     chunk = resp.read(64 * 1024)
                     now = time.perf_counter()
@@ -258,11 +267,21 @@ class SpeedTestWorker(QThread):
                     elapsed = now - started
                     if elapsed >= self._timeout:
                         break
+                    if (
+                        elapsed >= SPEED_TEST_SLOW_GRACE_SECONDS
+                        and total_bytes < SPEED_TEST_MIN_BYTES_AFTER_GRACE
+                    ):
+                        return None
 
                     window_elapsed = now - last_update
                     if window_elapsed >= 1.0:
                         speed = (window_bytes / (1000 * 1000)) / max(window_elapsed, 0.001)
                         max_speed = max(max_speed, speed)
+                        if (
+                            elapsed >= SPEED_TEST_SLOW_GRACE_SECONDS
+                            and max_speed < SPEED_TEST_MIN_MBPS_AFTER_GRACE
+                        ):
+                            return None
                         window_bytes = 0
                         last_update = now
                         percent = 35 + int(60 * min(1.0, elapsed / max(self._timeout, 0.1)))
