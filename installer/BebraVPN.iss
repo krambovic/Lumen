@@ -56,4 +56,4 @@ Name: "{commondesktop}\Bebra VPN"; Filename: "{app}\BebraVPN.exe"; WorkingDir: "
 Filename: "{app}\BebraVPN.exe"; Description: "Запустить Bebra VPN"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN ""Bebra VPN"" /F >nul 2>nul"; Flags: runhidden
+Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN ""Bebra VPN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupTask"
