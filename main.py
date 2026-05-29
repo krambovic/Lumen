@@ -229,6 +229,17 @@ def _hide_console_if_needed() -> None:
         _bootstrap_logger.exception("Failed to hide console window")
 
 
+def _set_windows_app_user_model_id() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("BebraVPN.BebraVPN")
+    except Exception:
+        _bootstrap_logger.exception("Failed to set Windows AppUserModelID")
+
+
 def _recover_system_proxy_from_previous_run() -> None:
     """Restore a leaked app-managed system proxy from a previous crashed run."""
     if sys.platform != "win32":
@@ -292,6 +303,7 @@ def main() -> int:
     _recover_system_proxy_from_previous_run()
     _enforce_frozen()
     _hide_console_if_needed()
+    _set_windows_app_user_model_id()
 
     parser = argparse.ArgumentParser(description="Bebra VPN")
     parser.add_argument("--tray", action="store_true", help="start in tray")
@@ -306,13 +318,15 @@ def main() -> int:
     from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
     from qfluentwidgets import SplashScreen
 
-    from xray_fluent.constants import APP_NAME
+    from xray_fluent.constants import APP_ICON_PATH, APP_NAME
     from xray_fluent.ui.main_window import MainWindow
     _unlock_qfluent_smooth_scroll_fps()
 
     _bootstrap_logger.info("Creating QApplication")
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    if APP_ICON_PATH.is_file():
+        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     tray_available = QSystemTrayIcon.isSystemTrayAvailable()
     app.setQuitOnLastWindowClosed(not tray_available)
 

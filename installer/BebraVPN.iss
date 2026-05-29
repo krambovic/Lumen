@@ -15,6 +15,7 @@ AppId={{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}
 AppName=Bebra VPN
 AppVersion={#AppVersion}
 AppPublisher=Bebra VPN
+AppCopyright=Copyright (c) youtubediscord/zapret-kvn contributors and krambovic/bebra-kvn contributors
 AppPublisherURL=https://github.com/krambovic/bebra-kvn
 AppSupportURL=https://github.com/krambovic/bebra-kvn/issues
 AppUpdatesURL=https://github.com/krambovic/bebra-kvn/releases
@@ -23,6 +24,8 @@ DefaultGroupName=Bebra VPN
 DisableProgramGroupPage=yes
 OutputDir={#OutputDir}
 OutputBaseFilename=BebraVPN-Setup-windows-x64
+SetupIconFile=..\assets\BebraVPN.ico
+LicenseFile=..\LICENSE
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -53,7 +56,7 @@ Name: "{group}\Удалить Bebra VPN"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\Bebra VPN"; Filename: "{app}\BebraVPN.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\BebraVPN.exe"; Description: "Запустить Bebra VPN"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\BebraVPN.exe"; Description: "Запустить Bebra VPN"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN ""Bebra VPN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupTask"

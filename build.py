@@ -36,6 +36,9 @@ CORE_DIR = ROOT / "core"
 ZAPRET_DIR = ROOT / "zapret"
 DATA_TEMPLATES_DIR = ROOT / "data" / "templates"
 INNO_SCRIPT = ROOT / "installer" / "BebraVPN.iss"
+ASSETS_DIR = ROOT / "assets"
+APP_ICON = ASSETS_DIR / "BebraVPN.ico"
+NOTICE_FILES = (ROOT / "LICENSE", ROOT / "NOTICE.md", ROOT / "README.md")
 
 
 def _print(msg: str) -> None:
@@ -158,6 +161,7 @@ def build_exe() -> None:
         "--onedir",
         "--uac-admin",
         "--manifest", _windows_path(MANIFEST),
+        "--icon", _windows_path(APP_ICON),
         "--distpath", _windows_path(temp_dist),
         # win32comext is needed by qframelesswindow for Mica/DWM effects
         "--hidden-import", "win32comext",
@@ -190,6 +194,15 @@ def build_exe() -> None:
     if DATA_TEMPLATES_DIR.is_dir():
         _print(f"Merging templates -> {dst_templates}")
         _copy_tree_merge(DATA_TEMPLATES_DIR, dst_templates)
+
+    dst_assets = APP_DIR / "assets"
+    if ASSETS_DIR.is_dir():
+        _print(f"Merging assets -> {dst_assets}")
+        _copy_tree_merge(ASSETS_DIR, dst_assets)
+
+    for notice_file in NOTICE_FILES:
+        if notice_file.is_file():
+            shutil.copy2(str(notice_file), str(APP_DIR / notice_file.name))
 
     _print(f"Build complete: {APP_DIR / (APP_NAME + '.exe')}")
 

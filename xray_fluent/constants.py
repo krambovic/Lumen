@@ -5,7 +5,7 @@ import sys
 
 
 APP_NAME = "Bebra VPN"
-APP_VERSION = "0.5.9"
+APP_VERSION = "0.5.10"
 STATE_SCHEMA_VERSION = 1
 
 PROXY_HOST = "127.0.0.1"
@@ -28,6 +28,8 @@ def get_base_dir() -> Path:
 
 BASE_DIR = get_base_dir()
 DATA_DIR = BASE_DIR / "data"
+ASSETS_DIR = BASE_DIR / "assets"
+APP_ICON_PATH = ASSETS_DIR / "BebraVPN.ico"
 TEMPLATES_DIR = DATA_DIR / "templates"
 CONFIGS_DIR = DATA_DIR / "configs"
 SINGBOX_TEMPLATES_DIR = TEMPLATES_DIR / "sing-box"

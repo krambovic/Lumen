@@ -19,7 +19,7 @@ from qfluentwidgets import (
 
 from ..app_controller import AppController
 from ..storage import PassphraseRequired
-from ..constants import APP_NAME, APP_VERSION, LOG_DIR
+from ..constants import APP_ICON_PATH, APP_NAME, APP_VERSION, LOG_DIR
 from ..models import AppSettings, Node, RoutingSettings
 from ..routing_presets import build_routing_preset
 from ..app_updater import AppUpdate, UpdateChecker, UpdateDownloader
@@ -66,7 +66,8 @@ class MainWindow(FluentWindow):
         self._navigation_items: dict[str, object] = {}
 
         self.setWindowTitle(APP_NAME)
-        self.setWindowIcon(QIcon(":/qfluentwidgets/images/logo.png"))
+        self._app_icon = QIcon(str(APP_ICON_PATH)) if APP_ICON_PATH.is_file() else QIcon(":/qfluentwidgets/images/logo.png")
+        self.setWindowIcon(self._app_icon)
         self.resize(1280, 720)
 
         if not defer_init:
@@ -144,7 +145,7 @@ class MainWindow(FluentWindow):
             return
 
         self.tray = QSystemTrayIcon(self)
-        self.tray.setIcon(QIcon(":/qfluentwidgets/images/logo.png"))
+        self.tray.setIcon(self._app_icon)
         self.tray.setToolTip(APP_NAME)
 
         menu = QMenu()
@@ -269,7 +270,7 @@ class MainWindow(FluentWindow):
     def _init_window(self) -> None:
         self.setMinimumSize(600, 450)
         self.setWindowTitle(APP_NAME)
-        self.setWindowIcon(QIcon(":/qfluentwidgets/images/logo.png"))
+        self.setWindowIcon(self._app_icon)
         self._apply_window_geometry(self.controller.state.settings)
 
     def _apply_window_geometry(self, settings: AppSettings) -> None:
