@@ -255,6 +255,11 @@ class NodesPage(QWidget):
         self._search_timer.setInterval(300)
         self._search_timer.timeout.connect(self._reload)
 
+        self._metric_sort_reload_timer = QTimer(self)
+        self._metric_sort_reload_timer.setSingleShot(True)
+        self._metric_sort_reload_timer.setInterval(50)
+        self._metric_sort_reload_timer.timeout.connect(self._reload)
+
         # --- Connections ---
         self.search_edit.textChanged.connect(self._search_timer.start)
         self.group_filter.currentIndexChanged.connect(self._reload)
@@ -300,12 +305,18 @@ class NodesPage(QWidget):
         self._pending_ping_ids.discard(node_id)
         self._table_model.set_ping_busy(node_id, False)
         self._table_model.refresh_ping(node_id)
+        if self.sort_combo.currentText() == "Пинг":
+            self._schedule_metric_sort_reload()
+            return
         self._sync_activity_for_node(node_id)
 
     def update_speed(self, node_id: str, speed_mbps: float | None) -> None:
         self._active_speed_progress.pop(node_id, None)
         self._table_model.set_speed_busy(node_id, False)
         self._table_model.refresh_speed(node_id)
+        if self.sort_combo.currentText() == "Скорость":
+            self._schedule_metric_sort_reload()
+            return
         self._sync_activity_for_node(node_id)
 
     def update_alive_status(self, node_id: str, is_alive: bool | None) -> None:
@@ -421,6 +432,9 @@ class NodesPage(QWidget):
         self._pending_ping_ids = targets
         for node_id in targets:
             self._table_model.set_ping_busy(node_id, True)
+        if self.sort_combo.currentText() == "Пинг":
+            self._schedule_metric_sort_reload()
+            return
         self._apply_activity_widgets()
 
     def start_speed_activity(self) -> None:
@@ -433,11 +447,19 @@ class NodesPage(QWidget):
 
     def update_speed_progress(self, node_id: str, percent: int) -> None:
         normalized = max(0, min(100, int(percent)))
+        was_pending = node_id in self._active_speed_progress
         if self._active_speed_progress.get(node_id) == normalized:
             return
         self._active_speed_progress[node_id] = normalized
         self._table_model.set_speed_busy(node_id, True)
+        if not was_pending and self.sort_combo.currentText() == "Скорость":
+            self._schedule_metric_sort_reload()
+            return
         self._sync_activity_for_node(node_id)
+
+    def _schedule_metric_sort_reload(self) -> None:
+        if not self._metric_sort_reload_timer.isActive():
+            self._metric_sort_reload_timer.start()
 
     def finish_ping_activity(self) -> None:
         if not self._pending_ping_ids:
@@ -541,8 +563,7 @@ class NodesPage(QWidget):
         if isinstance(bar, ProgressBar):
             bar.setValue(percent)
 
-    @staticmethod
-    def _sort_nodes(nodes: list[Node], key: str, ascending: bool) -> list[Node]:
+    def _sort_nodes(self, nodes: list[Node], key: str, ascending: bool) -> list[Node]:
         if key == "Вручную":
             return sorted(nodes, key=lambda n: n.sort_order, reverse=not ascending)
         if key == "Имя":
@@ -552,22 +573,53 @@ class NodesPage(QWidget):
         if key == "Тип":
             return sorted(nodes, key=lambda n: n.scheme.lower(), reverse=not ascending)
         if key == "Пинг":
-            none_val = float("inf") if ascending else float("-inf")
-            return sorted(
+            return self._sort_metric_nodes(
                 nodes,
-                key=lambda n: n.ping_ms if n.ping_ms is not None else none_val,
-                reverse=not ascending,
+                value_getter=lambda n: n.ping_ms,
+                pending_ids=self._pending_ping_ids,
+                ascending=ascending,
             )
         if key == "Скорость":
-            none_val = float("inf") if ascending else float("-inf")
-            return sorted(
+            return self._sort_metric_nodes(
                 nodes,
-                key=lambda n: n.speed_mbps if n.speed_mbps is not None else none_val,
-                reverse=not ascending,
+                value_getter=lambda n: n.speed_mbps,
+                pending_ids=set(self._active_speed_progress),
+                ascending=ascending,
             )
         if key == "Последнее использование":
             return sorted(nodes, key=lambda n: n.last_used_at or "", reverse=not ascending)
         return nodes
+
+    @staticmethod
+    def _sort_metric_nodes(
+        nodes: list[Node],
+        *,
+        value_getter,
+        pending_ids: set[str],
+        ascending: bool,
+    ) -> list[Node]:
+        checked: list[Node] = []
+        pending: list[Node] = []
+        for node in nodes:
+            if node.id in pending_ids:
+                pending.append(node)
+            else:
+                checked.append(node)
+
+        def metric_key(node: Node) -> tuple[bool, float]:
+            value = value_getter(node)
+            if value is None:
+                return True, 0.0
+            return False, float(value)
+
+        checked.sort(key=metric_key)
+        if not ascending:
+            valued = [node for node in checked if value_getter(node) is not None]
+            empty = [node for node in checked if value_getter(node) is None]
+            valued.reverse()
+            checked = valued + empty
+
+        return checked + pending
 
     def _toggle_sort_order(self) -> None:
         self._sort_ascending = not self._sort_ascending
