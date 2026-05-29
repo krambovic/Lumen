@@ -25,6 +25,7 @@ from qfluentwidgets import RoundMenu, Action
 from ..models import Node
 from .node_detail_widget import NodeDetailWidget
 from .nodes_table_model import NodesTableModel
+from .table_scroll import use_native_table_scroll
 
 _COLUMN_WIDTHS = {
     1: 96,   # Тип
@@ -223,10 +224,7 @@ class NodesPage(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        use_native_table_scroll(self.table, disable_hover=True)
         self.table.setIconSize(QSize(20, 14))
 
         # Prevent deselection on empty area click
