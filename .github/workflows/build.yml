@@ -52,15 +52,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
 
       - name: Download core binaries
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path core | Out-Null
 
-          # ── Xray-core ──
           Write-Host "Downloading Xray-core..."
           $xrayRelease = Invoke-RestMethod "https://api.github.com/repos/XTLS/Xray-core/releases/latest"
           $xrayAsset = $xrayRelease.assets | Where-Object { $_.name -match "Xray-windows-64\.zip$" }
@@ -71,7 +71,6 @@ jobs:
           Copy-Item _xray/geosite.dat core/
           Remove-Item -Recurse _xray, xray.zip
 
-          # ── tun2socks ──
           Write-Host "Downloading tun2socks..."
           $tunRelease = Invoke-RestMethod "https://api.github.com/repos/xjasonlyu/tun2socks/releases/latest"
           $tunAsset = $tunRelease.assets | Where-Object { $_.name -match "windows-amd64\.zip$" }
@@ -80,14 +79,12 @@ jobs:
           Get-ChildItem _tun -Recurse -Filter "*.exe" | ForEach-Object { Copy-Item $_.FullName core/tun2socks.exe }
           Remove-Item -Recurse _tun, tun2socks.zip
 
-          # ── wintun ──
           Write-Host "Downloading wintun..."
           Invoke-WebRequest "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile wintun.zip
           Expand-Archive wintun.zip -DestinationPath _wintun -Force
           Copy-Item _wintun/wintun/bin/amd64/wintun.dll core/
           Remove-Item -Recurse _wintun, wintun.zip
 
-          # ── sing-box (latest, including pre-release) ──
           Write-Host "Downloading sing-box..."
           $sbReleases = Invoke-RestMethod "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=10"
           $sbRelease = $sbReleases | Where-Object { -not $_.draft } | Select-Object -First 1
@@ -101,65 +98,29 @@ jobs:
           Write-Host "Core binaries ready:"
           Get-ChildItem core/
 
-      - name: Build with PyInstaller
+      - name: Build app, installer and portable archives
+        shell: pwsh
+        run: python build.py
+
+      - name: Create checksums
         shell: pwsh
         run: |
-          python -m PyInstaller main.py `
-            --name BebraVPN `
-            --noconfirm --clean --console --onedir `
-            --uac-admin `
-            --manifest uac_admin.manifest `
-            --hidden-import win32comext `
-            --hidden-import win32comext.shell `
-            --hidden-import win32comext.shell.shellcon `
-            --hidden-import encodings.idna
-
-          Copy-Item -Recurse core dist/BebraVPN/core
-
-          # Copy zapret/ (presets, binaries, lists — tracked in git)
-          if (Test-Path zapret) {
-            Copy-Item -Recurse zapret dist/BebraVPN/zapret
+          $assets = @(
+            "dist/BebraVPN-Setup-windows-x64.exe",
+            "dist/BebraVPN-windows-x64.zip",
+            "dist/BebraVPN-portable-windows-x64.zip"
+          )
+          foreach ($asset in $assets) {
+            $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
+            "$hash  $(Split-Path $asset -Leaf)" | Set-Content "$asset.sha256" -Encoding ASCII
           }
+          Get-ChildItem dist/*.exe, dist/*.zip, dist/*.sha256 | Format-Table Name, Length
 
-          # Copy raw config templates for first-run users
-          if (Test-Path data/templates) {
-            New-Item -ItemType Directory -Force -Path dist/BebraVPN/data | Out-Null
-            Copy-Item -Recurse data/templates dist/BebraVPN/data/templates
-          }
-
-          Write-Host "Build complete:"
-          Get-ChildItem dist/BebraVPN/ | Format-Table Name, Length
-
-      - name: Upload build artifact
+      - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
           name: BebraVPN-portable
           path: dist/BebraVPN/
-
-      # ── Release on push to main ──
-
-      - name: Create release archives
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        shell: pwsh
-        run: |
-          cd dist/BebraVPN
-
-          # Self-extracting exe for manual install
-          7z a -t7z -mx=5 -sfx "../BebraVPN-v$env:VERSION-windows-x64.exe" *
-
-          # Zip for auto-updater
-          7z a -tzip -mx=5 "../BebraVPN-v$env:VERSION-windows-x64.zip" *
-
-          $zipPath = "../BebraVPN-v$env:VERSION-windows-x64.zip"
-          $zipHash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
-          Set-Content "$zipPath.sha256" -Value $zipHash -Encoding ASCII
-
-          # 7z archive
-          7z a -t7z -mx=5 "../BebraVPN-v$env:VERSION-windows-x64.7z" *
-
-          cd ..
-          Write-Host "Release archives:"
-          Get-ChildItem *.exe, *.zip, *.7z, *.sha256 | Format-Table Name, Length
 
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -169,16 +130,18 @@ jobs:
           name: "Bebra VPN ${{ env.RELEASE_TAG }}"
           body: |
             ## Изменения
-            - Автоматическая релизная сборка Bebra VPN для Windows x64.
-            - Архив `.zip` подходит для автообновления приложения.
-            - Файл `.sha256` содержит контрольную сумму zip-архива.
+            - Добавлен полноценный установщик Bebra VPN для Windows x64.
+            - Добавлена portable-версия отдельным zip-архивом.
+            - Zip `BebraVPN-windows-x64.zip` оставлен для автообновления приложения.
           generate_release_notes: false
           make_latest: true
           files: |
-            dist/BebraVPN-*-windows-x64.exe
-            dist/BebraVPN-*-windows-x64.zip
-            dist/BebraVPN-*-windows-x64.7z
-            dist/BebraVPN-*-windows-x64.zip.sha256
+            dist/BebraVPN-Setup-windows-x64.exe
+            dist/BebraVPN-Setup-windows-x64.exe.sha256
+            dist/BebraVPN-windows-x64.zip
+            dist/BebraVPN-windows-x64.zip.sha256
+            dist/BebraVPN-portable-windows-x64.zip
+            dist/BebraVPN-portable-windows-x64.zip.sha256
 
       - name: Commit version bump
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'

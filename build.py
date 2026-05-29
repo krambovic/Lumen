@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -27,12 +28,15 @@ APP_NAME = "BebraVPN"
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 APP_DIR = DIST_DIR / APP_NAME
-ZIP_PATH = DIST_DIR / f"{APP_NAME}-windows-x64.zip"
+UPDATER_ZIP_PATH = DIST_DIR / f"{APP_NAME}-windows-x64.zip"
+PORTABLE_ZIP_PATH = DIST_DIR / f"{APP_NAME}-portable-windows-x64.zip"
+INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-Setup-windows-x64.exe"
 
 MANIFEST = ROOT / "uac_admin.manifest"
 CORE_DIR = ROOT / "core"
 ZAPRET_DIR = ROOT / "zapret"
 DATA_TEMPLATES_DIR = ROOT / "data" / "templates"
+INNO_SCRIPT = ROOT / "installer" / "BebraVPN.iss"
 
 
 def _print(msg: str) -> None:
@@ -56,6 +60,27 @@ def _windows_path(path: Path) -> str:
 def _run(cmd: list[str], **kwargs) -> None:
     _print(f"> {' '.join(cmd)}")
     subprocess.run(cmd, check=True, **kwargs)
+
+
+def _read_app_version() -> str:
+    constants = ROOT / "xray_fluent" / "constants.py"
+    match = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', constants.read_text(encoding="utf-8"))
+    if not match:
+        raise RuntimeError("APP_VERSION not found")
+    return match.group(1)
+
+
+def _find_iscc() -> Path | None:
+    candidates = [
+        Path(os.environ.get("ISCC_PATH", "")),
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Inno Setup 6" / "ISCC.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Inno Setup 6" / "ISCC.exe",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    found = shutil.which("ISCC.exe") or shutil.which("iscc")
+    return Path(found) if found else None
 
 
 def _copy_tree_merge(src: Path, dst: Path) -> None:
@@ -168,18 +193,51 @@ def build_exe() -> None:
     _print(f"Build complete: {APP_DIR / (APP_NAME + '.exe')}")
 
 
-def pack_zip() -> None:
-    if ZIP_PATH.exists():
-        ZIP_PATH.unlink()
-    _print(f"Creating {ZIP_PATH} ...")
-    shutil.make_archive(str(ZIP_PATH.with_suffix("")), "zip", str(DIST_DIR), APP_NAME)
-    _print(f"Portable archive ready: {ZIP_PATH}")
+def _pack_zip(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+    _print(f"Creating {path} ...")
+    shutil.make_archive(str(path.with_suffix("")), "zip", str(DIST_DIR), APP_NAME)
+
+
+def pack_portable_zips() -> None:
+    _pack_zip(UPDATER_ZIP_PATH)
+    if PORTABLE_ZIP_PATH.exists():
+        PORTABLE_ZIP_PATH.unlink()
+    shutil.copy2(UPDATER_ZIP_PATH, PORTABLE_ZIP_PATH)
+    _print(f"Updater archive ready: {UPDATER_ZIP_PATH}")
+    _print(f"Portable archive ready: {PORTABLE_ZIP_PATH}")
+
+
+def build_installer() -> None:
+    iscc = _find_iscc()
+    if iscc is None:
+        raise SystemExit(
+            "Inno Setup compiler not found. Install Inno Setup 6 or pass --no-installer."
+        )
+    if INSTALLER_PATH.exists():
+        INSTALLER_PATH.unlink()
+    version = _read_app_version()
+    source_dir = _windows_path(APP_DIR)
+    output_dir = _windows_path(DIST_DIR)
+    _run(
+        [
+            str(iscc),
+            f"/DAppVersion={version}",
+            f"/DSourceDir={source_dir}",
+            f"/DOutputDir={output_dir}",
+            _windows_path(INNO_SCRIPT),
+        ],
+        cwd=str(ROOT),
+    )
+    _print(f"Installer ready: {INSTALLER_PATH}")
 
 
 # ------------------------------------------------------------------
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build Bebra VPN portable exe")
+    parser = argparse.ArgumentParser(description="Build Bebra VPN")
     parser.add_argument("--no-zip", action="store_true", help="skip zip creation")
+    parser.add_argument("--no-installer", action="store_true", help="skip Inno Setup installer")
     parser.add_argument("--clean", action="store_true", help="only clean build artefacts")
     args = parser.parse_args()
 
@@ -194,7 +252,10 @@ def main() -> int:
     build_exe()
 
     if not args.no_zip:
-        pack_zip()
+        pack_portable_zips()
+
+    if not args.no_installer:
+        build_installer()
 
     _print("All done!")
     return 0
