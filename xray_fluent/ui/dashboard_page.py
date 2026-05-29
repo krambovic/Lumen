@@ -24,6 +24,7 @@ from qfluentwidgets import (
     ComboBox,
     FluentIcon as FIF,
     PrimaryPushButton,
+    PushButton,
     SmoothScrollArea,
     StrongBodyLabel,
     SubtitleLabel,
@@ -32,6 +33,11 @@ from qfluentwidgets import (
 )
 
 from ..models import AppSettings, Node, RoutingSettings
+from ..routing_presets import (
+    ROUTING_PRESET_BLOCKED,
+    ROUTING_PRESET_EXCEPT_RU,
+    ROUTING_PRESET_GLOBAL,
+)
 from .traffic_graph import DetailTrafficGraphWidget, TrafficGraphWidget
 
 
@@ -66,6 +72,7 @@ class DashboardPage(QWidget):
     toggle_connection_requested = pyqtSignal()
     node_selected = pyqtSignal(str)
     mode_changed = pyqtSignal(str)
+    routing_preset_requested = pyqtSignal(str)
     tun_toggled = pyqtSignal(bool)
     proxy_toggled = pyqtSignal(bool)
 
@@ -175,6 +182,21 @@ class DashboardPage(QWidget):
         # Toggle button inside connection card
         self.toggle_btn = PrimaryPushButton(FIF.PLAY_SOLID, "Запустить прокси", self.connection_card)
         connection_layout.addWidget(self.toggle_btn)
+
+        quick_route_row = QHBoxLayout()
+        quick_route_row.setSpacing(8)
+        quick_route_row.addWidget(CaptionLabel("Маршрут:", self.connection_card))
+        self.route_all_btn = PushButton("Всё", self.connection_card)
+        self.route_all_btn.setToolTip("Весь трафик через VPN")
+        quick_route_row.addWidget(self.route_all_btn)
+        self.route_blocked_btn = PushButton("Блок", self.connection_card)
+        self.route_blocked_btn.setToolTip("Только заблокированное через VPN")
+        quick_route_row.addWidget(self.route_blocked_btn)
+        self.route_except_ru_btn = PushButton("Кроме РФ", self.connection_card)
+        self.route_except_ru_btn.setToolTip("Российское напрямую, остальное через VPN")
+        quick_route_row.addWidget(self.route_except_ru_btn)
+        quick_route_row.addStretch(1)
+        connection_layout.addLayout(quick_route_row)
 
         # Hidden node combo (keeps selection logic intact, UI on nodes page)
         self.node_combo = ComboBox(self.connection_card)
@@ -374,6 +396,9 @@ class DashboardPage(QWidget):
         self.tun_switch.checkedChanged.connect(self._on_tun_toggled)
         self.proxy_switch.checkedChanged.connect(self._on_proxy_toggled)
         self.toggle_btn.clicked.connect(self.toggle_connection_requested)
+        self.route_all_btn.clicked.connect(lambda: self.routing_preset_requested.emit(ROUTING_PRESET_GLOBAL))
+        self.route_blocked_btn.clicked.connect(lambda: self.routing_preset_requested.emit(ROUTING_PRESET_BLOCKED))
+        self.route_except_ru_btn.clicked.connect(lambda: self.routing_preset_requested.emit(ROUTING_PRESET_EXCEPT_RU))
 
         self._stack.setCurrentIndex(0)
         self._refresh_dashboard()

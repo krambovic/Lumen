@@ -21,6 +21,7 @@ from qfluentwidgets import (
     CaptionLabel,
     ComboBox,
     FluentIcon as FIF,
+    MessageBox,
     PrimaryToolButton,
     PrimaryPushButton,
     PushButton,
@@ -35,6 +36,12 @@ from qfluentwidgets import (
 
 from ..models import RoutingSettings
 from ..process_presets import PROCESS_PRESETS
+from ..routing_presets import (
+    ROUTING_PRESET_BLOCKED,
+    ROUTING_PRESET_EXCEPT_RU,
+    ROUTING_PRESET_GLOBAL,
+    build_routing_preset,
+)
 from ..service_presets import SERVICE_PRESETS
 
 _ACTIONS = [
@@ -57,17 +64,6 @@ _PROCESS_MATCH_PATH_REGEX = "path_regex"
 _PROCESS_MATCH_ROLE = int(Qt.ItemDataRole.UserRole)
 _PROCESS_VALUE_ROLE = _PROCESS_MATCH_ROLE + 1
 _PROCESS_LABEL_ROLE = _PROCESS_MATCH_ROLE + 2
-
-_PRESET_RU_DIRECT_RULES = (
-    "geosite:category-ru",
-    "geoip:ru",
-)
-
-_PRESET_BLOCKED_PROXY_RULES = (
-    "geosite:category-media-ru-blocked",
-    "geoip:ru-blocked",
-    "geoip:ru-blocked-community",
-)
 
 
 class _ServiceRouteCard(SettingCard):
@@ -117,6 +113,8 @@ class RoutingPage(QWidget):
         super().__init__(parent)
         self.setObjectName("routing")
         self._loading = False
+        self._compact_mode = False
+        self._tun_mode = False
         self._apply_pending = False
         self._apply_timer = QTimer(self)
         self._apply_timer.setSingleShot(True)
@@ -148,6 +146,8 @@ class RoutingPage(QWidget):
         self._apply_pending_label.setVisible(False)
         apply_row.addWidget(self._apply_pending_label)
         apply_row.addStretch(1)
+        self.help_btn = PushButton(FIF.INFO, "Справка", container)
+        apply_row.addWidget(self.help_btn)
         self.apply_routing_btn = PrimaryPushButton("Применить", container)
         self.apply_routing_btn.setEnabled(False)
         apply_row.addWidget(self.apply_routing_btn)
@@ -158,14 +158,16 @@ class RoutingPage(QWidget):
         header.setHorizontalSpacing(12)
         header.setVerticalSpacing(8)
 
-        header.addWidget(BodyLabel("Режим", container), 0, 0)
+        self._mode_label = BodyLabel("Поведение", container)
+        header.addWidget(self._mode_label, 0, 0)
         self.mode_combo = ComboBox(container)
-        self.mode_combo.addItem("Глобальный", userData="global")
-        self.mode_combo.addItem("По правилам", userData="rule")
-        self.mode_combo.addItem("Прямой", userData="direct")
+        self.mode_combo.addItem("Всё через VPN", userData="global")
+        self.mode_combo.addItem("По моим правилам", userData="rule")
+        self.mode_combo.addItem("Без VPN по умолчанию", userData="direct")
         header.addWidget(self.mode_combo, 0, 1)
 
-        header.addWidget(BodyLabel("DNS", container), 1, 0)
+        self._dns_label = BodyLabel("DNS", container)
+        header.addWidget(self._dns_label, 1, 0)
         self.dns_combo = ComboBox(container)
         self.dns_combo.addItem("Системный DNS", userData="system")
         self.dns_combo.addItem("Встроенный DNS", userData="builtin")
@@ -214,18 +216,18 @@ class RoutingPage(QWidget):
         root.addLayout(header)
 
         self._priority_info = CaptionLabel(
-            "Приоритет применения: приложения и папки выше сервисов, сервисы выше доменных правил.",
+            "Сначала применяются приложения и папки, потом сервисы, потом домены и IP.",
             container,
         )
         root.addWidget(self._priority_info)
 
         preset_row = QHBoxLayout()
         preset_row.setSpacing(8)
-        self.preset_global_btn = PushButton(FIF.GLOBE, "Глобально", container)
+        self.preset_global_btn = PushButton(FIF.GLOBE, "Всё через VPN", container)
         self.preset_global_btn.setToolTip("Весь трафик через выбранный сервер")
         preset_row.addWidget(self.preset_global_btn)
 
-        self.preset_blocked_btn = PushButton(FIF.LINK, "Заблокированное", container)
+        self.preset_blocked_btn = PushButton(FIF.LINK, "Только заблокированное", container)
         self.preset_blocked_btn.setToolTip("Только заблокированные и выбранные сервисы через сервер, остальное напрямую")
         preset_row.addWidget(self.preset_blocked_btn)
 
@@ -236,11 +238,10 @@ class RoutingPage(QWidget):
         root.addLayout(preset_row)
 
         # --- Process routing section ---
-        root.addWidget(SubtitleLabel("Маршрутизация по процессам", container))
+        root.addWidget(SubtitleLabel("Приложения", container))
 
         self.process_info = CaptionLabel(
-            "В режиме TUN перехватывает весь трафик процесса. Для приложений с helper/update.exe лучше добавлять папку приложения. "
-            "В системном прокси правила работают только если приложение использует прокси.",
+            "Добавьте приложение или его папку, если нужно отправлять его через VPN или, наоборот, оставить напрямую.",
             container,
         )
         root.addWidget(self.process_info)
@@ -347,7 +348,7 @@ class RoutingPage(QWidget):
         root.addWidget(self._services_group)
 
         # --- Rules table ---
-        root.addWidget(SubtitleLabel("Доменные правила", container))
+        root.addWidget(SubtitleLabel("Домены и IP", container))
 
         rules_toolbar = QHBoxLayout()
         self.add_rule_btn = PrimaryToolButton(FIF.ADD, container)
@@ -401,6 +402,7 @@ class RoutingPage(QWidget):
         self.add_proc_folder_btn.clicked.connect(self._on_browse_process_folder)
         self.del_proc_btn.clicked.connect(self._on_del_procs)
         self.apply_routing_btn.clicked.connect(self._emit_apply)
+        self.help_btn.clicked.connect(self._show_help)
         self.preset_global_btn.clicked.connect(self._apply_global_preset)
         self.preset_blocked_btn.clicked.connect(self._apply_blocked_preset)
         self.preset_except_ru_btn.clicked.connect(self._apply_except_ru_preset)
@@ -468,17 +470,32 @@ class RoutingPage(QWidget):
         self._set_apply_pending(False)
 
     def set_tun_mode(self, enabled: bool) -> None:
+        self._tun_mode = bool(enabled)
         # Process routing works in both modes — show warning only in system proxy mode
         self._process_container.setEnabled(True)
         self.add_proc_btn.setEnabled(True)
         self.add_proc_folder_btn.setEnabled(True)
         self.del_proc_btn.setEnabled(True)
-        self.proxy_warning.setVisible(not enabled)
+        self.proxy_warning.setVisible((not enabled) and (not self._compact_mode))
         # TUN default outbound + process presets + DNS settings only relevant in TUN mode
-        self._tun_default_row_widget.setVisible(enabled)
-        self._dns_tun_widget.setVisible(enabled)
-        self.tun_default_info.setVisible(enabled)
+        self._tun_default_row_widget.setVisible(enabled and not self._compact_mode)
+        self._dns_tun_widget.setVisible(enabled and not self._compact_mode)
+        self.tun_default_info.setVisible(enabled and not self._compact_mode)
         self._process_presets_group.setVisible(enabled)
+
+    def set_compact_mode(self, enabled: bool) -> None:
+        self._compact_mode = bool(enabled)
+        self._dns_label.setVisible(not self._compact_mode)
+        self.dns_combo.setVisible(not self._compact_mode)
+        self.bypass_switch.setVisible(not self._compact_mode)
+        self._priority_info.setVisible(not self._compact_mode)
+        self.process_info.setVisible(not self._compact_mode)
+        self.import_btn.setVisible(not self._compact_mode)
+        self.export_btn.setVisible(not self._compact_mode)
+        self.proxy_warning.setVisible((not self._tun_mode) and (not self._compact_mode))
+        self._tun_default_row_widget.setVisible(self._tun_mode and not self._compact_mode)
+        self._dns_tun_widget.setVisible(self._tun_mode and not self._compact_mode)
+        self.tun_default_info.setVisible(self._tun_mode and not self._compact_mode)
 
     # --- Built-in routing presets ---
 
@@ -514,29 +531,19 @@ class RoutingPage(QWidget):
             preset = next((p for p in PROCESS_PRESETS if p.id == preset_id), None)
             card.set_state(enabled and preset is not None, preset.default_action if preset else "proxy")
 
+    def _apply_preset(self, preset_id: str) -> None:
+        routing = build_routing_preset(self._collect_current_routing(), preset_id)
+        self.set_routing(routing)
+        self.apply_requested.emit(routing)
+
     def _apply_global_preset(self) -> None:
-        self._set_mode("global")
-        self._set_rules()
-        self._set_services(False)
-        self._set_process_presets(False)
-        self._schedule_apply()
-        self._emit_apply()
+        self._apply_preset(ROUTING_PRESET_GLOBAL)
 
     def _apply_blocked_preset(self) -> None:
-        self._set_mode("direct")
-        self._set_rules(proxy=_PRESET_BLOCKED_PROXY_RULES)
-        self._set_services(True, only_proxy_defaults=True)
-        self._set_process_presets(False)
-        self._schedule_apply()
-        self._emit_apply()
+        self._apply_preset(ROUTING_PRESET_BLOCKED)
 
     def _apply_except_ru_preset(self) -> None:
-        self._set_mode("global")
-        self._set_rules(direct=_PRESET_RU_DIRECT_RULES)
-        self._set_services(False)
-        self._set_process_presets(False)
-        self._schedule_apply()
-        self._emit_apply()
+        self._apply_preset(ROUTING_PRESET_EXCEPT_RU)
 
     # --- Rules table helpers ---
 
@@ -725,7 +732,7 @@ class RoutingPage(QWidget):
 
     # --- Emit ---
 
-    def _emit_apply(self) -> None:
+    def _collect_current_routing(self) -> RoutingSettings:
         mode = self.mode_combo.currentData() or "rule"
         dns_mode = self.dns_combo.currentData() or "system"
         dns_bootstrap_server = self._dns_bootstrap_server.currentData() or "1.1.1.1"
@@ -788,7 +795,7 @@ class RoutingPage(QWidget):
 
         tun_default_outbound = self.tun_default_combo.currentData() or "direct"
 
-        routing = RoutingSettings(
+        return RoutingSettings(
             mode=str(mode),
             bypass_lan=self.bypass_switch.isChecked(),
             direct_domains=direct,
@@ -804,8 +811,26 @@ class RoutingPage(QWidget):
             service_routes=service_routes,
             tun_default_outbound=str(tun_default_outbound),
         )
+
+    def _emit_apply(self) -> None:
+        routing = self._collect_current_routing()
         self._set_apply_pending(False)
         self.apply_requested.emit(routing)
+
+    def _show_help(self) -> None:
+        box = MessageBox(
+            "Как работает маршрутизация",
+            "Выберите готовый режим сверху или добавьте свои правила.\n\n"
+            "«Всё через VPN» — весь трафик идёт через выбранный сервер.\n"
+            "«Только заблокированное» — обычные сайты открываются напрямую, а популярные заблокированные сервисы идут через VPN.\n"
+            "«Всё кроме РФ» — российские сайты и адреса идут напрямую, остальное через VPN.\n\n"
+            "В разделе «Приложения» можно выбрать конкретную программу или папку программы. "
+            "В разделе «Домены и IP» можно добавить сайт вроде example.com или адрес вроде 1.2.3.4.",
+            self.window(),
+        )
+        box.yesButton.setText("Понятно")
+        box.cancelButton.hide()
+        box.exec()
 
     # --- Helpers ---
 

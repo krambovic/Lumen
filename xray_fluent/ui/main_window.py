@@ -21,6 +21,7 @@ from ..app_controller import AppController
 from ..storage import PassphraseRequired
 from ..constants import APP_NAME, APP_VERSION, LOG_DIR
 from ..models import AppSettings, Node, RoutingSettings
+from ..routing_presets import build_routing_preset
 from ..app_updater import AppUpdate, UpdateChecker, UpdateDownloader
 from ..engines.xray import XrayCoreUpdateResult
 from .bulk_edit_dialog import BulkEditDialog
@@ -195,6 +196,7 @@ class MainWindow(FluentWindow):
         self.dashboard_page.tun_toggled.connect(self._on_dashboard_tun_toggled)
         self.dashboard_page.proxy_toggled.connect(self._on_dashboard_proxy_toggled)
         self.dashboard_page.node_selected.connect(self.controller.set_selected_node)
+        self.dashboard_page.routing_preset_requested.connect(self._apply_routing_preset)
 
         self.nodes_page.import_clipboard_requested.connect(self._import_nodes_from_clipboard)
         self.nodes_page.delete_requested.connect(self.controller.remove_nodes)
@@ -347,6 +349,7 @@ class MainWindow(FluentWindow):
 
         self.dashboard_page.set_compact_mode(compact)
         self.nodes_page.set_compact_mode(compact)
+        self.routing_page.set_compact_mode(compact)
         self.settings_page.set_compact_mode(compact)
 
         current = self.stackedWidget.currentWidget()
@@ -357,6 +360,10 @@ class MainWindow(FluentWindow):
             self.about_page,
         }:
             self.switchTo(self.dashboard_page)
+
+    def _apply_routing_preset(self, preset_id: str) -> None:
+        routing = build_routing_preset(self.controller.state.routing, preset_id)
+        self.controller.update_routing(routing)
 
     def _on_ping_updated(self, node_id: str, ping_ms: int | None) -> None:
         self.nodes_page.update_ping(node_id, ping_ms)
