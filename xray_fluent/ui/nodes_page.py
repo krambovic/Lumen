@@ -25,7 +25,7 @@ from qfluentwidgets import RoundMenu, Action
 from ..models import Node
 from .node_detail_widget import NodeDetailWidget
 from .nodes_table_model import NodesTableModel
-from .table_scroll import use_native_table_scroll
+from .table_scroll import tune_fluent_table_scroll
 
 _COLUMN_WIDTHS = {
     1: 96,   # Тип
@@ -80,6 +80,7 @@ class NodesPage(QWidget):
         self._speed_test_running = False
         self._speed_test_stopping = False
         self._compact_mode = False
+        self._activity_widget_keys: set[tuple[int, int]] = set()
 
         # Stack: page 0 = server list, page 1 = node detail
         self._stack = QStackedWidget(self)
@@ -224,7 +225,7 @@ class NodesPage(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        use_native_table_scroll(self.table, disable_hover=True)
+        tune_fluent_table_scroll(self.table, disable_hover=True)
         self.table.setIconSize(QSize(20, 14))
 
         # Prevent deselection on empty area click
@@ -262,6 +263,11 @@ class NodesPage(QWidget):
         self._metric_sort_reload_timer.setInterval(50)
         self._metric_sort_reload_timer.timeout.connect(self._reload)
 
+        self._activity_widget_timer = QTimer(self)
+        self._activity_widget_timer.setSingleShot(True)
+        self._activity_widget_timer.setInterval(30)
+        self._activity_widget_timer.timeout.connect(self._apply_activity_widgets)
+
         # --- Connections ---
         self.search_edit.textChanged.connect(self._search_timer.start)
         self.group_filter.currentIndexChanged.connect(self._reload)
@@ -284,6 +290,7 @@ class NodesPage(QWidget):
         self.table.selectionModel().selectionChanged.connect(lambda *_: self._emit_selection())
         self.table.doubleClicked.connect(self._on_double_click)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
+        self.table.verticalScrollBar().valueChanged.connect(self._schedule_activity_widgets_refresh)
 
         # --- Keyboard shortcuts ---
         paste_shortcut = QShortcut(QKeySequence.StandardKey.Paste, self)
@@ -404,6 +411,7 @@ class NodesPage(QWidget):
         self._visible_node_ids = [node.id for node in filtered]
 
         self.table.setUpdatesEnabled(False)
+        self._activity_widget_keys.clear()
         self._table_model.set_nodes(filtered)
         selection_model = self.table.selectionModel()
         if selection_model is not None:
@@ -485,7 +493,13 @@ class NodesPage(QWidget):
         self._sync_speed_test_controls()
 
     def _apply_activity_widgets(self) -> None:
-        for row, node_id in enumerate(self._visible_node_ids):
+        first_row, last_row = self._visible_row_range()
+        visible_rows = set(range(first_row, last_row + 1))
+        self._prune_activity_widgets(visible_rows)
+        for row in range(first_row, last_row + 1):
+            if row < 0 or row >= len(self._visible_node_ids):
+                continue
+            node_id = self._visible_node_ids[row]
             self._sync_activity_widget(row, 6, node_id in self._pending_ping_ids)
             self._sync_speed_widget(row, node_id)
 
@@ -493,8 +507,46 @@ class NodesPage(QWidget):
         row = self._table_model.row_for_node(node_id)
         if row is None:
             return
+        first_row, last_row = self._visible_row_range()
+        if row < first_row or row > last_row:
+            return
         self._sync_activity_widget(row, 6, node_id in self._pending_ping_ids)
         self._sync_speed_widget(row, node_id)
+
+    def _schedule_activity_widgets_refresh(self) -> None:
+        if not self._activity_widget_timer.isActive():
+            self._activity_widget_timer.start()
+
+    def _visible_row_range(self) -> tuple[int, int]:
+        row_count = self._table_model.rowCount()
+        if row_count <= 0:
+            return 0, -1
+
+        viewport = self.table.viewport()
+        first = self.table.rowAt(0)
+        if first < 0:
+            first = 0
+        last = self.table.rowAt(max(0, viewport.height() - 1))
+        if last < 0:
+            default_rows = max(1, viewport.height() // max(1, self.table.verticalHeader().defaultSectionSize()))
+            last = min(row_count - 1, first + default_rows)
+
+        # A small buffer avoids widget churn while the user scrolls.
+        first = max(0, first - 8)
+        last = min(row_count - 1, last + 8)
+        return first, last
+
+    def _prune_activity_widgets(self, visible_rows: set[int]) -> None:
+        for row, column in list(self._activity_widget_keys):
+            if row in visible_rows and row < self._table_model.rowCount():
+                continue
+            index = self._table_model.index(row, column)
+            if index.isValid():
+                existing = self.table.indexWidget(index)
+                if existing is not None:
+                    self.table.setIndexWidget(index, None)
+                    existing.deleteLater()
+            self._activity_widget_keys.discard((row, column))
 
     def _sync_speed_test_controls(self) -> None:
         running = self._speed_test_running
@@ -515,6 +567,7 @@ class NodesPage(QWidget):
             if existing is not None:
                 self.table.setIndexWidget(index, None)
                 existing.deleteLater()
+            self._activity_widget_keys.discard((row, column))
             return
 
         if existing is not None:
@@ -532,6 +585,7 @@ class NodesPage(QWidget):
         layout.addWidget(ring)
         layout.addStretch(1)
         self.table.setIndexWidget(index, container)
+        self._activity_widget_keys.add((row, column))
 
     def _sync_speed_widget(self, row: int, node_id: str) -> None:
         index = self._table_model.index(row, 7)
@@ -544,6 +598,7 @@ class NodesPage(QWidget):
             if existing is not None:
                 self.table.setIndexWidget(index, None)
                 existing.deleteLater()
+            self._activity_widget_keys.discard((row, 7))
             return
 
         if existing is None:
@@ -559,6 +614,7 @@ class NodesPage(QWidget):
             layout.addWidget(bar, 1)
             container.setProperty("progressBar", bar)
             self.table.setIndexWidget(index, container)
+            self._activity_widget_keys.add((row, 7))
             return
 
         bar = existing.property("progressBar")

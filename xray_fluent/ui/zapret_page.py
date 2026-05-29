@@ -27,7 +27,7 @@ from qfluentwidgets import RoundMenu, Action
 
 from ..zapret_manager import PresetInfo, ZapretManager
 from .preset_edit_widget import PresetEditWidget
-from .table_scroll import use_native_table_scroll
+from .table_scroll import tune_fluent_table_scroll
 
 
 class ZapretPage(QWidget):
@@ -136,7 +136,7 @@ class ZapretPage(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        use_native_table_scroll(self.table, disable_hover=True)
+        tune_fluent_table_scroll(self.table, disable_hover=True)
         root.addWidget(self.table, 1)
 
         self._stack.addWidget(list_page)
