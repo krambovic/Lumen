@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..constants import PROXY_HOST, XRAY_TUN_DEFAULT_INTERFACE_NAME
 from ..engines.xray import get_windows_default_route_context
+from ..routing_runtime import apply_xray_gui_routing
 from .connection_service import find_free_api_port
 from .runtime_introspection import extract_xray_runtime_ports
 from .runtime_security import strip_xray_proxy_inbounds
@@ -248,6 +249,8 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
             outbounds[index] = proxy_outbound
             used_selected_node = True
             break
+
+    apply_xray_gui_routing(payload, controller.state.routing, controller.state.settings)
 
     loop_prevention_interface = ""
     loop_prevention_patched_outbounds = 0

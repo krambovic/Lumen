@@ -18,7 +18,8 @@ from ...constants import (
     SS_PROTECT_PORT_END,
     SS_PROTECT_PORT_START,
 )
-from ...models import Node
+from ...models import Node, RoutingSettings
+from ...routing_runtime import apply_singbox_gui_routing
 from .config_builder import build_singbox_outbound
 
 
@@ -121,6 +122,7 @@ def plan_singbox_runtime(
     document: ParsedSingboxDocument,
     node: Node | None,
     *,
+    routing: RoutingSettings | None = None,
     preferred_relay_port: int = 0,
     preferred_protect_port: int = 0,
     preferred_protect_password: str = "",
@@ -133,6 +135,8 @@ def plan_singbox_runtime(
     outbounds = runtime_config.get("outbounds")
     proxy_index = _find_proxy_outbound_index(outbounds)
     if proxy_index is None:
+        if routing is not None:
+            apply_singbox_gui_routing(runtime_config, routing)
         _validate_runtime_dns_contract(runtime_config)
         return SingboxRuntimePlan(
             outcome="native_singbox",
@@ -150,7 +154,7 @@ def plan_singbox_runtime(
     try:
         native_proxy = build_singbox_outbound(node, tag="proxy")
     except ValueError:
-        return _plan_hybrid_runtime(
+        plan = _plan_hybrid_runtime(
             document,
             runtime_config=runtime_config,
             proxy_index=proxy_index,
@@ -159,10 +163,15 @@ def plan_singbox_runtime(
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
         )
+        if routing is not None:
+            apply_singbox_gui_routing(plan.singbox_config, routing)
+        return plan
 
     assert isinstance(outbounds, list)
     outbounds[proxy_index] = native_proxy
     _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
+    if routing is not None:
+        apply_singbox_gui_routing(runtime_config, routing)
     _validate_runtime_dns_contract(runtime_config)
     return SingboxRuntimePlan(
         outcome="native_singbox",

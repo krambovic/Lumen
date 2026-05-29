@@ -48,6 +48,7 @@ def transition_signature(
             "planner_outcome": planner_outcome,
             "node_id": node.id if has_proxy_outbound and node else None,
             "node_outbound": node.outbound if has_proxy_outbound and node else None,
+            "routing": routing.to_dict(),
         }
         if planner_outcome == "hybrid_xray_sidecar":
             signature_payload["xray_path"] = str(settings.xray_path)
@@ -63,6 +64,7 @@ def transition_signature(
             "node_id": node.id if has_proxy_outbound and node else None,
             "node_outbound": node.outbound if has_proxy_outbound and node else None,
             "api_port": int(api_port),
+            "routing": routing.to_dict(),
         }
         if controller.is_xray_tun_mode(settings):
             signature_payload.update({"tun_mode": True, "tun_engine": "xray"})
@@ -114,6 +116,7 @@ def xray_layer_signature(
             "socks_port": int(socks_port),
             "http_port": int(http_port),
             "api_port": int(api_port),
+            "routing": routing.to_dict(),
         }
         if controller.is_xray_tun_mode(settings):
             signature_payload.update({"tun_mode": True, "tun_engine": "xray"})

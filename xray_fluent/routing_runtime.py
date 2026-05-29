@@ -1,0 +1,350 @@
+from __future__ import annotations
+
+import ntpath
+from ipaddress import ip_network
+from typing import Any
+
+from .constants import ROUTING_DIRECT, ROUTING_GLOBAL
+from .models import AppSettings, RoutingSettings
+from .process_presets import PROCESS_PRESETS_BY_ID
+from .service_presets import SERVICE_PRESETS_BY_ID
+
+_SINGBOX_RULE_SET_URLS = {
+    "geosite:category-ru": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geosite/geosite-category-ru.srs",
+    "geosite:category-media-ru-blocked": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geosite/geosite-category-media-ru-blocked.srs",
+    "geoip:ru": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geoip/geoip-ru.srs",
+    "geoip:ru-blocked": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geoip/geoip-ru-blocked.srs",
+    "geoip:ru-blocked-community": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geoip/geoip-ru-blocked-community.srs",
+}
+
+
+def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
+    domains: list[str] = []
+    ips: list[str] = []
+    for raw in items:
+        value = raw.strip()
+        if not value:
+            continue
+        if value.startswith(("domain:", "full:", "regexp:", "keyword:", "geosite:", "ext:")):
+            domains.append(value)
+            continue
+        if value.startswith(("geoip:", "ip:")):
+            ips.append(value)
+            continue
+        try:
+            ip_network(value, strict=False)
+            ips.append(value)
+            continue
+        except ValueError:
+            domains.append(f"domain:{value}")
+    return domains, ips
+
+
+def append_xray_domain_ip_rule(rules: list[dict[str, Any]], items: list[str], outbound_tag: str) -> None:
+    domains, ips = split_xray_domain_ip(items)
+    if domains:
+        rules.append({"type": "field", "domain": domains, "outboundTag": outbound_tag})
+    if ips:
+        rules.append({"type": "field", "ip": ips, "outboundTag": outbound_tag})
+
+
+def resolve_xray_process_name(rule: dict[str, str]) -> str:
+    value = str(rule.get("process", "")).strip()
+    if not value:
+        return ""
+    match = str(rule.get("match", "")).strip().lower()
+    if match == "path_regex":
+        return ""
+    if match == "path" or "\\" in value or "/" in value or (len(value) > 1 and value[1] == ":"):
+        return ntpath.basename(value)
+    return value
+
+
+def append_xray_process_rule(rules: list[dict[str, Any]], processes: list[str], action: str) -> None:
+    names = sorted({name.strip() for name in processes if name.strip()})
+    if not names:
+        return
+    outbound = action if action in ("direct", "proxy", "block") else "direct"
+    rules.append({"type": "field", "process": names, "network": "tcp,udp", "outboundTag": outbound})
+
+
+def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings) -> list[dict[str, Any]]:
+    rules: list[dict[str, Any]] = []
+    if routing.bypass_lan:
+        rules.append({"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"})
+        rules.append({"type": "field", "domain": ["geosite:private"], "outboundTag": "direct"})
+
+    if not settings.tun_mode:
+        preset_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
+        for preset_id, action in routing.process_preset_routes.items():
+            preset = PROCESS_PRESETS_BY_ID.get(preset_id)
+            if preset and action in preset_processes:
+                preset_processes[action].extend(preset.processes)
+        for action, processes in preset_processes.items():
+            append_xray_process_rule(rules, processes, action)
+
+        manual_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
+        for pr in routing.process_rules:
+            name = resolve_xray_process_name(pr)
+            action = pr.get("action", "direct")
+            if name and action in manual_processes:
+                manual_processes[action].append(name)
+        for action, processes in manual_processes.items():
+            append_xray_process_rule(rules, processes, action)
+
+    service_direct: list[str] = []
+    service_proxy: list[str] = []
+    service_block: list[str] = []
+    for svc_id, action in routing.service_routes.items():
+        preset = SERVICE_PRESETS_BY_ID.get(svc_id)
+        if not preset:
+            continue
+        if action == "direct":
+            service_direct.extend(preset.domains)
+        elif action == "block":
+            service_block.extend(preset.domains)
+        else:
+            service_proxy.extend(preset.domains)
+
+    append_xray_domain_ip_rule(rules, service_proxy, "proxy")
+    append_xray_domain_ip_rule(rules, service_direct, "direct")
+    append_xray_domain_ip_rule(rules, service_block, "block")
+    append_xray_domain_ip_rule(rules, routing.direct_domains, "direct")
+    append_xray_domain_ip_rule(rules, routing.block_domains, "block")
+    append_xray_domain_ip_rule(rules, routing.proxy_domains, "proxy")
+
+    if routing.mode == ROUTING_GLOBAL:
+        rules.append({"type": "field", "network": "tcp,udp", "outboundTag": "proxy"})
+    elif routing.mode == ROUTING_DIRECT:
+        rules.append({"type": "field", "network": "tcp,udp", "outboundTag": "direct"})
+    else:
+        rules.append({"type": "field", "network": "tcp,udp", "outboundTag": "proxy"})
+    return rules
+
+
+def apply_xray_gui_routing(payload: dict[str, Any], routing: RoutingSettings, settings: AppSettings) -> None:
+    route = payload.setdefault("routing", {})
+    if not isinstance(route, dict):
+        route = {}
+        payload["routing"] = route
+    rules = route.setdefault("rules", [])
+    if not isinstance(rules, list):
+        rules = []
+        route["rules"] = rules
+    insert_at = _xray_runtime_rule_insert_index(rules)
+    rules[insert_at:insert_at] = build_xray_gui_routing_rules(routing, settings)
+
+
+def _xray_runtime_rule_insert_index(rules: list[Any]) -> int:
+    index = 0
+    while index < len(rules):
+        rule = rules[index]
+        inbound = rule.get("inboundTag") if isinstance(rule, dict) else None
+        if not isinstance(inbound, list):
+            break
+        inbound_text = {str(item) for item in inbound}
+        if any(tag.startswith("__app_") or tag == "api" for tag in inbound_text):
+            index += 1
+            continue
+        break
+    return index
+
+
+def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings) -> None:
+    route = payload.setdefault("route", {})
+    if not isinstance(route, dict):
+        route = {}
+        payload["route"] = route
+    rules = route.setdefault("rules", [])
+    if not isinstance(rules, list):
+        rules = []
+        route["rules"] = rules
+
+    gui_rules, rule_sets = build_singbox_gui_route_rules(routing)
+    _ensure_singbox_rule_sets(route, rule_sets)
+    insert_at = _singbox_runtime_rule_insert_index(rules)
+    rules[insert_at:insert_at] = gui_rules
+    route["final"] = "direct" if routing.mode == ROUTING_DIRECT else "proxy"
+
+
+def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[str, Any]], set[str]]:
+    rules: list[dict[str, Any]] = []
+    rule_sets: set[str] = set()
+
+    if routing.bypass_lan:
+        rules.append({"ip_is_private": True, "outbound": "direct"})
+
+    preset_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
+    for preset_id, action in routing.process_preset_routes.items():
+        preset = PROCESS_PRESETS_BY_ID.get(preset_id)
+        if preset and action in preset_processes:
+            preset_processes[action].extend(preset.processes)
+    for action, processes in preset_processes.items():
+        _append_singbox_process_rule(rules, processes, action)
+
+    manual_names: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
+    manual_paths: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
+    manual_regex: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
+    for pr in routing.process_rules:
+        action = pr.get("action", "direct")
+        if action not in manual_names:
+            continue
+        value = str(pr.get("process", "")).strip()
+        if not value:
+            continue
+        match = str(pr.get("match", "")).strip().lower()
+        if match == "path_regex":
+            manual_regex[action].append(value)
+        elif match == "path" or "\\" in value or "/" in value or (len(value) > 1 and value[1] == ":"):
+            manual_paths[action].append(value)
+        else:
+            manual_names[action].append(value)
+    for action in ("direct", "proxy", "block"):
+        _append_singbox_process_rule(rules, manual_names[action], action)
+        _append_singbox_process_rule(rules, manual_paths[action], action, key="process_path")
+        _append_singbox_process_rule(rules, manual_regex[action], action, key="process_path_regex")
+
+    service_direct: list[str] = []
+    service_proxy: list[str] = []
+    service_block: list[str] = []
+    for svc_id, action in routing.service_routes.items():
+        preset = SERVICE_PRESETS_BY_ID.get(svc_id)
+        if not preset:
+            continue
+        if action == "direct":
+            service_direct.extend(preset.domains)
+        elif action == "block":
+            service_block.extend(preset.domains)
+        else:
+            service_proxy.extend(preset.domains)
+
+    for items, outbound in (
+        (service_proxy, "proxy"),
+        (service_direct, "direct"),
+        (service_block, "block"),
+        (routing.direct_domains, "direct"),
+        (routing.block_domains, "block"),
+        (routing.proxy_domains, "proxy"),
+    ):
+        rule, used_sets = _singbox_domain_ip_rule(items, outbound)
+        if rule:
+            rules.append(rule)
+            rule_sets.update(used_sets)
+    return rules, rule_sets
+
+
+def _append_singbox_process_rule(
+    rules: list[dict[str, Any]],
+    values: list[str],
+    action: str,
+    *,
+    key: str = "process_name",
+) -> None:
+    names = sorted({value.strip() for value in values if value.strip()})
+    if names:
+        rules.append({key: names, "outbound": action if action in ("direct", "proxy", "block") else "direct"})
+
+
+def _singbox_domain_ip_rule(items: list[str], outbound: str) -> tuple[dict[str, Any] | None, set[str]]:
+    domain_suffix: list[str] = []
+    domain: list[str] = []
+    domain_keyword: list[str] = []
+    domain_regex: list[str] = []
+    ip_cidr: list[str] = []
+    rule_set: list[str] = []
+
+    for raw in items:
+        value = raw.strip()
+        if not value:
+            continue
+        mapped = _singbox_rule_set_tag(value)
+        if mapped:
+            rule_set.append(mapped)
+            continue
+        if value.startswith("domain:"):
+            domain_suffix.append(value.removeprefix("domain:"))
+        elif value.startswith("full:"):
+            domain.append(value.removeprefix("full:"))
+        elif value.startswith("keyword:"):
+            domain_keyword.append(value.removeprefix("keyword:"))
+        elif value.startswith("regexp:"):
+            domain_regex.append(value.removeprefix("regexp:"))
+        elif value.startswith("ip:"):
+            ip_cidr.append(value.removeprefix("ip:"))
+        else:
+            try:
+                ip_network(value, strict=False)
+                ip_cidr.append(value)
+            except ValueError:
+                domain_suffix.append(value)
+
+    rule: dict[str, Any] = {}
+    if domain_suffix:
+        rule["domain_suffix"] = sorted(set(domain_suffix))
+    if domain:
+        rule["domain"] = sorted(set(domain))
+    if domain_keyword:
+        rule["domain_keyword"] = sorted(set(domain_keyword))
+    if domain_regex:
+        rule["domain_regex"] = sorted(set(domain_regex))
+    if ip_cidr:
+        rule["ip_cidr"] = sorted(set(ip_cidr))
+    if rule_set:
+        rule["rule_set"] = sorted(set(rule_set))
+    if not rule:
+        return None, set()
+    rule["outbound"] = outbound
+    return rule, set(rule_set)
+
+
+def _singbox_rule_set_tag(value: str) -> str:
+    if value not in _SINGBOX_RULE_SET_URLS:
+        return ""
+    return value.replace(":", "-")
+
+
+def _ensure_singbox_rule_sets(route: dict[str, Any], tags: set[str]) -> None:
+    if not tags:
+        return
+    existing = route.setdefault("rule_set", [])
+    if not isinstance(existing, list):
+        existing = []
+        route["rule_set"] = existing
+    present = {
+        str(item.get("tag") or "")
+        for item in existing
+        if isinstance(item, dict)
+    }
+    reverse_urls = {key.replace(":", "-"): url for key, url in _SINGBOX_RULE_SET_URLS.items()}
+    for tag in sorted(tags):
+        if tag in present:
+            continue
+        url = reverse_urls.get(tag)
+        if not url:
+            continue
+        existing.append(
+            {
+                "type": "remote",
+                "tag": tag,
+                "format": "binary",
+                "url": url,
+                "download_detour": "direct",
+                "update_interval": "24h",
+            }
+        )
+
+
+def _singbox_runtime_rule_insert_index(rules: list[Any]) -> int:
+    index = 0
+    while index < len(rules):
+        rule = rules[index]
+        if not isinstance(rule, dict):
+            break
+        if rule.get("action") in {"sniff", "hijack-dns"}:
+            index += 1
+            continue
+        if rule.get("inbound"):
+            index += 1
+            continue
+        break
+    return index

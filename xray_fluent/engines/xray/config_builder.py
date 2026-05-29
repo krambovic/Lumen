@@ -1,22 +1,16 @@
 from __future__ import annotations
 
-import ntpath
 from copy import deepcopy
-from ipaddress import ip_network
 from typing import Any
 
 from ...constants import (
     DEFAULT_HTTP_PORT,
     DEFAULT_SOCKS_PORT,
     PROXY_HOST,
-    ROUTING_DIRECT,
-    ROUTING_GLOBAL,
-    ROUTING_RULE,
     DEFAULT_XRAY_STATS_API_PORT,
 )
 from ...models import AppSettings, Node, RoutingSettings
-from ...process_presets import PROCESS_PRESETS_BY_ID
-from ...service_presets import SERVICE_PRESETS_BY_ID
+from ...routing_runtime import build_xray_gui_routing_rules
 
 
 def _normalize_loglevel(value: str) -> str:
@@ -26,80 +20,6 @@ def _normalize_loglevel(value: str) -> str:
     if normalized in {"debug", "info", "warning", "error", "none"}:
         return normalized
     return "warning"
-
-
-def _split_rule_items(items: list[str]) -> tuple[list[str], list[str]]:
-    domains: list[str] = []
-    ips: list[str] = []
-    for raw in items:
-        value = raw.strip()
-        if not value:
-            continue
-
-        if value.startswith(("domain:", "full:", "regexp:", "keyword:", "geosite:", "ext:")):
-            domains.append(value)
-            continue
-        if value.startswith(("geoip:", "ip:")):
-            ips.append(value)
-            continue
-
-        try:
-            ip_network(value, strict=False)
-            ips.append(value)
-            continue
-        except ValueError:
-            pass
-
-        domains.append(f"domain:{value}")
-
-    return domains, ips
-
-
-def _append_domain_ip_rule(rules: list[dict[str, Any]], items: list[str], outbound_tag: str) -> None:
-    domains, ips = _split_rule_items(items)
-    if domains:
-        rules.append(
-            {
-                "type": "field",
-                "domain": domains,
-                "outboundTag": outbound_tag,
-            }
-        )
-    if ips:
-        rules.append(
-            {
-                "type": "field",
-                "ip": ips,
-                "outboundTag": outbound_tag,
-            }
-        )
-
-
-def _resolve_xray_process_name(rule: dict[str, str]) -> str:
-    value = str(rule.get("process", "")).strip()
-    if not value:
-        return ""
-    match = str(rule.get("match", "")).strip().lower()
-    if match == "path_regex":
-        return ""
-    if match == "path" or "\\" in value or "/" in value or (len(value) > 1 and value[1] == ":"):
-        return ntpath.basename(value)
-    return value
-
-
-def _append_process_rule(rules: list[dict[str, Any]], processes: list[str], action: str) -> None:
-    names = sorted({name.strip() for name in processes if name.strip()})
-    if not names:
-        return
-    outbound = action if action in ("direct", "proxy", "block") else "direct"
-    rules.append(
-        {
-            "type": "field",
-            "process": names,
-            "network": "tcp,udp",
-            "outboundTag": outbound,
-        }
-    )
 
 
 def build_xray_config(
@@ -124,87 +44,7 @@ def build_xray_config(
         }
     ]
 
-    if routing.bypass_lan:
-        routing_rules.append(
-            {
-                "type": "field",
-                "ip": ["geoip:private"],
-                "outboundTag": "direct",
-            }
-        )
-        routing_rules.append(
-            {
-                "type": "field",
-                "domain": ["geosite:private"],
-                "outboundTag": "direct",
-            }
-        )
-
-    if not settings.tun_mode:
-        preset_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
-        for preset_id, action in routing.process_preset_routes.items():
-            preset = PROCESS_PRESETS_BY_ID.get(preset_id)
-            if preset and action in preset_processes:
-                preset_processes[action].extend(preset.processes)
-        for action, processes in preset_processes.items():
-            _append_process_rule(routing_rules, processes, action)
-
-        manual_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
-        for pr in routing.process_rules:
-            name = _resolve_xray_process_name(pr)
-            action = pr.get("action", "direct")
-            if name and action in manual_processes:
-                manual_processes[action].append(name)
-        for action, processes in manual_processes.items():
-            _append_process_rule(routing_rules, processes, action)
-
-    # Merge service preset domains
-    service_direct: list[str] = []
-    service_proxy: list[str] = []
-    service_block: list[str] = []
-    for svc_id, action in routing.service_routes.items():
-        preset = SERVICE_PRESETS_BY_ID.get(svc_id)
-        if not preset:
-            continue
-        if action == "direct":
-            service_direct.extend(preset.domains)
-        elif action == "block":
-            service_block.extend(preset.domains)
-        else:
-            service_proxy.extend(preset.domains)
-    _append_domain_ip_rule(routing_rules, service_proxy, "proxy")
-    _append_domain_ip_rule(routing_rules, service_direct, "direct")
-    _append_domain_ip_rule(routing_rules, service_block, "block")
-    _append_domain_ip_rule(routing_rules, routing.direct_domains, "direct")
-    _append_domain_ip_rule(routing_rules, routing.block_domains, "block")
-    _append_domain_ip_rule(routing_rules, routing.proxy_domains, "proxy")
-
-    mode = routing.mode
-
-    if mode == ROUTING_GLOBAL:
-        routing_rules.append(
-            {
-                "type": "field",
-                "network": "tcp,udp",
-                "outboundTag": "proxy",
-            }
-        )
-    elif mode == ROUTING_DIRECT:
-        routing_rules.append(
-            {
-                "type": "field",
-                "network": "tcp,udp",
-                "outboundTag": "direct",
-            }
-        )
-    else:
-        routing_rules.append(
-            {
-                "type": "field",
-                "network": "tcp,udp",
-                "outboundTag": "proxy",
-            }
-        )
+    routing_rules.extend(build_xray_gui_routing_rules(routing, settings))
 
     config: dict[str, Any] = {
         "log": {

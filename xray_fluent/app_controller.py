@@ -728,6 +728,7 @@ class AppController(QObject):
         return plan_singbox_runtime(
             document,
             node,
+            routing=self.state.routing,
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
@@ -1226,8 +1227,6 @@ class AppController(QObject):
         self.schedule_save()
 
         if self.connected or self._desired_connected:
-            if self.is_singbox_editor_mode():
-                return
             self._request_transition("routing changed")
 
     def update_settings(self, settings: AppSettings) -> None:

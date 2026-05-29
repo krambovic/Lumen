@@ -221,6 +221,7 @@ class NodesPage(QWidget):
             self.table.setColumnWidth(col, width)
         horizontal_header.setSectionsClickable(True)
         horizontal_header.sectionClicked.connect(self._on_header_clicked)
+        self.table.setWordWrap(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -411,7 +412,7 @@ class NodesPage(QWidget):
         self._visible_node_ids = [node.id for node in filtered]
 
         self.table.setUpdatesEnabled(False)
-        self._activity_widget_keys.clear()
+        self._clear_activity_widgets()
         self._table_model.set_nodes(filtered)
         selection_model = self.table.selectionModel()
         if selection_model is not None:
@@ -440,8 +441,7 @@ class NodesPage(QWidget):
         self._pending_ping_ids.clear()
         self._table_model.clear_ping_busy()
         self._pending_ping_ids = targets
-        for node_id in targets:
-            self._table_model.set_ping_busy(node_id, True)
+        self._table_model.set_ping_busy_ids(targets)
         if self.sort_combo.currentText() == "Пинг":
             self._schedule_metric_sort_reload()
             return
@@ -547,6 +547,16 @@ class NodesPage(QWidget):
                     self.table.setIndexWidget(index, None)
                     existing.deleteLater()
             self._activity_widget_keys.discard((row, column))
+
+    def _clear_activity_widgets(self) -> None:
+        for row, column in list(self._activity_widget_keys):
+            index = self._table_model.index(row, column)
+            if index.isValid():
+                existing = self.table.indexWidget(index)
+                if existing is not None:
+                    self.table.setIndexWidget(index, None)
+                    existing.deleteLater()
+        self._activity_widget_keys.clear()
 
     def _sync_speed_test_controls(self) -> None:
         running = self._speed_test_running

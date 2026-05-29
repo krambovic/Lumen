@@ -56,10 +56,12 @@ class NodesTableModel(QAbstractTableModel):
     def clear_ping_busy(self) -> None:
         if not self._busy_ping_ids:
             return
-        busy_ids = list(self._busy_ping_ids)
         self._busy_ping_ids.clear()
-        for node_id in busy_ids:
-            self._emit_cell_changed(node_id, 6)
+        self._emit_column_changed(6)
+
+    def set_ping_busy_ids(self, node_ids: set[str]) -> None:
+        self._busy_ping_ids = set(node_ids)
+        self._emit_column_changed(6)
 
     def set_speed_busy(self, node_id: str, busy: bool) -> None:
         changed = False
@@ -77,10 +79,8 @@ class NodesTableModel(QAbstractTableModel):
     def clear_speed_busy(self) -> None:
         if not self._busy_speed_ids:
             return
-        busy_ids = list(self._busy_speed_ids)
         self._busy_speed_ids.clear()
-        for node_id in busy_ids:
-            self._emit_cell_changed(node_id, 7)
+        self._emit_column_changed(7)
 
     def row_for_node(self, node_id: str) -> int | None:
         return self._id_to_row.get(node_id)
@@ -251,6 +251,21 @@ class NodesTableModel(QAbstractTableModel):
         self.dataChanged.emit(
             index,
             index,
+            [
+                Qt.ItemDataRole.DisplayRole,
+                Qt.ItemDataRole.ToolTipRole,
+                Qt.ItemDataRole.ForegroundRole,
+            ],
+        )
+
+    def _emit_column_changed(self, column: int) -> None:
+        if not self._nodes:
+            return
+        top_left = self.index(0, column)
+        bottom_right = self.index(len(self._nodes) - 1, column)
+        self.dataChanged.emit(
+            top_left,
+            bottom_right,
             [
                 Qt.ItemDataRole.DisplayRole,
                 Qt.ItemDataRole.ToolTipRole,
