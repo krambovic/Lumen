@@ -1,0 +1,9 @@
+Source: https://github.com/youtubediscord/zapret/tree/main
+Upstream commit: 5eb790470ef93cede006153f843ffda4f12e42ee
+Commit date: 2026-05-29 01:50:02 +0300
+Latest GitHub release checked: 21.0.0.6
+Release asset checked: Zapret2Setup_21_0_0_6.exe
+
+Bundled update scope:
+- winws2 built-in presets copied from src/presets/builtin/winws2.
+- Executables were not replaced from main because the repository stores GUI source and presets; the latest executable is distributed as an installer asset.

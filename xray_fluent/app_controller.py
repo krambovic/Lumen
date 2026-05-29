@@ -1226,7 +1226,7 @@ class AppController(QObject):
         self.schedule_save()
 
         if self.connected or self._desired_connected:
-            if not self.is_tun2socks_mode():
+            if self.is_singbox_editor_mode():
                 return
             self._request_transition("routing changed")
 

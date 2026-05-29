@@ -1,8 +1,5 @@
-# Preset: ALL TCP & UDP v2 | Дикие Ягодки
-# ActivePreset: ALL TCP & UDP v2 | Дикие Ягодки
-# BuiltinVersion: 2.12
-# Created: 2026-01-30T20:52:33.575788
-# Modified: 2026-01-31T15:09:19.682782
+# Preset: ALL TCP & UDP v2
+# BuiltinVersion: 2.19
 # Description: 
 
 --lua-init=@lua/zapret-lib.lua
@@ -28,20 +25,23 @@
 --blob=quic_google:@bin/quic_initial_www_google_com.bin
 --blob=tls_gosuslugi:@bin/tls_clienthello_gosuslugi_ru.bin
 
+--name=updates.discord.com
 --filter-tcp=443
---hostlist-domains=updates.discord.com
+--hostlist=lists/discord-updates.txt
 --out-range=-d2
 --lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
 
 --new
 
+--name=discord.media
 --filter-tcp=80,443,1080,2053,2083,2087,2096,8443
---hostlist-domains=discord.media
+--hostlist=lists/discord-media.txt
 --out-range=-d2
 --lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
 
 --new
 
+--name=discord.com
 --filter-tcp=80,443,1080,2053,2083,2087,2096,8443
 --hostlist=lists/discord.txt
 --out-range=-n2
@@ -49,6 +49,7 @@
 
 --new
 
+--name=Голосовые звонки/чаты
 --filter-l7=stun,discord
 --payload=stun,discord_ip_discovery
 --out-range=-n2
@@ -56,6 +57,7 @@
 
 --new
 
+--name=Amazon UDP
 --filter-udp=443-65535
 --ipset=lists/ipset-amazon.txt
 --out-range=-n8
@@ -64,16 +66,23 @@
 
 --new
 
---filter-udp=443,40000-65535
---out-range=-n2
---payload=all
---lua-desync=fake:blob=quic_google:repeats=2:payload=all
-
---new
-
+--name=Все сайты (исключение)
 --filter-tcp=80,443-65535
 --ipset-exclude=lists/ipset-ru.txt
+--ipset-exclude=lists/ipset-dns.txt
+--ipset-exclude=lists/ipset-exclude.txt
 --out-range=-n4
 --lua-desync=send:repeats=1
 --lua-desync=syndata:blob=tls_max
 --lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
+
+--new
+
+--name=Все сайты UDP (исключение)
+--filter-udp=443-65535
+--ipset-exclude=lists/ipset-ru.txt
+--ipset-exclude=lists/ipset-dns.txt
+--ipset-exclude=lists/ipset-exclude.txt
+--out-range=-n2
+--payload=all
+--lua-desync=fake:blob=quic_google:repeats=2:payload=all

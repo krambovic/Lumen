@@ -1,8 +1,5 @@
 # Preset: Ростелеком
-# ActivePreset: Ростелеком
-# BuiltinVersion: 2.12
-# Created: 2026-02-06T14:19:01.572248
-# Modified: 2026-02-06T14:19:01.572930
+# BuiltinVersion: 2.19
 # Description: 
 
 --lua-init=@lua/zapret-lib.lua
@@ -16,7 +13,7 @@
 --ipcache-lifetime=8400
 --ipcache-hostname=1
 
---wf-tcp-out=80,443,1080,2053,2083,2087,2096,8443
+--wf-tcp-out=80,443,1080,2053,2083,2087,2096,8443,8080
 --wf-udp-out=80,443,5000-65535
 
 --wf-raw-part=@windivert.filter/windivert_part.discord_media.txt
@@ -83,13 +80,15 @@
 --blob=hex_0f0f0f0f:0x0F0F0F0F
 --blob=hex_00:0x00
 
+--name=googlevideo.com (CDN сервера)
 --filter-tcp=80,443
---hostlist-domains=googlevideo.com
+--hostlist=lists/googlevideo.txt
 --out-range=-d8
 --lua-desync=multidisorder:pos=1,host+2,sld+2,sld+5,sniext+1,sniext+2,endhost-2:seqovl=1
 
 --new
 
+--name=youtube.com (интерфейс)
 --filter-tcp=80,443
 --hostlist=lists/youtube.txt
 --out-range=-d8
@@ -97,6 +96,7 @@
 
 --new
 
+--name=youtube.com (QUIC)
 --filter-udp=443
 --ipset=lists/ipset-youtube.txt
 --out-range=-n8
@@ -105,6 +105,7 @@
 
 --new
 
+--name=Голосовые звонки/чаты
 --filter-l7=stun,discord
 --payload=stun,discord_ip_discovery
 --out-range=-n8
@@ -112,53 +113,328 @@
 
 --new
 
---filter-tcp=443
---hostlist-exclude=lists/netrogat.txt
---hostlist=lists/other.txt
---hostlist=lists/russia-blacklist.txt
+--name=Мои сайты
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-all.txt
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
---filter-tcp=80,443,444-65535
---ipset=lists/ipset-all.txt
---ipset=lists/ipset-base.txt
---ipset=lists/ipset-discord.txt
---ipset=lists/ipset-cloudflare.txt
---ipset=lists/cloudflare-ipset.txt
---ipset=lists/cloudflare-ipset_v6.txt
---ipset=lists/ipset-cloudflare1.txt
---ipset=lists/ipset-amazon.txt
---ipset=lists/ipset-roblox.txt
---ipset=lists/ipset-lol-ru.txt
---ipset=lists/ipset-lol-euw.txt
---ipset=lists/ipset-ovh.txt
---ipset=lists/ipset-whatsapp.txt
---ipset=lists/ipset-warp.txt
---ipset=lists/ipset-zapretkvn.txt
---ipset=lists/ipset-timeweb.txt
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
 
 --new
 
---filter-udp=444-65535
---ipset=lists/ipset-all.txt
---ipset=lists/ipset-base.txt
+--name=Russia blacklist TCP wide
+--filter-tcp=80,443-65535
+--hostlist=lists/russia-blacklist.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=discord.com
 --ipset=lists/ipset-discord.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=Cloudflare TCP
 --ipset=lists/ipset-cloudflare.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=Cloudflare legacy TCP
 --ipset=lists/cloudflare-ipset.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=Cloudflare IPv6 legacy TCP
 --ipset=lists/cloudflare-ipset_v6.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=Cloudflare alt TCP
 --ipset=lists/ipset-cloudflare1.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=Amazon TCP
 --ipset=lists/ipset-amazon.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=Roblox TCP
 --ipset=lists/ipset-roblox.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=League of Legends RU TCP
 --ipset=lists/ipset-lol-ru.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=League of Legends EUW TCP
 --ipset=lists/ipset-lol-euw.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=OVH TCP
 --ipset=lists/ipset-ovh.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=WhatsApp
 --ipset=lists/ipset-whatsapp.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=WARP TCP
 --ipset=lists/ipset-warp.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=ZapretKVN TCP
 --ipset=lists/ipset-zapretkvn.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=Timeweb TCP
+--ipset=lists/ipset-timeweb.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--filter-tcp=80,443-65535
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
+
+--new
+
+--name=Discord UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-discord.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=Cloudflare UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-cloudflare.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=Cloudflare legacy UDP
+--filter-udp=443-65535
+--ipset=lists/cloudflare-ipset.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=Cloudflare IPv6 legacy UDP
+--filter-udp=443-65535
+--ipset=lists/cloudflare-ipset_v6.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=Cloudflare alt UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-cloudflare1.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=Amazon UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-amazon.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=Roblox UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-roblox.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=League of Legends RU UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-lol-ru.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=League of Legends EUW UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-lol-euw.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=OVH UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-ovh.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=WhatsApp UDP wide
+--filter-udp=443-65535
+--ipset=lists/ipset-whatsapp.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=WARP UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-warp.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=ZapretKVN UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-zapretkvn.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
+
+--new
+
+--name=Timeweb UDP
+--filter-udp=443-65535
 --ipset=lists/ipset-timeweb.txt
 --out-range=-n8
 --payload=all

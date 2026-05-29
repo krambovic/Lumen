@@ -1,8 +1,5 @@
-# Preset: ALL TCP & UDP multisplit sni
-# ActivePreset: ALL TCP & UDP multisplit sni
-# BuiltinVersion: 2.12
-# Created: 2026-01-30T14:17:56.182141
-# Modified: 2026-01-30T14:47:35.144031
+# Preset: ALL TCP & UDP multisplit_sni
+# BuiltinVersion: 2.19
 # Description: 
 
 --lua-init=@lua/zapret-lib.lua
@@ -83,8 +80,11 @@
 --blob=hex_0f0f0f0f:0x0F0F0F0F
 --blob=hex_00:0x00
 
+--name=Все сайты (исключение)
 --filter-tcp=80,443-65535
 --ipset-exclude=lists/ipset-ru.txt
+--ipset-exclude=lists/ipset-dns.txt
+--ipset-exclude=lists/ipset-exclude.txt
 --out-range=-d8
 --lua-desync=send:repeats=2
 --lua-desync=syndata:blob=tls_google
@@ -92,8 +92,11 @@
 
 --new
 
---filter-udp=80,443-65535
+--name=Все сайты UDP (исключение)
+--filter-udp=443-65535
 --ipset-exclude=lists/ipset-ru.txt
+--ipset-exclude=lists/ipset-dns.txt
+--ipset-exclude=lists/ipset-exclude.txt
 --out-range=-d8
 --payload=all
 --lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all

@@ -30,6 +30,7 @@ from .logs_page import LogsPage
 from .node_edit_dialog import NodeEditDialog
 from .nodes_page import NodesPage
 from .configs_page import ConfigsPage
+from .routing_page import RoutingPage
 from .settings_page import SettingsPage
 from .about_page import AboutPage
 from .history_page import HistoryPage
@@ -79,6 +80,7 @@ class MainWindow(FluentWindow):
         self.dashboard_page = DashboardPage(self)
         self.nodes_page = NodesPage(self)
         self.configs_page = ConfigsPage(self)
+        self.routing_page = RoutingPage(self)
         self.zapret_page = ZapretPage(self)
         self.logs_page = LogsPage(self)
         self.settings_page = SettingsPage(self)
@@ -126,6 +128,7 @@ class MainWindow(FluentWindow):
         self._navigation_items = {
             "dashboard": self.addSubInterface(self.dashboard_page, FIF.SPEED_HIGH, "Панель"),
             "nodes": self.addSubInterface(self.nodes_page, FIF.LINK, "Серверы"),
+            "routing": self.addSubInterface(self.routing_page, FIF.GLOBE, "Маршруты"),
             "configs": self.addSubInterface(self.configs_page, FIF.CODE, "Конфиги"),
             "zapret": self.addSubInterface(self.zapret_page, FIF.COMMAND_PROMPT, "Zapret"),
             "logs": self.addSubInterface(self.logs_page, FIF.DOCUMENT, "Логи"),
@@ -210,6 +213,8 @@ class MainWindow(FluentWindow):
         self.configs_page.save_requested.connect(self._save_core_config)
         self.configs_page.validate_requested.connect(self._validate_core_config)
         self.configs_page.apply_requested.connect(self._apply_core_config)
+
+        self.routing_page.apply_requested.connect(self.controller.update_routing)
 
         self.zapret_page.start_requested.connect(self._on_zapret_start)
         self.zapret_page.stop_requested.connect(self._on_zapret_stop)
@@ -311,6 +316,7 @@ class MainWindow(FluentWindow):
 
     def _on_routing_changed(self, routing: RoutingSettings) -> None:
         self.dashboard_page.set_routing_snapshot(routing)
+        self.routing_page.set_routing(routing)
         if self.tray_mode_global is not None:
             self.tray_mode_global.setChecked(routing.mode == "global")
         if self.tray_mode_rule is not None:
@@ -322,6 +328,7 @@ class MainWindow(FluentWindow):
         self.settings_page.set_values(settings, self.controller.state.security)
         self.settings_page.set_encryption_active(self.controller.is_data_encrypted())
         self.dashboard_page.set_settings_snapshot(settings)
+        self.routing_page.set_tun_mode(settings.tun_mode)
         self._apply_interface_mode(settings.interface_mode)
         self._apply_window_geometry(settings)
         self._apply_theme(settings.theme, settings.accent_color)

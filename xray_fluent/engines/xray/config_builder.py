@@ -15,6 +15,7 @@ from ...constants import (
     DEFAULT_XRAY_STATS_API_PORT,
 )
 from ...models import AppSettings, Node, RoutingSettings
+from ...process_presets import PROCESS_PRESETS_BY_ID
 from ...service_presets import SERVICE_PRESETS_BY_ID
 
 
@@ -86,6 +87,21 @@ def _resolve_xray_process_name(rule: dict[str, str]) -> str:
     return value
 
 
+def _append_process_rule(rules: list[dict[str, Any]], processes: list[str], action: str) -> None:
+    names = sorted({name.strip() for name in processes if name.strip()})
+    if not names:
+        return
+    outbound = action if action in ("direct", "proxy", "block") else "direct"
+    rules.append(
+        {
+            "type": "field",
+            "process": names,
+            "network": "tcp,udp",
+            "outboundTag": outbound,
+        }
+    )
+
+
 def build_xray_config(
     node: Node,
     routing: RoutingSettings,
@@ -125,16 +141,22 @@ def build_xray_config(
         )
 
     if not settings.tun_mode:
+        preset_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
+        for preset_id, action in routing.process_preset_routes.items():
+            preset = PROCESS_PRESETS_BY_ID.get(preset_id)
+            if preset and action in preset_processes:
+                preset_processes[action].extend(preset.processes)
+        for action, processes in preset_processes.items():
+            _append_process_rule(routing_rules, processes, action)
+
+        manual_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
         for pr in routing.process_rules:
             name = _resolve_xray_process_name(pr)
             action = pr.get("action", "direct")
-            if name:
-                routing_rules.append({
-                    "type": "field",
-                    "process": [name],
-                    "network": "tcp,udp",
-                    "outboundTag": action if action in ("direct", "proxy", "block") else "direct",
-                })
+            if name and action in manual_processes:
+                manual_processes[action].append(name)
+        for action, processes in manual_processes.items():
+            _append_process_rule(routing_rules, processes, action)
 
     # Merge service preset domains
     service_direct: list[str] = []

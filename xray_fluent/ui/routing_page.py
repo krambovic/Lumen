@@ -23,6 +23,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
     PrimaryToolButton,
     PrimaryPushButton,
+    PushButton,
     SettingCard,
     SettingCardGroup,
     SmoothScrollArea,
@@ -56,6 +57,17 @@ _PROCESS_MATCH_PATH_REGEX = "path_regex"
 _PROCESS_MATCH_ROLE = int(Qt.ItemDataRole.UserRole)
 _PROCESS_VALUE_ROLE = _PROCESS_MATCH_ROLE + 1
 _PROCESS_LABEL_ROLE = _PROCESS_MATCH_ROLE + 2
+
+_PRESET_RU_DIRECT_RULES = (
+    "geosite:category-ru",
+    "geoip:ru",
+)
+
+_PRESET_BLOCKED_PROXY_RULES = (
+    "geosite:category-media-ru-blocked",
+    "geoip:ru-blocked",
+    "geoip:ru-blocked-community",
+)
 
 
 class _ServiceRouteCard(SettingCard):
@@ -206,6 +218,22 @@ class RoutingPage(QWidget):
             container,
         )
         root.addWidget(self._priority_info)
+
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(8)
+        self.preset_global_btn = PushButton(FIF.GLOBE, "Глобально", container)
+        self.preset_global_btn.setToolTip("Весь трафик через выбранный сервер")
+        preset_row.addWidget(self.preset_global_btn)
+
+        self.preset_blocked_btn = PushButton(FIF.LINK, "Заблокированное", container)
+        self.preset_blocked_btn.setToolTip("Только заблокированные и выбранные сервисы через сервер, остальное напрямую")
+        preset_row.addWidget(self.preset_blocked_btn)
+
+        self.preset_except_ru_btn = PushButton(FIF.HOME, "Всё кроме РФ", container)
+        self.preset_except_ru_btn.setToolTip("Российские сайты и IP напрямую, остальное через сервер")
+        preset_row.addWidget(self.preset_except_ru_btn)
+        preset_row.addStretch(1)
+        root.addLayout(preset_row)
 
         # --- Process routing section ---
         root.addWidget(SubtitleLabel("Маршрутизация по процессам", container))
@@ -373,6 +401,9 @@ class RoutingPage(QWidget):
         self.add_proc_folder_btn.clicked.connect(self._on_browse_process_folder)
         self.del_proc_btn.clicked.connect(self._on_del_procs)
         self.apply_routing_btn.clicked.connect(self._emit_apply)
+        self.preset_global_btn.clicked.connect(self._apply_global_preset)
+        self.preset_blocked_btn.clicked.connect(self._apply_blocked_preset)
+        self.preset_except_ru_btn.clicked.connect(self._apply_except_ru_preset)
         self.rules_table.cellChanged.connect(self._schedule_apply)
 
     # --- Auto-apply ---
@@ -395,30 +426,14 @@ class RoutingPage(QWidget):
         self.bypass_switch.setChecked(routing.bypass_lan)
         self._select_combo_value(self.tun_default_combo, routing.tun_default_outbound)
 
-        # Populate service cards
-        use_defaults = not routing.service_routes
         for svc_id, card in self._service_cards.items():
-            if use_defaults:
-                preset = next((p for p in SERVICE_PRESETS if p.id == svc_id), None)
-                if preset:
-                    card.set_state(True, preset.default_action)
-                else:
-                    card.set_state(False, "proxy")
-            elif svc_id in routing.service_routes:
+            if svc_id in routing.service_routes:
                 card.set_state(True, routing.service_routes[svc_id])
             else:
                 card.set_state(False, "proxy")
 
-        # Populate process preset cards
-        use_proc_defaults = not routing.process_preset_routes
         for preset_id, card in self._process_preset_cards.items():
-            if use_proc_defaults:
-                preset = next((p for p in PROCESS_PRESETS if p.id == preset_id), None)
-                if preset:
-                    card.set_state(True, preset.default_action)
-                else:
-                    card.set_state(False, "proxy")
-            elif preset_id in routing.process_preset_routes:
+            if preset_id in routing.process_preset_routes:
                 card.set_state(True, routing.process_preset_routes[preset_id])
             else:
                 card.set_state(False, "proxy")
@@ -452,10 +467,6 @@ class RoutingPage(QWidget):
         self._loading = False
         self._set_apply_pending(False)
 
-        # First launch: save defaults immediately
-        if use_defaults or use_proc_defaults:
-            self._emit_apply()
-
     def set_tun_mode(self, enabled: bool) -> None:
         # Process routing works in both modes — show warning only in system proxy mode
         self._process_container.setEnabled(True)
@@ -468,6 +479,64 @@ class RoutingPage(QWidget):
         self._dns_tun_widget.setVisible(enabled)
         self.tun_default_info.setVisible(enabled)
         self._process_presets_group.setVisible(enabled)
+
+    # --- Built-in routing presets ---
+
+    def _set_mode(self, mode: str) -> None:
+        self._select_combo_value(self.mode_combo, mode)
+
+    def _set_rules(self, direct: tuple[str, ...] = (), proxy: tuple[str, ...] = (), block: tuple[str, ...] = ()) -> None:
+        self.rules_table.setUpdatesEnabled(False)
+        self.rules_table.blockSignals(True)
+        self.rules_table.setRowCount(0)
+        for addr in direct:
+            self._add_rule_row(addr, "direct")
+        for addr in proxy:
+            self._add_rule_row(addr, "proxy")
+        for addr in block:
+            self._add_rule_row(addr, "block")
+        self.rules_table.blockSignals(False)
+        self.rules_table.setUpdatesEnabled(True)
+
+    def _set_services(self, enabled: bool, *, only_proxy_defaults: bool = False) -> None:
+        for svc_id, card in self._service_cards.items():
+            preset = next((p for p in SERVICE_PRESETS if p.id == svc_id), None)
+            if not preset:
+                card.set_state(False, "proxy")
+                continue
+            if only_proxy_defaults and preset.default_action != "proxy":
+                card.set_state(False, "proxy")
+            else:
+                card.set_state(enabled, preset.default_action)
+
+    def _set_process_presets(self, enabled: bool) -> None:
+        for preset_id, card in self._process_preset_cards.items():
+            preset = next((p for p in PROCESS_PRESETS if p.id == preset_id), None)
+            card.set_state(enabled and preset is not None, preset.default_action if preset else "proxy")
+
+    def _apply_global_preset(self) -> None:
+        self._set_mode("global")
+        self._set_rules()
+        self._set_services(False)
+        self._set_process_presets(False)
+        self._schedule_apply()
+        self._emit_apply()
+
+    def _apply_blocked_preset(self) -> None:
+        self._set_mode("direct")
+        self._set_rules(proxy=_PRESET_BLOCKED_PROXY_RULES)
+        self._set_services(True, only_proxy_defaults=True)
+        self._set_process_presets(False)
+        self._schedule_apply()
+        self._emit_apply()
+
+    def _apply_except_ru_preset(self) -> None:
+        self._set_mode("global")
+        self._set_rules(direct=_PRESET_RU_DIRECT_RULES)
+        self._set_services(False)
+        self._set_process_presets(False)
+        self._schedule_apply()
+        self._emit_apply()
 
     # --- Rules table helpers ---
 

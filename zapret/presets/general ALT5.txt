@@ -1,6 +1,5 @@
 # Preset: general ALT5
-# ActivePreset: general ALT5
-# BuiltinVersion: 2.12
+# BuiltinVersion: 2.19
 # IconColor: #b475f0ff
 
 --lua-init=@lua/zapret-lib.lua
@@ -80,35 +79,37 @@
 --wf-raw-part=@windivert.filter/windivert_part.stun.txt
 --wf-raw-part=@windivert.filter/windivert_part.wireguard.txt
 
---filter-udp=443
+--name=Все сайты (исключение)
+--filter-tcp=80,443-65535
+--ipset-exclude=lists/ipset-ru.txt
+--ipset-exclude=lists/ipset-dns.txt
 --ipset-exclude=lists/ipset-exclude.txt
---lua-desync=fake:blob=quic_google:repeats=6
-
---new
-
---filter-l7=discord,stun
---payload=stun,discord_ip_discovery
---lua-desync=fake:blob=fake_default_udp:repeats=6
-
---new
-
---filter-tcp=443,2053,2083,2087,2096,8443,444-65535
---ipset=lists/ipset-all.txt
---ipset-exclude=lists/ipset-exclude.txt
+--out-range=-n8
 --lua-desync=syndata
 --lua-desync=multidisorder:pos=2
 
 --new
 
---filter-l3=ipv4
---filter-tcp=443,2053,2083,2087,2096,8443
---ipset=lists/ipset-all.txt
+--name=Все сайты UDP (исключение)
+--filter-udp=443-65535
+--ipset-exclude=lists/ipset-ru.txt
+--ipset-exclude=lists/ipset-dns.txt
 --ipset-exclude=lists/ipset-exclude.txt
---lua-desync=syndata
+--out-range=-n8
+--lua-desync=fake:blob=quic_google:repeats=6
 
 --new
 
---filter-udp=443
+--name=Голосовые звонки/чаты
+--filter-l7=stun,discord
+--payload=stun,discord_ip_discovery
+--out-range=-n8
+--lua-desync=fake:blob=fake_default_udp:repeats=6
+
+--new
+
+--name=Мои сайты
+--filter-tcp=80,443-65535
 --ipset=lists/ipset-all.txt
---ipset-exclude=lists/ipset-exclude.txt
+--out-range=-n8
 --lua-desync=fake:blob=quic_google:repeats=6
