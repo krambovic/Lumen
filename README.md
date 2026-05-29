@@ -1,5 +1,9 @@
 # Bebra VPN
 
+<p align="center">
+  <img src="assets/BebraVPN.png" alt="Bebra VPN" width="160">
+</p>
+
 Bebra VPN (`bebra-kvn`) — форк проекта [youtubediscord/zapret-kvn](https://github.com/youtubediscord/zapret-kvn).
 
 Проект сохраняет copyright и MIT-атрибуцию upstream-репозитория. Все изменения этого форка публикуются в [krambovic/bebra-kvn](https://github.com/krambovic/bebra-kvn).
