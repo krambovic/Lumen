@@ -107,7 +107,6 @@ jobs:
         run: |
           $assets = @(
             "dist/BebraVPN-Setup-windows-x64.exe",
-            "dist/BebraVPN-windows-x64.zip",
             "dist/BebraVPN-portable-windows-x64.zip"
           )
           foreach ($asset in $assets) {
@@ -132,14 +131,12 @@ jobs:
             ## Изменения
             - Добавлен полноценный установщик Bebra VPN для Windows x64.
             - Добавлена portable-версия отдельным zip-архивом.
-            - Zip `BebraVPN-windows-x64.zip` оставлен для автообновления приложения.
+            - Автообновление использует portable-архив без отдельного zip-дубля.
           generate_release_notes: false
           make_latest: true
           files: |
             dist/BebraVPN-Setup-windows-x64.exe
             dist/BebraVPN-Setup-windows-x64.exe.sha256
-            dist/BebraVPN-windows-x64.zip
-            dist/BebraVPN-windows-x64.zip.sha256
             dist/BebraVPN-portable-windows-x64.zip
             dist/BebraVPN-portable-windows-x64.zip.sha256
 

@@ -28,7 +28,6 @@ APP_NAME = "BebraVPN"
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 APP_DIR = DIST_DIR / APP_NAME
-UPDATER_ZIP_PATH = DIST_DIR / f"{APP_NAME}-windows-x64.zip"
 PORTABLE_ZIP_PATH = DIST_DIR / f"{APP_NAME}-portable-windows-x64.zip"
 INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-Setup-windows-x64.exe"
 
@@ -202,12 +201,8 @@ def _pack_zip(path: Path) -> None:
     shutil.make_archive(str(path.with_suffix("")), "zip", str(DIST_DIR), APP_NAME)
 
 
-def pack_portable_zips() -> None:
-    _pack_zip(UPDATER_ZIP_PATH)
-    if PORTABLE_ZIP_PATH.exists():
-        PORTABLE_ZIP_PATH.unlink()
-    shutil.copy2(UPDATER_ZIP_PATH, PORTABLE_ZIP_PATH)
-    _print(f"Updater archive ready: {UPDATER_ZIP_PATH}")
+def pack_portable_zip() -> None:
+    _pack_zip(PORTABLE_ZIP_PATH)
     _print(f"Portable archive ready: {PORTABLE_ZIP_PATH}")
 
 
@@ -254,7 +249,7 @@ def main() -> int:
     build_exe()
 
     if not args.no_zip:
-        pack_portable_zips()
+        pack_portable_zip()
 
     if not args.no_installer:
         build_installer()
