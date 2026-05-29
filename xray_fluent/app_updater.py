@@ -138,6 +138,22 @@ def _fetch_text(url: str) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
+def _asset_score(asset: dict) -> tuple[int, str]:
+    name = str(asset.get("name") or "").lower()
+    if not name.endswith(".zip"):
+        return (0, name)
+    score = 1
+    if "bebravpn" in name:
+        score += 2
+    if "windows" in name:
+        score += 2
+    if "x64" in name or "win64" in name or "amd64" in name:
+        score += 2
+    if "portable" in name:
+        score += 1
+    return (score, name)
+
+
 class UpdateChecker(QThread):
     """Check GitHub for a newer release."""
 
@@ -156,15 +172,14 @@ class UpdateChecker(QThread):
                 self.result.emit(None)
                 return
 
-            asset = None
-            for a in data.get("assets", []):
-                name = a.get("name", "").lower()
-                if name.endswith(".zip") and "windows" in name and "x64" in name:
-                    asset = a
-                    break
+            zip_assets = [
+                a for a in data.get("assets", [])
+                if str(a.get("name") or "").lower().endswith(".zip")
+            ]
+            asset = max(zip_assets, key=_asset_score, default=None)
 
             if not asset:
-                self.error.emit(f"Релиз {tag} найден, но отсутствует Windows zip-архив")
+                self.error.emit(f"Релиз {tag} найден, но отсутствует zip-архив обновления")
                 return
 
             digest = _extract_digest(str(asset.get("digest") or ""))

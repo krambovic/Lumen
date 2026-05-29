@@ -27,7 +27,7 @@ APP_NAME = "BebraVPN"
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 APP_DIR = DIST_DIR / APP_NAME
-ZIP_PATH = DIST_DIR / f"{APP_NAME}-portable.zip"
+ZIP_PATH = DIST_DIR / f"{APP_NAME}-windows-x64.zip"
 
 MANIFEST = ROOT / "uac_admin.manifest"
 CORE_DIR = ROOT / "core"
