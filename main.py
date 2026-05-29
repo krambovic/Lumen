@@ -264,6 +264,28 @@ def _enforce_frozen() -> None:
         )
 
 
+def _unlock_qfluent_smooth_scroll_fps(target_fps: int = 144) -> None:
+    """Raise qfluentwidgets smooth-scroll timer above its built-in 60 FPS default."""
+    try:
+        from PyQt6.QtCore import Qt
+        from qfluentwidgets.common import smooth_scroll
+
+        original_init = smooth_scroll.SmoothScrollEngineBase.__init__
+        if getattr(original_init, "_bebra_fps_patch", False):
+            return
+
+        def patched_init(self, widget, orient=Qt.Orientation.Vertical):
+            original_init(self, widget, orient)
+            self.fps = max(60, int(target_fps))
+            self.smoothMoveTimer.setTimerType(Qt.TimerType.PreciseTimer)
+
+        patched_init._bebra_fps_patch = True
+        smooth_scroll.SmoothScrollEngineBase.__init__ = patched_init
+        _bootstrap_logger.info("qfluentwidgets smooth-scroll fps set to %s", target_fps)
+    except Exception:
+        _bootstrap_logger.exception("Failed to patch qfluentwidgets smooth-scroll fps")
+
+
 def main() -> int:
     _setup_bootstrap_logging()
     _install_exception_hooks()
@@ -286,6 +308,7 @@ def main() -> int:
 
     from xray_fluent.constants import APP_NAME
     from xray_fluent.ui.main_window import MainWindow
+    _unlock_qfluent_smooth_scroll_fps()
 
     _bootstrap_logger.info("Creating QApplication")
     app = QApplication(sys.argv)

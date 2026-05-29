@@ -134,11 +134,11 @@ class DashboardPage(QWidget):
         self.summary_label.setWordWrap(True)
         root.addWidget(self.summary_label)
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(12)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
+        self._top_grid = QGridLayout()
+        self._top_grid.setHorizontalSpacing(12)
+        self._top_grid.setVerticalSpacing(12)
+        self._top_grid.setColumnStretch(0, 1)
+        self._top_grid.setColumnStretch(1, 1)
 
         # ── Connection card ───────────────────────────────────
         self.connection_card = CardWidget(self)
@@ -290,9 +290,9 @@ class DashboardPage(QWidget):
         routing_layout.addWidget(self.routing_rules_label)
         routing_layout.addWidget(self.routing_bypass_label)
 
-        grid.addWidget(self.connection_card, 0, 0)
-        grid.addWidget(self.routing_card, 0, 1)
-        root.addLayout(grid)
+        self._top_grid.addWidget(self.connection_card, 0, 0)
+        self._top_grid.addWidget(self.routing_card, 0, 1)
+        root.addLayout(self._top_grid)
         root.addWidget(self.traffic_card)
         root.addWidget(self._proc_traffic_card)
         root.addStretch(1)
@@ -520,6 +520,15 @@ class DashboardPage(QWidget):
 
     def set_compact_mode(self, enabled: bool) -> None:
         self._compact_mode = bool(enabled)
+        if self._compact_mode:
+            self._top_grid.addWidget(self.connection_card, 0, 0, 1, 2)
+            self._top_grid.setColumnStretch(0, 1)
+            self._top_grid.setColumnStretch(1, 0)
+        else:
+            self._top_grid.addWidget(self.connection_card, 0, 0)
+            self._top_grid.addWidget(self.routing_card, 0, 1)
+            self._top_grid.setColumnStretch(0, 1)
+            self._top_grid.setColumnStretch(1, 1)
         self.routing_card.setVisible(not self._compact_mode)
         self._proc_traffic_card.setVisible(not self._compact_mode and self._settings.tun_mode)
         if self._compact_mode and self._stack.currentIndex() == 2:

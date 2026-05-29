@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtGui import QAction, QActionGroup, QCloseEvent, QGuiApplication, QIcon
 from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QMenu, QSystemTrayIcon
 from qfluentwidgets import (
@@ -144,7 +144,7 @@ class MainWindow(FluentWindow):
         self.tray.setToolTip(APP_NAME)
 
         menu = QMenu()
-        self.tray_show_action = QAction("Показать", self)
+        self.tray_show_action = QAction("Скрыть", self)
         self.tray_connect_action = QAction("Подключить", self)
         self.tray_next_action = QAction("Следующий сервер", self)
         self.tray_quit_action = QAction("Выход", self)
@@ -1231,11 +1231,30 @@ class MainWindow(FluentWindow):
 
     def _toggle_window_visible(self) -> None:
         if self.isVisible():
-            self.hide()
+            self._hide_to_tray(notify=False)
         else:
             self.show()
+            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
             self.activateWindow()
             self.raise_()
+        self._refresh_tray_action_text()
+
+    def _hide_to_tray(self, notify: bool = True) -> None:
+        self._save_geometry()
+        self.hide()
+        self._refresh_tray_action_text()
+        if notify and self.tray is not None and not self._tray_notified:
+            self.tray.showMessage(
+                APP_NAME,
+                "Приложение скрыто в системный трей",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
+            )
+            self._tray_notified = True
+
+    def _refresh_tray_action_text(self) -> None:
+        if self.tray_show_action is not None:
+            self.tray_show_action.setText("Скрыть" if self.isVisible() else "Показать")
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in {QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick}:
@@ -1272,6 +1291,16 @@ class MainWindow(FluentWindow):
         super().resizeEvent(e)
         self._save_geometry()
 
+    def changeEvent(self, e) -> None:
+        super().changeEvent(e)
+        if (
+            e.type() == QEvent.Type.WindowStateChange
+            and self.isMinimized()
+            and self._tray_available
+            and not self._quitting
+        ):
+            QTimer.singleShot(0, lambda: self._hide_to_tray(notify=False))
+
     def closeEvent(self, e: QCloseEvent) -> None:
         if self._quitting:
             e.accept()
@@ -1287,10 +1316,6 @@ class MainWindow(FluentWindow):
                 app.quit()
             return
 
-        self._save_geometry()
         self.controller.save()
         e.ignore()
-        self.hide()
-        if self.tray is not None and not self._tray_notified:
-            self.tray.showMessage(APP_NAME, "Приложение свёрнуто в системный трей", QSystemTrayIcon.MessageIcon.Information, 2000)
-            self._tray_notified = True
+        self._hide_to_tray(notify=True)
