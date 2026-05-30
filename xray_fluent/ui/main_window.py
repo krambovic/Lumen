@@ -1308,13 +1308,8 @@ class MainWindow(FluentWindow):
 
     def changeEvent(self, e) -> None:
         super().changeEvent(e)
-        if (
-            e.type() == QEvent.Type.WindowStateChange
-            and self.isMinimized()
-            and self._tray_available
-            and not self._quitting
-        ):
-            QTimer.singleShot(0, lambda: self._hide_to_tray(notify=False))
+        if e.type() == QEvent.Type.WindowStateChange:
+            self._refresh_tray_action_text()
 
     def closeEvent(self, e: QCloseEvent) -> None:
         if self._quitting:

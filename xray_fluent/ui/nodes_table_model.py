@@ -184,11 +184,11 @@ class NodesTableModel(QAbstractTableModel):
             return ", ".join(node.tags)
         if col == 6:
             if node.id in self._busy_ping_ids:
-                return ""
+                return "..."
             return "--" if node.ping_ms is None else f"{node.ping_ms} ms"
         if col == 7:
             if node.id in self._busy_speed_ids:
-                return ""
+                return "..."
             return "--" if node.speed_mbps is None else f"{node.speed_mbps:.1f} MB/s"
         if col == 8:
             text, _, _ = NodesTableModel._status_meta(node)

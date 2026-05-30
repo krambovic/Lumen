@@ -17,6 +17,8 @@ from qfluentwidgets import (
     SubtitleLabel,
 )
 
+from .table_scroll import tune_plain_scroll_area
+
 
 class _RawConfigEditor(QWidget):
     open_requested = pyqtSignal()
@@ -97,6 +99,7 @@ class _RawConfigEditor(QWidget):
         font = QFont("Consolas", 10)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.editor.setFont(font)
+        tune_plain_scroll_area(self.editor)
         root.addWidget(self.editor, 1)
 
         root.addWidget(BodyLabel("Статус", self))
@@ -104,6 +107,7 @@ class _RawConfigEditor(QWidget):
         self.status_box.setReadOnly(True)
         self.status_box.setFixedHeight(92)
         self.status_box.setFont(font)
+        tune_plain_scroll_area(self.status_box)
         root.addWidget(self.status_box)
 
         self.editor.textChanged.connect(self._on_text_changed)

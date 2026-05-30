@@ -43,6 +43,7 @@ from ..routing_presets import (
     build_routing_preset,
 )
 from ..service_presets import SERVICE_PRESETS
+from .table_scroll import tune_fluent_table_scroll, tune_plain_scroll_area
 
 _ACTIONS = [
     ("Прямой", "direct"),
@@ -129,6 +130,7 @@ class RoutingPage(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        tune_plain_scroll_area(self._scroll)
         outer.addWidget(self._scroll)
 
         container = QWidget()
@@ -317,6 +319,7 @@ class RoutingPage(QWidget):
         self.proc_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.proc_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.proc_table.verticalHeader().setVisible(False)
+        tune_fluent_table_scroll(self.proc_table, disable_hover=True)
         self.proc_table.setMinimumHeight(120)
         proc_layout.addWidget(self.proc_table)
 
@@ -380,6 +383,7 @@ class RoutingPage(QWidget):
         self.rules_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.rules_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.rules_table.verticalHeader().setVisible(False)
+        tune_fluent_table_scroll(self.rules_table, disable_hover=True)
         self.rules_table.setMinimumHeight(180)
         root.addWidget(self.rules_table)
 

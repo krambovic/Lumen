@@ -18,6 +18,7 @@ from qfluentwidgets import (
 )
 
 from ..traffic_history import TrafficHistoryStorage, TrafficSession
+from .table_scroll import tune_fluent_table_scroll, tune_plain_scroll_area
 
 
 class HistoryPage(QWidget):
@@ -33,6 +34,7 @@ class HistoryPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        tune_plain_scroll_area(scroll)
         outer.addWidget(scroll)
 
         container = QWidget()
@@ -110,6 +112,7 @@ class HistoryPage(QWidget):
         hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self._sessions_table.setMinimumHeight(300)
+        tune_fluent_table_scroll(self._sessions_table, disable_hover=True)
         root.addWidget(self._sessions_table)
 
         # ── Daily totals table ──
@@ -126,6 +129,7 @@ class HistoryPage(QWidget):
         dhdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         dhdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._daily_table.setMinimumHeight(180)
+        tune_fluent_table_scroll(self._daily_table, disable_hover=True)
         root.addWidget(self._daily_table)
 
         # ── Per-process totals table ──
@@ -143,6 +147,7 @@ class HistoryPage(QWidget):
         phdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         phdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self._proc_table.setMinimumHeight(200)
+        tune_fluent_table_scroll(self._proc_table, disable_hover=True)
         root.addWidget(self._proc_table)
 
         root.addStretch(1)

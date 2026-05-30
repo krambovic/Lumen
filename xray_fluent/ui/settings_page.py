@@ -27,6 +27,7 @@ from qfluentwidgets.components.settings.setting_card import ColorPickerButton
 from ..constants import SINGBOX_PATH_DEFAULT, XRAY_PATH_DEFAULT
 from ..models import AppSettings, SecuritySettings
 from ..path_utils import normalize_configured_path, resolve_configured_path
+from .table_scroll import tune_plain_scroll_area
 
 
 class _ComboCard(SettingCard):
@@ -135,6 +136,7 @@ class SettingsPage(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        tune_plain_scroll_area(self._scroll)
         outer.addWidget(self._scroll)
 
         container = QWidget()

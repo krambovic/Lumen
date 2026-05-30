@@ -39,6 +39,7 @@ from ..routing_presets import (
     ROUTING_PRESET_GLOBAL,
 )
 from .traffic_graph import DetailTrafficGraphWidget, TrafficGraphWidget
+from .table_scroll import tune_fluent_table_scroll, tune_plain_scroll_area
 
 
 def _format_speed(value_bps: float) -> str:
@@ -126,6 +127,7 @@ class DashboardPage(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        tune_plain_scroll_area(self._scroll)
         main_outer.addWidget(self._scroll)
 
         container = QWidget()
@@ -281,6 +283,7 @@ class DashboardPage(QWidget):
                 col, QHeaderView.ResizeMode.ResizeToContents
             )
         self._proc_traffic_table.verticalHeader().setVisible(False)
+        tune_fluent_table_scroll(self._proc_traffic_table, disable_hover=True)
         self._proc_traffic_table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
         )
@@ -385,6 +388,7 @@ class DashboardPage(QWidget):
             if item:
                 item.setToolTip(tip)
         self._proc_detail_table.verticalHeader().setVisible(False)
+        tune_fluent_table_scroll(self._proc_detail_table, disable_hover=True)
         self._proc_detail_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._proc_detail_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._proc_detail_table.setMinimumHeight(400)
@@ -886,3 +890,5 @@ class DashboardPage(QWidget):
         self.tun_switch.setEnabled(not busy)
         self.mode_combo.setEnabled(not busy and self._is_tun2socks_mode())
         self.proxy_switch.setEnabled(not busy and not self._settings.tun_mode)
+        for button in (self.route_all_btn, self.route_blocked_btn, self.route_except_ru_btn):
+            button.setEnabled(not busy)

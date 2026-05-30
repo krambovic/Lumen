@@ -4,6 +4,8 @@ from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, PlainTextEdit, PrimaryPushButton, PushButton, SearchLineEdit, SubtitleLabel
 
+from .table_scroll import tune_plain_scroll_area
+
 
 class LogsPage(QWidget):
     clear_requested = pyqtSignal()
@@ -37,6 +39,7 @@ class LogsPage(QWidget):
         self.log_edit = PlainTextEdit(self)
         self.log_edit.setReadOnly(True)
         self.log_edit.document().setMaximumBlockCount(2000)
+        tune_plain_scroll_area(self.log_edit)
         root.addWidget(self.log_edit, 1)
 
         self._refresh_timer = QTimer(self)
@@ -79,6 +82,8 @@ class LogsPage(QWidget):
 
     def _flush_updates(self) -> None:
         query = self.search.text().strip().lower()
+        vbar = self.log_edit.verticalScrollBar()
+        was_at_bottom = vbar.value() >= max(0, vbar.maximum() - 4)
         if self._full_refresh_needed or query:
             if not query:
                 data = self._lines
@@ -90,5 +95,5 @@ class LogsPage(QWidget):
                 self.log_edit.appendPlainText("\n".join(self._pending_lines))
         self._pending_lines.clear()
         self._full_refresh_needed = False
-        vbar = self.log_edit.verticalScrollBar()
-        vbar.setValue(vbar.maximum())
+        if was_at_bottom:
+            vbar.setValue(vbar.maximum())

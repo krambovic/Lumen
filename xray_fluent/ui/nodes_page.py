@@ -493,6 +493,7 @@ class NodesPage(QWidget):
         self._sync_speed_test_controls()
 
     def _apply_activity_widgets(self) -> None:
+        return
         first_row, last_row = self._visible_row_range()
         visible_rows = set(range(first_row, last_row + 1))
         self._prune_activity_widgets(visible_rows)
@@ -504,6 +505,7 @@ class NodesPage(QWidget):
             self._sync_speed_widget(row, node_id)
 
     def _sync_activity_for_node(self, node_id: str) -> None:
+        return
         row = self._table_model.row_for_node(node_id)
         if row is None:
             return
