@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +12,14 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, QProcess, QTimer, pyqtSignal
 
 from .constants import BASE_DIR
-from .subprocess_utils import decode_output, kill_processes_by_path
+from .subprocess_utils import (
+    CREATE_NO_WINDOW,
+    decode_output,
+    kill_processes_by_path,
+    run_text_pumped,
+    sleep_with_events,
+    wait_for_qprocess_finished,
+)
 
 log = logging.getLogger(__name__)
 
@@ -21,9 +27,6 @@ ZAPRET_DIR = BASE_DIR / "zapret"
 WINWS2_EXE = ZAPRET_DIR / "exe" / "winws2.exe"
 WINWS_EXE = ZAPRET_DIR / "exe" / "winws.exe"
 PRESETS_DIR = ZAPRET_DIR / "presets"
-
-_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
-
 
 @dataclass
 class PresetInfo:
@@ -225,11 +228,17 @@ class ZapretManager(QObject):
 
     def start(self, preset_name: str) -> None:
         if self.running:
+            if self._current_preset == preset_name:
+                self.log_line.emit(f"[zapret] Перезапуск текущего пресета: {preset_name}")
+            else:
+                self.log_line.emit(f"[zapret] Переключение пресета: {self._current_preset} -> {preset_name}")
             self.stop()
 
         killed = self._kill_orphaned()
         for name in killed:
             self.log_line.emit(f"[zapret] Завершён сторонний процесс: {name}")
+
+        sleep_with_events(0.35)
 
         exe = WINWS2_EXE
         if not exe.exists():
@@ -272,15 +281,29 @@ class ZapretManager(QObject):
 
     def stop(self) -> None:
         self._health_timer.stop()
-        if self._process is None:
+        process = self._process
+        if process is None:
             return
 
-        if self._process.state() == QProcess.ProcessState.Running:
+        try:
+            process.finished.disconnect(self._on_finished)
+        except (TypeError, RuntimeError):
+            pass
+
+        if process.state() == QProcess.ProcessState.Running:
             log.info("zapret stop")
-            self._process.kill()
-            self._process.waitForFinished(5000)
+            process.terminate()
+            if not wait_for_qprocess_finished(process, 1800):
+                process.kill()
+                wait_for_qprocess_finished(process, 5000)
 
         self._process = None
+        self._current_preset = ""
+        self._start_args = []
+        killed = self._kill_orphaned()
+        for name in killed:
+            self.log_line.emit(f"[zapret] Завершён оставшийся процесс: {name}")
+        sleep_with_events(0.5)
         self.stopped.emit()
 
     # ── internals ───────────────────────────────────────────────
@@ -297,8 +320,18 @@ class ZapretManager(QObject):
                     killed.append(exe_name)
             except Exception:
                 pass
+            try:
+                result = run_text_pumped(
+                    ["taskkill", "/F", "/T", "/IM", exe_name],
+                    timeout=3,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                if result.returncode == 0 and exe_name not in killed:
+                    killed.append(exe_name)
+            except Exception:
+                pass
         if killed:
-            time.sleep(1)
+            sleep_with_events(1.25)
         return killed
 
     @staticmethod

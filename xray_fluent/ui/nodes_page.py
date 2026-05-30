@@ -734,8 +734,6 @@ class NodesPage(QWidget):
         is_manual = self.sort_combo.currentText() == "Вручную"
         self.move_up_btn.setEnabled((not self._compact_mode) and is_manual and len(ids) == 1)
         self.move_down_btn.setEnabled((not self._compact_mode) and is_manual and len(ids) == 1)
-        if len(ids) == 1:
-            self.selected_node_changed.emit(next(iter(ids)))
 
     # ── Button handlers ──
 
@@ -807,9 +805,7 @@ class NodesPage(QWidget):
         row = index.row()
         if 0 <= row < len(self._visible_node_ids):
             node_id = self._visible_node_ids[row]
-            node = self._id_to_node.get(node_id)
-            if node:
-                self._show_detail(node)
+            self.selected_node_changed.emit(node_id)
 
     def _on_context_menu(self, pos) -> None:
         index = self.table.indexAt(pos)

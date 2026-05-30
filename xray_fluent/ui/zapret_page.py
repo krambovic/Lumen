@@ -171,7 +171,8 @@ class ZapretPage(QWidget):
             self.status_label.setStyleSheet("color: #4CAF50;")
             self.progress.show()
             self.progress.start()
-            self.start_btn.setEnabled(False)
+            self.start_btn.setEnabled(True)
+            self.start_btn.setToolTip("Переключить или перезапустить выбранный пресет")
             self.stop_btn.setEnabled(True)
         else:
             self._active_preset = ""
@@ -180,6 +181,7 @@ class ZapretPage(QWidget):
             self.progress.stop()
             self.progress.hide()
             self.start_btn.setEnabled(True)
+            self.start_btn.setToolTip("Запустить выбранный пресет")
             self.stop_btn.setEnabled(False)
         self._reload_table()
 
