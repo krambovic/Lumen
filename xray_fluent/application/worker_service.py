@@ -107,8 +107,7 @@ def on_ping_result(controller: AppController, node_id: str, ping_ms: int | None)
     node = getattr(controller, "_ping_node_map", {}).get(node_id)
     if node is not None:
         node.ping_ms = ping_ms
-        if ping_ms is not None or node.is_alive is None:
-            node.is_alive = ping_ms is not None
+        node.is_alive = ping_ms is not None
         ts = datetime.now(timezone.utc).isoformat()
         node.ping_history.append((ts, ping_ms))
         if len(node.ping_history) > 50:

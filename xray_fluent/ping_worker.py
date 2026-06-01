@@ -83,12 +83,33 @@ def _looks_like_tun_gateway(gateway: str) -> bool:
     return gateway.startswith(("172.19.", "198.18.", "198.19."))
 
 
+def _has_direct_host_route(ip: str, gateway: str) -> bool:
+    if os.name != "nt" or not ip or not gateway:
+        return False
+    script = (
+        f"$routes = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '{ip}/32' -ErrorAction SilentlyContinue; "
+        f"$route = $routes | Where-Object {{ $_.NextHop -eq '{gateway}' }} | Select-Object -First 1; "
+        "if ($route) { exit 0 } else { exit 1 }"
+    )
+    try:
+        result = run_text_pumped(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            timeout=3,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
 class _WindowsPingBypass:
     def __init__(self, nodes: list[Node], enabled: bool):
         self._nodes = nodes
         self._enabled = bool(enabled and os.name == "nt")
         self._gateway = ""
         self._added_ips: set[str] = set()
+        self._covered_ips: set[str] = set()
+        self._host_ips: dict[str, str] = {}
 
     def __enter__(self):
         if not self._enabled:
@@ -99,8 +120,10 @@ class _WindowsPingBypass:
 
         ips: set[str] = set()
         for node in self._nodes:
-            ip = _resolve_ipv4(str(node.server or "").strip())
+            host = str(node.server or "").strip()
+            ip = _resolve_ipv4(host)
             if ip and not ip.startswith(("127.", "0.", "169.254.")):
+                self._host_ips[host] = ip
                 ips.add(ip)
 
         for ip in ips:
@@ -114,7 +137,16 @@ class _WindowsPingBypass:
                 continue
             if result.returncode == 0:
                 self._added_ips.add(ip)
+                self._covered_ips.add(ip)
+            elif _has_direct_host_route(ip, self._gateway):
+                self._covered_ips.add(ip)
         return self
+
+    def can_ping_direct(self, host: str) -> bool:
+        if not self._enabled:
+            return True
+        ip = self._host_ips.get(str(host or "").strip())
+        return bool(ip and ip in self._covered_ips)
 
     def __exit__(self, *_exc) -> None:
         for ip in self._added_ips:
@@ -127,6 +159,8 @@ class _WindowsPingBypass:
             except Exception:
                 pass
         self._added_ips.clear()
+        self._covered_ips.clear()
+        self._host_ips.clear()
 
 
 class PingWorker(QThread):
@@ -154,19 +188,39 @@ class PingWorker(QThread):
         executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ping")
         pending: dict[Future[int | None], str] = {}
         iterator = iter(self._nodes)
+        exhausted = False
         completed = 0
 
         bypass = _WindowsPingBypass(self._nodes, self._bypass_tun)
-        try:
-            bypass.__enter__()
-            for _ in range(max_workers):
+
+        def submit_node(node: Node) -> None:
+            nonlocal completed
+            if not bypass.can_ping_direct(node.server):
+                completed += 1
+                self.result.emit(node.id, None)
+                self.progress.emit(completed, total)
+                return
+            future = executor.submit(tcp_ping, node.server, node.port, self._timeout)
+            pending[future] = node.id
+
+        def fill_pending_slots() -> None:
+            nonlocal exhausted
+            while len(pending) < max_workers and not exhausted and not self._cancelled:
                 node = next(iterator, None)
                 if node is None:
+                    exhausted = True
                     break
-                future = executor.submit(tcp_ping, node.server, node.port, self._timeout)
-                pending[future] = node.id
+                submit_node(node)
 
-            while pending and not self._cancelled:
+        try:
+            bypass.__enter__()
+            fill_pending_slots()
+
+            while (pending or not exhausted) and not self._cancelled:
+                if not pending:
+                    fill_pending_slots()
+                    if not pending:
+                        break
                 done, _ = wait(tuple(pending), timeout=0.1, return_when=FIRST_COMPLETED)
                 if not done:
                     continue
@@ -185,10 +239,7 @@ class PingWorker(QThread):
                     if self._cancelled:
                         break
 
-                    next_node = next(iterator, None)
-                    if next_node is not None:
-                        next_future = executor.submit(tcp_ping, next_node.server, next_node.port, self._timeout)
-                        pending[next_future] = next_node.id
+                    fill_pending_slots()
 
             if self._cancelled:
                 for future in pending:

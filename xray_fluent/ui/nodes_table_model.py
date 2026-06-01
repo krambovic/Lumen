@@ -185,7 +185,9 @@ class NodesTableModel(QAbstractTableModel):
         if col == 6:
             if node.id in self._busy_ping_ids:
                 return "..."
-            return "--" if node.ping_ms is None else f"{node.ping_ms} ms"
+            if node.ping_ms is None:
+                return "-1" if node.is_alive is False else "--"
+            return f"{node.ping_ms} ms"
         if col == 7:
             if node.id in self._busy_speed_ids:
                 return "..."
@@ -202,6 +204,8 @@ class NodesTableModel(QAbstractTableModel):
             return None
         if col == 7 and node.id in self._busy_speed_ids:
             return None
+        if col == 6 and node.ping_ms is None and node.is_alive is False:
+            return "Пинг: нет ответа"
         if col == 6 and node.ping_ms is not None:
             return f"Пинг: {node.ping_ms} ms"
         if col == 8:
