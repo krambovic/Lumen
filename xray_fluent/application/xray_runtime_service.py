@@ -5,7 +5,7 @@ import json
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from ..constants import PROXY_HOST, XRAY_TUN_DEFAULT_INTERFACE_NAME
+from ..constants import DEFAULT_DISCORD_SOCKS_PORT, PROXY_HOST, XRAY_TUN_DEFAULT_INTERFACE_NAME
 from ..engines.xray import get_windows_default_route_context
 from ..routing_runtime import apply_xray_gui_routing
 from .connection_service import find_free_api_port
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 APP_METRICS_API_TAG = "__app_metrics_api"
 APP_METRICS_API_INBOUND_TAG = "__app_metrics_api_in"
+APP_DISCORD_PROXY_INBOUND_TAG = "discord-socks-in"
 APP_TUN_INBOUND_TAG = "__app_tun_in"
 
 
@@ -115,6 +116,30 @@ def ensure_xray_metrics_contract(
     }
     controller._replace_or_append_tagged(inbounds, APP_METRICS_API_INBOUND_TAG, metrics_inbound)
 
+    if int(DEFAULT_DISCORD_SOCKS_PORT) not in existing_ports or any(
+        isinstance(inbound, dict) and str(inbound.get("tag") or "") == APP_DISCORD_PROXY_INBOUND_TAG
+        for inbound in inbounds
+    ):
+        controller._replace_or_append_tagged(
+            inbounds,
+            APP_DISCORD_PROXY_INBOUND_TAG,
+            {
+                "tag": APP_DISCORD_PROXY_INBOUND_TAG,
+                "listen": PROXY_HOST,
+                "port": int(DEFAULT_DISCORD_SOCKS_PORT),
+                "protocol": "socks",
+                "settings": {
+                    "auth": "noauth",
+                    "udp": True,
+                },
+                "sniffing": {
+                    "enabled": True,
+                    "destOverride": ["http", "tls", "quic"],
+                    "routeOnly": True,
+                },
+            },
+        )
+
     has_api_outbound = any(
         isinstance(outbound, dict) and str(outbound.get("tag") or "") == api_tag
         for outbound in outbounds
@@ -142,6 +167,11 @@ def ensure_xray_metrics_contract(
         "inboundTag": [APP_METRICS_API_INBOUND_TAG],
         "outboundTag": api_tag,
     }
+    discord_proxy_rule = {
+        "type": "field",
+        "inboundTag": [APP_DISCORD_PROXY_INBOUND_TAG],
+        "outboundTag": "proxy",
+    }
     replaced = False
     for index, rule in enumerate(rules):
         if not isinstance(rule, dict):
@@ -153,6 +183,17 @@ def ensure_xray_metrics_contract(
             break
     if not replaced:
         rules.insert(0, metrics_rule)
+    replaced = False
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            continue
+        inbound_tags = rule.get("inboundTag")
+        if isinstance(inbound_tags, list) and APP_DISCORD_PROXY_INBOUND_TAG in [str(item) for item in inbound_tags]:
+            rules[index] = discord_proxy_rule
+            replaced = True
+            break
+    if not replaced:
+        rules.insert(1 if rules and rules[0] == metrics_rule else 0, discord_proxy_rule)
 
     return api_port, tuple(user_inbound_tags)
 

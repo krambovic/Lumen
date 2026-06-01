@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from ...constants import (
+    DEFAULT_DISCORD_SOCKS_PORT,
     DEFAULT_HTTP_PORT,
     DEFAULT_SOCKS_PORT,
     PROXY_HOST,
@@ -41,6 +42,11 @@ def build_xray_config(
             "type": "field",
             "inboundTag": ["api"],
             "outboundTag": "api",
+        },
+        {
+            "type": "field",
+            "inboundTag": ["discord-socks-in"],
+            "outboundTag": "proxy",
         }
     ]
 
@@ -75,6 +81,21 @@ def build_xray_config(
                 "sniffing": {
                     "enabled": True,
                     "destOverride": ["http", "tls"],
+                    "routeOnly": True,
+                },
+            },
+            {
+                "tag": "discord-socks-in",
+                "listen": PROXY_HOST,
+                "port": DEFAULT_DISCORD_SOCKS_PORT,
+                "protocol": "socks",
+                "settings": {
+                    "auth": "noauth",
+                    "udp": True,
+                },
+                "sniffing": {
+                    "enabled": True,
+                    "destOverride": ["http", "tls", "quic"],
                     "routeOnly": True,
                 },
             },

@@ -131,6 +131,7 @@ from .engines.singbox import (
 )
 from .constants import (
     APP_NAME,
+    DEFAULT_DISCORD_SOCKS_PORT,
     DEFAULT_HTTP_PORT,
     DEFAULT_SOCKS_PORT,
     DEFAULT_XRAY_STATS_API_PORT,
@@ -1214,8 +1215,7 @@ class AppController(QObject):
         if not self.connected and not self._desired_connected:
             self.status.emit("warning", "Сначала запустите прокси Bebra VPN, потом включите Discord voice через прокси")
             return
-        socks_port, _ = self.get_effective_proxy_ports()
-        result = self.discord_proxy.enable(int(socks_port))
+        result = self.discord_proxy.enable(int(DEFAULT_DISCORD_SOCKS_PORT))
         self._log(f"[discord-proxy] enable: {result.message}")
         self.status.emit("success" if result.ok else "error", result.message)
 

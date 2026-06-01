@@ -143,6 +143,8 @@ def extract_xray_runtime_ports(payload: Any) -> tuple[int, int, int]:
             port = 0
         if port <= 0:
             continue
+        if tag == "discord-socks-in":
+            continue
         if protocol == "socks" and socks_port <= 0:
             socks_port = port
         elif protocol == "http" and http_port <= 0:
