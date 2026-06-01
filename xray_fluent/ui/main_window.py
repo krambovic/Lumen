@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, Qt, QTimer
@@ -904,7 +905,15 @@ class MainWindow(FluentWindow):
         if not notes:
             return ""
 
-        lines = notes.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        text = str(notes)
+        for escaped, real in (
+            ("\\r\\n", "\n"),
+            ("\\n", "\n"),
+            ("\\r", "\n"),
+            ("\\t", " "),
+        ):
+            text = text.replace(escaped, real)
+        lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
         items: list[str] = []
         capture_main = False
         saw_relevant_heading = False
@@ -912,6 +921,10 @@ class MainWindow(FluentWindow):
         for raw_line in lines:
             line = raw_line.strip()
             if not line:
+                continue
+            if line.lower().startswith(("notice ", "notice:", "sha256", "babravpn-", "bebravpn-")):
+                continue
+            if re.fullmatch(r"[0-9a-fA-F]{64}", line):
                 continue
 
             heading = line.lstrip("#").strip().lower() if line.startswith("#") else ""
@@ -931,6 +944,10 @@ class MainWindow(FluentWindow):
                 continue
 
             clean = line.lstrip("-*• ").strip().replace("`", "").strip()
+            if clean.lower().startswith(("notice ", "notice:", "sha256", "babravpn-", "bebravpn-")):
+                continue
+            if re.fullmatch(r"[0-9a-fA-F]{64}", clean):
+                continue
             if clean:
                 items.append(clean)
             if len(items) >= max_items:
@@ -939,6 +956,10 @@ class MainWindow(FluentWindow):
         if not items:
             for raw_line in lines:
                 clean = raw_line.strip().lstrip("-*•# ").replace("`", "").strip()
+                if clean.lower().startswith(("notice ", "notice:", "sha256", "babravpn-", "bebravpn-")):
+                    continue
+                if re.fullmatch(r"[0-9a-fA-F]{64}", clean):
+                    continue
                 if clean:
                     items.append(clean)
                 if len(items) >= max_items:
@@ -948,6 +969,30 @@ class MainWindow(FluentWindow):
             return ""
 
         return "Главное:\n" + "\n".join(f"- {item}" for item in items[:max_items])
+
+    def _show_update_dialog(self, update: AppUpdate, notes: str) -> None:
+        self.switchTo(self.updates_page)
+        if self.isMinimized():
+            self.showNormal()
+        elif not self.isVisible():
+            self.show()
+        self.raise_()
+        self.activateWindow()
+
+        from qfluentwidgets import MessageBox
+        notes_block = f"\n\n{notes}" if notes else ""
+        box = MessageBox(
+            "Доступно обновление",
+            f"Доступна новая версия v{update.version}.\n"
+            f"Текущая: v{APP_VERSION}"
+            f"{notes_block}\n\n"
+            f"Приложение скачает обновление, закроется и перезапустится автоматически.",
+            self,
+        )
+        box.yesButton.setText("Скачать и установить")
+        box.cancelButton.setText("Позже")
+        if box.exec():
+            self._start_update_download(update)
 
     def _check_updates(self, silent: bool = False) -> None:
         if getattr(self, "_update_in_progress", False):
@@ -997,46 +1042,7 @@ class MainWindow(FluentWindow):
             lambda: self._start_update_download(self._pending_update)
         )
 
-        if silent:
-            note_lines = notes.splitlines()
-            first_note = note_lines[1].lstrip("- ").strip() if len(note_lines) > 1 else ""
-            content = f"Доступна версия v{update.version}. "
-            if first_note:
-                content += f"{first_note}. "
-            content += "Откройте «Обновления», чтобы скачать и установить."
-            InfoBar.info(
-                "Обновление",
-                content,
-                position=InfoBarPosition.TOP_RIGHT,
-                duration=8000,
-                parent=self,
-            )
-            if self.tray is not None:
-                self.tray.showMessage(
-                    APP_NAME,
-                    f"Доступна версия v{update.version}. Можно скачать и установить обновление.",
-                    QSystemTrayIcon.MessageIcon.Information,
-                    8000,
-                )
-            return
-
-        # Switch to Updates page and show dialog
-        self.switchTo(self.updates_page)
-
-        from qfluentwidgets import MessageBox
-        notes_block = f"\n\n{notes}" if notes else ""
-        box = MessageBox(
-            "Доступно обновление",
-            f"Доступна новая версия v{update.version}.\n"
-            f"Текущая: v{APP_VERSION}"
-            f"{notes_block}\n\n"
-            f"Приложение скачает обновление, закроется и перезапустится автоматически.",
-            self,
-        )
-        box.yesButton.setText("Скачать и установить")
-        box.cancelButton.setText("Позже")
-        if box.exec():
-            self._start_update_download(update)
+        self._show_update_dialog(update, notes)
 
     def _start_update_download(self, update: AppUpdate) -> None:
         if not self.controller.state.settings.allow_updates:
