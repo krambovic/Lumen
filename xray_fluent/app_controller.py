@@ -312,10 +312,6 @@ class AppController(QObject):
         self._save_timer.setInterval(250)
         self._save_timer.timeout.connect(self._flush_scheduled_save)
         self._save_pending = False
-        self._discord_proxy_watchdog = QTimer(self)
-        self._discord_proxy_watchdog.setInterval(15_000)
-        self._discord_proxy_watchdog.timeout.connect(self._check_discord_proxy_watchdog)
-        self._discord_proxy_watchdog.start()
 
     def load(self) -> bool:
         try:
@@ -1222,17 +1218,6 @@ class AppController(QObject):
         result = self.discord_proxy.enable(int(socks_port))
         self._log(f"[discord-proxy] enable: {result.message}")
         self.status.emit("success" if result.ok else "error", result.message)
-
-    def _check_discord_proxy_watchdog(self) -> None:
-        if not self.state.settings.discord_proxy_enabled or not self.connected:
-            return
-        socks_port, _ = self.get_effective_proxy_ports()
-        result = self.discord_proxy.ensure_active(int(socks_port))
-        if result.affected:
-            self._log(f"[discord-proxy] watchdog: {result.message}")
-            self.status.emit("success" if result.ok else "warning", result.message)
-        elif not result.ok:
-            self._log(f"[discord-proxy] watchdog error: {result.message}")
 
     def switch_next_node(self) -> None:
         if not self.state.nodes:

@@ -21,6 +21,7 @@ Bundled third-party components keep their own licenses and notices:
 
 Optional external helpers downloaded at runtime:
 
-- force-proxy.dll: https://github.com/runetfreedom/force-proxy
+- droute: https://github.com/snowluwu/droute
   GPL-3.0 component used as a separate helper for Discord TCP/UDP SOCKS5
-  proxying. Its source code is not embedded into this repository.
+  proxying via Discord-local DLL loading and Squirrel updater hook. Its source
+  code is not embedded into this repository.

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import ctypes
 import json
 import os
 import subprocess
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request
@@ -14,11 +14,12 @@ from .http_utils import urlopen
 from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pumped
 
 
-FORCE_PROXY_RELEASE_URL = "https://github.com/runetfreedom/force-proxy/releases/download/v0.2.0/force-proxy.dll"
-FORCE_PROXY_SOURCE_URL = "https://github.com/runetfreedom/force-proxy"
-FORCE_PROXY_DIR = DATA_DIR / "external" / "force-proxy"
-FORCE_PROXY_DLL = FORCE_PROXY_DIR / "force-proxy.dll"
-FORCE_PROXY_NOTICE = FORCE_PROXY_DIR / "README.force-proxy.txt"
+DROUTE_VERSION = "1.1.2"
+DROUTE_ZIP_URL = f"https://github.com/snowluwu/droute/releases/download/{DROUTE_VERSION}/droute-{DROUTE_VERSION}.zip"
+DROUTE_SOURCE_URL = "https://github.com/snowluwu/droute"
+DROUTE_DIR = DATA_DIR / "external" / "droute"
+DROUTE_EXE = DROUTE_DIR / "droute.exe"
+DROUTE_NOTICE = DROUTE_DIR / "README.droute.txt"
 
 _DISCORD_BRANCHES = {
     "stable": ("Discord", "Discord.exe"),
@@ -85,30 +86,49 @@ def find_installed_discords() -> list[DiscordInstall]:
     return installs
 
 
-def _write_force_proxy_notice() -> None:
-    FORCE_PROXY_NOTICE.write_text(
-        "force-proxy.dll is an external GPL-3.0 component downloaded from:\n"
-        f"{FORCE_PROXY_SOURCE_URL}\n\n"
-        "Bebra VPN does not embed force-proxy source code. The DLL is used as a separate helper\n"
-        "to route Discord TCP/UDP traffic to the local SOCKS5 proxy.\n",
+def _write_droute_notice() -> None:
+    DROUTE_NOTICE.write_text(
+        "droute is an external GPL-3.0 component downloaded from:\n"
+        f"{DROUTE_SOURCE_URL}\n\n"
+        "Bebra VPN does not embed droute source code. The external droute binary is used\n"
+        "to install a Discord-local version.dll loader, droute.dll payload and Squirrel\n"
+        "updater hook for Discord TCP/UDP SOCKS5 proxying.\n",
         encoding="utf-8",
     )
 
 
-def ensure_force_proxy_dll() -> Path:
-    FORCE_PROXY_DIR.mkdir(parents=True, exist_ok=True)
-    if FORCE_PROXY_DLL.is_file() and FORCE_PROXY_DLL.stat().st_size > 0:
-        _write_force_proxy_notice()
-        return FORCE_PROXY_DLL
+def ensure_droute_bundle() -> Path:
+    DROUTE_DIR.mkdir(parents=True, exist_ok=True)
+    if DROUTE_EXE.is_file() and DROUTE_EXE.stat().st_size > 0:
+        _write_droute_notice()
+        return DROUTE_EXE
 
-    request = Request(FORCE_PROXY_RELEASE_URL, headers={"User-Agent": f"BebraVPN/{APP_VERSION}"})
-    with urlopen(request, timeout=30) as response:
+    tmp_zip = DROUTE_DIR / f"droute-{DROUTE_VERSION}.zip"
+    request = Request(DROUTE_ZIP_URL, headers={"User-Agent": f"BebraVPN/{APP_VERSION}"})
+    with urlopen(request, timeout=45) as response:
         payload = response.read()
     if len(payload) < 1024:
-        raise RuntimeError("force-proxy.dll download is damaged")
-    FORCE_PROXY_DLL.write_bytes(payload)
-    _write_force_proxy_notice()
-    return FORCE_PROXY_DLL
+        raise RuntimeError("droute archive download is damaged")
+    tmp_zip.write_bytes(payload)
+    with zipfile.ZipFile(tmp_zip) as archive:
+        archive.extractall(DROUTE_DIR)
+    tmp_zip.unlink(missing_ok=True)
+    if not DROUTE_EXE.is_file():
+        raise RuntimeError("droute.exe was not found in the downloaded archive")
+    _write_droute_notice()
+    return DROUTE_EXE
+
+
+def _powershell_quote(value: str | Path) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _run_powershell(script: str, *, timeout: float = 20.0) -> subprocess.CompletedProcess[bytes]:
+    return run_text_pumped(
+        ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+        timeout=timeout,
+        creationflags=CREATE_NO_WINDOW,
+    )
 
 
 def _discord_processes() -> list[dict[str, object]]:
@@ -119,11 +139,7 @@ def _discord_processes() -> list[dict[str, object]]:
         "Select-Object ProcessId,Name,ExecutablePath); "
         "if ($items.Count -eq 0) { '[]' } else { $items | ConvertTo-Json -Compress }"
     )
-    result = run_text_pumped(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-        timeout=6,
-        creationflags=CREATE_NO_WINDOW,
-    )
+    result = _run_powershell(script, timeout=6)
     if result.returncode != 0:
         return []
     text = result_output_text(result).strip()
@@ -151,37 +167,14 @@ def _terminate_discord(install: DiscordInstall) -> None:
         pass
 
 
-def _launch_discord(install: DiscordInstall, *, socks_port: int | None = None) -> None:
-    env = os.environ.copy()
-    if socks_port is not None:
-        env["SOCKS5_PROXY_ADDRESS"] = "127.0.0.1"
-        env["SOCKS5_PROXY_PORT"] = str(int(socks_port))
-        env.setdefault("SOCKS5_PROXY_TIMEOUT", "5000")
+def _launch_discord(install: DiscordInstall) -> None:
     subprocess.Popen(
         [str(install.exe_path)],
         cwd=str(install.app_dir),
-        env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True,
     )
-
-
-def _wait_for_discord_pids(install: DiscordInstall, timeout_sec: float = 10.0) -> list[int]:
-    started = time.monotonic()
-    deadline = time.monotonic() + timeout_sec
-    last: list[int] = []
-    last_change = started
-    while time.monotonic() < deadline:
-        current = _process_pids_for_install(install)
-        if current:
-            if current != last:
-                last = current
-                last_change = time.monotonic()
-            if time.monotonic() - started >= 3.0 and time.monotonic() - last_change >= 1.0:
-                return current
-        time.sleep(0.25)
-    return last
 
 
 def _process_pids_for_install(install: DiscordInstall) -> list[int]:
@@ -202,106 +195,78 @@ def _process_pids_for_install(install: DiscordInstall) -> list[int]:
     return sorted(set(pids))
 
 
-def _inject_dll(pid: int, dll_path: Path) -> None:
-    if os.name != "nt":
-        raise RuntimeError("Discord proxy is only available on Windows")
+def _wait_for_discord_start(install: DiscordInstall, timeout_sec: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if _process_pids_for_install(install):
+            return True
+        time.sleep(0.25)
+    return False
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_bool, ctypes.c_uint32]
-    kernel32.OpenProcess.restype = ctypes.c_void_p
-    kernel32.VirtualAllocEx.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_uint32]
-    kernel32.VirtualAllocEx.restype = ctypes.c_void_p
-    kernel32.WriteProcessMemory.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_size_t,
-        ctypes.POINTER(ctypes.c_size_t),
-    ]
-    kernel32.WriteProcessMemory.restype = ctypes.c_bool
-    kernel32.GetModuleHandleW.argtypes = [ctypes.c_wchar_p]
-    kernel32.GetModuleHandleW.restype = ctypes.c_void_p
-    kernel32.GetProcAddress.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-    kernel32.GetProcAddress.restype = ctypes.c_void_p
-    kernel32.CreateRemoteThread.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_size_t,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_uint32,
-        ctypes.POINTER(ctypes.c_uint32),
-    ]
-    kernel32.CreateRemoteThread.restype = ctypes.c_void_p
-    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
-    kernel32.WaitForSingleObject.restype = ctypes.c_uint32
-    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-    kernel32.CloseHandle.restype = ctypes.c_bool
 
-    process_rights = 0x0002 | 0x0400 | 0x0008 | 0x0020 | 0x0010
-    mem_commit = 0x1000
-    mem_reserve = 0x2000
-    page_readwrite = 0x04
+def _write_droute_registry(socks_port: int) -> None:
+    script = (
+        "$path = 'HKCU:\\Software\\droute'; "
+        "New-Item -Path $path -Force | Out-Null; "
+        "Set-ItemProperty -Path $path -Name Host -Type String -Value '127.0.0.1'; "
+        f"Set-ItemProperty -Path $path -Name Port -Type DWord -Value {int(socks_port)}; "
+        "Set-ItemProperty -Path $path -Name User -Type String -Value ''; "
+        "Set-ItemProperty -Path $path -Name Password -Type String -Value ''; "
+        "Set-ItemProperty -Path $path -Name ConnectTimeout -Type DWord -Value 5000; "
+        "Set-ItemProperty -Path $path -Name ReconnectInterval -Type DWord -Value 3000; "
+        "Set-ItemProperty -Path $path -Name RetryTimeout -Type DWord -Value 10000; "
+        "Set-ItemProperty -Path $path -Name LogLevel -Type DWord -Value 2"
+    )
+    result = _run_powershell(script, timeout=8)
+    if result.returncode != 0:
+        raise RuntimeError(result_output_text(result) or "failed to write droute registry settings")
 
-    handle = kernel32.OpenProcess(process_rights, False, int(pid))
-    if not handle:
-        raise OSError(ctypes.get_last_error(), f"OpenProcess failed for PID {pid}")
 
-    thread = None
-    try:
-        dll_text = str(dll_path.resolve())
-        data = ctypes.create_unicode_buffer(dll_text)
-        size = ctypes.sizeof(data)
-        remote_mem = kernel32.VirtualAllocEx(handle, None, size, mem_commit | mem_reserve, page_readwrite)
-        if not remote_mem:
-            raise OSError(ctypes.get_last_error(), f"VirtualAllocEx failed for PID {pid}")
-        written = ctypes.c_size_t(0)
-        if not kernel32.WriteProcessMemory(handle, remote_mem, data, size, ctypes.byref(written)):
-            raise OSError(ctypes.get_last_error(), f"WriteProcessMemory failed for PID {pid}")
-        kernel = kernel32.GetModuleHandleW("kernel32.dll")
-        load_library = kernel32.GetProcAddress(kernel, b"LoadLibraryW") if kernel else None
-        if not load_library:
-            raise OSError(ctypes.get_last_error(), "LoadLibraryW not found")
-        thread_id = ctypes.c_uint32(0)
-        thread = kernel32.CreateRemoteThread(handle, None, 0, load_library, remote_mem, 0, ctypes.byref(thread_id))
-        if not thread:
-            raise OSError(ctypes.get_last_error(), f"CreateRemoteThread failed for PID {pid}")
-        kernel32.WaitForSingleObject(thread, 8000)
-    finally:
-        if thread:
-            kernel32.CloseHandle(thread)
-        kernel32.CloseHandle(handle)
+def _install_droute_payload(exe: Path, install: DiscordInstall) -> None:
+    app_dir = install.app_dir
+    branch_root = install.root
+    proxy_path = app_dir / "version.dll"
+    payload_path = app_dir / "droute.dll"
+    updater_hook_path = branch_root / "Droute.UpdaterHook.dll"
+    updater_config_path = branch_root / "Update.exe.config"
+
+    script = (
+        "$ErrorActionPreference = 'Stop'; "
+        f"$asm = [System.Reflection.Assembly]::LoadFile({_powershell_quote(exe)}); "
+        "$patchType = $asm.GetType('Droute.Core.PatchManager', $true); "
+        "$archType = $patchType.GetNestedType('ArchitectureBitness'); "
+        "$force64 = [Enum]::Parse($archType, 'Force64'); "
+        "$dup = $patchType.GetMethod('DuplicateProxy', [Type[]]@([string], $archType)); "
+        "$apply = $patchType.GetMethod('ApplyPEPatch', [Type[]]@([string])); "
+        f"$dup.Invoke($null, @({_powershell_quote(proxy_path)}, $force64)); "
+        f"$apply.Invoke($null, @({_powershell_quote(proxy_path)})); "
+        "$stream = $asm.GetManifestResourceStream('Droute.Installer.Properties.Resources.resources'); "
+        "$reader = New-Object System.Resources.ResourceReader($stream); "
+        "$items = @{}; foreach ($entry in $reader) { $items[$entry.Key] = $entry.Value }; "
+        f"[IO.File]::WriteAllBytes({_powershell_quote(payload_path)}, [byte[]]$items['Droute64']); "
+        f"[IO.File]::WriteAllBytes({_powershell_quote(updater_hook_path)}, [byte[]]$items['UpdaterHook']); "
+        f"[IO.File]::WriteAllText({_powershell_quote(updater_config_path)}, [string]$items['UpdaterConfig']); "
+        "$reader.Close(); $stream.Close()"
+    )
+    result = _run_powershell(script, timeout=30)
+    if result.returncode != 0:
+        raise RuntimeError(result_output_text(result) or f"failed to install droute for {install.process_name}")
+
+
+def _remove_droute_payload(install: DiscordInstall) -> None:
+    for path in (install.root / "Droute.UpdaterHook.dll", install.root / "Update.exe.config"):
+        path.unlink(missing_ok=True)
+    for app_dir in install.root.glob("app-*"):
+        if not app_dir.is_dir():
+            continue
+        for name in ("version.dll", "droute.dll"):
+            try:
+                (app_dir / name).unlink(missing_ok=True)
+            except PermissionError:
+                pass
 
 
 class DiscordProxyManager:
-    def __init__(self) -> None:
-        self._injected_pids: set[int] = set()
-        self._active_socks_port = 0
-
-    def _inject_pids(self, pids: list[int], dll_path: Path) -> tuple[int, list[str]]:
-        affected = 0
-        errors: list[str] = []
-        for pid in pids:
-            if pid in self._injected_pids:
-                continue
-            try:
-                _inject_dll(pid, dll_path)
-                self._injected_pids.add(pid)
-                affected += 1
-            except Exception as exc:
-                errors.append(f"PID {pid}: {exc}")
-        return affected, errors
-
-    def _restart_install_with_proxy(self, install: DiscordInstall, socks_port: int, dll_path: Path) -> tuple[int, list[str]]:
-        _terminate_discord(install)
-        self._injected_pids.difference_update(_process_pids_for_install(install))
-        _launch_discord(install, socks_port=int(socks_port))
-        pids = _wait_for_discord_pids(install)
-        if not pids:
-            return 0, [f"{install.process_name}: process did not start"]
-        affected, errors = self._inject_pids(pids, dll_path)
-        return affected, [f"{install.process_name}: {error}" for error in errors]
-
     def enable(self, socks_port: int) -> DiscordProxyResult:
         if os.name != "nt":
             return DiscordProxyResult(False, "Discord proxy is only available on Windows")
@@ -312,76 +277,31 @@ class DiscordProxyManager:
             return DiscordProxyResult(False, "Bebra VPN SOCKS5 port not found")
 
         try:
-            dll_path = ensure_force_proxy_dll()
+            exe = ensure_droute_bundle()
+            _write_droute_registry(int(socks_port))
         except Exception as exc:
-            return DiscordProxyResult(False, f"Failed to prepare force-proxy.dll: {exc}")
+            return DiscordProxyResult(False, f"Failed to prepare droute: {exc}")
 
-        self._active_socks_port = int(socks_port)
-        self._injected_pids.clear()
         affected = 0
         errors: list[str] = []
         for install in installs:
             try:
-                count, branch_errors = self._restart_install_with_proxy(install, int(socks_port), dll_path)
-                affected += count
-                errors.extend(branch_errors)
+                was_running = bool(_process_pids_for_install(install))
+                _terminate_discord(install)
+                _install_droute_payload(exe, install)
+                if was_running:
+                    _launch_discord(install)
+                    _wait_for_discord_start(install)
+                affected += 1
             except Exception as exc:
                 errors.append(f"{install.process_name}: {exc}")
 
         if affected:
-            message = f"Discord started through SOCKS5 127.0.0.1:{int(socks_port)}"
+            message = f"droute installed for Discord via SOCKS5 127.0.0.1:{int(socks_port)}"
             if errors:
                 message += f"; partial errors: {'; '.join(errors[:2])}"
             return DiscordProxyResult(True, message, affected)
         return DiscordProxyResult(False, "; ".join(errors) or "Failed to enable Discord proxy")
-
-    def ensure_active(self, socks_port: int) -> DiscordProxyResult:
-        if os.name != "nt":
-            return DiscordProxyResult(False, "Discord proxy is only available on Windows")
-        if int(socks_port) <= 0:
-            return DiscordProxyResult(False, "Bebra VPN SOCKS5 port not found")
-        if self._active_socks_port and int(socks_port) != self._active_socks_port:
-            return self.enable(int(socks_port))
-
-        installs = find_installed_discords()
-        if not installs:
-            return DiscordProxyResult(True, "Discord not found", 0)
-
-        try:
-            dll_path = ensure_force_proxy_dll()
-        except Exception as exc:
-            return DiscordProxyResult(False, f"Failed to prepare force-proxy.dll: {exc}")
-
-        current_pids = {int(item.get("ProcessId") or 0) for item in _discord_processes()}
-        self._injected_pids.intersection_update(current_pids)
-        self._active_socks_port = int(socks_port)
-
-        affected = 0
-        errors: list[str] = []
-        for install in installs:
-            pids = _process_pids_for_install(install)
-            if not pids:
-                continue
-
-            injected_here = [pid for pid in pids if pid in self._injected_pids]
-            if not injected_here:
-                try:
-                    count, branch_errors = self._restart_install_with_proxy(install, int(socks_port), dll_path)
-                    affected += count
-                    errors.extend(branch_errors)
-                except Exception as exc:
-                    errors.append(f"{install.process_name}: {exc}")
-                continue
-
-            count, inject_errors = self._inject_pids(pids, dll_path)
-            affected += count
-            errors.extend(f"{install.process_name}: {error}" for error in inject_errors)
-
-        if errors and not affected:
-            return DiscordProxyResult(False, "; ".join(errors[:3]))
-        if affected:
-            return DiscordProxyResult(True, f"Discord proxy refreshed for processes: {affected}", affected)
-        return DiscordProxyResult(True, "Discord proxy is active", 0)
 
     def disable(self) -> DiscordProxyResult:
         installs = find_installed_discords()
@@ -391,13 +311,15 @@ class DiscordProxyManager:
         errors: list[str] = []
         for install in installs:
             try:
+                was_running = bool(_process_pids_for_install(install))
                 _terminate_discord(install)
-                _launch_discord(install, socks_port=None)
+                _remove_droute_payload(install)
+                if was_running:
+                    _launch_discord(install)
+                    _wait_for_discord_start(install)
                 affected += 1
             except Exception as exc:
                 errors.append(f"{install.process_name}: {exc}")
-        self._injected_pids.clear()
-        self._active_socks_port = 0
         if affected:
-            return DiscordProxyResult(True, "Discord restarted without force-proxy", affected)
+            return DiscordProxyResult(True, "droute removed from Discord", affected)
         return DiscordProxyResult(False, "; ".join(errors) or "Failed to disable Discord proxy")
