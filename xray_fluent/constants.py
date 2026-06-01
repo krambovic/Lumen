@@ -5,7 +5,7 @@ import sys
 
 
 APP_NAME = "Bebra VPN"
-APP_VERSION = "0.6.2"
+APP_VERSION = "0.6.3"
 STATE_SCHEMA_VERSION = 1
 
 PROXY_HOST = "127.0.0.1"

@@ -17,6 +17,11 @@ _SINGBOX_RULE_SET_URLS = {
     "geoip:ru-blocked-community": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geoip/geoip-ru-blocked-community.srs",
 }
 
+_XRAY_UNSUPPORTED_GEOIP_CODES = {
+    "geoip:ru-blocked",
+    "geoip:ru-blocked-community",
+}
+
 
 def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
     domains: list[str] = []
@@ -29,6 +34,8 @@ def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
             domains.append(value)
             continue
         if value.startswith(("geoip:", "ip:")):
+            if value.lower() in _XRAY_UNSUPPORTED_GEOIP_CODES:
+                continue
             ips.append(value)
             continue
         try:
