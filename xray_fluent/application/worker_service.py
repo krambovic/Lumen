@@ -29,7 +29,11 @@ def ping_nodes(controller: AppController, node_ids: set[str] | None = None) -> N
     controller._ping_completed = 0
     controller._ping_node_map = {node.id: node for node in nodes}
     controller.bulk_task_progress.emit("ping", 0, controller._ping_total, False)
-    controller._ping_worker = PingWorker(nodes)
+    active_session = controller._active_session
+    bypass_tun = bool(controller.connected and active_session is not None and active_session.tun_mode)
+    if bypass_tun:
+        controller._log("[ping] TUN включен: проверяю серверы через временные прямые маршруты")
+    controller._ping_worker = PingWorker(nodes, bypass_tun=bypass_tun)
     controller._ping_worker.result.connect(controller._on_ping_result)
     controller._ping_worker.progress.connect(controller._on_ping_progress)
     controller._ping_worker.completed.connect(controller._on_ping_complete)
