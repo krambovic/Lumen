@@ -18,3 +18,9 @@ Bundled third-party components keep their own licenses and notices:
 - tun2socks: https://github.com/xjasonlyu/tun2socks
 - zapret/WinDivert bundle: see files under `zapret/`, including
   `zapret/windivert.filter/manual.md`.
+
+Optional external helpers downloaded at runtime:
+
+- force-proxy.dll: https://github.com/runetfreedom/force-proxy
+  GPL-3.0 component used as a separate helper for Discord TCP/UDP SOCKS5
+  proxying. Its source code is not embedded into this repository.

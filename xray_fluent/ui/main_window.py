@@ -196,6 +196,7 @@ class MainWindow(FluentWindow):
         self.dashboard_page.toggle_connection_requested.connect(self.controller.toggle_connection)
         self.dashboard_page.tun_toggled.connect(self._on_dashboard_tun_toggled)
         self.dashboard_page.proxy_toggled.connect(self._on_dashboard_proxy_toggled)
+        self.dashboard_page.discord_proxy_toggled.connect(self.controller.set_discord_proxy_enabled)
         self.dashboard_page.node_selected.connect(self.controller.set_selected_node)
         self.dashboard_page.routing_preset_requested.connect(self._apply_routing_preset)
 

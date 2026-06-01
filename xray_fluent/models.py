@@ -179,6 +179,7 @@ class AppSettings:
     xray_release_channel: str = "beta"  # stable | beta | nightly
     xray_update_feed_url: str = ""
     xray_auto_update: bool = False
+    discord_proxy_enabled: bool = False
     tun_mode: bool = False
     tun_engine: str = "xray"  # "singbox" | "xray" | "tun2socks"
     xray_config_file: str = ""
@@ -217,6 +218,7 @@ class AppSettings:
             "xray_release_channel": self.xray_release_channel,
             "xray_update_feed_url": self.xray_update_feed_url,
             "xray_auto_update": self.xray_auto_update,
+            "discord_proxy_enabled": self.discord_proxy_enabled,
             "tun_mode": self.tun_mode,
             "tun_engine": self.tun_engine,
             "xray_config_file": self.xray_config_file,
@@ -260,6 +262,7 @@ class AppSettings:
             xray_release_channel=xray_release_channel,
             xray_update_feed_url=str(data.get("xray_update_feed_url") or ""),
             xray_auto_update=bool(data.get("xray_auto_update", False)),
+            discord_proxy_enabled=bool(data.get("discord_proxy_enabled", False)),
             tun_mode=bool(data.get("tun_mode", False)),
             tun_engine=str(data.get("tun_engine") or "xray"),
             xray_config_file=str(data.get("xray_config_file") or ""),

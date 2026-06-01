@@ -5,6 +5,8 @@ import socket
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from PyQt6.QtCore import QTimer
+
 from ..constants import DEFAULT_HTTP_PORT, DEFAULT_SOCKS_PORT, DEFAULT_XRAY_STATS_API_PORT
 from ..engines.singbox import SingboxRuntimePlan, start_tun as start_singbox_tun
 from ..engines.tun2socks import hot_swap as hot_swap_tun2socks, start_tun as start_tun2socks_tun
@@ -195,6 +197,8 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         controller.save()
         session_mode = "xray-tun" if tun and controller._active_core == "xray" else controller._active_core
         controller._traffic_history.start_session(session_label, session_mode)
+        if controller.state.settings.discord_proxy_enabled:
+            QTimer.singleShot(250, controller.apply_discord_proxy)
         return True
     finally:
         controller._connecting = False

@@ -76,6 +76,7 @@ class DashboardPage(QWidget):
     routing_preset_requested = pyqtSignal(str)
     tun_toggled = pyqtSignal(bool)
     proxy_toggled = pyqtSignal(bool)
+    discord_proxy_toggled = pyqtSignal(bool)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -310,8 +311,20 @@ class DashboardPage(QWidget):
         self.routing_rules_label = CaptionLabel("Прямые: 0   Прокси: 0   Блок: 0", self.routing_card)
         self.routing_bypass_label = CaptionLabel("Обход LAN: включён", self.routing_card)
         self.routing_bypass_label.setWordWrap(True)
+        discord_row = QHBoxLayout()
+        discord_row.setSpacing(10)
+        discord_row.addWidget(BodyLabel("Discord voice", self.routing_card))
+        self.discord_proxy_switch = SwitchButton(self.routing_card)
+        self.discord_proxy_switch.setOnText("Вкл")
+        self.discord_proxy_switch.setOffText("Выкл")
+        discord_row.addWidget(self.discord_proxy_switch)
+        discord_row.addStretch(1)
+        self.discord_proxy_hint = CaptionLabel("Голос и стримы Discord через SOCKS5 без TUN", self.routing_card)
+        self.discord_proxy_hint.setWordWrap(True)
         routing_layout.addWidget(self.routing_mode_label)
         routing_layout.addStretch(1)
+        routing_layout.addLayout(discord_row)
+        routing_layout.addWidget(self.discord_proxy_hint)
         routing_layout.addWidget(self.routing_dns_label)
         routing_layout.addWidget(self.routing_rules_label)
         routing_layout.addWidget(self.routing_bypass_label)
@@ -400,6 +413,7 @@ class DashboardPage(QWidget):
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.tun_switch.checkedChanged.connect(self._on_tun_toggled)
         self.proxy_switch.checkedChanged.connect(self._on_proxy_toggled)
+        self.discord_proxy_switch.checkedChanged.connect(self._on_discord_proxy_toggled)
         self.toggle_btn.clicked.connect(self.toggle_connection_requested)
         self.route_all_btn.clicked.connect(lambda: self.routing_preset_requested.emit(ROUTING_PRESET_GLOBAL))
         self.route_blocked_btn.clicked.connect(lambda: self.routing_preset_requested.emit(ROUTING_PRESET_BLOCKED))
@@ -893,6 +907,9 @@ class DashboardPage(QWidget):
     def _on_proxy_toggled(self, checked: bool) -> None:
         self.proxy_toggled.emit(checked)
 
+    def _on_discord_proxy_toggled(self, checked: bool) -> None:
+        self.discord_proxy_toggled.emit(checked)
+
     def _sync_switches(self) -> None:
         self.tun_switch.blockSignals(True)
         self.tun_switch.setChecked(self._settings.tun_mode)
@@ -903,6 +920,11 @@ class DashboardPage(QWidget):
         self.proxy_switch.setChecked(self._settings.enable_system_proxy)
         self.proxy_switch.setText("Вкл" if self._settings.enable_system_proxy else "Выкл")
         self.proxy_switch.blockSignals(False)
+
+        self.discord_proxy_switch.blockSignals(True)
+        self.discord_proxy_switch.setChecked(self._settings.discord_proxy_enabled)
+        self.discord_proxy_switch.setText("ON" if self._settings.discord_proxy_enabled else "OFF")
+        self.discord_proxy_switch.blockSignals(False)
         self._apply_interaction_state()
 
     def _apply_interaction_state(self) -> None:
@@ -914,5 +936,6 @@ class DashboardPage(QWidget):
         self.tun_switch.setEnabled(not busy)
         self.mode_combo.setEnabled(not busy and self._is_tun2socks_mode())
         self.proxy_switch.setEnabled(not busy and not self._settings.tun_mode)
+        self.discord_proxy_switch.setEnabled(not busy)
         for button in (self.route_all_btn, self.route_blocked_btn, self.route_except_ru_btn):
             button.setEnabled(not busy)

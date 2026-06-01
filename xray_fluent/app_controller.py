@@ -147,6 +147,7 @@ from .constants import (
     XRAY_TEMPLATES_DIR,
 )
 from .diagnostics import export_diagnostics
+from .discord_proxy_manager import DiscordProxyManager
 from .models import AppSettings, AppState, Node, RoutingSettings
 from .network_monitor import NetworkMonitor
 from .proxy_manager import ProxyManager
@@ -217,6 +218,7 @@ class AppController(QObject):
         self._xray_tun_routes = XrayTunRouteManager(self)
         self.zapret = ZapretManager(self)
         self.proxy = ProxyManager()
+        self.discord_proxy = DiscordProxyManager()
         self.network_monitor = NetworkMonitor(parent=self)
 
         self.state = AppState()
@@ -310,6 +312,10 @@ class AppController(QObject):
         self._save_timer.setInterval(250)
         self._save_timer.timeout.connect(self._flush_scheduled_save)
         self._save_pending = False
+        self._discord_proxy_watchdog = QTimer(self)
+        self._discord_proxy_watchdog.setInterval(15_000)
+        self._discord_proxy_watchdog.timeout.connect(self._check_discord_proxy_watchdog)
+        self._discord_proxy_watchdog.start()
 
     def load(self) -> bool:
         try:
@@ -1192,6 +1198,41 @@ class AppController(QObject):
         current_target = self._desired_connected if (self._transition_active or self._transition_pending) else self.connected
         self._desired_connected = not current_target
         self._request_transition("toggle connection")
+
+    def set_discord_proxy_enabled(self, enabled: bool) -> None:
+        settings = deepcopy(self.state.settings)
+        settings.discord_proxy_enabled = bool(enabled)
+        self.state.settings = settings
+        self.settings_changed.emit(self.state.settings)
+        self.schedule_save()
+        if enabled:
+            self.apply_discord_proxy()
+        else:
+            result = self.discord_proxy.disable()
+            self._log(f"[discord-proxy] disable: {result.message}")
+            self.status.emit("success" if result.ok else "warning", result.message)
+
+    def apply_discord_proxy(self) -> None:
+        if not self.state.settings.discord_proxy_enabled:
+            return
+        if not self.connected and not self._desired_connected:
+            self.status.emit("warning", "Сначала запустите прокси Bebra VPN, потом включите Discord voice через прокси")
+            return
+        socks_port, _ = self.get_effective_proxy_ports()
+        result = self.discord_proxy.enable(int(socks_port))
+        self._log(f"[discord-proxy] enable: {result.message}")
+        self.status.emit("success" if result.ok else "error", result.message)
+
+    def _check_discord_proxy_watchdog(self) -> None:
+        if not self.state.settings.discord_proxy_enabled or not self.connected:
+            return
+        socks_port, _ = self.get_effective_proxy_ports()
+        result = self.discord_proxy.ensure_active(int(socks_port))
+        if result.affected:
+            self._log(f"[discord-proxy] watchdog: {result.message}")
+            self.status.emit("success" if result.ok else "warning", result.message)
+        elif not result.ok:
+            self._log(f"[discord-proxy] watchdog error: {result.message}")
 
     def switch_next_node(self) -> None:
         if not self.state.nodes:
