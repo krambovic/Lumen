@@ -140,7 +140,7 @@ def _pick_release_from_github(releases: list[dict], channel: str) -> dict | None
             text = f"{release.get('tag_name', '')} {release.get('name', '')}".lower()
             if "beta" in text or "rc" in text:
                 return release
-        return None
+        return prereleases[0]
 
     # nightly
     for release in prereleases:

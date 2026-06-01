@@ -38,6 +38,8 @@ class LogsPage(QWidget):
         root.addWidget(BodyLabel("Логи работы", self))
         self.log_edit = PlainTextEdit(self)
         self.log_edit.setReadOnly(True)
+        self.log_edit.setUndoRedoEnabled(False)
+        self.log_edit.setCenterOnScroll(False)
         self.log_edit.document().setMaximumBlockCount(2000)
         tune_plain_scroll_area(self.log_edit)
         root.addWidget(self.log_edit, 1)
@@ -83,6 +85,7 @@ class LogsPage(QWidget):
     def _flush_updates(self) -> None:
         query = self.search.text().strip().lower()
         vbar = self.log_edit.verticalScrollBar()
+        previous_value = vbar.value()
         was_at_bottom = vbar.value() >= max(0, vbar.maximum() - 4)
         if self._full_refresh_needed or query:
             if not query:
@@ -97,3 +100,5 @@ class LogsPage(QWidget):
         self._full_refresh_needed = False
         if was_at_bottom:
             vbar.setValue(vbar.maximum())
+        else:
+            vbar.setValue(min(previous_value, vbar.maximum()))

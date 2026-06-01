@@ -244,10 +244,10 @@ class SettingsPage(QWidget):
 
         self.tun_engine_card = _ComboCard(
             FIF.DEVELOPER_TOOLS, "Движок TUN",
-            "sing-box — рекомендуемый TUN engine; xray — experimental native TUN; tun2socks — отдельный fallback engine",
+            "xray — основной TUN engine; sing-box и tun2socks доступны как fallback",
             [
-                ("sing-box (recommended)", "singbox"),
-                ("xray (experimental)", "xray"),
+                ("xray (default)", "xray"),
+                ("sing-box", "singbox"),
                 ("tun2socks", "tun2socks"),
             ],
             parent=paths_group,

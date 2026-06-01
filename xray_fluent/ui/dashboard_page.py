@@ -102,6 +102,7 @@ class DashboardPage(QWidget):
         self._up_history: deque[float] = deque(maxlen=300)
         self._last_process_stats: list | None = None
         self._compact_mode = False
+        self._top_grid_single_column: bool | None = None
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -406,8 +407,31 @@ class DashboardPage(QWidget):
 
         self._stack.setCurrentIndex(0)
         self._refresh_dashboard()
+        self._apply_responsive_layout()
 
     # ── Public API ────────────────────────────────────────────
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_responsive_layout()
+
+    def _apply_responsive_layout(self) -> None:
+        single_column = self.width() < 860
+        if single_column == self._top_grid_single_column:
+            return
+        self._top_grid_single_column = single_column
+        self._top_grid.removeWidget(self.connection_card)
+        self._top_grid.removeWidget(self.routing_card)
+        if single_column:
+            self._top_grid.addWidget(self.connection_card, 0, 0)
+            self._top_grid.addWidget(self.routing_card, 1, 0)
+            self._top_grid.setColumnStretch(0, 1)
+            self._top_grid.setColumnStretch(1, 0)
+        else:
+            self._top_grid.addWidget(self.connection_card, 0, 0)
+            self._top_grid.addWidget(self.routing_card, 0, 1)
+            self._top_grid.setColumnStretch(0, 1)
+            self._top_grid.setColumnStretch(1, 1)
 
     def set_nodes(self, nodes: list[Node], selected_node_id: str | None) -> None:
         self._nodes = list(nodes)

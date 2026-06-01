@@ -276,10 +276,20 @@ class MainWindow(FluentWindow):
     def _apply_window_geometry(self, settings: AppSettings) -> None:
         width = max(self.minimumWidth(), int(settings.window_width or 1000))
         height = max(self.minimumHeight(), int(settings.window_height or 720))
+        screen = QGuiApplication.screenAt(self.pos()) or QGuiApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else None
+        if available is not None:
+            width = min(width, max(self.minimumWidth(), available.width()))
+            height = min(height, max(self.minimumHeight(), available.height()))
         self.resize(width, height)
         if settings.window_x >= 0 and settings.window_y >= 0:
             if self._is_position_on_screen(settings.window_x, settings.window_y):
-                self.move(settings.window_x, settings.window_y)
+                x = settings.window_x
+                y = settings.window_y
+                if available is not None:
+                    x = min(max(available.left(), x), max(available.left(), available.right() - width + 1))
+                    y = min(max(available.top(), y), max(available.top(), available.bottom() - height + 1))
+                self.move(x, y)
 
     @staticmethod
     def _is_position_on_screen(x: int, y: int) -> bool:

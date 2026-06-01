@@ -211,6 +211,8 @@ class NodesPage(QWidget):
         self.table.setModel(self._table_model)
         vertical_header = cast(QHeaderView, self.table.verticalHeader())
         vertical_header.setVisible(False)
+        vertical_header.setDefaultSectionSize(32)
+        vertical_header.setMinimumSectionSize(28)
 
         horizontal_header = cast(QHeaderView, self.table.horizontalHeader())
         horizontal_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -222,6 +224,7 @@ class NodesPage(QWidget):
         horizontal_header.setSectionsClickable(True)
         horizontal_header.sectionClicked.connect(self._on_header_clicked)
         self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -831,6 +834,11 @@ class NodesPage(QWidget):
 
         if count == 1:
             node_id = next(iter(ids))
+            active_action = Action("Установить как активный", self)
+            active_action.triggered.connect(lambda: self.selected_node_changed.emit(node_id))
+            menu.addAction(active_action)
+            menu.addSeparator()
+
             edit_action = Action("Редактировать", self)
             edit_action.triggered.connect(lambda: self.edit_node_requested.emit(node_id))
             menu.addAction(edit_action)

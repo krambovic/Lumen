@@ -138,8 +138,8 @@ class NodesTableModel(QAbstractTableModel):
         row = self._id_to_row.get(node_id)
         if row is None:
             return
-        top_left = self.index(row, 0)
-        bottom_right = self.index(row, 9)
+        top_left = self.index(row, 6)
+        bottom_right = self.index(row, 8)
         self.dataChanged.emit(
             top_left,
             bottom_right,
@@ -157,8 +157,8 @@ class NodesTableModel(QAbstractTableModel):
         row = self._id_to_row.get(node_id)
         if row is None:
             return
-        top_left = self.index(row, 0)
-        bottom_right = self.index(row, 9)
+        top_left = self.index(row, 6)
+        bottom_right = self.index(row, 8)
         self.dataChanged.emit(
             top_left,
             bottom_right,

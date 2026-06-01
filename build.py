@@ -89,7 +89,7 @@ def _copy_tree_merge(src: Path, dst: Path) -> None:
     """Copy src tree into dst, overwriting files where possible and skipping locked ones."""
     dst.mkdir(parents=True, exist_ok=True)
     for item in src.iterdir():
-        if "Zone.Identifier" in item.name:
+        if "Zone.Identifier" in item.name or item.name.lower().endswith(".bak"):
             continue
         target = dst / item.name
         if item.is_dir():

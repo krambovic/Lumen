@@ -176,11 +176,11 @@ class AppSettings:
     allow_updates: bool = True
     release_channel: str = "stable"  # stable | beta | nightly
     update_feed_url: str = ""
-    xray_release_channel: str = "stable"  # stable | beta | nightly
+    xray_release_channel: str = "beta"  # stable | beta | nightly
     xray_update_feed_url: str = ""
     xray_auto_update: bool = False
     tun_mode: bool = False
-    tun_engine: str = "singbox"  # "singbox" | "xray" | "tun2socks"
+    tun_engine: str = "xray"  # "singbox" | "xray" | "tun2socks"
     xray_config_file: str = ""
     xray_template_file: str = ""
     singbox_path: str = ""
@@ -238,6 +238,9 @@ class AppSettings:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "AppSettings":
+        xray_release_channel = str(data.get("xray_release_channel") or "beta")
+        if xray_release_channel == "stable":
+            xray_release_channel = "beta"
         return AppSettings(
             theme=str(data.get("theme") or "system"),
             accent_color=str(data.get("accent_color") or "#0078D4"),
@@ -254,11 +257,11 @@ class AppSettings:
             allow_updates=bool(data.get("allow_updates", True)),
             release_channel=str(data.get("release_channel") or "stable"),
             update_feed_url=str(data.get("update_feed_url") or ""),
-            xray_release_channel=str(data.get("xray_release_channel") or "stable"),
+            xray_release_channel=xray_release_channel,
             xray_update_feed_url=str(data.get("xray_update_feed_url") or ""),
             xray_auto_update=bool(data.get("xray_auto_update", False)),
             tun_mode=bool(data.get("tun_mode", False)),
-            tun_engine=str(data.get("tun_engine") or "singbox"),
+            tun_engine=str(data.get("tun_engine") or "xray"),
             xray_config_file=str(data.get("xray_config_file") or ""),
             xray_template_file=str(data.get("xray_template_file") or ""),
             singbox_path=str(data.get("singbox_path") or ""),
