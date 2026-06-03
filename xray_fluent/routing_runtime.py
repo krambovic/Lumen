@@ -1,21 +1,61 @@
 from __future__ import annotations
 
+import json
 import ntpath
 from ipaddress import ip_network
+from pathlib import Path
 from typing import Any
 
-from .constants import ROUTING_DIRECT, ROUTING_GLOBAL
+from .constants import DATA_DIR, ROUTING_DIRECT, ROUTING_GLOBAL
 from .models import AppSettings, RoutingSettings
 from .process_presets import PROCESS_PRESETS_BY_ID
 from .service_presets import SERVICE_PRESETS_BY_ID
 
-_SINGBOX_RULE_SET_URLS = {
-    "geosite:category-ru": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geosite/geosite-category-ru.srs",
-    "geosite:category-media-ru-blocked": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geosite/geosite-category-media-ru-blocked.srs",
-    "geoip:ru": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geoip/geoip-ru.srs",
-    "geoip:ru-blocked": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geoip/geoip-ru-blocked.srs",
-    "geoip:ru-blocked-community": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/sing-box/rule-set-geoip/geoip-ru-blocked-community.srs",
+_SINGBOX_RULE_SET_DIR = DATA_DIR / "runtime" / "sing-box-rule-sets"
+_SINGBOX_RULE_SET_SOURCES = {
+    "geosite:category-ru": {
+        "domains": (),
+        "domain_suffix": ("ru", "su", "рф"),
+        "ips": (),
+    },
+    "geosite:category-media-ru-blocked": {
+        "domains": (
+            "zapret/lists/discord.txt",
+            "zapret/lists/google.txt",
+            "zapret/lists/list-general.txt",
+            "zapret/lists/list-google.txt",
+            "zapret/lists/russia-discord.txt",
+            "zapret/lists/russia-youtube.txt",
+            "zapret/lists/youtube.txt",
+        ),
+        "domain_suffix": (),
+        "ips": (),
+    },
+    "geoip:ru": {
+        "domains": (),
+        "domain_suffix": (),
+        "ips": ("zapret/lists/ipset-ru.txt",),
+    },
+    "geoip:ru-blocked": {
+        "domains": (),
+        "domain_suffix": (),
+        "ips": (
+            "zapret/lists/ipset-all.txt",
+            "zapret/lists/ipset-zapretkvn.txt",
+            "zapret/lists/russia-discord-ipset.txt",
+        ),
+    },
+    "geoip:ru-blocked-community": {
+        "domains": (),
+        "domain_suffix": (),
+        "ips": (
+            "zapret/lists/ipset-all.txt",
+            "zapret/lists/ipset-zapretkvn.txt",
+            "zapret/lists/russia-discord-ipset.txt",
+        ),
+    },
 }
+_SINGBOX_MANAGED_RULE_SET_TAGS = {key.replace(":", "-") for key in _SINGBOX_RULE_SET_SOURCES}
 
 _XRAY_UNSUPPORTED_GEOIP_CODES = {
     "geoip:ru-blocked",
@@ -377,40 +417,118 @@ def _singbox_domain_ip_rule(items: list[str], outbound: str) -> tuple[dict[str, 
 
 
 def _singbox_rule_set_tag(value: str) -> str:
-    if value not in _SINGBOX_RULE_SET_URLS:
+    if value not in _SINGBOX_RULE_SET_SOURCES:
         return ""
     return value.replace(":", "-")
 
 
 def _ensure_singbox_rule_sets(route: dict[str, Any], tags: set[str]) -> None:
-    if not tags:
-        return
     existing = route.setdefault("rule_set", [])
     if not isinstance(existing, list):
         existing = []
         route["rule_set"] = existing
-    present = {
-        str(item.get("tag") or "")
+
+    existing[:] = [
+        item
         for item in existing
-        if isinstance(item, dict)
-    }
-    reverse_urls = {key.replace(":", "-"): url for key, url in _SINGBOX_RULE_SET_URLS.items()}
+        if not (isinstance(item, dict) and str(item.get("tag") or "") in _SINGBOX_MANAGED_RULE_SET_TAGS)
+    ]
+    if not tags:
+        return
+
+    reverse_keys = {key.replace(":", "-"): key for key in _SINGBOX_RULE_SET_SOURCES}
     for tag in sorted(tags):
-        if tag in present:
+        key = reverse_keys.get(tag)
+        if not key:
             continue
-        url = reverse_urls.get(tag)
-        if not url:
-            continue
+        path = _ensure_singbox_local_rule_set(key)
         existing.append(
             {
-                "type": "remote",
+                "type": "local",
                 "tag": tag,
-                "format": "binary",
-                "url": url,
-                "download_detour": "proxy",
-                "update_interval": "24h",
+                "format": "source",
+                "path": str(path),
             }
         )
+
+
+def _ensure_singbox_local_rule_set(key: str) -> Path:
+    source = _SINGBOX_RULE_SET_SOURCES[key]
+    tag = key.replace(":", "-")
+    path = _SINGBOX_RULE_SET_DIR / f"{tag}.json"
+    domains = _read_domain_lists(source.get("domains") or ())
+    domain_suffix = sorted(
+        {
+            value.strip().lstrip(".").lower()
+            for value in source.get("domain_suffix") or ()
+            if str(value).strip()
+        }
+    )
+    ips = _read_ip_lists(source.get("ips") or ())
+
+    rules: list[dict[str, Any]] = []
+    if domains:
+        rules.append({"domain_suffix": domains})
+    if domain_suffix:
+        rules.append({"domain_suffix": domain_suffix})
+    if ips:
+        rules.append({"ip_cidr": ips})
+    if not rules:
+        rules.append({"domain_suffix": [tag]})
+
+    payload = {"version": 3, "rules": rules}
+    _SINGBOX_RULE_SET_DIR.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if not path.exists() or path.read_text(encoding="utf-8", errors="ignore") != text:
+        path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _read_domain_lists(paths: tuple[str, ...]) -> list[str]:
+    values: set[str] = set()
+    for relative in paths:
+        path = DATA_DIR.parent / relative
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            value = _normalize_list_entry(line)
+            if not value:
+                continue
+            try:
+                ip_network(value, strict=False)
+                continue
+            except ValueError:
+                values.add(value.lstrip(".").lower())
+    return sorted(values)
+
+
+def _read_ip_lists(paths: tuple[str, ...]) -> list[str]:
+    values: set[str] = set()
+    for relative in paths:
+        path = DATA_DIR.parent / relative
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            value = _normalize_list_entry(line)
+            if not value:
+                continue
+            try:
+                values.add(str(ip_network(value, strict=False)))
+            except ValueError:
+                continue
+    return sorted(values)
+
+
+def _normalize_list_entry(line: str) -> str:
+    value = line.split("#", 1)[0].strip()
+    if not value:
+        return ""
+    if value.startswith(("domain:", "full:", "keyword:", "regexp:", "ip:")):
+        value = value.split(":", 1)[1].strip()
+    if value.startswith("||"):
+        value = value[2:]
+    value = value.strip("|^,; ")
+    return value
 
 
 def _singbox_runtime_rule_insert_index(rules: list[Any]) -> int:
