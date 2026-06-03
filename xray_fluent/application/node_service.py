@@ -90,8 +90,18 @@ def update_node(controller: AppController, node_id: str, updates: dict) -> bool:
         node.group = updates["group"]
     if "tags" in updates:
         node.tags = list(updates["tags"])
+    if "server" in updates:
+        node.server = str(updates["server"])
+    if "port" in updates:
+        node.port = int(updates["port"] or 0)
+    if "outbound" in updates and isinstance(updates["outbound"], dict):
+        node.outbound = dict(updates["outbound"])
+    if "link" in updates:
+        node.link = str(updates["link"] or "")
     controller.nodes_changed.emit(controller.state.nodes)
     controller.save()
+    if controller.connected or controller._desired_connected:
+        controller._request_transition("node updated")
     return True
 
 

@@ -283,6 +283,9 @@ def _node_should_use_xray_sidecar(node: Node | None) -> bool:
 
     stream_settings = outbound.get("streamSettings")
     if isinstance(stream_settings, dict):
+        network = str(stream_settings.get("network") or "").strip().lower()
+        if network == "raw" or "finalmask" in stream_settings:
+            return True
         security = str(stream_settings.get("security") or "").strip().lower()
         if security == "reality":
             return True

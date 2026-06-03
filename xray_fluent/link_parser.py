@@ -8,9 +8,6 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .models import Node
 
 
-DEFAULT_TLS_FINGERPRINT = "chrome"
-
-
 class LinkParseError(ValueError):
     pass
 
@@ -165,7 +162,8 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
         if alpn:
             tls_settings["alpn"] = [item.strip() for item in alpn.split(",") if item.strip()]
         fp = _get_param(params, "fp", "fingerprint")
-        tls_settings["fingerprint"] = fp or DEFAULT_TLS_FINGERPRINT
+        if fp:
+            tls_settings["fingerprint"] = fp
         allow_insecure = _get_param(params, "allowInsecure", "allow_insecure")
         if allow_insecure:
             tls_settings["allowInsecure"] = _to_bool(allow_insecure)
@@ -176,7 +174,8 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
         if sni:
             reality_settings["serverName"] = sni
         fp = _get_param(params, "fp", "fingerprint")
-        reality_settings["fingerprint"] = fp or DEFAULT_TLS_FINGERPRINT
+        if fp:
+            reality_settings["fingerprint"] = fp
         pbk = _get_param(params, "pbk", "publicKey", "public_key", "password")
         if pbk:
             reality_settings["publicKey"] = pbk
@@ -186,7 +185,17 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
         spx = _get_param(params, "spx", "spiderX", "spider_x")
         if spx:
             reality_settings["spiderX"] = spx
+        pqv = _get_param(params, "pqv", "mldsa65Verify", "mldsa65_verify")
+        if pqv:
+            reality_settings["mldsa65Verify"] = pqv
         stream["realitySettings"] = reality_settings
+
+    finalmask = _get_param(params, "fm", "finalmask")
+    if finalmask:
+        try:
+            stream["finalmask"] = json.loads(finalmask)
+        except Exception:
+            stream["finalmask"] = finalmask
 
     return stream
 
@@ -244,7 +253,6 @@ def repair_node_outbound_from_link(node: Node) -> bool:
         reparsed = parse_single(link)
     except Exception:
         return False
-    normalize_node_outbound(reparsed)
     if reparsed.outbound == node.outbound:
         return False
     node.outbound = reparsed.outbound
@@ -276,9 +284,6 @@ def normalize_outbound_for_runtime(outbound: dict[str, Any], server: str = "") -
             tls_settings = {}
             stream_settings["tlsSettings"] = tls_settings
             changed = True
-        if not str(tls_settings.get("fingerprint") or "").strip():
-            tls_settings["fingerprint"] = DEFAULT_TLS_FINGERPRINT
-            changed = True
         if not str(tls_settings.get("serverName") or "").strip():
             inferred = _infer_transport_host(stream_settings) or server
             if inferred:
@@ -289,9 +294,6 @@ def normalize_outbound_for_runtime(outbound: dict[str, Any], server: str = "") -
         if not isinstance(reality_settings, dict):
             reality_settings = {}
             stream_settings["realitySettings"] = reality_settings
-            changed = True
-        if not str(reality_settings.get("fingerprint") or "").strip():
-            reality_settings["fingerprint"] = DEFAULT_TLS_FINGERPRINT
             changed = True
     return changed
 
