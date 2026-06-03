@@ -138,8 +138,53 @@ def apply_xray_gui_routing(payload: dict[str, Any], routing: RoutingSettings, se
     if not isinstance(rules, list):
         rules = []
         route["rules"] = rules
+    rules[:] = [rule for rule in rules if not _is_legacy_bebra_xray_route_rule(rule)]
     insert_at = _xray_runtime_rule_insert_index(rules)
     rules[insert_at:insert_at] = build_xray_gui_routing_rules(routing, settings)
+
+
+def _is_legacy_bebra_xray_route_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    outbound = str(rule.get("outboundTag") or "")
+    domains = {str(item) for item in rule.get("domain") or []} if isinstance(rule.get("domain"), list) else set()
+    ips = {str(item) for item in rule.get("ip") or []} if isinstance(rule.get("ip"), list) else set()
+    processes = {str(item).lower() for item in rule.get("process") or []} if isinstance(rule.get("process"), list) else set()
+    network = str(rule.get("network") or "")
+
+    if outbound == "direct" and (ips == {"geoip:private"} or domains == {"geosite:private"}):
+        return True
+    if outbound == "direct" and (ips == {"geoip:ru"} or domains == {"geosite:category-ru"}):
+        return True
+    if outbound == "proxy" and network == "tcp,udp" and not domains and not ips and not processes:
+        return True
+    legacy_domains = {
+        "regexp:(^|\\.)facebook\\.com$",
+        "regexp:(^|\\.)fbcdn\\.net$",
+        "regexp:(^|\\.)instagram\\.com$",
+        "full:ntc.party",
+        "full:rutracker.org",
+        "full:static.rutracker.cc",
+    }
+    if outbound == "proxy" and domains == legacy_domains:
+        return True
+    legacy_proxy_processes = {
+        "telegram.exe",
+        "ayugram.exe",
+        "discord.exe",
+        "vesktop.exe",
+        "spotify.exe",
+        "chrome.exe",
+        "firefox.exe",
+        "waterfox.exe",
+        "librewolf.exe",
+        "msedge.exe",
+        "opera.exe",
+        "brave.exe",
+        "vivaldi.exe",
+        "browser.exe",
+    }
+    return outbound == "proxy" and bool(processes) and processes.issubset(legacy_proxy_processes)
 
 
 def _xray_runtime_rule_insert_index(rules: list[Any]) -> int:
@@ -346,7 +391,7 @@ def _ensure_singbox_rule_sets(route: dict[str, Any], tags: set[str]) -> None:
                 "tag": tag,
                 "format": "binary",
                 "url": url,
-                "download_detour": "direct",
+                "download_detour": "proxy",
                 "update_interval": "24h",
             }
         )
