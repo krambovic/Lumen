@@ -9,11 +9,12 @@
       "tag": "tun-in",
       "interface_name": "xftun",
       "address": [
-        "172.19.0.1/30"
+        "172.18.0.1/30"
       ],
+      "mtu": 9000,
       "auto_route": true,
       "strict_route": false,
-      "stack": "mixed"
+      "stack": "system"
     }
   ],
   "outbounds": [
@@ -33,14 +34,41 @@
   ],
   "route": {
     "auto_detect_interface": true,
-    "default_domain_resolver": "proxy-dns",
+    "default_domain_resolver": "bootstrap-dns",
     "rules": [
       {
         "action": "sniff"
       },
       {
-        "protocol": "dns",
-        "action": "hijack-dns"
+        "type": "logical",
+        "mode": "or",
+        "action": "hijack-dns",
+        "rules": [
+          {
+            "port": 53
+          },
+          {
+            "protocol": "dns"
+          }
+        ]
+      },
+      {
+        "network": "udp",
+        "port": [
+          135,
+          137,
+          138,
+          139,
+          5353
+        ],
+        "action": "reject"
+      },
+      {
+        "ip_cidr": [
+          "224.0.0.0/3",
+          "ff00::/8"
+        ],
+        "action": "reject"
       },
       {
         "ip_is_private": true,

@@ -171,7 +171,18 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
     _ensure_singbox_rule_sets(route, rule_sets)
     insert_at = _singbox_runtime_rule_insert_index(rules)
     rules[insert_at:insert_at] = gui_rules
-    route["final"] = "direct" if routing.mode == ROUTING_DIRECT else "proxy"
+    final_outbound = "direct" if routing.mode == ROUTING_DIRECT else "proxy"
+    route["final"] = final_outbound
+    dns = payload.get("dns")
+    if isinstance(dns, dict):
+        dns_tags = {
+            str(server.get("tag") or "")
+            for server in dns.get("servers") or []
+            if isinstance(server, dict)
+        }
+        target_dns = "bootstrap-dns" if final_outbound == "direct" else "proxy-dns"
+        if target_dns in dns_tags:
+            dns["final"] = target_dns
 
 
 def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[str, Any]], set[str]]:

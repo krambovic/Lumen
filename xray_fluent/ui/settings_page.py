@@ -246,8 +246,7 @@ class SettingsPage(QWidget):
             FIF.DEVELOPER_TOOLS, "Движок TUN",
             "xray — основной TUN engine; sing-box и tun2socks доступны как fallback",
             [
-                ("xray (default)", "xray"),
-                ("sing-box", "singbox"),
+                ("sing-box (default)", "singbox"),
                 ("tun2socks", "tun2socks"),
             ],
             parent=paths_group,

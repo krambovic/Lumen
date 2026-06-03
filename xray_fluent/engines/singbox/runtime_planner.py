@@ -410,14 +410,85 @@ def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any]) -> None:
     the previous wintun interface.
     """
     inbounds = payload.get("inbounds")
-    if not isinstance(inbounds, list):
+    has_tun = False
+    if isinstance(inbounds, list):
+        for inbound in inbounds:
+            if not isinstance(inbound, dict):
+                continue
+            if str(inbound.get("type") or "").strip().lower() != "tun":
+                continue
+            has_tun = True
+            inbound["interface_name"] = _generate_tun_interface_name()
+            inbound["address"] = ["172.18.0.1/30"]
+            inbound["mtu"] = int(inbound.get("mtu") or 9000)
+            inbound["auto_route"] = True
+            inbound["strict_route"] = bool(inbound.get("strict_route", False))
+            inbound["stack"] = str(inbound.get("stack") or "system")
+            inbound.pop("sniff", None)
+    if not has_tun:
         return
-    for inbound in inbounds:
-        if not isinstance(inbound, dict):
+
+    route = _ensure_dict(payload, "route")
+    route["auto_detect_interface"] = True
+    if not route.get("default_domain_resolver"):
+        route["default_domain_resolver"] = "bootstrap-dns"
+    rules = _ensure_list(route, "rules")
+    _ensure_singbox_tun_base_rules(rules)
+
+
+def _ensure_singbox_tun_base_rules(rules: list[Any]) -> None:
+    base_rules = [
+        {"action": "sniff"},
+        {
+            "type": "logical",
+            "mode": "or",
+            "action": "hijack-dns",
+            "rules": [
+                {"port": 53},
+                {"protocol": "dns"},
+            ],
+        },
+        {
+            "network": "udp",
+            "port": [135, 137, 138, 139, 5353],
+            "action": "reject",
+        },
+        {
+            "ip_cidr": ["224.0.0.0/3", "ff00::/8"],
+            "action": "reject",
+        },
+    ]
+
+    def matches(candidate: Any, marker: dict[str, Any]) -> bool:
+        if not isinstance(candidate, dict):
+            return False
+        action = marker.get("action")
+        if action and candidate.get("action") != action:
+            return False
+        if action == "sniff":
+            return True
+        if action == "hijack-dns":
+            if candidate.get("port") == 53 or candidate.get("port") == [53]:
+                return True
+            if candidate.get("protocol") == "dns" or candidate.get("protocol") == ["dns"]:
+                return True
+            nested = candidate.get("rules")
+            if isinstance(nested, list):
+                has_port = any(isinstance(rule, dict) and rule.get("port") in (53, [53]) for rule in nested)
+                has_protocol = any(isinstance(rule, dict) and rule.get("protocol") in ("dns", ["dns"]) for rule in nested)
+                return has_port and has_protocol
+            return False
+        if action == "reject":
+            if marker.get("network") == "udp":
+                return candidate.get("network") == "udp" and candidate.get("port") == marker.get("port")
+            return candidate.get("ip_cidr") == marker.get("ip_cidr")
+        return False
+
+    insert_at = 0
+    for rule in reversed(base_rules):
+        if any(matches(existing, rule) for existing in rules):
             continue
-        if str(inbound.get("type") or "").strip().lower() != "tun":
-            continue
-        inbound["interface_name"] = _generate_tun_interface_name()
+        rules.insert(insert_at, rule)
 
 
 def _validate_runtime_dns_contract(payload: dict[str, Any]) -> None:

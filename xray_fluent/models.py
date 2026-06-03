@@ -181,7 +181,7 @@ class AppSettings:
     xray_auto_update: bool = False
     discord_proxy_enabled: bool = False
     tun_mode: bool = False
-    tun_engine: str = "xray"  # "singbox" | "xray" | "tun2socks"
+    tun_engine: str = "singbox"  # "singbox" | "xray" | "tun2socks"
     xray_config_file: str = ""
     xray_template_file: str = ""
     singbox_path: str = ""
@@ -197,6 +197,9 @@ class AppSettings:
     auto_switch_threshold_kbps: int = 50
     auto_switch_delay_sec: int = 30
     auto_switch_cooldown_sec: int = 60
+
+    def __post_init__(self) -> None:
+        self.tun_engine = _normalize_tun_engine(self.tun_engine)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -264,7 +267,7 @@ class AppSettings:
             xray_auto_update=bool(data.get("xray_auto_update", False)),
             discord_proxy_enabled=bool(data.get("discord_proxy_enabled", False)),
             tun_mode=bool(data.get("tun_mode", False)),
-            tun_engine=str(data.get("tun_engine") or "xray"),
+            tun_engine=_normalize_tun_engine(data.get("tun_engine")),
             xray_config_file=str(data.get("xray_config_file") or ""),
             xray_template_file=str(data.get("xray_template_file") or ""),
             singbox_path=str(data.get("singbox_path") or ""),
@@ -314,3 +317,12 @@ class AppState:
             settings=AppSettings.from_dict(dict(data.get("settings") or {})),
             security=SecuritySettings.from_dict(dict(data.get("security") or {})),
         )
+
+
+def _normalize_tun_engine(value: Any) -> str:
+    engine = str(value or "").strip().lower()
+    if engine == "tun2socks":
+        return "tun2socks"
+    # v2rayN-style TUN is sing-box based. Older Bebra VPN builds stored
+    # "xray" here, which could produce unstable DNS/routing on Windows.
+    return "singbox"
