@@ -991,6 +991,12 @@ class AppController(QObject):
         reason = self._transition_reason or action
         self._transition_active = True
         self.transition_state_changed.emit(True, self._transition_status_text(action))
+        generation = self._transition_generation
+        QTimer.singleShot(16, lambda: self._execute_transition_action(action, reason, generation))
+
+    def _execute_transition_action(self, action: str, reason: str, generation: int) -> None:
+        if not self._transition_active:
+            return
         try:
             ok = self._run_transition_action(action, reason)
             if ok:
@@ -1000,9 +1006,11 @@ class AppController(QObject):
                 self._desired_connected = self.connected
         finally:
             self._transition_active = False
+            if generation != self._transition_generation:
+                self._transition_pending = True
             if self._transition_pending or self._needs_transition():
                 self._transition_scheduled = True
-                QTimer.singleShot(0, self._drain_transition_queue)
+                QTimer.singleShot(16, self._drain_transition_queue)
             else:
                 self.transition_state_changed.emit(False, "")
 

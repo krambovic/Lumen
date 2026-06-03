@@ -264,7 +264,7 @@ class NodesPage(QWidget):
 
         self._metric_sort_reload_timer = QTimer(self)
         self._metric_sort_reload_timer.setSingleShot(True)
-        self._metric_sort_reload_timer.setInterval(50)
+        self._metric_sort_reload_timer.setInterval(180)
         self._metric_sort_reload_timer.timeout.connect(self._reload)
 
         self._activity_widget_timer = QTimer(self)
@@ -415,25 +415,27 @@ class NodesPage(QWidget):
         self._visible_node_ids = [node.id for node in filtered]
 
         self.table.setUpdatesEnabled(False)
-        self._clear_activity_widgets()
-        self._table_model.set_nodes(filtered)
-        selection_model = self.table.selectionModel()
-        if selection_model is not None:
-            selection_model.blockSignals(True)
-            selection_model.clearSelection()
-            for row, nid in enumerate(self._visible_node_ids):
-                if nid not in prev_selected:
-                    continue
-                index = self._table_model.index(row, 0)
-                if not index.isValid():
-                    continue
-                selection_model.select(
-                    index,
-                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-                )
-            selection_model.blockSignals(False)
-        self.table.setUpdatesEnabled(True)
-        self._apply_activity_widgets()
+        try:
+            self._clear_activity_widgets()
+            self._table_model.set_nodes(filtered)
+            selection_model = self.table.selectionModel()
+            if selection_model is not None:
+                selection_model.blockSignals(True)
+                selection_model.clearSelection()
+                for row, nid in enumerate(self._visible_node_ids):
+                    if nid not in prev_selected:
+                        continue
+                    index = self._table_model.index(row, 0)
+                    if not index.isValid():
+                        continue
+                    selection_model.select(
+                        index,
+                        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                    )
+                selection_model.blockSignals(False)
+        finally:
+            self.table.setUpdatesEnabled(True)
+        self._schedule_activity_widgets_refresh()
 
         self._emit_selection()
 

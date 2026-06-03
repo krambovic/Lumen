@@ -35,8 +35,25 @@ class NodesTableModel(QAbstractTableModel):
         self._busy_speed_ids: set[str] = set()
 
     def set_nodes(self, nodes: list[Node]) -> None:
+        new_nodes = list(nodes)
+        if len(new_nodes) == len(self._nodes) and all(
+            old.id == new.id for old, new in zip(self._nodes, new_nodes)
+        ):
+            self._nodes = new_nodes
+            if self._nodes:
+                self.dataChanged.emit(
+                    self.index(0, 0),
+                    self.index(len(self._nodes) - 1, len(_HEADERS) - 1),
+                    [
+                        Qt.ItemDataRole.DisplayRole,
+                        Qt.ItemDataRole.DecorationRole,
+                        Qt.ItemDataRole.ToolTipRole,
+                        Qt.ItemDataRole.ForegroundRole,
+                    ],
+                )
+            return
         self.beginResetModel()
-        self._nodes = list(nodes)
+        self._nodes = new_nodes
         self._id_to_row = {node.id: row for row, node in enumerate(self._nodes)}
         self.endResetModel()
 

@@ -109,6 +109,10 @@ class DashboardPage(QWidget):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(80)
         self._refresh_timer.timeout.connect(self._do_refresh_dashboard)
+        self._process_stats_timer = QTimer(self)
+        self._process_stats_timer.setSingleShot(True)
+        self._process_stats_timer.setInterval(250)
+        self._process_stats_timer.timeout.connect(self._flush_process_stats)
 
         # ── Outer layout with QStackedWidget ──────────────────
         outer = QVBoxLayout(self)
@@ -576,6 +580,13 @@ class DashboardPage(QWidget):
             self._clear_process_tables()
             return
         self._last_process_stats = list(stats)
+        if not self._process_stats_timer.isActive():
+            self._process_stats_timer.start()
+
+    def _flush_process_stats(self) -> None:
+        stats = self._last_process_stats
+        if stats is None:
+            return
         if self._proc_traffic_card.isVisible():
             self._apply_process_stats_to_table(self._proc_traffic_table, stats)
         if self._stack.currentIndex() == 2:
