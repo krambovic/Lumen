@@ -8,6 +8,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .models import Node
 
 
+DEFAULT_TLS_FINGERPRINT = "chrome"
+
+
 class LinkParseError(ValueError):
     pass
 
@@ -162,8 +165,7 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
         if alpn:
             tls_settings["alpn"] = [item.strip() for item in alpn.split(",") if item.strip()]
         fp = _get_param(params, "fp", "fingerprint")
-        if fp:
-            tls_settings["fingerprint"] = fp
+        tls_settings["fingerprint"] = fp or DEFAULT_TLS_FINGERPRINT
         allow_insecure = _get_param(params, "allowInsecure", "allow_insecure")
         if allow_insecure:
             tls_settings["allowInsecure"] = _to_bool(allow_insecure)
@@ -174,8 +176,7 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
         if sni:
             reality_settings["serverName"] = sni
         fp = _get_param(params, "fp", "fingerprint")
-        if fp:
-            reality_settings["fingerprint"] = fp
+        reality_settings["fingerprint"] = fp or DEFAULT_TLS_FINGERPRINT
         pbk = _get_param(params, "pbk", "publicKey", "public_key", "password")
         if pbk:
             reality_settings["publicKey"] = pbk
@@ -243,6 +244,7 @@ def repair_node_outbound_from_link(node: Node) -> bool:
         reparsed = parse_single(link)
     except Exception:
         return False
+    normalize_node_outbound(reparsed)
     if reparsed.outbound == node.outbound:
         return False
     node.outbound = reparsed.outbound
@@ -253,6 +255,66 @@ def repair_node_outbound_from_link(node: Node) -> bool:
     if node.port <= 0:
         node.port = reparsed.port
     return True
+
+
+def normalize_node_outbound(node: Node | None) -> bool:
+    if node is None or not isinstance(node.outbound, dict):
+        return False
+    return normalize_outbound_for_runtime(node.outbound, node.server)
+
+
+def normalize_outbound_for_runtime(outbound: dict[str, Any], server: str = "") -> bool:
+    changed = False
+    stream_settings = outbound.get("streamSettings")
+    if not isinstance(stream_settings, dict):
+        return False
+
+    security = str(stream_settings.get("security") or "").strip().lower()
+    if security == "tls":
+        tls_settings = stream_settings.get("tlsSettings")
+        if not isinstance(tls_settings, dict):
+            tls_settings = {}
+            stream_settings["tlsSettings"] = tls_settings
+            changed = True
+        if not str(tls_settings.get("fingerprint") or "").strip():
+            tls_settings["fingerprint"] = DEFAULT_TLS_FINGERPRINT
+            changed = True
+        if not str(tls_settings.get("serverName") or "").strip():
+            inferred = _infer_transport_host(stream_settings) or server
+            if inferred:
+                tls_settings["serverName"] = inferred
+                changed = True
+    elif security == "reality":
+        reality_settings = stream_settings.get("realitySettings")
+        if not isinstance(reality_settings, dict):
+            reality_settings = {}
+            stream_settings["realitySettings"] = reality_settings
+            changed = True
+        if not str(reality_settings.get("fingerprint") or "").strip():
+            reality_settings["fingerprint"] = DEFAULT_TLS_FINGERPRINT
+            changed = True
+    return changed
+
+
+def _infer_transport_host(stream_settings: dict[str, Any]) -> str:
+    network = str(stream_settings.get("network") or "").strip().lower()
+    if network == "ws":
+        headers = (stream_settings.get("wsSettings") or {}).get("headers") if isinstance(stream_settings.get("wsSettings"), dict) else {}
+        if isinstance(headers, dict):
+            return str(headers.get("Host") or headers.get("host") or "").split(",")[0].strip()
+    if network in {"http", "h2"}:
+        http_settings = stream_settings.get("httpSettings")
+        if isinstance(http_settings, dict):
+            hosts = http_settings.get("host")
+            if isinstance(hosts, list) and hosts:
+                return str(hosts[0]).strip()
+            if isinstance(hosts, str):
+                return hosts.split(",")[0].strip()
+    if network == "grpc":
+        grpc_settings = stream_settings.get("grpcSettings")
+        if isinstance(grpc_settings, dict):
+            return str(grpc_settings.get("authority") or "").strip()
+    return ""
 
 
 def validate_node_outbound(node: Node) -> str | None:

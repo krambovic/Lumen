@@ -195,7 +195,7 @@ def _xray_runtime_rule_insert_index(rules: list[Any]) -> int:
         if not isinstance(inbound, list):
             break
         inbound_text = {str(item) for item in inbound}
-        if any(tag.startswith("__app_") or tag == "api" for tag in inbound_text):
+        if any(tag.startswith("__app_") or tag in {"api", "discord-socks-in"} for tag in inbound_text):
             index += 1
             continue
         break

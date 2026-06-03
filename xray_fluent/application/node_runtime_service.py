@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..country_flags import CountryResolver, detect_country
-from ..link_parser import repair_node_outbound_from_link, validate_node_outbound
+from ..link_parser import normalize_node_outbound, repair_node_outbound_from_link, validate_node_outbound
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -53,7 +53,9 @@ def get_node_by_id(controller: AppController, node_id: str | None) -> Node | Non
 def prepare_node_for_runtime(controller: AppController, node: Node | None) -> str | None:
     if node is None:
         return None
-    if repair_node_outbound_from_link(node):
+    changed = repair_node_outbound_from_link(node)
+    changed = normalize_node_outbound(node) or changed
+    if changed:
         controller.schedule_save()
     return validate_node_outbound(node)
 

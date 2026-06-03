@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QTimer
 
 from ..country_flags import detect_country
-from ..link_parser import parse_links_text, validate_node_outbound
+from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -21,6 +21,7 @@ def import_nodes_from_text(controller: AppController, text: str) -> tuple[int, l
     first_new_id: str | None = None
     added = 0
     for node in nodes:
+        normalize_node_outbound(node)
         problem = validate_node_outbound(node)
         if problem:
             errors.append(problem)

@@ -111,6 +111,8 @@ def parse_singbox_document(source_path: Path, text: str) -> ParsedSingboxDocumen
 def classify_node_for_singbox(node: Node | None) -> str:
     if node is None:
         return "native_singbox"
+    if _node_should_use_xray_sidecar(node):
+        return "hybrid_xray_sidecar"
     try:
         build_singbox_outbound(node, tag="proxy")
     except ValueError:
@@ -151,9 +153,13 @@ def plan_singbox_runtime(
     if node is None:
         raise ValueError("В конфиге есть outbound tag `proxy`. Выберите сервер для запуска sing-box.")
 
+    force_sidecar = _node_should_use_xray_sidecar(node)
     try:
-        native_proxy = build_singbox_outbound(node, tag="proxy")
+        native_proxy = None if force_sidecar else build_singbox_outbound(node, tag="proxy")
     except ValueError:
+        native_proxy = None
+
+    if native_proxy is None:
         plan = _plan_hybrid_runtime(
             document,
             runtime_config=runtime_config,
@@ -165,6 +171,7 @@ def plan_singbox_runtime(
         )
         if routing is not None:
             apply_singbox_gui_routing(plan.singbox_config, routing)
+        _validate_runtime_dns_contract(plan.singbox_config)
         return plan
 
     assert isinstance(outbounds, list)
@@ -257,6 +264,44 @@ def _plan_hybrid_runtime(
         used_selected_node=True,
         xray_sidecar=sidecar,
     )
+
+
+def _node_should_use_xray_sidecar(node: Node | None) -> bool:
+    """Prefer Xray for VLESS Reality/Vision instead of sing-box native TUN.
+
+    v2rayN keeps these nodes on the Xray path, and small Reality/uTLS/Vision
+    differences are enough to make some targets hang or partially load through
+    TUN while the same server works in plain proxy mode.
+    """
+    outbound = node.outbound if node is not None else None
+    if not isinstance(outbound, dict):
+        return False
+
+    protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
+    if protocol != "vless":
+        return False
+
+    stream_settings = outbound.get("streamSettings")
+    if isinstance(stream_settings, dict):
+        security = str(stream_settings.get("security") or "").strip().lower()
+        if security == "reality":
+            return True
+
+    settings = outbound.get("settings")
+    vnext = settings.get("vnext") if isinstance(settings, dict) else None
+    if not isinstance(vnext, list):
+        return False
+    for server in vnext:
+        users = server.get("users") if isinstance(server, dict) else None
+        if not isinstance(users, list):
+            continue
+        for user in users:
+            if not isinstance(user, dict):
+                continue
+            flow = str(user.get("flow") or "").strip().lower()
+            if flow == "xtls-rprx-vision":
+                return True
+    return False
 
 
 def _build_xray_sidecar_config(
@@ -420,18 +465,17 @@ def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any]) -> None:
             has_tun = True
             inbound["interface_name"] = _generate_tun_interface_name()
             inbound["address"] = ["172.18.0.1/30"]
-            inbound["mtu"] = int(inbound.get("mtu") or 9000)
+            inbound["mtu"] = 9000
             inbound["auto_route"] = True
-            inbound["strict_route"] = bool(inbound.get("strict_route", False))
-            inbound["stack"] = str(inbound.get("stack") or "system")
+            inbound["strict_route"] = False
+            inbound["stack"] = "system"
             inbound.pop("sniff", None)
     if not has_tun:
         return
 
     route = _ensure_dict(payload, "route")
     route["auto_detect_interface"] = True
-    if not route.get("default_domain_resolver"):
-        route["default_domain_resolver"] = "bootstrap-dns"
+    route["default_domain_resolver"] = "bootstrap-dns"
     rules = _ensure_list(route, "rules")
     _ensure_singbox_tun_base_rules(rules)
 
@@ -458,37 +502,25 @@ def _ensure_singbox_tun_base_rules(rules: list[Any]) -> None:
             "action": "reject",
         },
     ]
+    rules[:] = [rule for rule in rules if not _is_singbox_tun_base_rule(rule)]
+    rules[0:0] = base_rules
 
-    def matches(candidate: Any, marker: dict[str, Any]) -> bool:
-        if not isinstance(candidate, dict):
-            return False
-        action = marker.get("action")
-        if action and candidate.get("action") != action:
-            return False
-        if action == "sniff":
-            return True
-        if action == "hijack-dns":
-            if candidate.get("port") == 53 or candidate.get("port") == [53]:
-                return True
-            if candidate.get("protocol") == "dns" or candidate.get("protocol") == ["dns"]:
-                return True
-            nested = candidate.get("rules")
-            if isinstance(nested, list):
-                has_port = any(isinstance(rule, dict) and rule.get("port") in (53, [53]) for rule in nested)
-                has_protocol = any(isinstance(rule, dict) and rule.get("protocol") in ("dns", ["dns"]) for rule in nested)
-                return has_port and has_protocol
-            return False
-        if action == "reject":
-            if marker.get("network") == "udp":
-                return candidate.get("network") == "udp" and candidate.get("port") == marker.get("port")
-            return candidate.get("ip_cidr") == marker.get("ip_cidr")
+
+def _is_singbox_tun_base_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
         return False
-
-    insert_at = 0
-    for rule in reversed(base_rules):
-        if any(matches(existing, rule) for existing in rules):
-            continue
-        rules.insert(insert_at, rule)
+    action = str(rule.get("action") or "")
+    if action == "sniff":
+        return True
+    if action == "hijack-dns":
+        return True
+    if rule.get("protocol") in ("dns", ["dns"]):
+        return True
+    if rule.get("port") in (53, [53]) and action in {"hijack-dns", ""}:
+        return True
+    if action == "reject" and rule.get("network") == "udp" and rule.get("port") == [135, 137, 138, 139, 5353]:
+        return True
+    return action == "reject" and rule.get("ip_cidr") == ["224.0.0.0/3", "ff00::/8"]
 
 
 def _validate_runtime_dns_contract(payload: dict[str, Any]) -> None:
