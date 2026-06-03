@@ -67,7 +67,7 @@ def build_xray_config(
             },
             "sniffing": {
                 "enabled": True,
-                "destOverride": ["http", "tls", "quic"],
+                "destOverride": ["http", "tls"],
                 "routeOnly": True,
             },
         },
@@ -97,7 +97,7 @@ def build_xray_config(
                 },
                 "sniffing": {
                     "enabled": True,
-                    "destOverride": ["http", "tls", "quic"],
+                    "destOverride": ["http", "tls"],
                     "routeOnly": True,
                 },
             }

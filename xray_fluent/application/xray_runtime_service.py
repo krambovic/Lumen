@@ -137,7 +137,7 @@ def ensure_xray_metrics_contract(
                 },
                 "sniffing": {
                     "enabled": True,
-                    "destOverride": ["http", "tls", "quic"],
+                    "destOverride": ["http", "tls"],
                     "routeOnly": True,
                 },
             },
@@ -219,7 +219,7 @@ def ensure_xray_tun_contract(controller: AppController, payload: dict[str, Any])
             "settings": {},
             "sniffing": {
                 "enabled": True,
-                "destOverride": ["http", "tls", "quic"],
+                "destOverride": ["http", "tls"],
                 "routeOnly": True,
             },
         }

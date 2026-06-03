@@ -76,7 +76,14 @@ def append_xray_process_rule(rules: list[dict[str, Any]], processes: list[str], 
 
 
 def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings) -> list[dict[str, Any]]:
-    rules: list[dict[str, Any]] = []
+    rules: list[dict[str, Any]] = [
+        {
+            "type": "field",
+            "port": "443",
+            "network": "udp",
+            "outboundTag": "block",
+        }
+    ]
     if routing.bypass_lan:
         rules.append({"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"})
         rules.append({"type": "field", "domain": ["geosite:private"], "outboundTag": "direct"})
@@ -151,7 +158,10 @@ def _is_legacy_bebra_xray_route_rule(rule: Any) -> bool:
     ips = {str(item) for item in rule.get("ip") or []} if isinstance(rule.get("ip"), list) else set()
     processes = {str(item).lower() for item in rule.get("process") or []} if isinstance(rule.get("process"), list) else set()
     network = str(rule.get("network") or "")
+    port = str(rule.get("port") or "")
 
+    if outbound == "block" and network == "udp" and port == "443":
+        return True
     if outbound == "direct" and (ips == {"geoip:private"} or domains == {"geosite:private"}):
         return True
     if outbound == "direct" and (ips == {"geoip:ru"} or domains == {"geosite:category-ru"}):
@@ -231,7 +241,13 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
 
 
 def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[str, Any]], set[str]]:
-    rules: list[dict[str, Any]] = []
+    rules: list[dict[str, Any]] = [
+        {
+            "network": "udp",
+            "port": 443,
+            "outbound": "block",
+        }
+    ]
     rule_sets: set[str] = set()
 
     if routing.bypass_lan:
