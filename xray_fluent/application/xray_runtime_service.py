@@ -116,9 +116,12 @@ def ensure_xray_metrics_contract(
     }
     controller._replace_or_append_tagged(inbounds, APP_METRICS_API_INBOUND_TAG, metrics_inbound)
 
-    if int(DEFAULT_DISCORD_SOCKS_PORT) not in existing_ports or any(
-        isinstance(inbound, dict) and str(inbound.get("tag") or "") == APP_DISCORD_PROXY_INBOUND_TAG
-        for inbound in inbounds
+    discord_proxy_enabled = bool(controller.state.settings.discord_proxy_enabled)
+    if discord_proxy_enabled and (
+        int(DEFAULT_DISCORD_SOCKS_PORT) not in existing_ports or any(
+            isinstance(inbound, dict) and str(inbound.get("tag") or "") == APP_DISCORD_PROXY_INBOUND_TAG
+            for inbound in inbounds
+        )
     ):
         controller._replace_or_append_tagged(
             inbounds,
@@ -183,17 +186,18 @@ def ensure_xray_metrics_contract(
             break
     if not replaced:
         rules.insert(0, metrics_rule)
-    replaced = False
-    for index, rule in enumerate(rules):
-        if not isinstance(rule, dict):
-            continue
-        inbound_tags = rule.get("inboundTag")
-        if isinstance(inbound_tags, list) and APP_DISCORD_PROXY_INBOUND_TAG in [str(item) for item in inbound_tags]:
-            rules[index] = discord_proxy_rule
-            replaced = True
-            break
-    if not replaced:
-        rules.insert(1 if rules and rules[0] == metrics_rule else 0, discord_proxy_rule)
+    if discord_proxy_enabled:
+        replaced = False
+        for index, rule in enumerate(rules):
+            if not isinstance(rule, dict):
+                continue
+            inbound_tags = rule.get("inboundTag")
+            if isinstance(inbound_tags, list) and APP_DISCORD_PROXY_INBOUND_TAG in [str(item) for item in inbound_tags]:
+                rules[index] = discord_proxy_rule
+                replaced = True
+                break
+        if not replaced:
+            rules.insert(1 if rules and rules[0] == metrics_rule else 0, discord_proxy_rule)
 
     return api_port, tuple(user_inbound_tags)
 

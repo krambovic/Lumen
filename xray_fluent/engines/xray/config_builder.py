@@ -42,48 +42,50 @@ def build_xray_config(
             "type": "field",
             "inboundTag": ["api"],
             "outboundTag": "api",
-        },
-        {
-            "type": "field",
-            "inboundTag": ["discord-socks-in"],
-            "outboundTag": "proxy",
         }
     ]
+    if settings.discord_proxy_enabled:
+        routing_rules.append(
+            {
+                "type": "field",
+                "inboundTag": ["discord-socks-in"],
+                "outboundTag": "proxy",
+            }
+        )
 
     routing_rules.extend(build_xray_gui_routing_rules(routing, settings))
 
-    config: dict[str, Any] = {
-        "log": {
-            "loglevel": _normalize_loglevel(settings.log_level),
+    inbounds: list[dict[str, Any]] = [
+        {
+            "tag": "socks-in",
+            "listen": PROXY_HOST,
+            "port": int(socks_port),
+            "protocol": "socks",
+            "settings": {
+                "auth": "noauth",
+                "udp": True,
+            },
+            "sniffing": {
+                "enabled": True,
+                "destOverride": ["http", "tls", "quic"],
+                "routeOnly": True,
+            },
         },
-        "inbounds": [
-            {
-                "tag": "socks-in",
-                "listen": PROXY_HOST,
-                "port": int(socks_port),
-                "protocol": "socks",
-                "settings": {
-                    "auth": "noauth",
-                    "udp": True,
-                },
-                "sniffing": {
-                    "enabled": True,
-                    "destOverride": ["http", "tls", "quic"],
-                    "routeOnly": True,
-                },
+        {
+            "tag": "http-in",
+            "listen": PROXY_HOST,
+            "port": int(http_port),
+            "protocol": "http",
+            "settings": {},
+            "sniffing": {
+                "enabled": True,
+                "destOverride": ["http", "tls"],
+                "routeOnly": True,
             },
-            {
-                "tag": "http-in",
-                "listen": PROXY_HOST,
-                "port": int(http_port),
-                "protocol": "http",
-                "settings": {},
-                "sniffing": {
-                    "enabled": True,
-                    "destOverride": ["http", "tls"],
-                    "routeOnly": True,
-                },
-            },
+        },
+    ]
+    if settings.discord_proxy_enabled:
+        inbounds.append(
             {
                 "tag": "discord-socks-in",
                 "listen": PROXY_HOST,
@@ -98,17 +100,25 @@ def build_xray_config(
                     "destOverride": ["http", "tls", "quic"],
                     "routeOnly": True,
                 },
+            }
+        )
+    inbounds.append(
+        {
+            "tag": "api",
+            "listen": PROXY_HOST,
+            "port": api_port,
+            "protocol": "dokodemo-door",
+            "settings": {
+                "address": PROXY_HOST,
             },
-            {
-                "tag": "api",
-                "listen": PROXY_HOST,
-                "port": api_port,
-                "protocol": "dokodemo-door",
-                "settings": {
-                    "address": PROXY_HOST,
-                },
-            },
-        ],
+        }
+    )
+
+    config: dict[str, Any] = {
+        "log": {
+            "loglevel": _normalize_loglevel(settings.log_level),
+        },
+        "inbounds": inbounds,
         "outbounds": [
             proxy_outbound,
             {
