@@ -142,6 +142,38 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
         if mode == "multi":
             grpc_settings["multiMode"] = True
         stream["grpcSettings"] = grpc_settings
+    elif network == "xhttp":
+        xhttp_settings: dict[str, Any] = {}
+        if path:
+            xhttp_settings["path"] = path
+        if host:
+            xhttp_settings["host"] = host
+        mode = _get_param(params, "mode")
+        if mode:
+            xhttp_settings["mode"] = mode
+        extra = _get_param(params, "extra")
+        if extra:
+            try:
+                decoded_extra = json.loads(extra)
+            except Exception:
+                decoded_extra = None
+            if isinstance(decoded_extra, dict):
+                xhttp_settings.update(decoded_extra)
+        for key in ("scMaxEachPostBytes", "scMaxBufferedPosts", "xPaddingBytes"):
+            value = _get_param(params, key)
+            if value:
+                xhttp_settings[key] = value
+        stream["xhttpSettings"] = xhttp_settings
+    elif network == "httpupgrade":
+        httpupgrade_settings: dict[str, Any] = {}
+        if path:
+            httpupgrade_settings["path"] = path
+        if host:
+            httpupgrade_settings["host"] = host
+        early_data = _get_param(params, "ed")
+        if early_data:
+            httpupgrade_settings["ed"] = early_data
+        stream["httpupgradeSettings"] = httpupgrade_settings
     elif network == "quic":
         stream["quicSettings"] = {
             "security": _get_param(params, "quicSecurity", "quic_security") or "none",

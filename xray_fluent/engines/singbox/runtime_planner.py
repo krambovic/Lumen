@@ -478,9 +478,17 @@ def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any]) -> None:
 
     route = _ensure_dict(payload, "route")
     route["auto_detect_interface"] = True
-    route["default_domain_resolver"] = "bootstrap-dns"
+    route["default_domain_resolver"] = {"server": "bootstrap-dns", "strategy": "prefer_ipv4"}
+    _ensure_singbox_dns_ipv4_preference(payload)
     rules = _ensure_list(route, "rules")
     _ensure_singbox_tun_base_rules(rules)
+
+
+def _ensure_singbox_dns_ipv4_preference(payload: dict[str, Any]) -> None:
+    dns = payload.get("dns")
+    if not isinstance(dns, dict):
+        return
+    dns.setdefault("strategy", "prefer_ipv4")
 
 
 def _ensure_singbox_tun_base_rules(rules: list[Any]) -> None:

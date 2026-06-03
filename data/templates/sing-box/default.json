@@ -34,7 +34,10 @@
   ],
   "route": {
     "auto_detect_interface": true,
-    "default_domain_resolver": "bootstrap-dns",
+    "default_domain_resolver": {
+      "server": "bootstrap-dns",
+      "strategy": "prefer_ipv4"
+    },
     "rules": [
       {
         "action": "sniff"
@@ -92,7 +95,8 @@
         "detour": "proxy"
       }
     ],
-    "final": "proxy-dns"
+    "final": "proxy-dns",
+    "strategy": "prefer_ipv4"
   },
   "experimental": {
     "cache_file": {

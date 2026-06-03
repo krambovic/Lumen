@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+if os.name == "nt":
+    import winreg
+
 from PyQt6.QtCore import QObject, QProcess, QTimer, pyqtSignal
 
 from .constants import BASE_DIR
@@ -238,6 +241,7 @@ class ZapretManager(QObject):
         for name in killed:
             self.log_line.emit(f"[zapret] Завершён сторонний процесс: {name}")
 
+        self._cleanup_windivert()
         sleep_with_events(0.35)
 
         exe = WINWS2_EXE
@@ -303,6 +307,7 @@ class ZapretManager(QObject):
         killed = self._kill_orphaned()
         for name in killed:
             self.log_line.emit(f"[zapret] Завершён оставшийся процесс: {name}")
+        self._cleanup_windivert()
         sleep_with_events(0.5)
         self.stopped.emit()
 
@@ -333,6 +338,46 @@ class ZapretManager(QObject):
         if killed:
             sleep_with_events(1.25)
         return killed
+
+    @staticmethod
+    def _find_windivert_services() -> list[str]:
+        if os.name != "nt":
+            return []
+        found: set[str] = {"WinDivert", "WinDivert14", "WinDivert2"}
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services") as root:
+                index = 0
+                while True:
+                    try:
+                        name = winreg.EnumKey(root, index)
+                    except OSError:
+                        break
+                    index += 1
+                    try:
+                        with winreg.OpenKey(root, name) as service_key:
+                            image_path, _ = winreg.QueryValueEx(service_key, "ImagePath")
+                    except OSError:
+                        continue
+                    image_text = str(image_path or "").lower()
+                    if any(marker in image_text for marker in ("monkey64", "monkey32", "windivert")):
+                        found.add(name)
+        except OSError:
+            pass
+        return sorted(found)
+
+    def _cleanup_windivert(self) -> None:
+        if os.name != "nt":
+            return
+        for service in self._find_windivert_services():
+            for action in ("stop", "delete"):
+                try:
+                    run_text_pumped(
+                        ["sc", action, service],
+                        timeout=3,
+                        creationflags=CREATE_NO_WINDOW,
+                    )
+                except Exception:
+                    pass
 
     @staticmethod
     def _exit_code_hint(code: int) -> str:

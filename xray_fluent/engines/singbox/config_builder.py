@@ -144,5 +144,5 @@ def _apply_transport(sb: dict[str, Any], stream: dict[str, Any]) -> None:
         sb["transport"] = transport
         return
 
-    if network == "xhttp":
-        sb["_unsupported_transport"] = "xhttp"
+    if network in {"raw", "xhttp", "httpupgrade"}:
+        sb["_unsupported_transport"] = network
