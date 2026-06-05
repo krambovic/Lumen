@@ -41,12 +41,32 @@ def start_metrics_worker(controller: AppController) -> None:
 
 
 def stop_metrics_worker(controller: AppController) -> None:
-    if not controller._metrics_worker:
+    worker = controller._metrics_worker
+    if not worker:
         return
-    if controller._metrics_worker.isRunning():
-        controller._metrics_worker.stop()
-        controller._metrics_worker.wait(1200)
     controller._metrics_worker = None
+
+    try:
+        worker.metrics.disconnect(controller._on_live_metrics)
+    except (TypeError, RuntimeError):
+        pass
+
+    if not worker.isRunning():
+        worker.deleteLater()
+        return
+
+    worker.stop()
+    retired = controller._retired_metrics_workers
+    retired.append(worker)
+
+    def _retire() -> None:
+        try:
+            retired.remove(worker)
+        except ValueError:
+            pass
+        worker.deleteLater()
+
+    worker.finished.connect(_retire)
 
 
 def cleanup_connection_runtime_state(
@@ -174,6 +194,10 @@ def shutdown(controller: AppController) -> None:
     if controller._connectivity_worker and controller._connectivity_worker.isRunning():
         controller._connectivity_worker.wait(1000)
     stop_metrics_worker(controller)
+    for retired_worker in list(controller._retired_metrics_workers):
+        if retired_worker.isRunning():
+            retired_worker.wait(2500)
+    controller._retired_metrics_workers.clear()
     if controller._speed_worker and controller._speed_worker.isRunning():
         controller._speed_worker.cancel()
         controller._speed_worker.wait(20000)
