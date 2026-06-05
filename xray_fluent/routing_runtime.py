@@ -61,6 +61,18 @@ _XRAY_UNSUPPORTED_GEOIP_CODES = {
     "geoip:ru-blocked",
     "geoip:ru-blocked-community",
 }
+_XRAY_EXPANDED_GEOIP_CACHE: dict[str, tuple[str, ...]] = {}
+_XRAY_EXPANDED_GEOSITE_CACHE: dict[str, tuple[str, ...]] = {}
+
+
+def _routing_final_outbound(routing: RoutingSettings, *, use_rule_default: bool = True) -> str:
+    if routing.mode == ROUTING_GLOBAL:
+        return "proxy"
+    if routing.mode == ROUTING_DIRECT:
+        return "direct"
+    if not use_rule_default:
+        return "direct"
+    return "proxy" if str(routing.tun_default_outbound).strip().lower() == "proxy" else "direct"
 
 
 def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
@@ -70,11 +82,16 @@ def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
         value = raw.strip()
         if not value:
             continue
+        lowered = value.lower()
+        if lowered == "geosite:category-media-ru-blocked":
+            domains.extend(_expand_xray_local_geosite(lowered))
+            continue
         if value.startswith(("domain:", "full:", "regexp:", "keyword:", "geosite:", "ext:")):
             domains.append(value)
             continue
         if value.startswith(("geoip:", "ip:")):
-            if value.lower() in _XRAY_UNSUPPORTED_GEOIP_CODES:
+            if lowered in _XRAY_UNSUPPORTED_GEOIP_CODES:
+                ips.extend(_expand_xray_unsupported_geoip(lowered))
                 continue
             ips.append(value)
             continue
@@ -90,9 +107,41 @@ def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
 def append_xray_domain_ip_rule(rules: list[dict[str, Any]], items: list[str], outbound_tag: str) -> None:
     domains, ips = split_xray_domain_ip(items)
     if domains:
-        rules.append({"type": "field", "domain": domains, "outboundTag": outbound_tag})
+        rules.append({"type": "field", "domain": sorted(set(domains)), "outboundTag": outbound_tag})
     if ips:
-        rules.append({"type": "field", "ip": ips, "outboundTag": outbound_tag})
+        rules.append({"type": "field", "ip": sorted(set(ips)), "outboundTag": outbound_tag})
+
+
+def _expand_xray_unsupported_geoip(value: str) -> tuple[str, ...]:
+    cached = _XRAY_EXPANDED_GEOIP_CACHE.get(value)
+    if cached is not None:
+        return cached
+    source = _SINGBOX_RULE_SET_SOURCES.get(value)
+    if not source:
+        _XRAY_EXPANDED_GEOIP_CACHE[value] = ()
+        return ()
+    expanded = tuple(_read_ip_lists(tuple(source.get("ips") or ())))
+    _XRAY_EXPANDED_GEOIP_CACHE[value] = expanded
+    return expanded
+
+
+def _expand_xray_local_geosite(value: str) -> tuple[str, ...]:
+    cached = _XRAY_EXPANDED_GEOSITE_CACHE.get(value)
+    if cached is not None:
+        return cached
+    source = _SINGBOX_RULE_SET_SOURCES.get(value)
+    if not source:
+        _XRAY_EXPANDED_GEOSITE_CACHE[value] = ()
+        return ()
+    domains = _read_domain_lists(tuple(source.get("domains") or ()))
+    suffixes = [
+        str(item).strip().lstrip(".").lower()
+        for item in source.get("domain_suffix") or ()
+        if str(item).strip()
+    ]
+    expanded = tuple(f"domain:{item}" for item in sorted(set(domains + suffixes)))
+    _XRAY_EXPANDED_GEOSITE_CACHE[value] = expanded
+    return expanded
 
 
 def resolve_xray_process_name(rule: dict[str, str]) -> str:
@@ -160,12 +209,13 @@ def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings
     append_xray_domain_ip_rule(rules, routing.block_domains, "block")
     append_xray_domain_ip_rule(rules, routing.proxy_domains, "proxy")
 
-    if routing.mode == ROUTING_GLOBAL:
-        rules.append({"type": "field", "network": "tcp,udp", "outboundTag": "proxy"})
-    elif routing.mode == ROUTING_DIRECT:
-        rules.append({"type": "field", "network": "tcp,udp", "outboundTag": "direct"})
-    else:
-        rules.append({"type": "field", "network": "tcp,udp", "outboundTag": "proxy"})
+    rules.append(
+        {
+            "type": "field",
+            "network": "tcp,udp",
+            "outboundTag": _routing_final_outbound(routing, use_rule_default=settings.tun_mode),
+        }
+    )
     return rules
 
 
@@ -260,7 +310,7 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
     _ensure_singbox_rule_sets(route, rule_sets)
     insert_at = _singbox_runtime_rule_insert_index(rules)
     rules[insert_at:insert_at] = gui_rules
-    final_outbound = "direct" if routing.mode == ROUTING_DIRECT else "proxy"
+    final_outbound = _routing_final_outbound(routing)
     route["final"] = final_outbound
     dns = payload.get("dns")
     if isinstance(dns, dict):

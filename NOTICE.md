@@ -8,8 +8,14 @@ https://github.com/youtubediscord/zapret-kvn
 Fork repository:
 https://github.com/krambovic/bebra-kvn
 
-This repository keeps the MIT license notice for the upstream project and
-adds copyright attribution for fork changes.
+Current upstream `youtubediscord/zapret-kvn` is distributed under GPL-3.0.
+This fork keeps upstream/fork attribution and distributes the application
+source under GPL-3.0 as shown in `LICENSE`.
+
+Earlier MIT attribution from the upstream history is preserved in this notice:
+
+- Copyright (c) 2026 youtubediscord/zapret-kvn contributors
+- Copyright (c) 2026 krambovic/bebra-kvn contributors
 
 Bundled third-party components keep their own licenses and notices:
 

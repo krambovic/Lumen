@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, PlainTextEdit, PrimaryPushButton, PushButton, SearchLineEdit, SubtitleLabel
 
@@ -95,10 +96,21 @@ class LogsPage(QWidget):
             self.log_edit.setPlainText("\n".join(data[-2000:]))
         else:
             if self._pending_lines:
-                self.log_edit.appendPlainText("\n".join(self._pending_lines))
+                self._append_pending_lines(self._pending_lines)
         self._pending_lines.clear()
         self._full_refresh_needed = False
         if was_at_bottom:
             vbar.setValue(vbar.maximum())
         else:
             vbar.setValue(min(previous_value, vbar.maximum()))
+
+    def _append_pending_lines(self, lines: list[str]) -> None:
+        text = "\n".join(lines)
+        if not text:
+            return
+        document = self.log_edit.document()
+        cursor = QTextCursor(document)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if not document.isEmpty():
+            cursor.insertBlock()
+        cursor.insertText(text)

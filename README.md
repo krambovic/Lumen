@@ -6,7 +6,7 @@
 
 Bebra VPN (`bebra-kvn`) — форк проекта [youtubediscord/zapret-kvn](https://github.com/youtubediscord/zapret-kvn).
 
-Проект сохраняет copyright и MIT-атрибуцию upstream-репозитория. Все изменения этого форка публикуются в [krambovic/bebra-kvn](https://github.com/krambovic/bebra-kvn).
+Проект сохраняет copyright и атрибуцию upstream-репозитория. Текущая upstream-лицензия `youtubediscord/zapret-kvn` — GPL-3.0, все изменения этого форка публикуются в [krambovic/bebra-kvn](https://github.com/krambovic/bebra-kvn).
 
 ## Что Это
 
@@ -39,7 +39,7 @@ Bebra VPN объединяет в одном Windows-клиенте xray-core, s
 - upstream: [youtubediscord/zapret-kvn](https://github.com/youtubediscord/zapret-kvn)
 - fork: [krambovic/bebra-kvn](https://github.com/krambovic/bebra-kvn)
 
-Если вы распространяете измененные копии, сохраняйте MIT license notice и сведения об upstream/fork.
+Если вы распространяете измененные копии, сохраняйте GPL-3.0 license notice и сведения об upstream/fork.
 
 ## Сторонние Компоненты
 
@@ -54,4 +54,4 @@ Bebra VPN объединяет в одном Windows-клиенте xray-core, s
 
 ## Лицензия
 
-MIT. См. [LICENSE](LICENSE).
+GPL-3.0. См. [LICENSE](LICENSE).
