@@ -275,6 +275,7 @@ class AppController(QObject):
         self._speed_node_map: dict[str, Node] = {}
         self._connectivity_worker: ConnectivityTestWorker | None = None
         self._metrics_worker: LiveMetricsWorker | None = None
+        self._retired_metrics_workers: list[LiveMetricsWorker] = []
         self._xray_update_worker: XrayCoreUpdateWorker | None = None
         self._singbox_documents = SingboxDocumentCache()
         self._ping_total = 0
