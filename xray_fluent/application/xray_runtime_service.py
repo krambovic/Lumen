@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from ..constants import DEFAULT_DISCORD_SOCKS_PORT, PROXY_HOST, XRAY_TUN_DEFAULT_INTERFACE_NAME
 from ..engines.xray import get_windows_default_route_context
 from ..routing_runtime import apply_xray_gui_routing
+from ..xray_inbounds import build_xray_sniffing, ensure_xray_mixed_proxy_inbound, normalize_xray_sniffing
 from ..xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
 from .connection_service import find_free_api_port
 from .runtime_introspection import extract_xray_runtime_ports
@@ -139,7 +140,7 @@ def ensure_xray_metrics_contract(
                 "sniffing": {
                     "enabled": True,
                     "destOverride": ["http", "tls"],
-                    "routeOnly": True,
+                    "routeOnly": False,
                 },
             },
         )
@@ -218,11 +219,7 @@ def ensure_xray_tun_contract(controller: AppController, payload: dict[str, Any])
             "tag": APP_TUN_INBOUND_TAG,
             "protocol": "tun",
             "settings": {},
-            "sniffing": {
-                "enabled": True,
-                "destOverride": ["http", "tls"],
-                "routeOnly": True,
-            },
+            "sniffing": build_xray_sniffing(),
         }
     )
     return XRAY_TUN_DEFAULT_INTERFACE_NAME
@@ -274,6 +271,11 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
     if tun_mode:
         tun_interface_name = controller._ensure_xray_tun_contract(payload)
         strip_xray_proxy_inbounds(payload)
+        normalize_xray_sniffing(payload)
+    else:
+        patched_inbounds = ensure_xray_mixed_proxy_inbound(payload)
+        if patched_inbounds:
+            controller._log(f"[xray] local proxy inbound normalized for mixed mode ({patched_inbounds} change(s))")
 
     api_port, inbound_tags = controller._ensure_xray_metrics_contract(payload, allocate_port=True)
 

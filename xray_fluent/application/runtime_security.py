@@ -78,7 +78,7 @@ def set_xray_socks_inbound_auth(
     for inbound in inbounds:
         if not isinstance(inbound, dict):
             continue
-        if str(inbound.get("protocol") or "").strip().lower() != "socks":
+        if str(inbound.get("protocol") or "").strip().lower() not in {"socks", "mixed"}:
             continue
         inbound_tag = str(inbound.get("tag") or "").strip()
         if tag is not None and inbound_tag != tag:

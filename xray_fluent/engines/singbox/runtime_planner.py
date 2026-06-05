@@ -354,7 +354,7 @@ def _build_xray_sidecar_config(
                 "sniffing": {
                     "enabled": True,
                     "destOverride": ["http", "tls"],
-                    "routeOnly": True,
+                    "routeOnly": False,
                 },
             }
         ],

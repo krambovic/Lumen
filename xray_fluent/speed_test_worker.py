@@ -207,7 +207,7 @@ class SpeedTestWorker(QThread):
                     "sniffing": {
                         "enabled": True,
                         "destOverride": ["http", "tls"],
-                        "routeOnly": True,
+                        "routeOnly": False,
                     },
                 }
             ],

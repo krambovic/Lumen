@@ -155,8 +155,7 @@ def extract_xray_runtime_ports(payload: Any) -> tuple[int, int, int]:
             api_port = port
         elif tag == "__app_metrics_api_in" and api_port <= 0:
             api_port = port
-    if socks_port <= 0 and mixed_port > 0:
+    if mixed_port > 0:
         socks_port = mixed_port
-    if http_port <= 0 and mixed_port > 0:
         http_port = mixed_port
     return socks_port, http_port, api_port

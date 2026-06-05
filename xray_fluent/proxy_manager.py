@@ -168,12 +168,15 @@ class ProxyManager:
             self._backup = self._read_settings()
             self._persist_backup(self._backup)
 
-        proxy_server = (
-            f"http={PROXY_HOST}:{http_port};"
-            f"https={PROXY_HOST}:{http_port};"
-            f"ftp={PROXY_HOST}:{http_port};"
-            f"socks={PROXY_HOST}:{socks_port}"
-        )
+        if int(http_port) == int(socks_port):
+            proxy_server = f"{PROXY_HOST}:{int(socks_port)}"
+        else:
+            proxy_server = (
+                f"http={PROXY_HOST}:{http_port};"
+                f"https={PROXY_HOST}:{http_port};"
+                f"ftp={PROXY_HOST}:{http_port};"
+                f"socks={PROXY_HOST}:{socks_port}"
+            )
 
         override = "<local>;localhost;127.*"
         if bypass_lan:

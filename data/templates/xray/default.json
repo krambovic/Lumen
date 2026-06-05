@@ -7,10 +7,11 @@
       "tag": "socks-in",
       "listen": "0.0.0.0",
       "port": 10808,
-      "protocol": "socks",
+      "protocol": "mixed",
       "settings": {
         "auth": "noauth",
-        "udp": true
+        "udp": true,
+        "allowTransparent": false
       },
       "sniffing": {
         "enabled": true,
@@ -18,7 +19,7 @@
           "http",
           "tls"
         ],
-        "routeOnly": true
+        "routeOnly": false
       }
     },
     {
@@ -33,7 +34,7 @@
           "http",
           "tls"
         ],
-        "routeOnly": true
+        "routeOnly": false
       }
     }
   ],

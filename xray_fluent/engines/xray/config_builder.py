@@ -12,6 +12,7 @@ from ...constants import (
 )
 from ...models import AppSettings, Node, RoutingSettings
 from ...routing_runtime import build_xray_gui_routing_rules
+from ...xray_inbounds import build_xray_http_compat_inbound, build_xray_mixed_inbound
 from ...xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
 
 
@@ -57,34 +58,10 @@ def build_xray_config(
     routing_rules.extend(build_xray_gui_routing_rules(routing, settings))
 
     inbounds: list[dict[str, Any]] = [
-        {
-            "tag": "socks-in",
-            "listen": PROXY_HOST,
-            "port": int(socks_port),
-            "protocol": "socks",
-            "settings": {
-                "auth": "noauth",
-                "udp": True,
-            },
-            "sniffing": {
-                "enabled": True,
-                "destOverride": ["http", "tls"],
-                "routeOnly": True,
-            },
-        },
-        {
-            "tag": "http-in",
-            "listen": PROXY_HOST,
-            "port": int(http_port),
-            "protocol": "http",
-            "settings": {},
-            "sniffing": {
-                "enabled": True,
-                "destOverride": ["http", "tls"],
-                "routeOnly": True,
-            },
-        },
+        build_xray_mixed_inbound(socks_port),
     ]
+    if int(http_port) != int(socks_port):
+        inbounds.append(build_xray_http_compat_inbound(http_port))
     if settings.discord_proxy_enabled:
         inbounds.append(
             {
@@ -99,7 +76,7 @@ def build_xray_config(
                 "sniffing": {
                     "enabled": True,
                     "destOverride": ["http", "tls"],
-                    "routeOnly": True,
+                    "routeOnly": False,
                 },
             }
         )
