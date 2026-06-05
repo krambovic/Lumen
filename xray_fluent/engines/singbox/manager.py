@@ -3,23 +3,25 @@ from __future__ import annotations
 from collections import deque
 import json
 import os
+import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-from PyQt6.QtCore import QObject, QProcess, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 
 from ...constants import RUNTIME_DIR, SINGBOX_CONFIG_FILE, SINGBOX_PATH_DEFAULT
 from ...path_utils import resolve_configured_path
 from ...subprocess_utils import (
     decode_output,
     kill_processes_by_path,
+    pump_qt_events,
     result_output_text,
     run_text_pumped,
     sleep_with_events,
-    wait_for_qprocess_finished,
-    wait_for_qprocess_started,
 )
 
 
@@ -32,12 +34,9 @@ class SingBoxManager(QObject):
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self._process = QProcess(self)
-        self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self._process.readyReadStandardOutput.connect(self._on_ready_read)
-        self._process.started.connect(self._on_started)
-        self._process.errorOccurred.connect(self._on_error)
-        self._process.finished.connect(self._on_finished)
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._reader: threading.Thread | None = None
+        self._lock = threading.RLock()
         self._running = False
         self._starting = False
         self._stop_requested = False
@@ -45,11 +44,15 @@ class SingBoxManager(QObject):
         self._runtime_error_reported = False
         self._last_output_lines: deque[str] = deque(maxlen=20)
         self._last_exit_code: int | None = None
-        self._last_exit_status = QProcess.ExitStatus.NormalExit
+        self._exe_path: Path | None = None
 
     @property
     def is_running(self) -> bool:
         return self._running
+
+    def _proc_alive(self) -> bool:
+        proc = self._proc
+        return proc is not None and proc.poll() is None
 
     def start(self, singbox_path: str, config: dict[str, Any]) -> bool:
         exe = resolve_configured_path(
@@ -64,6 +67,7 @@ class SingBoxManager(QObject):
         if not exe.is_file():
             self.error.emit(f"sing-box.exe not found: {exe}")
             return False
+        self._exe_path = exe
 
         tun_interface_name = self._extract_tun_interface_name(config)
         if not tun_interface_name:
@@ -75,7 +79,7 @@ class SingBoxManager(QObject):
             json.dumps(config, ensure_ascii=True, indent=2), encoding="utf-8"
         )
 
-        if self._process.state() != QProcess.ProcessState.NotRunning:
+        if self._proc_alive():
             if not self.stop(expected=True):
                 self.error.emit("failed to stop previous sing-box process")
                 return False
@@ -96,22 +100,42 @@ class SingBoxManager(QObject):
         # Try up to 3 times — wintun adapter may need time to be released
         for attempt in range(3):
             self._last_output_lines.clear()
-            self._process.setWorkingDirectory(str(core_dir))
-            self._process.setProgram(str(exe))
-            self._process.setArguments(["run", "-c", str(SINGBOX_CONFIG_FILE), "-D", str(core_dir)])
-            self._process.start()
+            self._stop_requested = False
+            self._last_exit_code = None
 
-            if not wait_for_qprocess_started(self._process, 4000):
+            try:
+                proc = subprocess.Popen(
+                    [str(exe), "run", "-c", str(SINGBOX_CONFIG_FILE), "-D", str(core_dir)],
+                    cwd=str(core_dir),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    bufsize=0,
+                    creationflags=_CREATE_NO_WINDOW,
+                )
+            except Exception as exc:
                 self._starting = False
-                self._report_startup_failure(f"failed to start sing-box process: {self._process.errorString()}")
+                self._report_startup_failure(f"failed to start sing-box process: {exc}")
                 return False
 
-            if self._wait_until_tun_ready(tun_interface_name):
+            with self._lock:
+                self._proc = proc
+            self._reader = threading.Thread(
+                target=self._read_output,
+                args=(proc,),
+                name="singbox-output-reader",
+                daemon=True,
+            )
+            self._reader.start()
+
+            # sing-box is only considered "connected" once the TUN interface has
+            # a usable IPv4 address — not merely when the process spawns.
+            if self._wait_until_tun_ready(proc, tun_interface_name):
                 self._starting = False
                 self._mark_running()
                 return True
 
-            exited = self._process.state() == QProcess.ProcessState.NotRunning
+            exited = not self._proc_alive()
             retryable = exited and self._startup_error_is_retryable()
             if not exited:
                 self.stop(expected=True)
@@ -124,7 +148,7 @@ class SingBoxManager(QObject):
             self._starting = False
             if exited:
                 self._report_startup_failure(
-                    self._unexpected_exit_message(self._last_exit_code, self._last_exit_status, startup=True)
+                    self._unexpected_exit_message(self._last_exit_code, startup=True)
                 )
             else:
                 self._report_startup_failure(
@@ -147,21 +171,38 @@ class SingBoxManager(QObject):
             pass
 
     def stop(self, expected: bool = True) -> bool:
-        if self._process.state() == QProcess.ProcessState.NotRunning:
-            self._stop_requested = False
-            if self._running:
-                self._running = False
-                self.state_changed.emit(False)
-            self._starting = False
-            return True
+        with self._lock:
+            proc = self._proc
+            if proc is None or proc.poll() is not None:
+                self._stop_requested = False
+                self._starting = False
+                if self._running:
+                    self._running = False
+                    self.state_changed.emit(False)
+                return True
+            self._stop_requested = expected
 
-        self._stop_requested = expected
-        self._process.terminate()
-        if not wait_for_qprocess_finished(self._process, 3000):
-            self._process.kill()
-            wait_for_qprocess_finished(self._process, 2000)
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        if not self._wait_proc(proc, 3.0):
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            self._wait_proc(proc, 2.0)
 
-        if self._process.state() != QProcess.ProcessState.NotRunning:
+        if proc.poll() is None:
+            exe = self._exe_path
+            if os.name == "nt" and exe is not None:
+                try:
+                    if kill_processes_by_path(exe.name, exe, timeout=5):
+                        self._wait_proc(proc, 1.0)
+                except Exception:
+                    pass
+
+        if proc.poll() is None:
             self._stop_requested = False
             self.error.emit("failed to stop sing-box process in time")
             return False
@@ -170,6 +211,15 @@ class SingBoxManager(QObject):
         self._starting = False
         self._wait_tun_released()
         return True
+
+    def _wait_proc(self, proc: subprocess.Popen[bytes], timeout_sec: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout_sec)
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                return True
+            pump_qt_events()
+            time.sleep(0.05)
+        return proc.poll() is not None
 
     @staticmethod
     def _wait_tun_released(max_wait: float = 10.0) -> None:
@@ -193,48 +243,45 @@ class SingBoxManager(QObject):
             sleep_with_events(step)
             waited += step
 
-    def _on_ready_read(self) -> None:
-        chunk = self._process.readAllStandardOutput()
-        raw = getattr(chunk, "data")()
-        if isinstance(raw, (bytes, bytearray)):
-            text = decode_output(bytes(raw))
-        else:
-            text = str(raw)
-        for line in text.splitlines():
-            clean = line.rstrip()
-            if clean:
-                self._last_output_lines.append(clean)
-                self.log_received.emit(clean)
+    def _read_output(self, proc: subprocess.Popen[bytes]) -> None:
+        stream = proc.stdout
+        try:
+            if stream is not None:
+                for raw in iter(stream.readline, b""):
+                    text = decode_output(raw)
+                    for line in text.splitlines():
+                        clean = line.rstrip()
+                        if clean:
+                            self._last_output_lines.append(clean)
+                            self.log_received.emit(clean)
+        except Exception:
+            pass
+        finally:
+            try:
+                proc.wait()
+            except Exception:
+                pass
+            self._handle_process_exit(proc)
 
-    def _on_started(self) -> None:
-        self._stop_requested = False
+    def _handle_process_exit(self, proc: subprocess.Popen[bytes]) -> None:
+        with self._lock:
+            if proc is not self._proc:
+                # A newer process superseded this handle; ignore the stale exit.
+                return
+            exit_code = proc.returncode if proc.returncode is not None else -1
+            expected = self._stop_requested
+            was_starting = self._starting
+            was_running = self._running
+            self._last_exit_code = exit_code
+            self._stop_requested = False
+            self._running = False
+            self._proc = None
 
-    def _on_error(self, process_error: QProcess.ProcessError) -> None:
-        if self._stop_requested and process_error == QProcess.ProcessError.Crashed:
-            return
-        message = f"sing-box process error: {process_error.name} ({self._process.errorString()})"
-        if self._starting:
-            self._report_startup_failure(message)
-            return
-        if self._runtime_error_reported:
-            return
-        self._runtime_error_reported = True
-        self.error.emit(message)
-
-    def _on_finished(self, exit_code: int, _exit_status: int = 0) -> None:
-        exit_status = QProcess.ExitStatus(_exit_status)
-        expected = self._stop_requested
-        self._last_exit_code = exit_code
-        self._last_exit_status = exit_status
-        self._stop_requested = False
-        was_running = self._running
-        self._running = False
-        if self._starting and not expected:
-            self._report_startup_failure(self._unexpected_exit_message(exit_code, exit_status, startup=True))
+        if was_starting and not expected:
+            self._report_startup_failure(self._unexpected_exit_message(exit_code, startup=True))
         elif was_running and not expected and not self._runtime_error_reported:
             self._runtime_error_reported = True
-            self.error.emit(self._unexpected_exit_message(exit_code, exit_status, startup=False))
-        self._starting = False
+            self.error.emit(self._unexpected_exit_message(exit_code, startup=False))
         self.stopped.emit(exit_code)
         if was_running:
             self.state_changed.emit(False)
@@ -257,13 +304,18 @@ class SingBoxManager(QObject):
             return str(inbound.get("interface_name") or "").strip()
         return ""
 
-    def _wait_until_tun_ready(self, tun_interface_name: str, max_wait: float = 18.0) -> bool:
+    def _wait_until_tun_ready(
+        self,
+        proc: subprocess.Popen[bytes],
+        tun_interface_name: str,
+        max_wait: float = 18.0,
+    ) -> bool:
         if os.name != "nt" or not tun_interface_name:
             return True
         step = 0.25
         waited = 0.0
         while waited < max_wait:
-            if self._process.state() == QProcess.ProcessState.NotRunning:
+            if proc.poll() is not None:
                 return False
             if self._tun_interface_has_ipv4(tun_interface_name):
                 return True
@@ -302,7 +354,6 @@ class SingBoxManager(QObject):
     def _unexpected_exit_message(
         self,
         exit_code: int | None,
-        exit_status: QProcess.ExitStatus,
         *,
         startup: bool,
     ) -> str:
@@ -312,7 +363,7 @@ class SingBoxManager(QObject):
             return f"sing-box exited {stage}: {detail}"
         if exit_code is None:
             return f"sing-box exited {stage}."
-        status_name = "CrashExit" if exit_status == QProcess.ExitStatus.CrashExit else "NormalExit"
+        status_name = "CrashExit" if exit_code < 0 else "NormalExit"
         return f"sing-box exited {stage} with code {exit_code} ({status_name})."
 
     def _report_startup_failure(self, message: str) -> None:

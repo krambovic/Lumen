@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+import subprocess
+import threading
+import time
 from urllib.parse import quote
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-from PyQt6.QtCore import QObject, QProcess, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 
 from ...constants import BASE_DIR
 from ...subprocess_utils import (
     decode_output,
     kill_processes_by_path,
+    pump_qt_events,
     result_output_text,
     run_text_pumped,
     sleep_with_events,
-    wait_for_qprocess_finished,
-    wait_for_qprocess_ready_read,
-    wait_for_qprocess_started,
 )
 
 TUN2SOCKS_PATH_DEFAULT = BASE_DIR / "core" / "tun2socks.exe"
@@ -38,12 +38,9 @@ class Tun2SocksManager(QObject):
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self._process = QProcess(self)
-        self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self._process.readyReadStandardOutput.connect(self._on_ready_read)
-        self._process.started.connect(self._on_started)
-        self._process.errorOccurred.connect(self._on_error)
-        self._process.finished.connect(self._on_finished)
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._reader: threading.Thread | None = None
+        self._lock = threading.RLock()
         self._running = False
         self._stop_requested = False
         self._server_ip: str = ""
@@ -55,6 +52,10 @@ class Tun2SocksManager(QObject):
     def is_running(self) -> bool:
         return self._running
 
+    def _proc_alive(self) -> bool:
+        proc = self._proc
+        return proc is not None and proc.poll() is None
+
     def start(self, socks_port: int, *, username: str = "", password: str = "", server_ip: str = "") -> bool:
         exe = TUN2SOCKS_PATH_DEFAULT
         if not exe.is_file():
@@ -63,7 +64,7 @@ class Tun2SocksManager(QObject):
 
         self._server_ip = server_ip
 
-        if self._process.state() != QProcess.ProcessState.NotRunning:
+        if self._proc_alive():
             if not self.stop(expected=True):
                 self.error.emit("failed to stop previous tun2socks process")
                 return False
@@ -74,30 +75,55 @@ class Tun2SocksManager(QObject):
         # Kill orphaned tun2socks
         self._kill_orphaned()
 
-        self._process.setProgram(str(exe))
         proxy_url = f"socks5://127.0.0.1:{socks_port}"
         if username or password:
             proxy_url = f"socks5://{quote(username, safe='')}:{quote(password, safe='')}@127.0.0.1:{socks_port}"
 
-        self._process.setArguments([
+        args = [
+            str(exe),
             "-device", f"tun://{TUN_DEVICE_NAME}",
             "-proxy", proxy_url,
             "-loglevel", "error",
-        ])
-        self._process.start()
+        ]
 
-        if not wait_for_qprocess_started(self._process, 5000):
-            self.error.emit(f"failed to start tun2socks: {self._process.errorString()}")
+        try:
+            proc = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                bufsize=0,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        except Exception as exc:
+            self.error.emit(f"failed to start tun2socks: {exc}")
             return False
 
-        # Wait for TUN adapter to be created
-        wait_for_qprocess_ready_read(self._process, 3000)
-        if self._process.state() == QProcess.ProcessState.NotRunning:
+        with self._lock:
+            self._proc = proc
+            self._stop_requested = False
+            reader = threading.Thread(
+                target=self._read_output,
+                args=(proc,),
+                name="tun2socks-output-reader",
+                daemon=True,
+            )
+            self._reader = reader
+            reader.start()
+
+        self._on_started(proc)
+
+        # Give it a moment to boot / fail fast
+        sleep_with_events(0.5)
+        if not self._proc_alive():
             self.error.emit("tun2socks exited right after start")
             return False
 
         # Wait until TUN interface appears (up to 10 seconds)
         for _ in range(20):
+            if not self._proc_alive():
+                self.error.emit("tun2socks exited right after start")
+                return False
             result = run_text_pumped(
                 ["netsh", "interface", "ipv4", "show", "interfaces"],
                 timeout=5,
@@ -107,9 +133,8 @@ class Tun2SocksManager(QObject):
                 break
             sleep_with_events(0.5)
         else:
-            self._process.terminate()
-            wait_for_qprocess_finished(self._process, 2000)
             self.error.emit("TUN adapter did not appear after tun2socks start")
+            self.stop(expected=True)
             return False
 
         # Configure routes
@@ -119,31 +144,101 @@ class Tun2SocksManager(QObject):
         return True
 
     def stop(self, expected: bool = True) -> bool:
-        if self._process.state() == QProcess.ProcessState.NotRunning:
+        proc = self._proc
+        if not self._proc_alive():
             self._stop_requested = False
             if self._running:
                 self._running = False
                 self.state_changed.emit(False)
+            self._cleanup_routes()
             return True
 
         self._stop_requested = expected
-        self._process.terminate()
-        if wait_for_qprocess_finished(self._process, 2000):
-            self._cleanup_routes()
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        if self._wait_proc(proc, 2.0):
+            self._finish_stop()
             return True
 
-        self._process.kill()
-        if wait_for_qprocess_finished(self._process, 1000):
-            self._cleanup_routes()
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        if self._wait_proc(proc, 1.0):
+            self._finish_stop()
             return True
 
-        if self._process.state() == QProcess.ProcessState.NotRunning:
-            self._cleanup_routes()
+        if not self._proc_alive():
+            self._finish_stop()
             return True
 
         self._stop_requested = False
         self.error.emit("failed to stop tun2socks in time")
         return False
+
+    def _finish_stop(self) -> None:
+        reader = self._reader
+        if reader is not None and reader.is_alive() and reader is not threading.current_thread():
+            reader.join(timeout=2.0)
+        self._cleanup_routes()
+
+    def _wait_proc(self, proc: subprocess.Popen[bytes], timeout: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                return True
+            pump_qt_events()
+            time.sleep(0.05)
+        return proc.poll() is not None
+
+    def _read_output(self, proc: subprocess.Popen[bytes]) -> None:
+        stream = proc.stdout
+        try:
+            if stream is not None:
+                for raw in iter(stream.readline, b""):
+                    text = decode_output(raw)
+                    for line in text.splitlines():
+                        clean = line.rstrip()
+                        if clean:
+                            self.log_received.emit(clean)
+        except Exception:
+            pass
+        finally:
+            try:
+                proc.wait()
+            except Exception:
+                pass
+            self._handle_process_exit(proc)
+
+    def _on_started(self, proc: subprocess.Popen[bytes]) -> None:
+        with self._lock:
+            if proc is not self._proc or proc.poll() is not None:
+                return
+            if self._running:
+                return
+            self._stop_requested = False
+            self._running = True
+        self.started.emit()
+        self.state_changed.emit(True)
+
+    def _handle_process_exit(self, proc: subprocess.Popen[bytes]) -> None:
+        with self._lock:
+            if proc is not self._proc:
+                return
+            exit_code = proc.poll()
+            if exit_code is None:
+                exit_code = -1
+            self._proc = None
+            self._reader = None
+            self._stop_requested = False
+            was_running = self._running
+            self._running = False
+        self._cleanup_routes()
+        self.stopped.emit(int(exit_code))
+        if was_running:
+            self.state_changed.emit(False)
 
     def _setup_routes(self) -> bool:
         """Set up routes so all traffic goes through the TUN adapter."""
@@ -278,33 +373,3 @@ class Tun2SocksManager(QObject):
                 sleep_with_events(1.0)
         except Exception:
             pass
-
-    def _on_ready_read(self) -> None:
-        chunk = self._process.readAllStandardOutput()
-        raw = getattr(chunk, "data")()
-        if isinstance(raw, (bytes, bytearray)):
-            text = decode_output(bytes(raw))
-        else:
-            text = str(raw)
-        for line in text.splitlines():
-            clean = line.rstrip()
-            if clean:
-                self.log_received.emit(clean)
-
-    def _on_started(self) -> None:
-        self._stop_requested = False
-        self._running = True
-        self.started.emit()
-        self.state_changed.emit(True)
-
-    def _on_error(self, process_error: QProcess.ProcessError) -> None:
-        if self._stop_requested and process_error == QProcess.ProcessError.Crashed:
-            return
-        self.error.emit(f"tun2socks error: {process_error.name} ({self._process.errorString()})")
-
-    def _on_finished(self, exit_code: int, _exit_status: int = 0) -> None:
-        self._stop_requested = False
-        self._running = False
-        self._cleanup_routes()
-        self.stopped.emit(exit_code)
-        self.state_changed.emit(False)

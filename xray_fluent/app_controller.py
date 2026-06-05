@@ -10,7 +10,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 from .application.config import (
     SingboxDocumentCache,
@@ -188,6 +188,31 @@ def _find_free_api_port(preferred: int | None = None, excluded: set[int] | None 
 _XRAY_METRICS_API_TAG = "__app_metrics_api"
 _XRAY_METRICS_API_INBOUND_TAG = "__app_metrics_api_in"
 _XRAY_TUN_INBOUND_TAG = "__app_tun_in"
+
+
+class _TransitionWorker(QObject):
+    """Runs blocking connect/disconnect transitions off the GUI thread"""
+
+    completed = pyqtSignal(bool, str, str, int)  # ok, action, reason, generation
+
+    def __init__(self, controller: "AppController") -> None:
+        super().__init__()
+        self._controller = controller
+
+    def execute(self, action: str, reason: str, generation: int) -> None:
+        ok = False
+        try:
+            ok = self._controller._run_transition_action(action, reason)
+        except Exception as exc:  # never let the worker thread die silently
+            try:
+                self._controller._log(f"[transition] worker error: {exc}")
+            except Exception:
+                pass
+            ok = False
+        finally:
+            self.completed.emit(ok, action, reason, generation)
+
+
 class AppController(QObject):
     nodes_changed = pyqtSignal(object)
     selection_changed = pyqtSignal(object)
@@ -209,6 +234,8 @@ class AppController(QObject):
     passphrase_required = pyqtSignal()
     auto_switch_triggered = pyqtSignal(str)  # node name we're switching to
     transition_state_changed = pyqtSignal(bool, str)
+    _transition_run = pyqtSignal(str, str, int)  # action, reason, generation (GUI -> worker thread)
+    _metrics_request = pyqtSignal(bool)  # start(True)/stop(False) metrics worker (any thread -> GUI)
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -994,25 +1021,48 @@ class AppController(QObject):
         generation = self._transition_generation
         QTimer.singleShot(16, lambda: self._execute_transition_action(action, reason, generation))
 
+    def _ensure_transition_worker(self) -> None:
+        """Lazily spin up the dedicated transition thread + worker (GUI thread)."""
+        if getattr(self, "_transition_thread", None) is not None:
+            return
+        thread = QThread()
+        thread.setObjectName("bebra-transition")
+        worker = _TransitionWorker(self)
+        worker.moveToThread(thread)
+        self._transition_run.connect(worker.execute)
+        worker.completed.connect(self._on_transition_action_complete)
+        self._metrics_request.connect(self._on_metrics_request)
+        thread.start()
+        self._transition_thread = thread
+        self._transition_worker = worker
+
     def _execute_transition_action(self, action: str, reason: str, generation: int) -> None:
         if not self._transition_active:
             return
-        try:
-            ok = self._run_transition_action(action, reason)
-            if ok:
-                self._blocked_transition_signature = ""
-            else:
-                self._blocked_transition_signature = self._transition_signature()
-                self._desired_connected = self.connected
-        finally:
-            self._transition_active = False
-            if generation != self._transition_generation:
-                self._transition_pending = True
-            if self._transition_pending or self._needs_transition():
-                self._transition_scheduled = True
-                QTimer.singleShot(16, self._drain_transition_queue)
-            else:
-                self.transition_state_changed.emit(False, "")
+        self._ensure_transition_worker()
+        self._transition_run.emit(action, reason, generation)
+
+    def _on_transition_action_complete(self, ok: bool, action: str, reason: str, generation: int) -> None:
+        if ok:
+            self._blocked_transition_signature = ""
+        else:
+            self._blocked_transition_signature = self._transition_signature()
+            self._desired_connected = self.connected
+        self._transition_active = False
+        if generation != self._transition_generation:
+            self._transition_pending = True
+        if self._transition_pending or self._needs_transition():
+            self._transition_scheduled = True
+            QTimer.singleShot(16, self._drain_transition_queue)
+        else:
+            self.transition_state_changed.emit(False, "")
+
+    def _on_metrics_request(self, start: bool) -> None:
+        # Always runs on the GUI thread (owns the metrics worker / its QThread).
+        if start:
+            self._start_metrics_worker()
+        else:
+            self._stop_metrics_worker()
 
     def _run_transition_action(self, action: str, reason: str) -> bool:
         if action == "disconnect":
@@ -1040,6 +1090,13 @@ class AppController(QObject):
 
     def shutdown(self) -> None:
         shutdown_operation(self)
+        thread = getattr(self, "_transition_thread", None)
+        if thread is not None:
+            try:
+                thread.quit()
+                thread.wait(2000)
+            except Exception:
+                pass
 
     @staticmethod
     def _cleanup_tun_adapter() -> None:

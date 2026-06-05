@@ -18,6 +18,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from ...constants import APP_VERSION, XRAY_GITHUB_RELEASES_API, XRAY_PATH_DEFAULT
 from ...path_utils import resolve_configured_path
 from ...update_checker import check_update
+from ...zip_utils import safe_extract_zip
 from .manager import get_xray_version
 
 
@@ -257,7 +258,7 @@ def _install_zip_archive(archive_path: Path, target_xray_path: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="xray_core_extract_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         with zipfile.ZipFile(archive_path, "r") as archive:
-            archive.extractall(temp_dir)
+            safe_extract_zip(archive, temp_dir)
 
         new_xray = _find_file(temp_dir, "xray.exe")
         if not new_xray:
