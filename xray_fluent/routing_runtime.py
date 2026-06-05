@@ -116,14 +116,7 @@ def append_xray_process_rule(rules: list[dict[str, Any]], processes: list[str], 
 
 
 def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings) -> list[dict[str, Any]]:
-    rules: list[dict[str, Any]] = [
-        {
-            "type": "field",
-            "port": "443",
-            "network": "udp",
-            "outboundTag": "block",
-        }
-    ]
+    rules: list[dict[str, Any]] = []
     if routing.bypass_lan:
         rules.append({"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"})
         rules.append({"type": "field", "domain": ["geosite:private"], "outboundTag": "direct"})
@@ -262,6 +255,7 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         rules = []
         route["rules"] = rules
 
+    rules[:] = [rule for rule in rules if not _is_legacy_bebra_singbox_route_rule(rule)]
     gui_rules, rule_sets = build_singbox_gui_route_rules(routing)
     _ensure_singbox_rule_sets(route, rule_sets)
     insert_at = _singbox_runtime_rule_insert_index(rules)
@@ -281,13 +275,7 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
 
 
 def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[str, Any]], set[str]]:
-    rules: list[dict[str, Any]] = [
-        {
-            "network": "udp",
-            "port": 443,
-            "outbound": "block",
-        }
-    ]
+    rules: list[dict[str, Any]] = []
     rule_sets: set[str] = set()
 
     if routing.bypass_lan:
@@ -350,6 +338,26 @@ def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[s
             rules.append(rule)
             rule_sets.update(used_sets)
     return rules, rule_sets
+
+
+def _is_legacy_bebra_singbox_route_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    network = rule.get("network")
+    if isinstance(network, list):
+        is_udp = {str(item).lower() for item in network} == {"udp"}
+    else:
+        is_udp = str(network or "").lower() == "udp"
+    port = rule.get("port")
+    if isinstance(port, list):
+        is_443 = {str(item) for item in port} == {"443"}
+    else:
+        is_443 = str(port or "") == "443"
+    return (
+        is_udp
+        and is_443
+        and str(rule.get("outbound") or "") == "block"
+    )
 
 
 def _append_singbox_process_rule(
