@@ -302,7 +302,7 @@ def _node_should_use_xray_sidecar(node: Node | None) -> bool:
             if not isinstance(user, dict):
                 continue
             flow = str(user.get("flow") or "").strip().lower()
-            if flow == "xtls-rprx-vision":
+            if flow.startswith("xtls-rprx-vision"):
                 return True
     return False
 
@@ -347,7 +347,7 @@ def _build_xray_sidecar_config(
                 },
                 "sniffing": {
                     "enabled": True,
-                    "destOverride": ["http", "tls", "quic"],
+                    "destOverride": ["http", "tls"],
                     "routeOnly": True,
                 },
             }

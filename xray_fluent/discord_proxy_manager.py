@@ -12,6 +12,7 @@ from urllib.request import Request
 from .constants import APP_VERSION, DATA_DIR
 from .http_utils import urlopen
 from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pumped
+from .zip_utils import safe_extract_zip
 
 
 DROUTE_VERSION = "1.1.2"
@@ -111,7 +112,7 @@ def ensure_droute_bundle() -> Path:
         raise RuntimeError("droute archive download is damaged")
     tmp_zip.write_bytes(payload)
     with zipfile.ZipFile(tmp_zip) as archive:
-        archive.extractall(DROUTE_DIR)
+        safe_extract_zip(archive, DROUTE_DIR)
     tmp_zip.unlink(missing_ok=True)
     if not DROUTE_EXE.is_file():
         raise RuntimeError("droute.exe was not found in the downloaded archive")

@@ -68,12 +68,12 @@ def _convert_outbound(xray_ob: dict[str, Any]) -> dict[str, Any]:
             sb["username"] = str(user_list[0].get("user") or "")
             sb["password"] = str(user_list[0].get("pass") or "")
 
-    _apply_tls(sb, stream)
+    _apply_tls(sb, stream, str(sb.get("server") or ""))
     _apply_transport(sb, stream)
     return sb
 
 
-def _apply_tls(sb: dict[str, Any], stream: dict[str, Any]) -> None:
+def _apply_tls(sb: dict[str, Any], stream: dict[str, Any], server: str = "") -> None:
     security = str(stream.get("security") or "").lower()
     if security not in ("tls", "reality"):
         return
@@ -82,28 +82,75 @@ def _apply_tls(sb: dict[str, Any], stream: dict[str, Any]) -> None:
 
     if security == "reality":
         reality_settings = dict(stream.get("realitySettings") or {})
-        tls["server_name"] = str(reality_settings.get("serverName") or "")
+        server_name = str(reality_settings.get("serverName") or "").strip()
+        if server_name:
+            tls["server_name"] = server_name
+        alpn = reality_settings.get("alpn")
+        if alpn:
+            tls["alpn"] = list(alpn) if isinstance(alpn, list) else [str(alpn)]
         fingerprint = str(reality_settings.get("fingerprint") or "")
         if fingerprint:
             tls["utls"] = {"enabled": True, "fingerprint": fingerprint}
         public_key = str(reality_settings.get("publicKey") or "")
         short_id = str(reality_settings.get("shortId") or "")
         tls["reality"] = {"enabled": True, "public_key": public_key, "short_id": short_id}
+        tls["insecure"] = False
     else:
         tls_settings = dict(stream.get("tlsSettings") or {})
-        server_name = str(tls_settings.get("serverName") or "")
+        server_name = str(tls_settings.get("serverName") or _infer_transport_host(stream) or server or "")
         if server_name:
             tls["server_name"] = server_name
         alpn = tls_settings.get("alpn")
         if alpn:
-            tls["alpn"] = list(alpn)
+            tls["alpn"] = list(alpn) if isinstance(alpn, list) else [str(alpn)]
         fingerprint = str(tls_settings.get("fingerprint") or "")
         if fingerprint:
             tls["utls"] = {"enabled": True, "fingerprint": fingerprint}
         if tls_settings.get("allowInsecure", False):
             tls["insecure"] = True
+        ech_config = str(tls_settings.get("echConfigList") or "")
+        if ech_config:
+            if "://" in ech_config:
+                query_server, _, server_url = ech_config.partition("+")
+                ech: dict[str, Any] = {"enabled": True}
+                if query_server and server_url:
+                    ech["query_server_name"] = query_server
+                tls["ech"] = ech
+            else:
+                tls["ech"] = {
+                    "enabled": True,
+                    "config": [f"-----BEGIN ECH CONFIGS-----\n{ech_config}\n-----END ECH CONFIGS-----"],
+                }
 
     sb["tls"] = tls
+
+
+def _infer_transport_host(stream: dict[str, Any]) -> str:
+    network = str(stream.get("network") or "").strip().lower()
+    if network in {"tcp", "raw", "ws"}:
+        settings = stream.get("wsSettings") if network == "ws" else stream.get("tcpSettings")
+        if isinstance(settings, dict):
+            headers = settings.get("headers") if network == "ws" else settings.get("header", {}).get("request", {}).get("headers")
+            if isinstance(headers, dict):
+                host = headers.get("Host") or headers.get("host")
+                if isinstance(host, list):
+                    return str(host[0]).strip() if host else ""
+                return str(host or "").split(",")[0].strip()
+    if network in {"http", "h2"}:
+        settings = stream.get("httpSettings") if isinstance(stream.get("httpSettings"), dict) else {}
+        host = settings.get("host")
+        if isinstance(host, list) and host:
+            return str(host[0]).strip()
+        if isinstance(host, str):
+            return host.split(",")[0].strip()
+    if network == "grpc":
+        settings = stream.get("grpcSettings") if isinstance(stream.get("grpcSettings"), dict) else {}
+        return str(settings.get("authority") or "").strip()
+    if network in {"xhttp", "httpupgrade"}:
+        key = "xhttpSettings" if network == "xhttp" else "httpupgradeSettings"
+        settings = stream.get(key) if isinstance(stream.get(key), dict) else {}
+        return str(settings.get("host") or "").split(",")[0].strip()
+    return ""
 
 
 def _apply_transport(sb: dict[str, Any], stream: dict[str, Any]) -> None:

@@ -149,7 +149,7 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
         if host:
             xhttp_settings["host"] = host
         mode = _get_param(params, "mode")
-        if mode:
+        if mode in {"auto", "packet-up", "stream-up", "stream-one"}:
             xhttp_settings["mode"] = mode
         extra = _get_param(params, "extra")
         if extra:
@@ -158,7 +158,7 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
             except Exception:
                 decoded_extra = None
             if isinstance(decoded_extra, dict):
-                xhttp_settings.update(decoded_extra)
+                xhttp_settings["extra"] = decoded_extra
         for key in ("scMaxEachPostBytes", "scMaxBufferedPosts", "xPaddingBytes"):
             value = _get_param(params, key)
             if value:
@@ -196,9 +196,19 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
         fp = _get_param(params, "fp", "fingerprint")
         if fp:
             tls_settings["fingerprint"] = fp
-        allow_insecure = _get_param(params, "allowInsecure", "allow_insecure")
+        allow_insecure = _get_param(params, "allowInsecure", "allow_insecure", "insecure")
         if allow_insecure:
             tls_settings["allowInsecure"] = _to_bool(allow_insecure)
+        cert_sha = _get_param(params, "pcs", "pinnedPeerCertSha256", "certSha")
+        if cert_sha:
+            tls_settings["pinnedPeerCertSha256"] = cert_sha
+        ech = _get_param(params, "ech", "echConfigList")
+        if ech:
+            tls_settings["echConfigList"] = ech
+            tls_settings["echForceQuery"] = "full"
+        verify_names = _get_param(params, "vcn", "verifyPeerCertByName")
+        if verify_names:
+            tls_settings["verifyPeerCertByName"] = [item.strip() for item in verify_names.split(",") if item.strip()]
         stream["tlsSettings"] = tls_settings
     elif security == "reality":
         reality_settings: dict[str, Any] = {}
@@ -220,6 +230,7 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
         pqv = _get_param(params, "pqv", "mldsa65Verify", "mldsa65_verify")
         if pqv:
             reality_settings["mldsa65Verify"] = pqv
+        reality_settings["show"] = False
         stream["realitySettings"] = reality_settings
 
     finalmask = _get_param(params, "fm", "finalmask")
@@ -252,6 +263,7 @@ def _parse_vless(link: str) -> Node:
     if flow:
         user["flow"] = flow
 
+    stream_settings = _build_stream_settings(params, default_network="tcp", default_security=params.get("security", "none"))
     outbound = {
         "protocol": "vless",
         "settings": {
@@ -263,8 +275,10 @@ def _parse_vless(link: str) -> Node:
                 }
             ]
         },
-        "streamSettings": _build_stream_settings(params, default_network="tcp", default_security=params.get("security", "none")),
+        "streamSettings": stream_settings,
     }
+    if str(stream_settings.get("network") or "").lower() == "xhttp":
+        outbound["mux"] = {"enabled": False, "concurrency": -1}
 
     name = _clean_name(parsed.fragment, f"vless-{server}:{port}")
     return Node(
@@ -309,6 +323,19 @@ def normalize_outbound_for_runtime(outbound: dict[str, Any], server: str = "") -
     if not isinstance(stream_settings, dict):
         return False
 
+    if str(stream_settings.get("network") or "").strip().lower() == "xhttp":
+        mux = outbound.get("mux")
+        if not isinstance(mux, dict):
+            outbound["mux"] = {"enabled": False, "concurrency": -1}
+            changed = True
+        else:
+            if mux.get("enabled") is not False:
+                mux["enabled"] = False
+                changed = True
+            if mux.get("concurrency") != -1:
+                mux["concurrency"] = -1
+                changed = True
+
     security = str(stream_settings.get("security") or "").strip().lower()
     if security == "tls":
         tls_settings = stream_settings.get("tlsSettings")
@@ -321,11 +348,17 @@ def normalize_outbound_for_runtime(outbound: dict[str, Any], server: str = "") -
             if inferred:
                 tls_settings["serverName"] = inferred
                 changed = True
+        if tls_settings.get("echConfigList") and not tls_settings.get("echForceQuery"):
+            tls_settings["echForceQuery"] = "full"
+            changed = True
     elif security == "reality":
         reality_settings = stream_settings.get("realitySettings")
         if not isinstance(reality_settings, dict):
             reality_settings = {}
             stream_settings["realitySettings"] = reality_settings
+            changed = True
+        if reality_settings.get("show") is not False:
+            reality_settings["show"] = False
             changed = True
     return changed
 
@@ -366,14 +399,20 @@ def validate_node_outbound(node: Node) -> str | None:
         reality_settings = {}
 
     public_key = str(reality_settings.get("publicKey") or "").strip()
-    if public_key:
-        return None
+    node_name = str(node.name or node.server or "\u0431\u0435\u0437\u044b\u043c\u044f\u043d\u043d\u044b\u0439 \u0441\u0435\u0440\u0432\u0435\u0440").strip()
+    if not public_key:
+        return (
+            f"\u0421\u0435\u0440\u0432\u0435\u0440 {node_name} \u043d\u0435 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u0437\u0430\u043f\u0443\u0449\u0435\u043d: \u0434\u043b\u044f REALITY \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u0435\u043d publicKey "
+            "(\u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440 pbk \u0432 VLESS-\u0441\u0441\u044b\u043b\u043a\u0435), \u043d\u043e \u0432 \u044d\u0442\u043e\u0439 \u0441\u0441\u044b\u043b\u043a\u0435 \u043e\u043d \u043f\u0443\u0441\u0442\u043e\u0439 \u0438\u043b\u0438 \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442."
+        )
 
-    node_name = str(node.name or node.server or "безымянный сервер").strip()
-    return (
-        f"Сервер {node_name} не может быть запущен: для REALITY обязателен publicKey "
-        "(параметр pbk в VLESS-ссылке), но в этой ссылке он пустой или отсутствует."
-    )
+    short_id = str(reality_settings.get("shortId") or "").strip()
+    if short_id and (len(short_id) > 16 or len(short_id) % 2 != 0 or any(ch not in "0123456789abcdefABCDEF" for ch in short_id)):
+        return (
+            f"\u0421\u0435\u0440\u0432\u0435\u0440 {node_name} \u043d\u0435 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u0437\u0430\u043f\u0443\u0449\u0435\u043d: shortId \u0434\u043b\u044f REALITY \u0434\u043e\u043b\u0436\u0435\u043d \u0431\u044b\u0442\u044c hex-\u0441\u0442\u0440\u043e\u043a\u043e\u0439 "
+            "\u0447\u0435\u0442\u043d\u043e\u0439 \u0434\u043b\u0438\u043d\u044b \u0434\u043e 16 \u0441\u0438\u043c\u0432\u043e\u043b\u043e\u0432. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440 sid \u0432 \u0441\u0441\u044b\u043b\u043a\u0435."
+        )
+    return None
 
 
 def _parse_vmess(link: str) -> Node:

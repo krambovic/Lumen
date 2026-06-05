@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.request import Request
 
 from .http_utils import build_opener, urlopen
+from .zip_utils import safe_extract_zip
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -455,7 +456,7 @@ class UpdateDownloader(QThread):
             # Extract
             extract_dir = tmp_dir / "extracted"
             with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(extract_dir)
+                safe_extract_zip(zf, extract_dir)
 
             exe_name = "BebraVPN.exe"
             source_dir = _resolve_extracted_app_dir(extract_dir, exe_name)

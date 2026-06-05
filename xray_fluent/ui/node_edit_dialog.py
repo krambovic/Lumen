@@ -306,6 +306,19 @@ def _build_vless_link(name: str, server: str, port: int, outbound: dict[str, Any
     payload = reality if security == "reality" else tls
     _set_param(params, "sni", str(payload.get("serverName") or ""))
     _set_param(params, "fp", str(payload.get("fingerprint") or ""))
+    network = str(stream.get("network") or "tcp").lower()
+    if network == "xhttp":
+        xhttp = stream.get("xhttpSettings") if isinstance(stream.get("xhttpSettings"), dict) else {}
+        _set_param(params, "path", str(xhttp.get("path") or ""))
+        _set_param(params, "host", str(xhttp.get("host") or ""))
+        _set_param(params, "mode", str(xhttp.get("mode") or ""))
+        extra = xhttp.get("extra")
+        if extra not in (None, ""):
+            _set_param(
+                params,
+                "extra",
+                extra if isinstance(extra, str) else json.dumps(extra, ensure_ascii=False, separators=(",", ":")),
+            )
     if security == "reality":
         _set_param(params, "pbk", str(reality.get("publicKey") or ""))
         _set_param(params, "sid", str(reality.get("shortId") or ""))
