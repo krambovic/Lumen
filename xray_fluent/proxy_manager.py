@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import json
 import sys
+import threading
 from ctypes import wintypes
 
 if sys.platform == "win32":
@@ -113,9 +114,16 @@ class ProxyManager:
     def _refresh_system_proxy(self) -> None:
         if not self.is_supported:
             return
-        wininet = ctypes.windll.Wininet
-        wininet.InternetSetOptionW(0, INTERNET_OPTION_SETTINGS_CHANGED, 0, 0)
-        wininet.InternetSetOptionW(0, INTERNET_OPTION_REFRESH, 0, 0)
+
+        def _notify() -> None:
+            try:
+                wininet = ctypes.windll.Wininet
+                wininet.InternetSetOptionW(0, INTERNET_OPTION_SETTINGS_CHANGED, 0, 0)
+                wininet.InternetSetOptionW(0, INTERNET_OPTION_REFRESH, 0, 0)
+            except Exception:
+                pass
+
+        threading.Thread(target=_notify, name="proxy-refresh", daemon=True).start()
 
     def _set_wininet_connection_proxy(self, proxy_server: str, override: str, enabled: bool) -> bool:
         if not self.is_supported:

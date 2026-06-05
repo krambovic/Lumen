@@ -51,14 +51,14 @@ def run_text(
 
 def pump_qt_events() -> None:
     try:
-        from PyQt6.QtCore import QThread
+        from PyQt6.QtCore import QEventLoop, QThread
         from PyQt6.QtWidgets import QApplication
     except Exception:
         return
 
     app = QApplication.instance()
     if app is not None and QThread.currentThread() == app.thread():
-        app.processEvents()
+        app.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
 
 def sleep_with_events(duration_sec: float, *, step_sec: float = 0.05) -> None:

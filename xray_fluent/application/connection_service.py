@@ -254,10 +254,7 @@ def reconnect(controller: AppController, reason: str) -> bool:
         controller._auto_switch_transitioning = False
         _, controller.connected = controller._refresh_connected_state()
         controller.connection_changed.emit(controller.connected)
-        if controller.connected:
-            controller._start_metrics_worker()
-        else:
-            controller._stop_metrics_worker()
+        controller._metrics_request.emit(controller.connected)
 
 
 def _is_admin() -> bool:

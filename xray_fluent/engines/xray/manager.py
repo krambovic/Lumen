@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import subprocess
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Any
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-from PyQt6.QtCore import QObject, QProcess, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 
 from ...constants import RUNTIME_DIR, XRAY_CONFIG_FILE, XRAY_PATH_DEFAULT
 from ...path_utils import resolve_configured_path
@@ -23,8 +24,6 @@ from ...subprocess_utils import (
     result_output_text,
     run_text_pumped,
     sleep_with_events,
-    wait_for_qprocess_finished,
-    wait_for_qprocess_started,
 )
 
 
@@ -37,12 +36,9 @@ class XrayManager(QObject):
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self._process = QProcess(self)
-        self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self._process.readyReadStandardOutput.connect(self._on_ready_read)
-        self._process.started.connect(self._on_started)
-        self._process.errorOccurred.connect(self._on_error)
-        self._process.finished.connect(self._on_finished)
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._reader: threading.Thread | None = None
+        self._lock = threading.RLock()
         self._running = False
         self._stop_requested = False
         self._starting = False
@@ -50,7 +46,6 @@ class XrayManager(QObject):
         self._runtime_error_reported = False
         self._last_output_lines: deque[str] = deque(maxlen=20)
         self._last_exit_code: int | None = None
-        self._last_exit_status = QProcess.ExitStatus.NormalExit
         self._last_exit_expected = False
         self._exe_path: Path | None = None
 
@@ -61,6 +56,10 @@ class XrayManager(QObject):
     @property
     def last_exit_expected(self) -> bool:
         return self._last_exit_expected
+
+    def _proc_alive(self) -> bool:
+        proc = self._proc
+        return proc is not None and proc.poll() is None
 
     def start(self, xray_path: str, config: dict[str, Any]) -> bool:
         if not xray_path or not xray_path.strip():
@@ -80,7 +79,7 @@ class XrayManager(QObject):
             return False
         self._exe_path = exe
 
-        if self._process.state() != QProcess.ProcessState.NotRunning:
+        if self._proc_alive():
             if not self.stop(expected=True):
                 self.error.emit("Не удалось остановить предыдущий процесс Xray")
                 return False
@@ -100,16 +99,37 @@ class XrayManager(QObject):
         self._starting = True
         self._startup_failure_reported = False
         self._runtime_error_reported = False
+        self._stop_requested = False
+        self._last_exit_expected = False
+        self._last_exit_code = None
         self._last_output_lines.clear()
-        self._process.setWorkingDirectory(str(exe.parent))
-        self._process.setProgram(str(exe))
-        self._process.setArguments(["run", "-c", str(XRAY_CONFIG_FILE)])
-        self._process.start()
 
-        if not wait_for_qprocess_started(self._process, 2000):
+        try:
+            proc = subprocess.Popen(
+                [str(exe), "run", "-c", str(XRAY_CONFIG_FILE)],
+                cwd=str(exe.parent),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                bufsize=0,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        except Exception as exc:
             self._starting = False
-            self._report_startup_failure(f"Не удалось запустить Xray: {self._process.errorString()}")
+            self._report_startup_failure(f"Не удалось запустить Xray: {exc}")
             return False
+
+        with self._lock:
+            self._proc = proc
+        self._reader = threading.Thread(
+            target=self._read_output,
+            args=(proc,),
+            name="xray-output-reader",
+            daemon=True,
+        )
+        self._reader.start()
+
+        self._on_started(proc)
 
         if not self._wait_until_ready(required_ports):
             self._starting = False
@@ -119,83 +139,101 @@ class XrayManager(QObject):
         return True
 
     def stop(self, expected: bool = True) -> bool:
-        if self._process.state() == QProcess.ProcessState.NotRunning:
-            self._stop_requested = False
-            if self._running:
-                self._running = False
-                self.state_changed.emit(False)
+        with self._lock:
+            proc = self._proc
+            if proc is None or proc.poll() is not None:
+                self._stop_requested = False
+                if self._running:
+                    self._running = False
+                    self.state_changed.emit(False)
+                return True
+            self._stop_requested = expected
+
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        if self._wait_proc(proc, 3.0):
             return True
 
-        self._stop_requested = expected
-        self._process.terminate()
-        if wait_for_qprocess_finished(self._process, 3000):
-            return True
-
-        self._process.kill()
-        if wait_for_qprocess_finished(self._process, 2000):
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        if self._wait_proc(proc, 2.0):
             return True
 
         exe = self._exe_path
         if os.name == "nt" and exe is not None:
             try:
                 if kill_processes_by_path(exe.name, exe, timeout=5):
-                    sleep_with_events(0.5)
-                    if wait_for_qprocess_finished(self._process, 1000):
+                    if self._wait_proc(proc, 1.0):
                         return True
             except Exception:
                 pass
 
-        if self._process.state() == QProcess.ProcessState.NotRunning:
+        if proc.poll() is not None:
             return True
 
         self._stop_requested = False
         self.error.emit("Не удалось вовремя остановить процесс Xray")
         return False
 
-    def _on_ready_read(self) -> None:
-        chunk = self._process.readAllStandardOutput()
-        raw = getattr(chunk, "data")()
-        if isinstance(raw, (bytes, bytearray)):
-            text = decode_output(bytes(raw))
-        else:
-            text = str(raw)
-        for line in text.splitlines():
-            clean = line.rstrip()
-            if clean:
-                self._last_output_lines.append(clean)
-                self.log_received.emit(clean)
+    def _wait_proc(self, proc: subprocess.Popen[bytes], timeout_sec: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout_sec)
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                return True
+            pump_qt_events()
+            time.sleep(0.05)
+        return proc.poll() is not None
 
-    def _on_started(self) -> None:
-        self._stop_requested = False
-        self._running = True
+    def _read_output(self, proc: subprocess.Popen[bytes]) -> None:
+        stream = proc.stdout
+        try:
+            if stream is not None:
+                for raw in iter(stream.readline, b""):
+                    text = decode_output(raw)
+                    for line in text.splitlines():
+                        clean = line.rstrip()
+                        if clean:
+                            self._last_output_lines.append(clean)
+                            self.log_received.emit(clean)
+        except Exception:
+            pass
+        finally:
+            try:
+                proc.wait()
+            except Exception:
+                pass
+            self._handle_process_exit(proc)
+
+    def _on_started(self, proc: subprocess.Popen[bytes]) -> None:
+        with self._lock:
+            if proc is not self._proc or proc.poll() is not None:
+                return
+            self._running = True
         self.started.emit()
         self.state_changed.emit(True)
 
-    def _on_error(self, process_error: QProcess.ProcessError) -> None:
-        if self._stop_requested and process_error == QProcess.ProcessError.Crashed:
-            return
-        message = f"Ошибка процесса Xray: {process_error.name} ({self._process.errorString()})"
-        if self._starting:
-            self._report_startup_failure(message)
-            return
-        if self._runtime_error_reported:
-            return
-        self._runtime_error_reported = True
-        self.error.emit(message)
+    def _handle_process_exit(self, proc: subprocess.Popen[bytes]) -> None:
+        with self._lock:
+            if proc is not self._proc:
+                return
+            exit_code = proc.returncode if proc.returncode is not None else -1
+            expected = self._stop_requested
+            was_starting = self._starting
+            self._last_exit_expected = expected
+            self._last_exit_code = exit_code
+            self._stop_requested = False
+            self._running = False
+            self._proc = None
 
-    def _on_finished(self, exit_code: int, _exit_status: int = 0) -> None:
-        exit_status = QProcess.ExitStatus(_exit_status)
-        expected = self._stop_requested
-        self._last_exit_expected = expected
-        self._last_exit_code = exit_code
-        self._last_exit_status = exit_status
-        self._stop_requested = False
-        self._running = False
-        if self._starting and not expected:
-            self._report_startup_failure(self._unexpected_exit_message(exit_code, exit_status, startup=True))
+        if was_starting and not expected:
+            self._report_startup_failure(self._unexpected_exit_message(exit_code, startup=True))
         elif not expected and not self._runtime_error_reported:
             self._runtime_error_reported = True
-            self.error.emit(self._unexpected_exit_message(exit_code, exit_status, startup=False))
+            self.error.emit(self._unexpected_exit_message(exit_code, startup=False))
         self.stopped.emit(exit_code)
         self.state_changed.emit(False)
 
@@ -222,13 +260,15 @@ class XrayManager(QObject):
 
     def _ensure_ports_available(self, port_roles: dict[int, str]) -> str | None:
         for port, role in port_roles.items():
+            if not self._is_port_ready(port):
+                continue
             owner = self._find_listening_port_owner(port)
             if owner is None:
                 continue
             pid, name = owner
             if pid > 0 and (name or "").strip().lower() == "xray.exe" and self._kill_pid(pid):
                 sleep_with_events(0.5)
-                if self._find_listening_port_owner(port) is None:
+                if not self._is_port_ready(port):
                     self.log_received.emit(f"[xray] terminated stale xray.exe PID {pid} on port {port}")
                     continue
             return self._port_conflict_message(port, role, pid, name)
@@ -335,8 +375,8 @@ class XrayManager(QObject):
         deadline = time.monotonic() + timeout_sec
         while time.monotonic() < deadline:
             pump_qt_events()
-            if self._process.state() == QProcess.ProcessState.NotRunning:
-                self._report_startup_failure(self._unexpected_exit_message(self._last_exit_code, self._last_exit_status, startup=True))
+            if not self._proc_alive():
+                self._report_startup_failure(self._unexpected_exit_message(self._last_exit_code, startup=True))
                 return False
             if all(self._is_port_ready(port) for port in port_roles):
                 return True
@@ -358,7 +398,6 @@ class XrayManager(QObject):
     def _unexpected_exit_message(
         self,
         exit_code: int | None,
-        exit_status: QProcess.ExitStatus,
         *,
         startup: bool,
     ) -> str:
@@ -371,7 +410,7 @@ class XrayManager(QObject):
             return f"Xray завершился {stage}: {detail}"
         if exit_code is None:
             return f"Xray завершился {stage}."
-        status_name = "CrashExit" if exit_status == QProcess.ExitStatus.CrashExit else "NormalExit"
+        status_name = "CrashExit" if exit_code < 0 else "NormalExit"
         return f"Xray завершился {stage} с кодом {exit_code} ({status_name})."
 
     def _report_startup_failure(self, message: str) -> None:
