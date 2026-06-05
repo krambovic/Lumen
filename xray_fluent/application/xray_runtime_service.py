@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from ..constants import DEFAULT_DISCORD_SOCKS_PORT, PROXY_HOST, XRAY_TUN_DEFAULT_INTERFACE_NAME
 from ..engines.xray import get_windows_default_route_context
 from ..routing_runtime import apply_xray_gui_routing
+from ..xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
 from .connection_service import find_free_api_port
 from .runtime_introspection import extract_xray_runtime_ports
 from .runtime_security import strip_xray_proxy_inbounds
@@ -296,6 +297,14 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
             break
 
     apply_xray_gui_routing(payload, controller.state.routing, controller.state.settings)
+    if controller.state.settings.enable_xray_fragment:
+        patched = apply_xray_outbound_fragment(payload)
+        if patched:
+            controller._log(f"[xray] outbound fragment enabled for {patched} outbound(s)")
+    if controller.state.settings.enable_final_fragment:
+        patched = apply_xray_final_fragment(payload)
+        if patched:
+            controller._log(f"[xray] final TLS fragment enabled for {patched} proxy outbound(s)")
 
     loop_prevention_interface = ""
     loop_prevention_patched_outbounds = 0

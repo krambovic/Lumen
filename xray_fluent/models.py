@@ -179,6 +179,8 @@ class AppSettings:
     xray_release_channel: str = "beta"  # stable | beta | nightly
     xray_update_feed_url: str = ""
     xray_auto_update: bool = False
+    enable_xray_fragment: bool = False
+    enable_final_fragment: bool = True
     discord_proxy_enabled: bool = False
     tun_mode: bool = False
     tun_engine: str = "singbox"  # "singbox" | "xray" | "tun2socks"
@@ -221,6 +223,8 @@ class AppSettings:
             "xray_release_channel": self.xray_release_channel,
             "xray_update_feed_url": self.xray_update_feed_url,
             "xray_auto_update": self.xray_auto_update,
+            "enable_xray_fragment": self.enable_xray_fragment,
+            "enable_final_fragment": self.enable_final_fragment,
             "discord_proxy_enabled": self.discord_proxy_enabled,
             "tun_mode": self.tun_mode,
             "tun_engine": self.tun_engine,
@@ -265,6 +269,8 @@ class AppSettings:
             xray_release_channel=xray_release_channel,
             xray_update_feed_url=str(data.get("xray_update_feed_url") or ""),
             xray_auto_update=bool(data.get("xray_auto_update", False)),
+            enable_xray_fragment=bool(data.get("enable_xray_fragment", False)),
+            enable_final_fragment=bool(data.get("enable_final_fragment", True)),
             discord_proxy_enabled=bool(data.get("discord_proxy_enabled", False)),
             tun_mode=bool(data.get("tun_mode", False)),
             tun_engine=_normalize_tun_engine(data.get("tun_engine")),

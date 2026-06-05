@@ -20,6 +20,7 @@ from ...constants import (
 )
 from ...models import Node, RoutingSettings
 from ...routing_runtime import apply_singbox_gui_routing
+from ...xray_fragments import apply_xray_final_fragment
 from .config_builder import build_singbox_outbound
 
 
@@ -125,6 +126,7 @@ def plan_singbox_runtime(
     node: Node | None,
     *,
     routing: RoutingSettings | None = None,
+    enable_final_fragment: bool = True,
     preferred_relay_port: int = 0,
     preferred_protect_port: int = 0,
     preferred_protect_password: str = "",
@@ -132,7 +134,7 @@ def plan_singbox_runtime(
     runtime_config = deepcopy(document.payload)
     strip_singbox_proxy_inbounds(runtime_config)
     _ensure_singbox_metrics_contract(runtime_config)
-    _ensure_singbox_tun_runtime_contract(runtime_config)
+    _ensure_singbox_tun_runtime_contract(runtime_config, enable_final_fragment=enable_final_fragment)
 
     outbounds = runtime_config.get("outbounds")
     proxy_index = _find_proxy_outbound_index(outbounds)
@@ -165,6 +167,7 @@ def plan_singbox_runtime(
             runtime_config=runtime_config,
             proxy_index=proxy_index,
             node=node,
+            enable_final_fragment=enable_final_fragment,
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
@@ -197,6 +200,7 @@ def _plan_hybrid_runtime(
     runtime_config: dict[str, Any],
     proxy_index: int,
     node: Node,
+    enable_final_fragment: bool,
     preferred_relay_port: int,
     preferred_protect_port: int,
     preferred_protect_password: str,
@@ -253,6 +257,7 @@ def _plan_hybrid_runtime(
             relay_password=relay_password,
             protect_port=protect_port,
             protect_password=protect_password,
+            enable_final_fragment=enable_final_fragment,
         ),
     )
     return SingboxRuntimePlan(
@@ -315,6 +320,7 @@ def _build_xray_sidecar_config(
     relay_password: str,
     protect_port: int,
     protect_password: str,
+    enable_final_fragment: bool = True,
 ) -> dict[str, Any]:
     if not isinstance(node.outbound, dict) or not node.outbound:
         raise ValueError("Выбранный сервер не содержит outbound JSON для xray sidecar.")
@@ -332,7 +338,7 @@ def _build_xray_sidecar_config(
         stream_settings["sockopt"] = sockopt
     sockopt["dialerProxy"] = _APP_XRAY_SIDECAR_PROTECT_OUTBOUND_TAG
 
-    return {
+    config = {
         "log": {"loglevel": "warning"},
         "inbounds": [
             {
@@ -380,6 +386,9 @@ def _build_xray_sidecar_config(
             ],
         },
     }
+    if enable_final_fragment:
+        apply_xray_final_fragment(config)
+    return config
 
 
 def _is_domain_name(value: str) -> bool:
@@ -449,7 +458,7 @@ def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> None:
     clash_api["external_controller"] = f"127.0.0.1:{SINGBOX_CLASH_API_PORT}"
 
 
-def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any]) -> None:
+def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any], *, enable_final_fragment: bool = True) -> None:
     """Patch app-owned runtime fields for raw sing-box configs.
 
     The source document may keep a placeholder or stale interface name, but the
@@ -481,7 +490,7 @@ def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any]) -> None:
     route["default_domain_resolver"] = {"server": "bootstrap-dns", "strategy": "prefer_ipv4"}
     _ensure_singbox_dns_ipv4_preference(payload)
     rules = _ensure_list(route, "rules")
-    _ensure_singbox_tun_base_rules(rules)
+    _ensure_singbox_tun_base_rules(rules, enable_final_fragment=enable_final_fragment)
 
 
 def _ensure_singbox_dns_ipv4_preference(payload: dict[str, Any]) -> None:
@@ -491,7 +500,7 @@ def _ensure_singbox_dns_ipv4_preference(payload: dict[str, Any]) -> None:
     dns.setdefault("strategy", "prefer_ipv4")
 
 
-def _ensure_singbox_tun_base_rules(rules: list[Any]) -> None:
+def _ensure_singbox_tun_base_rules(rules: list[Any], *, enable_final_fragment: bool = True) -> None:
     base_rules = [
         {"action": "sniff"},
         {
@@ -503,16 +512,28 @@ def _ensure_singbox_tun_base_rules(rules: list[Any]) -> None:
                 {"protocol": "dns"},
             ],
         },
-        {
-            "network": "udp",
-            "port": [135, 137, 138, 139, 5353],
-            "action": "reject",
-        },
-        {
-            "ip_cidr": ["224.0.0.0/3", "ff00::/8"],
-            "action": "reject",
-        },
     ]
+    if enable_final_fragment:
+        base_rules.append(
+            {
+                "protocol": ["tls"],
+                "action": "route-options",
+                "tls_record_fragment": True,
+            }
+        )
+    base_rules.extend(
+        [
+            {
+                "network": "udp",
+                "port": [135, 137, 138, 139, 5353],
+                "action": "reject",
+            },
+            {
+                "ip_cidr": ["224.0.0.0/3", "ff00::/8"],
+                "action": "reject",
+            },
+        ]
+    )
     rules[:] = [rule for rule in rules if not _is_singbox_tun_base_rule(rule)]
     rules[0:0] = base_rules
 
@@ -524,6 +545,8 @@ def _is_singbox_tun_base_rule(rule: Any) -> bool:
     if action == "sniff":
         return True
     if action == "hijack-dns":
+        return True
+    if action == "route-options" and rule.get("tls_record_fragment") is True:
         return True
     if rule.get("protocol") in ("dns", ["dns"]):
         return True

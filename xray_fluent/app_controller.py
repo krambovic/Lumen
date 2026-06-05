@@ -760,6 +760,7 @@ class AppController(QObject):
             document,
             node,
             routing=self.state.routing,
+            enable_final_fragment=self.state.settings.enable_final_fragment,
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,

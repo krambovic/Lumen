@@ -12,6 +12,7 @@ from ...constants import (
 )
 from ...models import AppSettings, Node, RoutingSettings
 from ...routing_runtime import build_xray_gui_routing_rules
+from ...xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
 
 
 def _normalize_loglevel(value: str) -> str:
@@ -165,5 +166,10 @@ def build_xray_config(
             ],
             "queryStrategy": "UseIP",
         }
+
+    if settings.enable_xray_fragment:
+        apply_xray_outbound_fragment(config)
+    if settings.enable_final_fragment:
+        apply_xray_final_fragment(config)
 
     return config

@@ -32,6 +32,7 @@ from .constants import (
 )
 from .http_utils import build_opener
 from .models import Node, RoutingSettings
+from .xray_fragments import apply_xray_final_fragment
 
 
 @dataclass(frozen=True)
@@ -194,7 +195,7 @@ class SpeedTestWorker(QThread):
         proxy_outbound = deepcopy(target.node.outbound)
         proxy_outbound["tag"] = outbound_tag
 
-        return {
+        config = {
             "log": {"loglevel": "none"},
             "inbounds": [
                 {
@@ -226,6 +227,8 @@ class SpeedTestWorker(QThread):
                 ],
             },
         }
+        apply_xray_final_fragment(config, tag_prefix=outbound_tag)
+        return config
 
     def _real_ping(self, target: _SpeedTestTarget) -> int:
         opener = self._build_proxy_opener(target.http_port)
