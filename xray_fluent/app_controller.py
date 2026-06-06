@@ -341,6 +341,9 @@ class AppController(QObject):
         self._save_timer.setInterval(250)
         self._save_timer.timeout.connect(self._flush_scheduled_save)
         self._save_pending = False
+        self._transition_timer = QTimer(self)
+        self._transition_timer.setSingleShot(True)
+        self._transition_timer.timeout.connect(self._drain_transition_queue)
 
     def load(self) -> bool:
         try:
@@ -999,7 +1002,7 @@ class AppController(QObject):
         if self._transition_active or self._transition_scheduled:
             return
         self._transition_scheduled = True
-        QTimer.singleShot(0, self._drain_transition_queue)
+        self._transition_timer.start(120)
 
     def _drain_transition_queue(self) -> None:
         self._transition_scheduled = False
@@ -1045,6 +1048,10 @@ class AppController(QObject):
         self._transition_run.emit(action, reason, generation)
 
     def _on_transition_action_complete(self, ok: bool, action: str, reason: str, generation: int) -> None:
+        was_connected, is_connected = self._refresh_connected_state()
+        if was_connected != is_connected:
+            self.connection_changed.emit(is_connected)
+            self._metrics_request.emit(is_connected)
         if ok:
             self._blocked_transition_signature = ""
         else:
@@ -1055,7 +1062,7 @@ class AppController(QObject):
             self._transition_pending = True
         if self._transition_pending or self._needs_transition():
             self._transition_scheduled = True
-            QTimer.singleShot(16, self._drain_transition_queue)
+            self._transition_timer.start(50)
         else:
             self.transition_state_changed.emit(False, "")
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .constants import SINGBOX_CLASH_API_PORT
+from .win_proc_monitor import process_name_from_pid
 
 # Processes to hide (internal, not user traffic)
 _HIDDEN_PROCESSES = {"xray.exe", "sing-box.exe", "tun2socks.exe"}
@@ -29,20 +30,67 @@ class ProcessTrafficSnapshot:
 
 # Session-scoped state
 _seen_connections: dict[str, set[str]] = {}
+_conn_owner: dict[str, str] = {}
 _conn_bytes: dict[str, tuple[int, int]] = {}  # {conn_id: (upload, download)} — last seen per connection
+_proc_total_connections: dict[str, int] = {}
 _proc_closed_bytes: dict[str, tuple[int, int]] = {}  # {exe: (closed_up, closed_down)} — bytes from closed connections
 _prev_proc_total: dict[str, tuple[int, int]] = {}  # {exe: (total_up, total_down)} — for speed calc
 _prev_time: float = 0.0
+_metadata_process_cache: dict[str, str] = {}
 
 
 def reset_connection_tracking() -> None:
     """Call on disconnect to reset session counters."""
     _seen_connections.clear()
+    _conn_owner.clear()
     _conn_bytes.clear()
+    _proc_total_connections.clear()
     _proc_closed_bytes.clear()
     _prev_proc_total.clear()
+    _metadata_process_cache.clear()
     global _prev_time
     _prev_time = 0.0
+
+
+def _metadata_value(meta: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = meta.get(key)
+        if value not in (None, ""):
+            return value
+    lowered = {str(k).lower(): v for k, v in meta.items()}
+    for key in keys:
+        value = lowered.get(key.lower())
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def _process_name_from_metadata(meta: dict[str, Any]) -> tuple[str, str]:
+    process_path = str(_metadata_value(meta, "processPath", "process_path", "process") or "").strip()
+    if process_path:
+        name = os.path.basename(process_path).strip() or process_path
+        return name.lower(), name
+
+    explicit_name = str(_metadata_value(meta, "processName", "process_name", "program", "exe") or "").strip()
+    if explicit_name:
+        name = os.path.basename(explicit_name).strip() or explicit_name
+        return name.lower(), name
+
+    pid = _metadata_value(meta, "processID", "processId", "pid", "uid")
+    pid_key = str(pid or "").strip()
+    if pid_key:
+        cached = _metadata_process_cache.get(pid_key)
+        if cached:
+            return cached.lower(), cached
+        name = process_name_from_pid(pid_key)
+        if name:
+            _metadata_process_cache[pid_key] = name
+            return name.lower(), name
+
+    host = str(_metadata_value(meta, "host", "destinationIP", "destination_ip", "dstIP", "dst_ip") or "").strip()
+    if host:
+        return f"system:{host}".lower(), f"Системный трафик ({host})"
+    return "system:unknown", "Системный трафик"
 
 
 def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[ProcessTrafficSnapshot]:
@@ -68,8 +116,7 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
     by_proc: dict[str, dict[str, Any]] = {}
     for conn in connections:
         meta = conn.get("metadata") or {}
-        process_path = meta.get("processPath") or ""
-        exe = os.path.basename(process_path).lower() if process_path else "unknown"
+        exe, display_exe = _process_name_from_metadata(meta)
 
         if exe in _HIDDEN_PROCESSES:
             continue
@@ -78,7 +125,7 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
             by_proc[exe] = {
                 "upload": 0, "download": 0, "conns": 0, "routes": set(),
                 "proxy_bytes": 0, "direct_bytes": 0, "hosts": {},
-                "display_exe": exe,
+                "display_exe": display_exe,
             }
 
         entry = by_proc[exe]
@@ -90,10 +137,13 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
         conn_id = conn.get("id", "")
         if conn_id:
             active_conn_ids.add(conn_id)
+            if conn_id not in _conn_owner:
+                _proc_total_connections[exe] = _proc_total_connections.get(exe, 0) + 1
             if exe not in _seen_connections:
                 _seen_connections[exe] = set()
             _seen_connections[exe].add(conn_id)
             _conn_bytes[conn_id] = (conn_up, conn_down)
+            _conn_owner[conn_id] = exe
         entry["upload"] += conn_up
         entry["download"] += conn_down
         entry["conns"] += 1
@@ -116,22 +166,22 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
         if host:
             entry["hosts"][host] = entry["hosts"].get(host, 0) + conn_total
 
-        # Original case display name
-        if entry["display_exe"] == exe:
-            pp = meta.get("processPath") or ""
-            if pp:
-                entry["display_exe"] = os.path.basename(pp)
+        if str(entry["display_exe"]).startswith("Системный трафик") and not display_exe.startswith("Системный трафик"):
+            entry["display_exe"] = display_exe
 
     # Detect closed connections → accumulate their bytes into _proc_closed_bytes
     closed_ids = set(_conn_bytes.keys()) - active_conn_ids
     for cid in closed_ids:
         up, down = _conn_bytes.pop(cid)
-        # Find which exe owned this connection
-        for exe_key, conn_set in _seen_connections.items():
-            if cid in conn_set:
-                prev_closed = _proc_closed_bytes.get(exe_key, (0, 0))
-                _proc_closed_bytes[exe_key] = (prev_closed[0] + up, prev_closed[1] + down)
-                break
+        exe_key = _conn_owner.pop(cid, "")
+        if exe_key:
+            prev_closed = _proc_closed_bytes.get(exe_key, (0, 0))
+            _proc_closed_bytes[exe_key] = (prev_closed[0] + up, prev_closed[1] + down)
+            conn_set = _seen_connections.get(exe_key)
+            if conn_set is not None:
+                conn_set.discard(cid)
+                if not conn_set:
+                    _seen_connections.pop(exe_key, None)
 
     # Calculate per-process speed from delta
     import time as _time
@@ -155,7 +205,7 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
         if stats["hosts"]:
             top_host = max(stats["hosts"], key=stats["hosts"].get)
 
-        total_conns = len(_seen_connections.get(exe, set()))
+        total_conns = max(stats["conns"], _proc_total_connections.get(exe, 0))
 
         # Total bytes = active connections + closed connections
         closed_up, closed_down = _proc_closed_bytes.get(exe, (0, 0))

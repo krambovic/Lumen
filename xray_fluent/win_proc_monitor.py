@@ -112,6 +112,17 @@ def _pid_to_exe(pid: int) -> str:
     return ""
 
 
+def process_name_from_pid(pid: int | str | None) -> str:
+    """Best-effort PID to executable name lookup for traffic telemetry."""
+    try:
+        value = int(pid or 0)
+    except (TypeError, ValueError):
+        return ""
+    if value <= 0:
+        return ""
+    return _pid_to_exe(value)
+
+
 def _ntohs(port: int) -> int:
     """Network byte order to host byte order for port."""
     return ((port & 0xFF) << 8) | ((port >> 8) & 0xFF)
