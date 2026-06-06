@@ -48,7 +48,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "download-latest.ps1"; Flags: dontcopy
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\NOTICE.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\Bebra VPN"; Filename: "{app}\BebraVPN.exe"; WorkingDir: "{app}"
@@ -60,3 +63,40 @@ Filename: "{app}\BebraVPN.exe"; Description: "Запустить Bebra VPN"; Fla
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN ""Bebra VPN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupTask"
+
+[Code]
+function DownloadLatestRelease(): Boolean;
+var
+  ResultCode: Integer;
+  ScriptPath: String;
+  Params: String;
+begin
+  Result := False;
+  ForceDirectories(ExpandConstant('{app}'));
+  ExtractTemporaryFile('download-latest.ps1');
+  ScriptPath := ExpandConstant('{tmp}\download-latest.ps1');
+  Params :=
+    '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptPath + '"' +
+    ' -InstallDir "' + ExpandConstant('{app}') + '"';
+
+  if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Result := ResultCode = 0;
+  end;
+
+  if not Result then
+  begin
+    MsgBox('Не удалось скачать последнюю версию Bebra VPN. Проверьте интернет и попробуйте снова.', mbError, MB_OK);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+  begin
+    if not DownloadLatestRelease() then
+    begin
+      RaiseException('Latest release download failed');
+    end;
+  end;
+end;
