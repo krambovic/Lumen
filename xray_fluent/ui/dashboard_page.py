@@ -918,7 +918,6 @@ class DashboardPage(QWidget):
             self.mode_changed.emit(str(value))
 
     def _on_tun_toggled(self, checked: bool) -> None:
-        self.proxy_switch.setEnabled(not checked)
         self.tun_toggled.emit(checked)
 
     def _on_proxy_toggled(self, checked: bool) -> None:
@@ -952,7 +951,7 @@ class DashboardPage(QWidget):
         self.toggle_btn.setEnabled(has_profiles and not busy)
         self.tun_switch.setEnabled(not busy)
         self.mode_combo.setEnabled(not busy and self._is_tun2socks_mode())
-        self.proxy_switch.setEnabled(not busy and not self._settings.tun_mode)
+        self.proxy_switch.setEnabled(not busy)
         self.discord_proxy_switch.setEnabled(not busy)
         for button in (self.route_all_btn, self.route_blocked_btn, self.route_except_ru_btn):
             button.setEnabled(not busy)
