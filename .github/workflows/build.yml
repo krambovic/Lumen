@@ -22,30 +22,15 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: pwsh
         run: |
-          $tags = git tag --list "v*" --sort=-version:refname 2>$null
-          if ($tags) {
-            $latest = ($tags | Select-Object -First 1).Trim()
-            $clean = ($latest.TrimStart("v") -replace '-.*$','')
-            $parts = $clean.Split(".")
-            $major = [int]$parts[0]
-            $minor = [int]$parts[1]
-            $patch = [int]$parts[2] + 1
-            $version = "$major.$minor.$patch"
-          } else {
-            $version = "0.5.0"
+          $file = "xray_fluent/constants.py"
+          $content = Get-Content $file -Raw
+          if ($content -notmatch 'APP_VERSION\s*=\s*"([^"]+)"') {
+            throw "APP_VERSION not found"
           }
+          $version = $Matches[1]
           echo "VERSION=$version" >> $env:GITHUB_ENV
           echo "RELEASE_TAG=v$version" >> $env:GITHUB_ENV
           Write-Host "Release version: $version (tag: v$version)"
-
-      - name: Update version in constants.py
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        shell: pwsh
-        run: |
-          $file = "xray_fluent/constants.py"
-          (Get-Content $file -Raw) -replace 'APP_VERSION = ".*?"', "APP_VERSION = `"$env:VERSION`"" | Set-Content $file -NoNewline
-          Write-Host "Updated APP_VERSION to $env:VERSION"
-          Get-Content $file | Select-String "APP_VERSION"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -102,18 +87,9 @@ jobs:
         shell: pwsh
         run: python build.py
 
-      - name: Create checksums
+      - name: List release assets
         shell: pwsh
-        run: |
-          $assets = @(
-            "dist/BebraVPN-Setup-windows-x64.exe",
-            "dist/BebraVPN-portable-windows-x64.zip"
-          )
-          foreach ($asset in $assets) {
-            $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
-            "$hash  $(Split-Path $asset -Leaf)" | Set-Content "$asset.sha256" -Encoding ASCII
-          }
-          Get-ChildItem dist/*.exe, dist/*.zip, dist/*.sha256 | Format-Table Name, Length
+        run: Get-ChildItem dist/*.exe, dist/*.zip | Format-Table Name, Length
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
@@ -128,26 +104,13 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Bebra VPN ${{ env.RELEASE_TAG }}"
           body: |
-            ## Изменения
-            - Добавлен полноценный установщик Bebra VPN для Windows x64.
-            - Добавлена portable-версия отдельным zip-архивом.
-            - Автообновление использует portable-архив без отдельного zip-дубля.
+            ## What's Changed
+
+            - [Fix]: Вернули старый формат setup: установщик снова содержит актуальную сборку внутри.
+            - [Chore]: Setup пересобирается под каждую новую версию вместе с portable.
+            - [Chore]: Убраны лишние `.sha256`-ассеты из релиза.
           generate_release_notes: false
           make_latest: true
           files: |
             dist/BebraVPN-Setup-windows-x64.exe
-            dist/BebraVPN-Setup-windows-x64.exe.sha256
             dist/BebraVPN-portable-windows-x64.zip
-            dist/BebraVPN-portable-windows-x64.zip.sha256
-
-      - name: Commit version bump
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add xray_fluent/constants.py
-          if ! git diff --cached --quiet; then
-            git commit -m "v$VERSION [skip ci]"
-            git push
-          fi
