@@ -764,6 +764,7 @@ class AppController(QObject):
             node,
             routing=self.state.routing,
             enable_final_fragment=self.state.settings.enable_final_fragment,
+            discord_proxy_enabled=self.state.settings.discord_proxy_enabled,
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
@@ -1052,6 +1053,8 @@ class AppController(QObject):
         if was_connected != is_connected:
             self.connection_changed.emit(is_connected)
             self._metrics_request.emit(is_connected)
+        if ok and action in {"proxy_hot_swap", "tun_hot_swap"} and self.connected and self.state.settings.discord_proxy_enabled:
+            QTimer.singleShot(250, self.apply_discord_proxy)
         if ok:
             self._blocked_transition_signature = ""
         else:
@@ -1271,17 +1274,22 @@ class AppController(QObject):
         self._request_transition("toggle connection")
 
     def set_discord_proxy_enabled(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if self.state.settings.discord_proxy_enabled == enabled:
+            return
         settings = deepcopy(self.state.settings)
-        settings.discord_proxy_enabled = bool(enabled)
+        settings.discord_proxy_enabled = enabled
         self.state.settings = settings
         self.settings_changed.emit(self.state.settings)
         self.schedule_save()
-        if enabled:
-            self.apply_discord_proxy()
-        else:
+        if self.connected or self._desired_connected:
+            self._request_transition("discord proxy changed")
+        if not enabled:
             result = self.discord_proxy.disable()
             self._log(f"[discord-proxy] disable: {result.message}")
             self.status.emit("success" if result.ok else "warning", result.message)
+        elif not self.connected and not self._desired_connected:
+            self.apply_discord_proxy()
 
     def apply_discord_proxy(self) -> None:
         if not self.state.settings.discord_proxy_enabled:

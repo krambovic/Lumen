@@ -49,6 +49,7 @@ def transition_signature(
             "node_id": node.id if has_proxy_outbound and node else None,
             "node_outbound": node.outbound if has_proxy_outbound and node else None,
             "routing": routing.to_dict(),
+            "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
         }
         if planner_outcome == "hybrid_xray_sidecar":
             signature_payload["xray_path"] = str(settings.xray_path)
@@ -65,6 +66,7 @@ def transition_signature(
             "node_outbound": node.outbound if has_proxy_outbound and node else None,
             "api_port": int(api_port),
             "routing": routing.to_dict(),
+            "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
         }
         if controller.is_xray_tun_mode(settings):
             signature_payload.update({"tun_mode": True, "tun_engine": "xray"})
@@ -90,6 +92,7 @@ def transition_signature(
             "xray_path": str(settings.xray_path),
             "singbox_path": str(settings.singbox_path),
             "routing": routing.to_dict(),
+            "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
         }
     )
 
@@ -117,6 +120,7 @@ def xray_layer_signature(
             "http_port": int(http_port),
             "api_port": int(api_port),
             "routing": routing.to_dict(),
+            "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
         }
         if controller.is_xray_tun_mode(settings):
             signature_payload.update({"tun_mode": True, "tun_engine": "xray"})
@@ -130,6 +134,7 @@ def xray_layer_signature(
             "http_port": int(DEFAULT_HTTP_PORT),
             "xray_path": str(settings.xray_path),
             "routing": routing.to_dict(),
+            "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
         }
     )
 
@@ -153,6 +158,7 @@ def tun_layer_signature(
                 "mode": "tun2socks",
                 "server": node.server if node else "",
                 "socks_port": int(DEFAULT_SOCKS_PORT),
+                "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
             }
         )
     if controller.is_xray_tun_mode(settings):
@@ -170,5 +176,6 @@ def tun_layer_signature(
             "routing": routing.to_dict(),
             "xray_path": str(settings.xray_path),
             "singbox_path": str(settings.singbox_path),
+            "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
         }
     )

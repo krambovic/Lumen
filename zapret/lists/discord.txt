@@ -40,4 +40,11 @@ findadiscord.com
 mee6.xyz
 top.gg
 discord-attachments-uploads-prd.storage.googleapis.com
+discord.media
+gateway.discord.gg
+cdn.discordapp.com
+media.discordapp.net
+dl.discordapp.net
+images-ext-1.discordapp.net
+status.discord.com
 cloudflare-ech.com

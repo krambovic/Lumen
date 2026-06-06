@@ -12,6 +12,7 @@ from typing import Any
 
 from ...application.runtime_security import generate_local_proxy_credentials, strip_singbox_proxy_inbounds
 from ...constants import (
+    DEFAULT_DISCORD_SOCKS_PORT,
     PROXY_HOST,
     SINGBOX_CLASH_API_PORT,
     SINGBOX_XRAY_RELAY_PORT,
@@ -28,6 +29,7 @@ _SS_PROTECT_METHOD = "chacha20-ietf-poly1305"
 _APP_SINGBOX_HYBRID_PROTECT_INBOUND_TAG = "__app_hybrid_protect_in"
 _APP_XRAY_SIDECAR_RELAY_INBOUND_TAG = "__app_hybrid_relay_in"
 _APP_XRAY_SIDECAR_PROTECT_OUTBOUND_TAG = "__app_hybrid_protect_out"
+_APP_DISCORD_PROXY_INBOUND_TAG = "discord-socks-in"
 
 
 @dataclass(slots=True)
@@ -127,6 +129,7 @@ def plan_singbox_runtime(
     *,
     routing: RoutingSettings | None = None,
     enable_final_fragment: bool = True,
+    discord_proxy_enabled: bool = False,
     preferred_relay_port: int = 0,
     preferred_protect_port: int = 0,
     preferred_protect_password: str = "",
@@ -141,6 +144,7 @@ def plan_singbox_runtime(
     if proxy_index is None:
         if routing is not None:
             apply_singbox_gui_routing(runtime_config, routing)
+        _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
         _validate_runtime_dns_contract(runtime_config)
         return SingboxRuntimePlan(
             outcome="native_singbox",
@@ -174,6 +178,7 @@ def plan_singbox_runtime(
         )
         if routing is not None:
             apply_singbox_gui_routing(plan.singbox_config, routing)
+        _ensure_singbox_discord_proxy_contract(plan.singbox_config, enabled=discord_proxy_enabled)
         _validate_runtime_dns_contract(plan.singbox_config)
         return plan
 
@@ -182,6 +187,7 @@ def plan_singbox_runtime(
     _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
     if routing is not None:
         apply_singbox_gui_routing(runtime_config, routing)
+    _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
     _validate_runtime_dns_contract(runtime_config)
     return SingboxRuntimePlan(
         outcome="native_singbox",
@@ -451,6 +457,82 @@ def _ensure_hybrid_protect_route(payload: dict[str, Any]) -> None:
             rules[index] = protect_rule
             return
     rules.insert(0, protect_rule)
+
+
+def _ensure_singbox_discord_proxy_contract(payload: dict[str, Any], *, enabled: bool) -> None:
+    inbounds = _ensure_list(payload, "inbounds")
+    route = _ensure_dict(payload, "route")
+    rules = _ensure_list(route, "rules")
+
+    inbounds[:] = [
+        inbound
+        for inbound in inbounds
+        if not (
+            isinstance(inbound, dict)
+            and str(inbound.get("tag") or "") == _APP_DISCORD_PROXY_INBOUND_TAG
+        )
+    ]
+    rules[:] = [rule for rule in rules if not _is_singbox_discord_proxy_rule(rule)]
+
+    if not enabled:
+        return
+
+    for inbound in inbounds:
+        if not isinstance(inbound, dict):
+            continue
+        try:
+            port = int(inbound.get("listen_port") or inbound.get("port") or 0)
+        except (TypeError, ValueError):
+            port = 0
+        if port == int(DEFAULT_DISCORD_SOCKS_PORT):
+            tag = str(inbound.get("tag") or "").strip() or "<no tag>"
+            raise ValueError(
+                f"sing-box inbound `{tag}` already uses Discord proxy port {DEFAULT_DISCORD_SOCKS_PORT}."
+            )
+
+    inbounds.append(
+        {
+            "type": "socks",
+            "tag": _APP_DISCORD_PROXY_INBOUND_TAG,
+            "listen": PROXY_HOST,
+            "listen_port": int(DEFAULT_DISCORD_SOCKS_PORT),
+        }
+    )
+    rules.insert(
+        _singbox_discord_rule_insert_index(rules),
+        {
+            "inbound": [_APP_DISCORD_PROXY_INBOUND_TAG],
+            "action": "route",
+            "outbound": "proxy",
+        },
+    )
+
+
+def _is_singbox_discord_proxy_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    inbound = rule.get("inbound")
+    if isinstance(inbound, str):
+        return inbound == _APP_DISCORD_PROXY_INBOUND_TAG
+    if isinstance(inbound, list):
+        return _APP_DISCORD_PROXY_INBOUND_TAG in [str(item) for item in inbound]
+    return False
+
+
+def _singbox_discord_rule_insert_index(rules: list[Any]) -> int:
+    index = 0
+    while index < len(rules):
+        rule = rules[index]
+        if not isinstance(rule, dict):
+            break
+        if rule.get("inbound"):
+            index += 1
+            continue
+        if rule.get("action") in {"sniff", "hijack-dns", "route-options"}:
+            index += 1
+            continue
+        break
+    return index
 
 
 def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> None:
