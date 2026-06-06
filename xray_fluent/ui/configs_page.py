@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QHBoxLayout, QPlainTextEdit, QStackedWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -99,8 +99,6 @@ class _RawConfigEditor(QWidget):
         font = QFont("Consolas", 10)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.editor.setFont(font)
-        self.editor.setCenterOnScroll(False)
-        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         tune_plain_scroll_area(self.editor)
         root.addWidget(self.editor, 1)
 
@@ -109,8 +107,6 @@ class _RawConfigEditor(QWidget):
         self.status_box.setReadOnly(True)
         self.status_box.setFixedHeight(92)
         self.status_box.setFont(font)
-        self.status_box.setCenterOnScroll(False)
-        self.status_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         tune_plain_scroll_area(self.status_box)
         root.addWidget(self.status_box)
 

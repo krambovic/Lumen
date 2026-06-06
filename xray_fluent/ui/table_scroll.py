@@ -81,7 +81,7 @@ def tune_fluent_table_scroll(table: QAbstractItemView, *, disable_hover: bool = 
         table.viewport().setMouseTracking(False)
         try:
             table.entered.disconnect()
-        except (RuntimeError, TypeError):
+        except TypeError:
             pass
 
 
@@ -93,5 +93,3 @@ def tune_plain_scroll_area(scroll_area: QAbstractScrollArea) -> None:
     scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     scroll_area.setAttribute(Qt.WidgetAttribute.WA_Hover, False)
     scroll_area.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover, False)
-    scroll_area.verticalScrollBar().setSingleStep(32)
-    scroll_area.horizontalScrollBar().setSingleStep(32)
