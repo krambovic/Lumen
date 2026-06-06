@@ -41,6 +41,11 @@ def start_tun(
     )
     controller._set_connection_status("starting", start_message, level="info")
     controller._log(f"[tun] sing-box planner outcome: {plan.outcome} from {plan.source_path}")
+    route = plan.singbox_config.get("route") if isinstance(plan.singbox_config, dict) else {}
+    dns = plan.singbox_config.get("dns") if isinstance(plan.singbox_config, dict) else {}
+    route_final = route.get("final") if isinstance(route, dict) else ""
+    dns_final = dns.get("final") if isinstance(dns, dict) else ""
+    controller._log(f"[tun] routing final={route_final or '--'} dns_final={dns_final or '--'}")
     if plan.used_selected_node and node is not None:
         if plan.is_hybrid:
             controller._log(
@@ -85,6 +90,11 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
             else f"Переключение на {session_label}..."
         )
         controller._set_connection_status("starting", start_message, level="info")
+        route = plan.singbox_config.get("route") if isinstance(plan.singbox_config, dict) else {}
+        dns = plan.singbox_config.get("dns") if isinstance(plan.singbox_config, dict) else {}
+        route_final = route.get("final") if isinstance(route, dict) else ""
+        dns_final = dns.get("final") if isinstance(dns, dict) else ""
+        controller._log(f"[tun-hot-swap] routing final={route_final or '--'} dns_final={dns_final or '--'}")
         controller._stop_metrics_worker()
 
         if controller.singbox.is_running and not controller.singbox.stop():

@@ -242,6 +242,7 @@ def _plan_hybrid_runtime(
         },
     )
     _ensure_hybrid_protect_route(runtime_config)
+    _remove_singbox_tls_fragment_rule(runtime_config)
     _validate_runtime_dns_contract(runtime_config)
 
     sidecar = SingboxXraySidecarPlan(
@@ -477,10 +478,10 @@ def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any], *, enable_fina
             has_tun = True
             inbound["interface_name"] = _generate_tun_interface_name()
             inbound["address"] = ["172.18.0.1/30"]
-            inbound["mtu"] = 9000
+            inbound["mtu"] = 1500
             inbound["auto_route"] = True
             inbound["strict_route"] = False
-            inbound["stack"] = "system"
+            inbound["stack"] = "mixed"
             inbound.pop("sniff", None)
     if not has_tun:
         return
@@ -525,6 +526,11 @@ def _ensure_singbox_tun_base_rules(rules: list[Any], *, enable_final_fragment: b
         [
             {
                 "network": "udp",
+                "port": 443,
+                "action": "reject",
+            },
+            {
+                "network": "udp",
                 "port": [135, 137, 138, 139, 5353],
                 "action": "reject",
             },
@@ -538,6 +544,20 @@ def _ensure_singbox_tun_base_rules(rules: list[Any], *, enable_final_fragment: b
     rules[0:0] = base_rules
 
 
+def _remove_singbox_tls_fragment_rule(payload: dict[str, Any]) -> None:
+    route = payload.get("route")
+    if not isinstance(route, dict):
+        return
+    rules = route.get("rules")
+    if not isinstance(rules, list):
+        return
+    rules[:] = [
+        rule
+        for rule in rules
+        if not _is_app_singbox_tls_fragment_rule(rule)
+    ]
+
+
 def _is_singbox_tun_base_rule(rule: Any) -> bool:
     if not isinstance(rule, dict):
         return False
@@ -546,15 +566,28 @@ def _is_singbox_tun_base_rule(rule: Any) -> bool:
         return True
     if action == "hijack-dns":
         return True
-    if action == "route-options" and rule.get("tls_record_fragment") is True:
+    if _is_app_singbox_tls_fragment_rule(rule):
         return True
     if rule.get("protocol") in ("dns", ["dns"]):
         return True
     if rule.get("port") in (53, [53]) and action in {"hijack-dns", ""}:
         return True
+    if action == "reject" and rule.get("network") == "udp" and rule.get("port") == 443:
+        return True
     if action == "reject" and rule.get("network") == "udp" and rule.get("port") == [135, 137, 138, 139, 5353]:
         return True
     return action == "reject" and rule.get("ip_cidr") == ["224.0.0.0/3", "ff00::/8"]
+
+
+def _is_app_singbox_tls_fragment_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    return (
+        str(rule.get("action") or "") == "route-options"
+        and rule.get("protocol") == ["tls"]
+        and rule.get("tls_record_fragment") is True
+        and set(rule) <= {"protocol", "action", "tls_record_fragment"}
+    )
 
 
 def _validate_runtime_dns_contract(payload: dict[str, Any]) -> None:

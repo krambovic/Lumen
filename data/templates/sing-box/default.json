@@ -11,10 +11,10 @@
       "address": [
         "172.18.0.1/30"
       ],
-      "mtu": 9000,
+      "mtu": 1500,
       "auto_route": true,
       "strict_route": false,
-      "stack": "system"
+      "stack": "mixed"
     }
   ],
   "outbounds": [
@@ -79,7 +79,7 @@
         "outbound": "direct"
       }
     ],
-    "final": "proxy"
+    "final": "direct"
   },
   "dns": {
     "servers": [
@@ -95,7 +95,7 @@
         "detour": "proxy"
       }
     ],
-    "final": "proxy-dns",
+    "final": "bootstrap-dns",
     "strategy": "prefer_ipv4"
   },
   "experimental": {

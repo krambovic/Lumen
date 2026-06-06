@@ -306,8 +306,9 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         route["rules"] = rules
 
     rules[:] = [rule for rule in rules if not _is_legacy_bebra_singbox_route_rule(rule)]
-    gui_rules, rule_sets = build_singbox_gui_route_rules(routing)
-    _ensure_singbox_rule_sets(route, rule_sets)
+    gui_rules, route_rule_sets = build_singbox_gui_route_rules(routing)
+    dns_rules, dns_rule_sets = build_singbox_gui_dns_rules(routing)
+    _ensure_singbox_rule_sets(route, route_rule_sets | dns_rule_sets)
     insert_at = _singbox_runtime_rule_insert_index(rules)
     rules[insert_at:insert_at] = gui_rules
     final_outbound = _routing_final_outbound(routing)
@@ -322,6 +323,13 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         target_dns = "bootstrap-dns" if final_outbound == "direct" else "proxy-dns"
         if target_dns in dns_tags:
             dns["final"] = target_dns
+            route["default_domain_resolver"] = {"server": target_dns, "strategy": "prefer_ipv4"}
+        if dns_rules:
+            existing_dns_rules = dns.setdefault("rules", [])
+            if not isinstance(existing_dns_rules, list):
+                existing_dns_rules = []
+                dns["rules"] = existing_dns_rules
+            existing_dns_rules[0:0] = dns_rules
 
 
 def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[str, Any]], set[str]]:
@@ -384,6 +392,39 @@ def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[s
         (routing.proxy_domains, "proxy"),
     ):
         rule, used_sets = _singbox_domain_ip_rule(items, outbound)
+        if rule:
+            rules.append(rule)
+            rule_sets.update(used_sets)
+    return rules, rule_sets
+
+
+def build_singbox_gui_dns_rules(routing: RoutingSettings) -> tuple[list[dict[str, Any]], set[str]]:
+    rules: list[dict[str, Any]] = []
+    rule_sets: set[str] = set()
+
+    service_direct: list[str] = []
+    service_proxy: list[str] = []
+    service_block: list[str] = []
+    for svc_id, action in routing.service_routes.items():
+        preset = SERVICE_PRESETS_BY_ID.get(svc_id)
+        if not preset:
+            continue
+        if action == "direct":
+            service_direct.extend(preset.domains)
+        elif action == "block":
+            service_block.extend(preset.domains)
+        else:
+            service_proxy.extend(preset.domains)
+
+    for items, dns_action in (
+        (service_proxy, "proxy-dns"),
+        (service_direct, "bootstrap-dns"),
+        (service_block, "reject"),
+        (routing.direct_domains, "bootstrap-dns"),
+        (routing.block_domains, "reject"),
+        (routing.proxy_domains, "proxy-dns"),
+    ):
+        rule, used_sets = _singbox_domain_dns_rule(items, dns_action)
         if rule:
             rules.append(rule)
             rule_sets.update(used_sets)
@@ -474,10 +515,73 @@ def _singbox_domain_ip_rule(items: list[str], outbound: str) -> tuple[dict[str, 
     return rule, set(rule_set)
 
 
+def _singbox_domain_dns_rule(items: list[str], dns_action: str) -> tuple[dict[str, Any] | None, set[str]]:
+    domain_suffix: list[str] = []
+    domain: list[str] = []
+    domain_keyword: list[str] = []
+    domain_regex: list[str] = []
+    rule_set: list[str] = []
+
+    for raw in items:
+        value = raw.strip()
+        if not value:
+            continue
+        mapped = _singbox_dns_rule_set_tag(value)
+        if mapped:
+            rule_set.append(mapped)
+            continue
+        if value.startswith("domain:"):
+            domain_suffix.append(value.removeprefix("domain:"))
+        elif value.startswith("full:"):
+            domain.append(value.removeprefix("full:"))
+        elif value.startswith("keyword:"):
+            domain_keyword.append(value.removeprefix("keyword:"))
+        elif value.startswith("regexp:"):
+            domain_regex.append(value.removeprefix("regexp:"))
+        elif value.startswith(("ip:", "geoip:")):
+            continue
+        else:
+            try:
+                ip_network(value, strict=False)
+                continue
+            except ValueError:
+                domain_suffix.append(value)
+
+    rule: dict[str, Any] = {}
+    if domain_suffix:
+        rule["domain_suffix"] = sorted(set(domain_suffix))
+    if domain:
+        rule["domain"] = sorted(set(domain))
+    if domain_keyword:
+        rule["domain_keyword"] = sorted(set(domain_keyword))
+    if domain_regex:
+        rule["domain_regex"] = sorted(set(domain_regex))
+    if rule_set:
+        rule["rule_set"] = sorted(set(rule_set))
+    if not rule:
+        return None, set()
+    if dns_action == "reject":
+        rule["action"] = "reject"
+    else:
+        rule["action"] = "route"
+        rule["server"] = dns_action
+        rule["strategy"] = "prefer_ipv4"
+    return rule, set(rule_set)
+
+
 def _singbox_rule_set_tag(value: str) -> str:
     if value not in _SINGBOX_RULE_SET_SOURCES:
         return ""
     return value.replace(":", "-")
+
+
+def _singbox_dns_rule_set_tag(value: str) -> str:
+    source = _SINGBOX_RULE_SET_SOURCES.get(value)
+    if not source:
+        return ""
+    if source.get("domains") or source.get("domain_suffix"):
+        return value.replace(":", "-")
+    return ""
 
 
 def _ensure_singbox_rule_sets(route: dict[str, Any], tags: set[str]) -> None:

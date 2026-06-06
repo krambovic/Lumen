@@ -33,6 +33,7 @@ class NodesTableModel(QAbstractTableModel):
         self._id_to_row: dict[str, int] = {}
         self._busy_ping_ids: set[str] = set()
         self._busy_speed_ids: set[str] = set()
+        self._row_signatures: dict[str, tuple[object, ...]] = {}
 
     def set_nodes(self, nodes: list[Node]) -> None:
         new_nodes = list(nodes)
@@ -40,10 +41,15 @@ class NodesTableModel(QAbstractTableModel):
             old.id == new.id for old, new in zip(self._nodes, new_nodes)
         ):
             self._nodes = new_nodes
-            if self._nodes:
+            self._id_to_row = {node.id: row for row, node in enumerate(self._nodes)}
+            for row, node in enumerate(self._nodes):
+                signature = self._node_signature(node)
+                if self._row_signatures.get(node.id) == signature:
+                    continue
+                self._row_signatures[node.id] = signature
                 self.dataChanged.emit(
-                    self.index(0, 0),
-                    self.index(len(self._nodes) - 1, len(_HEADERS) - 1),
+                    self.index(row, 0),
+                    self.index(row, len(_HEADERS) - 1),
                     [
                         Qt.ItemDataRole.DisplayRole,
                         Qt.ItemDataRole.DecorationRole,
@@ -55,6 +61,7 @@ class NodesTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._nodes = new_nodes
         self._id_to_row = {node.id: row for row, node in enumerate(self._nodes)}
+        self._row_signatures = {node.id: self._node_signature(node) for node in self._nodes}
         self.endResetModel()
 
     def set_ping_busy(self, node_id: str, busy: bool) -> None:
@@ -155,6 +162,7 @@ class NodesTableModel(QAbstractTableModel):
         row = self._id_to_row.get(node_id)
         if row is None:
             return
+        self._row_signatures[node_id] = self._node_signature(self._nodes[row])
         top_left = self.index(row, 6)
         bottom_right = self.index(row, 8)
         self.dataChanged.emit(
@@ -168,12 +176,16 @@ class NodesTableModel(QAbstractTableModel):
         )
 
     def refresh_speed(self, node_id: str) -> None:
+        row = self._id_to_row.get(node_id)
+        if row is not None:
+            self._row_signatures[node_id] = self._node_signature(self._nodes[row])
         self._emit_cell_changed(node_id, 7)
 
     def refresh_alive_status(self, node_id: str) -> None:
         row = self._id_to_row.get(node_id)
         if row is None:
             return
+        self._row_signatures[node_id] = self._node_signature(self._nodes[row])
         top_left = self.index(row, 6)
         bottom_right = self.index(row, 8)
         self.dataChanged.emit(
@@ -292,4 +304,21 @@ class NodesTableModel(QAbstractTableModel):
                 Qt.ItemDataRole.ToolTipRole,
                 Qt.ItemDataRole.ForegroundRole,
             ],
+        )
+
+    @staticmethod
+    def _node_signature(node: Node) -> tuple[object, ...]:
+        return (
+            node.name,
+            node.scheme,
+            node.server,
+            node.port,
+            node.group,
+            tuple(node.tags),
+            node.ping_ms,
+            node.speed_mbps,
+            node.is_alive,
+            node.last_used_at,
+            node.country_code,
+            bool(node.speed_history),
         )

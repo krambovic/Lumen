@@ -51,6 +51,7 @@ class LiveMetricsWorker(QThread):
         self._clash_api_port = clash_api_port
         self._socks_port = socks_port
         self._http_port = http_port
+        self._process_stats_prev_ts = 0.0
         normalized_inbound_tags: list[str] = []
         for tag in xray_inbound_tags or []:
             clean = str(tag).strip()
@@ -67,6 +68,7 @@ class LiveMetricsWorker(QThread):
         prev_ts: float | None = None
         last_ping_ts = 0.0
         iteration_count = 0
+        process_stats_interval = max(3, round(4000 / max(1, self._interval_ms)))
 
         # Proxy mode: per-process traffic via TCP connection estats
         proxy_prev_bytes: dict[str, tuple[int, int]] = {}  # {exe: (in, out)} for speed & drop detection
@@ -99,7 +101,7 @@ class LiveMetricsWorker(QThread):
                 last_ping_ts = now
 
             process_stats = None
-            if iteration_count % 2 == 0:
+            if iteration_count % process_stats_interval == 0:
                 if self._mode == "singbox":
                     process_stats = collect_process_stats(self._clash_api_port)
                 elif self._mode == "xray":
@@ -140,6 +142,10 @@ class LiveMetricsWorker(QThread):
         if not proxy_procs:
             return None
 
+        now = time.perf_counter()
+        dt = max(0.5, now - self._process_stats_prev_ts) if self._process_stats_prev_ts > 0 else 2.0
+        self._process_stats_prev_ts = now
+
         result: list[ProcessTrafficSnapshot] = []
         for p in proxy_procs:
             prev_in, prev_out = prev_bytes.get(p.exe, (0, 0))
@@ -157,8 +163,8 @@ class LiveMetricsWorker(QThread):
             total_out = cl_out + p.bytes_out
 
             # Speed from active connection deltas
-            down_speed = max(0.0, (p.bytes_in - prev_in) / 2.0) if prev_in > 0 and p.bytes_in >= prev_in else 0.0
-            up_speed = max(0.0, (p.bytes_out - prev_out) / 2.0) if prev_out > 0 and p.bytes_out >= prev_out else 0.0
+            down_speed = max(0.0, (p.bytes_in - prev_in) / dt) if prev_in > 0 and p.bytes_in >= prev_in else 0.0
+            up_speed = max(0.0, (p.bytes_out - prev_out) / dt) if prev_out > 0 and p.bytes_out >= prev_out else 0.0
             prev_bytes[p.exe] = (p.bytes_in, p.bytes_out)
 
             result.append(ProcessTrafficSnapshot(

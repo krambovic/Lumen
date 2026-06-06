@@ -111,7 +111,7 @@ class DashboardPage(QWidget):
         self._refresh_timer.timeout.connect(self._do_refresh_dashboard)
         self._process_stats_timer = QTimer(self)
         self._process_stats_timer.setSingleShot(True)
-        self._process_stats_timer.setInterval(250)
+        self._process_stats_timer.setInterval(750)
         self._process_stats_timer.timeout.connect(self._flush_process_stats)
 
         # ── Outer layout with QStackedWidget ──────────────────
@@ -633,6 +633,12 @@ class DashboardPage(QWidget):
 
     # ── Refresh logic ─────────────────────────────────────────
 
+    @staticmethod
+    def _set_widget_text(widget, text: str) -> None:
+        current = getattr(widget, "text", lambda: None)()
+        if current != text:
+            widget.setText(text)
+
     def _refresh_dashboard(self) -> None:
         if not self._refresh_timer.isActive():
             self._refresh_timer.start()
@@ -648,13 +654,13 @@ class DashboardPage(QWidget):
 
     def _refresh_connection_card(self) -> None:
         state_title, status_text = self._connection_texts()
-        self.connection_state_label.setText(state_title)
-        self.connection_engine_label.setText(self._route_engine_label())
-        self.connection_status_label.setText(status_text)
-        self.connection_target_label.setText(self._selected_node_summary())
-        self.toggle_btn.setText(self._toggle_action_text())
+        self._set_widget_text(self.connection_state_label, state_title)
+        self._set_widget_text(self.connection_engine_label, self._route_engine_label())
+        self._set_widget_text(self.connection_status_label, status_text)
+        self._set_widget_text(self.connection_target_label, self._selected_node_summary())
+        self._set_widget_text(self.toggle_btn, self._toggle_action_text())
         self.toggle_btn.setIcon(FIF.PAUSE_BOLD if self._connected else FIF.PLAY_SOLID)
-        self.summary_label.setText(self._summary_text())
+        self._set_widget_text(self.summary_label, self._summary_text())
 
     def _refresh_profile_card(self) -> None:
         selected = self._selected_node

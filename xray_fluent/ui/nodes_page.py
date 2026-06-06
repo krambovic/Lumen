@@ -264,7 +264,7 @@ class NodesPage(QWidget):
 
         self._metric_sort_reload_timer = QTimer(self)
         self._metric_sort_reload_timer.setSingleShot(True)
-        self._metric_sort_reload_timer.setInterval(180)
+        self._metric_sort_reload_timer.setInterval(600)
         self._metric_sort_reload_timer.timeout.connect(self._reload)
 
         self._activity_widget_timer = QTimer(self)
