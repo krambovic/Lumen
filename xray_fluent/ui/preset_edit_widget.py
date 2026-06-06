@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QPlainTextEdit, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BreadcrumbBar,
     BodyLabel,
@@ -15,6 +15,8 @@ from qfluentwidgets import (
     StrongBodyLabel,
     TransparentToolButton,
 )
+
+from .table_scroll import tune_plain_scroll_area
 
 
 class PresetEditWidget(QWidget):
@@ -83,6 +85,9 @@ class PresetEditWidget(QWidget):
         font = QFont("Consolas", 10)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.editor.setFont(font)
+        self.editor.setCenterOnScroll(False)
+        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        tune_plain_scroll_area(self.editor)
         root.addWidget(self.editor, 1)
 
     def set_preset(self, name: str, description: str, content: str,

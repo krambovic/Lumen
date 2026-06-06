@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtGui import QTextCursor
-from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QPlainTextEdit, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, PlainTextEdit, PrimaryPushButton, PushButton, SearchLineEdit, SubtitleLabel
 
 from .table_scroll import tune_plain_scroll_area
@@ -41,6 +41,7 @@ class LogsPage(QWidget):
         self.log_edit.setReadOnly(True)
         self.log_edit.setUndoRedoEnabled(False)
         self.log_edit.setCenterOnScroll(False)
+        self.log_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.log_edit.document().setMaximumBlockCount(2000)
         tune_plain_scroll_area(self.log_edit)
         root.addWidget(self.log_edit, 1)

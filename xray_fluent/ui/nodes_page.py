@@ -6,17 +6,14 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize, QItemSelectionModel
 from PyQt6.QtGui import QCursor, QKeyEvent, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QHBoxLayout, QHeaderView,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QStackedWidget, QTableView, QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
     ComboBox,
     FluentIcon as FIF,
-    IndeterminateProgressRing,
-    ProgressBar,
     PrimaryToolButton,
     SearchLineEdit,
     SubtitleLabel,
-    TableView,
     TransparentToolButton,
     VerticalSeparator,
 )
@@ -80,7 +77,6 @@ class NodesPage(QWidget):
         self._speed_test_running = False
         self._speed_test_stopping = False
         self._compact_mode = False
-        self._activity_widget_keys: set[tuple[int, int]] = set()
 
         # Stack: page 0 = server list, page 1 = node detail
         self._stack = QStackedWidget(self)
@@ -206,11 +202,37 @@ class NodesPage(QWidget):
         root.addLayout(toolbar)
 
         # --- Table ---
-        self.table = TableView(self)
+        self.table = QTableView(self)
+        self.table.setObjectName("nodesTable")
         self._table_model = NodesTableModel(self)
         self.table.setModel(self._table_model)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(False)
+        self.table.setSortingEnabled(False)
+        self.table.setCornerButtonEnabled(False)
+        self.table.setStyleSheet("""
+            QTableView#nodesTable {
+                background: transparent;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                gridline-color: transparent;
+                selection-background-color: rgba(0, 120, 212, 0.32);
+                selection-color: palette(text);
+            }
+            QTableView#nodesTable::item {
+                border: none;
+                padding: 4px 8px;
+            }
+            QHeaderView::section {
+                background: rgba(255, 255, 255, 0.04);
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                padding: 6px 8px;
+            }
+        """)
         vertical_header = cast(QHeaderView, self.table.verticalHeader())
         vertical_header.setVisible(False)
+        vertical_header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         vertical_header.setDefaultSectionSize(32)
         vertical_header.setMinimumSectionSize(28)
 
@@ -222,6 +244,8 @@ class NodesPage(QWidget):
             horizontal_header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             self.table.setColumnWidth(col, width)
         horizontal_header.setSectionsClickable(True)
+        horizontal_header.setSectionsMovable(False)
+        horizontal_header.setHighlightSections(False)
         horizontal_header.sectionClicked.connect(self._on_header_clicked)
         self.table.setWordWrap(False)
         self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
@@ -230,6 +254,7 @@ class NodesPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         tune_fluent_table_scroll(self.table, disable_hover=True)
+        self.table.viewport().setAttribute(Qt.WidgetAttribute.WA_StaticContents, True)
         self.table.setIconSize(QSize(20, 14))
 
         # Prevent deselection on empty area click
@@ -267,11 +292,6 @@ class NodesPage(QWidget):
         self._metric_sort_reload_timer.setInterval(600)
         self._metric_sort_reload_timer.timeout.connect(self._reload)
 
-        self._activity_widget_timer = QTimer(self)
-        self._activity_widget_timer.setSingleShot(True)
-        self._activity_widget_timer.setInterval(30)
-        self._activity_widget_timer.timeout.connect(self._apply_activity_widgets)
-
         # --- Connections ---
         self.search_edit.textChanged.connect(self._search_timer.start)
         self.group_filter.currentIndexChanged.connect(self._reload)
@@ -294,7 +314,6 @@ class NodesPage(QWidget):
         self.table.selectionModel().selectionChanged.connect(lambda *_: self._emit_selection())
         self.table.doubleClicked.connect(self._on_double_click)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
-        self.table.verticalScrollBar().valueChanged.connect(self._schedule_activity_widgets_refresh)
 
         # --- Keyboard shortcuts ---
         paste_shortcut = QShortcut(QKeySequence.StandardKey.Paste, self)
@@ -499,71 +518,15 @@ class NodesPage(QWidget):
 
     def _apply_activity_widgets(self) -> None:
         return
-        first_row, last_row = self._visible_row_range()
-        visible_rows = set(range(first_row, last_row + 1))
-        self._prune_activity_widgets(visible_rows)
-        for row in range(first_row, last_row + 1):
-            if row < 0 or row >= len(self._visible_node_ids):
-                continue
-            node_id = self._visible_node_ids[row]
-            self._sync_activity_widget(row, 6, node_id in self._pending_ping_ids)
-            self._sync_speed_widget(row, node_id)
 
     def _sync_activity_for_node(self, node_id: str) -> None:
         return
-        row = self._table_model.row_for_node(node_id)
-        if row is None:
-            return
-        first_row, last_row = self._visible_row_range()
-        if row < first_row or row > last_row:
-            return
-        self._sync_activity_widget(row, 6, node_id in self._pending_ping_ids)
-        self._sync_speed_widget(row, node_id)
 
     def _schedule_activity_widgets_refresh(self) -> None:
-        if not self._activity_widget_timer.isActive():
-            self._activity_widget_timer.start()
-
-    def _visible_row_range(self) -> tuple[int, int]:
-        row_count = self._table_model.rowCount()
-        if row_count <= 0:
-            return 0, -1
-
-        viewport = self.table.viewport()
-        first = self.table.rowAt(0)
-        if first < 0:
-            first = 0
-        last = self.table.rowAt(max(0, viewport.height() - 1))
-        if last < 0:
-            default_rows = max(1, viewport.height() // max(1, self.table.verticalHeader().defaultSectionSize()))
-            last = min(row_count - 1, first + default_rows)
-
-        # A small buffer avoids widget churn while the user scrolls.
-        first = max(0, first - 8)
-        last = min(row_count - 1, last + 8)
-        return first, last
-
-    def _prune_activity_widgets(self, visible_rows: set[int]) -> None:
-        for row, column in list(self._activity_widget_keys):
-            if row in visible_rows and row < self._table_model.rowCount():
-                continue
-            index = self._table_model.index(row, column)
-            if index.isValid():
-                existing = self.table.indexWidget(index)
-                if existing is not None:
-                    self.table.setIndexWidget(index, None)
-                    existing.deleteLater()
-            self._activity_widget_keys.discard((row, column))
+        return
 
     def _clear_activity_widgets(self) -> None:
-        for row, column in list(self._activity_widget_keys):
-            index = self._table_model.index(row, column)
-            if index.isValid():
-                existing = self.table.indexWidget(index)
-                if existing is not None:
-                    self.table.setIndexWidget(index, None)
-                    existing.deleteLater()
-        self._activity_widget_keys.clear()
+        return
 
     def _sync_speed_test_controls(self) -> None:
         running = self._speed_test_running
@@ -573,70 +536,6 @@ class NodesPage(QWidget):
         self.stop_speed_test_btn.setVisible(running)
         self.stop_speed_test_btn.setEnabled(running and not stopping)
         self._detail_widget.set_speed_test_running(running, stopping=stopping)
-
-    def _sync_activity_widget(self, row: int, column: int, active: bool) -> None:
-        index = self._table_model.index(row, column)
-        if not index.isValid():
-            return
-
-        existing = self.table.indexWidget(index)
-        if not active:
-            if existing is not None:
-                self.table.setIndexWidget(index, None)
-                existing.deleteLater()
-            self._activity_widget_keys.discard((row, column))
-            return
-
-        if existing is not None:
-            return
-
-        container = QWidget(self.table)
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        ring = IndeterminateProgressRing(container)
-        ring.setFixedSize(16, 16)
-        ring.setStrokeWidth(3)
-        ring.setCustomBackgroundColor("transparent", "transparent")
-        layout.addStretch(1)
-        layout.addWidget(ring)
-        layout.addStretch(1)
-        self.table.setIndexWidget(index, container)
-        self._activity_widget_keys.add((row, column))
-
-    def _sync_speed_widget(self, row: int, node_id: str) -> None:
-        index = self._table_model.index(row, 7)
-        if not index.isValid():
-            return
-
-        percent = self._active_speed_progress.get(node_id)
-        existing = self.table.indexWidget(index)
-        if percent is None:
-            if existing is not None:
-                self.table.setIndexWidget(index, None)
-                existing.deleteLater()
-            self._activity_widget_keys.discard((row, 7))
-            return
-
-        if existing is None:
-            container = QWidget(self.table)
-            layout = QHBoxLayout(container)
-            layout.setContentsMargins(6, 0, 6, 0)
-            layout.setSpacing(0)
-            bar = ProgressBar(container)
-            bar.setRange(0, 100)
-            bar.setValue(percent)
-            bar.setTextVisible(False)
-            bar.setFixedHeight(6)
-            layout.addWidget(bar, 1)
-            container.setProperty("progressBar", bar)
-            self.table.setIndexWidget(index, container)
-            self._activity_widget_keys.add((row, 7))
-            return
-
-        bar = existing.property("progressBar")
-        if isinstance(bar, ProgressBar):
-            bar.setValue(percent)
 
     def _sort_nodes(self, nodes: list[Node], key: str, ascending: bool) -> list[Node]:
         if key == "Вручную":

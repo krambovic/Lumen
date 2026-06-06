@@ -175,6 +175,9 @@ class HistoryPage(QWidget):
         self._total_up_label.setText(_fmt_bytes(total_up))
         self._session_count_label.setText(f"{len(sessions)} сессий")
 
+        for table in (self._sessions_table, self._daily_table, self._proc_table):
+            table.setUpdatesEnabled(False)
+
         # Sessions table
         self._sessions_table.setRowCount(len(sessions))
         for row, s in enumerate(sessions):
@@ -245,6 +248,9 @@ class HistoryPage(QWidget):
             route = str(stats.get("route", ""))
             route_text = {"proxy": "VPN", "direct": "Прямой", "mixed": "Смешанный"}.get(route, route)
             self._proc_table.setItem(row, 3, QTableWidgetItem(route_text))
+
+        for table in (self._sessions_table, self._daily_table, self._proc_table):
+            table.setUpdatesEnabled(True)
 
 
 def _fmt_bytes(b: int) -> str:
