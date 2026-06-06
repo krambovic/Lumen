@@ -838,6 +838,8 @@ class MainWindow(FluentWindow):
         settings.tun_mode = checked
         if checked:
             settings.enable_system_proxy = False
+        elif self.controller.connected or self.controller._desired_connected:
+            settings.enable_system_proxy = True
         self.controller.update_settings(settings)
 
     def _on_dashboard_proxy_toggled(self, checked: bool) -> None:

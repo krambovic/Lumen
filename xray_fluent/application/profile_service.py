@@ -35,7 +35,51 @@ def get_active_template_path(controller: AppController, engine: str) -> Path | N
     return resolved if resolved.exists() else None
 
 
-def ensure_active_config(controller: AppController, engine: str, path: str | Path | None = None) -> Path:
+def _backup_path_for(path: Path) -> Path:
+    return path.with_name(f"{path.name}.bak")
+
+
+def _sync_active_config_from_template(
+    controller: AppController,
+    engine: str,
+    active_path: Path,
+    template_path: Path | None,
+) -> bool:
+    if template_path is None or not active_path.exists() or not template_path.exists():
+        return False
+    try:
+        active_stat = active_path.stat()
+        template_stat = template_path.stat()
+    except OSError:
+        return False
+    if int(getattr(template_stat, "st_mtime_ns", 0)) <= int(getattr(active_stat, "st_mtime_ns", 0)):
+        return False
+
+    template_text = template_path.read_text(encoding="utf-8")
+    active_text = active_path.read_text(encoding="utf-8")
+    if active_text == template_text:
+        return False
+
+    try:
+        _backup_path_for(active_path).write_text(active_text, encoding="utf-8")
+    except OSError:
+        pass
+    active_path.write_text(template_text, encoding="utf-8")
+    if engine == "singbox":
+        controller._cache_singbox_document_state(active_path, template_text)
+    if controller.connected or controller._desired_connected:
+        controller._desired_connected = True
+        controller._request_transition(f"{engine} template synced")
+    return True
+
+
+def ensure_active_config(
+    controller: AppController,
+    engine: str,
+    path: str | Path | None = None,
+    *,
+    sync_template: bool = True,
+) -> Path:
     if engine == "singbox":
         resolved = controller._resolve_singbox_config_path(path)
         template_path = get_active_template_path(controller, "singbox")
@@ -60,6 +104,8 @@ def ensure_active_config(controller: AppController, engine: str, path: str | Pat
             template_setter(template_path, emit_signal=False)
         else:
             resolved.write_text(default_text, encoding="utf-8")
+    elif sync_template:
+        _sync_active_config_from_template(controller, engine, resolved, template_path)
     setter(resolved)
     return resolved
 
@@ -82,6 +128,13 @@ def load_config_text(controller: AppController, engine: str, path: str | Path) -
     if not resolved.exists():
         raise FileNotFoundError(f"Файл не найден: {resolved.name}")
     setter(resolved)
+    if engine == "singbox":
+        template_path = controller._default_singbox_template_path_for_config(resolved)
+    else:
+        template_path = controller._default_xray_template_path_for_config(resolved)
+    if template_path is None:
+        template_path = get_active_template_path(controller, engine)
+    _sync_active_config_from_template(controller, engine, resolved, template_path)
     text = resolved.read_text(encoding="utf-8")
     if engine == "singbox":
         controller._cache_singbox_document_state(resolved, text)
@@ -133,7 +186,7 @@ def reset_active_config_to_template(controller: AppController, engine: str) -> t
 
 
 def save_config_text(controller: AppController, engine: str, text: str, path: str | Path | None = None) -> Path:
-    resolved = ensure_active_config(controller, engine, path)
+    resolved = ensure_active_config(controller, engine, path, sync_template=False)
     resolved.write_text(text, encoding="utf-8")
     if engine == "singbox":
         controller._set_active_singbox_config_path(resolved)
