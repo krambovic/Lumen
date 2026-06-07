@@ -38,6 +38,7 @@ def find_free_api_port(preferred: int | None = None, excluded: set[int] | None =
 
 def connect_selected(controller: AppController, allow_during_reconnect: bool = False) -> bool:
     if controller._connecting:
+        controller._set_connection_status("starting", "Подключение уже выполняется...", level="info")
         return False
     controller._connecting = True
     try:
@@ -231,6 +232,7 @@ def disconnect_current(controller: AppController, disable_proxy: bool = True, em
 
 def reconnect(controller: AppController, reason: str) -> bool:
     if controller._reconnecting:
+        controller._set_connection_status("starting", "Переподключение уже выполняется...", level="info")
         return False
     controller._reconnecting = True
     controller._switching = True

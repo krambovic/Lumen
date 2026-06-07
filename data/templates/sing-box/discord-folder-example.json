@@ -46,6 +46,7 @@
         "process_path_regex": [
           "(?i)^[A-Z]:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Discord\\\\.*(?:Discord|Update)\\.exe$"
         ],
+        "action": "route",
         "outbound": "proxy"
       },
       {
@@ -62,6 +63,7 @@
           "Spotify.exe",
           "Vesktop.exe"
         ],
+        "action": "route",
         "outbound": "proxy"
       }
     ],

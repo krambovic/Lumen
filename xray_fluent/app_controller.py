@@ -995,6 +995,27 @@ class AppController(QObject):
     def _transition_status_text(self, action: str) -> str:
         return transition_status_text(action)
 
+    def _emit_no_transition_feedback(self) -> None:
+        if not self._desired_connected:
+            return
+        node = self.selected_node
+        if self.locked:
+            self._set_connection_status(
+                "error",
+                "Приложение заблокировано. Разблокируйте для подключения.",
+                level="warning",
+            )
+            return
+        if node is None and not self._can_connect_without_selected_node():
+            self._set_connection_status("error", "Сначала выберите сервер.", level="warning")
+            return
+        if self._blocked_transition_signature and self._transition_signature(node) == self._blocked_transition_signature:
+            self._set_connection_status(
+                "error",
+                "Предыдущая попытка подключения уже завершилась ошибкой. Измените сервер или настройки и попробуйте снова.",
+                level="warning",
+            )
+
     def _request_transition(self, reason: str) -> None:
         self._blocked_transition_signature = ""
         self._transition_pending = True
@@ -1016,6 +1037,7 @@ class AppController(QObject):
 
         action = self._compute_transition_action()
         if action is None:
+            self._emit_no_transition_feedback()
             self._transition_pending = False
             self.transition_state_changed.emit(False, "")
             return
@@ -1114,6 +1136,12 @@ class AppController(QObject):
     def _cleanup_tun_adapter() -> None:
         """Remove the wintun TUN adapter if it was left behind."""
         import subprocess as _sp
+        try:
+            from .engines.singbox.manager import SingBoxManager
+
+            SingBoxManager.cleanup_orphaned_tun_adapters(max_wait=3.0)
+        except Exception:
+            pass
         try:
             result = run_text(
                 ["netsh", "interface", "show", "interface"],

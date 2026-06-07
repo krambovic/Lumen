@@ -184,9 +184,9 @@ def plan_singbox_runtime(
 
     assert isinstance(outbounds, list)
     outbounds[proxy_index] = native_proxy
-    _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
     if routing is not None:
         apply_singbox_gui_routing(runtime_config, routing)
+    _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
     _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
     _validate_runtime_dns_contract(runtime_config)
     return SingboxRuntimePlan(
@@ -448,7 +448,11 @@ def _ensure_proxy_server_bootstrap_contract(
 def _ensure_hybrid_protect_route(payload: dict[str, Any]) -> None:
     route = _ensure_dict(payload, "route")
     rules = _ensure_list(route, "rules")
-    protect_rule = {"inbound": [_APP_SINGBOX_HYBRID_PROTECT_INBOUND_TAG], "outbound": "direct"}
+    protect_rule = {
+        "inbound": [_APP_SINGBOX_HYBRID_PROTECT_INBOUND_TAG],
+        "action": "route",
+        "outbound": "direct",
+    }
     for index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             continue

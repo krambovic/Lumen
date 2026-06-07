@@ -71,8 +71,7 @@ jobs:
           Remove-Item -Recurse _wintun, wintun.zip
 
           Write-Host "Downloading sing-box..."
-          $sbReleases = Invoke-RestMethod "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=10"
-          $sbRelease = $sbReleases | Where-Object { -not $_.draft } | Select-Object -First 1
+          $sbRelease = Invoke-RestMethod "https://api.github.com/repos/SagerNet/sing-box/releases/latest"
           Write-Host "Using sing-box $($sbRelease.tag_name)"
           $sbAsset = $sbRelease.assets | Where-Object { $_.name -match "windows-amd64\.zip$" -and $_.name -notmatch "\.sig" }
           Invoke-WebRequest $sbAsset.browser_download_url -OutFile singbox.zip

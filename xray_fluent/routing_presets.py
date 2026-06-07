@@ -20,6 +20,11 @@ BLOCKED_PROXY_RULES = (
     "geoip:ru-blocked-community",
 )
 
+BLOCKED_DIRECT_RULES = (
+    "geosite:bebra-exclude",
+    "geoip:bebra-exclude",
+)
+
 
 def proxy_default_services() -> dict[str, str]:
     return {
@@ -46,8 +51,8 @@ def build_routing_preset(current: RoutingSettings, preset_id: str) -> RoutingSet
     if preset_id == ROUTING_PRESET_BLOCKED:
         return replace(
             current,
-            mode="direct",
-            direct_domains=[],
+            mode="rule",
+            direct_domains=list(BLOCKED_DIRECT_RULES),
             proxy_domains=list(BLOCKED_PROXY_RULES),
             block_domains=[],
             process_rules=[],

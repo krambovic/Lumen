@@ -13,6 +13,16 @@ from .service_presets import SERVICE_PRESETS_BY_ID
 
 _SINGBOX_RULE_SET_DIR = DATA_DIR / "runtime" / "sing-box-rule-sets"
 _SINGBOX_RULE_SET_SOURCES = {
+    "geosite:bebra-exclude": {
+        "domains": ("zapret/lists/list-exclude.txt",),
+        "domain_suffix": (),
+        "ips": (),
+    },
+    "geoip:bebra-exclude": {
+        "domains": (),
+        "domain_suffix": (),
+        "ips": ("zapret/lists/ipset-exclude.txt",),
+    },
     "geosite:category-ru": {
         "domains": (),
         "domain_suffix": ("ru", "su", "рф"),
@@ -58,6 +68,7 @@ _SINGBOX_RULE_SET_SOURCES = {
 _SINGBOX_MANAGED_RULE_SET_TAGS = {key.replace(":", "-") for key in _SINGBOX_RULE_SET_SOURCES}
 
 _XRAY_UNSUPPORTED_GEOIP_CODES = {
+    "geoip:bebra-exclude",
     "geoip:ru-blocked",
     "geoip:ru-blocked-community",
 }
@@ -83,7 +94,7 @@ def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
         if not value:
             continue
         lowered = value.lower()
-        if lowered == "geosite:category-media-ru-blocked":
+        if value.startswith("geosite:") and lowered in _SINGBOX_RULE_SET_SOURCES:
             domains.extend(_expand_xray_local_geosite(lowered))
             continue
         if value.startswith(("domain:", "full:", "regexp:", "keyword:", "geosite:", "ext:")):
@@ -202,11 +213,11 @@ def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings
         else:
             service_proxy.extend(preset.domains)
 
-    append_xray_domain_ip_rule(rules, service_proxy, "proxy")
     append_xray_domain_ip_rule(rules, service_direct, "direct")
-    append_xray_domain_ip_rule(rules, service_block, "block")
     append_xray_domain_ip_rule(rules, routing.direct_domains, "direct")
+    append_xray_domain_ip_rule(rules, service_block, "block")
     append_xray_domain_ip_rule(rules, routing.block_domains, "block")
+    append_xray_domain_ip_rule(rules, service_proxy, "proxy")
     append_xray_domain_ip_rule(rules, routing.proxy_domains, "proxy")
 
     rules.append(
@@ -324,11 +335,14 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         if target_dns in dns_tags:
             dns["final"] = target_dns
             route["default_domain_resolver"] = {"server": target_dns, "strategy": "prefer_ipv4"}
+        existing_dns_rules = dns.setdefault("rules", [])
+        if not isinstance(existing_dns_rules, list):
+            existing_dns_rules = []
+            dns["rules"] = existing_dns_rules
+        existing_dns_rules[:] = [
+            rule for rule in existing_dns_rules if not _is_bebra_singbox_dns_rule(rule)
+        ]
         if dns_rules:
-            existing_dns_rules = dns.setdefault("rules", [])
-            if not isinstance(existing_dns_rules, list):
-                existing_dns_rules = []
-                dns["rules"] = existing_dns_rules
             existing_dns_rules[0:0] = dns_rules
 
 
@@ -337,7 +351,7 @@ def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[s
     rule_sets: set[str] = set()
 
     if routing.bypass_lan:
-        rules.append({"ip_is_private": True, "outbound": "direct"})
+        rules.append({"ip_is_private": True, "action": "route", "outbound": "direct"})
 
     preset_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
     for preset_id, action in routing.process_preset_routes.items():
@@ -384,11 +398,11 @@ def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[s
             service_proxy.extend(preset.domains)
 
     for items, outbound in (
-        (service_proxy, "proxy"),
         (service_direct, "direct"),
-        (service_block, "block"),
         (routing.direct_domains, "direct"),
+        (service_block, "block"),
         (routing.block_domains, "block"),
+        (service_proxy, "proxy"),
         (routing.proxy_domains, "proxy"),
     ):
         rule, used_sets = _singbox_domain_ip_rule(items, outbound)
@@ -417,11 +431,11 @@ def build_singbox_gui_dns_rules(routing: RoutingSettings) -> tuple[list[dict[str
             service_proxy.extend(preset.domains)
 
     for items, dns_action in (
-        (service_proxy, "proxy-dns"),
         (service_direct, "bootstrap-dns"),
-        (service_block, "reject"),
         (routing.direct_domains, "bootstrap-dns"),
+        (service_block, "reject"),
         (routing.block_domains, "reject"),
+        (service_proxy, "proxy-dns"),
         (routing.proxy_domains, "proxy-dns"),
     ):
         rule, used_sets = _singbox_domain_dns_rule(items, dns_action)
@@ -444,11 +458,56 @@ def _is_legacy_bebra_singbox_route_rule(rule: Any) -> bool:
         is_443 = {str(item) for item in port} == {"443"}
     else:
         is_443 = str(port or "") == "443"
-    return (
-        is_udp
-        and is_443
-        and str(rule.get("outbound") or "") == "block"
-    )
+    outbound = str(rule.get("outbound") or "")
+    if is_udp and is_443 and outbound == "block":
+        return True
+    if outbound not in {"direct", "proxy", "block"}:
+        return False
+    rule_set = rule.get("rule_set")
+    if isinstance(rule_set, str):
+        if rule_set in _SINGBOX_MANAGED_RULE_SET_TAGS:
+            return True
+    elif isinstance(rule_set, list) and any(str(item) in _SINGBOX_MANAGED_RULE_SET_TAGS for item in rule_set):
+        return True
+    if rule.get("ip_is_private") is True and outbound == "direct":
+        return True
+    generated_keys = {
+        "domain_suffix",
+        "domain",
+        "domain_keyword",
+        "domain_regex",
+        "ip_cidr",
+        "process_name",
+        "process_path",
+        "process_path_regex",
+    }
+    allowed_keys = generated_keys | {"rule_set", "ip_is_private", "action", "outbound"}
+    return bool(generated_keys & set(rule)) and set(rule).issubset(allowed_keys)
+
+
+def _is_bebra_singbox_dns_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    action = str(rule.get("action") or "")
+    if action not in {"route", "reject"}:
+        return False
+    server = str(rule.get("server") or "")
+    if action == "route" and server not in {"bootstrap-dns", "proxy-dns"}:
+        return False
+    rule_set = rule.get("rule_set")
+    if isinstance(rule_set, str):
+        if rule_set in _SINGBOX_MANAGED_RULE_SET_TAGS:
+            return True
+    elif isinstance(rule_set, list) and any(str(item) in _SINGBOX_MANAGED_RULE_SET_TAGS for item in rule_set):
+        return True
+    generated_keys = {
+        "domain_suffix",
+        "domain",
+        "domain_keyword",
+        "domain_regex",
+    }
+    allowed_keys = generated_keys | {"rule_set", "action", "server"}
+    return bool(generated_keys & set(rule)) and set(rule).issubset(allowed_keys)
 
 
 def _append_singbox_process_rule(
@@ -460,7 +519,8 @@ def _append_singbox_process_rule(
 ) -> None:
     names = sorted({value.strip() for value in values if value.strip()})
     if names:
-        rules.append({key: names, "outbound": action if action in ("direct", "proxy", "block") else "direct"})
+        outbound = action if action in ("direct", "proxy", "block") else "direct"
+        rules.append({key: names, "action": "route", "outbound": outbound})
 
 
 def _singbox_domain_ip_rule(items: list[str], outbound: str) -> tuple[dict[str, Any] | None, set[str]]:
@@ -511,6 +571,7 @@ def _singbox_domain_ip_rule(items: list[str], outbound: str) -> tuple[dict[str, 
         rule["rule_set"] = sorted(set(rule_set))
     if not rule:
         return None, set()
+    rule["action"] = "route"
     rule["outbound"] = outbound
     return rule, set(rule_set)
 
@@ -565,7 +626,6 @@ def _singbox_domain_dns_rule(items: list[str], dns_action: str) -> tuple[dict[st
     else:
         rule["action"] = "route"
         rule["server"] = dns_action
-        rule["strategy"] = "prefer_ipv4"
     return rule, set(rule_set)
 
 

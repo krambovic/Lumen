@@ -89,6 +89,7 @@ class SingBoxManager(QObject):
 
         # Kill any orphaned sing-box processes to free the TUN adapter
         self._kill_orphaned(exe)
+        self.cleanup_orphaned_tun_adapters()
 
         # Set working directory to core/ so sing-box can find wintun.dll
         core_dir = exe.parent
@@ -141,11 +142,13 @@ class SingBoxManager(QObject):
                 self.stop(expected=True)
 
             if retryable and attempt < 2:
+                self.cleanup_orphaned_tun_adapters()
                 self._wait_tun_released()
                 self._starting = True
                 continue
 
             self._starting = False
+            self.cleanup_orphaned_tun_adapters()
             if exited:
                 self._report_startup_failure(
                     self._unexpected_exit_message(self._last_exit_code, startup=True)
@@ -209,6 +212,7 @@ class SingBoxManager(QObject):
 
         # Wait for TUN adapter to be released by OS (active polling)
         self._starting = False
+        self.cleanup_orphaned_tun_adapters()
         self._wait_tun_released()
         return True
 
@@ -231,17 +235,52 @@ class SingBoxManager(QObject):
         while waited < max_wait:
             try:
                 result = run_text_pumped(
-                    ["netsh", "interface", "show", "interface"],
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        (
+                            "$active = @(Get-NetAdapter -Name 'xftun*' -ErrorAction SilentlyContinue "
+                            "| Where-Object { $_.Status -notin @('Disabled','Not Present') }); "
+                            "if ($active.Count -eq 0) { exit 0 } else { exit 1 }"
+                        ),
+                    ],
                     timeout=3,
+                    check=False,
                     creationflags=_CREATE_NO_WINDOW,
                 )
-                # Check if any xftun* adapter still exists
-                if "xftun" not in result_output_text(result):
-                    return  # TUN adapter gone
+                if result.returncode == 0:
+                    return
             except Exception:
                 return  # can't check, proceed anyway
             sleep_with_events(step)
             waited += step
+
+    @staticmethod
+    def cleanup_orphaned_tun_adapters(max_wait: float = 5.0) -> None:
+        """Remove routes from app-owned sing-box TUN adapters and disable them."""
+        if os.name != "nt":
+            return
+        script = (
+            "$ErrorActionPreference = 'SilentlyContinue'; "
+            "$adapters = @(Get-NetAdapter -Name 'xftun*' -ErrorAction SilentlyContinue); "
+            "foreach ($adapter in $adapters) { "
+            "$alias = $adapter.Name; "
+            "Get-NetRoute -InterfaceAlias $alias -ErrorAction SilentlyContinue "
+            "| Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue; "
+            "Disable-NetAdapter -Name $alias -Confirm:$false -ErrorAction SilentlyContinue; "
+            "}"
+        )
+        try:
+            run_text_pumped(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                timeout=max_wait,
+                check=False,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        except Exception:
+            pass
 
     def _read_output(self, proc: subprocess.Popen[bytes]) -> None:
         stream = proc.stdout
@@ -278,8 +317,10 @@ class SingBoxManager(QObject):
             self._proc = None
 
         if was_starting and not expected:
+            self.cleanup_orphaned_tun_adapters()
             self._report_startup_failure(self._unexpected_exit_message(exit_code, startup=True))
         elif was_running and not expected and not self._runtime_error_reported:
+            self.cleanup_orphaned_tun_adapters()
             self._runtime_error_reported = True
             self.error.emit(self._unexpected_exit_message(exit_code, startup=False))
         self.stopped.emit(exit_code)

@@ -288,17 +288,17 @@ example:
 }
 ```
 
-But the upstream option structs still accept the classic shorthand where the
-rule only contains `outbound`. That is what the app generates today. This is
-valid and intentionally simple.
+The app now emits the explicit form for generated GUI/runtime rules. Older
+templates that still contain the shorthand are normalized during runtime
+planning where the app owns those rules.
 
 ### Изменения в sing-box 1.14
 
 Несколько полей, используемых текущим билдером, изменили статус в 1.14:
 
 - `outbound` как shorthand в route rules (без `action`) — deprecated с 1.11.
-  Продолжает работать, но при переходе на текстовый редактор следует
-  генерировать `"action": "route", "outbound": "..."`.
+  Продолжает работать, но GUI/runtime-генератор уже пишет
+  `"action": "route", "outbound": "..."`.
 
 - `outbound` как match-условие в DNS rules — **удалён** в 1.14. Был deprecated
   с 1.12. Маршрутизация DNS теперь только через `domain_resolver` на
