@@ -138,7 +138,7 @@ class XrayManager(QObject):
         self._starting = False
         return True
 
-    def stop(self, expected: bool = True) -> bool:
+    def stop(self, expected: bool = True, *, fast: bool = False) -> bool:
         with self._lock:
             proc = self._proc
             if proc is None or proc.poll() is not None:
@@ -153,21 +153,26 @@ class XrayManager(QObject):
             proc.terminate()
         except Exception:
             pass
-        if self._wait_proc(proc, 3.0):
+        terminate_timeout = 0.8 if fast else 3.0
+        kill_timeout = 0.5 if fast else 2.0
+        orphan_timeout = 2 if fast else 5
+        final_timeout = 0.3 if fast else 1.0
+
+        if self._wait_proc(proc, terminate_timeout):
             return True
 
         try:
             proc.kill()
         except Exception:
             pass
-        if self._wait_proc(proc, 2.0):
+        if self._wait_proc(proc, kill_timeout):
             return True
 
         exe = self._exe_path
         if os.name == "nt" and exe is not None:
             try:
-                if kill_processes_by_path(exe.name, exe, timeout=5):
-                    if self._wait_proc(proc, 1.0):
+                if kill_processes_by_path(exe.name, exe, timeout=orphan_timeout):
+                    if self._wait_proc(proc, final_timeout):
                         return True
             except Exception:
                 pass

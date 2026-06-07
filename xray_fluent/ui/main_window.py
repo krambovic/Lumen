@@ -1299,8 +1299,11 @@ class MainWindow(FluentWindow):
     def _quit_app(self) -> None:
         self._quitting = True
         self._save_geometry()
-        self.controller.shutdown()
+        self.hide()
         app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+        self.controller.shutdown()
         if app is not None:
             app.quit()
 
@@ -1340,9 +1343,12 @@ class MainWindow(FluentWindow):
         if not self._tray_available:
             self._quitting = True
             self._save_geometry()
+            self.hide()
+            app = QApplication.instance()
+            if app is not None:
+                app.processEvents()
             self.controller.shutdown()
             e.accept()
-            app = QApplication.instance()
             if app is not None:
                 app.quit()
             return

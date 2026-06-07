@@ -177,12 +177,12 @@ def _disable_system_proxy_on_exit() -> None:
     try:
         from xray_fluent.engines.singbox.manager import SingBoxManager
 
-        SingBoxManager.cleanup_orphaned_tun_adapters(max_wait=3.0)
+        SingBoxManager.cleanup_orphaned_tun_adapters(max_wait=0.8)
         _bootstrap_logger.info("sing-box TUN adapters cleaned on exit (safety)")
     except Exception:
         pass
     try:
-        r = run_text(["netsh", "interface", "show", "interface"], timeout=5, creationflags=0x08000000)
+        r = run_text(["netsh", "interface", "show", "interface"], timeout=1, creationflags=0x08000000)
         interfaces = result_output_text(r)
         for interface_name in ("BebraVPN_TUN", "ZapretKVN_TUN"):
             if interface_name not in interfaces:
@@ -191,7 +191,7 @@ def _disable_system_proxy_on_exit() -> None:
             _sp.run(
                 ["netsh", "interface", "set", "interface", interface_name, "admin=disable"],
                 capture_output=True,
-                timeout=5,
+                timeout=1,
                 creationflags=0x08000000,
             )
             _bootstrap_logger.info("TUN adapter disabled on exit (safety)")

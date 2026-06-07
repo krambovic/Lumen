@@ -1133,19 +1133,20 @@ class AppController(QObject):
                 pass
 
     @staticmethod
-    def _cleanup_tun_adapter() -> None:
+    def _cleanup_tun_adapter(max_wait: float = 3.0) -> None:
         """Remove the wintun TUN adapter if it was left behind."""
         import subprocess as _sp
         try:
             from .engines.singbox.manager import SingBoxManager
 
-            SingBoxManager.cleanup_orphaned_tun_adapters(max_wait=3.0)
+            SingBoxManager.cleanup_orphaned_tun_adapters(max_wait=max_wait)
         except Exception:
             pass
+        timeout = max(1, int(max_wait))
         try:
             result = run_text(
                 ["netsh", "interface", "show", "interface"],
-                timeout=5,
+                timeout=timeout,
                 creationflags=0x08000000,
             )
             interfaces = result_output_text(result)
@@ -1154,7 +1155,7 @@ class AppController(QObject):
                     continue
                 _sp.run(
                     ["netsh", "interface", "set", "interface", interface_name, "admin=disable"],
-                    capture_output=True, timeout=5,
+                    capture_output=True, timeout=timeout,
                     creationflags=0x08000000,
                 )
         except Exception:
@@ -1274,8 +1275,8 @@ class AppController(QObject):
             reset_auto_switch_cooldown=reset_auto_switch_cooldown,
         )
 
-    def _stop_active_connection_processes(self, *, disable_proxy: bool) -> bool:
-        return stop_active_connection_processes_operation(self, disable_proxy=disable_proxy)
+    def _stop_active_connection_processes(self, *, disable_proxy: bool, fast: bool = False) -> bool:
+        return stop_active_connection_processes_operation(self, disable_proxy=disable_proxy, fast=fast)
 
     def _handle_unexpected_disconnect(self) -> None:
         handle_unexpected_disconnect_operation(self)
@@ -1283,8 +1284,8 @@ class AppController(QObject):
     def connect_selected(self, allow_during_reconnect: bool = False) -> bool:
         return connect_selected_operation(self, allow_during_reconnect=allow_during_reconnect)
 
-    def disconnect_current(self, disable_proxy: bool = True, emit_status: bool = True) -> bool:
-        return disconnect_current_operation(self, disable_proxy=disable_proxy, emit_status=emit_status)
+    def disconnect_current(self, disable_proxy: bool = True, emit_status: bool = True, *, fast: bool = False) -> bool:
+        return disconnect_current_operation(self, disable_proxy=disable_proxy, emit_status=emit_status, fast=fast)
 
     def _restart_proxy_core(self, reason: str) -> bool:
         return restart_xray_proxy_core(self, reason)

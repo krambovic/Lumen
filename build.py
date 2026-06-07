@@ -157,7 +157,7 @@ def build_exe() -> None:
         "--name", APP_NAME,
         "--noconfirm",
         "--clean",
-        "--console",
+        "--windowed",
         "--onedir",
         "--uac-admin",
         "--manifest", _windows_path(MANIFEST),

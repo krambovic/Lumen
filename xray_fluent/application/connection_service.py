@@ -205,7 +205,13 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         controller._connecting = False
 
 
-def disconnect_current(controller: AppController, disable_proxy: bool = True, emit_status: bool = True) -> bool:
+def disconnect_current(
+    controller: AppController,
+    disable_proxy: bool = True,
+    emit_status: bool = True,
+    *,
+    fast: bool = False,
+) -> bool:
     controller._disconnecting = True
     try:
         controller._cleanup_connection_runtime_state(
@@ -216,7 +222,7 @@ def disconnect_current(controller: AppController, disable_proxy: bool = True, em
         active_tun = controller._active_session.tun_mode if controller._active_session is not None else controller.state.settings.tun_mode
         if emit_status and active_tun:
             controller.status.emit("info", "Остановка VPN...")
-        stopped = controller._stop_active_connection_processes(disable_proxy=disable_proxy)
+        stopped = controller._stop_active_connection_processes(disable_proxy=disable_proxy, fast=fast)
         if stopped:
             controller._active_core = "xray"
             controller._clear_active_session()

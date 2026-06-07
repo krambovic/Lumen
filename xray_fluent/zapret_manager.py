@@ -283,7 +283,7 @@ class ZapretManager(QObject):
         self._health_timer.start()
         self.started.emit()
 
-    def stop(self) -> None:
+    def stop(self, *, fast: bool = False) -> None:
         self._health_timer.stop()
         process = self._process
         if process is None:
@@ -297,38 +297,47 @@ class ZapretManager(QObject):
         if process.state() == QProcess.ProcessState.Running:
             log.info("zapret stop")
             process.terminate()
-            if not wait_for_qprocess_finished(process, 1800):
+            terminate_timeout = 600 if fast else 1800
+            kill_timeout = 800 if fast else 5000
+            if not wait_for_qprocess_finished(process, terminate_timeout):
                 process.kill()
-                wait_for_qprocess_finished(process, 5000)
+                wait_for_qprocess_finished(process, kill_timeout)
 
         self._process = None
         self._current_preset = ""
         self._start_args = []
-        killed = self._kill_orphaned()
+        killed = self._kill_orphaned(
+            timeout=1 if fast else 5,
+            taskkill_timeout=1 if fast else 3,
+            settle_delay=0 if fast else 1.25,
+        )
         for name in killed:
             self.log_line.emit(f"[zapret] Завершён оставшийся процесс: {name}")
-        self._cleanup_windivert()
-        sleep_with_events(0.5)
+        self._cleanup_windivert(timeout=1 if fast else 3)
+        if not fast:
+            sleep_with_events(0.5)
         self.stopped.emit()
 
     # ── internals ───────────────────────────────────────────────
 
     @staticmethod
-    def _kill_orphaned() -> list[str]:
+    def _kill_orphaned(
+        *, timeout: float = 5.0, taskkill_timeout: float = 3.0, settle_delay: float = 1.25
+    ) -> list[str]:
         """Kill any orphaned winws.exe / winws2.exe processes."""
         killed: list[str] = []
         if os.name != "nt":
             return killed
         for exe_name, exe_path in (("winws2.exe", WINWS2_EXE), ("winws.exe", WINWS_EXE)):
             try:
-                if kill_processes_by_path(exe_name, exe_path, timeout=5):
+                if kill_processes_by_path(exe_name, exe_path, timeout=timeout):
                     killed.append(exe_name)
             except Exception:
                 pass
             try:
                 result = run_text_pumped(
                     ["taskkill", "/F", "/T", "/IM", exe_name],
-                    timeout=3,
+                    timeout=taskkill_timeout,
                     creationflags=CREATE_NO_WINDOW,
                 )
                 if result.returncode == 0 and exe_name not in killed:
@@ -336,7 +345,7 @@ class ZapretManager(QObject):
             except Exception:
                 pass
         if killed:
-            sleep_with_events(1.25)
+            sleep_with_events(settle_delay)
         return killed
 
     @staticmethod
@@ -365,7 +374,7 @@ class ZapretManager(QObject):
             pass
         return sorted(found)
 
-    def _cleanup_windivert(self) -> None:
+    def _cleanup_windivert(self, *, timeout: float = 3.0) -> None:
         if os.name != "nt":
             return
         for service in self._find_windivert_services():
@@ -373,7 +382,7 @@ class ZapretManager(QObject):
                 try:
                     run_text_pumped(
                         ["sc", action, service],
-                        timeout=3,
+                        timeout=timeout,
                         creationflags=CREATE_NO_WINDOW,
                     )
                 except Exception:

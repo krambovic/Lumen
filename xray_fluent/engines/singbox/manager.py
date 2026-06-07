@@ -173,7 +173,7 @@ class SingBoxManager(QObject):
         except Exception:
             pass
 
-    def stop(self, expected: bool = True) -> bool:
+    def stop(self, expected: bool = True, *, fast: bool = False) -> bool:
         with self._lock:
             proc = self._proc
             if proc is None or proc.poll() is not None:
@@ -189,19 +189,26 @@ class SingBoxManager(QObject):
             proc.terminate()
         except Exception:
             pass
-        if not self._wait_proc(proc, 3.0):
+        terminate_timeout = 0.8 if fast else 3.0
+        kill_timeout = 0.5 if fast else 2.0
+        orphan_timeout = 2 if fast else 5
+        final_timeout = 0.3 if fast else 1.0
+        cleanup_timeout = 1.0 if fast else 5.0
+        release_timeout = 1.5 if fast else 10.0
+
+        if not self._wait_proc(proc, terminate_timeout):
             try:
                 proc.kill()
             except Exception:
                 pass
-            self._wait_proc(proc, 2.0)
+            self._wait_proc(proc, kill_timeout)
 
         if proc.poll() is None:
             exe = self._exe_path
             if os.name == "nt" and exe is not None:
                 try:
-                    if kill_processes_by_path(exe.name, exe, timeout=5):
-                        self._wait_proc(proc, 1.0)
+                    if kill_processes_by_path(exe.name, exe, timeout=orphan_timeout):
+                        self._wait_proc(proc, final_timeout)
                 except Exception:
                     pass
 
@@ -212,8 +219,8 @@ class SingBoxManager(QObject):
 
         # Wait for TUN adapter to be released by OS (active polling)
         self._starting = False
-        self.cleanup_orphaned_tun_adapters()
-        self._wait_tun_released()
+        self.cleanup_orphaned_tun_adapters(max_wait=cleanup_timeout)
+        self._wait_tun_released(max_wait=release_timeout)
         return True
 
     def _wait_proc(self, proc: subprocess.Popen[bytes], timeout_sec: float) -> bool:

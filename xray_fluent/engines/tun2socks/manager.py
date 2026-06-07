@@ -143,7 +143,7 @@ class Tun2SocksManager(QObject):
             return False
         return True
 
-    def stop(self, expected: bool = True) -> bool:
+    def stop(self, expected: bool = True, *, fast: bool = False) -> bool:
         proc = self._proc
         if not self._proc_alive():
             self._stop_requested = False
@@ -158,31 +158,34 @@ class Tun2SocksManager(QObject):
             proc.terminate()
         except Exception:
             pass
-        if self._wait_proc(proc, 2.0):
-            self._finish_stop()
+        terminate_timeout = 0.6 if fast else 2.0
+        kill_timeout = 0.4 if fast else 1.0
+
+        if self._wait_proc(proc, terminate_timeout):
+            self._finish_stop(fast=fast)
             return True
 
         try:
             proc.kill()
         except Exception:
             pass
-        if self._wait_proc(proc, 1.0):
-            self._finish_stop()
+        if self._wait_proc(proc, kill_timeout):
+            self._finish_stop(fast=fast)
             return True
 
         if not self._proc_alive():
-            self._finish_stop()
+            self._finish_stop(fast=fast)
             return True
 
         self._stop_requested = False
         self.error.emit("failed to stop tun2socks in time")
         return False
 
-    def _finish_stop(self) -> None:
+    def _finish_stop(self, *, fast: bool = False) -> None:
         reader = self._reader
         if reader is not None and reader.is_alive() and reader is not threading.current_thread():
-            reader.join(timeout=2.0)
-        self._cleanup_routes()
+            reader.join(timeout=0.5 if fast else 2.0)
+        self._cleanup_routes(timeout=1 if fast else 5)
 
     def _wait_proc(self, proc: subprocess.Popen[bytes], timeout: float) -> bool:
         deadline = time.monotonic() + max(0.0, timeout)
@@ -339,7 +342,7 @@ class Tun2SocksManager(QObject):
             self.log_received.emit(f"[tun2socks] route setup error: {exc}")
             return False
 
-    def _cleanup_routes(self) -> None:
+    def _cleanup_routes(self, *, timeout: int = 5) -> None:
         """Remove routes added by _setup_routes."""
         if os.name != "nt":
             return
@@ -359,7 +362,7 @@ class Tun2SocksManager(QObject):
             for destination, mask, gateway in self._helper_routes:
                 cmds.append(["route", "delete", destination, "mask", mask, gateway])
             for cmd in cmds:
-                run_text_pumped(cmd, timeout=5, creationflags=_CREATE_NO_WINDOW)
+                run_text_pumped(cmd, timeout=timeout, creationflags=_CREATE_NO_WINDOW)
             self._helper_routes = []
         except Exception:
             pass

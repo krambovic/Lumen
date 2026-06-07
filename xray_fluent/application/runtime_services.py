@@ -95,30 +95,30 @@ def cleanup_connection_runtime_state(
     clear_pid_cache()
 
 
-def stop_active_connection_processes(controller: AppController, *, disable_proxy: bool) -> bool:
+def stop_active_connection_processes(controller: AppController, *, disable_proxy: bool, fast: bool = False) -> bool:
     stopped = True
 
     if controller._active_core == "singbox":
         if controller.singbox.is_running:
-            stopped = controller.singbox.stop() and stopped
+            stopped = controller.singbox.stop(fast=fast) and stopped
         if controller.xray.is_running:
-            stopped = controller.xray.stop() and stopped
+            stopped = controller.xray.stop(fast=fast) and stopped
         if controller.tun2socks.is_running:
-            stopped = controller.tun2socks.stop() and stopped
+            stopped = controller.tun2socks.stop(fast=fast) and stopped
     elif controller._active_core == "tun2socks":
         if controller.tun2socks.is_running:
-            stopped = controller.tun2socks.stop() and stopped
+            stopped = controller.tun2socks.stop(fast=fast) and stopped
         if controller.xray.is_running:
-            stopped = controller.xray.stop() and stopped
+            stopped = controller.xray.stop(fast=fast) and stopped
         if controller.singbox.is_running:
-            stopped = controller.singbox.stop() and stopped
+            stopped = controller.singbox.stop(fast=fast) and stopped
     else:
         if controller.xray.is_running:
-            stopped = controller.xray.stop() and stopped
+            stopped = controller.xray.stop(fast=fast) and stopped
         if controller.singbox.is_running:
-            stopped = controller.singbox.stop() and stopped
+            stopped = controller.singbox.stop(fast=fast) and stopped
         if controller.tun2socks.is_running:
-            stopped = controller.tun2socks.stop() and stopped
+            stopped = controller.tun2socks.stop(fast=fast) and stopped
 
     if disable_proxy and controller.state.settings.enable_system_proxy:
         controller.proxy.disable(restore_previous=True)
@@ -187,36 +187,36 @@ def on_live_metrics(controller: AppController, payload: dict[str, object]) -> No
 def shutdown(controller: AppController) -> None:
     if controller._country_resolver and controller._country_resolver.isRunning():
         controller._country_resolver.quit()
-        controller._country_resolver.wait(2000)
+        controller._country_resolver.wait(500)
     if controller._ping_worker and controller._ping_worker.isRunning():
         controller._ping_worker.cancel()
         controller._ping_worker.wait(500)
     if controller._connectivity_worker and controller._connectivity_worker.isRunning():
-        controller._connectivity_worker.wait(1000)
+        controller._connectivity_worker.wait(300)
     stop_metrics_worker(controller)
     for retired_worker in list(controller._retired_metrics_workers):
         if retired_worker.isRunning():
-            retired_worker.wait(2500)
+            retired_worker.wait(300)
     controller._retired_metrics_workers.clear()
     if controller._speed_worker and controller._speed_worker.isRunning():
         controller._speed_worker.cancel()
-        controller._speed_worker.wait(20000)
+        controller._speed_worker.wait(800)
     if controller._xray_update_worker and controller._xray_update_worker.isRunning():
-        controller._xray_update_worker.wait(1000)
+        controller._xray_update_worker.wait(300)
 
-    controller.disconnect_current()
+    controller.disconnect_current(fast=True)
     if controller.tun2socks.is_running:
-        controller.tun2socks.stop()
+        controller.tun2socks.stop(fast=True)
     if controller.singbox.is_running:
-        controller.singbox.stop()
+        controller.singbox.stop(fast=True)
     if controller.xray.is_running:
-        controller.xray.stop()
+        controller.xray.stop(fast=True)
     controller._xray_tun_routes.cleanup()
     if controller.zapret.running:
-        controller.zapret.stop()
+        controller.zapret.stop(fast=True)
     if controller.proxy.is_enabled():
         controller.proxy.disable(restore_previous=True)
-    controller._cleanup_tun_adapter()
+    controller._cleanup_tun_adapter(max_wait=1.0)
     controller.network_monitor.stop()
     controller._lock_timer.stop()
     controller.save()
