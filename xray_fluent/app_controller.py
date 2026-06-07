@@ -155,7 +155,7 @@ from .proxy_manager import ProxyManager
 from .security import create_password_hash, get_idle_seconds, verify_password
 from .engines.tun2socks import Tun2SocksManager, hot_swap as hot_swap_tun2socks
 from .storage import PassphraseRequired, StateStorage
-from .startup import build_startup_command, set_startup_enabled
+from .startup import build_startup_command, is_process_elevated, set_always_run_as_admin, set_startup_enabled
 from .subprocess_utils import result_output_text, run_text
 from .traffic_history import TrafficHistoryStorage
 from .zapret_manager import ZapretManager
@@ -372,6 +372,11 @@ class AppController(QObject):
 
         self.network_monitor.start()
         self._lock_timer.start()
+        if not is_process_elevated():
+            self.status.emit(
+                "warning",
+                "Bebra VPN запущен без прав администратора. TUN, Zapret и WinDivert могут работать нестабильно.",
+            )
         return True
 
     def set_data_passphrase(self, passphrase: str) -> None:
@@ -1369,6 +1374,7 @@ class AppController(QObject):
     def update_settings(self, settings: AppSettings) -> None:
         old_settings = self.state.settings
         old_launch = old_settings.launch_on_startup
+        old_admin = old_settings.always_run_as_admin
         old_tun = old_settings.tun_mode
         old_tun_engine = old_settings.tun_engine
         self.state.settings = settings
@@ -1380,6 +1386,16 @@ class AppController(QObject):
                 set_startup_enabled(APP_NAME, settings.launch_on_startup, build_startup_command())
             except Exception as exc:
                 self.status.emit("error", f"Ошибка настройки автозапуска: {exc}")
+
+        if old_admin != settings.always_run_as_admin:
+            try:
+                set_always_run_as_admin(settings.always_run_as_admin)
+                if settings.always_run_as_admin:
+                    self.status.emit("success", "Запуск от имени администратора включён. Сработает после перезапуска приложения.")
+                else:
+                    self.status.emit("info", "Запуск от имени администратора отключён")
+            except Exception as exc:
+                self.status.emit("error", f"Ошибка настройки запуска от администратора: {exc}")
 
         if self.connected or self._desired_connected:
             if old_tun != settings.tun_mode:

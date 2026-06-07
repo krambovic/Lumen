@@ -169,6 +169,7 @@ class AppSettings:
     enable_system_proxy: bool = True
     system_proxy_bypass_lan: bool = True
     launch_on_startup: bool = False
+    always_run_as_admin: bool = False
     reconnect_on_network_change: bool = True
     xray_path: str = ""
     log_level: str = "warning"
@@ -213,6 +214,7 @@ class AppSettings:
             "enable_system_proxy": self.enable_system_proxy,
             "system_proxy_bypass_lan": self.system_proxy_bypass_lan,
             "launch_on_startup": self.launch_on_startup,
+            "always_run_as_admin": self.always_run_as_admin,
             "reconnect_on_network_change": self.reconnect_on_network_change,
             "xray_path": self.xray_path,
             "log_level": self.log_level,
@@ -259,6 +261,7 @@ class AppSettings:
             enable_system_proxy=bool(data.get("enable_system_proxy", True)),
             system_proxy_bypass_lan=bool(data.get("system_proxy_bypass_lan", True)),
             launch_on_startup=bool(data.get("launch_on_startup", False)),
+            always_run_as_admin=bool(data.get("always_run_as_admin", False)),
             reconnect_on_network_change=bool(data.get("reconnect_on_network_change", True)),
             xray_path=str(data.get("xray_path") or ""),
             log_level=str(data.get("log_level") or "warning"),
