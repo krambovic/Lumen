@@ -23,6 +23,7 @@ from ..storage import PassphraseRequired
 from ..constants import APP_ICON_PATH, APP_NAME, APP_VERSION, LOG_DIR
 from ..models import AppSettings, Node, RoutingSettings
 from ..routing_presets import build_routing_preset
+from ..startup import is_process_elevated, relaunch_as_admin
 from ..app_updater import AppUpdate, UpdateChecker, UpdateDownloader
 from ..engines.xray import XrayCoreUpdateResult
 from .bulk_edit_dialog import BulkEditDialog
@@ -58,6 +59,7 @@ class MainWindow(FluentWindow):
         self.tray_show_action: QAction | None = None
         self.tray_connect_action: QAction | None = None
         self.tray_next_action: QAction | None = None
+        self.tray_admin_action: QAction | None = None
         self.tray_quit_action: QAction | None = None
         self.tray_mode_menu: QMenu | None = None
         self.tray_mode_group: QActionGroup | None = None
@@ -153,6 +155,7 @@ class MainWindow(FluentWindow):
         self.tray_show_action = QAction("Скрыть", self)
         self.tray_connect_action = QAction("Подключить", self)
         self.tray_next_action = QAction("Следующий сервер", self)
+        self.tray_admin_action = QAction("Перезапустить от администратора", self)
         self.tray_quit_action = QAction("Выход", self)
 
         self.tray_mode_menu = QMenu("Режим", menu)
@@ -178,6 +181,7 @@ class MainWindow(FluentWindow):
         menu.addAction(self.tray_next_action)
         menu.addMenu(self.tray_mode_menu)
         menu.addSeparator()
+        menu.addAction(self.tray_admin_action)
         menu.addAction(self.tray_quit_action)
 
         self.tray.setContextMenu(menu)
@@ -187,6 +191,7 @@ class MainWindow(FluentWindow):
         self.tray_show_action.triggered.connect(self._toggle_window_visible)
         self.tray_connect_action.triggered.connect(self.controller.toggle_connection)
         self.tray_next_action.triggered.connect(self.controller.switch_next_node)
+        self.tray_admin_action.triggered.connect(self._relaunch_as_admin)
         self.tray_quit_action.triggered.connect(self._quit_app)
         self.tray_mode_global.triggered.connect(lambda: self._set_mode_from_tray("global"))
         self.tray_mode_rule.triggered.connect(lambda: self._set_mode_from_tray("rule"))
@@ -258,6 +263,7 @@ class MainWindow(FluentWindow):
         self.controller.settings_changed.connect(self._on_settings_changed)
         self.controller.log_line.connect(self.logs_page.append_line)
         self.controller.status.connect(self._show_status)
+        self.controller.admin_relaunch_requested.connect(self._relaunch_as_admin)
         self.controller.bulk_task_progress.connect(self._on_bulk_task_progress)
         self.controller.ping_updated.connect(self._on_ping_updated)
         self.controller.speed_progress_updated.connect(self._on_speed_progress_updated)
@@ -271,9 +277,28 @@ class MainWindow(FluentWindow):
 
     def _init_window(self) -> None:
         self.setMinimumSize(600, 450)
-        self.setWindowTitle(APP_NAME)
+        self._refresh_admin_title()
         self.setWindowIcon(self._app_icon)
         self._apply_window_geometry(self.controller.state.settings)
+
+    def _refresh_admin_title(self) -> None:
+        elevated = is_process_elevated()
+        suffix = "Администратор" if elevated else "без прав администратора"
+        self.setWindowTitle(f"{APP_NAME} - {suffix}")
+        if self.tray_admin_action is not None:
+            self.tray_admin_action.setEnabled(not elevated)
+            self.tray_admin_action.setVisible(not elevated)
+
+    def _relaunch_as_admin(self) -> None:
+        if is_process_elevated():
+            self._show_status("info", "Bebra VPN уже запущен от имени администратора")
+            self._refresh_admin_title()
+            return
+        self.controller.save()
+        if not relaunch_as_admin():
+            self._show_status("error", "Не удалось перезапустить Bebra VPN от имени администратора")
+            return
+        self._quit_app()
 
     def _apply_window_geometry(self, settings: AppSettings) -> None:
         width = max(self.minimumWidth(), int(settings.window_width or 1000))
@@ -347,6 +372,7 @@ class MainWindow(FluentWindow):
         self._apply_interface_mode(settings.interface_mode)
         self._apply_window_geometry(settings)
         self._apply_theme(settings.theme, settings.accent_color)
+        self._refresh_admin_title()
         routing_controls_enabled = bool(settings.tun_mode and settings.tun_engine == "tun2socks")
         for action in (self.tray_mode_global, self.tray_mode_rule, self.tray_mode_direct):
             if action is not None:
@@ -834,6 +860,11 @@ class MainWindow(FluentWindow):
 
     def _on_dashboard_tun_toggled(self, checked: bool) -> None:
         from copy import deepcopy
+        if checked and not is_process_elevated():
+            self.dashboard_page.set_settings_snapshot(self.controller.state.settings)
+            self._show_status("warning", "Для VPN (TUN) нужны права администратора. Перезапускаю Bebra VPN с повышенными правами.")
+            self._relaunch_as_admin()
+            return
         settings = deepcopy(self.controller.state.settings)
         settings.tun_mode = checked
         if checked:

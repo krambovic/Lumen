@@ -36,6 +36,24 @@ def is_process_elevated() -> bool:
         return False
 
 
+def relaunch_as_admin(extra_args: list[str] | None = None) -> bool:
+    if sys.platform != "win32":
+        return False
+    executable, arguments, working_dir = _admin_launch_command(extra_args)
+    try:
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "runas",
+            str(executable),
+            arguments,
+            str(working_dir),
+            1,
+        )
+        return int(result) > 32
+    except Exception:
+        return False
+
+
 def set_always_run_as_admin(enabled: bool, executable: str | Path | None = None) -> None:
     if sys.platform != "win32":
         return
@@ -72,6 +90,22 @@ def _current_executable_path() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve()
     return Path(sys.executable).resolve()
+
+
+def _admin_launch_command(extra_args: list[str] | None = None) -> tuple[Path, str, Path]:
+    args = [arg for arg in sys.argv[1:] if arg != "--relaunch-as-admin"]
+    if extra_args:
+        args.extend(extra_args)
+    args.append("--relaunch-as-admin")
+    if getattr(sys, "frozen", False):
+        executable = Path(sys.executable).resolve()
+        return executable, subprocess.list2cmdline(args), executable.parent
+
+    base_dir = Path(__file__).resolve().parents[1]
+    pythonw = base_dir / ".venv" / "Scripts" / "pythonw.exe"
+    executable = pythonw if pythonw.exists() else Path(sys.executable).resolve()
+    script = base_dir / "main.py"
+    return executable, subprocess.list2cmdline([str(script), *args]), base_dir
 
 
 def _update_layer_value(value: str, enabled: bool) -> str:

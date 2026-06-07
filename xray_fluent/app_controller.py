@@ -222,6 +222,7 @@ class AppController(QObject):
     settings_changed = pyqtSignal(object)
     log_line = pyqtSignal(str)
     status = pyqtSignal(str, str)
+    admin_relaunch_requested = pyqtSignal()
     bulk_task_progress = pyqtSignal(str, int, int, bool)  # task, current, total, completed
     ping_updated = pyqtSignal(str, object)
     speed_updated = pyqtSignal(str, object, bool)  # node_id, speed_mbps, is_alive
@@ -372,6 +373,11 @@ class AppController(QObject):
 
         self.network_monitor.start()
         self._lock_timer.start()
+        if self.state.settings.always_run_as_admin:
+            try:
+                set_always_run_as_admin(True)
+            except Exception as exc:
+                self.status.emit("error", f"Ошибка настройки запуска от администратора: {exc}")
         if not is_process_elevated():
             self.status.emit(
                 "warning",
@@ -1304,6 +1310,10 @@ class AppController(QObject):
 
     def toggle_connection(self) -> None:
         current_target = self._desired_connected if (self._transition_active or self._transition_pending) else self.connected
+        if not current_target and self.state.settings.tun_mode and not is_process_elevated():
+            self.status.emit("warning", "Для VPN (TUN) нужны права администратора. Перезапускаю Bebra VPN с повышенными правами.")
+            self.admin_relaunch_requested.emit()
+            return
         self._desired_connected = not current_target
         self._request_transition("toggle connection")
 
@@ -1391,7 +1401,11 @@ class AppController(QObject):
             try:
                 set_always_run_as_admin(settings.always_run_as_admin)
                 if settings.always_run_as_admin:
-                    self.status.emit("success", "Запуск от имени администратора включён. Сработает после перезапуска приложения.")
+                    if is_process_elevated():
+                        self.status.emit("success", "Запуск от имени администратора включён")
+                    else:
+                        self.status.emit("warning", "Запуск от имени администратора включён. Перезапускаю Bebra VPN с повышенными правами.")
+                        self.admin_relaunch_requested.emit()
                 else:
                     self.status.emit("info", "Запуск от имени администратора отключён")
             except Exception as exc:
