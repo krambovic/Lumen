@@ -1,9 +1,10 @@
 """
-Build Bebra VPN portable exe via PyInstaller.
+Build the Qt Quick (QML) edition of Bebra VPN via PyInstaller.
 
-Usage:  python build.py          — full build (clean + compile + pack zip)
-        python build.py --no-zip — skip zip creation
-        python build.py --clean  — only wipe previous build artefacts
+Usage:  python build_qml.py            - full build (clean + compile + pack zip)
+        python build_qml.py --no-zip   - skip zip creation
+        python build_qml.py --no-installer  - skip Inno Setup installer
+        python build_qml.py --clean    - only wipe previous QML build artefacts
 
 Requires .venv created by setup.bat (or manually).
 """
@@ -24,25 +25,25 @@ VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 VENV_PIP = VENV_DIR / "Scripts" / "pip.exe"
 
 APP_NAME = "BebraVPN"
+SPEC_OUTPUT_NAME = "BebraVPN"
+SPEC_FILE = ROOT / "BebraVPN-qml.spec"
 
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
-APP_DIR = DIST_DIR / APP_NAME
-PORTABLE_ZIP_PATH = DIST_DIR / f"{APP_NAME}-portable-windows-x64.zip"
-INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-Setup-windows-x64.exe"
+APP_DIR = DIST_DIR / "BebraVPN Nightly"
+PORTABLE_ZIP_PATH = DIST_DIR / f"{APP_NAME}-nightly-portable-windows-x64.zip"
+INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-nightly-Setup-windows-x64.exe"
 
-MANIFEST = ROOT / "uac_admin.manifest"
 CORE_DIR = ROOT / "core"
 ZAPRET_DIR = ROOT / "zapret"
 DATA_TEMPLATES_DIR = ROOT / "data" / "templates"
 INNO_SCRIPT = ROOT / "installer" / "BebraVPN.iss"
 ASSETS_DIR = ROOT / "assets"
-APP_ICON = ASSETS_DIR / "BebraVPN.ico"
-NOTICE_FILES = (ROOT / "LICENSE", ROOT / "NOTICE.md", ROOT / "README.md")
+NOTICE_FILES = (ROOT / "LICENSE", ROOT / "NOTICE.md", ROOT / "README_QML.md", ROOT / "README.md")
 
 
 def _print(msg: str) -> None:
-    print(f"[build] {msg}", flush=True)
+    print(f"[build-qml] {msg}", flush=True)
 
 
 def _windows_path(path: Path) -> str:
@@ -123,9 +124,6 @@ def clean() -> None:
             _print("Close the app (tray -> Quit) and try again.")
             raise SystemExit(1)
 
-    # dist/BebraVPN/ — remove everything EXCEPT data/, core/, zapret/
-    # core/ and zapret/ are kept because running binaries (xray.exe) lock them;
-    # they will be merged/overwritten in build_exe() instead.
     keep_dirs = {"data", "core", "zapret"}
     if APP_DIR.exists():
         for child in APP_DIR.iterdir():
@@ -145,51 +143,39 @@ def clean() -> None:
 def build_exe() -> None:
     ensure_venv()
 
-    # Build into a temporary directory so PyInstaller doesn't touch the live
-    # APP_DIR (which may contain locked files like running xray.exe).
+    if not SPEC_FILE.is_file():
+        raise SystemExit(f"Spec file not found: {SPEC_FILE}")
+
     temp_dist = DIST_DIR / "_build_tmp"
     if temp_dist.exists():
         shutil.rmtree(temp_dist)
 
     cmd = [
         str(VENV_PYTHON), "-m", "PyInstaller",
-        _windows_path(ROOT / "main.py"),
-        "--name", APP_NAME,
+        _windows_path(SPEC_FILE),
         "--noconfirm",
         "--clean",
-        "--windowed",
-        "--onedir",
-        "--uac-admin",
-        "--manifest", _windows_path(MANIFEST),
-        "--icon", _windows_path(APP_ICON),
         "--distpath", _windows_path(temp_dist),
-        # win32comext is needed by qframelesswindow for Mica/DWM effects
-        "--hidden-import", "win32comext",
-        "--hidden-import", "win32comext.shell",
-        "--hidden-import", "win32comext.shell.shellcon",
-        # encodings.idna is needed by socket.getaddrinfo() for hostname resolution
-        "--hidden-import", "encodings.idna",
+        "--workpath", _windows_path(BUILD_DIR / "qml"),
     ]
     _run(cmd, cwd=str(ROOT))
 
-    # Merge PyInstaller output into the real APP_DIR (skip locked files)
-    temp_app = temp_dist / APP_NAME
+    temp_app = temp_dist / SPEC_OUTPUT_NAME
+    if not temp_app.is_dir():
+        raise SystemExit(f"Expected PyInstaller output not found: {temp_app}")
     _print(f"Merging build output -> {APP_DIR}")
     _copy_tree_merge(temp_app, APP_DIR)
     shutil.rmtree(temp_dist, ignore_errors=True)
 
-    # Copy core/ into dist (merge, skip locked files like running xray.exe)
     dst_core = APP_DIR / "core"
     _print(f"Merging core -> {dst_core}")
     _copy_tree_merge(CORE_DIR, dst_core)
 
-    # Copy zapret/ into dist (merge, skip locked files)
     dst_zapret = APP_DIR / "zapret"
     if ZAPRET_DIR.is_dir():
         _print(f"Merging zapret -> {dst_zapret}")
         _copy_tree_merge(ZAPRET_DIR, dst_zapret)
 
-    # Copy tracked raw config templates for first-run users
     dst_templates = APP_DIR / "data" / "templates"
     if DATA_TEMPLATES_DIR.is_dir():
         _print(f"Merging templates -> {dst_templates}")
@@ -211,7 +197,7 @@ def _pack_zip(path: Path) -> None:
     if path.exists():
         path.unlink()
     _print(f"Creating {path} ...")
-    shutil.make_archive(str(path.with_suffix("")), "zip", str(DIST_DIR), APP_NAME)
+    shutil.make_archive(str(path.with_suffix("")), "zip", str(APP_DIR.parent), APP_DIR.name)
 
 
 def pack_portable_zip() -> None:
@@ -236,6 +222,9 @@ def build_installer() -> None:
             f"/DAppVersion={version}",
             f"/DSourceDir={source_dir}",
             f"/DOutputDir={output_dir}",
+            "/DAppId={{7C4A1E92-3B6D-4F81-A2C5-9E0D7B3F1A48}",
+            "/DAppNameValue=Bebra VPN Nightly",
+            "/DOutputBaseName=BebraVPN-nightly-Setup-windows-x64",
             _windows_path(INNO_SCRIPT),
         ],
         cwd=str(ROOT),
@@ -244,30 +233,11 @@ def build_installer() -> None:
 
 
 # ------------------------------------------------------------------
-def _build_qml(args) -> None:
-    """Run the QML (Nightly) build via build_qml.py, forwarding flags.
-    """
-    qml_build = ROOT / "build_qml.py"
-    if not qml_build.is_file():
-        _print(f"QML build script not found at {qml_build}; skipping QML build")
-        return
-    python = str(VENV_PYTHON) if VENV_PYTHON.is_file() else "python"
-    cmd = [python, str(qml_build)]
-    if args.no_zip:
-        cmd.append("--no-zip")
-    if args.no_installer:
-        cmd.append("--no-installer")
-    _print("Building QML (Nightly) edition ...")
-    _run(cmd, cwd=str(ROOT))
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build Bebra VPN")
+    parser = argparse.ArgumentParser(description="Build Bebra VPN (QML edition)")
     parser.add_argument("--no-zip", action="store_true", help="skip zip creation")
     parser.add_argument("--no-installer", action="store_true", help="skip Inno Setup installer")
     parser.add_argument("--clean", action="store_true", help="only clean build artefacts")
-    parser.add_argument("--no-qml", action="store_true", help="skip the QML (Nightly) build")
-    parser.add_argument("--qml-only", action="store_true", help="build only the QML (Nightly) edition")
     args = parser.parse_args()
 
     os.chdir(ROOT)
@@ -277,20 +247,14 @@ def main() -> int:
         _print("Done.")
         return 0
 
-    # By default produce BOTH editions: the classic Stable build first, then the
-    # QML Nightly build via build_qml.py. --qml-only / --no-qml narrow this.
-    if not args.qml_only:
-        clean()
-        build_exe()
+    clean()
+    build_exe()
 
-        if not args.no_zip:
-            pack_portable_zip()
+    if not args.no_zip:
+        pack_portable_zip()
 
-        if not args.no_installer:
-            build_installer()
-
-    if not args.no_qml:
-        _build_qml(args)
+    if not args.no_installer:
+        build_installer()
 
     _print("All done!")
     return 0

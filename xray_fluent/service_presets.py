@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from qfluentwidgets import FluentIcon as FIF
+# NOTE: qfluentwidgets is only needed by the legacy QtWidgets UI. The `icon`
+# field below is presentation metadata that the QML frontend never reads, so we
+# avoid pulling in the heavy dependency with a tiny shim that simply yields the
+# icon name as a string. (The `icon: FIF` annotations are never evaluated
+# because of `from __future__ import annotations`.)
+class _FluentIconShim:
+    def __getattr__(self, name: str) -> str:
+        return name
+
+
+FIF = _FluentIconShim()
 
 
 @dataclass(frozen=True, slots=True)
