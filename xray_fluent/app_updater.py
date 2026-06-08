@@ -139,7 +139,7 @@ def _fetch_text(url: str) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
-def _asset_score(asset: dict) -> tuple[int, str]:
+def _asset_score(asset: dict, prefer_qml: bool = False) -> tuple[int, str]:
     name = str(asset.get("name") or "").lower()
     if not name.endswith(".zip"):
         return (0, name)
@@ -152,6 +152,12 @@ def _asset_score(asset: dict) -> tuple[int, str]:
         score += 2
     if "portable" in name:
         score += 1
+
+    is_nightly = ("nightly" in name) or ("qml" in name)
+    if prefer_qml:
+        score += 5 if is_nightly else 0
+    else:
+        score += 0 if is_nightly else 5
     return (score, name)
 
 
@@ -160,6 +166,11 @@ class UpdateChecker(QThread):
 
     result = pyqtSignal(object)  # AppUpdate | None
     error = pyqtSignal(str)
+
+    def __init__(self, parent=None, channel: str = "stable", prefer_qml: bool = False):
+        super().__init__(parent)
+        self._channel = (channel or "stable").strip().lower()
+        self._prefer_qml = bool(prefer_qml) or self._channel == "nightly"
 
     def run(self) -> None:
         try:
@@ -177,7 +188,7 @@ class UpdateChecker(QThread):
                 a for a in data.get("assets", [])
                 if str(a.get("name") or "").lower().endswith(".zip")
             ]
-            asset = max(zip_assets, key=_asset_score, default=None)
+            asset = max(zip_assets, key=lambda a: _asset_score(a, self._prefer_qml), default=None)
 
             if not asset:
                 self.error.emit(f"Релиз {tag} найден, но отсутствует zip-архив обновления")
