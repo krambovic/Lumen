@@ -139,6 +139,11 @@ def _fetch_text(url: str) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
+def _is_nightly_asset(asset: dict) -> bool:
+    name = str(asset.get("name") or "").lower()
+    return "nightly" in name or "qml" in name
+
+
 def _asset_score(asset: dict, prefer_qml: bool = False) -> tuple[int, str]:
     name = str(asset.get("name") or "").lower()
     if not name.endswith(".zip"):
@@ -153,7 +158,7 @@ def _asset_score(asset: dict, prefer_qml: bool = False) -> tuple[int, str]:
     if "portable" in name:
         score += 1
 
-    is_nightly = ("nightly" in name) or ("qml" in name)
+    is_nightly = _is_nightly_asset(asset)
     if prefer_qml:
         score += 5 if is_nightly else 0
     else:
@@ -188,10 +193,21 @@ class UpdateChecker(QThread):
                 a for a in data.get("assets", [])
                 if str(a.get("name") or "").lower().endswith(".zip")
             ]
-            asset = max(zip_assets, key=lambda a: _asset_score(a, self._prefer_qml), default=None)
+            channel_assets = [
+                a for a in zip_assets
+                if _is_nightly_asset(a) == self._prefer_qml
+            ]
+            asset = max(
+                channel_assets,
+                key=lambda a: _asset_score(a, self._prefer_qml),
+                default=None,
+            )
 
             if not asset:
-                self.error.emit(f"Релиз {tag} найден, но отсутствует zip-архив обновления")
+                channel_name = "nightly" if self._prefer_qml else "stable"
+                self.error.emit(
+                    f"Релиз {tag} найден, но отсутствует zip-архив для канала {channel_name}"
+                )
                 return
 
             digest = _extract_digest(str(asset.get("digest") or ""))
