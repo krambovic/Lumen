@@ -27,6 +27,8 @@ Bebra VPN объединяет в одном Windows-клиенте xray-core, s
 
 Скачайте последнюю версию на странице [Releases](https://github.com/krambovic/bebra-kvn/releases).
 
+На данный момент рекомендуется к скачиванию nightly-build
+
 - `BebraVPN-Setup-windows-x64.exe` — обычный установщик Windows. Приложение появится в списке установленных программ, в меню Пуск и, при выборе опции, на рабочем столе.
 - `BebraVPN-portable-windows-x64.zip` — portable-версия без установки.
 
