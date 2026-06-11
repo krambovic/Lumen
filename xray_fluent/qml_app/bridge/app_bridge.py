@@ -421,11 +421,8 @@ class AppBridge(QObject):
     # ── «Обновления» settings persistence ───────────────────────
     @pyqtSlot(str)
     def setReleaseChannel(self, channel: str) -> None:
-        channel = (channel or "").strip().lower()
-        if channel not in ("stable", "nightly"):
-            channel = "stable"
         settings = deepcopy(self.controller.state.settings)
-        settings.release_channel = channel
+        settings.release_channel = "stable"
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
@@ -448,10 +445,7 @@ class AppBridge(QObject):
 
     @pyqtProperty(str, notify=settingsChanged)
     def releaseChannel(self) -> str:
-        try:
-            return self.controller.state.settings.release_channel or "stable"
-        except Exception:
-            return "stable"
+        return "stable"
 
     @pyqtProperty(bool, notify=settingsChanged)
     def checkUpdates(self) -> bool:
@@ -798,11 +792,7 @@ class AppBridge(QObject):
         self._app_update_silent = silent
         if not silent:
             self.appUpdateState.emit({"phase": "checking"})
-        try:
-            channel = self.controller.state.settings.release_channel or "nightly"
-        except Exception:
-            channel = "nightly"
-        checker = UpdateChecker(self, channel=channel, prefer_qml=True)
+        checker = UpdateChecker(self, channel="stable", prefer_qml=False)
         self._app_update_checker = checker
         checker.result.connect(self._on_app_update_result)
         checker.error.connect(self._on_app_update_error)

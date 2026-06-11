@@ -104,7 +104,7 @@ def _admin_launch_command(extra_args: list[str] | None = None) -> tuple[Path, st
     base_dir = Path(__file__).resolve().parents[1]
     pythonw = base_dir / ".venv" / "Scripts" / "pythonw.exe"
     executable = pythonw if pythonw.exists() else Path(sys.executable).resolve()
-    script = base_dir / "main.py"
+    script = base_dir / "run_qml.py"
     return executable, subprocess.list2cmdline([str(script), *args]), base_dir
 
 
@@ -176,7 +176,7 @@ def build_startup_command() -> str:
         return f'"{exe}" --tray'
 
     base_dir = Path(__file__).resolve().parents[1]
-    script = base_dir / "main.py"
+    script = base_dir / "run_qml.py"
     venv_pythonw = base_dir / ".venv" / "Scripts" / "pythonw.exe"
     python_exe = venv_pythonw if venv_pythonw.exists() else Path(sys.executable).resolve()
     return f'"{python_exe}" "{script}" --tray'

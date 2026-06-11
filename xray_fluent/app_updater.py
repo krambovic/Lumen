@@ -158,11 +158,8 @@ def _asset_score(asset: dict, prefer_qml: bool = False) -> tuple[int, str]:
     if "portable" in name:
         score += 1
 
-    is_nightly = _is_nightly_asset(asset)
-    if prefer_qml:
-        score += 5 if is_nightly else 0
-    else:
-        score += 0 if is_nightly else 5
+    if _is_nightly_asset(asset):
+        score -= 1
     return (score, name)
 
 
@@ -193,12 +190,8 @@ class UpdateChecker(QThread):
                 a for a in data.get("assets", [])
                 if str(a.get("name") or "").lower().endswith(".zip")
             ]
-            channel_assets = [
-                a for a in zip_assets
-                if _is_nightly_asset(a) == self._prefer_qml
-            ]
             asset = max(
-                channel_assets,
+                zip_assets,
                 key=lambda a: _asset_score(a, self._prefer_qml),
                 default=None,
             )

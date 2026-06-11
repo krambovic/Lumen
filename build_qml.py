@@ -29,9 +29,9 @@ SPEC_FILE = ROOT / "LumenKVN-qml.spec"
 
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
-APP_DIR = DIST_DIR / "LumenKVN Nightly"
-PORTABLE_ZIP_PATH = DIST_DIR / f"{APP_NAME}-nightly-portable-windows-x64.zip"
-INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-nightly-Setup-windows-x64.exe"
+APP_DIR = DIST_DIR / "LumenKVN"
+PORTABLE_ZIP_PATH = DIST_DIR / f"{APP_NAME}-portable-windows-x64.zip"
+INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-Setup-windows-x64.exe"
 
 CORE_DIR = ROOT / "core"
 ZAPRET_DIR = ROOT / "zapret"
@@ -221,9 +221,9 @@ def build_installer() -> None:
             f"/DAppVersion={version}",
             f"/DSourceDir={source_dir}",
             f"/DOutputDir={output_dir}",
-            "/DAppId={{7C4A1E92-3B6D-4F81-A2C5-9E0D7B3F1A48}",
-            "/DAppNameValue=Lumen KVN Nightly",
-            "/DOutputBaseName=LumenKVN-nightly-Setup-windows-x64",
+            "/DAppId={{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}",
+            "/DAppNameValue=Lumen KVN",
+            "/DOutputBaseName=LumenKVN-Setup-windows-x64",
             _windows_path(INNO_SCRIPT),
         ],
         cwd=str(ROOT),

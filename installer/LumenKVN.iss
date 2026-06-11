@@ -10,9 +10,6 @@
 #define OutputDir "..\dist"
 #endif
 
-; Per-edition identity. Defaults = Stable (classic) build.
-; build_qml.py overrides these via /D so the Nightly (QML) edition installs
-; side-by-side with its own AppId, name, install dir and setup filename.
 #ifndef AppId
 #define AppId "{{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}"
 #endif

@@ -82,13 +82,13 @@ jobs:
           Write-Host "Core binaries ready:"
           Get-ChildItem core/
 
-      - name: Build app, installer and portable archives
+      - name: Build QML app, installer and portable archive
         shell: pwsh
         run: python build.py
 
       - name: List release assets
         shell: pwsh
-        run: Get-ChildItem dist/*.exe, dist/*.zip | Format-Table Name, Length
+        run: Get-ChildItem dist/LumenKVN-Setup-windows-x64.exe, dist/LumenKVN-portable-windows-x64.zip | Format-Table Name, Length
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
@@ -105,14 +105,12 @@ jobs:
           body: |
             ## What's Changed
 
-            - [Feature]: Полный ребрендинг проекта в Lumen KVN.
-            - [Feature]: Добавлен временный логотип Lumen KVN для приложения, установщика и релизов.
-            - [Chore]: Апдейтер теперь проверяет релизы krambovic/lumen-kvn.
-            - [Chore]: Stable и Nightly публикуются в одном релизе отдельными setup/portable assets.
+            - [Feature]: Lumen KVN is now QML-only.
+            - [Feature]: Included all changes from `72a3822` and later commits.
+            - [Chore]: Release assets now contain only the QML setup and portable archive.
+            - [Fix]: The updater now targets the Lumen KVN portable archive without stable/nightly split.
           generate_release_notes: false
           make_latest: true
           files: |
             dist/LumenKVN-Setup-windows-x64.exe
             dist/LumenKVN-portable-windows-x64.zip
-            dist/LumenKVN-nightly-Setup-windows-x64.exe
-            dist/LumenKVN-nightly-portable-windows-x64.zip
