@@ -223,6 +223,28 @@ def _write_droute_registry(socks_port: int) -> None:
         raise RuntimeError(result_output_text(result) or "failed to write droute registry settings")
 
 
+def _read_droute_registry_port() -> int:
+    if os.name != "nt":
+        return 0
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\droute", 0, winreg.KEY_READ) as key:
+            value, _ = winreg.QueryValueEx(key, "Port")
+        return int(value)
+    except Exception:
+        return 0
+
+
+def _droute_payload_installed(install: DiscordInstall) -> bool:
+    return (
+        (install.app_dir / "version.dll").is_file()
+        and (install.app_dir / "droute.dll").is_file()
+        and (install.root / "Droute.UpdaterHook.dll").is_file()
+        and (install.root / "Update.exe.config").is_file()
+    )
+
+
 def _install_droute_payload(exe: Path, install: DiscordInstall) -> None:
     app_dir = install.app_dir
     branch_root = install.root
@@ -277,16 +299,27 @@ class DiscordProxyManager:
         if int(socks_port) <= 0:
             return DiscordProxyResult(False, "Lumen KVN SOCKS5 port not found")
 
+        target_port = int(socks_port)
         try:
-            exe = ensure_droute_bundle()
-            _write_droute_registry(int(socks_port))
+            needs_install = any(not _droute_payload_installed(install) for install in installs)
+            exe = ensure_droute_bundle() if needs_install else DROUTE_EXE
+            if not exe.is_file():
+                exe = ensure_droute_bundle()
+            current_port = _read_droute_registry_port()
+            if current_port != target_port:
+                _write_droute_registry(target_port)
         except Exception as exc:
             return DiscordProxyResult(False, f"Failed to prepare droute: {exc}")
 
         affected = 0
+        already_ready = 0
         errors: list[str] = []
         for install in installs:
             try:
+                if _droute_payload_installed(install):
+                    already_ready += 1
+                    affected += 1
+                    continue
                 was_running = bool(_process_pids_for_install(install))
                 _terminate_discord(install)
                 _install_droute_payload(exe, install)
@@ -298,7 +331,9 @@ class DiscordProxyManager:
                 errors.append(f"{install.process_name}: {exc}")
 
         if affected:
-            message = f"droute installed for Discord via SOCKS5 127.0.0.1:{int(socks_port)}"
+            message = f"droute ready for Discord via SOCKS5 127.0.0.1:{target_port}"
+            if already_ready and already_ready == affected:
+                message = f"droute already active for Discord via SOCKS5 127.0.0.1:{target_port}"
             if errors:
                 message += f"; partial errors: {'; '.join(errors[:2])}"
             return DiscordProxyResult(True, message, affected)

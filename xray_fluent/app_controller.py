@@ -156,6 +156,7 @@ from .discord_proxy_manager import DiscordProxyManager
 from .models import AppSettings, AppState, Node, RoutingSettings
 from .network_monitor import NetworkMonitor
 from .proxy_manager import ProxyManager
+from .routing_presets import build_routing_preset
 from .security import create_password_hash, get_idle_seconds, verify_password
 from .engines.tun2socks import Tun2SocksManager, hot_swap as hot_swap_tun2socks
 from .storage import PassphraseRequired, StateStorage
@@ -1402,6 +1403,16 @@ class AppController(QObject):
 
         if self.connected or self._desired_connected:
             self._request_transition("routing changed")
+
+    def apply_routing_preset(self, preset_id: str) -> None:
+        before = self._routing_signature(self.state.routing)
+        routing = build_routing_preset(self.state.routing, preset_id)
+        after = self._routing_signature(routing)
+        if before == after:
+            self._log(f"[routing] preset {preset_id} already active")
+            return
+        self._log(f"[routing] applying dashboard preset: {preset_id}")
+        self.update_routing(routing)
 
     def update_settings(self, settings: AppSettings) -> None:
         old_settings = self.state.settings

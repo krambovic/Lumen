@@ -51,6 +51,18 @@ def _resolve_extracted_app_dir(root: Path, exe_name: str) -> Path:
     return root
 
 
+def _resolve_update_app_dir(exe_name: str) -> Path:
+    app_dir = BASE_DIR.resolve(strict=False)
+    app_name = "Lumen KVN"
+    if app_dir.name.lower() == "program":
+        for env_name in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+            root = os.environ.get(env_name)
+            if root:
+                return (Path(root) / app_name).resolve(strict=False)
+
+    return app_dir
+
+
 @dataclass(slots=True)
 class AppUpdate:
     version: str
@@ -487,18 +499,23 @@ class UpdateDownloader(QThread):
 
             # Write restart script
             current_pid = os.getpid()
-            app_dir = BASE_DIR
+            current_app_dir = BASE_DIR.resolve(strict=False)
+            app_dir = _resolve_update_app_dir(exe_name)
             script = tmp_dir / "_update.ps1"
             script_text = "\r\n".join([
                 "$ErrorActionPreference = 'Stop'",
                 f"$pidToWait = {current_pid}",
                 f"$sourceDir = {_powershell_literal(str(source_dir))}",
+                f"$currentAppDir = {_powershell_literal(str(current_app_dir))}",
                 f"$appDir = {_powershell_literal(str(app_dir))}",
                 f"$exePath = {_powershell_literal(str(app_dir / exe_name))}",
                 f"$tempDir = {_powershell_literal(str(tmp_dir))}",
                 "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
                 "$runtimeDir = Join-Path (Join-Path $appDir 'data') 'runtime'",
                 "$errorLog = Join-Path $logDir 'update_error.log'",
+                "if ((Split-Path -Leaf $appDir) -ieq 'Program') { throw 'Install directory resolved to C:\\Program; aborting update.' }",
+                "New-Item -ItemType Directory -Path $appDir -Force | Out-Null",
+                "New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
                 "$preserveNames = @('data')",
                 "$backupDir = Join-Path $runtimeDir 'update_backup'",
                 "$backupReplaceDir = Join-Path $backupDir 'replace'",
@@ -513,6 +530,10 @@ class UpdateDownloader(QThread):
                 "}",
                 "$proc = Get-Process -Id $pidToWait -ErrorAction SilentlyContinue",
                 "if ($proc) { Stop-Process -Id $pidToWait -Force }",
+                "$currentDataDir = Join-Path $currentAppDir 'data'",
+                "if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir)) {",
+                "    Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force",
+                "}",
                 "$sourceItems = @(Get-ChildItem -LiteralPath $sourceDir -Force | Where-Object { $preserveNames -notcontains $_.Name })",
                 "$sourceNames = @($sourceItems | ForEach-Object { $_.Name })",
                 "try {",
@@ -533,6 +554,13 @@ class UpdateDownloader(QThread):
                 "        throw ('Updated application exited immediately with code ' + $started.ExitCode)",
                 "    }",
                 "    Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue",
+                "    $oldExePath = Join-Path $currentAppDir 'LumenKVN.exe'",
+                "    $currentRoot = [System.IO.Path]::GetPathRoot($currentAppDir)",
+                "    $currentParent = Split-Path -Parent $currentAppDir",
+                "    $isRootProgramDir = ((Split-Path -Leaf $currentAppDir) -ieq 'Program' -and $currentParent.TrimEnd('\\') -ieq $currentRoot.TrimEnd('\\'))",
+                "    if ($currentAppDir -ine $appDir -and $isRootProgramDir -and (Test-Path -LiteralPath $oldExePath)) {",
+                "        Remove-Item -LiteralPath $currentAppDir -Recurse -Force -ErrorAction SilentlyContinue",
+                "    }",
                 "}",
                 "catch {",
                 "    Get-ChildItem -LiteralPath $appDir -Force -ErrorAction SilentlyContinue | Where-Object { $preserveNames -notcontains $_.Name } | ForEach-Object {",

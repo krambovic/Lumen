@@ -20,7 +20,6 @@ from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from ...app_controller import AppController
 from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY
 from ...models import Node, RoutingSettings
-from ...routing_presets import build_routing_preset
 from ...startup import is_process_elevated, relaunch_as_admin
 from .log_model import LogModel
 from .node_list_model import NodeListModel
@@ -355,8 +354,7 @@ class AppBridge(QObject):
 
     @pyqtSlot(str)
     def applyRoutingPreset(self, preset_id: str) -> None:
-        routing = build_routing_preset(self.controller.state.routing, preset_id)
-        self.controller.update_routing(routing)
+        self.controller.apply_routing_preset(preset_id)
 
     @pyqtSlot(bool)
     def setTun(self, enabled: bool) -> None:
