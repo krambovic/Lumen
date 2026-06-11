@@ -13,6 +13,14 @@ class LinkParseError(ValueError):
 
 
 def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
+    stripped = text.strip()
+    lowered = stripped.lower()
+    if "[interface]" in lowered and "[peer]" in lowered:
+        try:
+            return [_parse_wireguard_config(stripped)], []
+        except Exception as exc:
+            return [], [f"Config: {exc}"]
+
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     nodes: list[Node] = []
     errors: list[str] = []

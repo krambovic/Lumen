@@ -47,7 +47,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path core | Out-Null
 
           Write-Host "Downloading Xray-core..."
-          $xrayRelease = Invoke-RestMethod "https://api.github.com/repos/XTLS/Xray-core/releases/latest"
+          $xrayReleases = Invoke-RestMethod "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=30"
+          $xrayRelease = $xrayReleases |
+            Where-Object { -not $_.draft -and $_.tag_name -match '^v?\d+\.\d+\.\d+' } |
+            Sort-Object {
+              $m = [regex]::Match($_.tag_name, '\d+')
+              $parts = [regex]::Matches($_.tag_name, '\d+') | ForEach-Object { [int]$_.Value }
+              [version]::new($parts[0], $parts[1], $parts[2])
+            } -Descending |
+            Select-Object -First 1
+          Write-Host "Using Xray-core $($xrayRelease.tag_name)"
           $xrayAsset = $xrayRelease.assets | Where-Object { $_.name -match "Xray-windows-64\.zip$" }
           Invoke-WebRequest $xrayAsset.browser_download_url -OutFile xray.zip
           Expand-Archive xray.zip -DestinationPath _xray -Force
@@ -84,11 +93,13 @@ jobs:
 
       - name: Build QML app, installer and portable archive
         shell: pwsh
-        run: python build.py
+        run: |
+          python build.py
+          Copy-Item core/sing-box.exe dist/sing-box-extended-windows-x64.exe
 
       - name: List release assets
         shell: pwsh
-        run: Get-ChildItem dist/LumenKVN-Setup-windows-x64.exe, dist/LumenKVN-portable-windows-x64.zip | Format-Table Name, Length
+        run: Get-ChildItem dist/LumenKVN-Setup-windows-x64.exe, dist/LumenKVN-portable-windows-x64.zip, dist/sing-box-extended-windows-x64.exe | Format-Table Name, Length
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
@@ -103,14 +114,18 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Lumen KVN ${{ env.RELEASE_TAG }}"
           body: |
-            ## What's Changed
+            ## Что изменилось
 
-            - [Fix]: Move broken `C:\Program` installs back to `Program Files\Lumen KVN` during update while keeping user data.
-            - [Fix]: Dashboard routing preset buttons now apply through the same runtime transition path as the routing page.
-            - [Fix]: Discord voice proxy no longer restarts Discord when switching servers or routing presets if droute is already installed.
-            - [Chore]: Bump version to 1.1.1.
+            - [Fix]: Исправлен перенос сломанной установки из `C:\Program` в `Program Files\Lumen KVN` с сохранением данных.
+            - [Fix]: Кнопки маршрутизации на главной панели теперь применяют правила так же, как вкладка маршрутизации.
+            - [Fix]: Discord droute больше не перезапускает Discord при смене сервера или пресета маршрутизации.
+            - [Fix]: Обновление Xray-core больше не откатывает ядро на старый stable `latest`, если есть более новая версия вроде 26.6.1.
+            - [Feature]: Добавлен импорт `.conf` для WARP/WireGuard/AWG и отдельный ассет `sing-box-extended` в релизе.
+            - [Fix]: При включении TUN droute отключается, а системный прокси по-прежнему работает через Xray-core.
+            - [Chore]: Версия обновлена до 1.1.2.
           generate_release_notes: false
           make_latest: true
           files: |
             dist/LumenKVN-Setup-windows-x64.exe
             dist/LumenKVN-portable-windows-x64.zip
+            dist/sing-box-extended-windows-x64.exe

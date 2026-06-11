@@ -420,6 +420,7 @@ Item {
                 spacing: 8
 
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B5"; text: "Импорт из буфера"; onClicked: App.importClipboard() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8E5"; text: "Импорт .conf"; onClicked: App.importNodeFile() }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B3"; text: "Выбрать все"; onClicked: page.selectAll() }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE894"; text: "Снять выбор"; enabled: page.selCount > 0; onClicked: page.clearSel() }
                 // Пинг — две кнопки как в оригинале (FIF.SEND / FIF.SYNC), способ из настроек

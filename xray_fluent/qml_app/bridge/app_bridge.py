@@ -1223,6 +1223,29 @@ class AppBridge(QObject):
             self.toast.emit("warning", "Новых серверов не импортировано")
 
     @pyqtSlot()
+    def importNodeFile(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "Импортировать сервер",
+            "",
+            "VPN configs (*.conf *.txt *.json);;All files (*.*)",
+        )
+        if not file_path:
+            return
+        try:
+            text = Path(file_path).read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:
+            self.toast.emit("error", f"Не удалось прочитать файл: {exc}")
+            return
+        added, errors = self.controller.import_nodes_from_text(text)
+        if added:
+            self.toast.emit("success", f"Импортировано серверов: {added}")
+        if errors:
+            self.toast.emit("warning", "; ".join(errors[:2]))
+        if not added and not errors:
+            self.toast.emit("warning", "Новых серверов не импортировано")
+
+    @pyqtSlot()
     @pyqtSlot(str)
     def copyOutboundJson(self, node_id: str = "") -> None:
         payload = self.controller.export_node_outbound_json(node_id or None)

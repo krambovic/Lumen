@@ -1097,7 +1097,7 @@ class AppController(QObject):
         if was_connected != is_connected:
             self.connection_changed.emit(is_connected)
             self._metrics_request.emit(is_connected)
-        if ok and action in {"proxy_hot_swap", "tun_hot_swap"} and self.connected and self.state.settings.discord_proxy_enabled:
+        if ok and action == "proxy_hot_swap" and self.connected and self.state.settings.discord_proxy_enabled:
             QTimer.singleShot(250, self.apply_discord_proxy)
         if ok:
             self._blocked_transition_signature = ""
@@ -1360,6 +1360,10 @@ class AppController(QObject):
 
     def apply_discord_proxy(self) -> None:
         if not self.state.settings.discord_proxy_enabled:
+            return
+        if self.state.settings.tun_mode or (self._active_session is not None and self._active_session.tun_mode):
+            result = self.discord_proxy.disable()
+            self._log(f"[discord-proxy] disabled while TUN is active: {result.message}")
             return
         if not self.connected and not self._desired_connected:
             self.status.emit("warning", "Сначала запустите прокси Lumen KVN, потом включите Discord voice через прокси")

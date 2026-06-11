@@ -112,6 +112,9 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
 
             if controller.proxy.is_enabled():
                 controller.proxy.disable(restore_previous=True)
+            if controller.state.settings.discord_proxy_enabled:
+                result = controller.discord_proxy.disable()
+                controller._log(f"[discord-proxy] disabled for TUN: {result.message}")
 
             controller._tun_log_count = 0
             engine = controller.state.settings.tun_engine
@@ -198,7 +201,7 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         controller.save()
         session_mode = "xray-tun" if tun and controller._active_core == "xray" else controller._active_core
         controller._traffic_history.start_session(session_label, session_mode)
-        if controller.state.settings.discord_proxy_enabled:
+        if controller.state.settings.discord_proxy_enabled and not tun:
             QTimer.singleShot(250, controller.apply_discord_proxy)
         return True
     finally:

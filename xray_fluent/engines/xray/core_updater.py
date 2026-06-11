@@ -126,13 +126,15 @@ def _request_json(url: str) -> object:
 
 
 def _pick_release_from_github(releases: list[dict], channel: str) -> dict | None:
+    candidates = [release for release in releases if not bool(release.get("draft"))]
+    candidates.sort(
+        key=lambda release: _parse_semver(str(release.get("tag_name") or release.get("name") or "")) or (0, 0, 0, []),
+        reverse=True,
+    )
     if channel == "stable":
-        for release in releases:
-            if not bool(release.get("prerelease")):
-                return release
-        return None
+        return candidates[0] if candidates else None
 
-    prereleases = [release for release in releases if bool(release.get("prerelease"))]
+    prereleases = [release for release in candidates if bool(release.get("prerelease"))]
     if not prereleases:
         return None
 
