@@ -59,13 +59,17 @@ from .application.nodes import (
     get_next_node_for_auto_switch as get_next_node_for_auto_switch_operation,
     get_node_by_id as get_node_by_id_operation,
     import_nodes_from_text as import_nodes_from_text_operation,
+    import_subscription as import_subscription_operation,
     on_countries_resolved as on_countries_resolved_operation,
     prepare_node_for_runtime as prepare_node_for_runtime_operation,
     remove_nodes as remove_nodes_operation,
+    remove_subscription as remove_subscription_operation,
     reorder_nodes as reorder_nodes_operation,
     set_selected_node as set_selected_node_operation,
     start_country_ip_resolution as start_country_ip_resolution_operation,
+    update_all_subscriptions as update_all_subscriptions_operation,
     update_node as update_node_operation,
+    update_subscription as update_subscription_operation,
 )
 from .application.runtime import (
     ActiveSessionSnapshot,
@@ -220,6 +224,7 @@ class AppController(QObject):
     connection_status_changed = pyqtSignal(str, str)
     routing_changed = pyqtSignal(object)
     settings_changed = pyqtSignal(object)
+    subscriptions_changed = pyqtSignal(object)  # list[dict] of subscriptions
     log_line = pyqtSignal(str)
     status = pyqtSignal(str, str)
     admin_relaunch_requested = pyqtSignal()
@@ -285,6 +290,9 @@ class AppController(QObject):
         self._speed_completed = 0
         self._xray_update_silent = False
         self._reconnect_after_xray_update = False
+        # True while a user-requested core update is in its check-only first pass,
+        # so the live connection is only dropped once a real update is confirmed.
+        self._xray_update_apply_requested = False
         self._reconnecting = False
         self._connecting = False
         self._disconnecting = False
@@ -359,6 +367,8 @@ class AppController(QObject):
         self.selection_changed.emit(self.selected_node)
         self.routing_changed.emit(self.state.routing)
         self.settings_changed.emit(self.state.settings)
+        # Без этого список подписок не пересчитывается в QML после загрузки (подписки "пропадают" после перезапуска).
+        self.subscriptions_changed.emit(list(self.state.subscriptions))
         QTimer.singleShot(500, self._start_country_ip_resolution)
 
         version = get_xray_version(self.state.settings.xray_path)
@@ -1216,6 +1226,18 @@ class AppController(QObject):
     def import_nodes_from_text(self, text: str) -> tuple[int, list[str]]:
         return import_nodes_from_text_operation(self, text)
 
+    def import_subscription(self, url: str, name: str | None = None) -> tuple[int, list[str]]:
+        return import_subscription_operation(self, url, name)
+
+    def update_subscription(self, url: str) -> tuple[int, list[str]]:
+        return update_subscription_operation(self, url)
+
+    def update_all_subscriptions(self) -> tuple[int, list[str]]:
+        return update_all_subscriptions_operation(self)
+
+    def remove_subscription(self, url: str, delete_nodes: bool = True) -> None:
+        remove_subscription_operation(self, url, delete_nodes=delete_nodes)
+
     def remove_nodes(self, node_ids: set[str]) -> None:
         remove_nodes_operation(self, node_ids)
 
@@ -1422,8 +1444,8 @@ class AppController(QObject):
                 return
             self._request_transition("settings changed")
 
-    def ping_nodes(self, node_ids: set[str] | None = None) -> None:
-        ping_nodes_operation(self, node_ids)
+    def ping_nodes(self, node_ids: set[str] | None = None, method: str | None = None) -> None:
+        ping_nodes_operation(self, node_ids, method)
 
     def speed_test_nodes(self, node_ids: set[str] | None = None) -> bool:
         return speed_test_nodes_operation(self, node_ids)

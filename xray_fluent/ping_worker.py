@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import socket
 import os
 import time
@@ -7,11 +8,14 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from .constants import ICMP_PING_TIMEOUT_MS
 from .models import Node
 from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pumped
 
 
 _MAX_PING_WORKERS = 16
+
+_ICMP_TIME_RE = re.compile(r"[=<]\s*(\d+(?:[.,]\d+)?)\s*ms", re.IGNORECASE)
 
 
 def tcp_ping(host: str, port: int, timeout: float = 2.0) -> int | None:
@@ -23,6 +27,37 @@ def tcp_ping(host: str, port: int, timeout: float = 2.0) -> int | None:
             elapsed = (time.perf_counter() - start) * 1000.0
             return int(elapsed)
     except OSError:
+        return None
+
+
+def icmp_ping(host: str, timeout_ms: int = ICMP_PING_TIMEOUT_MS) -> int | None:
+    """Системный ICMP ping (один пакет). Возвращает задержку в мс или None."""
+    host = str(host or "").strip()
+    if not host:
+        return None
+    timeout_ms = max(200, int(timeout_ms or ICMP_PING_TIMEOUT_MS))
+    if os.name == "nt":
+        command = ["ping", "-n", "1", "-w", str(timeout_ms), host]
+    else:
+        timeout_sec = max(1, int(round(timeout_ms / 1000.0)))
+        command = ["ping", "-c", "1", "-W", str(timeout_sec), host]
+    try:
+        result = run_text_pumped(
+            command,
+            timeout=max(2.0, timeout_ms / 1000.0 + 1.0),
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    text = result_output_text(result)
+    match = _ICMP_TIME_RE.search(text)
+    if not match:
+        return None
+    try:
+        return int(round(float(match.group(1).replace(",", "."))))
+    except ValueError:
         return None
 
 
@@ -168,12 +203,25 @@ class PingWorker(QThread):
     progress = pyqtSignal(int, int)  # current, total
     completed = pyqtSignal()
 
-    def __init__(self, nodes: list[Node], timeout: float = 2.0, *, bypass_tun: bool = False):
+    def __init__(
+        self,
+        nodes: list[Node],
+        timeout: float = 2.0,
+        *,
+        bypass_tun: bool = False,
+        method: str = "tcping",
+    ):
         super().__init__()
         self._nodes = nodes
         self._timeout = timeout
         self._bypass_tun = bypass_tun
+        self._method = method if method in ("tcping", "icmp") else "tcping"
         self._cancelled = False
+
+    def _measure(self, node: Node) -> int | None:
+        if self._method == "icmp":
+            return icmp_ping(node.server, int(self._timeout * 1000))
+        return tcp_ping(node.server, node.port, self._timeout)
 
     def cancel(self) -> None:
         self._cancelled = True
@@ -200,7 +248,7 @@ class PingWorker(QThread):
                 self.result.emit(node.id, None)
                 self.progress.emit(completed, total)
                 return
-            future = executor.submit(tcp_ping, node.server, node.port, self._timeout)
+            future = executor.submit(self._measure, node)
             pending[future] = node.id
 
         def fill_pending_slots() -> None:

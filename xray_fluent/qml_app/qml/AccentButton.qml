@@ -84,8 +84,9 @@ Button {
                 if (control.down) return Theme.controlFillPressed;
                 return control.hovered ? Theme.controlFillHover : Theme.controlFill;
             }
-            // Slightly deepen the danger red so the white label stays legible.
-            var base = control.kind === "danger" ? Qt.darker(Theme.danger, 1.22) : Theme.accent;
+            // Use the dedicated saturated danger fill so the white label keeps
+            // a strong contrast (Theme.danger itself is tuned for error text).
+            var base = control.kind === "danger" ? Theme.dangerFill : Theme.accent;
             if (!control.enabled) return Qt.rgba(base.r, base.g, base.b, 0.4);
             if (control.down) return Theme.dark ? Qt.lighter(base, 1.18) : Qt.darker(base, 1.12);
             return control.hovered ? (Theme.dark ? Qt.lighter(base, 1.10) : Qt.darker(base, 1.06)) : base;

@@ -187,6 +187,19 @@ class NodeListModel(QAbstractListModel):
             return self._nodes[row].id
         return None
 
+    def node_row_at(self, row: int) -> dict | None:
+        """Return the filterable fields of a row by index (for Ctrl+A respecting filters)."""
+        if 0 <= row < len(self._nodes):
+            node = self._nodes[row]
+            return {
+                "id": node.id,
+                "name": node.name or node.server or "(\u0431\u0435\u0437 \u0438\u043c\u0435\u043d\u0438)",
+                "server": node.server or "",
+                "group": node.group or "",
+                "tags": list(node.tags or []),
+            }
+        return None
+
     # ── helpers ─────────────────────────────────────────────────
     def _emit_row_changed(self, node_id: str | None, roles: list[int]) -> None:
         if not node_id:

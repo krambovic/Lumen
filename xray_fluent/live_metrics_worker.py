@@ -11,6 +11,14 @@ from .http_utils import urlopen
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
+# Sanity ceilings for per-process proxy byte accounting. Raw 64-bit estats
+# counters can come back uninitialized/garbage, and the active-connection
+# aggregate swings as connections churn; without these caps a single glitch
+# gets permanently baked into the running total (the "Трафик по процессам"
+# bug where VPN showed values like hundreds of millions of GB).
+_MAX_REASONABLE_BYTES_PER_SEC = 2 * 1024 ** 3   # 2 GiB/s, matches traffic_history
+_MAX_PLAUSIBLE_CONN_BYTES = 1 * 1024 ** 5       # 1 PiB: any single reading above is a glitch
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import XRAY_PATH_DEFAULT
@@ -70,9 +78,9 @@ class LiveMetricsWorker(QThread):
         iteration_count = 0
         process_stats_interval = max(3, round(4000 / max(1, self._interval_ms)))
 
-        # Proxy mode: per-process traffic via TCP connection estats
-        proxy_prev_bytes: dict[str, tuple[int, int]] = {}  # {exe: (in, out)} for speed & drop detection
-        proxy_closed_bytes: dict[str, tuple[int, int]] = {}  # {exe: (in, out)} accumulated from closed conns
+        # Proxy mode: per-process traffic via TCP connection estats.
+        proxy_prev_bytes: dict[str, tuple[int, int]] = {}  # {exe: (in, out)} last active aggregate
+        proxy_total_bytes: dict[str, tuple[int, int]] = {}  # {exe: (in, out)} monotonic running total
 
         while not self._stopped:
             now = time.perf_counter()
@@ -106,7 +114,7 @@ class LiveMetricsWorker(QThread):
                     process_stats = collect_process_stats(self._clash_api_port)
                 elif self._mode == "xray":
                     process_stats = self._collect_proxy_process_stats(
-                        proxy_prev_bytes, proxy_closed_bytes,
+                        proxy_prev_bytes, proxy_total_bytes,
                     )
 
             self.metrics.emit(
@@ -127,13 +135,22 @@ class LiveMetricsWorker(QThread):
     def _collect_proxy_process_stats(
         self,
         prev_bytes: dict[str, tuple[int, int]],
-        closed_bytes: dict[str, tuple[int, int]],
+        total_bytes: dict[str, tuple[int, int]],
     ) -> list[ProcessTrafficSnapshot] | None:
         """Build per-process stats in proxy mode.
 
-        Uses GetPerTcpConnectionEStats for actual per-connection byte counts.
-        Tracks closed connections: when active bytes drop, the lost bytes
-        are accumulated in closed_bytes so "Всего" grows monotonically.
+        Uses GetPerTcpConnectionEStats for per-connection byte counts. The
+        active-connection aggregate (p.bytes_in/out) is the sum over currently
+        open connections, so it swings as connections open/close. We keep a
+        monotonic running total per exe by adding only the positive, capped
+        delta of that aggregate each tick:
+
+          * a drop means connection(s) closed (their bytes were already
+            counted) → contributes 0, never a subtraction;
+          * an implausibly large single reading is treated as a glitched estats
+            counter and ignored (fall back to the previous value);
+          * a per-tick increase larger than the physical ceiling is clamped,
+            so one bad sample can't be baked into "Всего" forever.
         """
         try:
             proxy_procs = get_proxy_connections(self._socks_port, self._http_port)
@@ -146,34 +163,38 @@ class LiveMetricsWorker(QThread):
         dt = max(0.5, now - self._process_stats_prev_ts) if self._process_stats_prev_ts > 0 else 2.0
         self._process_stats_prev_ts = now
 
+        # Most bytes a process could legitimately add in one sampling interval.
+        max_delta = int(_MAX_REASONABLE_BYTES_PER_SEC * dt)
+
         result: list[ProcessTrafficSnapshot] = []
         for p in proxy_procs:
             prev_in, prev_out = prev_bytes.get(p.exe, (0, 0))
-            cl_in, cl_out = closed_bytes.get(p.exe, (0, 0))
+            tot_in, tot_out = total_bytes.get(p.exe, (0, 0))
 
-            # Detect closed connections: active bytes dropped (but not to zero — that indicates API glitch)
-            if p.bytes_in < prev_in and p.bytes_in > 0:
-                cl_in += prev_in - p.bytes_in
-            if p.bytes_out < prev_out and p.bytes_out > 0:
-                cl_out += prev_out - p.bytes_out
-            closed_bytes[p.exe] = (cl_in, cl_out)
+            # Reject glitched/uninitialized 64-bit estats readings: fall back to
+            # the previous good aggregate so no spike enters the running total.
+            cur_in = p.bytes_in if 0 <= p.bytes_in <= _MAX_PLAUSIBLE_CONN_BYTES else prev_in
+            cur_out = p.bytes_out if 0 <= p.bytes_out <= _MAX_PLAUSIBLE_CONN_BYTES else prev_out
 
-            # Total = accumulated from closed conns + current active conns
-            total_in = cl_in + p.bytes_in
-            total_out = cl_out + p.bytes_out
+            # Grow the monotonic total only by the positive, capped delta.
+            delta_in = min(max(0, cur_in - prev_in), max_delta)
+            delta_out = min(max(0, cur_out - prev_out), max_delta)
+            tot_in += delta_in
+            tot_out += delta_out
+            total_bytes[p.exe] = (tot_in, tot_out)
 
-            # Speed from active connection deltas
-            down_speed = max(0.0, (p.bytes_in - prev_in) / dt) if prev_in > 0 and p.bytes_in >= prev_in else 0.0
-            up_speed = max(0.0, (p.bytes_out - prev_out) / dt) if prev_out > 0 and p.bytes_out >= prev_out else 0.0
-            prev_bytes[p.exe] = (p.bytes_in, p.bytes_out)
+            # Speed from the same validated delta (0 on first sample for an exe).
+            down_speed = (delta_in / dt) if prev_in > 0 else 0.0
+            up_speed = (delta_out / dt) if prev_out > 0 else 0.0
+            prev_bytes[p.exe] = (cur_in, cur_out)
 
             result.append(ProcessTrafficSnapshot(
                 exe=p.exe,
-                upload=total_out,
-                download=total_in,
+                upload=tot_out,
+                download=tot_in,
                 connections=p.connections,
                 route="proxy",
-                proxy_bytes=total_in + total_out,
+                proxy_bytes=tot_in + tot_out,
                 down_speed=down_speed,
                 up_speed=up_speed,
             ))

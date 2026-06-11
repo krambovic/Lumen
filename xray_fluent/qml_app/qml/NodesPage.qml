@@ -86,6 +86,82 @@ Item {
     function isSelected(id) { return sel[id] === true; }
     function selectedIds() { return Object.keys(sel); }
     function firstSelected() { var k = Object.keys(sel); return k.length ? k[0] : ""; }
+    // Цели для тестов: выбранные узлы, или пустой список (= все) если ничего не выбрано.
+    function testTargets() { return page.selCount > 0 ? page.selectedIds() : []; }
+    // Активная подписка в выпадающем списке (или null).
+    function selectedSub() {
+        var subs = App.subscriptions;
+        if (!subs || subs.length === 0) return null;
+        var i = subCombo.currentIndex;
+        if (i < 0 || i >= subs.length) return null;
+        return subs[i];
+    }
+    // Подписка, выбранная в диалоге свойств (может отличаться от subCombo).
+    function infoSub() {
+        var subs = App.subscriptions;
+        if (!subs || subs.length === 0) return null;
+        var i = infoCombo.currentIndex;
+        if (i < 0 || i >= subs.length) return null;
+        return subs[i];
+    }
+    // Человекочитаемый размер: байты → КБ/МБ/ГБ/ТБ.
+    function fmtBytes(n) {
+        var b = Number(n);
+        if (!isFinite(b) || b < 0) return String(n);
+        var u = ["Б", "КБ", "МБ", "ГБ", "ТБ", "ПБ"];
+        var i = 0;
+        while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+        return (i === 0 ? String(Math.round(b)) : b.toFixed(2)) + " " + u[i];
+    }
+    // Время → локальный часовой пояс компьютера (из unix-секунд или ISO/UTC).
+    function fmtTime(v) {
+        if (v === undefined || v === null || v === "") return "";
+        var d;
+        if (typeof v === "number") d = new Date(v * 1000);
+        else {
+            var s = String(v).trim();
+            if (/^\d{9,}$/.test(s)) d = new Date(parseInt(s, 10) * 1000);
+            else d = new Date(s);
+        }
+        if (isNaN(d.getTime())) return String(v);
+        return Qt.formatDateTime(d, "dd.MM.yyyy HH:mm");
+    }
+    // Строит список [метка, значение] из данных подписки.
+    function infoRows(sub) {
+        var rows = [];
+        if (!sub) return rows;
+        rows.push(["Группа", (sub.name && sub.name.length ? sub.name : "—")]);
+        if (sub.url) rows.push(["URL", sub.url]);
+        if (sub.updated_at) rows.push(["Обновлено", fmtTime(sub.updated_at)]);
+        rows.push(["Серверов", String(sub.node_count || 0)]);
+        var ui = sub.userinfo;
+        if (ui && typeof ui === "object") {
+            if (ui.username) rows.push(["Пользователь", String(ui.username)]);
+            if (ui.userStatus) rows.push(["Статус", String(ui.userStatus)]);
+            else if (ui.isActive !== undefined) rows.push(["Статус", ui.isActive ? "Активна" : "Неактивна"]);
+            if (ui.daysLeft !== undefined) rows.push(["Осталось дней", String(ui.daysLeft)]);
+            // Трафик: предпочитаем точные байты (форматируем), иначе готовые строки.
+            var usedB = (ui.trafficUsedBytes !== undefined) ? Number(ui.trafficUsedBytes)
+                      : ((ui.total !== undefined) ? Number((ui.upload || 0) + (ui.download || 0)) : undefined);
+            var limitB = (ui.trafficLimitBytes !== undefined) ? Number(ui.trafficLimitBytes)
+                       : ((ui.total !== undefined) ? Number(ui.total) : undefined);
+            if (usedB !== undefined || limitB !== undefined) {
+                var uStr = (usedB !== undefined) ? fmtBytes(usedB)
+                         : (ui.trafficUsed !== undefined ? String(ui.trafficUsed) : "?");
+                var lStr = (limitB !== undefined) ? fmtBytes(limitB)
+                         : (ui.trafficLimit !== undefined ? String(ui.trafficLimit) : "∞");
+                rows.push(["Трафик", uStr + " / " + lStr]);
+            } else if (ui.trafficUsed !== undefined || ui.trafficLimit !== undefined) {
+                var used = (ui.trafficUsed !== undefined ? String(ui.trafficUsed) : "?");
+                var limit = (ui.trafficLimit !== undefined ? String(ui.trafficLimit) : "∞");
+                rows.push(["Трафик", used + " / " + limit]);
+            }
+            if (ui.expiresAt) rows.push(["Истекает", fmtTime(ui.expiresAt)]);
+            else if (ui.expire) rows.push(["Истекает", fmtTime(ui.expire)]);
+            if (ui.trafficLimitStrategy) rows.push(["Сброс трафика", String(ui.trafficLimitStrategy)]);
+        }
+        return rows;
+    }
     function menuNodeId() { return App.nodeIdAt(page.menuRow); }
 
     function selectOnly(rowIndex) {
@@ -115,10 +191,13 @@ Item {
     }
     function clearSel() { anchorRow = -1; _commit({}, 0); }
     function selectAll() {
+        // Учитываем активный фильтр (группа/тег/поиск): выбираем только видимые строки.
         var o = {};
         for (var i = 0; i < list.count; i++) {
-            var id = App.nodeIdAt(i);
-            if (id) o[id] = true;
+            var r = App.nodeRowAt(i);
+            if (!r || !r.id) continue;
+            if (!page.rowVisible(r.name, r.server, r.group, r.tags)) continue;
+            o[r.id] = true;
         }
         anchorRow = 0;
         _commit(o, Object.keys(o).length);
@@ -139,6 +218,30 @@ Item {
         return false;
     }
 
+    // Apply a sort key coming from a column-header click. Three-state cycle on
+    // repeated clicks of the same column: ascending -> descending -> off (back
+    // to manual order, so the arrow disappears entirely). A different column
+    // starts ascending. Keeps the Sort dropdown in sync so both entry points
+    // agree.
+    function applySort(key) {
+        if (!key) return;
+        if (page.sortKey === key) {
+            if (page.sortAsc) {
+                page.sortAsc = false;          // asc -> desc
+            } else {
+                page.sortKey = "manual";       // desc -> off (manual order)
+                page.sortAsc = true;
+            }
+        } else {
+            page.sortKey = key;
+            page.sortAsc = true;
+        }
+        var idx = page.sortKeys.indexOf(page.sortKey);
+        if (idx >= 0)
+            sortCombo.currentIndex = idx;
+        App.setNodeSort(page.sortKey, page.sortAsc);
+    }
+
     // ── reusable cell / header text ───────────────────
     component CellText: Text {
         property int w: 80
@@ -152,16 +255,43 @@ Item {
         font.pixelSize: page.cellFont
     }
     component HeaderLabel: Text {
+        id: hdr
         property int w: 80
+        // Empty sortKey = column is not sortable (no click handler / no arrow).
+        property string sortKey: ""
+        readonly property bool sortable: sortKey !== ""
+        readonly property bool activeSort: sortable && page.sortKey === sortKey
         width: w
         height: parent ? parent.height : 0
         leftPadding: 4
+        rightPadding: activeSort ? 16 : 0
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
-        color: Theme.textFaint
+        // Highlight the column the list is currently sorted by.
+        color: activeSort ? Theme.text : Theme.textFaint
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontSmall
         font.bold: true
+
+        // Sort-direction chevron, shown only on the active sort column.
+        Text {
+            visible: hdr.activeSort
+            anchors.right: parent.right
+            anchors.rightMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            text: page.sortAsc ? "\uE74A" : "\uE74B"
+            font.family: "Segoe Fluent Icons"
+            font.pixelSize: 10
+            color: Theme.textMuted
+        }
+
+        // Click a sortable header to sort by it; click again to flip direction.
+        MouseArea {
+            anchors.fill: parent
+            enabled: hdr.sortable
+            cursorShape: Qt.PointingHandCursor
+            onClicked: page.applySort(hdr.sortKey)
+        }
     }
     // Group / Tags / Sort dropdowns. Their pop-ups are now opaque because
     // Main.qml sets Universal.background to the opaque Theme.flyout token.
@@ -279,21 +409,51 @@ Item {
         }
 
         // ── action toolbar ───────────────────────
-        Flow {
+        RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: 12
 
-            AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B5"; text: "Импорт из буфера"; onClicked: App.importClipboard() }
-            AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B3"; text: "Выбрать все"; onClicked: page.selectAll() }
-            AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE894"; text: "Снять выбор"; enabled: page.selCount > 0; onClicked: page.clearSel() }
-            AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE724"; text: "Пинг выбранных"; enabled: page.selCount > 0; onClicked: App.pingNodes(page.selectedIds()) }
-            AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE724"; text: "Пинг всех"; onClicked: App.pingNodes() }
-            AccentButton { kind: "accent"; iconOnly: true; glyph: "\uEC4A"; text: "Тест скорости выбранных"; enabled: page.selCount > 0; onClicked: App.speedTestNodes(page.selectedIds()) }
-            AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uEC4A"; text: "Тест скорости всех"; onClicked: App.speedTestNodes() }
-            AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE769"; text: "Остановить тест"; onClicked: App.cancelSpeedTest() }
-            AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE943"; text: "Экспорт outbound JSON"; enabled: page.selCount === 1; onClicked: App.saveOutboundJson(page.firstSelected()) }
-            AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE792"; text: "Экспорт runtime JSON"; enabled: page.selCount === 1; onClicked: App.saveRuntimeJson(page.firstSelected()) }
-            AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: "Удалить выбранные"; enabled: page.selCount > 0; onClicked: App.deleteNodes(page.selectedIds()) }
+            // Действия над серверами (слева, переносятся при нехватке места)
+            Flow {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                spacing: 8
+
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B5"; text: "Импорт из буфера"; onClicked: App.importClipboard() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B3"; text: "Выбрать все"; onClicked: page.selectAll() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE894"; text: "Снять выбор"; enabled: page.selCount > 0; onClicked: page.clearSel() }
+                // Пинг — две кнопки как в оригинале (FIF.SEND / FIF.SYNC), способ из настроек
+                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE724"; text: "Пинг выбранных"; enabled: page.selCount > 0; onClicked: App.pingNodes(page.selectedIds()) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE895"; text: "Пинг всех"; onClicked: App.pingNodes() }
+                // Тест скорости — две кнопки (выбранные / все)
+                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uEC4A"; text: "Тест скорости выбранных"; enabled: page.selCount > 0; onClicked: App.speedTestNodes(page.selectedIds()) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uEC4A"; text: "Тест скорости всех"; onClicked: App.speedTestNodes() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE769"; text: "Остановить тест"; onClicked: App.cancelSpeedTest() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE943"; text: "Экспорт outbound JSON"; enabled: page.selCount === 1; onClicked: App.saveOutboundJson(page.firstSelected()) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE792"; text: "Экспорт runtime JSON"; enabled: page.selCount === 1; onClicked: App.saveRuntimeJson(page.firstSelected()) }
+                AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: "Удалить выбранные"; enabled: page.selCount > 0; onClicked: App.deleteNodes(page.selectedIds()) }
+            }
+
+            // Подписки (справа, в той же линии)
+            RowLayout {
+                Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                spacing: 8
+
+                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE946"; text: "Свойства подписки"; enabled: App.subscriptions.length > 0; onClicked: infoDialog.openInfo() }
+                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE8B5"; text: "Импорт подписки"; onClicked: subDialog.openNew() }
+                FilterCombo {
+                    id: subCombo
+                    Layout.preferredWidth: 220
+                    width: 220
+                    enabled: App.subscriptions.length > 0
+                    model: App.subscriptions.length > 0
+                        ? App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
+                        : ["Нет подписок"]
+                }
+                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE72C"; text: "Обновить подписку"; enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.updateSubscription(s.url) } }
+                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE895"; text: "Обновить все подписки"; enabled: App.subscriptions.length > 0; onClicked: App.updateAllSubscriptions() }
+                AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: "Удалить подписку (с серверами)"; enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.removeSubscription(s.url, true) } }
+            }
         }
 
         // ── table ────────────────────────────
@@ -332,16 +492,16 @@ Item {
                         Row {
                             anchors.fill: parent
                             anchors.leftMargin: page.leftPad
-                            HeaderLabel { w: page.colName; text: "Сервер" }
-                            HeaderLabel { w: page.colType; text: "Тип" }
+                            HeaderLabel { w: page.colName; text: "Сервер"; sortKey: "name" }
+                            HeaderLabel { w: page.colType; text: "Тип"; sortKey: "scheme" }
                             HeaderLabel { w: page.colAddr; text: "Адрес" }
                             HeaderLabel { w: page.colPort; text: "Порт" }
-                            HeaderLabel { w: page.colGroup; text: "Группа" }
+                            HeaderLabel { w: page.colGroup; text: "Группа"; sortKey: "group" }
                             HeaderLabel { w: page.colTags; text: "Теги" }
-                            HeaderLabel { w: page.colPing; text: "Пинг" }
-                            HeaderLabel { w: page.colSpeed; text: "Скорость" }
+                            HeaderLabel { w: page.colPing; text: "Пинг"; sortKey: "ping" }
+                            HeaderLabel { w: page.colSpeed; text: "Скорость"; sortKey: "speed" }
                             HeaderLabel { w: page.colStatus; text: "Статус" }
-                            HeaderLabel { w: page.colLast; text: "Последнее" }
+                            HeaderLabel { w: page.colLast; text: "Последнее"; sortKey: "last" }
                         }
                         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.divider }
                     }
@@ -371,6 +531,28 @@ Item {
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: FluentScrollBar {}
+
+                        // Плавная и более быстрая прокрутка колёсиком мыши (~3 строки на щелчок, glide как в FluentScroll); тачпад остаётся попиксельным.
+                        NumberAnimation {
+                            id: listScrollAnim
+                            target: list
+                            property: "contentY"
+                            duration: 420
+                            easing.type: Easing.OutQuint
+                        }
+                        WheelHandler {
+                            acceptedDevices: PointerDevice.Mouse
+                            onWheel: (ev) => {
+                                var maxY = Math.max(0, list.contentHeight - list.height)
+                                if (maxY <= 0) { ev.accepted = true; return }
+                                var step = Math.max(60, page.rowH * 3)
+                                var base = listScrollAnim.running ? listScrollAnim.to : list.contentY
+                                var target = Math.max(0, Math.min(maxY, base - (ev.angleDelta.y / 120) * step))
+                                listScrollAnim.to = target
+                                listScrollAnim.restart()
+                                ev.accepted = true
+                            }
+                        }
 
                         delegate: Rectangle {
                             id: nodeRow
@@ -662,14 +844,24 @@ Item {
         }
         Sep {}
         Ctx {
-            text: "Пинг (" + page.selCount + ")"
+            text: "Пинг — способ из настроек (" + page.selCount + ")"
             enabled: page.selCount > 0
             onTriggered: App.pingNodes(page.selectedIds())
         }
         Ctx {
-            text: "Тест скорости (" + page.selCount + ")"
+            text: "Тест TCP ping (" + page.selCount + ")"
             enabled: page.selCount > 0
-            onTriggered: App.speedTestNodes(page.selectedIds())
+            onTriggered: App.tcpingNodes(page.selectedIds())
+        }
+        Ctx {
+            text: "Тест реальной задержки (" + page.selCount + ")"
+            enabled: page.selCount > 0
+            onTriggered: App.realDelayNodes(page.selectedIds())
+        }
+        Ctx {
+            text: "Тест скорости загрузки (" + page.selCount + ")"
+            enabled: page.selCount > 0
+            onTriggered: App.downloadSpeedNodes(page.selectedIds())
         }
         Sep {}
         Ctx {
@@ -690,7 +882,237 @@ Item {
         }
     }
 
+    // ── keyboard shortcuts ───────────────────────
+    // Only active while the Servers tab is the visible page AND the user is not
+    // typing in the search field, a modal edit dialog, or the context menu, so
+    // they never hijack normal text editing (Ctrl+A / Ctrl+C / Ctrl+V) inside
+    // those inputs.
+    readonly property bool _kbReady: page.visible
+        && !searchInput.activeFocus
+        && !editDialog.opened
+        && !bulkDialog.opened
+        && !ctxMenu.opened
+
+    Shortcut {                              // Ctrl+V → импорт из буфера
+        sequences: [ StandardKey.Paste ]
+        enabled: page._kbReady
+        autoRepeat: false
+        onActivated: App.importClipboard()
+    }
+    Shortcut {                              // Ctrl+A → выбрать все
+        sequences: [ StandardKey.SelectAll ]
+        enabled: page._kbReady && list.count > 0
+        autoRepeat: false
+        onActivated: page.selectAll()
+    }
+    Shortcut {                              // Ctrl+C → копировать ссылку
+        sequences: [ StandardKey.Copy ]
+        enabled: page._kbReady && page.selCount === 1
+        autoRepeat: false
+        onActivated: App.copyNodeLink(page.firstSelected())
+    }
+    Shortcut {                              // Delete → удалить выбранные
+        sequences: [ StandardKey.Delete ]
+        enabled: page._kbReady && page.selCount > 0
+        autoRepeat: false
+        onActivated: App.deleteNodes(page.selectedIds())
+    }
+    Shortcut {                              // Esc → снять выбор
+        sequences: [ StandardKey.Cancel ]
+        enabled: page._kbReady && page.selCount > 0
+        autoRepeat: false
+        onActivated: page.clearSel()
+    }
+
     // Диалоги редактирования (одиночного и массового) — порт ui/node_edit_dialog.py и ui/bulk_edit_dialog.py.
     NodeEditDialog { id: editDialog }
     BulkEditDialog { id: bulkDialog }
+
+    // ── диалог импорта подписки (URL + имя группы) ──────────────
+    Dialog {
+        id: subDialog
+        modal: true
+        dim: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: 480
+        padding: 18
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        function openNew() {
+            subUrlField.text = "";
+            subNameField.text = "";
+            subDialog.open();
+            subUrlField.forceActiveFocus();
+        }
+
+        background: Rectangle {
+            color: Theme.flyout
+            radius: 10
+            border.width: 1
+            border.color: Theme.flyoutBorder
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            Text {
+                text: "Импорт подписки"
+                color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontStrong
+                font.bold: true
+            }
+            Text {
+                text: "Вставьте ссылку на подписку. Серверы автоматически попадут в новую группу."
+                color: Theme.textFaint
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            Text { text: "URL подписки"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+            TextField {
+                id: subUrlField
+                Layout.fillWidth: true
+                implicitHeight: Theme.controlHeight
+                color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontNormal
+                selectByMouse: true
+                leftPadding: 10; rightPadding: 10
+                placeholderText: "https://…"
+                placeholderTextColor: Theme.textFaint
+                background: Rectangle { radius: Theme.radiusSmall; color: Theme.card; border.width: 1; border.color: subUrlField.activeFocus ? Theme.accent : Theme.borderSolid }
+            }
+
+            Text { text: "Имя группы (необязательно)"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+            TextField {
+                id: subNameField
+                Layout.fillWidth: true
+                implicitHeight: Theme.controlHeight
+                color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontNormal
+                selectByMouse: true
+                leftPadding: 10; rightPadding: 10
+                placeholderText: "Пусто — имя будет создано автоматически"
+                placeholderTextColor: Theme.textFaint
+                background: Rectangle { radius: Theme.radiusSmall; color: Theme.card; border.width: 1; border.color: subNameField.activeFocus ? Theme.accent : Theme.borderSolid }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+                Item { Layout.fillWidth: true }
+                AccentButton { kind: "ghost"; text: "Отмена"; onClicked: subDialog.close() }
+                AccentButton {
+                    kind: "accent"; text: "Импортировать"
+                    enabled: subUrlField.text.trim().length > 0
+                    onClicked: {
+                        App.importSubscription(subUrlField.text.trim(), subNameField.text.trim());
+                        subDialog.close();
+                    }
+                }
+            }
+        }
+    }
+
+    // ── диалог свойств подписки (инфо из ссылки, если есть) ──────
+    Dialog {
+        id: infoDialog
+        modal: true
+        dim: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: 520
+        padding: 18
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        function openInfo() {
+            if (!App.subscriptions || App.subscriptions.length === 0) return;
+            var i = subCombo.currentIndex;
+            if (i < 0 || i >= App.subscriptions.length) i = 0;
+            infoCombo.currentIndex = i;
+            infoDialog.open();
+            // Подтягиваем свежие показатели из ссылки (прокси/VPN не трогаем).
+            var s = App.subscriptions[i];
+            if (s && s.url) App.updateSubscription(s.url);
+        }
+
+        background: Rectangle {
+            color: Theme.flyout
+            radius: 10
+            border.width: 1
+            border.color: Theme.flyoutBorder
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            Text {
+                text: "Свойства подписки"
+                color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontStrong
+                font.bold: true
+            }
+
+            // Переключатель подписки
+            FilterCombo {
+                id: infoCombo
+                Layout.fillWidth: true
+                enabled: App.subscriptions.length > 0
+                model: App.subscriptions.length > 0
+                    ? App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
+                    : ["Нет подписок"]
+            }
+
+            // Свойства выбранной подписки
+            Column {
+                Layout.fillWidth: true
+                spacing: 6
+                Repeater {
+                    model: page.infoRows(page.infoSub())
+                    delegate: RowLayout {
+                        width: parent ? parent.width : 0
+                        spacing: 12
+                        Text {
+                            text: modelData[0]
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                            Layout.preferredWidth: 140
+                        }
+                        Text {
+                            text: modelData[1]
+                            color: Theme.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                            wrapMode: Text.WrapAnywhere
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+            }
+
+            Text {
+                visible: { var s = page.infoSub(); return s ? !(s.userinfo && typeof s.userinfo === "object" && Object.keys(s.userinfo).length > 0) : false; }
+                text: "В ссылке этой подписки нет доп. информации о пользователе."
+                color: Theme.textFaint
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+                Item { Layout.fillWidth: true }
+                AccentButton { kind: "accent"; text: "Закрыть"; onClicked: infoDialog.close() }
+            }
+        }
+    }
 }

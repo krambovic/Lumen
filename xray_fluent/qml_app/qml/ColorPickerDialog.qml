@@ -21,6 +21,10 @@ Popup {
 
     signal accepted(string hex)
 
+    // Default system accent, used by the "Сбросить" button to restore the
+    // out-of-the-box colour (matches Theme.accent's default of #0078D4).
+    property string defaultColor: "#0078D4"
+
     // HSV working state (0..1), kept separate so dragging stays smooth.
     property real _h: 0
     property real _s: 0
@@ -160,6 +164,12 @@ Popup {
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
+            AccentButton {
+                kind: "ghost"
+                text: "Сбросить"
+                // Preview the default accent in the picker; user confirms with OK.
+                onClicked: { dlg._loadHsv(dlg.defaultColor); hexField.text = dlg._hex(dlg.current) }
+            }
             Item { Layout.fillWidth: true }
             AccentButton { kind: "ghost"; text: "Отмена"; onClicked: dlg.close() }
             AccentButton { kind: "accent"; text: "OK"; onClicked: { dlg.accepted(dlg._hex(dlg.current)); dlg.close() } }

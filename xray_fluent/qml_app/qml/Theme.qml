@@ -66,6 +66,11 @@ QtObject {
     readonly property color success: dark ? "#6CCB5F" : "#0F7B0F"
     readonly property color warning: dark ? "#FCE100" : "#9D5D00"
     readonly property color danger: dark ? "#FF99A4" : "#C42B1C"
+    // Solid fill for destructive buttons. `danger` above is tuned for legible
+    // error TEXT (a pale pink in dark mode), which is too washed-out behind a
+    // white button label, so filled danger buttons use this stronger, more
+    // saturated red for proper contrast with the white text in both themes.
+    readonly property color dangerFill: dark ? "#D13438" : "#C42B1C"
     readonly property color info: accent
 
     // ---- Standard (non-accent) button fill -----------------------------

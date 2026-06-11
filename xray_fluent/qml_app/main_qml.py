@@ -132,7 +132,27 @@ def _apply_mica(window, dark: bool) -> None:
         print(f"Mica backdrop unavailable: {exc}", file=sys.stderr)
 
 
+def _set_app_user_model_id() -> None:
+    """Give Windows an explicit AppUserModelID.
+
+    Without it the taskbar button is associated with the generic host process
+    and shows the default Windows icon. Setting an explicit ID lets Windows
+    use our own icon and group the taskbar button correctly. Must be called
+    before the first window is created.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "Bebra.BebraVPN"
+        )
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _set_app_user_model_id()
     _enable_gpu_friendly_defaults()
     _install_message_filter()
 
@@ -173,6 +193,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     window = engine.rootObjects()[0]
+
+    # Apply the icon directly to the top-level QQuickWindow. Setting it only on
+    # the QApplication doesn't reliably reach the first-shown QML window's
+    # taskbar button on Windows — the icon would otherwise stay the generic
+    # default until the window was hidden to tray and re-shown. Setting it on
+    # the QWindow itself makes the correct taskbar icon appear on first launch.
+    if APP_ICON_PATH.is_file():
+        try:
+            window.setIcon(QIcon(str(APP_ICON_PATH)))
+        except Exception:
+            pass
 
     def _refresh_backdrop() -> None:
         _apply_mica(window, _resolve_dark(app, _theme_name(bridge)))

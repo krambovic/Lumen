@@ -292,12 +292,18 @@ Item {
             radius: Theme.radiusSmall
             color: Theme.card
             border.width: 1; border.color: Theme.borderSolid
-            ScrollView {
+            Flickable {
+                id: editorFlick
                 anchors.fill: parent
                 anchors.margins: 1
                 clip: true
-                ScrollBar.vertical: FluentScrollBar {}
-                TextArea {
+                boundsBehavior: Flickable.StopAtBounds
+
+                // A plain Flickable + TextArea.flickable keeps the vertical
+                // scrollbar anchored to the viewport's RIGHT edge. The previous
+                // ScrollView + NoWrap TextArea mis-placed the bar on the LEFT
+                // once the JSON content was wider than the view.
+                TextArea.flickable: TextArea {
                     id: editor
                     placeholderText: "Raw " + (page.core === "singbox" ? "sing-box" : "xray") + ".json"
                     color: Theme.text
@@ -306,6 +312,17 @@ Item {
                     wrapMode: TextArea.NoWrap
                     background: null
                     selectByMouse: true
+                }
+
+                ScrollBar.vertical: FluentScrollBar {
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                }
+                ScrollBar.horizontal: FluentScrollBar {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
                 }
             }
         }

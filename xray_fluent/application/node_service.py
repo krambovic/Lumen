@@ -1,17 +1,31 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import json
+import re
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
+from urllib.request import Request
 
 from PyQt6.QtCore import QTimer
 
 from ..country_flags import detect_country
+from ..http_utils import urlopen
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
 
 
-def import_nodes_from_text(controller: AppController, text: str) -> tuple[int, list[str]]:
+def import_nodes_from_text(
+    controller: AppController,
+    text: str,
+    *,
+    group: str | None = None,
+    auto_connect: bool | None = None,
+) -> tuple[int, list[str]]:
     nodes, errors = parse_links_text(text)
     if not nodes:
         return 0, errors
@@ -28,6 +42,8 @@ def import_nodes_from_text(controller: AppController, text: str) -> tuple[int, l
             continue
         if node.link in existing_links:
             continue
+        if group:
+            node.group = group
         if not node.country_code:
             node.country_code = detect_country(node.name, node.server)
         max_order += 1
@@ -48,7 +64,12 @@ def import_nodes_from_text(controller: AppController, text: str) -> tuple[int, l
     controller.save()
     QTimer.singleShot(500, controller._start_country_ip_resolution)
 
-    if added:
+    should_auto_connect = (
+        controller.state.settings.auto_connect_on_import
+        if auto_connect is None
+        else auto_connect
+    )
+    if added and should_auto_connect:
         controller._desired_connected = True
         controller._request_transition("new node imported")
 
@@ -173,3 +194,236 @@ def set_selected_node(controller: AppController, node_id: str) -> None:
     if controller.connected or controller._desired_connected:
         controller._desired_connected = True
         controller._request_transition("node switched")
+
+
+# --- Подписки (subscriptions) ---------------------------------------------
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _maybe_base64_decode(text: str) -> str:
+    """Подписки часто отдают base64-блоб со списком ссылок."""
+    if "://" in text:
+        return ""
+    compact = "".join(text.split())
+    if not compact:
+        return ""
+    for decoder in (base64.urlsafe_b64decode, base64.b64decode):
+        try:
+            padded = compact + "=" * (-len(compact) % 4)
+            decoded = decoder(padded).decode("utf-8", errors="strict")
+        except (binascii.Error, ValueError, UnicodeDecodeError):
+            continue
+        if "://" in decoded:
+            return decoded
+    return ""
+
+
+def _parse_userinfo_header(value: str) -> dict:
+    """Разбирает заголовок subscription-userinfo: upload=..; download=..; total=..; expire=.."""
+    info: dict = {}
+    if not value:
+        return info
+    for part in value.split(";"):
+        if "=" not in part:
+            continue
+        key, _, raw = part.partition("=")
+        key = key.strip().lower()
+        raw = raw.strip()
+        if not key:
+            continue
+        try:
+            info[key] = int(raw)
+        except (TypeError, ValueError):
+            info[key] = raw
+    return info
+
+
+def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
+    """Если тело — JSON вида {"user": {...}, "links": [...]}, достаёт инфо и ссылки."""
+    stripped = (text or "").strip()
+    if not stripped.startswith("{"):
+        return text, {}
+    try:
+        data = json.loads(stripped)
+    except (ValueError, TypeError):
+        return text, {}
+    if not isinstance(data, dict):
+        return text, {}
+    info: dict = {}
+    user = data.get("user")
+    if isinstance(user, dict):
+        info = {str(k): v for k, v in user.items()}
+    elif isinstance(data.get("userStatus"), str) or "username" in data:
+        info = {str(k): v for k, v in data.items() if k != "links"}
+    links = data.get("links")
+    if isinstance(links, list) and links:
+        links_text = "\n".join(str(item) for item in links if item)
+        return links_text, info
+    return text, info
+
+
+def _fetch_subscription(url: str) -> tuple[str, dict]:
+    """Загружает подписку и возвращает (текст_со_ссылками, userinfo).
+
+    userinfo берётся из HTTP-заголовка subscription-userinfo и/или из JSON-тела.
+    """
+    request = Request(url, headers={"User-Agent": "BebraVPN-Subscription/1.0"})
+    with urlopen(request, timeout=20) as response:
+        raw = response.read()
+        try:
+            header_value = response.headers.get("subscription-userinfo", "")
+        except Exception:  # noqa: BLE001 - защита от нестандартных ответов
+            header_value = ""
+    userinfo = _parse_userinfo_header(header_value)
+    text = raw.decode("utf-8", errors="replace").strip()
+    # JSON-тело (например, формат с {"user": {...}, "links": [...]}).
+    text, body_info = _extract_userinfo_from_body(text)
+    if body_info:
+        # Данные из тела приоритетнее заголовка.
+        userinfo = {**userinfo, **body_info}
+    decoded = _maybe_base64_decode(text)
+    return (decoded or text), userinfo
+
+
+def _derive_subscription_name(url: str) -> str:
+    host = urlparse(url).hostname or ""
+    host = host.strip()
+    if host:
+        return f"Подписка {host}"
+    return "Подписка"
+
+
+def _find_subscription(controller: AppController, url: str) -> dict | None:
+    for sub in controller.state.subscriptions:
+        if sub.get("url") == url:
+            return sub
+    return None
+
+
+def _record_subscription(
+    controller: AppController,
+    url: str,
+    group: str,
+    node_count: int,
+    userinfo: dict | None = None,
+) -> None:
+    now = _utc_now_iso()
+    info = dict(userinfo) if isinstance(userinfo, dict) else {}
+    existing = _find_subscription(controller, url)
+    if existing is not None:
+        existing["name"] = group
+        existing["group"] = group
+        existing["updated_at"] = now
+        existing["node_count"] = node_count
+        # Сохраняем старую инфо, если новая не пришла.
+        if info:
+            existing["userinfo"] = info
+        elif "userinfo" not in existing:
+            existing["userinfo"] = {}
+    else:
+        controller.state.subscriptions.append(
+            {
+                "url": url,
+                "name": group,
+                "group": group,
+                "updated_at": now,
+                "node_count": node_count,
+                "userinfo": info,
+            }
+        )
+    controller.subscriptions_changed.emit(list(controller.state.subscriptions))
+    controller.save()
+
+
+def import_subscription(
+    controller: AppController, url: str, name: str | None = None
+) -> tuple[int, list[str]]:
+    url = (url or "").strip()
+    if not url:
+        return 0, ["Пустой URL подписки"]
+    existing = _find_subscription(controller, url)
+    if existing is not None:
+        # Подписка с таким URL уже есть. Если пользователь задал новое имя —
+        # переименовываем группу (у самой записи и у её узлов), иначе сохраняем
+        # прежнее. Затем обновляем содержимое.
+        new_name = (name or "").strip()
+        old_group = (existing.get("group") or "").strip()
+        if new_name and new_name != old_group:
+            if old_group:
+                for node in controller.state.nodes:
+                    if (node.group or "Default") == old_group:
+                        node.group = new_name
+            existing["name"] = new_name
+            existing["group"] = new_name
+            controller.nodes_changed.emit(controller.state.nodes)
+            controller.subscriptions_changed.emit(list(controller.state.subscriptions))
+            controller.save()
+        return update_subscription(controller, url)
+    group = (name or "").strip() or _derive_subscription_name(url)
+    try:
+        text, userinfo = _fetch_subscription(url)
+    except Exception as exc:  # noqa: BLE001 - показываем ошибку пользователю
+        return 0, [f"Не удалось загрузить подписку: {exc}"]
+    added, errors = import_nodes_from_text(controller, text, group=group, auto_connect=False)
+    _record_subscription(controller, url, group, added, userinfo)
+    return added, errors
+
+
+def update_subscription(controller: AppController, url: str) -> tuple[int, list[str]]:
+    url = (url or "").strip()
+    sub = _find_subscription(controller, url)
+    if sub is None:
+        return 0, ["Подписка не найдена"]
+    group = (sub.get("group") or "").strip() or _derive_subscription_name(url)
+    try:
+        text, userinfo = _fetch_subscription(url)
+    except Exception as exc:  # noqa: BLE001 - показываем ошибку пользователю
+        return 0, [f"Не удалось обновить подписку: {exc}"]
+    # Удаляем старые узлы этой подписки (по группе) перед повторным импортом.
+    keep: list = []
+    removed_ids: set[str] = set()
+    for node in controller.state.nodes:
+        if (node.group or "Default") == group:
+            removed_ids.add(node.id)
+        else:
+            keep.append(node)
+    controller.state.nodes = keep
+    if controller.state.selected_node_id in removed_ids:
+        controller.state.selected_node_id = None
+    added, errors = import_nodes_from_text(controller, text, group=group, auto_connect=False)
+    _record_subscription(controller, url, group, added, userinfo)
+    return added, errors
+
+
+def update_all_subscriptions(controller: AppController) -> tuple[int, list[str]]:
+    total_added = 0
+    all_errors: list[str] = []
+    for sub in list(controller.state.subscriptions):
+        url = sub.get("url") or ""
+        if not url:
+            continue
+        added, errors = update_subscription(controller, url)
+        total_added += added
+        all_errors.extend(errors)
+    return total_added, all_errors
+
+
+def remove_subscription(controller: AppController, url: str, *, delete_nodes: bool = True) -> None:
+    url = (url or "").strip()
+    sub = _find_subscription(controller, url)
+    if sub is None:
+        return
+    group = (sub.get("group") or "").strip()
+    controller.state.subscriptions = [
+        item for item in controller.state.subscriptions if item.get("url") != url
+    ]
+    controller.subscriptions_changed.emit(list(controller.state.subscriptions))
+    if delete_nodes and group:
+        ids = {node.id for node in controller.state.nodes if (node.group or "Default") == group}
+        if ids:
+            remove_nodes(controller, ids)
+            return
+    controller.save()

@@ -156,17 +156,17 @@ FluentScroll {
                 SettingRow {
                     glyph: "\uEC4A"; title: "Порог скорости"; subtitle: "КБ/с, ниже которого срабатывает переключение"
                     enabled: App.autoSwitchEnabled
-                    SpinBox { from: 1; to: 10000; value: App.autoSwitchThreshold; onValueModified: App.setAutoSwitchThreshold(value) }
+                    FluentSpin { from: 1; to: 10000; value: App.autoSwitchThreshold; onValueModified: App.setAutoSwitchThreshold(value) }
                 }
                 SettingRow {
                     glyph: "\uE916"; title: "Задержка"; subtitle: "Секунд низкой скорости перед переключением"
                     enabled: App.autoSwitchEnabled
-                    SpinBox { from: 5; to: 300; value: App.autoSwitchDelay; onValueModified: App.setAutoSwitchDelay(value) }
+                    FluentSpin { from: 5; to: 300; value: App.autoSwitchDelay; onValueModified: App.setAutoSwitchDelay(value) }
                 }
                 SettingRow {
                     glyph: "\uE81C"; title: "Пауза"; subtitle: "Секунд между переключениями"
                     enabled: App.autoSwitchEnabled
-                    SpinBox { from: 10; to: 600; value: App.autoSwitchCooldown; onValueModified: App.setAutoSwitchCooldown(value) }
+                    FluentSpin { from: 10; to: 600; value: App.autoSwitchCooldown; onValueModified: App.setAutoSwitchCooldown(value) }
                 }
             }
         }
@@ -215,12 +215,148 @@ FluentScroll {
                     Switch { checked: App.launchOnStartup; onToggled: App.setLaunchOnStartup(checked) }
                 }
                 SettingRow {
+                    glyph: "\uE768"; title: "Автоподключение после запуска"; subtitle: "Подключаться к последнему использованному серверу при старте"
+                    Switch { checked: App.autoConnectLast; onToggled: App.setAutoConnectLast(checked) }
+                }
+                SettingRow {
+                    glyph: "\uE896"; title: "Автоподключение при импорте"; subtitle: "Сразу подключаться к импортированному серверу"
+                    Switch { checked: App.autoConnectOnImport; onToggled: App.setAutoConnectOnImport(checked) }
+                }
+                SettingRow {
                     glyph: "\uE7EF"; title: "Всегда запускать от администратора"; subtitle: "Windows будет запрашивать повышенные права при следующем запуске"
                     Switch { checked: App.alwaysRunAsAdmin; onToggled: App.setAlwaysRunAsAdmin(checked) }
                 }
                 SettingRow {
                     glyph: "\uE945"; title: "Автозапуск Zapret"; subtitle: "Запускать Zapret при старте приложения"
                     Switch { checked: App.zapretAutostart; onToggled: App.setZapretAutostart(checked) }
+                }
+            }
+        }
+
+        // ============================ Тестирование серверов ============================
+        Card {
+            Layout.fillWidth: true
+            visible: !App.compactMode
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 14
+                Text { text: "Тестирование серверов"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+
+                SettingRow {
+                    glyph: "\uE724"; title: "Способ измерения ping"; subtitle: "TCP ping быстрее всего; ICMP — системный ping; реальная задержка — HTTP через сервер"
+                    StyledCombo {
+                        model: ["TCP ping (быстро)", "ICMP (системный)", "Реальная задержка (HTTP)"]
+                        readonly property var keys: ["tcping", "icmp", "real"]
+                        currentIndex: Math.max(0, keys.indexOf(App.pingMethod))
+                        onActivated: App.setPingMethod(keys[currentIndex])
+                    }
+                }
+                SettingRow {
+                    glyph: "\uEC4A"; title: "URL теста скорости"; subtitle: "Пусто — стандартный (cachefly 50MB)"
+                    StyledField {
+                        id: speedUrlField
+                        Layout.preferredWidth: 300
+                        text: App.speedTestUrl
+                        placeholderText: "https://cachefly.cachefly.net/50mb.test"
+                        onEditingFinished: App.setSpeedTestUrl(text)
+                    }
+                    Button {
+                        id: speedPresetBtn
+                        implicitHeight: Theme.controlHeight
+                        implicitWidth: 36
+                        hoverEnabled: true
+                        text: "\uE70D"
+                        font.family: "Segoe Fluent Icons"; font.pixelSize: 12
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: speedPresetBtn.down ? Theme.controlFillPressed
+                                   : (speedPresetBtn.hovered ? Theme.controlFillHover : Theme.controlFill)
+                            border.width: 1; border.color: Theme.borderSolid
+                        }
+                        contentItem: Text {
+                            text: speedPresetBtn.text; font: speedPresetBtn.font
+                            color: Theme.textMuted
+                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        }
+                        onClicked: speedPresetMenu.visible ? speedPresetMenu.close() : speedPresetMenu.open()
+                        function pick(u) { App.setSpeedTestUrl(u); speedUrlField.text = u; }
+                        // Fluent-flyout в стиле FluentCombo: скруглённый, Theme.flyout, строки-«пилюли» с hover.
+                        Popup {
+                            id: speedPresetMenu
+                            y: speedPresetBtn.height + 4
+                            x: speedPresetBtn.width - width
+                            width: 230
+                            padding: 4
+                            modal: false
+                            // Клик по самой кнопке не должен закрывать-и-сразу-открывать список:
+                            // считаем «вне поповера» только клики за пределами кнопки-родителя,
+                            // тогда onClicked корректно переключает open/close (как у FluentCombo).
+                            parent: speedPresetBtn
+                            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                            readonly property var presets: [
+                                { label: "Cachefly 100 MB",  url: "https://cachefly.cachefly.net/100mb.test" },
+                                { label: "Cachefly 50 MB",   url: "https://cachefly.cachefly.net/50mb.test" },
+                                { label: "Cachefly 10 MB",   url: "https://cachefly.cachefly.net/10mb.test" },
+                                { label: "Cachefly 1 MB",    url: "https://cachefly.cachefly.net/1mb.test" },
+                                { label: "Cloudflare 100 MB", url: "https://speed.cloudflare.com/__down?bytes=104857600" },
+                                { label: "Cloudflare 50 MB",  url: "https://speed.cloudflare.com/__down?bytes=52428800" },
+                                { label: "Cloudflare 10 MB",  url: "https://speed.cloudflare.com/__down?bytes=10485760" }
+                            ]
+                            background: Rectangle {
+                                radius: 8
+                                color: Theme.flyout
+                                border.width: 1
+                                border.color: Theme.flyoutBorder
+                            }
+                            contentItem: Column {
+                                spacing: 0
+                                Repeater {
+                                    model: speedPresetMenu.presets
+                                    delegate: ItemDelegate {
+                                        id: presetItem
+                                        width: speedPresetMenu.availableWidth
+                                        height: 34
+                                        padding: 0
+                                        hoverEnabled: true
+                                        contentItem: Text {
+                                            leftPadding: 12
+                                            rightPadding: 12
+                                            text: modelData.label
+                                            color: Theme.text
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontNormal
+                                            verticalAlignment: Text.AlignVCenter
+                                            elide: Text.ElideRight
+                                        }
+                                        background: Rectangle {
+                                            anchors.fill: parent
+                                            anchors.margins: 3
+                                            radius: Theme.radiusSmall
+                                            color: presetItem.hovered ? Theme.cardHover : "transparent"
+                                            Rectangle {
+                                                visible: App.speedTestUrl === modelData.url
+                                                width: 3
+                                                radius: 1.5
+                                                height: parent.height * 0.5
+                                                anchors.left: parent.left
+                                                anchors.leftMargin: 1
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                color: Theme.accent
+                                            }
+                                        }
+                                        onClicked: { speedPresetBtn.pick(modelData.url); speedPresetMenu.close() }
+                                    }
+                                }
+                            }
+                            enter: Transition {
+                                NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 90 }
+                            }
+                        }
+                    }
+                }
+                SettingRow {
+                    glyph: "\uE8C9"; title: "Параллельных проверок"; subtitle: "Сколько серверов тестировать одновременно (0 — авто)"
+                    FluentSpin { from: 0; to: 32; value: App.speedTestConcurrency; onValueModified: App.setSpeedTestConcurrency(value) }
                 }
             }
         }
@@ -233,6 +369,16 @@ FluentScroll {
                 spacing: 14
                 Text { text: "Обновления"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
+                SettingRow {
+                    glyph: "\uE895"; title: "Автообновление подписок"; subtitle: "Как часто фоново обновлять подписки (прокси/VPN не отключается)"
+                    StyledCombo {
+                        Layout.preferredWidth: 200
+                        readonly property var values: [0, 30, 60, 240, 720, 1440]
+                        model: ["Выкл", "30 мин", "1 час", "4 часа", "12 часов", "24 часа"]
+                        currentIndex: Math.max(0, values.indexOf(App.subscriptionAutoUpdateMinutes))
+                        onActivated: App.setSubscriptionAutoUpdateMinutes(values[currentIndex])
+                    }
+                }
                 SettingRow {
                     glyph: "\uE777"; title: "Проверять обновления"; subtitle: "Автоматически проверять наличие обновлений"
                     Switch { checked: App.checkUpdates; onToggled: App.setCheckUpdates(checked) }

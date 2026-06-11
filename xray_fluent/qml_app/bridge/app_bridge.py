@@ -14,11 +14,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from PyQt6.QtCore import QObject, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 
 from ...app_controller import AppController
-from ...constants import APP_NAME, APP_VERSION
+from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY
 from ...models import Node, RoutingSettings
 from ...routing_presets import build_routing_preset
 from ...startup import is_process_elevated, relaunch_as_admin
@@ -44,6 +44,7 @@ class AppBridge(QObject):
     selectionChanged = pyqtSignal()
     routingChanged = pyqtSignal()
     settingsChanged = pyqtSignal()
+    subscriptionsChanged = pyqtSignal()    # subscription list changed
     nodeFiltersChanged = pyqtSignal()      # distinct group/tag option lists changed
     lockedChanged = pyqtSignal()           # app lock/unlock state changed
     trayAvailableChanged = pyqtSignal()    # system tray availability resolved
@@ -81,6 +82,11 @@ class AppBridge(QObject):
         self._tray_available = False
         self._quitting = False
 
+        # Таймер авто-обновления подписок (интервал берётся из настроек).
+        self._sub_timer = QTimer(self)
+        self._sub_timer.setSingleShot(False)
+        self._sub_timer.timeout.connect(self._on_sub_auto_update)
+
         self._wire_controller()
 
     # ── lifecycle ──────────────────────────────────────────
@@ -92,10 +98,59 @@ class AppBridge(QObject):
             self.toast.emit("error", f"Ошибка загрузки: {exc}")
         self._push_initial_snapshot()
         self.controller.auto_connect_if_needed()
+        self._reconfigure_sub_timer()
+        # Проверка обновлений при запуске (как в старой widgets-версии).
+        # Тихо: ничего не показываем, если обновлений нет/ошибка; при наличии
+        # обновления — обновляем страницу «Обновления» и шлём уведомление.
+        try:
+            if getattr(self.controller.state.settings, "check_updates", True):
+                QTimer.singleShot(
+                    2500, lambda: self._start_app_update_check(silent=True)
+                )
+        except Exception:
+            pass
+        # Разовое тихое обновление подписок при запуске. Таймер авто-обновления
+        # стартует «с нуля» при каждом запуске, поэтому при частых перезапусках
+        # подписка иначе могла бы никогда не обновиться. Не трогает VPN/прокси.
+        try:
+            if self.controller.state.subscriptions:
+                QTimer.singleShot(3000, self._on_sub_auto_update)
+        except Exception:
+            pass
 
     def shutdown(self) -> None:
         try:
+            self._sub_timer.stop()
+        except Exception:
+            pass
+        try:
             self.controller.shutdown()
+        except Exception:
+            pass
+
+    # ── Авто-обновление подписок ────────────────────────
+    def _reconfigure_sub_timer(self) -> None:
+        """Перезапускает таймер авто-обновления по текущим настройкам."""
+        try:
+            minutes = int(self.controller.state.settings.subscription_auto_update_minutes)
+        except Exception:
+            minutes = 240
+        if minutes > 0:
+            self._sub_timer.setInterval(minutes * 60 * 1000)
+            self._sub_timer.start()
+        else:
+            self._sub_timer.stop()
+
+    def _on_sub_auto_update(self) -> None:
+        """Тихое фоновое обновление подписок. Не трогает VPN/прокси."""
+        try:
+            if getattr(self.controller, "locked", False):
+                return
+            if not self.controller.state.subscriptions:
+                return
+            added, _errors = self.controller.update_all_subscriptions()
+            if added:
+                self.toast.emit("info", f"Авто-обновление подписок: +{added} серверов")
         except Exception:
             pass
 
@@ -156,6 +211,7 @@ class AppBridge(QObject):
         c.connection_status_changed.connect(self._on_runtime_status)
         c.routing_changed.connect(self._on_routing_changed)
         c.settings_changed.connect(self._on_settings_changed)
+        c.subscriptions_changed.connect(self._on_subscriptions_changed)
         c.transition_state_changed.connect(self._on_transition)
         c.status.connect(self.toast.emit)
         c.log_line.connect(self._log_model.append_line)
@@ -244,6 +300,9 @@ class AppBridge(QObject):
         self._theme = settings.theme
         self._accent = settings.accent_color or "#0078D4"
         self.settingsChanged.emit()
+
+    def _on_subscriptions_changed(self, _subscriptions=None) -> None:
+        self.subscriptionsChanged.emit()
 
     def _on_ping(self, node_id: str, ping_ms) -> None:
         self._node_model.update_ping(node_id, ping_ms)
@@ -595,7 +654,22 @@ class AppBridge(QObject):
 
     @pyqtSlot()
     @pyqtSlot('QVariantList')
+    def tcpingNodes(self, ids: list | None = None) -> None:
+        self.controller.ping_nodes(set(ids) if ids else None, method="tcping")
+
+    @pyqtSlot()
+    @pyqtSlot('QVariantList')
+    def realDelayNodes(self, ids: list | None = None) -> None:
+        self.controller.ping_nodes(set(ids) if ids else None, method="real")
+
+    @pyqtSlot()
+    @pyqtSlot('QVariantList')
     def speedTestNodes(self, ids: list | None = None) -> None:
+        self.controller.speed_test_nodes(set(ids) if ids else None)
+
+    @pyqtSlot()
+    @pyqtSlot('QVariantList')
+    def downloadSpeedNodes(self, ids: list | None = None) -> None:
         self.controller.speed_test_nodes(set(ids) if ids else None)
 
     @pyqtSlot()
@@ -715,10 +789,15 @@ class AppBridge(QObject):
     # -- application updater --
     @pyqtSlot()
     def checkAppUpdate(self) -> None:
+        self._start_app_update_check(silent=False)
+
+    def _start_app_update_check(self, silent: bool = False) -> None:
         from ...app_updater import UpdateChecker
         if getattr(self, "_app_update_checker", None) is not None:
             return
-        self.appUpdateState.emit({"phase": "checking"})
+        self._app_update_silent = silent
+        if not silent:
+            self.appUpdateState.emit({"phase": "checking"})
         try:
             channel = self.controller.state.settings.release_channel or "nightly"
         except Exception:
@@ -735,8 +814,10 @@ class AppBridge(QObject):
 
     def _on_app_update_result(self, update) -> None:
         self._pending_app_update = update
+        silent = getattr(self, "_app_update_silent", False)
         if update is None:
-            self.appUpdateState.emit({"phase": "uptodate"})
+            if not silent:
+                self.appUpdateState.emit({"phase": "uptodate"})
             return
         notes = (update.notes or "").strip()
         if len(notes) > 1200:
@@ -746,8 +827,13 @@ class AppBridge(QObject):
             "version": update.version,
             "notes": notes,
         })
+        if silent:
+            # При тихой проверке на старте уведомляем пользователя тостом.
+            self.toast.emit("info", f"Доступно обновление v{update.version}")
 
     def _on_app_update_error(self, message: str) -> None:
+        if getattr(self, "_app_update_silent", False):
+            return
         self.appUpdateState.emit({"phase": "error", "message": message})
 
     @pyqtSlot()
@@ -792,6 +878,18 @@ class AppBridge(QObject):
 
     def _on_app_download_ok(self) -> None:
         self.appUpdateState.emit({"phase": "ready", "message": "Обновление загружено. Перезапуск..."})
+        # PowerShell-скрипт перезапуска ждёт выхода этого процесса перед заменой
+        # файлов. Если не закрыться самим, он ждёт ~60с и лишь потом убивает процесс —
+        # это и была минутная задержка. Закрываемся быстро (как _quit_for_update в widgets-версии),
+        # чтобы перезапуск произошёл практически сразу.
+        self.prepareQuit()
+        QTimer.singleShot(1500, self._quit_for_update)
+
+    def _quit_for_update(self) -> None:
+        # app.aboutToQuit уже вызывает bridge.shutdown() → корректно останавливает VPN/Wintun.
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.quit()
 
     def _on_app_download_error(self, message: str) -> None:
         self.appUpdateState.emit({"phase": "error", "message": message})
@@ -1232,6 +1330,15 @@ class AppBridge(QObject):
         """Map a ListView row index to a node id (used for drag/shift range select)."""
         return self._node_model.node_id_at(row) or ""
 
+    @pyqtSlot(int, result="QVariant")
+    def nodeRowAt(self, row: int):
+        """Return a row's filterable fields {id,name,server,group,tags} by index.
+
+        Used by Ctrl+A so it can select only the rows that pass the current
+        group/tag/text filter instead of every node in the model.
+        """
+        return self._node_model.node_row_at(row)
+
     @pyqtSlot()
     def lockNow(self) -> None:
         self.controller.lock()
@@ -1404,7 +1511,19 @@ class AppBridge(QObject):
     @pyqtProperty(str, notify=settingsChanged)
     def xrayPath(self) -> str:
         try:
-            return self.controller.state.settings.xray_path or ""
+            from pathlib import Path
+            from ...constants import XRAY_PATH_DEFAULT
+            path = (self.controller.state.settings.xray_path or "").strip()
+            # Treat the bundled default core as "built-in": return an empty
+            # string so the field shows the "встроенный" placeholder, exactly
+            # like sing-box does when no custom path is set.
+            if path:
+                try:
+                    if Path(path) == Path(XRAY_PATH_DEFAULT):
+                        return ""
+                except Exception:
+                    pass
+            return path
         except Exception:
             return ""
 
@@ -1428,6 +1547,164 @@ class AppBridge(QObject):
             return bool(self.controller.state.settings.zapret_autostart)
         except Exception:
             return False
+
+    # ── Auto-connect / server-test settings ──────────────────────
+    @pyqtSlot(bool)
+    def setAutoConnectLast(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.auto_connect_last = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def autoConnectLast(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.auto_connect_last)
+        except Exception:
+            return True
+
+    @pyqtSlot(bool)
+    def setAutoConnectOnImport(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.auto_connect_on_import = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def autoConnectOnImport(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.auto_connect_on_import)
+        except Exception:
+            return False
+
+    @pyqtSlot(str)
+    def setPingMethod(self, method: str) -> None:
+        value = (method or "tcping").strip().lower()
+        if value not in ("tcping", "icmp", "real"):
+            value = "tcping"
+        settings = deepcopy(self.controller.state.settings)
+        settings.ping_method = value
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def pingMethod(self) -> str:
+        try:
+            return self.controller.state.settings.ping_method or "tcping"
+        except Exception:
+            return "tcping"
+
+    @pyqtSlot(str)
+    def setSpeedTestUrl(self, url: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.speed_test_url = (url or "").strip()
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def speedTestUrl(self) -> str:
+        try:
+            return self.controller.state.settings.speed_test_url or ""
+        except Exception:
+            return ""
+
+    @pyqtSlot(int)
+    def setSpeedTestConcurrency(self, value: int) -> None:
+        try:
+            count = int(value)
+        except Exception:
+            count = 0
+        count = max(0, min(SPEED_TEST_MAX_CONCURRENCY, count))
+        settings = deepcopy(self.controller.state.settings)
+        settings.speed_test_concurrency = count
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def speedTestConcurrency(self) -> int:
+        try:
+            return int(self.controller.state.settings.speed_test_concurrency)
+        except Exception:
+            return 0
+
+    @pyqtSlot(int)
+    def setSubscriptionAutoUpdateMinutes(self, value: int) -> None:
+        try:
+            minutes = int(value)
+        except Exception:
+            minutes = 240
+        minutes = max(0, min(1440, minutes))
+        settings = deepcopy(self.controller.state.settings)
+        settings.subscription_auto_update_minutes = minutes
+        self.controller.update_settings(settings)
+        self._reconfigure_sub_timer()
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def subscriptionAutoUpdateMinutes(self) -> int:
+        try:
+            return int(self.controller.state.settings.subscription_auto_update_minutes)
+        except Exception:
+            return 240
+
+    # ── Subscriptions ────────────────────────────────────────────
+    @pyqtSlot(str)
+    @pyqtSlot(str, str)
+    def importSubscription(self, url: str, name: str = "") -> None:
+        target = (url or "").strip()
+        if not target:
+            self.toast.emit("warning", "Введите ссылку на подписку")
+            return
+        try:
+            added, errors = self.controller.import_subscription(target, (name or "").strip() or None)
+        except Exception as exc:  # noqa: BLE001
+            self.toast.emit("error", f"Ошибка импорта подписки: {exc}")
+            return
+        if added:
+            self.toast.emit("success", f"Импортировано серверов: {added}")
+        if errors:
+            self.toast.emit("warning", "; ".join(errors[:2]))
+        if not added and not errors:
+            self.toast.emit("info", "Новых серверов не найдено")
+
+    @pyqtSlot(str)
+    def updateSubscription(self, url: str) -> None:
+        target = (url or "").strip()
+        if not target:
+            return
+        try:
+            added, errors = self.controller.update_subscription(target)
+        except Exception as exc:  # noqa: BLE001
+            self.toast.emit("error", f"Ошибка обновления подписки: {exc}")
+            return
+        self.toast.emit("success", f"Подписка обновлена: {added} серверов")
+        if errors:
+            self.toast.emit("warning", "; ".join(errors[:2]))
+
+    @pyqtSlot()
+    def updateAllSubscriptions(self) -> None:
+        try:
+            added, errors = self.controller.update_all_subscriptions()
+        except Exception as exc:  # noqa: BLE001
+            self.toast.emit("error", f"Ошибка обновления подписок: {exc}")
+            return
+        self.toast.emit("success", f"Подписки обновлены: {added} серверов")
+        if errors:
+            self.toast.emit("warning", "; ".join(errors[:2]))
+
+    @pyqtSlot(str)
+    @pyqtSlot(str, bool)
+    def removeSubscription(self, url: str, delete_nodes: bool = True) -> None:
+        target = (url or "").strip()
+        if not target:
+            return
+        try:
+            self.controller.remove_subscription(target, bool(delete_nodes))
+        except Exception as exc:  # noqa: BLE001
+            self.toast.emit("error", f"Ошибка удаления подписки: {exc}")
+            return
+        self.toast.emit("info", "Подписка удалена")
+
+    @pyqtProperty("QVariantList", notify=subscriptionsChanged)
+    def subscriptions(self) -> list:
+        try:
+            return [dict(item) for item in self.controller.state.subscriptions]
+        except Exception:
+            return []
 
     # ── Security / data mirrors ──────────────────────────────────
     @pyqtProperty(int, notify=settingsChanged)

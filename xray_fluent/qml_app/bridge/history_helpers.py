@@ -56,6 +56,19 @@ def fmt_duration(start: str, end: str | None) -> str:
         return ""
 
 
+def _duration_seconds(start: str, end: str | None) -> int:
+    """Raw session length in seconds, for sorting (0 when unknown)."""
+    if not start:
+        return 0
+    try:
+        s = datetime.fromisoformat(start)
+        e = datetime.fromisoformat(end) if end else datetime.now(timezone.utc)
+        total_sec = int((e - s).total_seconds())
+        return total_sec if total_sec > 0 else 0
+    except Exception:
+        return 0
+
+
 _MODE_LABELS = {
     "xray": "Прокси",
     "xray-tun": "TUN (xray experimental)",
@@ -116,29 +129,42 @@ def build_history_payload(storage: Any, days: int = 30) -> dict[str, Any]:
             "hasDown": s.total_download > 0,
             "up": fmt_bytes(s.total_upload),
             "procs": procs,
+            # Raw values for client-side column sorting.
+            "ts": s.started_at or "",
+            "durSec": _duration_seconds(s.started_at, s.ended_at),
+            "downB": int(s.total_download),
+            "upB": int(s.total_upload),
         })
 
     daily = storage.get_daily_totals(days)
     daily_rows: list[dict[str, Any]] = []
     for date_key, totals in sorted(daily.items(), key=lambda kv: kv[0], reverse=True):
         down = int(totals.get("download", 0))
+        up_b = int(totals.get("upload", 0))
         daily_rows.append({
             "day": date_key,
             "down": fmt_bytes(down),
             "hasDown": down > 0,
-            "up": fmt_bytes(int(totals.get("upload", 0))),
+            "up": fmt_bytes(up_b),
+            # Raw values for client-side column sorting.
+            "downB": down,
+            "upB": up_b,
         })
 
     proc_totals = storage.get_process_totals(days)
     proc_rows: list[dict[str, Any]] = []
     for exe, stats in sorted(proc_totals.items(), key=lambda kv: kv[1]["download"], reverse=True):
         down = int(stats["download"])
+        up_b = int(stats["upload"])
         proc_rows.append({
             "exe": exe,
             "down": fmt_bytes(down),
             "hasDown": down > 0,
-            "up": fmt_bytes(int(stats["upload"])),
+            "up": fmt_bytes(up_b),
             "route": _route_label(str(stats.get("route", ""))),
+            # Raw values for client-side column sorting.
+            "downB": down,
+            "upB": up_b,
         })
 
     return {

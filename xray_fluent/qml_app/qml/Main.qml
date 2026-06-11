@@ -19,10 +19,11 @@ import "."
 ApplicationWindow {
     id: win
     visible: true
-    width: 1000
+    // Launch at a 16:9 window size (1280×720), not fullscreen, per request.
+    width: 1280
     height: 720
-    minimumWidth: 600
-    minimumHeight: 450
+    minimumWidth: 640
+    minimumHeight: 360
     title: App.appName
     // Transparent so the Windows 11 Mica backdrop (applied from main_qml.py via
     // DwmSetWindowAttribute) shows through the frame around the content panel.

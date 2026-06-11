@@ -13,6 +13,8 @@ ScrollBar {
     policy: ScrollBar.AsNeeded
     padding: 2
     minimumSize: 0.12
+    // Не показываем полосу, если страница и так помещается целиком (допуск на округление в 1–2px).
+    visible: bar.size < 0.999
 
     readonly property bool isVertical: orientation === Qt.Vertical
     readonly property bool big: bar.hovered || bar.pressed

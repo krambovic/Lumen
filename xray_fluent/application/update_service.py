@@ -19,24 +19,25 @@ def run_xray_core_update(controller: AppController, apply_update: bool, silent: 
         return
 
     if apply_update and controller.connected:
-        stopped = controller.disconnect_current()
-        if not stopped:
-            controller._reconnect_after_xray_update = False
-            if silent:
-                controller._log("[core-update] update cancelled: failed to stop active connection")
-            else:
-                controller.status.emit("error", "Не удалось остановить активное подключение перед обновлением Xray")
-            return
-        controller._reconnect_after_xray_update = True
+        # Non-silent user request (the silent+connected case already returned
+        # above). Run a CHECK-ONLY pass first and only tear down the live
+        # connection once we know a newer version actually exists. The old code
+        # disconnected unconditionally here, dropping the connection even when
+        # Xray was already up to date.
+        controller._xray_update_apply_requested = True
+        controller._reconnect_after_xray_update = False
+        worker_apply = False
     else:
         controller._reconnect_after_xray_update = False
+        controller._xray_update_apply_requested = False
+        worker_apply = apply_update
 
     controller._xray_update_silent = silent
     controller._xray_update_worker = XrayCoreUpdateWorker(
         controller.state.settings.xray_path,
         controller.state.settings.xray_release_channel,
         controller.state.settings.xray_update_feed_url,
-        apply_update=apply_update,
+        apply_update=worker_apply,
     )
     controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)
     controller._xray_update_worker.start()
@@ -49,6 +50,40 @@ def run_xray_core_update(controller: AppController, apply_update: bool, silent: 
 def on_xray_update_worker_done(controller: AppController, result: XrayCoreUpdateResult) -> None:
     controller._xray_update_worker = None
     controller.xray_update_result.emit(result)
+
+    # First pass of a user-requested apply was check-only. Now that we know the
+    # real state, either install (dropping the connection only at this point) or
+    # leave everything untouched when already up to date / on error.
+    if controller._xray_update_apply_requested:
+        controller._xray_update_apply_requested = False
+        if result.status == "available":
+            controller.status.emit("info", "Обновление Xray...")
+            if controller.connected:
+                stopped = controller.disconnect_current()
+                if not stopped:
+                    controller._reconnect_after_xray_update = False
+                    controller.status.emit("error", "Не удалось остановить активное подключение перед обновлением Xray")
+                    controller._xray_update_silent = False
+                    return
+                controller._reconnect_after_xray_update = True
+            else:
+                controller._reconnect_after_xray_update = False
+            controller._xray_update_silent = False
+            controller._xray_update_worker = XrayCoreUpdateWorker(
+                controller.state.settings.xray_path,
+                controller.state.settings.xray_release_channel,
+                controller.state.settings.xray_update_feed_url,
+                apply_update=True,
+            )
+            controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)
+            controller._xray_update_worker.start()
+            return
+        if result.status == "error":
+            controller.status.emit("error", result.message)
+        else:  # up_to_date — connection stays intact, nothing else to do
+            controller.status.emit("info", result.message)
+        controller._xray_update_silent = False
+        return
 
     if result.status == "error":
         if not controller._xray_update_silent:

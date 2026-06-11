@@ -200,6 +200,16 @@ class AppSettings:
     auto_switch_threshold_kbps: int = 50
     auto_switch_delay_sec: int = 30
     auto_switch_cooldown_sec: int = 60
+    # Не подключаться автоматически к только что импортированному серверу.
+    auto_connect_on_import: bool = False
+    # Способ измерения ping: "tcping" | "icmp" | "real" (реальная задержка HTTP).
+    ping_method: str = "tcping"
+    # Пользовательский URL/размер для теста скорости (пусто = значение по умолчанию).
+    speed_test_url: str = ""
+    # Число одновременных проверок при тесте (0 = значение по умолчанию).
+    speed_test_concurrency: int = 0
+    # Интервал авто-обновления подписок в минутах (0 = выключено).
+    subscription_auto_update_minutes: int = 240
 
     def __post_init__(self) -> None:
         self.tun_engine = _normalize_tun_engine(self.tun_engine)
@@ -245,6 +255,11 @@ class AppSettings:
             "auto_switch_threshold_kbps": self.auto_switch_threshold_kbps,
             "auto_switch_delay_sec": self.auto_switch_delay_sec,
             "auto_switch_cooldown_sec": self.auto_switch_cooldown_sec,
+            "auto_connect_on_import": self.auto_connect_on_import,
+            "ping_method": self.ping_method,
+            "speed_test_url": self.speed_test_url,
+            "speed_test_concurrency": self.speed_test_concurrency,
+            "subscription_auto_update_minutes": self.subscription_auto_update_minutes,
         }
 
     @staticmethod
@@ -292,6 +307,11 @@ class AppSettings:
             auto_switch_threshold_kbps=int(data.get("auto_switch_threshold_kbps") or 50),
             auto_switch_delay_sec=int(data.get("auto_switch_delay_sec") or 30),
             auto_switch_cooldown_sec=int(data.get("auto_switch_cooldown_sec") or 60),
+            auto_connect_on_import=bool(data.get("auto_connect_on_import", False)),
+            ping_method=str(data.get("ping_method") or "tcping"),
+            speed_test_url=str(data.get("speed_test_url") or ""),
+            speed_test_concurrency=int(data.get("speed_test_concurrency") or 0),
+            subscription_auto_update_minutes=int(data.get("subscription_auto_update_minutes") or 240),
         )
 
 
@@ -303,6 +323,8 @@ class AppState:
     routing: RoutingSettings = field(default_factory=RoutingSettings)
     settings: AppSettings = field(default_factory=AppSettings)
     security: SecuritySettings = field(default_factory=SecuritySettings)
+    # Импортированные подписки: [{"url", "name", "group", "updated_at", "node_count"}].
+    subscriptions: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -312,6 +334,7 @@ class AppState:
             "routing": self.routing.to_dict(),
             "settings": self.settings.to_dict(),
             "security": self.security.to_dict(),
+            "subscriptions": [dict(item) for item in self.subscriptions],
         }
 
     @staticmethod
@@ -325,6 +348,7 @@ class AppState:
             routing=RoutingSettings.from_dict(dict(data.get("routing") or {})),
             settings=AppSettings.from_dict(dict(data.get("settings") or {})),
             security=SecuritySettings.from_dict(dict(data.get("security") or {})),
+            subscriptions=[dict(item) for item in (data.get("subscriptions") or []) if isinstance(item, dict)],
         )
 
 

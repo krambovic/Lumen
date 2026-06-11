@@ -32,12 +32,26 @@ Item {
         id: bg
         anchors.fill: parent
         radius: Theme.radius
-        // Subtle surface-only attention: lighten the fill a hair on hover.
-        color: root._hot ? Theme.cardHover : root.color
+        // Base surface fill stays constant. We must NOT animate the fill hue:
+        // a white->tint ColorAnimation dips through an opaque mid-gray, so the
+        // card visibly flashes gray on hover before settling (light mode bug).
+        color: root.color
         border.width: 1
         // Hairline border stays constant — no accent glow on hover.
         border.color: Theme.borderSolid
-        Behavior on color { ColorAnimation { duration: 120 } }
+
+        // Hover attention as a fixed tint that only fades in/out via opacity,
+        // keeping the transition monotonic with no hue shift / gray flash.
+        Rectangle {
+            anchors.fill: parent
+            radius: parent.radius
+            // Dark mode's cardHover tint read too strong (an additive white
+            // overlay on top of the already-light card fill), so dim it to a
+            // gentler value there. Light mode was fine — keep its token.
+            color: Theme.dark ? Qt.rgba(1, 1, 1, 0.035) : Theme.cardHover
+            opacity: root._hot ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 120 } }
+        }
 
         // Fluent's slightly darker bottom stroke, faked with a 1px sliver that
         // follows the rounded corners.

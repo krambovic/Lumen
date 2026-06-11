@@ -124,6 +124,30 @@ Item {
                             onToggled: App.setBypassLan(checked)
                         }
                     }
+
+                    Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
+
+                    // Discord voice — SOCKS5 без TUN (дублирует переключатель с главного экрана)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text {
+                            text: "\uE767"
+                            font.family: "Segoe Fluent Icons"
+                            color: App.discordProxy ? Theme.accent : Theme.textMuted
+                            font.pixelSize: Theme.fontNormal
+                        }
+                        ColumnLayout {
+                            spacing: 2
+                            Layout.fillWidth: true
+                            Text { text: "Discord voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                            Text { text: "Голос и стримы Discord через SOCKS5 без TUN"; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        }
+                        Switch {
+                            checked: App.discordProxy
+                            onToggled: App.setDiscordProxy(checked)
+                        }
+                    }
                 }
             }
 
@@ -398,17 +422,60 @@ Item {
         }
     }
 
-    // ---- help dialog --------------------------------------------------
+    // ---- help dialog (Fluent-стилизованный, как ContentDialog WinUI) --
     Dialog {
         id: helpDialog
         anchors.centerIn: Overlay.overlay
         modal: true
-        title: "Как работает маршрутизация"
-        standardButtons: Dialog.Ok
         width: 460
+        padding: 0
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        // Скруглённая карточка с hairline-границей вместо квадратного Metro-окна.
+        background: Rectangle {
+            radius: 10
+            color: Theme.flyout
+            border.width: 1
+            border.color: Theme.flyoutBorder
+        }
+
+        // Мягкое затемнение фона вместо дефолтного.
+        Overlay.modal: Rectangle {
+            color: Qt.rgba(0, 0, 0, 0.45)
+        }
+
+        header: Text {
+            text: "Как работает маршрутизация"
+            color: Theme.text
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontStrong
+            font.weight: Font.DemiBold
+            wrapMode: Text.WordWrap
+            leftPadding: 20; rightPadding: 20
+            topPadding: 18; bottomPadding: 6
+        }
+
         contentItem: Text {
             text: "«Всё через VPN» отправляет весь трафик через сервер.\n«По моим правилам» использует ваши правила по приложениям, сервисам, доменам и IP.\n«Без VPN по умолчанию» пускает трафик напрямую, кроме явно указанных исключений.\n\nПравила по приложениям работают только в режиме TUN."
-            color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontNormal
+            wrapMode: Text.WordWrap
+            lineHeight: 1.25
+            leftPadding: 20; rightPadding: 20; bottomPadding: 6
+        }
+
+        footer: RowLayout {
+            spacing: 0
+            Item { Layout.fillWidth: true }
+            AccentButton {
+                kind: "accent"
+                text: "Понятно"
+                onClicked: helpDialog.close()
+                Layout.rightMargin: 20
+                Layout.topMargin: 6
+                Layout.bottomMargin: 18
+            }
         }
     }
 

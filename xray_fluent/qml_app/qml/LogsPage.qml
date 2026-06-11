@@ -9,6 +9,22 @@ Item {
 
     property string filterText: ""
 
+    // Scroll the log list to the newest entry. Defined as a named function so
+    // it can be handed to Qt.callLater: passing logList.positionViewAtEnd
+    // directly loses its `this` binding and silently does nothing (that is why
+    // the previous "sticky bottom" never worked).
+    function scrollLogsToBottom() {
+        logList.positionViewAtEnd();
+    }
+
+    // The tab pages live in a StackLayout, which toggles `visible` on each
+    // child. Whenever the Logs tab becomes visible (including the very first
+    // time it is opened) re-pin to the bottom so the freshest lines show.
+    onVisibleChanged: if (visible) {
+        logList.stickToBottom = true;
+        Qt.callLater(page.scrollLogsToBottom);
+    }
+
     function levelColor(level) {
         if (level === "error") return Theme.danger;
         if (level === "warning") return Theme.warning;
@@ -76,7 +92,13 @@ Item {
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: FluentScrollBar {}
 
-                onCountChanged: positionViewAtEnd()
+                // Only auto-scroll to the newest line when the user is already
+                // pinned to the bottom; otherwise keep their scroll position.
+                property bool stickToBottom: true
+                onMovementEnded: stickToBottom = atYEnd
+                onCountChanged: if (stickToBottom) Qt.callLater(page.scrollLogsToBottom)
+                // Open the tab already scrolled to the newest line.
+                Component.onCompleted: Qt.callLater(page.scrollLogsToBottom)
 
                 delegate: Row {
                     width: logList.width

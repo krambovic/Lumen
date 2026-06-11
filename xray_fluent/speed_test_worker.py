@@ -45,6 +45,7 @@ class SpeedTestWorker(QThread):
     """Tests nodes like v2rayN Mixedtest: ping first, then one speed download."""
 
     result = pyqtSignal(str, object, bool)   # node_id, speed_mbps (float|None), is_alive
+    ping_result = pyqtSignal(str, object)    # node_id, delay_ms (int|None) - режим ping
     progress = pyqtSignal(int, int)          # current, total
     node_progress = pyqtSignal(str, int)     # node_id, percent 0..100
     completed = pyqtSignal()
@@ -55,12 +56,19 @@ class SpeedTestWorker(QThread):
         xray_path: str,
         routing: RoutingSettings | None = None,
         timeout: float = SPEED_TEST_TIMEOUT,
+        *,
+        mode: str = "speed",
+        test_url: str = "",
+        concurrency: int = 0,
     ):
         super().__init__()
         self._nodes = list(nodes)
         self._xray_path = xray_path
         self._routing = routing or RoutingSettings()
         self._timeout = timeout
+        self._mode = mode if mode in ("speed", "ping") else "speed"
+        self._test_url = (test_url or "").strip() or SPEED_TEST_DEFAULT_URL
+        self._concurrency = int(concurrency or 0)
         self._cancelled = False
         self._completed_nodes = 0
         self._processes: set[subprocess.Popen] = set()
@@ -102,7 +110,8 @@ class SpeedTestWorker(QThread):
             for node in self._nodes:
                 self.node_progress.emit(node.id, 0)
 
-            max_workers = min(max(1, SPEED_TEST_MIXED_CONCURRENCY), max(1, len(self._nodes)))
+            base_concurrency = self._concurrency if self._concurrency > 0 else SPEED_TEST_MIXED_CONCURRENCY
+            max_workers = min(max(1, base_concurrency), max(1, len(self._nodes)))
             with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speed-test") as executor:
                 pending: set[Future[tuple[Node, float | None, bool]]] = {
                     executor.submit(self._test_node, node)
@@ -127,10 +136,14 @@ class SpeedTestWorker(QThread):
             self._terminate_all_processes()
             self.completed.emit()
 
-    def _emit_node_result(self, node: Node, speed: float | None, alive: bool, total: int) -> None:
+    def _emit_node_result(self, node: Node, value: float | None, alive: bool, total: int) -> None:
         self._completed_nodes += 1
         self.node_progress.emit(node.id, 100)
-        self.result.emit(node.id, speed, alive)
+        if self._mode == "ping":
+            delay = int(value) if (value is not None and value > 0) else None
+            self.ping_result.emit(node.id, delay)
+        else:
+            self.result.emit(node.id, value, alive)
         self.progress.emit(self._completed_nodes, total)
 
     def _test_node(self, node: Node) -> tuple[Node, float | None, bool]:
@@ -170,6 +183,10 @@ class SpeedTestWorker(QThread):
                 return node, None, False
             if delay_ms <= 0:
                 return node, None, False
+
+            if self._mode == "ping":
+                # Режим реальной задержки: только ping, без загрузки.
+                return node, float(delay_ms), True
 
             self.node_progress.emit(node.id, 35)
             speed = self._measure_speed(target)
@@ -248,7 +265,7 @@ class SpeedTestWorker(QThread):
 
     def _measure_speed(self, target: _SpeedTestTarget) -> float | None:
         opener = self._build_proxy_opener(target.http_port)
-        req = Request(SPEED_TEST_DEFAULT_URL, headers={"User-Agent": "BebraVPN/SpeedTest"})
+        req = Request(self._test_url, headers={"User-Agent": "BebraVPN/SpeedTest"})
 
         try:
             started = time.perf_counter()

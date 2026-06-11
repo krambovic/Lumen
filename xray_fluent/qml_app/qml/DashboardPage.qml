@@ -92,12 +92,10 @@ FluentScroll {
             // ===== Connection card =====
             Card {
                 Layout.fillWidth: true
-                // Fixed, equal, content-independent column width: each top-row card
-                // always takes exactly half the row (minus the column gap) in two-
-                // column mode, and the full width when stacked. This way toggling
-                // TUN / Сист. прокси / Discord never changes the card size — the
-                // grid no longer redistributes width based on each card's content.
-                Layout.preferredWidth: page.twoColumns ? (page.width - Theme.spacingLarge) / 2 : page.width
+                // Карточка подключения занимает всю ширину (раньше была половина
+                // ряда из-за удалённого виджета маршрутизации).
+                Layout.columnSpan: page.twoColumns ? 2 : 1
+                Layout.preferredWidth: page.width
                 Layout.alignment: Qt.AlignTop
                 padding: 16
                 ColumnLayout {
@@ -171,6 +169,31 @@ FluentScroll {
                         AccentButton { kind: "ghost"; text: "Кроме РФ"; onClicked: App.applyRoutingPreset("except_ru") }
                         Item { Layout.fillWidth: true }
                     }
+                    // Discord voice (moved here from the old Routing card)
+                    Rectangle { Layout.fillWidth: true; Layout.topMargin: 4; height: 1; color: Theme.divider }
+                    RowLayout {
+                        Layout.topMargin: 2
+                        spacing: 8
+                        Text {
+                            text: "\uE767"
+                            font.family: "Segoe Fluent Icons"
+                            color: App.discordProxy ? Theme.accent : Theme.textMuted
+                            font.pixelSize: Theme.fontNormal
+                        }
+                        Text { text: "Discord voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Switch {
+                            checked: App.discordProxy
+                            onToggled: App.setDiscordProxy(checked)
+                        }
+                        Text { text: App.discordProxy ? "Вкл" : "Выкл"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                        Item { Layout.fillWidth: true }
+                    }
+                    Text {
+                        text: "Голос и стримы Discord через SOCKS5 без TUN"
+                        color: Theme.textFaint; font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSmall
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
                     Item { Layout.fillHeight: true; Layout.preferredHeight: 2 }
                     // status + target
                     Text {
@@ -184,83 +207,6 @@ FluentScroll {
                         color: Theme.textFaint; font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSmall
                         Layout.fillWidth: true; elide: Text.ElideRight
-                    }
-                }
-            }
-
-            // ===== Routing card =====
-            Card {
-                Layout.fillWidth: true
-                // Fixed, equal, content-independent column width: each top-row card
-                // always takes exactly half the row (minus the column gap) in two-
-                // column mode, and the full width when stacked. This way toggling
-                // TUN / Сист. прокси / Discord never changes the card size — the
-                // grid no longer redistributes width based on each card's content.
-                Layout.preferredWidth: page.twoColumns ? (page.width - Theme.spacingLarge) / 2 : page.width
-                Layout.alignment: Qt.AlignTop
-                padding: 16
-                ColumnLayout {
-                    width: parent.width
-                    spacing: 8
-                    Text {
-                        text: "Маршрутизация"
-                        color: Theme.text; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
-                    }
-                    FluentCombo {
-                        id: modeCombo
-                        Layout.fillWidth: true
-                        property var modeKeys: ["global", "rule", "direct"]
-                        enabled: App.tunMode && App.tunEngine !== "singbox" && !App.transitionBusy
-                        model: ["Глобальный", "Правила", "Прямой"]
-                        currentIndex: Math.max(0, modeKeys.indexOf(App.routingMode))
-                        onActivated: App.setRoutingMode(modeKeys[currentIndex])
-                    }
-                    Text {
-                        text: page.singbox ? "Routing из raw sing-box config"
-                                           : ("Режим: " + page.modeTitle(App.routingMode))
-                        color: Theme.text; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontNormal
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    }
-                    Item { Layout.fillHeight: true; Layout.preferredHeight: 2 }
-                    // Discord voice
-                    RowLayout {
-                        spacing: 8
-                        Text { text: "Discord voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                        Switch {
-                            checked: App.discordProxy
-                            onToggled: App.setDiscordProxy(checked)
-                        }
-                        Text { text: App.discordProxy ? "ON" : "OFF"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                        Item { Layout.fillWidth: true }
-                    }
-                    Text {
-                        text: "Голос и стримы Discord через SOCKS5 без TUN"
-                        color: Theme.textMuted; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    }
-                    Text {
-                        text: page.singbox ? "DNS и routing берутся из editor JSON"
-                                           : "DNS по умолчанию системный"
-                        color: Theme.textFaint; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    }
-                    Text {
-                        text: page.singbox ? "sing-box TUN перехватывает системный трафик, поэтому process/path правила работают полноценно"
-                                           : "Правила применяются выбранным движком маршрутизации"
-                        color: Theme.textFaint; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    }
-                    Text {
-                        text: page.singbox ? "GUI routing не влияет на sing-box: конфигурация берётся целиком из JSON"
-                                           : "Bypass-список применяется к системному прокси"
-                        color: Theme.textFaint; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
                     }
                 }
             }

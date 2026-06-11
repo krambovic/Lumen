@@ -24,6 +24,49 @@ Item {
     function reload() { hist = App.historyData(periodDays) }
     Component.onCompleted: reload()
 
+    // ── per-table column sort state ────────────────────────────────
+    // key = "" means unsorted (natural order from the backend, no arrow).
+    // Clicking a column header cycles: ascending → descending → off (3rd click).
+    property string sessSort: ""
+    property bool   sessAsc: true
+    property string daySort: ""
+    property bool   dayAsc: true
+    property string procSort: ""
+    property bool   procAsc: true
+
+    // Three-state cycle for a column header click.
+    function cycleSort(table, key) {
+        var k, a
+        if (table === "sess") { k = sessSort; a = sessAsc }
+        else if (table === "day") { k = daySort; a = dayAsc }
+        else { k = procSort; a = procAsc }
+        if (k === key) {
+            if (a) { a = false }            // asc → desc
+            else { k = ""; a = true }       // desc → off (natural order)
+        } else { k = key; a = true }        // new column → asc
+        if (table === "sess") { sessSort = k; sessAsc = a }
+        else if (table === "day") { daySort = k; dayAsc = a }
+        else { procSort = k; procAsc = a }
+    }
+
+    // Sorted copy of `rows` by `key`: numbers sort numerically, everything
+    // else by locale-aware string compare. key === "" → returned unchanged.
+    function sortedRows(rows, key, asc) {
+        if (!rows || key === "")
+            return rows || []
+        var out = rows.slice()
+        out.sort(function(x, y) {
+            var a = x[key], b = y[key]
+            var r
+            if (typeof a === "number" && typeof b === "number")
+                r = a - b
+            else
+                r = ("" + a).localeCompare("" + b)
+            return asc ? r : -r
+        })
+        return out
+    }
+
     component StyledCombo: FluentCombo {}
 
     component StatTile: Card {
@@ -42,16 +85,33 @@ Item {
     }
 
     // Header cell: w = 0 means "flexible / fill".
+    // Clickable when sortKey is set; appends a ▲/▼ arrow while it is the
+    // active sort column. curKey/curAsc come from the owning table's state.
     component HCell: Text {
+        id: hcell
         property int w: 0
         property bool alignRight: false
-        color: Theme.textMuted
+        property string label: ""
+        property string sortKey: ""
+        property string curKey: ""
+        property bool curAsc: true
+        signal sortClicked()
+        readonly property bool sortable: sortKey !== ""
+        readonly property bool active: sortable && curKey === sortKey
+        text: label + (active ? (curAsc ? "  ▲" : "  ▼") : "")
+        color: active ? Theme.text : Theme.textMuted
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontSmall
         font.weight: Font.DemiBold
         Layout.fillWidth: w === 0
         Layout.preferredWidth: w > 0 ? w : -1
         horizontalAlignment: alignRight ? Text.AlignRight : Text.AlignLeft
+        MouseArea {
+            anchors.fill: parent
+            enabled: hcell.sortable
+            cursorShape: Qt.PointingHandCursor
+            onClicked: hcell.sortClicked()
+        }
     }
     // Data cell.
     component DCell: Text {
@@ -178,12 +238,12 @@ Item {
                     spacing: 0
                     RowLayout {
                         Layout.fillWidth: true; Layout.margins: 14; Layout.bottomMargin: 8; spacing: 12
-                        HCell { text: "Начало"; w: 140 }
-                        HCell { text: "Сервер" }
-                        HCell { text: "Режим"; w: 150 }
-                        HCell { text: "Длит."; w: 80; alignRight: true }
-                        HCell { text: "↓"; w: 100; alignRight: true }
-                        HCell { text: "↑"; w: 100; alignRight: true }
+                        HCell { label: "Начало"; w: 140; sortKey: "ts"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "ts") }
+                        HCell { label: "Сервер"; sortKey: "node"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "node") }
+                        HCell { label: "Режим"; w: 150; sortKey: "mode"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "mode") }
+                        HCell { label: "Длит."; w: 80; alignRight: true; sortKey: "durSec"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "durSec") }
+                        HCell { label: "↓"; w: 100; alignRight: true; sortKey: "downB"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "downB") }
+                        HCell { label: "↑"; w: 100; alignRight: true; sortKey: "upB"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "upB") }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
                     Item {
@@ -191,7 +251,7 @@ Item {
                         TableList {
                             id: sessionsList
                             anchors.fill: parent
-                            model: page.hist.sessions || []
+                            model: page.sortedRows(page.hist.sessions || [], page.sessSort, page.sessAsc)
                             delegate: Item {
                                 width: ListView.view.width
                                 implicitHeight: page.rowH
@@ -226,9 +286,9 @@ Item {
                     spacing: 0
                     RowLayout {
                         Layout.fillWidth: true; Layout.margins: 14; Layout.bottomMargin: 8; spacing: 12
-                        HCell { text: "День" }
-                        HCell { text: "Загружено"; w: 150; alignRight: true }
-                        HCell { text: "Отдано"; w: 150; alignRight: true }
+                        HCell { label: "День"; sortKey: "day"; curKey: page.daySort; curAsc: page.dayAsc; onSortClicked: page.cycleSort("day", "day") }
+                        HCell { label: "Загружено"; w: 150; alignRight: true; sortKey: "downB"; curKey: page.daySort; curAsc: page.dayAsc; onSortClicked: page.cycleSort("day", "downB") }
+                        HCell { label: "Отдано"; w: 150; alignRight: true; sortKey: "upB"; curKey: page.daySort; curAsc: page.dayAsc; onSortClicked: page.cycleSort("day", "upB") }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
                     Item {
@@ -236,7 +296,7 @@ Item {
                         TableList {
                             id: dailyList
                             anchors.fill: parent
-                            model: page.hist.daily || []
+                            model: page.sortedRows(page.hist.daily || [], page.daySort, page.dayAsc)
                             delegate: Item {
                                 width: ListView.view.width
                                 implicitHeight: page.rowH
@@ -268,10 +328,10 @@ Item {
                     spacing: 0
                     RowLayout {
                         Layout.fillWidth: true; Layout.margins: 14; Layout.bottomMargin: 8; spacing: 12
-                        HCell { text: "Процесс" }
-                        HCell { text: "Загружено"; w: 140; alignRight: true }
-                        HCell { text: "Отдано"; w: 140; alignRight: true }
-                        HCell { text: "Маршрут"; w: 110; alignRight: true }
+                        HCell { label: "Процесс"; sortKey: "exe"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "exe") }
+                        HCell { label: "Загружено"; w: 140; alignRight: true; sortKey: "downB"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "downB") }
+                        HCell { label: "Отдано"; w: 140; alignRight: true; sortKey: "upB"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "upB") }
+                        HCell { label: "Маршрут"; w: 110; alignRight: true; sortKey: "route"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "route") }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
                     Item {
@@ -279,7 +339,7 @@ Item {
                         TableList {
                             id: procList
                             anchors.fill: parent
-                            model: page.hist.procs || []
+                            model: page.sortedRows(page.hist.procs || [], page.procSort, page.procAsc)
                             delegate: Item {
                                 width: ListView.view.width
                                 implicitHeight: page.rowH

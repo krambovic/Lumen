@@ -14,7 +14,11 @@ if TYPE_CHECKING:
     from ..models import Node
 
 
-def ping_nodes(controller: AppController, node_ids: set[str] | None = None) -> None:
+def ping_nodes(
+    controller: AppController,
+    node_ids: set[str] | None = None,
+    method: str | None = None,
+) -> None:
     nodes = controller.state.nodes
     if node_ids:
         nodes = [node for node in nodes if node.id in node_ids]
@@ -25,15 +29,44 @@ def ping_nodes(controller: AppController, node_ids: set[str] | None = None) -> N
         controller._ping_worker.cancel()
         controller._ping_worker.wait(500)
 
+    resolved_method = (method or controller.state.settings.ping_method or "tcping").strip().lower()
+    if resolved_method not in ("tcping", "icmp", "real"):
+        resolved_method = "tcping"
+
     controller._ping_total = len(nodes)
     controller._ping_completed = 0
     controller._ping_node_map = {node.id: node for node in nodes}
     controller.bulk_task_progress.emit("ping", 0, controller._ping_total, False)
+
+    if resolved_method == "real":
+        # Реальная задержка измеряется через временный xray-прокси (как в v2rayN).
+        resolved = resolve_configured_path(
+            controller.state.settings.xray_path,
+            default_path=XRAY_PATH_DEFAULT,
+            use_default_if_empty=True,
+            migrate_default_location=True,
+        )
+        xray_path = str(resolved) if resolved else controller.state.settings.xray_path
+        controller._log("[ping] Измеряю реальную задержку через временные прокси")
+        worker = SpeedTestWorker(
+            nodes,
+            xray_path=xray_path,
+            routing=controller.state.routing,
+            mode="ping",
+            concurrency=controller.state.settings.speed_test_concurrency,
+        )
+        controller._ping_worker = worker
+        worker.ping_result.connect(controller._on_ping_result)
+        worker.progress.connect(controller._on_ping_progress)
+        worker.completed.connect(controller._on_ping_complete)
+        worker.start()
+        return
+
     active_session = controller._active_session
     bypass_tun = bool(controller.connected and active_session is not None and active_session.tun_mode)
     if bypass_tun:
         controller._log("[ping] TUN включен: проверяю серверы через временные прямые маршруты")
-    controller._ping_worker = PingWorker(nodes, bypass_tun=bypass_tun)
+    controller._ping_worker = PingWorker(nodes, bypass_tun=bypass_tun, method=resolved_method)
     controller._ping_worker.result.connect(controller._on_ping_result)
     controller._ping_worker.progress.connect(controller._on_ping_progress)
     controller._ping_worker.completed.connect(controller._on_ping_complete)
@@ -67,6 +100,8 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
         nodes,
         xray_path=xray_path,
         routing=controller.state.routing,
+        test_url=controller.state.settings.speed_test_url,
+        concurrency=controller.state.settings.speed_test_concurrency,
     )
     controller._speed_worker.result.connect(controller._on_speed_result)
     controller._speed_worker.progress.connect(controller._on_speed_progress)
