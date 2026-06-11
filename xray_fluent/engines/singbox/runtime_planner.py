@@ -183,10 +183,16 @@ def plan_singbox_runtime(
         return plan
 
     assert isinstance(outbounds, list)
-    outbounds[proxy_index] = native_proxy
+    native_is_endpoint = _is_singbox_endpoint(native_proxy)
+    if native_is_endpoint:
+        outbounds.pop(proxy_index)
+        _replace_or_append_tagged(_ensure_list(runtime_config, "endpoints"), "proxy", native_proxy)
+    else:
+        outbounds[proxy_index] = native_proxy
     if routing is not None:
         apply_singbox_gui_routing(runtime_config, routing)
-    _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
+    if not native_is_endpoint:
+        _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
     _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
     _validate_runtime_dns_contract(runtime_config)
     return SingboxRuntimePlan(
@@ -296,6 +302,8 @@ def _node_should_use_xray_sidecar(node: Node | None) -> bool:
     stream_settings = outbound.get("streamSettings")
     if isinstance(stream_settings, dict):
         network = str(stream_settings.get("network") or "").strip().lower()
+        if network == "xhttp":
+            return False
         if network == "raw" or "finalmask" in stream_settings:
             return True
         security = str(stream_settings.get("security") or "").strip().lower()
@@ -743,6 +751,12 @@ def _replace_or_append_tagged(items: list[Any], tag: str, payload: dict[str, Any
             items[index] = payload
             return
     items.append(payload)
+
+
+def _is_singbox_endpoint(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return str(payload.get("type") or "").strip().lower() in {"warp", "wireguard"}
 
 
 def _ensure_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:

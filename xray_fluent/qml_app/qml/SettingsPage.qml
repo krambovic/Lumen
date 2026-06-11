@@ -186,7 +186,7 @@ FluentScroll {
                     AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: "Обзор"; onClicked: { var p = App.browseXrayPath(); if (p) xrayField.text = p } }
                 }
                 SettingRow {
-                    glyph: "\uE756"; title: "Ядро sing-box"; subtitle: "Путь к исполняемому файлу sing-box"
+                    glyph: "\uE756"; title: "Ядро sing-box-extended"; subtitle: "Путь к исполняемому файлу sing-box-extended"
                     StyledField { id: sbField; Layout.preferredWidth: 240; text: App.singboxPath; placeholderText: "встроенный"; onEditingFinished: App.setSingboxPath(text) }
                     AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: "Обзор"; onClicked: { var p = App.browseSingboxPath(); if (p) sbField.text = p } }
                 }

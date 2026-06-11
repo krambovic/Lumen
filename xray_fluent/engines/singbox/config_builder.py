@@ -3,7 +3,17 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-_SUPPORTED_NATIVE_PROTOCOLS = {"vless", "vmess", "trojan", "shadowsocks", "socks", "http"}
+_SUPPORTED_NATIVE_PROTOCOLS = {
+    "vless",
+    "vmess",
+    "trojan",
+    "shadowsocks",
+    "socks",
+    "http",
+    "warp",
+    "wireguard",
+    "awg",
+}
 
 
 def build_singbox_outbound(node, *, tag: str = "proxy") -> dict[str, Any]:
@@ -14,7 +24,7 @@ def build_singbox_outbound(node, *, tag: str = "proxy") -> dict[str, Any]:
             f"Текущий сервер нельзя конвертировать в native sing-box outbound: protocol `{protocol or 'unknown'}`"
         )
 
-    outbound = _convert_outbound(deepcopy(node.outbound))
+    outbound = _convert_outbound(deepcopy(node.outbound), tag=tag)
     unsupported_transport = str(outbound.pop("_unsupported_transport", "") or "").strip()
     if unsupported_transport:
         raise ValueError(
@@ -25,8 +35,14 @@ def build_singbox_outbound(node, *, tag: str = "proxy") -> dict[str, Any]:
     return outbound
 
 
-def _convert_outbound(xray_ob: dict[str, Any]) -> dict[str, Any]:
+def _convert_outbound(xray_ob: dict[str, Any], *, tag: str = "proxy") -> dict[str, Any]:
     protocol = str(xray_ob.get("protocol") or "").lower()
+    native = xray_ob.get("singbox")
+    if isinstance(native, dict):
+        sb = deepcopy(native)
+        sb["tag"] = tag
+        return sb
+
     xray_settings = dict(xray_ob.get("settings") or {})
     stream = dict(xray_ob.get("streamSettings") or {})
 
@@ -191,5 +207,70 @@ def _apply_transport(sb: dict[str, Any], stream: dict[str, Any]) -> None:
         sb["transport"] = transport
         return
 
-    if network in {"raw", "xhttp", "httpupgrade"}:
+    if network == "xhttp":
+        xhttp_settings = dict(stream.get("xhttpSettings") or {})
+        transport: dict[str, Any] = {"type": "xhttp"}
+        mode = str(xhttp_settings.get("mode") or "").strip()
+        if mode and mode != "auto":
+            transport["mode"] = mode
+        host = str(xhttp_settings.get("host") or "").strip()
+        if host:
+            transport["host"] = host
+        path = str(xhttp_settings.get("path") or "").strip()
+        if path:
+            transport["path"] = path
+        headers = xhttp_settings.get("headers")
+        if isinstance(headers, dict) and headers:
+            transport["headers"] = headers
+        _copy_xhttp_value(xhttp_settings, transport, "scMaxEachPostBytes", "sc_max_each_post_bytes", int)
+        _copy_xhttp_value(xhttp_settings, transport, "scMinPostsIntervalMs", "sc_min_posts_interval_ms", int)
+        _copy_xhttp_value(xhttp_settings, transport, "xPaddingBytes", "x_padding_bytes", str)
+        transport.setdefault("x_padding_bytes", "100-1000")
+        _copy_xhttp_value(xhttp_settings, transport, "noGRPCHeader", "no_grpc_header", _to_bool)
+        extra = xhttp_settings.get("extra")
+        if isinstance(extra, dict):
+            for key, value in extra.items():
+                if isinstance(key, str) and key and key not in transport:
+                    transport[key] = value
+        sb["transport"] = transport
+        return
+
+    if network == "httpupgrade":
+        settings = dict(stream.get("httpupgradeSettings") or {})
+        transport = {"type": "httpupgrade"}
+        path = str(settings.get("path") or "")
+        if path:
+            transport["path"] = path
+        host = str(settings.get("host") or "")
+        if host:
+            transport["host"] = host
+        headers = settings.get("headers")
+        if isinstance(headers, dict) and headers:
+            transport["headers"] = headers
+        sb["transport"] = transport
+        return
+
+    if network in {"raw"}:
         sb["_unsupported_transport"] = network
+
+
+def _copy_xhttp_value(
+    source: dict[str, Any],
+    target: dict[str, Any],
+    source_key: str,
+    target_key: str,
+    caster,
+) -> None:
+    value = source.get(source_key)
+    if value in (None, ""):
+        return
+    try:
+        target[target_key] = caster(value)
+    except Exception:
+        target[target_key] = value
+
+
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}

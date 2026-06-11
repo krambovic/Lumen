@@ -70,8 +70,8 @@ jobs:
           Copy-Item _wintun/wintun/bin/amd64/wintun.dll core/
           Remove-Item -Recurse _wintun, wintun.zip
 
-          Write-Host "Downloading sing-box..."
-          $sbRelease = Invoke-RestMethod "https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+          Write-Host "Downloading sing-box-extended..."
+          $sbRelease = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest"
           Write-Host "Using sing-box $($sbRelease.tag_name)"
           $sbAsset = $sbRelease.assets | Where-Object { $_.name -match "windows-amd64\.zip$" -and $_.name -notmatch "\.sig" }
           Invoke-WebRequest $sbAsset.browser_download_url -OutFile singbox.zip
@@ -105,10 +105,10 @@ jobs:
           body: |
             ## What's Changed
 
-            - [Feature]: Lumen KVN is now QML-only.
-            - [Feature]: Included all changes from `72a3822` and later commits.
-            - [Chore]: Release assets now contain only the QML setup and portable archive.
-            - [Fix]: The updater now targets the Lumen KVN portable archive without stable/nightly split.
+            - [Feature]: Switched bundled TUN runtime to sing-box-extended.
+            - [Feature]: Added native sing-box-extended XHTTP transport support.
+            - [Feature]: Added WARP, WireGuard and AWG profile import for sing-box-extended endpoints.
+            - [Fix]: Firefox-family browsers now follow Lumen system proxy via profile prefs backup/restore.
           generate_release_notes: false
           make_latest: true
           files: |

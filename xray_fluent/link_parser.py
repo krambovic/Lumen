@@ -34,6 +34,8 @@ def parse_single(raw: str) -> Node:
 
     if text.startswith("{"):
         return _parse_json_outbound(text)
+    if text.startswith("["):
+        return _parse_wireguard_config(text)
 
     scheme = urlsplit(text).scheme.lower()
     if scheme == "vless":
@@ -48,6 +50,8 @@ def parse_single(raw: str) -> Node:
         return _parse_socks(text)
     if scheme in {"http", "https"}:
         return _parse_http_proxy(text)
+    if scheme in {"wireguard", "wg", "awg", "warp"}:
+        return _parse_wireguard_like_link(text, scheme)
 
     raise LinkParseError(f"unsupported scheme: {scheme or 'unknown'}")
 
@@ -634,10 +638,15 @@ def _parse_json_outbound(text: str) -> Node:
     payload = json.loads(text)
 
     outbound: dict[str, Any]
-    if "protocol" in payload:
+    if "type" in payload:
+        outbound = _native_singbox_outbound(payload)
+    elif "protocol" in payload:
         outbound = dict(payload)
+    elif isinstance(payload.get("endpoints"), list) and payload["endpoints"]:
+        outbound = _native_singbox_outbound(payload["endpoints"][0])
     elif isinstance(payload.get("outbounds"), list) and payload["outbounds"]:
-        outbound = dict(payload["outbounds"][0])
+        first_outbound = dict(payload["outbounds"][0])
+        outbound = _native_singbox_outbound(first_outbound) if "type" in first_outbound else first_outbound
     else:
         raise LinkParseError("JSON must contain `protocol` or `outbounds`")
 
@@ -646,15 +655,29 @@ def _parse_json_outbound(text: str) -> Node:
     server = ""
     port = 0
 
+    native = outbound.get("singbox") if isinstance(outbound.get("singbox"), dict) else {}
     settings = outbound.get("settings") or {}
     if protocol in {"vless", "vmess"}:
-        vnext = (settings.get("vnext") or [{}])[0]
-        server = str(vnext.get("address") or "")
-        port = int(vnext.get("port") or 0)
+        if native:
+            server = str(native.get("server") or "")
+            port = int(native.get("server_port") or 0)
+        else:
+            vnext = (settings.get("vnext") or [{}])[0]
+            server = str(vnext.get("address") or "")
+            port = int(vnext.get("port") or 0)
     elif protocol in {"trojan", "shadowsocks", "socks", "http"}:
-        servers = (settings.get("servers") or [{}])[0]
-        server = str(servers.get("address") or "")
-        port = int(servers.get("port") or 0)
+        if native:
+            server = str(native.get("server") or "")
+            port = int(native.get("server_port") or 0)
+        else:
+            servers = (settings.get("servers") or [{}])[0]
+            server = str(servers.get("address") or "")
+            port = int(servers.get("port") or 0)
+    elif protocol in {"warp", "wireguard", "awg"} and native:
+        peers = native.get("peers")
+        peer = peers[0] if isinstance(peers, list) and peers and isinstance(peers[0], dict) else {}
+        server = str(peer.get("address") or native.get("server") or "")
+        port = int(peer.get("port") or native.get("server_port") or 0)
 
     return Node(
         name=f"json-{tag}",
@@ -664,3 +687,188 @@ def _parse_json_outbound(text: str) -> Node:
         link=text,
         outbound=outbound,
     )
+
+
+def _native_singbox_outbound(payload: dict[str, Any]) -> dict[str, Any]:
+    native = dict(payload)
+    protocol = str(native.get("type") or "custom").lower()
+    return {
+        "protocol": "awg" if protocol == "wireguard" and isinstance(native.get("amnezia"), dict) else protocol,
+        "singbox": native,
+    }
+
+
+def _parse_wireguard_like_link(link: str, scheme: str) -> Node:
+    parsed = urlsplit(link)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    params = {k: _first(query, k) for k in query}
+
+    if scheme == "warp":
+        endpoint = _build_warp_endpoint(params)
+        name = _clean_name(parsed.fragment, "WARP")
+        return Node(name=name, scheme="warp", server="engage.cloudflareclient.com", port=2408, link=link, outbound=_native_singbox_outbound(endpoint))
+
+    server = parsed.hostname or _get_param(params, "server", "endpoint", "address")
+    port = parsed.port or int(_get_param(params, "port", default="0") or 0) or 51820
+    private_key = _clean_b64_key(unquote(parsed.username or "") or _get_param(params, "private_key", "privateKey", "key"))
+    public_key = _clean_b64_key(_get_param(params, "public_key", "publicKey", "peer_public_key", "peerPublicKey", "pbk"))
+    address = _split_csv(_get_param(params, "address", "local_address", "localAddress", default="10.0.0.2/32"))
+    allowed_ips = _split_csv(_get_param(params, "allowed_ips", "allowedIPs", "allowed", default="0.0.0.0/0,::/0"))
+    pre_shared_key = _get_param(params, "pre_shared_key", "preshared_key", "psk", "reserved")
+    mtu = int(_get_param(params, "mtu", default="1408") or 1408)
+
+    if not private_key or not public_key or not server:
+        raise LinkParseError("wireguard/awg link must contain server, private_key and public_key")
+
+    endpoint = _build_wireguard_endpoint(
+        server=server,
+        port=port,
+        private_key=_clean_b64_key(private_key),
+        public_key=_clean_b64_key(public_key),
+        address=address,
+        allowed_ips=allowed_ips,
+        pre_shared_key=pre_shared_key,
+        mtu=mtu,
+        amnezia=_amnezia_from_params(params) if scheme == "awg" else {},
+    )
+    name = _clean_name(parsed.fragment, f"{scheme}-{server}:{port}")
+    return Node(name=name, scheme=scheme, server=server, port=port, link=link, outbound=_native_singbox_outbound(endpoint))
+
+
+def _parse_wireguard_config(text: str) -> Node:
+    sections: dict[str, dict[str, str]] = {}
+    current = ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = line.strip("[]").strip().lower()
+            sections.setdefault(current, {})
+            continue
+        if "=" not in line or not current:
+            continue
+        key, value = line.split("=", 1)
+        sections.setdefault(current, {})[key.strip().lower()] = value.strip()
+
+    interface = sections.get("interface") or {}
+    peer = sections.get("peer") or {}
+    endpoint_value = peer.get("endpoint", "")
+    server, port = _split_endpoint(endpoint_value)
+    private_key = interface.get("privatekey", "")
+    public_key = peer.get("publickey", "")
+    if not server or not private_key or not public_key:
+        raise LinkParseError("wireguard config must contain [Interface] PrivateKey and [Peer] Endpoint/PublicKey")
+
+    amnezia = _amnezia_from_params({key: value for key, value in interface.items()})
+    endpoint = _build_wireguard_endpoint(
+        server=server,
+        port=port or 51820,
+        private_key=private_key,
+        public_key=public_key,
+        address=_split_csv(interface.get("address", "10.0.0.2/32")),
+        allowed_ips=_split_csv(peer.get("allowedips", "0.0.0.0/0,::/0")),
+        pre_shared_key=_clean_b64_key(peer.get("presharedkey", "")),
+        mtu=int(interface.get("mtu", "1408") or 1408),
+        amnezia=amnezia,
+    )
+    scheme = "awg" if amnezia else "wireguard"
+    return Node(
+        name=f"{scheme}-{server}:{port or 51820}",
+        scheme=scheme,
+        server=server,
+        port=port or 51820,
+        link=text,
+        outbound=_native_singbox_outbound(endpoint),
+    )
+
+
+def _build_warp_endpoint(params: dict[str, str]) -> dict[str, Any]:
+    endpoint: dict[str, Any] = {
+        "type": "warp",
+        "tag": "proxy",
+        "listen_port": int(_get_param(params, "listen_port", "listenPort", default="10000") or 10000),
+        "udp_timeout": _get_param(params, "udp_timeout", "udpTimeout", default="5m0s") or "5m0s",
+    }
+    amnezia = _amnezia_from_params(params)
+    if amnezia:
+        endpoint["amnezia"] = amnezia
+    profile: dict[str, Any] = {"detour": "direct"}
+    for source, target in (("id", "id"), ("private_key", "private_key"), ("privateKey", "private_key"), ("auth_token", "auth_token"), ("authToken", "auth_token")):
+        value = _get_param(params, source)
+        if value:
+            profile[target] = value
+    endpoint["profile"] = profile
+    return endpoint
+
+
+def _build_wireguard_endpoint(
+    *,
+    server: str,
+    port: int,
+    private_key: str,
+    public_key: str,
+    address: list[str],
+    allowed_ips: list[str],
+    pre_shared_key: str = "",
+    mtu: int = 1408,
+    amnezia: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    peer: dict[str, Any] = {
+        "address": server,
+        "port": int(port),
+        "public_key": public_key,
+        "allowed_ips": allowed_ips or ["0.0.0.0/0", "::/0"],
+    }
+    if pre_shared_key:
+        peer["pre_shared_key"] = _clean_b64_key(pre_shared_key)
+    endpoint: dict[str, Any] = {
+        "type": "wireguard",
+        "tag": "proxy",
+        "mtu": int(mtu or 1408),
+        "address": address or ["10.0.0.2/32"],
+        "private_key": _clean_b64_key(private_key),
+        "listen_port": 10000,
+        "peers": [peer],
+        "udp_timeout": "5m0s",
+    }
+    if amnezia:
+        endpoint["amnezia"] = amnezia
+    return endpoint
+
+
+def _amnezia_from_params(params: dict[str, str]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in ("jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "itime"):
+        value = _get_param(params, key, key.upper())
+        if value:
+            try:
+                result[key] = int(value)
+            except ValueError:
+                result[key] = value
+    for key in ("i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3"):
+        value = _get_param(params, key, key.upper())
+        if value:
+            result[key] = value
+    return result
+
+
+def _split_csv(value: str) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def _split_endpoint(value: str) -> tuple[str, int]:
+    text = str(value or "").strip()
+    if not text:
+        return "", 0
+    if text.startswith("[") and "]:" in text:
+        host, _, port_text = text[1:].partition("]:")
+        return host, int(port_text or 0)
+    if ":" in text:
+        host, _, port_text = text.rpartition(":")
+        return host.strip(), int(port_text or 0)
+    return text, 0
+
+
+def _clean_b64_key(value: str) -> str:
+    return str(value or "").strip().replace(" ", "+")

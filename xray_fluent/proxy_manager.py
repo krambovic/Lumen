@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
+from pathlib import Path
 import sys
 import threading
 from ctypes import wintypes
@@ -58,6 +60,7 @@ class ProxyManager:
     def __init__(self) -> None:
         self._backup: dict[str, str | int] | None = None
         self._backup_file = RUNTIME_DIR / "system_proxy_backup.json"
+        self._firefox_proxy = FirefoxProxyManager()
 
     @property
     def is_supported(self) -> bool:
@@ -191,6 +194,7 @@ class ProxyManager:
         )
         if not self._set_wininet_connection_proxy(proxy_server, override, True):
             self._refresh_system_proxy()
+        self._firefox_proxy.enable()
 
     def disable(self, restore_previous: bool = True) -> None:
         if not self.is_supported:
@@ -202,6 +206,7 @@ class ProxyManager:
             self._write_settings({"ProxyEnable": 0})
         self._backup = None
         self._persist_backup(None)
+        self._firefox_proxy.disable()
         if not self._set_wininet_connection_proxy("", "", False):
             self._refresh_system_proxy()
 
@@ -210,3 +215,131 @@ class ProxyManager:
             return False
         values = self._read_settings()
         return int(values.get("ProxyEnable", 0)) == 1
+
+
+class FirefoxProxyManager:
+    """Make Firefox-family browsers follow Windows system proxy.
+
+    Firefox stores proxy behaviour in profile prefs (`network.proxy.type`).
+    Value 5 means "use system proxy". Lumen writes a tiny managed user.js and
+    restores the previous file on proxy shutdown.
+    """
+
+    _MARKER_BEGIN = "// Lumen KVN system proxy begin"
+    _MARKER_END = "// Lumen KVN system proxy end"
+
+    def __init__(self) -> None:
+        self._backup_file = RUNTIME_DIR / "firefox_proxy_backup.json"
+
+    def enable(self) -> None:
+        if sys.platform != "win32":
+            return
+        profiles = self._find_profiles()
+        if not profiles:
+            return
+        backup = self._load_backup()
+        changed = False
+        for profile in profiles:
+            key = str(profile)
+            if key not in backup:
+                user_js = profile / "user.js"
+                backup[key] = user_js.read_text(encoding="utf-8", errors="replace") if user_js.exists() else None
+            self._write_user_js(profile)
+            changed = True
+        if changed:
+            self._save_backup(backup)
+
+    def disable(self) -> None:
+        backup = self._load_backup()
+        if not backup:
+            return
+        for profile_text, original in backup.items():
+            profile = Path(profile_text)
+            user_js = profile / "user.js"
+            try:
+                if original is None:
+                    if user_js.exists():
+                        remaining = self._strip_managed_block(user_js.read_text(encoding="utf-8", errors="replace")).strip()
+                        if remaining:
+                            user_js.write_text(remaining + "\n", encoding="utf-8")
+                        else:
+                            user_js.unlink()
+                else:
+                    user_js.write_text(str(original), encoding="utf-8")
+            except Exception:
+                continue
+        self._save_backup({})
+
+    def _find_profiles(self) -> list[Path]:
+        roots: list[Path] = []
+        appdata = os.environ.get("APPDATA")
+        localappdata = os.environ.get("LOCALAPPDATA")
+        for base in (appdata, localappdata):
+            if not base:
+                continue
+            root = Path(base)
+            roots.extend(
+                [
+                    root / "Mozilla" / "Firefox" / "Profiles",
+                    root / "librewolf" / "Profiles",
+                    root / "Waterfox" / "Profiles",
+                    root / "Floorp" / "Profiles",
+                ]
+            )
+        profiles: list[Path] = []
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for child in root.iterdir():
+                if not child.is_dir():
+                    continue
+                if (child / "prefs.js").exists() or child.suffix.lower() in {".default", ".default-release"}:
+                    profiles.append(child)
+        return sorted(set(profiles))
+
+    def _write_user_js(self, profile: Path) -> None:
+        user_js = profile / "user.js"
+        existing = user_js.read_text(encoding="utf-8", errors="replace") if user_js.exists() else ""
+        existing = self._strip_managed_block(existing).rstrip()
+        block = "\n".join(
+            [
+                self._MARKER_BEGIN,
+                'user_pref("network.proxy.type", 5);',
+                self._MARKER_END,
+            ]
+        )
+        text = f"{existing}\n\n{block}\n" if existing else f"{block}\n"
+        user_js.write_text(text, encoding="utf-8")
+
+    def _strip_managed_block(self, text: str) -> str:
+        start = text.find(self._MARKER_BEGIN)
+        end = text.find(self._MARKER_END)
+        if start == -1 or end == -1 or end < start:
+            return text
+        end += len(self._MARKER_END)
+        if end < len(text) and text[end:end + 1] == "\n":
+            end += 1
+        return text[:start].rstrip() + ("\n" if text[:start].strip() and text[end:].strip() else "") + text[end:].lstrip()
+
+    def _load_backup(self) -> dict[str, str | None]:
+        try:
+            payload = json.loads(self._backup_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        result: dict[str, str | None] = {}
+        for key, value in payload.items():
+            if isinstance(key, str) and (value is None or isinstance(value, str)):
+                result[key] = value
+        return result
+
+    def _save_backup(self, backup: dict[str, str | None]) -> None:
+        try:
+            if backup:
+                self._backup_file.parent.mkdir(parents=True, exist_ok=True)
+                self._backup_file.write_text(json.dumps(backup, ensure_ascii=True, indent=2), encoding="utf-8")
+            elif self._backup_file.exists():
+                self._backup_file.unlink()
+        except Exception:
+            pass
