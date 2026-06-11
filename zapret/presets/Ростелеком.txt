@@ -290,7 +290,7 @@
 
 --new
 
---name=ZapretKVN TCP
+--name=LumenKVN TCP
 --ipset=lists/ipset-zapretkvn.txt
 --out-range=-d10
 --lua-desync=syndata
@@ -424,7 +424,7 @@
 
 --new
 
---name=ZapretKVN UDP
+--name=LumenKVN UDP
 --filter-udp=443-65535
 --ipset=lists/ipset-zapretkvn.txt
 --out-range=-n8

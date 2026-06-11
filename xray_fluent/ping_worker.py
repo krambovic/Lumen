@@ -94,7 +94,7 @@ def _detect_direct_gateway() -> str:
         "| Sort-Object RouteMetric, InterfaceMetric; "
         "$route = $routes | Where-Object { "
         "$alias = [string]$_.InterfaceAlias; "
-        "$alias -notmatch '(?i)bebra|xftun|wintun|tun' "
+        "$alias -notmatch '(?i)lumen|xftun|wintun|tun' "
         "} | Select-Object -First 1; "
         "if (-not $route) { $route = $routes | Select-Object -First 1 }; "
         "if (-not $route) { exit 1 }; "

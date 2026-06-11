@@ -145,7 +145,7 @@ def _set_app_user_model_id() -> None:
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "Bebra.BebraVPN"
+            "Lumen.LumenKVN"
         )
     except Exception:
         pass
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     from .bridge import AppBridge
 
     QApplication.setApplicationName(APP_NAME)
-    QApplication.setOrganizationName("Bebra")
+    QApplication.setOrganizationName("Lumen")
 
     from PyQt6.QtGui import QSurfaceFormat
     _fmt = QSurfaceFormat.defaultFormat()

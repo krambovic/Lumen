@@ -1,5 +1,5 @@
 """
-Build the Qt Quick (QML) edition of Bebra VPN via PyInstaller.
+Build the Qt Quick (QML) edition of Lumen KVN via PyInstaller.
 
 Usage:  python build_qml.py            - full build (clean + compile + pack zip)
         python build_qml.py --no-zip   - skip zip creation
@@ -22,22 +22,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / ".venv"
 VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
-VENV_PIP = VENV_DIR / "Scripts" / "pip.exe"
 
-APP_NAME = "BebraVPN"
-SPEC_OUTPUT_NAME = "BebraVPN"
-SPEC_FILE = ROOT / "BebraVPN-qml.spec"
+APP_NAME = "LumenKVN"
+SPEC_OUTPUT_NAME = "LumenKVN"
+SPEC_FILE = ROOT / "LumenKVN-qml.spec"
 
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
-APP_DIR = DIST_DIR / "BebraVPN Nightly"
+APP_DIR = DIST_DIR / "LumenKVN Nightly"
 PORTABLE_ZIP_PATH = DIST_DIR / f"{APP_NAME}-nightly-portable-windows-x64.zip"
 INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-nightly-Setup-windows-x64.exe"
 
 CORE_DIR = ROOT / "core"
 ZAPRET_DIR = ROOT / "zapret"
 DATA_TEMPLATES_DIR = ROOT / "data" / "templates"
-INNO_SCRIPT = ROOT / "installer" / "BebraVPN.iss"
+INNO_SCRIPT = ROOT / "installer" / "LumenKVN.iss"
 ASSETS_DIR = ROOT / "assets"
 NOTICE_FILES = (ROOT / "LICENSE", ROOT / "NOTICE.md", ROOT / "README_QML.md", ROOT / "README.md")
 
@@ -109,8 +108,8 @@ def ensure_venv() -> None:
         return
     _print("Creating virtual environment ...")
     _run([sys.executable, "-m", "venv", str(VENV_DIR)])
-    _run([str(VENV_PIP), "install", "--upgrade", "pip"])
-    _run([str(VENV_PIP), "install", "-r", str(ROOT / "requirements.txt")])
+    _run([str(VENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip"])
+    _run([str(VENV_PYTHON), "-m", "pip", "install", "-r", str(ROOT / "requirements.txt")])
 
 
 def clean() -> None:
@@ -120,7 +119,7 @@ def clean() -> None:
         try:
             shutil.rmtree(BUILD_DIR)
         except PermissionError:
-            _print(f"ERROR: Cannot remove {BUILD_DIR} — is BebraVPN.exe still running?")
+            _print(f"ERROR: Cannot remove {BUILD_DIR} — is LumenKVN.exe still running?")
             _print("Close the app (tray -> Quit) and try again.")
             raise SystemExit(1)
 
@@ -223,8 +222,8 @@ def build_installer() -> None:
             f"/DSourceDir={source_dir}",
             f"/DOutputDir={output_dir}",
             "/DAppId={{7C4A1E92-3B6D-4F81-A2C5-9E0D7B3F1A48}",
-            "/DAppNameValue=Bebra VPN Nightly",
-            "/DOutputBaseName=BebraVPN-nightly-Setup-windows-x64",
+            "/DAppNameValue=Lumen KVN Nightly",
+            "/DOutputBaseName=LumenKVN-nightly-Setup-windows-x64",
             _windows_path(INNO_SCRIPT),
         ],
         cwd=str(ROOT),
@@ -234,7 +233,7 @@ def build_installer() -> None:
 
 # ------------------------------------------------------------------
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build Bebra VPN (QML edition)")
+    parser = argparse.ArgumentParser(description="Build Lumen KVN (QML edition)")
     parser.add_argument("--no-zip", action="store_true", help="skip zip creation")
     parser.add_argument("--no-installer", action="store_true", help="skip Inno Setup installer")
     parser.add_argument("--clean", action="store_true", help="only clean build artefacts")

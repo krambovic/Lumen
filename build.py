@@ -1,5 +1,5 @@
 """
-Build Bebra VPN portable exe via PyInstaller.
+Build Lumen KVN portable exe via PyInstaller.
 
 Usage:  python build.py          — full build (clean + compile + pack zip)
         python build.py --no-zip — skip zip creation
@@ -21,9 +21,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / ".venv"
 VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
-VENV_PIP = VENV_DIR / "Scripts" / "pip.exe"
 
-APP_NAME = "BebraVPN"
+APP_NAME = "LumenKVN"
 
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
@@ -35,9 +34,9 @@ MANIFEST = ROOT / "uac_admin.manifest"
 CORE_DIR = ROOT / "core"
 ZAPRET_DIR = ROOT / "zapret"
 DATA_TEMPLATES_DIR = ROOT / "data" / "templates"
-INNO_SCRIPT = ROOT / "installer" / "BebraVPN.iss"
+INNO_SCRIPT = ROOT / "installer" / "LumenKVN.iss"
 ASSETS_DIR = ROOT / "assets"
-APP_ICON = ASSETS_DIR / "BebraVPN.ico"
+APP_ICON = ASSETS_DIR / "LumenKVN.ico"
 NOTICE_FILES = (ROOT / "LICENSE", ROOT / "NOTICE.md", ROOT / "README.md")
 
 
@@ -108,8 +107,8 @@ def ensure_venv() -> None:
         return
     _print("Creating virtual environment ...")
     _run([sys.executable, "-m", "venv", str(VENV_DIR)])
-    _run([str(VENV_PIP), "install", "--upgrade", "pip"])
-    _run([str(VENV_PIP), "install", "-r", str(ROOT / "requirements.txt")])
+    _run([str(VENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip"])
+    _run([str(VENV_PYTHON), "-m", "pip", "install", "-r", str(ROOT / "requirements.txt")])
 
 
 def clean() -> None:
@@ -119,11 +118,11 @@ def clean() -> None:
         try:
             shutil.rmtree(BUILD_DIR)
         except PermissionError:
-            _print(f"ERROR: Cannot remove {BUILD_DIR} — is BebraVPN.exe still running?")
+            _print(f"ERROR: Cannot remove {BUILD_DIR} — is LumenKVN.exe still running?")
             _print("Close the app (tray -> Quit) and try again.")
             raise SystemExit(1)
 
-    # dist/BebraVPN/ — remove everything EXCEPT data/, core/, zapret/
+    # dist/LumenKVN/ — remove everything EXCEPT data/, core/, zapret/
     # core/ and zapret/ are kept because running binaries (xray.exe) lock them;
     # they will be merged/overwritten in build_exe() instead.
     keep_dirs = {"data", "core", "zapret"}
@@ -262,7 +261,7 @@ def _build_qml(args) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build Bebra VPN")
+    parser = argparse.ArgumentParser(description="Build Lumen KVN")
     parser.add_argument("--no-zip", action="store_true", help="skip zip creation")
     parser.add_argument("--no-installer", action="store_true", help="skip Inno Setup installer")
     parser.add_argument("--clean", action="store_true", help="only clean build artefacts")

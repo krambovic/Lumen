@@ -67,7 +67,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="BebraVPN",
+    name="LumenKVN",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -79,7 +79,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     uac_admin=True,
-    icon=[str(root / "assets" / "BebraVPN.ico")],
+    icon=[str(root / "assets" / "LumenKVN.ico")],
     manifest=str(root / "uac_admin.manifest"),
 )
 coll = COLLECT(
@@ -89,5 +89,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="BebraVPN",
+    name="LumenKVN",
 )

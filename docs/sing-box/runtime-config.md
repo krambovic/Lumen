@@ -1,8 +1,8 @@
-# sing-box Runtime Config In Bebra VPN
+# sing-box Runtime Config In Lumen KVN
 
 ## Scope
 
-This document describes the `sing-box` JSON shape that Bebra VPN actually
+This document describes the `sing-box` JSON shape that Lumen KVN actually
 builds today.
 
 ## Current Runtime Model
@@ -60,7 +60,7 @@ The upstream configuration root supports many top-level sections:
 }
 ```
 
-Bebra VPN currently emits only this subset:
+Lumen KVN currently emits only this subset:
 
 - `log`
 - `inbounds`

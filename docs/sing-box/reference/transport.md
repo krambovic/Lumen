@@ -4,7 +4,7 @@
 
 Доступные типы транспорта: HTTP, WebSocket, gRPC, HTTPUpgrade, QUIC.
 xhttp (Xray-специфичный) НЕ поддерживается sing-box -- при его
-обнаружении Bebra VPN переключается в hybrid mode.
+обнаружении Lumen KVN переключается в hybrid mode.
 
 ## WebSocket (ws)
 
@@ -235,7 +235,7 @@ HTTP-путь запроса. Сервер проверяет соответст
 
 | Транспорт | Причина |
 |-----------|---------|
-| xhttp | Специфичен для Xray-core. При обнаружении Bebra VPN переключается в hybrid mode (sing-box TUN + xray SOCKS). |
+| xhttp | Специфичен для Xray-core. При обнаружении Lumen KVN переключается в hybrid mode (sing-box TUN + xray SOCKS). |
 | TCP transport | В sing-box нет отдельного TCP-транспорта; plain HTTP объединён с HTTP-транспортом. |
 | mKCP | Не реализован в sing-box. |
 | DomainSocket | Не реализован в sing-box. |

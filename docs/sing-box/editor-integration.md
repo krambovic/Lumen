@@ -78,7 +78,7 @@ The editor stores a template-like source document. The app injects the
 runtime-managed fragments before launch and shows the compiled result in a
 preview panel.
 
-This is the preferred V1 shape for Bebra VPN because it keeps the UX text-only
+This is the preferred V1 shape for Lumen KVN because it keeps the UX text-only
 without pretending that runtime-generated fragments are static user text.
 
 ## Practical Template Boundaries

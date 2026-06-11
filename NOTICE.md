@@ -1,12 +1,12 @@
 # Notices
 
-Bebra VPN / bebra-kvn is a fork of `youtubediscord/zapret-kvn`.
+Lumen KVN / lumen-kvn is a fork of `youtubediscord/zapret-kvn`.
 
 Upstream project:
 https://github.com/youtubediscord/zapret-kvn
 
 Fork repository:
-https://github.com/krambovic/bebra-kvn
+https://github.com/krambovic/lumen-kvn
 
 Current upstream `youtubediscord/zapret-kvn` is distributed under GPL-3.0.
 This fork keeps upstream/fork attribution and distributes the application
@@ -15,7 +15,7 @@ source under GPL-3.0 as shown in `LICENSE`.
 Earlier MIT attribution from the upstream history is preserved in this notice:
 
 - Copyright (c) 2026 youtubediscord/zapret-kvn contributors
-- Copyright (c) 2026 krambovic/bebra-kvn contributors
+- Copyright (c) 2026 krambovic/lumen-kvn contributors
 
 Bundled third-party components keep their own licenses and notices:
 

@@ -21,7 +21,7 @@ from ...subprocess_utils import (
 )
 
 TUN2SOCKS_PATH_DEFAULT = BASE_DIR / "core" / "tun2socks.exe"
-TUN_DEVICE_NAME = "BebraVPN_TUN"
+TUN_DEVICE_NAME = "LumenKVN_TUN"
 TUN_GW = "172.19.0.1"
 TUN_ADDR = "172.19.0.2"
 TUN_MASK = "255.255.255.252"

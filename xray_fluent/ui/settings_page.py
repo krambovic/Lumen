@@ -270,7 +270,7 @@ class SettingsPage(QWidget):
         self.always_admin_card = SwitchSettingCard(
             FIF.POWER_BUTTON,
             "Всегда запускать от администратора",
-            "Windows будет запрашивать повышенные права при следующем запуске Bebra VPN",
+            "Windows будет запрашивать повышенные права при следующем запуске Lumen KVN",
             parent=startup_group,
         )
         self.zapret_autostart_card = SwitchSettingCard(

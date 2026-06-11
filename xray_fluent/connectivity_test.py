@@ -33,7 +33,7 @@ class ConnectivityTestWorker(QThread):
                 )
             )
 
-        request = Request(self._url, headers={"User-Agent": f"BebraVPN/{APP_VERSION}"})
+        request = Request(self._url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
         started = time.perf_counter()
         try:
             with opener.open(request, timeout=self._timeout) as response:

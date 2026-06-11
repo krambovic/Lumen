@@ -5,7 +5,7 @@ import App 1.0
 import "."
 
 // Faithful port of ui/about_page.py: a flat column (no card) with the big
-// "Bebra VPN" title, a muted version caption, a hairline separator, three
+// "Lumen KVN" title, a muted version caption, a hairline separator, three
 // body paragraphs, a second separator, the "Ссылки" subtitle with the two
 // link buttons (Telegram канал / Купить подписку) and the footer caption.
 FluentScroll {
@@ -43,7 +43,7 @@ FluentScroll {
             color: Theme.text
             font.family: Theme.fontFamily
             font.pixelSize: 15
-            text: "Bebra VPN — уникальный туннель до любой страны мира, созданный передовыми мировыми инженерами (не является тем чем вы думаете)."
+            text: "Lumen KVN — уникальный туннель до любой страны мира, созданный передовыми мировыми инженерами (не является тем чем вы думаете)."
         }
         Text {
             Layout.fillWidth: true

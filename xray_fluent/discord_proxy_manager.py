@@ -91,7 +91,7 @@ def _write_droute_notice() -> None:
     DROUTE_NOTICE.write_text(
         "droute is an external GPL-3.0 component downloaded from:\n"
         f"{DROUTE_SOURCE_URL}\n\n"
-        "Bebra VPN does not embed droute source code. The external droute binary is used\n"
+        "Lumen KVN does not embed droute source code. The external droute binary is used\n"
         "to install a Discord-local version.dll loader, droute.dll payload and Squirrel\n"
         "updater hook for Discord TCP/UDP SOCKS5 proxying.\n",
         encoding="utf-8",
@@ -105,7 +105,7 @@ def ensure_droute_bundle() -> Path:
         return DROUTE_EXE
 
     tmp_zip = DROUTE_DIR / f"droute-{DROUTE_VERSION}.zip"
-    request = Request(DROUTE_ZIP_URL, headers={"User-Agent": f"BebraVPN/{APP_VERSION}"})
+    request = Request(DROUTE_ZIP_URL, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     with urlopen(request, timeout=45) as response:
         payload = response.read()
     if len(payload) < 1024:
@@ -275,7 +275,7 @@ class DiscordProxyManager:
         if not installs:
             return DiscordProxyResult(False, "Discord not found")
         if int(socks_port) <= 0:
-            return DiscordProxyResult(False, "Bebra VPN SOCKS5 port not found")
+            return DiscordProxyResult(False, "Lumen KVN SOCKS5 port not found")
 
         try:
             exe = ensure_droute_bundle()

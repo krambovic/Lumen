@@ -391,7 +391,7 @@ class AppController(QObject):
         if not is_process_elevated():
             self.status.emit(
                 "warning",
-                "Bebra VPN запущен без прав администратора. TUN, Zapret и WinDivert могут работать нестабильно.",
+                "Lumen KVN запущен без прав администратора. TUN, Zapret и WinDivert могут работать нестабильно.",
             )
         return True
 
@@ -1075,7 +1075,7 @@ class AppController(QObject):
         if getattr(self, "_transition_thread", None) is not None:
             return
         thread = QThread()
-        thread.setObjectName("bebra-transition")
+        thread.setObjectName("lumen-transition")
         worker = _TransitionWorker(self)
         worker.moveToThread(thread)
         self._transition_run.connect(worker.execute)
@@ -1171,7 +1171,7 @@ class AppController(QObject):
                 creationflags=0x08000000,
             )
             interfaces = result_output_text(result)
-            for interface_name in ("BebraVPN_TUN", "ZapretKVN_TUN"):
+            for interface_name in ("LumenKVN_TUN", "LumenKVN_TUN"):
                 if interface_name not in interfaces:
                     continue
                 _sp.run(
@@ -1333,7 +1333,7 @@ class AppController(QObject):
     def toggle_connection(self) -> None:
         current_target = self._desired_connected if (self._transition_active or self._transition_pending) else self.connected
         if not current_target and self.state.settings.tun_mode and not is_process_elevated():
-            self.status.emit("warning", "Для VPN (TUN) нужны права администратора. Перезапускаю Bebra VPN с повышенными правами.")
+            self.status.emit("warning", "Для VPN (TUN) нужны права администратора. Перезапускаю Lumen KVN с повышенными правами.")
             self.admin_relaunch_requested.emit()
             return
         self._desired_connected = not current_target
@@ -1361,7 +1361,7 @@ class AppController(QObject):
         if not self.state.settings.discord_proxy_enabled:
             return
         if not self.connected and not self._desired_connected:
-            self.status.emit("warning", "Сначала запустите прокси Bebra VPN, потом включите Discord voice через прокси")
+            self.status.emit("warning", "Сначала запустите прокси Lumen KVN, потом включите Discord voice через прокси")
             return
         result = self.discord_proxy.enable(int(DEFAULT_DISCORD_SOCKS_PORT))
         self._log(f"[discord-proxy] enable: {result.message}")
@@ -1426,7 +1426,7 @@ class AppController(QObject):
                     if is_process_elevated():
                         self.status.emit("success", "Запуск от имени администратора включён")
                     else:
-                        self.status.emit("warning", "Запуск от имени администратора включён. Перезапускаю Bebra VPN с повышенными правами.")
+                        self.status.emit("warning", "Запуск от имени администратора включён. Перезапускаю Lumen KVN с повышенными правами.")
                         self.admin_relaunch_requested.emit()
                 else:
                     self.status.emit("info", "Запуск от имени администратора отключён")

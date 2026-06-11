@@ -270,7 +270,7 @@ def _fetch_subscription(url: str) -> tuple[str, dict]:
 
     userinfo берётся из HTTP-заголовка subscription-userinfo и/или из JSON-тела.
     """
-    request = Request(url, headers={"User-Agent": "BebraVPN-Subscription/1.0"})
+    request = Request(url, headers={"User-Agent": "LumenKVN-Subscription/1.0"})
     with urlopen(request, timeout=20) as response:
         raw = response.read()
         try:

@@ -93,25 +93,26 @@ jobs:
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BebraVPN-portable
-          path: dist/BebraVPN/
+          name: LumenKVN-portable
+          path: dist/LumenKVN/
 
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "Bebra VPN ${{ env.RELEASE_TAG }}"
+          name: "Lumen KVN ${{ env.RELEASE_TAG }}"
           body: |
             ## What's Changed
 
-            - [Feature]: Добавлен отдельный nightly-дизайн на Qt Quick / QML.
-            - [Chore]: Stable и Nightly распространяются параллельно в одном релизе.
-            - [Fix]: Апдейтер выбирает архив строго по своему каналу.
+            - [Feature]: Полный ребрендинг проекта в Lumen KVN.
+            - [Feature]: Добавлен временный логотип Lumen KVN для приложения, установщика и релизов.
+            - [Chore]: Апдейтер теперь проверяет релизы krambovic/lumen-kvn.
+            - [Chore]: Stable и Nightly публикуются в одном релизе отдельными setup/portable assets.
           generate_release_notes: false
           make_latest: true
           files: |
-            dist/BebraVPN-Setup-windows-x64.exe
-            dist/BebraVPN-portable-windows-x64.zip
-            dist/BebraVPN-nightly-Setup-windows-x64.exe
-            dist/BebraVPN-nightly-portable-windows-x64.zip
+            dist/LumenKVN-Setup-windows-x64.exe
+            dist/LumenKVN-portable-windows-x64.zip
+            dist/LumenKVN-nightly-Setup-windows-x64.exe
+            dist/LumenKVN-nightly-portable-windows-x64.zip

@@ -8,7 +8,7 @@ __pycache__/
 build/
 dist/
 *.spec
-!BebraVPN-qml.spec
+!LumenKVN-qml.spec
 
 # Core binaries (downloaded by CI)
 core/

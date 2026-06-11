@@ -3,7 +3,7 @@
 #endif
 
 #ifndef SourceDir
-#define SourceDir "..\dist\BebraVPN"
+#define SourceDir "..\dist\LumenKVN"
 #endif
 
 #ifndef OutputDir
@@ -18,28 +18,28 @@
 #endif
 
 #ifndef AppNameValue
-#define AppNameValue "Bebra VPN"
+#define AppNameValue "Lumen KVN"
 #endif
 
 #ifndef OutputBaseName
-#define OutputBaseName "BebraVPN-Setup-windows-x64"
+#define OutputBaseName "LumenKVN-Setup-windows-x64"
 #endif
 
 [Setup]
 AppId={#AppId}
 AppName={#AppNameValue}
 AppVersion={#AppVersion}
-AppPublisher=Bebra VPN
-AppCopyright=Copyright (c) youtubediscord/zapret-kvn contributors and krambovic/bebra-kvn contributors
-AppPublisherURL=https://github.com/krambovic/bebra-kvn
-AppSupportURL=https://github.com/krambovic/bebra-kvn/issues
-AppUpdatesURL=https://github.com/krambovic/bebra-kvn/releases
+AppPublisher=Lumen KVN
+AppCopyright=Copyright (c) youtubediscord/zapret-kvn contributors and krambovic/lumen-kvn contributors
+AppPublisherURL=https://github.com/krambovic/lumen-kvn
+AppSupportURL=https://github.com/krambovic/lumen-kvn/issues
+AppUpdatesURL=https://github.com/krambovic/lumen-kvn/releases
 DefaultDirName={autopf}\{#AppNameValue}
 DefaultGroupName={#AppNameValue}
 DisableProgramGroupPage=yes
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBaseName}
-SetupIconFile=..\assets\BebraVPN.ico
+SetupIconFile=..\assets\LumenKVN.ico
 LicenseFile=..\LICENSE
 Compression=lzma2
 SolidCompression=yes
@@ -49,8 +49,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 CloseApplications=yes
 RestartApplications=no
-UninstallDisplayIcon={app}\BebraVPN.exe
-VersionInfoCompany=Bebra VPN
+UninstallDisplayIcon={app}\LumenKVN.exe
+VersionInfoCompany=Lumen KVN
 VersionInfoDescription={#AppNameValue} installer
 VersionInfoProductName={#AppNameValue}
 VersionInfoProductVersion={#AppVersion}
@@ -66,12 +66,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#AppNameValue}"; Filename: "{app}\BebraVPN.exe"; WorkingDir: "{app}"
+Name: "{group}\{#AppNameValue}"; Filename: "{app}\LumenKVN.exe"; WorkingDir: "{app}"
 Name: "{group}\Удалить {#AppNameValue}"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\{#AppNameValue}"; Filename: "{app}\BebraVPN.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{commondesktop}\{#AppNameValue}"; Filename: "{app}\LumenKVN.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\BebraVPN.exe"; Description: "Запустить Bebra VPN"; Flags: nowait postinstall skipifsilent runascurrentuser
+Filename: "{app}\LumenKVN.exe"; Description: "Запустить Lumen KVN"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [UninstallRun]
-Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN ""Bebra VPN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupTask"
+Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN ""Lumen KVN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupTask"

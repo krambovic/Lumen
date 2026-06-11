@@ -188,7 +188,7 @@ class AppBridge(QObject):
         except Exception:
             pass
         if not relaunch_as_admin():
-            self.toast.emit("error", "Не удалось перезапустить Bebra VPN от имени администратора")
+            self.toast.emit("error", "Не удалось перезапустить Lumen KVN от имени администратора")
             return
         app = QGuiApplication.instance()
         if app is not None:
@@ -620,7 +620,7 @@ class AppBridge(QObject):
         from PyQt6.QtWidgets import QFileDialog
         from pathlib import Path
         path, _ = QFileDialog.getSaveFileName(
-            None, "Сохранить резервную копию", "bebra-backup.json",
+            None, "Сохранить резервную копию", "lumen-backup.json",
             "Резервная копия (*.json);;Все файлы (*.*)"
         )
         if not path:

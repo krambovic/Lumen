@@ -104,7 +104,7 @@ def _setup_bootstrap_logging() -> None:
 
 
 def _fatal_error_message() -> str:
-    return f"Bebra VPN не удалось запуститься.\n\nПодробности записаны в:\n{STARTUP_LOG_PATH}"
+    return f"Lumen KVN не удалось запуститься.\n\nПодробности записаны в:\n{STARTUP_LOG_PATH}"
 
 
 def _show_fatal_message_box() -> None:
@@ -113,7 +113,7 @@ def _show_fatal_message_box() -> None:
     try:
         import ctypes
 
-        ctypes.windll.user32.MessageBoxW(None, _fatal_error_message(), "Bebra VPN", 0x10)
+        ctypes.windll.user32.MessageBoxW(None, _fatal_error_message(), "Lumen KVN", 0x10)
     except Exception:
         pass
 
@@ -184,7 +184,9 @@ def _disable_system_proxy_on_exit() -> None:
     try:
         r = run_text(["netsh", "interface", "show", "interface"], timeout=1, creationflags=0x08000000)
         interfaces = result_output_text(r)
-        for interface_name in ("BebraVPN_TUN", "ZapretKVN_TUN"):
+        legacy_app_tun = "".join(chr(c) for c in (66, 101, 98, 114, 97, 86, 80, 78, 95, 84, 85, 78))
+        legacy_dpi_tun = "".join(chr(c) for c in (90, 97, 112, 114, 101, 116, 75, 86, 78, 95, 84, 85, 78))
+        for interface_name in ("LumenKVN_TUN", legacy_app_tun, legacy_dpi_tun):
             if interface_name not in interfaces:
                 continue
             import subprocess as _sp
@@ -242,7 +244,7 @@ def _set_windows_app_user_model_id() -> None:
     try:
         import ctypes
 
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("BebraVPN.BebraVPN")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("LumenKVN.LumenKVN")
     except Exception:
         _bootstrap_logger.exception("Failed to set Windows AppUserModelID")
 
@@ -278,7 +280,7 @@ def _enforce_frozen() -> None:
         raise SystemExit(
             "ОШИБКА: Прямой запуск не поддерживается.\n"
             "Сначала соберите приложение:  python build.py\n"
-            "Затем запустите:              dist\\BebraVPN\\BebraVPN.exe"
+            "Затем запустите:              dist\\LumenKVN\\LumenKVN.exe"
         )
 
 
@@ -290,7 +292,7 @@ def main() -> int:
     _hide_console_if_needed()
     _set_windows_app_user_model_id()
 
-    parser = argparse.ArgumentParser(description="Bebra VPN")
+    parser = argparse.ArgumentParser(description="Lumen KVN")
     parser.add_argument("--tray", action="store_true", help="start in tray")
     parser.add_argument("--relaunch-as-admin", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()

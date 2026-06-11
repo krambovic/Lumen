@@ -291,12 +291,12 @@ class MainWindow(FluentWindow):
 
     def _relaunch_as_admin(self) -> None:
         if is_process_elevated():
-            self._show_status("info", "Bebra VPN уже запущен от имени администратора")
+            self._show_status("info", "Lumen KVN уже запущен от имени администратора")
             self._refresh_admin_title()
             return
         self.controller.save()
         if not relaunch_as_admin():
-            self._show_status("error", "Не удалось перезапустить Bebra VPN от имени администратора")
+            self._show_status("error", "Не удалось перезапустить Lumen KVN от имени администратора")
             return
         self._quit_app()
 
@@ -862,7 +862,7 @@ class MainWindow(FluentWindow):
         from copy import deepcopy
         if checked and not is_process_elevated():
             self.dashboard_page.set_settings_snapshot(self.controller.state.settings)
-            self._show_status("warning", "Для VPN (TUN) нужны права администратора. Перезапускаю Bebra VPN с повышенными правами.")
+            self._show_status("warning", "Для VPN (TUN) нужны права администратора. Перезапускаю Lumen KVN с повышенными правами.")
             self._relaunch_as_admin()
             return
         settings = deepcopy(self.controller.state.settings)
@@ -957,7 +957,7 @@ class MainWindow(FluentWindow):
             line = raw_line.strip()
             if not line:
                 continue
-            if line.lower().startswith(("notice ", "notice:", "sha256", "babravpn-", "bebravpn-")):
+            if line.lower().startswith(("notice ", "notice:", "sha256", "babravpn-", "lumenkvn-")):
                 continue
             if re.fullmatch(r"[0-9a-fA-F]{64}", line):
                 continue
@@ -979,7 +979,7 @@ class MainWindow(FluentWindow):
                 continue
 
             clean = line.lstrip("-*• ").strip().replace("`", "").strip()
-            if clean.lower().startswith(("notice ", "notice:", "sha256", "babravpn-", "bebravpn-")):
+            if clean.lower().startswith(("notice ", "notice:", "sha256", "babravpn-", "lumenkvn-")):
                 continue
             if re.fullmatch(r"[0-9a-fA-F]{64}", clean):
                 continue
@@ -991,7 +991,7 @@ class MainWindow(FluentWindow):
         if not items:
             for raw_line in lines:
                 clean = raw_line.strip().lstrip("-*•# ").replace("`", "").strip()
-                if clean.lower().startswith(("notice ", "notice:", "sha256", "babravpn-", "bebravpn-")):
+                if clean.lower().startswith(("notice ", "notice:", "sha256", "babravpn-", "lumenkvn-")):
                     continue
                 if re.fullmatch(r"[0-9a-fA-F]{64}", clean):
                     continue

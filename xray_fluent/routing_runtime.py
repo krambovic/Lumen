@@ -13,12 +13,12 @@ from .service_presets import SERVICE_PRESETS_BY_ID
 
 _SINGBOX_RULE_SET_DIR = DATA_DIR / "runtime" / "sing-box-rule-sets"
 _SINGBOX_RULE_SET_SOURCES = {
-    "geosite:bebra-exclude": {
+    "geosite:lumen-exclude": {
         "domains": ("zapret/lists/list-exclude.txt",),
         "domain_suffix": (),
         "ips": (),
     },
-    "geoip:bebra-exclude": {
+    "geoip:lumen-exclude": {
         "domains": (),
         "domain_suffix": (),
         "ips": ("zapret/lists/ipset-exclude.txt",),
@@ -68,7 +68,7 @@ _SINGBOX_RULE_SET_SOURCES = {
 _SINGBOX_MANAGED_RULE_SET_TAGS = {key.replace(":", "-") for key in _SINGBOX_RULE_SET_SOURCES}
 
 _XRAY_UNSUPPORTED_GEOIP_CODES = {
-    "geoip:bebra-exclude",
+    "geoip:lumen-exclude",
     "geoip:ru-blocked",
     "geoip:ru-blocked-community",
 }
@@ -239,12 +239,12 @@ def apply_xray_gui_routing(payload: dict[str, Any], routing: RoutingSettings, se
     if not isinstance(rules, list):
         rules = []
         route["rules"] = rules
-    rules[:] = [rule for rule in rules if not _is_legacy_bebra_xray_route_rule(rule)]
+    rules[:] = [rule for rule in rules if not _is_legacy_lumen_xray_route_rule(rule)]
     insert_at = _xray_runtime_rule_insert_index(rules)
     rules[insert_at:insert_at] = build_xray_gui_routing_rules(routing, settings)
 
 
-def _is_legacy_bebra_xray_route_rule(rule: Any) -> bool:
+def _is_legacy_lumen_xray_route_rule(rule: Any) -> bool:
     if not isinstance(rule, dict):
         return False
     outbound = str(rule.get("outboundTag") or "")
@@ -316,7 +316,7 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         rules = []
         route["rules"] = rules
 
-    rules[:] = [rule for rule in rules if not _is_legacy_bebra_singbox_route_rule(rule)]
+    rules[:] = [rule for rule in rules if not _is_legacy_lumen_singbox_route_rule(rule)]
     gui_rules, route_rule_sets = build_singbox_gui_route_rules(routing)
     dns_rules, dns_rule_sets = build_singbox_gui_dns_rules(routing)
     _ensure_singbox_rule_sets(route, route_rule_sets | dns_rule_sets)
@@ -340,7 +340,7 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
             existing_dns_rules = []
             dns["rules"] = existing_dns_rules
         existing_dns_rules[:] = [
-            rule for rule in existing_dns_rules if not _is_bebra_singbox_dns_rule(rule)
+            rule for rule in existing_dns_rules if not _is_lumen_singbox_dns_rule(rule)
         ]
         if dns_rules:
             existing_dns_rules[0:0] = dns_rules
@@ -445,7 +445,7 @@ def build_singbox_gui_dns_rules(routing: RoutingSettings) -> tuple[list[dict[str
     return rules, rule_sets
 
 
-def _is_legacy_bebra_singbox_route_rule(rule: Any) -> bool:
+def _is_legacy_lumen_singbox_route_rule(rule: Any) -> bool:
     if not isinstance(rule, dict):
         return False
     network = rule.get("network")
@@ -485,7 +485,7 @@ def _is_legacy_bebra_singbox_route_rule(rule: Any) -> bool:
     return bool(generated_keys & set(rule)) and set(rule).issubset(allowed_keys)
 
 
-def _is_bebra_singbox_dns_rule(rule: Any) -> bool:
+def _is_lumen_singbox_dns_rule(rule: Any) -> bool:
     if not isinstance(rule, dict):
         return False
     action = str(rule.get("action") or "")

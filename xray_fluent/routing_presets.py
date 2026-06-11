@@ -21,8 +21,8 @@ BLOCKED_PROXY_RULES = (
 )
 
 BLOCKED_DIRECT_RULES = (
-    "geosite:bebra-exclude",
-    "geoip:bebra-exclude",
+    "geosite:lumen-exclude",
+    "geoip:lumen-exclude",
 )
 
 

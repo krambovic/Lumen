@@ -13,7 +13,7 @@ if sys.platform == "win32":
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APP_COMPAT_LAYERS_KEY = r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
 RUNASADMIN_FLAG = "RUNASADMIN"
-TASK_NAME = "Bebra VPN"
+TASK_NAME = "Lumen KVN"
 CREATE_NO_WINDOW = 0x08000000
 
 

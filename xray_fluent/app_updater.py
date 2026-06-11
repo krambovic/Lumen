@@ -26,9 +26,9 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import APP_VERSION, BASE_DIR
 
-GITHUB_REPO = "krambovic/bebra-kvn"
+GITHUB_REPO = "krambovic/lumen-kvn"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-USER_AGENT = f"BebraVPN/{APP_VERSION}"
+USER_AGENT = f"LumenKVN/{APP_VERSION}"
 
 
 def _powershell_literal(value: str) -> str:
@@ -149,7 +149,7 @@ def _asset_score(asset: dict, prefer_qml: bool = False) -> tuple[int, str]:
     if not name.endswith(".zip"):
         return (0, name)
     score = 1
-    if "bebravpn" in name:
+    if "lumenkvn" in name:
         score += 2
     if "windows" in name:
         score += 2
@@ -419,7 +419,7 @@ class UpdateDownloader(QThread):
     def run(self) -> None:
         tmp_dir: Path | None = None
         try:
-            tmp_dir = Path(tempfile.mkdtemp(prefix="bebravpn_update_"))
+            tmp_dir = Path(tempfile.mkdtemp(prefix="lumenkvn_update_"))
             zip_path = tmp_dir / "update.zip"
 
             downloaded_ok = False
@@ -485,10 +485,10 @@ class UpdateDownloader(QThread):
             with zipfile.ZipFile(zip_path, "r") as zf:
                 safe_extract_zip(zf, extract_dir)
 
-            exe_name = "BebraVPN.exe"
+            exe_name = "LumenKVN.exe"
             source_dir = _resolve_extracted_app_dir(extract_dir, exe_name)
             if not (source_dir / exe_name).is_file():
-                self.error.emit("Архив обновления не содержит BebraVPN.exe")
+                self.error.emit("Архив обновления не содержит LumenKVN.exe")
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
 

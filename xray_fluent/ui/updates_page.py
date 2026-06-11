@@ -39,7 +39,7 @@ class UpdatesPage(QWidget):
         # ── App version info ──
         app_box = QVBoxLayout()
         app_box.setSpacing(6)
-        app_title = BodyLabel("Bebra VPN", self)
+        app_title = BodyLabel("Lumen KVN", self)
         app_title.setStyleSheet("font-weight: bold; font-size: 16px;")
         app_box.addWidget(app_title)
 

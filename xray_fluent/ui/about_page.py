@@ -27,7 +27,7 @@ class AboutPage(QWidget):
         root.setSpacing(16)
 
         # ── Title ──
-        title = TitleLabel("Bebra VPN", self)
+        title = TitleLabel("Lumen KVN", self)
         root.addWidget(title)
 
         version = CaptionLabel(f"v{APP_VERSION}", self)
@@ -42,7 +42,7 @@ class AboutPage(QWidget):
 
         # ── Description ──
         desc1 = BodyLabel(
-            "Bebra VPN — уникальный туннель до любой страны мира, "
+            "Lumen KVN — уникальный туннель до любой страны мира, "
             "созданный передовыми мировыми инженерами "
             "(не является тем чем вы думаете).",
             self,

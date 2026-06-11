@@ -3,7 +3,7 @@
 ## Purpose
 
 This document fixes the intended editor model for runtime engine configs in
-Bebra VPN.
+Lumen KVN.
 
 The design goal is explicit:
 
@@ -269,7 +269,7 @@ Examples:
 
 ## V1 Direction
 
-This is the chosen V1 direction for config editing in Bebra VPN:
+This is the chosen V1 direction for config editing in Lumen KVN:
 
 - one text editor;
 - template files;

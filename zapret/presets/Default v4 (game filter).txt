@@ -204,7 +204,7 @@
 
 --new
 
---name=ZapretKVN UDP
+--name=LumenKVN UDP
 --filter-udp=443-65535
 --ipset=lists/ipset-zapretkvn.txt
 --out-range=-n8
@@ -334,7 +334,7 @@
 
 --new
 
---name=ZapretKVN TCP
+--name=LumenKVN TCP
 --filter-tcp=80,443-65535
 --ipset=lists/ipset-zapretkvn.txt
 --out-range=-n8

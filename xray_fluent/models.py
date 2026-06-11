@@ -356,6 +356,6 @@ def _normalize_tun_engine(value: Any) -> str:
     engine = str(value or "").strip().lower()
     if engine == "tun2socks":
         return "tun2socks"
-    # v2rayN-style TUN is sing-box based. Older Bebra VPN builds stored
+    # v2rayN-style TUN is sing-box based. Older Lumen KVN builds stored
     # "xray" here, which could produce unstable DNS/routing on Windows.
     return "singbox"

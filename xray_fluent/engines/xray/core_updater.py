@@ -120,7 +120,7 @@ def _normalize_channel(value: str) -> str:
 
 
 def _request_json(url: str) -> object:
-    request = Request(url, headers={"User-Agent": f"BebraVPN/{APP_VERSION}"})
+    request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     with urlopen(request, timeout=12) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -167,7 +167,7 @@ def _extract_digest(value: str) -> str:
 
 
 def _fetch_dgst_hash(url: str) -> str:
-    request = Request(url, headers={"User-Agent": f"BebraVPN/{APP_VERSION}"})
+    request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     with urlopen(request, timeout=12) as response:
         body = response.read().decode("utf-8", errors="replace")
     return _extract_digest(body)
@@ -218,7 +218,7 @@ def resolve_xray_release(channel: str, feed_url: str = "") -> XrayCoreRelease | 
 def _download_file(url: str, destination: Path, on_progress=None) -> None:
     """Download file with optional progress callback(downloaded, total)."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    request = Request(url, headers={"User-Agent": f"BebraVPN/{APP_VERSION}"})
+    request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     with urlopen(request, timeout=120) as response:
         total = int(response.headers.get("Content-Length", 0))
         downloaded = 0

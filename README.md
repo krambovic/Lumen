@@ -1,20 +1,21 @@
-# Bebra VPN
+# Lumen KVN
 
 <p align="center">
-  <img src="assets/BebraVPN.png" alt="Bebra VPN" width="160">
+  <img src="assets/LumenKVN.png" alt="Lumen KVN" width="160">
 </p>
 
-Bebra VPN (`bebra-kvn`) — форк проекта [youtubediscord/zapret-kvn](https://github.com/youtubediscord/zapret-kvn).
+Lumen KVN (`lumen-kvn`) — форк проекта [youtubediscord/zapret-kvn](https://github.com/youtubediscord/zapret-kvn) и новая основная ветка клиента.
 
-Проект сохраняет copyright и атрибуцию upstream-репозитория. Текущая upstream-лицензия `youtubediscord/zapret-kvn` — GPL-3.0, все изменения этого форка публикуются в [krambovic/bebra-kvn](https://github.com/krambovic/bebra-kvn).
+Проект сохраняет copyright и атрибуцию upstream-репозитория. Текущая upstream-лицензия `youtubediscord/zapret-kvn` — GPL-3.0, все изменения этого форка публикуются в [krambovic/lumen-kvn](https://github.com/krambovic/lumen-kvn).
 
 ## Что Это
 
-Bebra VPN объединяет в одном Windows-клиенте xray-core, sing-box и встроенный zapret/DPI bypass. Приложение рассчитано на быстрый запуск без ручного редактирования JSON-конфигов.
+Lumen KVN объединяет в одном Windows-клиенте xray-core, sing-box и встроенный zapret/DPI bypass. Приложение рассчитано на быстрый запуск без ручного редактирования JSON-конфигов.
 
 Основные возможности:
 
 - импорт VLESS, Trojan, Shadowsocks и VMess ключей;
+- подписки и автообновление подписок;
 - системный proxy-режим;
 - TUN/VPN-режим;
 - встроенный zapret;
@@ -25,12 +26,11 @@ Bebra VPN объединяет в одном Windows-клиенте xray-core, s
 
 ## Установка
 
-Скачайте последнюю версию на странице [Releases](https://github.com/krambovic/bebra-kvn/releases).
+Скачайте последнюю версию на странице [Releases](https://github.com/krambovic/lumen-kvn/releases).
 
-На данный момент рекомендуется к скачиванию nightly-build
-
-- `BebraVPN-Setup-windows-x64.exe` — обычный установщик Windows. Приложение появится в списке установленных программ, в меню Пуск и, при выборе опции, на рабочем столе.
-- `BebraVPN-portable-windows-x64.zip` — portable-версия без установки.
+- `LumenKVN-Setup-windows-x64.exe` — обычный установщик Windows.
+- `LumenKVN-portable-windows-x64.zip` — portable-версия без установки.
+- `LumenKVN-nightly-Setup-windows-x64.exe` и `LumenKVN-nightly-portable-windows-x64.zip` — nightly-сборка с QML-интерфейсом.
 
 Для TUN/VPN и zapret требуются права администратора.
 
@@ -39,9 +39,9 @@ Bebra VPN объединяет в одном Windows-клиенте xray-core, s
 Этот репозиторий является форком:
 
 - upstream: [youtubediscord/zapret-kvn](https://github.com/youtubediscord/zapret-kvn)
-- fork: [krambovic/bebra-kvn](https://github.com/krambovic/bebra-kvn)
+- fork: [krambovic/lumen-kvn](https://github.com/krambovic/lumen-kvn)
 
-Если вы распространяете измененные копии, сохраняйте GPL-3.0 license notice и сведения об upstream/fork.
+Если вы распространяете изменённые копии, сохраняйте GPL-3.0 license notice и сведения об upstream/fork.
 
 ## Сторонние Компоненты
 
