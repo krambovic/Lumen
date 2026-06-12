@@ -1542,17 +1542,32 @@ class AppController(QObject):
 
     def _on_xray_log(self, line: str) -> None:
         # In TUN mode, throttle noisy per-connection logs to prevent UI freeze
-        if self.state.settings.tun_mode and "accepted" in line:
+        if self.state.settings.tun_mode and self._is_noisy_tun_log(line):
             self._tun_log_count = getattr(self, "_tun_log_count", 0) + 1
-            # Only log to file, skip UI — emit summary every 100 lines
-            self._logger.info(line)
-            self.recent_logs.append(line)
-            if len(self.recent_logs) > 5000:
-                self.recent_logs = self.recent_logs[-5000:]
+            # Skip per-connection noise in both UI and app.log; keep a compact
+            # heartbeat so diagnostics still show that TUN is routing traffic.
             if self._tun_log_count % 100 == 0:
+                self._logger.info("[tun] %d noisy connection logs suppressed", self._tun_log_count)
                 self.log_line.emit(f"[tun] {self._tun_log_count} connections routed...")
             return
         self._log(line)
+
+    @staticmethod
+    def _is_noisy_tun_log(line: str) -> bool:
+        text = line.lower()
+        if "accepted" in text:
+            return True
+        if "connection upload closed" in text or "connection download closed" in text:
+            return True
+        if "an existing connection was forcibly closed by the remote host" in text:
+            return True
+        if "wsarecv" in text or "wsasend" in text:
+            return True
+        if "dns: exchange failed for" in text and "context deadline exceeded" in text:
+            return True
+        if "dial tcp connection: context deadline exceeded" in text:
+            return True
+        return False
 
     def _on_xray_error(self, message: str) -> None:
         self._log(f"[xray-error] {message}")

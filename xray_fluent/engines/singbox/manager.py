@@ -43,6 +43,7 @@ class SingBoxManager(QObject):
         self._startup_failure_reported = False
         self._runtime_error_reported = False
         self._last_output_lines: deque[str] = deque(maxlen=20)
+        self._suppressed_noisy_lines = 0
         self._last_exit_code: int | None = None
         self._exe_path: Path | None = None
 
@@ -87,9 +88,10 @@ class SingBoxManager(QObject):
             self._running = False
             self.state_changed.emit(False)
 
-        # Kill any orphaned sing-box processes to free the TUN adapter
+        # Kill only orphaned processes before start. Runtime uses a fresh
+        # xftun* name every time, so a full adapter cleanup here only slows
+        # down the common path; retry cleanup still handles real conflicts.
         self._kill_orphaned(exe)
-        self.cleanup_orphaned_tun_adapters()
 
         # Set working directory to core/ so sing-box can find wintun.dll
         core_dir = exe.parent
@@ -97,6 +99,7 @@ class SingBoxManager(QObject):
         self._startup_failure_reported = False
         self._runtime_error_reported = False
         self._last_output_lines.clear()
+        self._suppressed_noisy_lines = 0
 
         # Try up to 3 times — wintun adapter may need time to be released
         for attempt in range(3):
@@ -193,8 +196,8 @@ class SingBoxManager(QObject):
         kill_timeout = 0.5 if fast else 2.0
         orphan_timeout = 2 if fast else 5
         final_timeout = 0.3 if fast else 1.0
-        cleanup_timeout = 1.0 if fast else 5.0
-        release_timeout = 1.5 if fast else 10.0
+        cleanup_timeout = 1.0 if fast else 2.0
+        release_timeout = 0.5 if fast else 1.0
 
         if not self._wait_proc(proc, terminate_timeout):
             try:
@@ -298,6 +301,13 @@ class SingBoxManager(QObject):
                     for line in text.splitlines():
                         clean = line.rstrip()
                         if clean:
+                            if not self._starting and self._is_noisy_runtime_line(clean):
+                                self._suppressed_noisy_lines += 1
+                                if self._suppressed_noisy_lines % 100 == 0:
+                                    self.log_received.emit(
+                                        f"[tun] {self._suppressed_noisy_lines} noisy connection logs suppressed..."
+                                    )
+                                continue
                             self._last_output_lines.append(clean)
                             self.log_received.emit(clean)
         except Exception:
@@ -356,20 +366,18 @@ class SingBoxManager(QObject):
         self,
         proc: subprocess.Popen[bytes],
         tun_interface_name: str,
-        max_wait: float = 18.0,
+        max_wait: float = 1.0,
     ) -> bool:
-        if os.name != "nt" or not tun_interface_name:
-            return True
-        step = 0.25
-        waited = 0.0
-        while waited < max_wait:
+        # Older builds polled Get-NetIPAddress through PowerShell until the
+        # adapter had IPv4. That made successful starts feel slow and could
+        # freeze transitions on Windows. sing-box exits quickly on real startup
+        # failures, so a short alive grace is enough for the UI transition.
+        deadline = time.monotonic() + max(0.2, max_wait)
+        while time.monotonic() < deadline:
             if proc.poll() is not None:
                 return False
-            if self._tun_interface_has_ipv4(tun_interface_name):
-                return True
-            sleep_with_events(step)
-            waited += step
-        return False
+            sleep_with_events(0.05)
+        return proc.poll() is None
 
     @staticmethod
     def _tun_interface_has_ipv4(tun_interface_name: str) -> bool:
@@ -419,6 +427,21 @@ class SingBoxManager(QObject):
             return
         self._startup_failure_reported = True
         self.error.emit(message)
+
+    @staticmethod
+    def _is_noisy_runtime_line(line: str) -> bool:
+        text = line.lower()
+        if "connection upload closed" in text or "connection download closed" in text:
+            return True
+        if "an existing connection was forcibly closed by the remote host" in text:
+            return True
+        if "wsarecv" in text or "wsasend" in text:
+            return True
+        if "dns: exchange failed for" in text and "context deadline exceeded" in text:
+            return True
+        if "dial tcp connection: context deadline exceeded" in text:
+            return True
+        return False
 
 
 def get_singbox_version(singbox_path: str) -> str | None:

@@ -608,16 +608,42 @@ def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any], *, enable_fina
     route = _ensure_dict(payload, "route")
     route["auto_detect_interface"] = True
     route["default_domain_resolver"] = {"server": "bootstrap-dns", "strategy": "prefer_ipv4"}
-    _ensure_singbox_dns_ipv4_preference(payload)
+    _ensure_singbox_dns_runtime_contract(payload)
     rules = _ensure_list(route, "rules")
     _ensure_singbox_tun_base_rules(rules, enable_final_fragment=enable_final_fragment)
 
 
-def _ensure_singbox_dns_ipv4_preference(payload: dict[str, Any]) -> None:
+def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any]) -> None:
     dns = payload.get("dns")
     if not isinstance(dns, dict):
         return
+    dns["independent_cache"] = True
     dns.setdefault("strategy", "prefer_ipv4")
+    for server in dns.get("servers") or []:
+        if not isinstance(server, dict):
+            continue
+        tag = str(server.get("tag") or "")
+        server_type = str(server.get("type") or "").strip().lower()
+        address = str(server.get("server") or "").strip().lower()
+        if tag == "proxy-dns" and server_type == "tcp" and address in {"8.8.8.8", "8.8.4.4"}:
+            # TCP/53 through some proxy nodes times out and spams sing-box logs.
+            # v2rayN defaults remote DNS to encrypted DNS; migrate old runtime
+            # templates to DoH while keeping the same tag used by routing rules.
+            server.clear()
+            server.update(
+                {
+                    "tag": "proxy-dns",
+                    "type": "https",
+                    "server": "dns.google",
+                    "server_port": 443,
+                    "path": "/dns-query",
+                    "domain_resolver": "bootstrap-dns",
+                    "detour": "proxy",
+                }
+            )
+            continue
+        if tag == "proxy-dns" and server_type in {"tls", "https"} and "domain_resolver" not in server:
+            server["domain_resolver"] = "bootstrap-dns"
 
 
 def _ensure_singbox_tun_base_rules(rules: list[Any], *, enable_final_fragment: bool = True) -> None:

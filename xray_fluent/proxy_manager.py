@@ -71,7 +71,12 @@ class ProxyManager:
             return {}
         values: dict[str, str | int] = {}
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, INTERNET_SETTINGS_KEY, 0, winreg.KEY_READ) as key:
-            for name, default in (("ProxyEnable", 0), ("ProxyServer", ""), ("ProxyOverride", "")):
+            for name, default in (
+                ("ProxyEnable", 0),
+                ("ProxyServer", ""),
+                ("ProxyOverride", ""),
+                ("AutoConfigURL", ""),
+            ):
                 try:
                     values[name], _ = winreg.QueryValueEx(key, name)
                 except FileNotFoundError:
@@ -88,6 +93,8 @@ class ProxyManager:
                 winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, str(values["ProxyServer"]))
             if "ProxyOverride" in values:
                 winreg.SetValueEx(key, "ProxyOverride", 0, winreg.REG_SZ, str(values["ProxyOverride"]))
+            if "AutoConfigURL" in values:
+                winreg.SetValueEx(key, "AutoConfigURL", 0, winreg.REG_SZ, str(values["AutoConfigURL"]))
 
     def _load_persisted_backup(self) -> dict[str, str | int] | None:
         if not self._backup_file.exists():
@@ -99,7 +106,7 @@ class ProxyManager:
         if not isinstance(payload, dict):
             return None
         result: dict[str, str | int] = {}
-        for key in ("ProxyEnable", "ProxyServer", "ProxyOverride"):
+        for key in ("ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL"):
             if key in payload:
                 result[key] = payload[key]
         return result or None
@@ -171,15 +178,10 @@ class ProxyManager:
             self._backup = self._read_settings()
             self._persist_backup(self._backup)
 
-        if int(http_port) == int(socks_port):
-            proxy_server = f"{PROXY_HOST}:{int(socks_port)}"
-        else:
-            proxy_server = (
-                f"http={PROXY_HOST}:{http_port};"
-                f"https={PROXY_HOST}:{http_port};"
-                f"ftp={PROXY_HOST}:{http_port};"
-                f"socks={PROXY_HOST}:{socks_port}"
-            )
+        # v2rayN-style system proxy: WinINET points at the local mixed inbound.
+        # Xray `mixed` accepts both HTTP and SOCKS on this port, which is more
+        # reliable for Necko/Firefox than split protocol-specific ports.
+        proxy_server = f"{PROXY_HOST}:{int(socks_port)}"
 
         override = "<local>;localhost;127.*"
         if bypass_lan:
@@ -190,11 +192,12 @@ class ProxyManager:
                 "ProxyEnable": 1,
                 "ProxyServer": proxy_server,
                 "ProxyOverride": override,
+                "AutoConfigURL": "",
             }
         )
         if not self._set_wininet_connection_proxy(proxy_server, override, True):
             self._refresh_system_proxy()
-        self._firefox_proxy.enable()
+        self._firefox_proxy.enable(http_port=int(http_port), socks_port=int(socks_port), bypass_lan=bypass_lan)
 
     def disable(self, restore_previous: bool = True) -> None:
         if not self.is_supported:
@@ -203,7 +206,7 @@ class ProxyManager:
         if restore_previous and backup:
             self._write_settings(dict(backup))
         else:
-            self._write_settings({"ProxyEnable": 0})
+            self._write_settings({"ProxyEnable": 0, "ProxyServer": "", "ProxyOverride": "", "AutoConfigURL": ""})
         self._backup = None
         self._persist_backup(None)
         self._firefox_proxy.disable()
@@ -218,11 +221,10 @@ class ProxyManager:
 
 
 class FirefoxProxyManager:
-    """Make Firefox-family browsers follow Windows system proxy.
+    """Make Firefox-family browsers follow the Windows system proxy.
 
-    Firefox stores proxy behaviour in profile prefs (`network.proxy.type`).
-    Value 5 means "use system proxy". Lumen writes a tiny managed user.js and
-    restores the previous file on proxy shutdown.
+    This mirrors v2rayN's model: Windows gets a local mixed proxy endpoint,
+    while Necko profiles are nudged into `network.proxy.type = 5`.
     """
 
     _MARKER_BEGIN = "// Lumen KVN system proxy begin"
@@ -231,7 +233,7 @@ class FirefoxProxyManager:
     def __init__(self) -> None:
         self._backup_file = RUNTIME_DIR / "firefox_proxy_backup.json"
 
-    def enable(self) -> None:
+    def enable(self, *, http_port: int, socks_port: int, bypass_lan: bool = True) -> None:
         if sys.platform != "win32":
             return
         profiles = self._find_profiles()
@@ -243,8 +245,12 @@ class FirefoxProxyManager:
             key = str(profile)
             if key not in backup:
                 user_js = profile / "user.js"
-                backup[key] = user_js.read_text(encoding="utf-8", errors="replace") if user_js.exists() else None
-            self._write_user_js(profile)
+                prefs_js = profile / "prefs.js"
+                backup[key] = {
+                    "user.js": user_js.read_text(encoding="utf-8", errors="replace") if user_js.exists() else None,
+                    "prefs.js": prefs_js.read_text(encoding="utf-8", errors="replace") if prefs_js.exists() else None,
+                }
+            self._write_profile_prefs(profile)
             changed = True
         if changed:
             self._save_backup(backup)
@@ -255,19 +261,25 @@ class FirefoxProxyManager:
             return
         for profile_text, original in backup.items():
             profile = Path(profile_text)
-            user_js = profile / "user.js"
-            try:
-                if original is None:
-                    if user_js.exists():
-                        remaining = self._strip_managed_block(user_js.read_text(encoding="utf-8", errors="replace")).strip()
-                        if remaining:
-                            user_js.write_text(remaining + "\n", encoding="utf-8")
-                        else:
-                            user_js.unlink()
-                else:
-                    user_js.write_text(str(original), encoding="utf-8")
-            except Exception:
-                continue
+            files = {"user.js": original} if not isinstance(original, dict) else original
+            for file_name, content in files.items():
+                if file_name not in {"user.js", "prefs.js"}:
+                    continue
+                target = profile / file_name
+                try:
+                    if content is None:
+                        if target.exists():
+                            remaining = self._strip_managed_block(
+                                target.read_text(encoding="utf-8", errors="replace")
+                            ).strip()
+                            if remaining:
+                                target.write_text(remaining + "\n", encoding="utf-8")
+                            else:
+                                target.unlink()
+                    else:
+                        target.write_text(str(content), encoding="utf-8")
+                except Exception:
+                    continue
         self._save_backup({})
 
     def _find_profiles(self) -> list[Path]:
@@ -297,19 +309,23 @@ class FirefoxProxyManager:
                     profiles.append(child)
         return sorted(set(profiles))
 
-    def _write_user_js(self, profile: Path) -> None:
-        user_js = profile / "user.js"
-        existing = user_js.read_text(encoding="utf-8", errors="replace") if user_js.exists() else ""
-        existing = self._strip_managed_block(existing).rstrip()
-        block = "\n".join(
+    def _write_profile_prefs(self, profile: Path) -> None:
+        block = self._build_proxy_block()
+        for file_name in ("user.js", "prefs.js"):
+            target = profile / file_name
+            existing = target.read_text(encoding="utf-8", errors="replace") if target.exists() else ""
+            existing = self._strip_managed_block(existing).rstrip()
+            text = f"{existing}\n\n{block}\n" if existing else f"{block}\n"
+            target.write_text(text, encoding="utf-8")
+
+    def _build_proxy_block(self) -> str:
+        return "\n".join(
             [
                 self._MARKER_BEGIN,
                 'user_pref("network.proxy.type", 5);',
                 self._MARKER_END,
             ]
         )
-        text = f"{existing}\n\n{block}\n" if existing else f"{block}\n"
-        user_js.write_text(text, encoding="utf-8")
 
     def _strip_managed_block(self, text: str) -> str:
         start = text.find(self._MARKER_BEGIN)
@@ -321,20 +337,27 @@ class FirefoxProxyManager:
             end += 1
         return text[:start].rstrip() + ("\n" if text[:start].strip() and text[end:].strip() else "") + text[end:].lstrip()
 
-    def _load_backup(self) -> dict[str, str | None]:
+    def _load_backup(self) -> dict[str, object]:
         try:
             payload = json.loads(self._backup_file.read_text(encoding="utf-8"))
         except Exception:
             return {}
         if not isinstance(payload, dict):
             return {}
-        result: dict[str, str | None] = {}
+        result: dict[str, object] = {}
         for key, value in payload.items():
             if isinstance(key, str) and (value is None or isinstance(value, str)):
                 result[key] = value
+            elif isinstance(key, str) and isinstance(value, dict):
+                clean: dict[str, str | None] = {}
+                for file_name in ("user.js", "prefs.js"):
+                    content = value.get(file_name)
+                    if content is None or isinstance(content, str):
+                        clean[file_name] = content
+                result[key] = clean
         return result
 
-    def _save_backup(self, backup: dict[str, str | None]) -> None:
+    def _save_backup(self, backup: dict[str, object]) -> None:
         try:
             if backup:
                 self._backup_file.parent.mkdir(parents=True, exist_ok=True)

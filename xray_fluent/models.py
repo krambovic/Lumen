@@ -90,7 +90,7 @@ class RoutingSettings:
     dns_bootstrap_server: str = "1.1.1.1"  # DNS for direct traffic
     dns_bootstrap_type: str = "udp"        # udp | tcp | tls | https
     dns_proxy_server: str = "8.8.8.8"     # DNS for proxy traffic
-    dns_proxy_type: str = "tcp"            # tcp | tls | https
+    dns_proxy_type: str = "https"          # tcp | tls | https
     process_rules: list[dict[str, str]] = field(default_factory=list)  # [{"process": "chrome.exe", "action": "direct|proxy|block"}]
     process_preset_routes: dict[str, str] = field(default_factory=dict)  # {"telegram": "proxy", "windows_system": "direct"}
     service_routes: dict[str, str] = field(default_factory=dict)  # {"youtube": "proxy", "steam": "direct", ...}
@@ -126,7 +126,7 @@ class RoutingSettings:
             dns_bootstrap_server=str(data.get("dns_bootstrap_server") or "1.1.1.1"),
             dns_bootstrap_type=str(data.get("dns_bootstrap_type") or "udp"),
             dns_proxy_server=str(data.get("dns_proxy_server") or "8.8.8.8"),
-            dns_proxy_type=str(data.get("dns_proxy_type") or "tcp"),
+            dns_proxy_type=str(data.get("dns_proxy_type") or "https"),
             process_rules=list(data.get("process_rules") or []),
             process_preset_routes=dict(data.get("process_preset_routes") or {}),
             service_routes=dict(data.get("service_routes") or {}),

@@ -90,8 +90,11 @@
       },
       {
         "tag": "proxy-dns",
-        "type": "tcp",
-        "server": "8.8.8.8",
+        "type": "https",
+        "server": "dns.google",
+        "server_port": 443,
+        "path": "/dns-query",
+        "domain_resolver": "bootstrap-dns",
         "detour": "proxy"
       }
     ],
