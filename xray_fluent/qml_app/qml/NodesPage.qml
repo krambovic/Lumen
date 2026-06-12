@@ -191,31 +191,20 @@ Item {
     }
     function clearSel() { anchorRow = -1; _commit({}, 0); }
     function selectAll() {
-        // Учитываем активный фильтр (группа/тег/поиск): выбираем только видимые строки.
+        // Модель уже отфильтрована (группа/тег/поиск) в Python — выбираем все строки.
         var o = {};
         for (var i = 0; i < list.count; i++) {
-            var r = App.nodeRowAt(i);
-            if (!r || !r.id) continue;
-            if (!page.rowVisible(r.name, r.server, r.group, r.tags)) continue;
-            o[r.id] = true;
+            var id = App.nodeIdAt(i);
+            if (id) o[id] = true;
         }
         anchorRow = 0;
         _commit(o, Object.keys(o).length);
     }
 
-    // Combined text + group + tag filter for a single row.
-    function rowVisible(name, server, group, tags) {
-        if (page.filterGroup !== "" && (group || "Default") !== page.filterGroup)
-            return false;
-        if (page.filterTag !== "" && !(tags && tags.indexOf(page.filterTag) >= 0))
-            return false;
-        var q = (page.filterText || "").trim().toLowerCase();
-        if (!q) return true;
-        if ((name || "").toLowerCase().indexOf(q) >= 0) return true;
-        if ((server || "").toLowerCase().indexOf(q) >= 0) return true;
-        if ((group || "").toLowerCase().indexOf(q) >= 0) return true;
-        if (tags && tags.join(" ").toLowerCase().indexOf(q) >= 0) return true;
-        return false;
+    // Фильтрация (группа/тег/поиск) выполняется в модели на стороне Python,
+    // поэтому ListView всегда содержит только видимые строки.
+    function applyFilters() {
+        App.setNodeFilter(page.filterGroup, page.filterTag, page.filterText);
     }
 
     // Apply a sort key coming from a column-header click. Three-state cycle on
@@ -361,7 +350,7 @@ Item {
                     color: Theme.text
                     font.family: Theme.fontFamily
                     font.pixelSize: page.cellFont
-                    onTextChanged: page.filterText = text
+                    onTextChanged: { page.filterText = text; page.applyFilters() }
                 }
             }
         }
@@ -376,14 +365,14 @@ Item {
                 Layout.preferredWidth: 160
                 width: 160
                 model: page.groupModel
-                onActivated: page.filterGroup = (currentIndex <= 0 ? "" : currentText)
+                onActivated: { page.filterGroup = (currentIndex <= 0 ? "" : currentText); page.applyFilters() }
             }
             FilterCombo {
                 id: tagCombo
                 Layout.preferredWidth: 160
                 width: 160
                 model: page.tagModel
-                onActivated: page.filterTag = (currentIndex <= 0 ? "" : currentText)
+                onActivated: { page.filterTag = (currentIndex <= 0 ? "" : currentText); page.applyFilters() }
             }
             FilterCombo {
                 id: sortCombo
@@ -576,11 +565,9 @@ Item {
                             required property string lastUsed
 
                             readonly property bool picked: (page.selRev >= 0) && (page.sel[nodeId] === true)
-                            readonly property bool visibleRow: page.rowVisible(name, server, group, tags)
 
                             width: page.tableWidth
-                            height: visibleRow ? page.rowH : 0
-                            visible: visibleRow
+                            height: page.rowH
                             opacity: runtimeSupported ? 1.0 : 0.45
                             color: picked ? Theme.accentSoft : (hover.hovered && runtimeSupported ? Theme.cardHover : "transparent")
 

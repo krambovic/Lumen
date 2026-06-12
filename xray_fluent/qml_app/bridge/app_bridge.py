@@ -83,6 +83,13 @@ class AppBridge(QObject):
         self._language = "en"
         self._accent = "#0078D4"
 
+        # Активные фильтры списка серверов (группа/тег/текст). Фильтруем в модели
+        # (Python), а не скрывая QML-делегаты: иначе ListView неверно оценивает
+        # contentHeight — список можно проскроллить ниже конца и он «дёргается».
+        self._filter_group = ""
+        self._filter_tag = ""
+        self._filter_text = ""
+
         self._tray_available = False
         self._quitting = False
 
@@ -241,7 +248,33 @@ class AppBridge(QObject):
         self._node_model.set_runtime_support(
             bool(state.settings.tun_mode and state.settings.tun_engine == "singbox")
         )
-        self._node_model.set_nodes(self._sorted_nodes(state.nodes), state.selected_node_id)
+        self._node_model.set_nodes(
+            self._sorted_nodes(self._filtered_nodes(state.nodes)),
+            state.selected_node_id,
+        )
+
+    def _filtered_nodes(self, nodes: list[Node]) -> list[Node]:
+        """Apply the active group/tag/text filter (mirrors the old QML rowVisible)."""
+        group = self._filter_group
+        tag = self._filter_tag
+        text = (self._filter_text or "").strip().lower()
+        if not group and not tag and not text:
+            return list(nodes)
+        result: list[Node] = []
+        for n in nodes:
+            if group and (n.group or "Default") != group:
+                continue
+            if tag and tag not in (n.tags or []):
+                continue
+            if text and not (
+                text in (n.name or "").lower()
+                or text in (n.server or "").lower()
+                or text in (n.group or "").lower()
+                or text in " ".join(n.tags or []).lower()
+            ):
+                continue
+            result.append(n)
+        return result
 
     def _sorted_nodes(self, nodes: list[Node]) -> list[Node]:
         items = list(nodes)
@@ -1371,6 +1404,15 @@ class AppBridge(QObject):
         """Set the active sort key/direction for the node list and re-push it."""
         self._sort_key = key or "manual"
         self._sort_asc = bool(ascending)
+        self._apply_node_model()
+
+    @pyqtSlot(str, str, str)
+    def setNodeFilter(self, group: str, tag: str, text: str) -> None:
+        """Set the active group/tag/text filter and re-push the node list so the
+        model holds only visible rows (keeps ListView count/contentHeight correct)."""
+        self._filter_group = group or ""
+        self._filter_tag = tag or ""
+        self._filter_text = text or ""
         self._apply_node_model()
 
     @pyqtProperty("QVariantList", notify=nodeFiltersChanged)
