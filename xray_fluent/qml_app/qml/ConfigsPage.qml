@@ -339,8 +339,8 @@ Item {
                 anchors.margins: 10
                 text: page.statusMessage.length > 0
                     ? (page._statusPrefix(page.statusLevel).length > 0
-                        ? page._statusPrefix(page.statusLevel) + ": " + page.statusMessage
-                        : page.statusMessage)
+                        ? page._statusPrefix(page.statusLevel) + ": " + I18n.t(page.statusMessage)
+                        : I18n.t(page.statusMessage))
                     : I18n.t("Готов к работе.")
                 color: page.statusLevel === "success" ? Theme.success
                      : page.statusLevel === "warning" ? Theme.warning

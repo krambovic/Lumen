@@ -67,6 +67,26 @@ Item {
         return out
     }
 
+    function modeLabel(mode) {
+        if (mode === "xray")
+            return I18n.t("Прокси")
+        if (mode === "xray-tun")
+            return I18n.t("TUN (xray experimental)")
+        if (mode === "singbox")
+            return I18n.t("TUN (sing-box)")
+        return I18n.t(mode || "")
+    }
+
+    function routeLabel(route) {
+        if (route === "proxy")
+            return "VPN"
+        if (route === "direct")
+            return I18n.t("Прямой")
+        if (route === "mixed")
+            return I18n.t("Смешанный")
+        return I18n.t(route || "")
+    }
+
     component StyledCombo: FluentCombo {}
 
     component StatTile: Card {
@@ -261,7 +281,7 @@ Item {
                                     spacing: 12
                                     DCell { text: modelData.date; w: 140 }
                                     DCell { text: modelData.node }
-                                    DCell { text: modelData.mode; w: 150; color: modelData.isTun ? Theme.accent : Theme.text }
+                                    DCell { text: page.modeLabel(modelData.mode); w: 150; color: modelData.isTun ? Theme.accent : Theme.text }
                                     DCell { text: modelData.duration; w: 80; alignRight: true }
                                     DCell { text: modelData.down; w: 100; alignRight: true; color: modelData.hasDown ? Theme.success : Theme.text }
                                     DCell { text: modelData.up; w: 100; alignRight: true }
@@ -350,7 +370,7 @@ Item {
                                     DCell { text: modelData.exe }
                                     DCell { text: modelData.down; w: 140; alignRight: true; color: modelData.hasDown ? Theme.success : Theme.text }
                                     DCell { text: modelData.up; w: 140; alignRight: true }
-                                    DCell { text: modelData.route; w: 110; alignRight: true; color: Theme.textMuted }
+                                    DCell { text: page.routeLabel(modelData.route); w: 110; alignRight: true; color: Theme.textMuted }
                                 }
                             }
                         }

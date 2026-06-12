@@ -8,6 +8,23 @@ QtObject {
     readonly property string language: App.language
 
     readonly property var en: ({
+        "JSON корректен": "JSON is valid",
+        "TUN (sing-box)": "TUN (sing-box)",
+        "TUN (xray experimental)": "TUN (xray experimental)",
+        "Импортирован template": "Template imported",
+        "Импортирован template и обновлена активная копия: ": "Template imported and active copy updated: ",
+        "Не удалось применить": "Could not apply",
+        "Неизвестное ядро": "Unknown core",
+        "Открыт конфиг: ": "Opened config: ",
+        "Открыта активная копия: ": "Opened active copy: ",
+        "Применён шаблон: ": "Template applied: ",
+        "Применено": "Applied",
+        "Применяю": "Applying",
+        "Прокси": "Proxy",
+        "Прямой": "Direct",
+        "Сброс не выполнен": "Reset was not completed",
+        "Смешанный": "Mixed",
+        "Сохранено: ": "Saved: ",
         " и установить": " and install",
         "1 час": "1 hour",
         "12 часов": "12 hours",

@@ -121,7 +121,7 @@ def build_history_payload(storage: Any, days: int = 30) -> dict[str, Any]:
         session_rows.append({
             "date": fmt_datetime(s.started_at),
             "node": s.node_name,
-            "mode": _mode_label(s.mode),
+            "mode": s.mode or "",
             "isTun": _is_tun(s.mode),
             "duration": fmt_duration(s.started_at, s.ended_at),
             "down": fmt_bytes(s.total_download),
@@ -160,7 +160,7 @@ def build_history_payload(storage: Any, days: int = 30) -> dict[str, Any]:
             "down": fmt_bytes(down),
             "hasDown": down > 0,
             "up": fmt_bytes(up_b),
-            "route": _route_label(str(stats.get("route", ""))),
+            "route": str(stats.get("route", "")),
             # Raw values for client-side column sorting.
             "downB": down,
             "upB": up_b,
