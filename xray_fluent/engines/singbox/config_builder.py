@@ -13,6 +13,8 @@ _SUPPORTED_NATIVE_PROTOCOLS = {
     "warp",
     "wireguard",
     "awg",
+    "hysteria",
+    "hysteria2",
 }
 
 

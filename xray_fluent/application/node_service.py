@@ -265,12 +265,12 @@ def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
     return text, info
 
 
-def _fetch_subscription(url: str) -> tuple[str, dict]:
+def _fetch_subscription_with_user_agent(url: str, user_agent: str) -> tuple[str, dict]:
     """Загружает подписку и возвращает (текст_со_ссылками, userinfo).
 
     userinfo берётся из HTTP-заголовка subscription-userinfo и/или из JSON-тела.
     """
-    request = Request(url, headers={"User-Agent": "LumenKVN-Subscription/1.0"})
+    request = Request(url, headers={"User-Agent": user_agent})
     with urlopen(request, timeout=20) as response:
         raw = response.read()
         try:
@@ -288,6 +288,14 @@ def _fetch_subscription(url: str) -> tuple[str, dict]:
     return (decoded or text), userinfo
 
 
+def _fetch_subscription(url: str, *, user_agent: str = "LumenKVN-Subscription/1.0") -> tuple[str, dict]:
+    return _fetch_subscription_with_user_agent(url, user_agent)
+
+
+def _fetch_subscription_happ(url: str) -> tuple[str, dict]:
+    return _fetch_subscription_with_user_agent(url, "Happ/1.0")
+
+
 def _derive_subscription_name(url: str) -> str:
     host = urlparse(url).hostname or ""
     host = host.strip()
@@ -301,6 +309,61 @@ def _find_subscription(controller: AppController, url: str) -> dict | None:
         if sub.get("url") == url:
             return sub
     return None
+
+
+def _import_subscription_payload(
+    controller: AppController,
+    url: str,
+    group: str,
+    *,
+    replace_existing_group: bool = False,
+) -> tuple[int, list[str], dict]:
+    first_error = ""
+    chosen_text = ""
+    chosen_userinfo: dict = {}
+    chosen_errors: list[str] = []
+    try:
+        text, userinfo = _fetch_subscription(url)
+        nodes, errors = parse_links_text(text)
+        if nodes:
+            chosen_text = text
+            chosen_userinfo = userinfo
+            chosen_errors = errors
+        else:
+            first_error = "; ".join(errors[:3]) or "no nodes parsed"
+    except Exception as exc:  # noqa: BLE001 - fallback to Happ-compatible panels
+        first_error = str(exc)
+
+    if not chosen_text:
+        try:
+            text, userinfo = _fetch_subscription_happ(url)
+            nodes, errors = parse_links_text(text)
+            if not nodes:
+                if first_error:
+                    errors = [*errors, f"Default UA: {first_error}"]
+                return 0, errors, userinfo
+            chosen_text = text
+            chosen_userinfo = userinfo
+            chosen_errors = errors
+        except Exception as exc:  # noqa: BLE001
+            if first_error:
+                return 0, [f"Happ/1.0: {exc}", f"Default UA: {first_error}"], {}
+            return 0, [str(exc)], {}
+
+    if replace_existing_group:
+        keep: list = []
+        removed_ids: set[str] = set()
+        for node in controller.state.nodes:
+            if (node.group or "Default") == group:
+                removed_ids.add(node.id)
+            else:
+                keep.append(node)
+        controller.state.nodes = keep
+        if controller.state.selected_node_id in removed_ids:
+            controller.state.selected_node_id = None
+
+    added, errors = import_nodes_from_text(controller, chosen_text, group=group, auto_connect=False)
+    return added, [*chosen_errors, *errors], chosen_userinfo
 
 
 def _record_subscription(
@@ -363,11 +426,7 @@ def import_subscription(
             controller.save()
         return update_subscription(controller, url)
     group = (name or "").strip() or _derive_subscription_name(url)
-    try:
-        text, userinfo = _fetch_subscription(url)
-    except Exception as exc:  # noqa: BLE001 - показываем ошибку пользователю
-        return 0, [f"Не удалось загрузить подписку: {exc}"]
-    added, errors = import_nodes_from_text(controller, text, group=group, auto_connect=False)
+    added, errors, userinfo = _import_subscription_payload(controller, url, group)
     _record_subscription(controller, url, group, added, userinfo)
     return added, errors
 
@@ -378,22 +437,9 @@ def update_subscription(controller: AppController, url: str) -> tuple[int, list[
     if sub is None:
         return 0, ["Подписка не найдена"]
     group = (sub.get("group") or "").strip() or _derive_subscription_name(url)
-    try:
-        text, userinfo = _fetch_subscription(url)
-    except Exception as exc:  # noqa: BLE001 - показываем ошибку пользователю
-        return 0, [f"Не удалось обновить подписку: {exc}"]
-    # Удаляем старые узлы этой подписки (по группе) перед повторным импортом.
-    keep: list = []
-    removed_ids: set[str] = set()
-    for node in controller.state.nodes:
-        if (node.group or "Default") == group:
-            removed_ids.add(node.id)
-        else:
-            keep.append(node)
-    controller.state.nodes = keep
-    if controller.state.selected_node_id in removed_ids:
-        controller.state.selected_node_id = None
-    added, errors = import_nodes_from_text(controller, text, group=group, auto_connect=False)
+    added, errors, userinfo = _import_subscription_payload(
+        controller, url, group, replace_existing_group=True
+    )
     _record_subscription(controller, url, group, added, userinfo)
     return added, errors
 

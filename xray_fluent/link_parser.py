@@ -20,6 +20,12 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
     if file_text is not None:
         stripped = file_text.strip()
         text = file_text
+    if stripped.startswith(("{", "[")):
+        try:
+            return _parse_json_nodes_text(stripped)
+        except Exception as exc:
+            if stripped.startswith("{"):
+                return [], [f"JSON: {exc}"]
     lowered = stripped.lower()
     if "[interface]" in lowered and "[peer]" in lowered:
         try:
@@ -74,6 +80,15 @@ def parse_single(raw: str) -> Node:
     if text.startswith("{"):
         return _parse_json_outbound(text)
     if text.startswith("["):
+        try:
+            nodes, errors = _parse_json_nodes_text(text)
+        except Exception:
+            nodes, errors = [], []
+        if nodes:
+            return nodes[0]
+        if errors:
+            raise LinkParseError("; ".join(errors[:3]))
+    if text.startswith("["):
         return _parse_wireguard_config(text)
 
     scheme = urlsplit(text).scheme.lower()
@@ -91,6 +106,10 @@ def parse_single(raw: str) -> Node:
         return _parse_http_proxy(text)
     if scheme in {"wireguard", "wg", "awg", "warp"}:
         return _parse_wireguard_like_link(text, scheme)
+    if scheme in {"hysteria", "hy"}:
+        return _parse_hysteria(text)
+    if scheme in {"hysteria2", "hy2"}:
+        return _parse_hysteria2(text)
 
     raise LinkParseError(f"unsupported scheme: {scheme or 'unknown'}")
 
@@ -139,6 +158,14 @@ def _decode_b64(data: str) -> str:
 def _clean_name(name: str, fallback: str) -> str:
     value = unquote(name).strip()
     return value if value else fallback
+
+
+def _json_name(payload: dict[str, Any], fallback: str) -> str:
+    for key in ("remarks", "remark", "ps", "name", "tag"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    return fallback
 
 
 def _to_bool(value: str) -> bool:
@@ -673,8 +700,66 @@ def _parse_http_proxy(link: str) -> Node:
     )
 
 
+def _parse_json_nodes_text(text: str) -> tuple[list[Node], list[str]]:
+    payload = json.loads(text)
+    return _parse_json_nodes_payload(payload)
+
+
+def _parse_json_nodes_payload(payload: Any) -> tuple[list[Node], list[str]]:
+    nodes: list[Node] = []
+    errors: list[str] = []
+
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict):
+        links = payload.get("links")
+        if isinstance(links, list):
+            items = links
+        elif isinstance(payload.get("configs"), list):
+            items = payload["configs"]
+        elif isinstance(payload.get("nodes"), list):
+            items = payload["nodes"]
+        elif isinstance(payload.get("items"), list):
+            items = payload["items"]
+        elif _json_payload_can_be_node(payload):
+            items = [payload]
+        else:
+            raise LinkParseError("JSON must contain links, configs, nodes, items, protocol, type, endpoints, or outbounds")
+    else:
+        raise LinkParseError("JSON subscription must be an object or an array")
+
+    for idx, item in enumerate(items, start=1):
+        try:
+            if isinstance(item, str):
+                nodes.append(parse_single(item))
+            elif isinstance(item, dict):
+                nodes.append(_parse_json_outbound_payload(item))
+            else:
+                raise LinkParseError(f"unsupported JSON item type: {type(item).__name__}")
+        except Exception as exc:
+            errors.append(f"JSON item {idx}: {exc}")
+
+    return nodes, errors
+
+
+def _json_payload_can_be_node(payload: dict[str, Any]) -> bool:
+    return (
+        "type" in payload
+        or "protocol" in payload
+        or isinstance(payload.get("endpoints"), list)
+        or isinstance(payload.get("outbounds"), list)
+    )
+
+
 def _parse_json_outbound(text: str) -> Node:
     payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise LinkParseError("JSON node must be an object")
+    return _parse_json_outbound_payload(payload)
+
+
+def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
+    original_payload = payload
 
     outbound: dict[str, Any]
     if "type" in payload:
@@ -684,7 +769,7 @@ def _parse_json_outbound(text: str) -> Node:
     elif isinstance(payload.get("endpoints"), list) and payload["endpoints"]:
         outbound = _native_singbox_outbound(payload["endpoints"][0])
     elif isinstance(payload.get("outbounds"), list) and payload["outbounds"]:
-        first_outbound = dict(payload["outbounds"][0])
+        first_outbound = _pick_json_proxy_outbound(payload["outbounds"])
         outbound = _native_singbox_outbound(first_outbound) if "type" in first_outbound else first_outbound
     else:
         raise LinkParseError("JSON must contain `protocol` or `outbounds`")
@@ -717,23 +802,154 @@ def _parse_json_outbound(text: str) -> Node:
         peer = peers[0] if isinstance(peers, list) and peers and isinstance(peers[0], dict) else {}
         server = str(peer.get("address") or native.get("server") or "")
         port = int(peer.get("port") or native.get("server_port") or 0)
+    elif protocol in {"hysteria", "hysteria2"} and native:
+        server = str(native.get("server") or "")
+        port = int(native.get("server_port") or 0)
 
     return Node(
-        name=f"json-{tag}",
+        name=_json_name(original_payload, f"json-{tag}"),
         scheme=protocol,
         server=server,
         port=port,
-        link=text,
+        link=json.dumps(original_payload, ensure_ascii=False, separators=(",", ":")),
         outbound=outbound,
     )
+
+
+def _pick_json_proxy_outbound(outbounds: list[Any]) -> dict[str, Any]:
+    candidates = [dict(item) for item in outbounds if isinstance(item, dict)]
+    if not candidates:
+        raise LinkParseError("JSON outbounds list is empty")
+
+    def kind(item: dict[str, Any]) -> str:
+        return str(item.get("protocol") or item.get("type") or "").strip().lower()
+
+    ignored = {"freedom", "blackhole", "dns", "direct", "block", "selector", "urltest", "url-test"}
+    supported = {
+        "vless",
+        "vmess",
+        "trojan",
+        "shadowsocks",
+        "socks",
+        "http",
+        "warp",
+        "wireguard",
+        "awg",
+        "hysteria",
+        "hysteria2",
+        "hy",
+        "hy2",
+    }
+    for item in candidates:
+        if str(item.get("tag") or "").strip().lower() == "proxy" and kind(item) not in ignored:
+            return item
+    for item in candidates:
+        if kind(item) in supported:
+            return item
+    for item in candidates:
+        if kind(item) not in ignored:
+            return item
+    return candidates[0]
 
 
 def _native_singbox_outbound(payload: dict[str, Any]) -> dict[str, Any]:
     native = dict(payload)
     protocol = str(native.get("type") or "custom").lower()
+    if protocol == "hy":
+        protocol = native["type"] = "hysteria"
+    elif protocol == "hy2":
+        protocol = native["type"] = "hysteria2"
     return {
         "protocol": "awg" if protocol == "wireguard" and isinstance(native.get("amnezia"), dict) else protocol,
         "singbox": native,
+    }
+
+
+def _parse_hysteria(link: str) -> Node:
+    parsed = urlsplit(link)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    params = {k: _first(query, k) for k in query}
+    server = parsed.hostname or _get_param(params, "server", "address", "host")
+    port = parsed.port or int(_get_param(params, "port", default="0") or 0) or 443
+    auth = unquote(parsed.username or "") or _get_param(params, "auth", "auth_str", "authStr", "password")
+    if not server or not auth:
+        raise LinkParseError("hysteria link must contain server and auth/password")
+
+    outbound: dict[str, Any] = {
+        "type": "hysteria",
+        "tag": "proxy",
+        "server": server,
+        "server_port": int(port),
+    }
+    if auth:
+        outbound["auth_str"] = auth
+    protocol = _get_param(params, "protocol")
+    if protocol:
+        outbound["protocol"] = protocol
+    up_mbps = _get_param(params, "upmbps", "up_mbps", "up")
+    down_mbps = _get_param(params, "downmbps", "down_mbps", "down")
+    if up_mbps:
+        outbound["up_mbps"] = int(up_mbps)
+    if down_mbps:
+        outbound["down_mbps"] = int(down_mbps)
+    _apply_hysteria_tls(outbound, params, server)
+    _apply_hysteria_obfs(outbound, params)
+    name = _clean_name(parsed.fragment, f"hysteria-{server}:{port}")
+    return Node(name=name, scheme="hysteria", server=server, port=int(port), link=link, outbound=_native_singbox_outbound(outbound))
+
+
+def _parse_hysteria2(link: str) -> Node:
+    parsed = urlsplit(link)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    params = {k: _first(query, k) for k in query}
+    server = parsed.hostname or _get_param(params, "server", "address", "host")
+    port = parsed.port or int(_get_param(params, "port", default="0") or 0) or 443
+    password = unquote(parsed.username or "") or _get_param(params, "password", "auth", "auth_str", "authStr")
+    if not server or not password:
+        raise LinkParseError("hysteria2 link must contain server and password")
+
+    outbound: dict[str, Any] = {
+        "type": "hysteria2",
+        "tag": "proxy",
+        "server": server,
+        "server_port": int(port),
+        "password": password,
+    }
+    _apply_hysteria_tls(outbound, params, server)
+    _apply_hysteria_obfs(outbound, params)
+    name = _clean_name(parsed.fragment, f"hysteria2-{server}:{port}")
+    return Node(name=name, scheme="hysteria2", server=server, port=int(port), link=link, outbound=_native_singbox_outbound(outbound))
+
+
+def _apply_hysteria_tls(outbound: dict[str, Any], params: dict[str, str], server: str) -> None:
+    tls: dict[str, Any] = {"enabled": True}
+    sni = _get_param(params, "sni", "peer", "server_name", "serverName")
+    if sni:
+        tls["server_name"] = sni
+    elif server:
+        tls["server_name"] = server
+    insecure = _get_param(params, "insecure", "allowInsecure")
+    if insecure:
+        tls["insecure"] = _to_bool(insecure)
+    alpn = _get_param(params, "alpn")
+    if alpn:
+        tls["alpn"] = [item.strip() for item in alpn.split(",") if item.strip()]
+    outbound["tls"] = tls
+
+
+def _apply_hysteria_obfs(outbound: dict[str, Any], params: dict[str, str]) -> None:
+    obfs_type = _get_param(params, "obfs", "obfs_type", "obfsType")
+    obfs_password = _get_param(params, "obfs-password", "obfs_password", "obfsPassword", "obfs-pass", "obfsPass")
+    if not obfs_type and not obfs_password:
+        return
+    if obfs_type == "none":
+        return
+    if str(outbound.get("type") or "") == "hysteria":
+        outbound["obfs"] = obfs_password or obfs_type
+        return
+    outbound["obfs"] = {
+        "type": obfs_type or "salamander",
+        "password": obfs_password,
     }
 
 

@@ -55,7 +55,7 @@ def is_native_singbox_only_node(node: Node | None) -> bool:
     if not isinstance(outbound, dict):
         return False
     protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
-    if protocol in {"warp", "wireguard", "awg"}:
+    if protocol in {"warp", "wireguard", "awg", "hysteria", "hysteria2"}:
         return True
     return isinstance(outbound.get("singbox"), dict) and protocol not in {
         "vless",
@@ -71,7 +71,7 @@ def native_singbox_only_message(node: Node | None = None) -> str:
     name = (node.name or node.server) if node is not None else "Этот сервер"
     return (
         f"{name} работает только через VPN (TUN) на sing-box-extended. "
-        "В системном прокси/Xray такие WARP/WireGuard/AWG конфиги недоступны."
+        "В системном прокси/Xray такие WARP/WireGuard/AWG/Hysteria конфиги недоступны."
     )
 
 
