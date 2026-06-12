@@ -74,14 +74,6 @@ jobs:
           Invoke-WebRequest "$geoBase/geoip.dat" -OutFile core/geoip.dat
           Invoke-WebRequest "$geoBase/geosite.dat" -OutFile core/geosite.dat
 
-          Write-Host "Downloading tun2socks..."
-          $tunRelease = Invoke-RestMethod "https://api.github.com/repos/xjasonlyu/tun2socks/releases/latest" -Headers $githubHeaders
-          $tunAsset = $tunRelease.assets | Where-Object { $_.name -match "windows-amd64\.zip$" }
-          Invoke-WebRequest $tunAsset.browser_download_url -OutFile tun2socks.zip
-          Expand-Archive tun2socks.zip -DestinationPath _tun -Force
-          Get-ChildItem _tun -Recurse -Filter "*.exe" | ForEach-Object { Copy-Item $_.FullName core/tun2socks.exe }
-          Remove-Item -Recurse _tun, tun2socks.zip
-
           Write-Host "Downloading wintun..."
           Invoke-WebRequest "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile wintun.zip
           Expand-Archive wintun.zip -DestinationPath _wintun -Force
