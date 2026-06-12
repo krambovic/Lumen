@@ -4,7 +4,7 @@
   <img src="assets/LumenKVN.png" alt="Lumen KVN" width="160">
 </p>
 
-**Language:** English | [Русский](README.ru.md)
+**Language:** English | [Русский](README-RU.md)
 
 Lumen KVN is a standalone Windows client for VPN/TUN, system proxy, routing, server management, and DPI bypass through zapret.
 
