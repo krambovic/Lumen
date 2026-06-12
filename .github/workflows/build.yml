@@ -43,11 +43,18 @@ jobs:
 
       - name: Download core binaries
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           New-Item -ItemType Directory -Force -Path core | Out-Null
+          $githubHeaders = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "Lumen-KVN-CI"
+          }
 
           Write-Host "Downloading Xray-core..."
-          $xrayReleases = Invoke-RestMethod "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=30"
+          $xrayReleases = Invoke-RestMethod "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=30" -Headers $githubHeaders
           $xrayRelease = $xrayReleases |
             Where-Object { -not $_.draft -and $_.tag_name -match '^v?\d+\.\d+\.\d+' } |
             Sort-Object {
@@ -68,7 +75,7 @@ jobs:
           Invoke-WebRequest "$geoBase/geosite.dat" -OutFile core/geosite.dat
 
           Write-Host "Downloading tun2socks..."
-          $tunRelease = Invoke-RestMethod "https://api.github.com/repos/xjasonlyu/tun2socks/releases/latest"
+          $tunRelease = Invoke-RestMethod "https://api.github.com/repos/xjasonlyu/tun2socks/releases/latest" -Headers $githubHeaders
           $tunAsset = $tunRelease.assets | Where-Object { $_.name -match "windows-amd64\.zip$" }
           Invoke-WebRequest $tunAsset.browser_download_url -OutFile tun2socks.zip
           Expand-Archive tun2socks.zip -DestinationPath _tun -Force
@@ -82,7 +89,7 @@ jobs:
           Remove-Item -Recurse _wintun, wintun.zip
 
           Write-Host "Downloading sing-box-extended..."
-          $sbRelease = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest"
+          $sbRelease = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest" -Headers $githubHeaders
           Write-Host "Using sing-box $($sbRelease.tag_name)"
           $sbAsset = $sbRelease.assets | Where-Object { $_.name -match "windows-amd64\.zip$" -and $_.name -notmatch "\.sig" }
           Invoke-WebRequest $sbAsset.browser_download_url -OutFile singbox.zip
