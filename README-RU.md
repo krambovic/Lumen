@@ -1,5 +1,9 @@
 # Lumen KVN
 
+<p align="center">
+  <img src="assets/LumenKVN.png" alt="Lumen KVN" width="160">
+</p>
+
 **Язык:** [English](README.md) | Русский
 
 Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, системного прокси, маршрутизации, управления серверами и DPI bypass через zapret.
