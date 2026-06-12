@@ -13,8 +13,20 @@ Dev usage:
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
+from xray_fluent.constants import APP_VERSION
 from xray_fluent.qml_app.main_qml import main
 
 if __name__ == "__main__":
+    if "--version-file" in sys.argv[1:]:
+        try:
+            index = sys.argv.index("--version-file")
+            Path(sys.argv[index + 1]).write_text(APP_VERSION, encoding="utf-8")
+            sys.exit(0)
+        except Exception:
+            sys.exit(2)
+    if "--version" in sys.argv[1:]:
+        print(APP_VERSION)
+        sys.exit(0)
     sys.exit(main())

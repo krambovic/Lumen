@@ -25,6 +25,7 @@ from .zip_utils import safe_extract_zip
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import APP_VERSION, BASE_DIR
+from .startup import is_process_elevated
 
 GITHUB_REPO = "krambovic/lumen-kvn"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -61,6 +62,68 @@ def _resolve_update_app_dir(exe_name: str) -> Path:
                 return (Path(root) / app_name).resolve(strict=False)
 
     return app_dir
+
+
+def _path_is_under(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve(strict=False).relative_to(parent.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def _needs_elevation_for_update(app_dir: Path) -> bool:
+    if sys.platform != "win32" or is_process_elevated():
+        return False
+    roots = [
+        os.environ.get("ProgramW6432"),
+        os.environ.get("ProgramFiles"),
+        os.environ.get("ProgramFiles(x86)"),
+    ]
+    return any(_path_is_under(app_dir, Path(root)) for root in roots if root)
+
+
+def _launch_update_script(script: Path, *, elevated: bool) -> bool:
+    if sys.platform == "win32" and elevated:
+        try:
+            import ctypes
+
+            args = subprocess.list2cmdline([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-WindowStyle",
+                "Hidden",
+                "-File",
+                str(script),
+            ])
+            result = ctypes.windll.shell32.ShellExecuteW(
+                None,
+                "runas",
+                "powershell.exe",
+                args,
+                str(script.parent),
+                0,
+            )
+            return int(result) > 32
+        except Exception:
+            return False
+
+    subprocess.Popen(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            str(script),
+        ],
+        creationflags=0x08000000,
+        close_fds=True,
+    )
+    return True
 
 
 @dataclass(slots=True)
@@ -501,6 +564,7 @@ class UpdateDownloader(QThread):
             current_pid = os.getpid()
             current_app_dir = BASE_DIR.resolve(strict=False)
             app_dir = _resolve_update_app_dir(exe_name)
+            needs_elevation = _needs_elevation_for_update(app_dir)
             script = tmp_dir / "_update.ps1"
             script_text = "\r\n".join([
                 "$ErrorActionPreference = 'Stop'",
@@ -510,6 +574,7 @@ class UpdateDownloader(QThread):
                 f"$appDir = {_powershell_literal(str(app_dir))}",
                 f"$exePath = {_powershell_literal(str(app_dir / exe_name))}",
                 f"$tempDir = {_powershell_literal(str(tmp_dir))}",
+                f"$expectedVersion = {_powershell_literal(self._update.version)}",
                 "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
                 "$runtimeDir = Join-Path (Join-Path $appDir 'data') 'runtime'",
                 "$errorLog = Join-Path $logDir 'update_error.log'",
@@ -549,6 +614,11 @@ class UpdateDownloader(QThread):
                 "        Copy-Item -LiteralPath $item.FullName -Destination $appDir -Recurse -Force",
                 "    }",
                 "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated LumenKVN.exe was not copied' }",
+                "    $versionFile = Join-Path $runtimeDir 'update_version.txt'",
+                "    Remove-Item -LiteralPath $versionFile -Force -ErrorAction SilentlyContinue",
+                "    $versionProbe = Start-Process -FilePath $exePath -ArgumentList '--version-file',$versionFile -WorkingDirectory $appDir -PassThru -Wait -ErrorAction Stop",
+                "    $installedVersion = (Get-Content -LiteralPath $versionFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim().TrimStart('v')",
+                "    if ($expectedVersion -and $installedVersion -and $installedVersion -ne $expectedVersion.TrimStart('v')) { throw ('Updated executable reports v' + $installedVersion + ', expected v' + $expectedVersion) }",
                 (
                     "    $started = Start-Process -FilePath $exePath -ArgumentList '--tray' -WorkingDirectory $appDir -PassThru -ErrorAction Stop"
                     if self._restart_in_tray
@@ -588,21 +658,13 @@ class UpdateDownloader(QThread):
             ])
             _write_utf8_bom_text(script, script_text)
 
-            # Launch script and exit
-            subprocess.Popen(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-WindowStyle",
-                    "Hidden",
-                    "-File",
-                    str(script),
-                ],
-                creationflags=0x08000000,
-                close_fds=True,
-            )
+            # Launch script and exit. Program Files updates require elevation;
+            # otherwise Windows denies replacing the old exe and the script
+            # rolls back, which looks like a successful update to the user.
+            if not _launch_update_script(script, elevated=needs_elevation):
+                self.error.emit("Не удалось запустить установку обновления с правами администратора")
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return
 
             self.finished_ok.emit()
 

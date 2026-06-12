@@ -190,6 +190,46 @@ def _cleanup_legacy_root_program_install() -> None:
         pass
 
 
+def _create_single_instance(app):
+    """Return (server, is_primary). A second launch just activates the first window."""
+    try:
+        from PyQt6.QtCore import QIODevice
+        from PyQt6.QtNetwork import QLocalServer, QLocalSocket
+    except Exception:
+        return None, True
+
+    server_name = "LumenKVN.SingleInstance"
+    socket = QLocalSocket()
+    socket.connectToServer(server_name, QIODevice.OpenModeFlag.WriteOnly)
+    if socket.waitForConnected(250):
+        try:
+            socket.write(b"activate")
+            socket.flush()
+            socket.waitForBytesWritten(250)
+        except Exception:
+            pass
+        socket.disconnectFromServer()
+        return None, False
+
+    try:
+        QLocalServer.removeServer(server_name)
+    except Exception:
+        pass
+    server = QLocalServer(app)
+    if not server.listen(server_name):
+        return None, True
+    return server, True
+
+
+def _activate_window(window) -> None:
+    try:
+        window.show()
+        window.raise_()
+        window.requestActivate()
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     _set_app_user_model_id()
     _cleanup_legacy_root_program_install()
@@ -216,10 +256,15 @@ def main(argv: list[str] | None = None) -> int:
     QQuickWindow.setDefaultAlphaBuffer(True)
 
     app = QApplication(argv if argv is not None else sys.argv)
+    single_server, is_primary = _create_single_instance(app)
+    if not is_primary:
+        return 0
+
     if APP_ICON_PATH.is_file():
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
     bridge = AppBridge()
+    bridge.load()
 
     qmlRegisterSingletonInstance("App", 1, 0, "App", bridge)
 
@@ -233,6 +278,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     window = engine.rootObjects()[0]
+
+    if single_server is not None:
+        def _on_second_instance() -> None:
+            while single_server.hasPendingConnections():
+                conn = single_server.nextPendingConnection()
+                if conn is not None:
+                    conn.disconnectFromServer()
+            _activate_window(window)
+
+        single_server.newConnection.connect(_on_second_instance)
 
     # Apply the icon directly to the top-level QQuickWindow. Setting it only on
     # the QApplication doesn't reliably reach the first-shown QML window's
@@ -297,8 +352,6 @@ def main(argv: list[str] | None = None) -> int:
     bridge.set_tray_available(tray_available)
     app.setQuitOnLastWindowClosed(not tray_available)
     tray = QmlTray(app, window, bridge) if tray_available else None
-
-    bridge.load()
     app.aboutToQuit.connect(bridge.shutdown)
 
     return app.exec()
