@@ -105,8 +105,21 @@ jobs:
           name: LumenKVN-portable
           path: dist/LumenKVN/
 
-      - name: Create GitHub Release
+      - name: Check existing release
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (gh release view $env:RELEASE_TAG *> $null) {
+            echo "RELEASE_EXISTS=true" >> $env:GITHUB_ENV
+            Write-Host "Release $env:RELEASE_TAG already exists, skipping release update."
+          } else {
+            echo "RELEASE_EXISTS=false" >> $env:GITHUB_ENV
+          }
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && env.RELEASE_EXISTS != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
@@ -114,13 +127,8 @@ jobs:
           body: |
             ## Что изменилось
 
-            - [Feature]: TUN теперь запускает VLESS XHTTP/Reality нативно через sing-box extended, без xray-sidecar, когда конфиг поддерживается самим sing-box.
-            - [Fix]: xray-sidecar больше не включается для Reality/Vision просто на всякий случай и остаётся только для реально неподдерживаемых транспортов.
-            - [Fix]: Системный прокси выставляется ближе к v2rayN: WinINET получает mixed-порт `127.0.0.1:10808`, а настройки применяются не только к LAN, но и к RAS/dial-up подключениям.
-            - [Fix]: Firefox/LibreWolf/Waterfox/Floorp получают явный Necko fallback на тот же mixed-порт `127.0.0.1:10808`, чтобы не зависеть от нестабильного чтения `network.proxy.type = 5`.
-            - [Fix]: DNS timeout-ошибки TUN снова видны в логах, чтобы реальные проблемы не скрывались фильтром.
-            - [Performance]: Шумные runtime-логи TUN сворачиваются чаще и меньше грузят интерфейс.
-            - [Chore]: Версия обновлена до 1.1.5.
+            - [Chore]: Автоматическая сборка версии ${{ env.VERSION }}.
+            - [Chore]: Подробный changelog заполняется вручную перед публикацией.
           generate_release_notes: false
           make_latest: true
           files: |
