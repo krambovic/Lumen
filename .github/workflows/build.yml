@@ -101,7 +101,7 @@ jobs:
         shell: pwsh
         run: Get-ChildItem dist/LumenKVN-Setup-windows-x64.exe, dist/LumenKVN-portable-windows-x64.zip | Format-Table Name, Length
 
-      - name: Upload portable artifact
+            - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
           name: LumenKVN-portable
@@ -113,11 +113,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if (gh release view $env:RELEASE_TAG *> $null) {
-            echo "RELEASE_EXISTS=true" >> $env:GITHUB_ENV
-            Write-Host "Release $env:RELEASE_TAG already exists, skipping release update."
-          } else {
-            echo "RELEASE_EXISTS=false" >> $env:GITHUB_ENV
+          $exists = $false
+
+          try {
+            gh release view $env:RELEASE_TAG *> $null
+
+            if ($LASTEXITCODE -eq 0) {
+              $exists = $true
+            }
+          }
+          catch {
+            $exists = $false
+          }
+
+          if ($exists) {
+            "RELEASE_EXISTS=true" >> $env:GITHUB_ENV
+            Write-Host "Release $env:RELEASE_TAG already exists."
+          }
+          else {
+            "RELEASE_EXISTS=false" >> $env:GITHUB_ENV
+            Write-Host "Release $env:RELEASE_TAG does not exist."
           }
 
       - name: Create GitHub Release
@@ -128,9 +143,8 @@ jobs:
           name: "Lumen KVN ${{ env.RELEASE_TAG }}"
           body: |
             ## Что изменилось
-
-            - [Chore]: Автоматическая сборка версии ${{ env.VERSION }}.
-            - [Chore]: Подробный changelog заполняется вручную перед публикацией.
+            - [Chore]&#58; Автоматическая сборка версии ${{ env.VERSION }}.
+            - [Chore]&#58; Подробный changelog заполняется вручную перед публикацией.
           generate_release_notes: false
           make_latest: true
           files: |
