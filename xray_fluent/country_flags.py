@@ -64,15 +64,15 @@ _STRIPES: dict[str, tuple[str, list[str]]] = {
     "PE": ("v", ["#D91023", "#FFFFFF", "#D91023"]),
     "CA": ("v", ["#FF0000", "#FFFFFF", "#FF0000"]),
     "PT": ("v", ["#006600", "#FF0000", "#FF0000"]),
-    # Cross-flags approximated as 3 stripes
-    "SE": ("h", ["#006AA7", "#FECC02", "#006AA7"]),
-    "NO": ("h", ["#EF2B2D", "#002868", "#EF2B2D"]),
-    "FI": ("h", ["#FFFFFF", "#003580", "#FFFFFF"]),
-    "DK": ("h", ["#C60C30", "#FFFFFF", "#C60C30"]),
-    "IS": ("h", ["#003897", "#FFFFFF", "#D72828"]),
-    "CH": ("h", ["#FF0000", "#FFFFFF", "#FF0000"]),
+    # Cross flags
+    "SE": ("nordic", ["#006AA7", "#FECC02"]),
+    "NO": ("nordic", ["#EF2B2D", "#FFFFFF", "#002868"]),
+    "FI": ("nordic", ["#FFFFFF", "#003580"]),
+    "DK": ("nordic", ["#C60C30", "#FFFFFF"]),
+    "IS": ("nordic", ["#003897", "#FFFFFF", "#D72828"]),
+    "CH": ("cross", ["#FF0000", "#FFFFFF"]),
     "GR": ("h", ["#0D5EAF", "#FFFFFF", "#0D5EAF"]),
-    "GE": ("h", ["#FFFFFF", "#FF0000", "#FFFFFF"]),
+    "GE": ("cross", ["#FFFFFF", "#FF0000"]),
     # Complex flags simplified
     "US": ("h", ["#3C3B6E", "#FFFFFF", "#B22234"]),
     "GB": ("h", ["#012169", "#FFFFFF", "#C8102E"]),
@@ -150,10 +150,24 @@ def _draw_flag(code: str) -> QPixmap:
             sh = _H / len(colors)
             for i, c in enumerate(colors):
                 p.fillRect(QRectF(0, i * sh, _W, sh + 0.5), QColor(c))
-        else:
+        elif orient == "v":
             sw = _W / len(colors)
             for i, c in enumerate(colors):
                 p.fillRect(QRectF(i * sw, 0, sw + 0.5, _H), QColor(c))
+        elif orient == "nordic":
+            p.fillRect(QRectF(0, 0, _W, _H), QColor(colors[0]))
+            outer = QColor(colors[1])
+            inner = QColor(colors[2]) if len(colors) > 2 else outer
+            p.fillRect(QRectF(0, 5, _W, 4), outer)
+            p.fillRect(QRectF(6, 0, 4, _H), outer)
+            if len(colors) > 2:
+                p.fillRect(QRectF(0, 6, _W, 2), inner)
+                p.fillRect(QRectF(7, 0, 2, _H), inner)
+        elif orient == "cross":
+            p.fillRect(QRectF(0, 0, _W, _H), QColor(colors[0]))
+            cross = QColor(colors[1])
+            p.fillRect(QRectF(0, 5, _W, 4), cross)
+            p.fillRect(QRectF(8, 0, 4, _H), cross)
     else:
         p.fillRect(QRectF(0, 0, _W, _H), QColor("#B0BEC5"))
 

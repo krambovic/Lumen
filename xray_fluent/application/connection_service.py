@@ -110,8 +110,11 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
                 )
                 return False
 
-            if controller.proxy.is_enabled():
-                controller.proxy.disable(restore_previous=True)
+            # TUN catches traffic at the adapter level. Restore browser/system
+            # proxy prefs even when WinINET already looks disabled, because
+            # Necko browsers can keep Lumen's manual 127.0.0.1 proxy block from
+            # the previous system-proxy session and then fail in TUN mode.
+            controller.proxy.disable(restore_previous=True)
             if controller.state.settings.discord_proxy_enabled:
                 result = controller.discord_proxy.disable()
                 controller._log(f"[discord-proxy] disabled for TUN: {result.message}")

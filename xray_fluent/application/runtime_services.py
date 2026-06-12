@@ -203,6 +203,8 @@ def shutdown(controller: AppController) -> None:
         controller._speed_worker.wait(800)
     if controller._xray_update_worker and controller._xray_update_worker.isRunning():
         controller._xray_update_worker.wait(300)
+    if controller._resource_update_worker and controller._resource_update_worker.isRunning():
+        controller._resource_update_worker.wait(300)
 
     controller.disconnect_current(fast=True)
     if controller.tun2socks.is_running:

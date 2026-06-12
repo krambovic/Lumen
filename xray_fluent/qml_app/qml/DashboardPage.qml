@@ -51,7 +51,7 @@ FluentScroll {
     function engineText() {
         if (App.tunMode)
             return App.tunEngine === "singbox"
-                ? "VPN (TUN) → sing-box (recommended, auto hybrid)"
+                ? "VPN (TUN) → sing-box"
                 : "VPN (TUN) → tun2socks";
         return App.proxyEnabled ? "Системный прокси Windows" : "Прямое подключение";
     }

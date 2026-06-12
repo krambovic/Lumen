@@ -20,6 +20,7 @@ from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from ...app_controller import AppController
 from ...application.node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
 from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY
+from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...startup import is_process_elevated, relaunch_as_admin
 from .log_model import LogModel
@@ -35,6 +36,7 @@ class AppBridge(QObject):
     connectivityResult = pyqtSignal(bool, str, int)
     appUpdateState = pyqtSignal("QVariantMap")     # application updater
     xrayUpdateState = pyqtSignal("QVariantMap")    # Xray-core updater
+    resourceUpdateState = pyqtSignal("QVariantMap")    # sing-box/geodata updater
 
     # ── property-change signals ──────────────────────────────────
     connectedChanged = pyqtSignal()
@@ -59,6 +61,7 @@ class AppBridge(QObject):
 
         # Reuse the existing backend untouched.
         self.controller = AppController(self)
+        self.controller.resource_update_result.connect(self._on_resource_update_result)
 
         # cached state for QML properties
         self._connected = False
@@ -786,7 +789,11 @@ class AppBridge(QObject):
             version = get_xray_version(self.controller.state.settings.xray_path) or ""
         except Exception:
             version = ""
-        return {"appVersion": APP_VERSION, "xrayVersion": version}
+        try:
+            singbox_version = get_singbox_version(self.controller.state.settings.singbox_path) or ""
+        except Exception:
+            singbox_version = ""
+        return {"appVersion": APP_VERSION, "xrayVersion": version, "singboxVersion": singbox_version}
 
     # -- application updater --
     @pyqtSlot()
@@ -933,6 +940,45 @@ class AppBridge(QObject):
             "version": version,
             "message": getattr(result, "message", "") or "",
         })
+
+    @pyqtSlot()
+    def checkSingboxUpdate(self) -> None:
+        self.resourceUpdateState.emit({"kind": "singbox", "phase": "checking"})
+        try:
+            self.controller.run_resource_update("singbox", apply_update=False)
+        except Exception as exc:  # noqa: BLE001
+            self.resourceUpdateState.emit({"kind": "singbox", "phase": "error", "message": str(exc)})
+
+    @pyqtSlot()
+    def updateSingboxCore(self) -> None:
+        self.resourceUpdateState.emit({"kind": "singbox", "phase": "updating"})
+        try:
+            self.controller.run_resource_update("singbox", apply_update=True)
+        except Exception as exc:  # noqa: BLE001
+            self.resourceUpdateState.emit({"kind": "singbox", "phase": "error", "message": str(exc)})
+
+    @pyqtSlot()
+    def updateGeodataFiles(self) -> None:
+        self.resourceUpdateState.emit({"kind": "geodata", "phase": "updating"})
+        try:
+            self.controller.run_resource_update("geodata", apply_update=True)
+        except Exception as exc:  # noqa: BLE001
+            self.resourceUpdateState.emit({"kind": "geodata", "phase": "error", "message": str(exc)})
+
+    def _on_resource_update_result(self, result) -> None:
+        phase = {
+            "up_to_date": "uptodate",
+            "available": "available",
+            "updated": "updated",
+            "error": "error",
+        }.get(getattr(result, "status", ""), "uptodate")
+        payload = {
+            "kind": getattr(result, "kind", ""),
+            "phase": phase,
+            "message": getattr(result, "message", "") or "",
+            "version": getattr(result, "latest_version", "") or getattr(result, "current_version", "") or "",
+        }
+        self.resourceUpdateState.emit(payload)
 
     # ── Zapret tab ──────────────────────────────────────────────
     zapretState = pyqtSignal("QVariantMap")        # {running, preset, error}

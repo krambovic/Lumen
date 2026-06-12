@@ -17,6 +17,7 @@ Item {
 
     property string appVersion: App.appVersion
     property string xrayVersion: ""
+    property string singboxVersion: ""
 
     // application updater state
     property string appPhase: "idle"        // idle|checking|available|downloading|uptodate|ready|error
@@ -28,9 +29,15 @@ Item {
     // xray updater state
     property string xrayPhase: "idle"       // idle|checking|updating|available|updated|uptodate|error
     property string xrayMessage: ""
+    property string singboxPhase: "idle"
+    property string singboxMessage: ""
+    property string geodataPhase: "idle"
+    property string geodataMessage: ""
 
     readonly property bool appBusy: appPhase === "checking" || appPhase === "downloading"
     readonly property bool xrayBusy: xrayPhase === "checking" || xrayPhase === "updating"
+    readonly property bool singboxBusy: singboxPhase === "checking" || singboxPhase === "updating"
+    readonly property bool geodataBusy: geodataPhase === "checking" || geodataPhase === "updating"
 
     function appStatusText() {
         switch (appPhase) {
@@ -65,11 +72,28 @@ Item {
         if (xrayPhase === "updated" || xrayPhase === "uptodate" || xrayPhase === "available") return Theme.success
         return Theme.textMuted
     }
+    function resourceStatusText(phase, message, fallback) {
+        switch (phase) {
+        case "checking": return "Проверка обновлений..."
+        case "updating": return "Обновление..."
+        case "uptodate":
+        case "available":
+        case "updated":
+        case "error":    return message
+        default:         return fallback
+        }
+    }
+    function resourceStatusColor(phase) {
+        if (phase === "error") return Theme.danger
+        if (phase === "updated" || phase === "uptodate" || phase === "available") return Theme.success
+        return Theme.textMuted
+    }
 
     function init() {
         var s = App.updatesInitialState()
         appVersion = s.appVersion || App.appVersion
         xrayVersion = s.xrayVersion || ""
+        singboxVersion = s.singboxVersion || ""
     }
     Component.onCompleted: init()
 
@@ -87,6 +111,16 @@ Item {
             page.xrayPhase = s.phase || "idle"
             page.xrayMessage = s.message !== undefined ? s.message : ""
             if (s.version !== undefined && s.version !== "") page.xrayVersion = s.version
+        }
+        function onResourceUpdateState(s) {
+            if ((s.kind || "") === "singbox") {
+                page.singboxPhase = s.phase || "idle"
+                page.singboxMessage = s.message !== undefined ? s.message : ""
+                if (s.version !== undefined && s.version !== "") page.singboxVersion = s.version
+            } else if ((s.kind || "") === "geodata") {
+                page.geodataPhase = s.phase || "idle"
+                page.geodataMessage = s.message !== undefined ? s.message : ""
+            }
         }
     }
 
@@ -211,6 +245,81 @@ Item {
                             kind: "ghost"; glyph: "\uE896"; text: "Обновить Xray core"
                             enabled: !page.xrayBusy
                             onClicked: App.updateXrayCore()
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+            }
+
+            Card {
+                Layout.fillWidth: true
+                padding: 18
+                hoverable: false
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 10
+                    Text { text: "Ядро sing-box extended"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        Text { text: "Версия:"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Text { text: page.singboxVersion !== "" ? page.singboxVersion : "не найдена"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
+                        Item { Layout.fillWidth: true }
+                    }
+                    Text {
+                        text: page.resourceStatusText(page.singboxPhase, page.singboxMessage, "Проверьте наличие новой версии sing-box extended.")
+                        color: page.resourceStatusColor(page.singboxPhase)
+                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                        font.weight: (page.singboxPhase === "updated" || page.singboxPhase === "error") ? Font.DemiBold : Font.Normal
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
+                    ProgressBar {
+                        Layout.fillWidth: true
+                        visible: page.singboxBusy
+                        indeterminate: true
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        AccentButton {
+                            kind: "accent"; glyph: "\uE72C"; text: "Проверить sing-box"
+                            enabled: !page.singboxBusy
+                            onClicked: App.checkSingboxUpdate()
+                        }
+                        AccentButton {
+                            kind: "ghost"; glyph: "\uE896"; text: "Обновить sing-box"
+                            enabled: !page.singboxBusy
+                            onClicked: App.updateSingboxCore()
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+            }
+
+            Card {
+                Layout.fillWidth: true
+                padding: 18
+                hoverable: false
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 10
+                    Text { text: "GeoIP и GeoSite"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                    Text {
+                        text: page.resourceStatusText(page.geodataPhase, page.geodataMessage, "Обновляет geoip.dat и geosite.dat для правил маршрутизации.")
+                        color: page.resourceStatusColor(page.geodataPhase)
+                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                        font.weight: (page.geodataPhase === "updated" || page.geodataPhase === "error") ? Font.DemiBold : Font.Normal
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
+                    ProgressBar {
+                        Layout.fillWidth: true
+                        visible: page.geodataBusy
+                        indeterminate: true
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        AccentButton {
+                            kind: "accent"; glyph: "\uE895"; text: "Обновить geoip/geosite"
+                            enabled: !page.geodataBusy
+                            onClicked: App.updateGeodataFiles()
                         }
                         Item { Layout.fillWidth: true }
                     }

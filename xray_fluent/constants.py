@@ -5,7 +5,7 @@ import sys
 
 
 APP_NAME = "Lumen KVN"
-APP_VERSION = "1.1.5"
+APP_VERSION = "1.1.6"
 STATE_SCHEMA_VERSION = 1
 
 PROXY_HOST = "127.0.0.1"
@@ -55,6 +55,7 @@ SPEED_TEST_DEFAULT_URL = "https://cachefly.cachefly.net/50mb.test"
 SPEED_TEST_PING_URL = "https://www.google.com/generate_204"
 SPEED_TEST_TIMEOUT = 10  # v2rayN-style timeout per speed test
 SPEED_TEST_MIXED_CONCURRENCY = 10
+SPEED_TEST_PROCESS_CONCURRENCY_CAP = 6
 SPEED_TEST_STARTUP_TIMEOUT = 5.0
 SPEED_TEST_PING_TIMEOUT = 3.0
 SPEED_TEST_MAX_PING_MS = 3500

@@ -26,6 +26,7 @@ from .constants import (
     SPEED_TEST_MIXED_CONCURRENCY,
     SPEED_TEST_PING_URL,
     SPEED_TEST_PING_TIMEOUT,
+    SPEED_TEST_PROCESS_CONCURRENCY_CAP,
     SPEED_TEST_SLOW_GRACE_SECONDS,
     SPEED_TEST_STARTUP_TIMEOUT,
     SPEED_TEST_TIMEOUT,
@@ -111,16 +112,36 @@ class SpeedTestWorker(QThread):
                 self.node_progress.emit(node.id, 0)
 
             base_concurrency = self._concurrency if self._concurrency > 0 else SPEED_TEST_MIXED_CONCURRENCY
-            max_workers = min(max(1, base_concurrency), max(1, len(self._nodes)))
+            max_workers = min(
+                max(1, base_concurrency),
+                SPEED_TEST_PROCESS_CONCURRENCY_CAP,
+                max(1, len(self._nodes)),
+            )
             with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speed-test") as executor:
-                pending: set[Future[tuple[Node, float | None, bool]]] = {
-                    executor.submit(self._test_node, node)
-                    for node in self._nodes
-                }
+                pending: set[Future[tuple[Node, float | None, bool]]] = set()
+                iterator = iter(self._nodes)
+                exhausted = False
 
-                while pending and not self._cancelled:
-                    done, pending = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
+                def fill_pending_slots() -> None:
+                    nonlocal exhausted
+                    while len(pending) < max_workers and not exhausted and not self._cancelled:
+                        node = next(iterator, None)
+                        if node is None:
+                            exhausted = True
+                            break
+                        pending.add(executor.submit(self._test_node, node))
+
+                fill_pending_slots()
+                while (pending or not exhausted) and not self._cancelled:
+                    if not pending:
+                        fill_pending_slots()
+                        if not pending:
+                            break
+                    done, _ = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
+                    if not done:
+                        continue
                     for future in done:
+                        pending.discard(future)
                         if self._cancelled:
                             break
                         try:
@@ -128,10 +149,12 @@ class SpeedTestWorker(QThread):
                         except Exception:
                             continue
                         self._emit_node_result(node, speed, alive, total)
+                        fill_pending_slots()
 
                 if self._cancelled:
                     for future in pending:
                         future.cancel()
+                    executor.shutdown(wait=False, cancel_futures=True)
         finally:
             self._terminate_all_processes()
             self.completed.emit()

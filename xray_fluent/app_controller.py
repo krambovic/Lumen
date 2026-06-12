@@ -237,6 +237,7 @@ class AppController(QObject):
     connectivity_test_done = pyqtSignal(bool, str, object)
     live_metrics_updated = pyqtSignal(object)
     xray_update_result = pyqtSignal(object)
+    resource_update_result = pyqtSignal(object)
     lock_state_changed = pyqtSignal(bool)
     passphrase_required = pyqtSignal()
     auto_switch_triggered = pyqtSignal(str)  # node name we're switching to
@@ -284,6 +285,7 @@ class AppController(QObject):
         self._metrics_worker: LiveMetricsWorker | None = None
         self._retired_metrics_workers: list[LiveMetricsWorker] = []
         self._xray_update_worker: XrayCoreUpdateWorker | None = None
+        self._resource_update_worker = None
         self._singbox_documents = SingboxDocumentCache()
         self._ping_total = 0
         self._ping_completed = 0
@@ -1424,9 +1426,16 @@ class AppController(QObject):
         old_admin = old_settings.always_run_as_admin
         old_tun = old_settings.tun_mode
         old_tun_engine = old_settings.tun_engine
+        old_proxy = old_settings.enable_system_proxy
         self.state.settings = settings
         self.settings_changed.emit(self.state.settings)
         self.schedule_save()
+
+        if old_proxy and not settings.enable_system_proxy:
+            # Only Firefox-family/Necko profiles are touched here. WinINET is
+            # still handled by the normal runtime proxy transition, but browser
+            # profile overrides must be removed even when VPN is currently off.
+            self.proxy.disable_necko_overrides()
 
         if old_launch != settings.launch_on_startup:
             try:
@@ -1476,6 +1485,31 @@ class AppController(QObject):
 
     def run_xray_core_update(self, apply_update: bool, silent: bool = False) -> None:
         run_xray_core_update_operation(self, apply_update, silent=silent)
+
+    def run_resource_update(self, kind: str, *, apply_update: bool = True) -> None:
+        from .core_resource_updater import ResourceUpdateWorker
+        if self._resource_update_worker and self._resource_update_worker.isRunning():
+            self.status.emit("info", "Обновление уже выполняется")
+            return
+        self._resource_update_worker = ResourceUpdateWorker(
+            kind,
+            singbox_path=self.state.settings.singbox_path,
+            apply_update=apply_update,
+        )
+        self._resource_update_worker.done.connect(self._on_resource_update_done)
+        self._resource_update_worker.start()
+
+    def _on_resource_update_done(self, result) -> None:
+        self._resource_update_worker = None
+        self.resource_update_result.emit(result)
+        status = getattr(result, "status", "")
+        message = getattr(result, "message", "") or ""
+        if status == "error":
+            self.status.emit("error", message)
+        elif status in {"updated", "up_to_date"}:
+            self.status.emit("success" if status == "updated" else "info", message)
+        else:
+            self.status.emit("warning", message)
 
     def _start_metrics_worker(self) -> None:
         start_metrics_worker_operation(self)

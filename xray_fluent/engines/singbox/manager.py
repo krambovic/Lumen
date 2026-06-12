@@ -136,6 +136,7 @@ class SingBoxManager(QObject):
             # a usable IPv4 address — not merely when the process spawns.
             if self._wait_until_tun_ready(proc, tun_interface_name):
                 self._starting = False
+                self.log_received.emit(f"[tun] sing-box runtime ready, interface={tun_interface_name}")
                 self._mark_running()
                 return True
 
@@ -303,7 +304,7 @@ class SingBoxManager(QObject):
                         if clean:
                             if not self._starting and self._is_noisy_runtime_line(clean):
                                 self._suppressed_noisy_lines += 1
-                                if self._suppressed_noisy_lines % 50 == 0:
+                                if self._suppressed_noisy_lines % 25 == 0:
                                     self.log_received.emit(
                                         f"[tun] {self._suppressed_noisy_lines} noisy connection logs suppressed..."
                                     )

@@ -272,6 +272,10 @@ class ProxyManager:
         if not self._set_wininet_connection_proxy("", "", False):
             self._refresh_system_proxy()
 
+    def disable_necko_overrides(self) -> None:
+        """Restore only Firefox-family browser proxy prefs managed by Lumen."""
+        self._firefox_proxy.disable()
+
     def is_enabled(self) -> bool:
         if not self.is_supported:
             return False

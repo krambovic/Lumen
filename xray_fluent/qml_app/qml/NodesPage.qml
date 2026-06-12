@@ -679,6 +679,48 @@ Item {
                                                     }
                                                 }
                                             }
+                                            Item {
+                                                anchors.fill: parent
+                                                visible: nodeRow.flagOrient === "nordic"
+                                                Rectangle { anchors.fill: parent; color: (nodeRow.flagColors && nodeRow.flagColors.length > 0) ? nodeRow.flagColors[0] : "transparent" }
+                                                Rectangle {
+                                                    x: 0; y: Math.round(flagBox.height * 0.36)
+                                                    width: flagBox.width; height: Math.max(2, Math.round(flagBox.height * 0.28))
+                                                    color: (nodeRow.flagColors && nodeRow.flagColors.length > 1) ? nodeRow.flagColors[1] : "transparent"
+                                                }
+                                                Rectangle {
+                                                    x: Math.round(flagBox.width * 0.30); y: 0
+                                                    width: Math.max(3, Math.round(flagBox.width * 0.18)); height: flagBox.height
+                                                    color: (nodeRow.flagColors && nodeRow.flagColors.length > 1) ? nodeRow.flagColors[1] : "transparent"
+                                                }
+                                                Rectangle {
+                                                    visible: nodeRow.flagColors && nodeRow.flagColors.length > 2
+                                                    x: 0; y: Math.round(flagBox.height * 0.43)
+                                                    width: flagBox.width; height: Math.max(1, Math.round(flagBox.height * 0.14))
+                                                    color: (nodeRow.flagColors && nodeRow.flagColors.length > 2) ? nodeRow.flagColors[2] : "transparent"
+                                                }
+                                                Rectangle {
+                                                    visible: nodeRow.flagColors && nodeRow.flagColors.length > 2
+                                                    x: Math.round(flagBox.width * 0.36); y: 0
+                                                    width: Math.max(1, Math.round(flagBox.width * 0.09)); height: flagBox.height
+                                                    color: (nodeRow.flagColors && nodeRow.flagColors.length > 2) ? nodeRow.flagColors[2] : "transparent"
+                                                }
+                                            }
+                                            Item {
+                                                anchors.fill: parent
+                                                visible: nodeRow.flagOrient === "cross"
+                                                Rectangle { anchors.fill: parent; color: (nodeRow.flagColors && nodeRow.flagColors.length > 0) ? nodeRow.flagColors[0] : "transparent" }
+                                                Rectangle {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: flagBox.width; height: Math.max(3, Math.round(flagBox.height * 0.30))
+                                                    color: (nodeRow.flagColors && nodeRow.flagColors.length > 1) ? nodeRow.flagColors[1] : "transparent"
+                                                }
+                                                Rectangle {
+                                                    anchors.horizontalCenter: parent.horizontalCenter
+                                                    width: Math.max(3, Math.round(flagBox.width * 0.20)); height: flagBox.height
+                                                    color: (nodeRow.flagColors && nodeRow.flagColors.length > 1) ? nodeRow.flagColors[1] : "transparent"
+                                                }
+                                            }
                                             Rectangle {
                                                 anchors.fill: parent
                                                 color: "transparent"
