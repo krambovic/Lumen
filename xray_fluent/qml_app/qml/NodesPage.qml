@@ -569,6 +569,7 @@ Item {
                             required property real speed
                             required property bool isAlive
                             required property bool selected
+                            required property bool runtimeSupported
                             required property int speedProgress
                             required property string flagOrient
                             required property var flagColors
@@ -580,7 +581,8 @@ Item {
                             width: page.tableWidth
                             height: visibleRow ? page.rowH : 0
                             visible: visibleRow
-                            color: picked ? Theme.accentSoft : (hover.hovered ? Theme.cardHover : "transparent")
+                            opacity: runtimeSupported ? 1.0 : 0.45
+                            color: picked ? Theme.accentSoft : (hover.hovered && runtimeSupported ? Theme.cardHover : "transparent")
 
                             HoverHandler { id: hover }
 

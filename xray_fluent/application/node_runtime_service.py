@@ -50,6 +50,31 @@ def get_node_by_id(controller: AppController, node_id: str | None) -> Node | Non
     return None
 
 
+def is_native_singbox_only_node(node: Node | None) -> bool:
+    outbound = node.outbound if node is not None else None
+    if not isinstance(outbound, dict):
+        return False
+    protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
+    if protocol in {"warp", "wireguard", "awg"}:
+        return True
+    return isinstance(outbound.get("singbox"), dict) and protocol not in {
+        "vless",
+        "vmess",
+        "trojan",
+        "shadowsocks",
+        "socks",
+        "http",
+    }
+
+
+def native_singbox_only_message(node: Node | None = None) -> str:
+    name = (node.name or node.server) if node is not None else "Этот сервер"
+    return (
+        f"{name} работает только через VPN (TUN) на sing-box-extended. "
+        "В системном прокси/Xray такие WARP/WireGuard/AWG конфиги недоступны."
+    )
+
+
 def prepare_node_for_runtime(controller: AppController, node: Node | None) -> str | None:
     if node is None:
         return None

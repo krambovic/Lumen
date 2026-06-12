@@ -14,6 +14,7 @@ from PyQt6.QtCore import QAbstractListModel, QModelIndex, Qt, pyqtSlot
 
 from ...models import Node
 from ...country_flags import detect_country, _STRIPES as _FLAG_STRIPES
+from ...application.node_runtime_service import is_native_singbox_only_node
 
 
 class NodeListModel(QAbstractListModel):
@@ -34,6 +35,7 @@ class NodeListModel(QAbstractListModel):
     FlagOrientRole = Qt.ItemDataRole.UserRole + 14
     FlagColorsRole = Qt.ItemDataRole.UserRole + 15
     LastUsedRole = Qt.ItemDataRole.UserRole + 16
+    RuntimeSupportedRole = Qt.ItemDataRole.UserRole + 17
 
     _ROLE_NAMES = {
         IdRole: b"nodeId",
@@ -52,6 +54,7 @@ class NodeListModel(QAbstractListModel):
         FlagOrientRole: b"flagOrient",
         FlagColorsRole: b"flagColors",
         LastUsedRole: b"lastUsed",
+        RuntimeSupportedRole: b"runtimeSupported",
     }
 
     def __init__(self, parent=None) -> None:
@@ -61,6 +64,7 @@ class NodeListModel(QAbstractListModel):
         self._index_by_id: dict[str, int] = {}
         self._speed_progress: dict[str, int] = {}
         self._country_cache: dict[str, str] = {}
+        self._allow_native_singbox_only = False
 
     # ── Qt model API ────────────────────────────────────────────
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -105,6 +109,8 @@ class NodeListModel(QAbstractListModel):
             return list(data[1]) if data else []
         if role == self.LastUsedRole:
             return self._format_last_used(node.last_used_at)
+        if role == self.RuntimeSupportedRole:
+            return self._allow_native_singbox_only or not is_native_singbox_only_node(node)
         if role == self.SelectedRole:
             return node.id == self._selected_id
         if role == self.SpeedProgressRole:
@@ -153,6 +159,18 @@ class NodeListModel(QAbstractListModel):
         self._selected_id = selected_id
         for nid in (previous, selected_id):
             self._emit_row_changed(nid, [self.SelectedRole])
+
+    def set_runtime_support(self, allow_native_singbox_only: bool) -> None:
+        value = bool(allow_native_singbox_only)
+        if value == self._allow_native_singbox_only:
+            return
+        self._allow_native_singbox_only = value
+        if self._nodes:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(len(self._nodes) - 1, 0),
+                [self.RuntimeSupportedRole],
+            )
 
     def update_ping(self, node_id: str, ping_ms: int | None) -> None:
         row = self._index_by_id.get(node_id)

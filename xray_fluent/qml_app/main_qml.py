@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -151,8 +152,47 @@ def _set_app_user_model_id() -> None:
         pass
 
 
+def _cleanup_legacy_root_program_install() -> None:
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    try:
+        current_dir = Path(sys.executable).resolve().parent
+        old_dir = Path("C:/Program")
+        if current_dir == old_dir or not old_dir.is_dir():
+            return
+        if current_dir.name.lower() != "lumen kvn":
+            return
+        program_files = {
+            Path(os.environ.get("ProgramW6432") or ""),
+            Path(os.environ.get("ProgramFiles") or ""),
+        }
+        if not any(
+            str(current_dir).lower().startswith(str(root).lower().rstrip("\\/") + "\\")
+            for root in program_files
+            if str(root)
+        ):
+            return
+        if not (old_dir / "LumenKVN.exe").is_file():
+            return
+        script = (
+            "$old='C:\\Program';"
+            "Start-Sleep -Seconds 3;"
+            "if ((Test-Path -LiteralPath (Join-Path $old 'LumenKVN.exe')) -and "
+            "((Split-Path -Leaf $old) -ieq 'Program')) {"
+            "Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue"
+            "}"
+        )
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", script],
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     _set_app_user_model_id()
+    _cleanup_legacy_root_program_install()
     _enable_gpu_friendly_defaults()
     _install_message_filter()
 

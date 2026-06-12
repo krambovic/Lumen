@@ -11,6 +11,7 @@ from ..routing_runtime import apply_xray_gui_routing
 from ..xray_inbounds import build_xray_sniffing, ensure_xray_mixed_proxy_inbound, normalize_xray_sniffing
 from ..xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
 from .connection_service import find_free_api_port
+from .node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
 from .runtime_introspection import extract_xray_runtime_ports
 from .runtime_security import strip_xray_proxy_inbounds
 from .session_state import XrayRuntimeConfig
@@ -289,6 +290,8 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
             has_proxy_outbound = True
             if node is None:
                 raise ValueError("В конфиге есть outbound tag `proxy`. Выберите сервер для запуска xray.")
+            if is_native_singbox_only_node(node):
+                raise ValueError(native_singbox_only_message(node))
             problem = controller._prepare_node_for_runtime(node)
             if problem:
                 raise ValueError(problem)

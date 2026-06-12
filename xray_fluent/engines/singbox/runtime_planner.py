@@ -187,6 +187,7 @@ def plan_singbox_runtime(
     if native_is_endpoint:
         outbounds.pop(proxy_index)
         _replace_or_append_tagged(_ensure_list(runtime_config, "endpoints"), "proxy", native_proxy)
+        _ensure_endpoint_server_bootstrap_contract(runtime_config, native_proxy)
     else:
         outbounds[proxy_index] = native_proxy
     if routing is not None:
@@ -429,6 +430,30 @@ def _ensure_proxy_server_bootstrap_contract(
     # Domain-based proxy servers must resolve through bootstrap-dns, otherwise
     # proxy-dns can recurse into the proxy outbound before the tunnel is ready.
     proxy_outbound["domain_resolver"] = "bootstrap-dns"
+    _ensure_direct_domain_route(payload, server)
+
+
+def _ensure_endpoint_server_bootstrap_contract(payload: dict[str, Any], endpoint: dict[str, Any]) -> None:
+    endpoint_type = str(endpoint.get("type") or "").strip().lower()
+    hosts: list[str] = []
+    if endpoint_type == "wireguard":
+        endpoint["domain_resolver"] = "bootstrap-dns"
+        for peer in endpoint.get("peers") or []:
+            if isinstance(peer, dict):
+                hosts.append(str(peer.get("address") or "").strip())
+    elif endpoint_type == "warp":
+        endpoint["domain_resolver"] = "bootstrap-dns"
+        hosts.append("engage.cloudflareclient.com")
+
+    for host in hosts:
+        if _is_domain_name(host):
+            _ensure_direct_domain_route(payload, host)
+
+
+def _ensure_direct_domain_route(payload: dict[str, Any], server: str) -> None:
+    server = str(server or "").strip()
+    if not server:
+        return
 
     route = _ensure_dict(payload, "route")
     rules = _ensure_list(route, "rules")

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.request import url2pathname
 
 from .models import Node
 
@@ -14,6 +16,10 @@ class LinkParseError(ValueError):
 
 def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
     stripped = text.strip()
+    file_text = _read_import_file_reference(stripped)
+    if file_text is not None:
+        stripped = file_text.strip()
+        text = file_text
     lowered = stripped.lower()
     if "[interface]" in lowered and "[peer]" in lowered:
         try:
@@ -33,6 +39,31 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
             errors.append(f"Line {idx}: {exc}")
 
     return nodes, errors
+
+
+def _read_import_file_reference(text: str) -> str | None:
+    """Accept paths copied from Explorer/QML instead of treating them as links."""
+    if not text or "\n" in text:
+        return None
+    candidate_text = text.strip().strip('"')
+    parsed = urlsplit(candidate_text)
+    path_text = ""
+    if len(candidate_text) >= 3 and candidate_text[1] == ":" and candidate_text[2] in {"\\", "/"}:
+        path_text = candidate_text
+    elif parsed.scheme.lower() == "file":
+        path_text = url2pathname(unquote(parsed.path or ""))
+        if parsed.netloc and not path_text.startswith("\\\\"):
+            path_text = f"\\\\{parsed.netloc}{path_text}"
+    elif parsed.scheme == "":
+        candidate = candidate_text
+        if candidate.lower().endswith((".conf", ".txt", ".json")):
+            path_text = candidate
+    if not path_text:
+        return None
+    path = Path(path_text)
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def parse_single(raw: str) -> Node:

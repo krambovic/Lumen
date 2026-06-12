@@ -18,6 +18,7 @@ from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSl
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 
 from ...app_controller import AppController
+from ...application.node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
 from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY
 from ...models import Node, RoutingSettings
 from ...startup import is_process_elevated, relaunch_as_admin
@@ -233,6 +234,9 @@ class AppBridge(QObject):
         """Re-push the controller's nodes into the model honouring the active
         sort key/direction chosen in the Серверы toolbar"""
         state = self.controller.state
+        self._node_model.set_runtime_support(
+            bool(state.settings.tun_mode and state.settings.tun_engine == "singbox")
+        )
         self._node_model.set_nodes(self._sorted_nodes(state.nodes), state.selected_node_id)
 
     def _sorted_nodes(self, nodes: list[Node]) -> list[Node]:
@@ -298,6 +302,7 @@ class AppBridge(QObject):
         self._discord_proxy = bool(getattr(settings, "discord_proxy_enabled", False))
         self._theme = settings.theme
         self._accent = settings.accent_color or "#0078D4"
+        self._node_model.set_runtime_support(bool(settings.tun_mode and settings.tun_engine == "singbox"))
         self.settingsChanged.emit()
 
     def _on_subscriptions_changed(self, _subscriptions=None) -> None:
@@ -336,6 +341,11 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def selectNode(self, node_id: str) -> None:
         if node_id:
+            node = self.controller._get_node_by_id(node_id)
+            settings = self.controller.state.settings
+            if is_native_singbox_only_node(node) and not (settings.tun_mode and settings.tun_engine == "singbox"):
+                self.toast.emit("warning", native_singbox_only_message(node))
+                return
             self.controller.set_selected_node(node_id)
 
     @pyqtSlot()
@@ -1224,6 +1234,9 @@ class AppBridge(QObject):
 
     @pyqtSlot()
     def importNodeFile(self) -> None:
+        from pathlib import Path
+        from PyQt6.QtWidgets import QFileDialog
+
         file_path, _ = QFileDialog.getOpenFileName(
             None,
             "Импортировать сервер",
