@@ -180,7 +180,6 @@ small helper widgets around the editor.
 Apply the same ownership model to other engines:
 
 - Xray
-- tun2socks-sidecar generation
 - Zapret presets and related text assets
 
 This is where "all cores in a text editor" becomes a consistent product

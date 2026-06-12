@@ -9,11 +9,9 @@ from PyQt6.QtCore import QTimer
 
 from ..constants import DEFAULT_HTTP_PORT, DEFAULT_SOCKS_PORT, DEFAULT_XRAY_STATS_API_PORT
 from ..engines.singbox import SingboxRuntimePlan, start_tun as start_singbox_tun
-from ..engines.tun2socks import hot_swap as hot_swap_tun2socks, start_tun as start_tun2socks_tun
 from ..engines.xray import (
     restart_proxy_core as restart_xray_proxy_core,
     start_proxy as start_xray_proxy,
-    start_tun as start_xray_tun,
 )
 
 if TYPE_CHECKING:
@@ -57,7 +55,6 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         node = controller.selected_node
         singbox_editor_mode = controller.is_singbox_editor_mode()
         xray_raw_mode = controller.uses_xray_raw_config()
-        tun2socks_mode = controller.is_tun2socks_mode()
         if node is None and not controller._can_connect_without_selected_node():
             message = "Сначала выберите сервер."
             if singbox_editor_mode or xray_raw_mode:
@@ -73,14 +70,6 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         prev_active_core = controller._active_core
         tun = controller.state.settings.tun_mode
         controller._xray_api_port = 0
-        if tun2socks_mode:
-            try:
-                controller._xray_api_port = find_free_api_port(
-                    excluded={DEFAULT_SOCKS_PORT, DEFAULT_HTTP_PORT},
-                )
-            except RuntimeError:
-                controller._set_connection_status("error", "Не удалось найти свободный порт для API Xray", level="error")
-                return False
 
         singbox_plan: SingboxRuntimePlan | None = None
         runtime_xray: XrayRuntimeConfig | None = None
@@ -120,32 +109,11 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
                 controller._log(f"[discord-proxy] disabled for TUN: {result.message}")
 
             controller._tun_log_count = 0
-            engine = controller.state.settings.tun_engine
-
-            if engine == "singbox":
-                result = start_singbox_tun(controller, node, prev_active_core=prev_active_core)
-                if result is None:
-                    return False
-                singbox_plan = result.plan
-                session_label = result.session_label
-            elif engine == "xray":
-                result = start_xray_tun(controller, node, prev_active_core=prev_active_core)
-                if result is None:
-                    return False
-                runtime_xray = result.runtime
-                session_label = result.session_label
-            elif engine == "tun2socks":
-                if node is None:
-                    controller._active_core = prev_active_core
-                    return False
-                result = start_tun2socks_tun(controller, node, prev_active_core=prev_active_core)
-                if result is None:
-                    return False
-                session_label = result.session_label
-            else:
-                controller._active_core = prev_active_core
-                controller._set_connection_status("error", f"Неизвестный TUN engine: {engine}", level="error")
+            result = start_singbox_tun(controller, node, prev_active_core=prev_active_core)
+            if result is None:
                 return False
+            singbox_plan = result.plan
+            session_label = result.session_label
         else:
             result = start_xray_proxy(controller, node, prev_active_core=prev_active_core)
             if result is None:

@@ -10,7 +10,9 @@ from .constants import SINGBOX_CLASH_API_PORT
 from .win_proc_monitor import process_name_from_pid
 
 # Processes to hide (internal, not user traffic)
-_HIDDEN_PROCESSES = {"xray.exe", "sing-box.exe", "tun2socks.exe"}
+_HIDDEN_PROCESSES = {"xray.exe", "sing-box.exe"}
+_MAX_REASONABLE_BYTES_PER_SEC = 256 * 1024 ** 2
+_MAX_FIRST_SAMPLE_BYTES = 512 * 1024 ** 2
 
 
 @dataclass(slots=True)
@@ -31,7 +33,8 @@ class ProcessTrafficSnapshot:
 # Session-scoped state
 _seen_connections: dict[str, set[str]] = {}
 _conn_owner: dict[str, str] = {}
-_conn_bytes: dict[str, tuple[int, int]] = {}  # {conn_id: (upload, download)} — last seen per connection
+_conn_bytes: dict[str, tuple[int, int]] = {}
+_conn_raw_bytes: dict[str, tuple[int, int]] = {}
 _proc_total_connections: dict[str, int] = {}
 _proc_closed_bytes: dict[str, tuple[int, int]] = {}  # {exe: (closed_up, closed_down)} — bytes from closed connections
 _prev_proc_total: dict[str, tuple[int, int]] = {}  # {exe: (total_up, total_down)} — for speed calc
@@ -44,6 +47,7 @@ def reset_connection_tracking() -> None:
     _seen_connections.clear()
     _conn_owner.clear()
     _conn_bytes.clear()
+    _conn_raw_bytes.clear()
     _proc_total_connections.clear()
     _proc_closed_bytes.clear()
     _prev_proc_total.clear()
@@ -112,6 +116,13 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
     # Track which connection IDs are still active
     active_conn_ids: set[str] = set()
 
+    import time as _time
+    global _prev_time
+    now = _time.monotonic()
+    dt = max(0.5, now - _prev_time) if _prev_time > 0 else 2.0
+    _prev_time = now
+    max_delta = int(_MAX_REASONABLE_BYTES_PER_SEC * dt)
+
     # Aggregate by process exe name
     by_proc: dict[str, dict[str, Any]] = {}
     for conn in connections:
@@ -129,12 +140,12 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
             }
 
         entry = by_proc[exe]
-        conn_up = conn.get("upload", 0)
-        conn_down = conn.get("download", 0)
-        conn_total = conn_up + conn_down
-
         # Track unique connection IDs and their bytes
-        conn_id = conn.get("id", "")
+        conn_id = str(conn.get("id", "") or "")
+        raw_up = _safe_int(conn.get("upload", 0))
+        raw_down = _safe_int(conn.get("download", 0))
+        conn_up, conn_down = _validated_connection_bytes(conn_id, raw_up, raw_down, max_delta)
+        conn_total = conn_up + conn_down
         if conn_id:
             active_conn_ids.add(conn_id)
             if conn_id not in _conn_owner:
@@ -142,7 +153,6 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
             if exe not in _seen_connections:
                 _seen_connections[exe] = set()
             _seen_connections[exe].add(conn_id)
-            _conn_bytes[conn_id] = (conn_up, conn_down)
             _conn_owner[conn_id] = exe
         entry["upload"] += conn_up
         entry["download"] += conn_down
@@ -173,6 +183,7 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
     closed_ids = set(_conn_bytes.keys()) - active_conn_ids
     for cid in closed_ids:
         up, down = _conn_bytes.pop(cid)
+        _conn_raw_bytes.pop(cid, None)
         exe_key = _conn_owner.pop(cid, "")
         if exe_key:
             prev_closed = _proc_closed_bytes.get(exe_key, (0, 0))
@@ -182,13 +193,6 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
                 conn_set.discard(cid)
                 if not conn_set:
                     _seen_connections.pop(exe_key, None)
-
-    # Calculate per-process speed from delta
-    import time as _time
-    global _prev_time
-    now = _time.monotonic()
-    dt = max(0.5, now - _prev_time) if _prev_time > 0 else 2.0
-    _prev_time = now
 
     # Build snapshots
     result: list[ProcessTrafficSnapshot] = []
@@ -235,3 +239,31 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
     # Sort by total traffic descending
     result.sort(key=lambda s: s.upload + s.download, reverse=True)
     return result
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except Exception:
+        return 0
+
+
+def _validated_connection_bytes(conn_id: str, raw_up: int, raw_down: int, max_delta: int) -> tuple[int, int]:
+    if not conn_id:
+        return min(raw_up, _MAX_FIRST_SAMPLE_BYTES), min(raw_down, _MAX_FIRST_SAMPLE_BYTES)
+
+    prev_up, prev_down = _conn_bytes.get(conn_id, (0, 0))
+    prev_raw_up, prev_raw_down = _conn_raw_bytes.get(conn_id, (0, 0))
+
+    if conn_id not in _conn_raw_bytes:
+        up = 0
+        down = 0
+    else:
+        raw_delta_up = max(0, raw_up - prev_raw_up)
+        raw_delta_down = max(0, raw_down - prev_raw_down)
+        up = prev_up + (raw_delta_up if raw_delta_up <= max_delta else 0)
+        down = prev_down + (raw_delta_down if raw_delta_down <= max_delta else 0)
+
+    _conn_raw_bytes[conn_id] = (raw_up, raw_down)
+    _conn_bytes[conn_id] = (up, down)
+    return up, down

@@ -56,6 +56,11 @@ class StateStorage:
 
     def _default_state(self) -> AppState:
         state = AppState()
+        try:
+            from .routing_presets import ROUTING_PRESET_BLOCKED, build_routing_preset
+            state.routing = build_routing_preset(state.routing, ROUTING_PRESET_BLOCKED)
+        except Exception:
+            pass
         return self._normalize_state_paths(state)
 
     def _normalize_state_paths(self, state: AppState) -> AppState:

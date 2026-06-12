@@ -19,7 +19,6 @@ Bundled third-party components keep their own licenses and notices:
 
 - Xray-core: https://github.com/XTLS/Xray-core
 - sing-box-extended: https://github.com/shtorm-7/sing-box-extended
-- tun2socks: https://github.com/xjasonlyu/tun2socks
 - zapret/WinDivert bundle: see files under `zapret/`, including
   `zapret/windivert.filter/manual.md`.
 

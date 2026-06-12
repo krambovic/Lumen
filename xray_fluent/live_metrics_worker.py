@@ -16,7 +16,7 @@ _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # aggregate swings as connections churn; without these caps a single glitch
 # gets permanently baked into the running total (the "Трафик по процессам"
 # bug where VPN showed values like hundreds of millions of GB).
-_MAX_REASONABLE_BYTES_PER_SEC = 2 * 1024 ** 3   # 2 GiB/s, matches traffic_history
+_MAX_REASONABLE_BYTES_PER_SEC = 256 * 1024 ** 2  # 256 MiB/s per process
 _MAX_PLAUSIBLE_CONN_BYTES = 1 * 1024 ** 5       # 1 PiB: any single reading above is a glitch
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -149,7 +149,7 @@ class LiveMetricsWorker(QThread):
             counted) → contributes 0, never a subtraction;
           * an implausibly large single reading is treated as a glitched estats
             counter and ignored (fall back to the previous value);
-          * a per-tick increase larger than the physical ceiling is clamped,
+          * a per-tick increase larger than the physical ceiling is ignored,
             so one bad sample can't be baked into "Всего" forever.
         """
         try:
@@ -168,6 +168,7 @@ class LiveMetricsWorker(QThread):
 
         result: list[ProcessTrafficSnapshot] = []
         for p in proxy_procs:
+            has_previous_sample = p.exe in prev_bytes
             prev_in, prev_out = prev_bytes.get(p.exe, (0, 0))
             tot_in, tot_out = total_bytes.get(p.exe, (0, 0))
 
@@ -176,16 +177,26 @@ class LiveMetricsWorker(QThread):
             cur_in = p.bytes_in if 0 <= p.bytes_in <= _MAX_PLAUSIBLE_CONN_BYTES else prev_in
             cur_out = p.bytes_out if 0 <= p.bytes_out <= _MAX_PLAUSIBLE_CONN_BYTES else prev_out
 
-            # Grow the monotonic total only by the positive, capped delta.
-            delta_in = min(max(0, cur_in - prev_in), max_delta)
-            delta_out = min(max(0, cur_out - prev_out), max_delta)
+            # First sample initializes the baseline only. EStats counters are
+            # per active TCP connection and may already contain bytes from
+            # before Lumen started watching; counting that first value creates
+            # fake gigabytes in the UI. Subsequent impossible jumps are ignored
+            # instead of being clamped into the running total.
+            if not has_previous_sample:
+                delta_in = 0
+                delta_out = 0
+            else:
+                raw_delta_in = max(0, cur_in - prev_in)
+                raw_delta_out = max(0, cur_out - prev_out)
+                delta_in = raw_delta_in if raw_delta_in <= max_delta else 0
+                delta_out = raw_delta_out if raw_delta_out <= max_delta else 0
             tot_in += delta_in
             tot_out += delta_out
             total_bytes[p.exe] = (tot_in, tot_out)
 
             # Speed from the same validated delta (0 on first sample for an exe).
-            down_speed = (delta_in / dt) if prev_in > 0 else 0.0
-            up_speed = (delta_out / dt) if prev_out > 0 else 0.0
+            down_speed = (delta_in / dt) if has_previous_sample else 0.0
+            up_speed = (delta_out / dt) if has_previous_sample else 0.0
             prev_bytes[p.exe] = (cur_in, cur_out)
 
             result.append(ProcessTrafficSnapshot(

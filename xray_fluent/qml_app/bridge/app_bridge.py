@@ -80,6 +80,7 @@ class AppBridge(QObject):
         self._proxy_enabled = False
         self._discord_proxy = False
         self._theme = "dark"
+        self._language = "en"
         self._accent = "#0078D4"
 
         self._tray_available = False
@@ -304,6 +305,7 @@ class AppBridge(QObject):
         self._proxy_enabled = bool(settings.enable_system_proxy)
         self._discord_proxy = bool(getattr(settings, "discord_proxy_enabled", False))
         self._theme = settings.theme
+        self._language = getattr(settings, "language", "en")
         self._accent = settings.accent_color or "#0078D4"
         self._node_model.set_runtime_support(bool(settings.tun_mode and settings.tun_engine == "singbox"))
         self.settingsChanged.emit()
@@ -393,6 +395,15 @@ class AppBridge(QObject):
     def setTheme(self, name: str) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.theme = name
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(str)
+    def setLanguage(self, language: str) -> None:
+        value = (language or "en").strip().lower()
+        if value not in {"ru", "en"}:
+            value = "en"
+        settings = deepcopy(self.controller.state.settings)
+        settings.language = value
         self.controller.update_settings(settings)
 
     @pyqtSlot(str)
@@ -557,7 +568,7 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def setTunEngine(self, engine: str) -> None:
         settings = deepcopy(self.controller.state.settings)
-        settings.tun_engine = (engine or "singbox").strip()
+        settings.tun_engine = "singbox"
         self.controller.update_settings(settings)
 
     # ── Startup ──────────────────────────────────────────────────
@@ -1525,6 +1536,14 @@ class AppBridge(QObject):
         return self._theme
 
     @pyqtProperty(str, notify=settingsChanged)
+    def language(self) -> str:
+        return self._language
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def effectiveLanguage(self) -> str:
+        return self._language if self._language in {"ru", "en"} else "en"
+
+    @pyqtProperty(str, notify=settingsChanged)
     def accentColor(self) -> str:
         return self._accent
 
@@ -1581,26 +1600,17 @@ class AppBridge(QObject):
     @pyqtProperty(str, notify=settingsChanged)
     def xrayPath(self) -> str:
         try:
-            from pathlib import Path
             from ...constants import XRAY_PATH_DEFAULT
             path = (self.controller.state.settings.xray_path or "").strip()
-            # Treat the bundled default core as "built-in": return an empty
-            # string so the field shows the "встроенный" placeholder, exactly
-            # like sing-box does when no custom path is set.
-            if path:
-                try:
-                    if Path(path) == Path(XRAY_PATH_DEFAULT):
-                        return ""
-                except Exception:
-                    pass
-            return path
+            return path or str(XRAY_PATH_DEFAULT)
         except Exception:
             return ""
 
     @pyqtProperty(str, notify=settingsChanged)
     def singboxPath(self) -> str:
         try:
-            return self.controller.state.settings.singbox_path or ""
+            from ...constants import SINGBOX_PATH_DEFAULT
+            return self.controller.state.settings.singbox_path or str(SINGBOX_PATH_DEFAULT)
         except Exception:
             return ""
 

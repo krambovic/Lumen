@@ -73,7 +73,6 @@ _MODE_LABELS = {
     "xray": "Прокси",
     "xray-tun": "TUN (xray experimental)",
     "singbox": "TUN (sing-box)",
-    "tun2socks": "TUN (tun2socks)",
 }
 
 _ROUTE_LABELS = {

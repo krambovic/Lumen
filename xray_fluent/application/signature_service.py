@@ -152,15 +152,6 @@ def tun_layer_signature(
         return ""
     if controller.is_singbox_editor_mode(settings):
         return transition_signature(controller, node, settings, routing)
-    if controller.is_tun2socks_mode(settings):
-        return signature(
-            {
-                "mode": "tun2socks",
-                "server": node.server if node else "",
-                "socks_port": int(DEFAULT_SOCKS_PORT),
-                "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
-            }
-        )
     if controller.is_xray_tun_mode(settings):
         return signature(
             {

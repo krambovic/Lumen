@@ -15,6 +15,7 @@ FluentScroll {
     clip: true
 
     readonly property var themeKeys: ["system", "light", "dark"]
+    readonly property var languageKeys: ["ru", "en"]
 
     component StyledCombo: FluentCombo { Layout.preferredWidth: 210 }
 
@@ -109,6 +110,15 @@ FluentScroll {
                 }
 
                 SettingRow {
+                    glyph: "\uE774"; title: "Язык"; subtitle: "При первом запуске выбирается по языку системы"
+                    StyledCombo {
+                        model: ["Русский", "English"]
+                        currentIndex: Math.max(0, page.languageKeys.indexOf(App.language))
+                        onActivated: App.setLanguage(page.languageKeys[currentIndex])
+                    }
+                }
+
+                SettingRow {
                     glyph: "\uE2B1"; title: "Цвет акцента"; subtitle: "Цвет акцента для элементов интерфейса"
                     AccentPicker {}
                 }
@@ -182,22 +192,13 @@ FluentScroll {
 
                 SettingRow {
                     glyph: "\uE756"; title: "Ядро Xray"; subtitle: "Путь к исполняемому файлу xray"
-                    StyledField { id: xrayField; Layout.preferredWidth: 240; text: App.xrayPath; placeholderText: "встроенный"; onEditingFinished: App.setXrayPath(text) }
+                    StyledField { id: xrayField; Layout.preferredWidth: 240; text: App.xrayPath; placeholderText: "core\\xray.exe"; onEditingFinished: App.setXrayPath(text) }
                     AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: "Обзор"; onClicked: { var p = App.browseXrayPath(); if (p) xrayField.text = p } }
                 }
                 SettingRow {
                     glyph: "\uE756"; title: "Ядро sing-box-extended"; subtitle: "Путь к исполняемому файлу sing-box-extended"
-                    StyledField { id: sbField; Layout.preferredWidth: 240; text: App.singboxPath; placeholderText: "встроенный"; onEditingFinished: App.setSingboxPath(text) }
+                    StyledField { id: sbField; Layout.preferredWidth: 240; text: App.singboxPath; placeholderText: "core\\sing-box.exe"; onEditingFinished: App.setSingboxPath(text) }
                     AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: "Обзор"; onClicked: { var p = App.browseSingboxPath(); if (p) sbField.text = p } }
-                }
-                SettingRow {
-                    glyph: "\uEC7A"; title: "Движок TUN"; subtitle: "Ядро для режима TUN"
-                    StyledCombo {
-                        model: ["sing-box (default)", "tun2socks"]
-                        readonly property var keys: ["singbox", "tun2socks"]
-                        currentIndex: Math.max(0, keys.indexOf(App.tunEngine))
-                        onActivated: App.setTunEngine(keys[currentIndex])
-                    }
                 }
             }
         }

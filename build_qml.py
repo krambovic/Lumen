@@ -39,6 +39,7 @@ DATA_TEMPLATES_DIR = ROOT / "data" / "templates"
 INNO_SCRIPT = ROOT / "installer" / "LumenKVN.iss"
 ASSETS_DIR = ROOT / "assets"
 NOTICE_FILES = (ROOT / "LICENSE", ROOT / "NOTICE.md", ROOT / "README_QML.md", ROOT / "README.md")
+LEGACY_CORE_FILES = ("tun2socks.exe",)
 
 
 def _print(msg: str) -> None:
@@ -99,6 +100,18 @@ def _copy_tree_merge(src: Path, dst: Path) -> None:
                 shutil.copy2(str(item), str(target))
             except PermissionError:
                 _print(f"  skipped (locked): {target.name}")
+
+
+def _remove_legacy_files(root: Path, names: tuple[str, ...]) -> None:
+    for name in names:
+        target = root / name
+        if target.exists():
+            try:
+                target.unlink()
+                _print(f"  removed legacy file: {target}")
+            except PermissionError:
+                _print(f"ERROR: Cannot remove legacy file {target} — is LumenKVN.exe still running?")
+                raise SystemExit(1)
 
 
 # ------------------------------------------------------------------
@@ -169,6 +182,7 @@ def build_exe() -> None:
     dst_core = APP_DIR / "core"
     _print(f"Merging core -> {dst_core}")
     _copy_tree_merge(CORE_DIR, dst_core)
+    _remove_legacy_files(dst_core, LEGACY_CORE_FILES)
 
     dst_zapret = APP_DIR / "zapret"
     if ZAPRET_DIR.is_dir():

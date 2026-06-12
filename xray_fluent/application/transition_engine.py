@@ -110,8 +110,4 @@ def can_tun_hot_swap(
         return False
     if session.active_core == "singbox":
         return settings_tun_engine == "singbox"
-    if session.active_core == "tun2socks":
-        if not has_selected_node or settings_tun_engine != "tun2socks":
-            return False
-        return session.tun_layer_signature == current_tun_layer_signature
     return False

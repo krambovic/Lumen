@@ -8,7 +8,7 @@ import "."
 // 1:1: a page header (title + summary), then a responsive grid of cards:
 //   • Подключение   — state, engine line, VPN/proxy switches (Вкл/Выкл),
 //                     ▶/⏸ start/stop button, «Маршрут» quick row, status + target.
-//   • Маршрутизация — mode ComboBox (enabled only for tun2socks), mode caption,
+//   • Маршрутизация — mode controls and status caption,
 //                     Discord voice switch (ON/OFF) + hint, dns/rules/bypass info.
 //   • Трафик       — Загрузка/Выгрузка/RTT stacked, sparkline, peak.
 //   • Процессы     — only when the backend reports per-process stats (TUN).
@@ -50,9 +50,7 @@ FluentScroll {
     }
     function engineText() {
         if (App.tunMode)
-            return App.tunEngine === "singbox"
-                ? "VPN (TUN) → sing-box"
-                : "VPN (TUN) → tun2socks";
+            return "VPN (TUN) → sing-box";
         return App.proxyEnabled ? "Системный прокси Windows" : "Прямое подключение";
     }
     readonly property bool singbox: App.tunMode && App.tunEngine === "singbox"

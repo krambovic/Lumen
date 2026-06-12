@@ -80,8 +80,6 @@ def cleanup_connection_runtime_state(
     controller._xray_api_port = 0
     controller._protect_ss_port = 0
     controller._protect_ss_password = ""
-    controller._tun2socks_proxy_username = ""
-    controller._tun2socks_proxy_password = ""
     controller._traffic_save_counter = 0
     controller._reset_auto_switch_state(
         reset_cooldown=reset_auto_switch_cooldown,
@@ -103,22 +101,11 @@ def stop_active_connection_processes(controller: AppController, *, disable_proxy
             stopped = controller.singbox.stop(fast=fast) and stopped
         if controller.xray.is_running:
             stopped = controller.xray.stop(fast=fast) and stopped
-        if controller.tun2socks.is_running:
-            stopped = controller.tun2socks.stop(fast=fast) and stopped
-    elif controller._active_core == "tun2socks":
-        if controller.tun2socks.is_running:
-            stopped = controller.tun2socks.stop(fast=fast) and stopped
-        if controller.xray.is_running:
-            stopped = controller.xray.stop(fast=fast) and stopped
-        if controller.singbox.is_running:
-            stopped = controller.singbox.stop(fast=fast) and stopped
     else:
         if controller.xray.is_running:
             stopped = controller.xray.stop(fast=fast) and stopped
         if controller.singbox.is_running:
             stopped = controller.singbox.stop(fast=fast) and stopped
-        if controller.tun2socks.is_running:
-            stopped = controller.tun2socks.stop(fast=fast) and stopped
 
     if disable_proxy and controller.state.settings.enable_system_proxy:
         controller.proxy.disable(restore_previous=True)
@@ -207,8 +194,6 @@ def shutdown(controller: AppController) -> None:
         controller._resource_update_worker.wait(300)
 
     controller.disconnect_current(fast=True)
-    if controller.tun2socks.is_running:
-        controller.tun2socks.stop(fast=True)
     if controller.singbox.is_running:
         controller.singbox.stop(fast=True)
     if controller.xray.is_running:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import locale
 from typing import Any
 import uuid
 
@@ -162,6 +163,7 @@ class SecuritySettings:
 @dataclass(slots=True)
 class AppSettings:
     theme: str = "system"  # system | light | dark
+    language: str = field(default_factory=lambda: _detect_system_language())  # ru | en
     accent_color: str = "#0078D4"
     interface_mode: str = "full"  # compact | full
     auto_connect_last: bool = True
@@ -184,7 +186,7 @@ class AppSettings:
     enable_final_fragment: bool = True
     discord_proxy_enabled: bool = False
     tun_mode: bool = False
-    tun_engine: str = "singbox"  # "singbox" | "xray" | "tun2socks"
+    tun_engine: str = "singbox"
     xray_config_file: str = ""
     xray_template_file: str = ""
     singbox_path: str = ""
@@ -217,6 +219,7 @@ class AppSettings:
     def to_dict(self) -> dict[str, Any]:
         return {
             "theme": self.theme,
+            "language": self.language,
             "accent_color": self.accent_color,
             "interface_mode": self.interface_mode,
             "auto_connect_last": self.auto_connect_last,
@@ -269,6 +272,7 @@ class AppSettings:
             xray_release_channel = "beta"
         return AppSettings(
             theme=str(data.get("theme") or "system"),
+            language=_normalize_language(data.get("language")),
             accent_color=str(data.get("accent_color") or "#0078D4"),
             interface_mode=str(data.get("interface_mode") or "full"),
             auto_connect_last=bool(data.get("auto_connect_last", True)),
@@ -353,9 +357,19 @@ class AppState:
 
 
 def _normalize_tun_engine(value: Any) -> str:
-    engine = str(value or "").strip().lower()
-    if engine == "tun2socks":
-        return "tun2socks"
-    # v2rayN-style TUN is sing-box based. Older Lumen KVN builds stored
-    # "xray" here, which could produce unstable DNS/routing on Windows.
+    # Lumen KVN TUN is sing-box-extended based. Migrate older saved engines to
+    # the only supported engine.
     return "singbox"
+
+
+def _normalize_language(value: Any) -> str:
+    language = str(value or "").strip().lower()
+    return language if language in {"ru", "en"} else _detect_system_language()
+
+
+def _detect_system_language() -> str:
+    try:
+        language = (locale.getlocale()[0] or "").lower()
+    except Exception:
+        language = ""
+    return "ru" if language.startswith("ru") else "en"

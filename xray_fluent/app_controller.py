@@ -158,7 +158,6 @@ from .network_monitor import NetworkMonitor
 from .proxy_manager import ProxyManager
 from .routing_presets import build_routing_preset
 from .security import create_password_hash, get_idle_seconds, verify_password
-from .engines.tun2socks import Tun2SocksManager, hot_swap as hot_swap_tun2socks
 from .storage import PassphraseRequired, StateStorage
 from .startup import build_startup_command, is_process_elevated, set_always_run_as_admin, set_startup_enabled
 from .subprocess_utils import result_output_text, run_text
@@ -250,7 +249,6 @@ class AppController(QObject):
         self.storage = StateStorage()
         self.xray = XrayManager(self)
         self.singbox = SingBoxManager(self)
-        self.tun2socks = Tun2SocksManager(self)
         self._xray_tun_routes = XrayTunRouteManager(self)
         self.zapret = ZapretManager(self)
         self.proxy = ProxyManager()
@@ -301,11 +299,9 @@ class AppController(QObject):
         self._disconnecting = False
         self._cleaning_connection_state = False
         self._switching = False  # suppress intermediate UI updates during stop→start
-        self._active_core: str = "xray"  # "xray" | "singbox" | "tun2socks"
+        self._active_core: str = "xray"  # "xray" | "singbox"
         self._protect_ss_port: int = 0
         self._protect_ss_password: str = ""
-        self._tun2socks_proxy_username: str = ""
-        self._tun2socks_proxy_password: str = ""
         self._xray_api_port: int = 0
         self._traffic_history = TrafficHistoryStorage()
         self._traffic_save_counter = 0
@@ -337,10 +333,6 @@ class AppController(QObject):
         self.singbox.state_changed.connect(self._on_core_state_changed)
         self.singbox.stopped.connect(lambda code: self._on_core_stopped("singbox", code))
 
-        self.tun2socks.log_received.connect(self._on_xray_log)
-        self.tun2socks.error.connect(self._on_singbox_error)
-        self.tun2socks.state_changed.connect(self._on_core_state_changed)
-        self.tun2socks.stopped.connect(lambda code: self._on_core_stopped("tun2socks", code))
         self._xray_tun_routes.log_received.connect(self._on_xray_log)
 
         self.network_monitor.network_changed.connect(self._on_network_changed)
@@ -442,13 +434,9 @@ class AppController(QObject):
         settings = settings or self.state.settings
         return bool(settings.tun_mode and str(settings.tun_engine) == "xray")
 
-    def is_tun2socks_mode(self, settings: AppSettings | None = None) -> bool:
-        settings = settings or self.state.settings
-        return bool(settings.tun_mode and str(settings.tun_engine) == "tun2socks")
-
     def uses_xray_raw_config(self, settings: AppSettings | None = None) -> bool:
         settings = settings or self.state.settings
-        return not self.is_singbox_editor_mode(settings) and not self.is_tun2socks_mode(settings)
+        return not self.is_singbox_editor_mode(settings)
 
     def _can_connect_without_selected_node(self, settings: AppSettings | None = None) -> bool:
         settings = settings or self.state.settings
@@ -1278,8 +1266,6 @@ class AppController(QObject):
             if self._active_session is not None and self._active_session.hybrid:
                 return self.singbox.is_running and self.xray.is_running
             return self.singbox.is_running
-        if self._active_core == "tun2socks":
-            return self.tun2socks.is_running and self.xray.is_running
         return self.xray.is_running
 
     def _refresh_connected_state(self) -> tuple[bool, bool]:
@@ -1461,10 +1447,6 @@ class AppController(QObject):
             if old_tun != settings.tun_mode:
                 self._desired_connected = True
                 self._request_transition("TUN mode toggled")
-                return
-            if settings.tun_mode and old_tun_engine != settings.tun_engine:
-                self._desired_connected = True
-                self._request_transition("TUN engine changed")
                 return
             self._request_transition("settings changed")
 
@@ -1680,16 +1662,6 @@ class AppController(QObject):
         if self._active_core == "singbox":
             try:
                 return self._restart_singbox_runtime(reason)
-            finally:
-                self._auto_switch_transitioning = False
-
-        # tun2socks mode: restart only xray while the TUN adapter stays up
-        if self._active_core == "tun2socks":
-            if node is None:
-                self._auto_switch_transitioning = False
-                return False
-            try:
-                return hot_swap_tun2socks(self, reason, node)
             finally:
                 self._auto_switch_transitioning = False
 
