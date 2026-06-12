@@ -1546,7 +1546,7 @@ class AppController(QObject):
             self._tun_log_count = getattr(self, "_tun_log_count", 0) + 1
             # Skip per-connection noise in both UI and app.log; keep a compact
             # heartbeat so diagnostics still show that TUN is routing traffic.
-            if self._tun_log_count % 100 == 0:
+            if self._tun_log_count % 50 == 0:
                 self._logger.info("[tun] %d noisy connection logs suppressed", self._tun_log_count)
                 self.log_line.emit(f"[tun] {self._tun_log_count} connections routed...")
             return
@@ -1562,10 +1562,6 @@ class AppController(QObject):
         if "an existing connection was forcibly closed by the remote host" in text:
             return True
         if "wsarecv" in text or "wsasend" in text:
-            return True
-        if "dns: exchange failed for" in text and "context deadline exceeded" in text:
-            return True
-        if "dial tcp connection: context deadline exceeded" in text:
             return True
         return False
 

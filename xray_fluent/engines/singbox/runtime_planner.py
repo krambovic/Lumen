@@ -286,12 +286,7 @@ def _plan_hybrid_runtime(
 
 
 def _node_should_use_xray_sidecar(node: Node | None) -> bool:
-    """Prefer Xray for VLESS Reality/Vision instead of sing-box native TUN.
-
-    v2rayN keeps these nodes on the Xray path, and small Reality/uTLS/Vision
-    differences are enough to make some targets hang or partially load through
-    TUN while the same server works in plain proxy mode.
-    """
+    """Return True only for transports that sing-box cannot run natively."""
     outbound = node.outbound if node is not None else None
     if not isinstance(outbound, dict):
         return False
@@ -303,28 +298,8 @@ def _node_should_use_xray_sidecar(node: Node | None) -> bool:
     stream_settings = outbound.get("streamSettings")
     if isinstance(stream_settings, dict):
         network = str(stream_settings.get("network") or "").strip().lower()
-        if network == "xhttp":
-            return False
         if network == "raw" or "finalmask" in stream_settings:
             return True
-        security = str(stream_settings.get("security") or "").strip().lower()
-        if security == "reality":
-            return True
-
-    settings = outbound.get("settings")
-    vnext = settings.get("vnext") if isinstance(settings, dict) else None
-    if not isinstance(vnext, list):
-        return False
-    for server in vnext:
-        users = server.get("users") if isinstance(server, dict) else None
-        if not isinstance(users, list):
-            continue
-        for user in users:
-            if not isinstance(user, dict):
-                continue
-            flow = str(user.get("flow") or "").strip().lower()
-            if flow.startswith("xtls-rprx-vision"):
-                return True
     return False
 
 

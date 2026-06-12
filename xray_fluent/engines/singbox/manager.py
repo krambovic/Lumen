@@ -303,7 +303,7 @@ class SingBoxManager(QObject):
                         if clean:
                             if not self._starting and self._is_noisy_runtime_line(clean):
                                 self._suppressed_noisy_lines += 1
-                                if self._suppressed_noisy_lines % 100 == 0:
+                                if self._suppressed_noisy_lines % 50 == 0:
                                     self.log_received.emit(
                                         f"[tun] {self._suppressed_noisy_lines} noisy connection logs suppressed..."
                                     )
@@ -436,10 +436,6 @@ class SingBoxManager(QObject):
         if "an existing connection was forcibly closed by the remote host" in text:
             return True
         if "wsarecv" in text or "wsasend" in text:
-            return True
-        if "dns: exchange failed for" in text and "context deadline exceeded" in text:
-            return True
-        if "dial tcp connection: context deadline exceeded" in text:
             return True
         return False
 
