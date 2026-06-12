@@ -1,21 +1,19 @@
 # Notices
 
-Lumen KVN / lumen-kvn is a fork of `youtubediscord/zapret-kvn`.
+Lumen KVN is distributed as a standalone project under GPL-3.0. See `LICENSE`.
 
-Upstream project:
-https://github.com/youtubediscord/zapret-kvn
+This project preserves copyright and attribution notices required by the
+licenses of source materials and bundled third-party components.
 
-Fork repository:
-https://github.com/krambovic/lumen-kvn
-
-Current upstream `youtubediscord/zapret-kvn` is distributed under GPL-3.0.
-This fork keeps upstream/fork attribution and distributes the application
-source under GPL-3.0 as shown in `LICENSE`.
-
-Earlier MIT attribution from the upstream history is preserved in this notice:
+Preserved copyright notices:
 
 - Copyright (c) 2026 youtubediscord/zapret-kvn contributors
 - Copyright (c) 2026 krambovic/lumen-kvn contributors
+
+Relevant source and attribution links:
+
+- https://github.com/youtubediscord/zapret-kvn
+- https://github.com/krambovic/lumen-kvn
 
 Bundled third-party components keep their own licenses and notices:
 
@@ -25,7 +23,7 @@ Bundled third-party components keep their own licenses and notices:
 - zapret/WinDivert bundle: see files under `zapret/`, including
   `zapret/windivert.filter/manual.md`.
 
-Optional external helpers downloaded at runtime:
+Optional external helpers downloaded or used separately:
 
 - droute: https://github.com/snowluwu/droute
   GPL-3.0 component used as a separate helper for Discord TCP/UDP SOCKS5
