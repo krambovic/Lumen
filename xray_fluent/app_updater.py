@@ -1,4 +1,4 @@
-"""Self-update: check GitHub releases, download, extract, restart."""
+"""Self-update: check GitHub releases, download setup, install, restart."""
 
 from __future__ import annotations
 
@@ -13,19 +13,15 @@ import sys
 import tempfile
 import threading
 import urllib.request
-import zipfile  # kept for legacy .zip support
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request
 
 from .http_utils import build_opener, urlopen
-from .zip_utils import safe_extract_zip
-
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import APP_VERSION, BASE_DIR
-from .startup import is_process_elevated
 
 GITHUB_REPO = "krambovic/lumen-kvn"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -40,47 +36,25 @@ def _write_utf8_bom_text(path: Path, text: str) -> None:
     path.write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
 
 
-def _resolve_extracted_app_dir(root: Path, exe_name: str) -> Path:
-    if (root / exe_name).is_file():
-        return root
-    child_dirs = [path for path in root.iterdir() if path.is_dir()]
-    if len(child_dirs) == 1 and (child_dirs[0] / exe_name).is_file():
-        return child_dirs[0]
-    for path in child_dirs:
-        if (path / exe_name).is_file():
-            return path
-    return root
-
-
-def _resolve_update_app_dir(exe_name: str) -> Path:
-    app_dir = BASE_DIR.resolve(strict=False)
+def _program_files_app_dir() -> Path:
     app_name = "Lumen KVN"
-    if app_dir.name.lower() == "program":
-        for env_name in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
-            root = os.environ.get(env_name)
-            if root:
-                return (Path(root) / app_name).resolve(strict=False)
-
-    return app_dir
+    for env_name in ("ProgramW6432", "ProgramFiles"):
+        root = os.environ.get(env_name)
+        if root:
+            return (Path(root) / app_name).resolve(strict=False)
+    return Path(r"C:\Program Files") / app_name
 
 
-def _path_is_under(child: Path, parent: Path) -> bool:
-    try:
-        child.resolve(strict=False).relative_to(parent.resolve(strict=False))
-        return True
-    except ValueError:
-        return False
+def _is_root_program_dir(path: Path) -> bool:
+    resolved = path.resolve(strict=False)
+    parent = resolved.parent
+    return resolved.name.lower() == "program" and parent == Path(resolved.anchor)
 
 
-def _needs_elevation_for_update(app_dir: Path) -> bool:
-    if sys.platform != "win32" or is_process_elevated():
-        return False
-    roots = [
-        os.environ.get("ProgramW6432"),
-        os.environ.get("ProgramFiles"),
-        os.environ.get("ProgramFiles(x86)"),
-    ]
-    return any(_path_is_under(app_dir, Path(root)) for root in roots if root)
+def _target_app_dir(current_app_dir: Path) -> Path:
+    if _is_root_program_dir(current_app_dir):
+        return _program_files_app_dir()
+    return current_app_dir.resolve(strict=False)
 
 
 def _launch_update_script(script: Path, *, elevated: bool) -> bool:
@@ -134,6 +108,7 @@ class AppUpdate:
     size: int
     notes: str
     digest_sha256: str = ""
+    asset_name: str = ""
 
 
 _SEMVER_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?")
@@ -221,17 +196,19 @@ def _is_nightly_asset(asset: dict) -> bool:
 
 def _asset_score(asset: dict, prefer_qml: bool = False) -> tuple[int, str]:
     name = str(asset.get("name") or "").lower()
-    if not name.endswith(".zip"):
+    if not name.endswith(".exe"):
         return (0, name)
     score = 1
     if "lumenkvn" in name:
         score += 2
+    if "setup" in name:
+        score += 4
     if "windows" in name:
         score += 2
     if "x64" in name or "win64" in name or "amd64" in name:
         score += 2
     if "portable" in name:
-        score += 1
+        score -= 4
 
     if _is_nightly_asset(asset):
         score -= 1
@@ -261,12 +238,13 @@ class UpdateChecker(QThread):
                 self.result.emit(None)
                 return
 
-            zip_assets = [
+            setup_assets = [
                 a for a in data.get("assets", [])
-                if str(a.get("name") or "").lower().endswith(".zip")
+                if str(a.get("name") or "").lower().endswith(".exe")
+                and "setup" in str(a.get("name") or "").lower()
             ]
             asset = max(
-                zip_assets,
+                setup_assets,
                 key=lambda a: _asset_score(a, self._prefer_qml),
                 default=None,
             )
@@ -274,7 +252,7 @@ class UpdateChecker(QThread):
             if not asset:
                 channel_name = "nightly" if self._prefer_qml else "stable"
                 self.error.emit(
-                    f"Релиз {tag} найден, но отсутствует zip-архив для канала {channel_name}"
+                    f"Релиз {tag} найден, но отсутствует setup-установщик для канала {channel_name}"
                 )
                 return
 
@@ -298,7 +276,7 @@ class UpdateChecker(QThread):
                         _fetch_text(str(sidecar.get("browser_download_url") or ""))
                     )
             if not digest:
-                self.error.emit(f"Релиз {tag} найден, но архив не содержит SHA-256")
+                self.error.emit(f"Релиз {tag} найден, но установщик не содержит SHA-256")
                 return
 
             self.result.emit(AppUpdate(
@@ -308,6 +286,7 @@ class UpdateChecker(QThread):
                 size=asset.get("size", 0),
                 notes=data.get("body", ""),
                 digest_sha256=digest,
+                asset_name=str(asset.get("name") or "LumenKVN-Setup-windows-x64.exe"),
             ))
         except Exception as exc:
             self.error.emit(str(exc))
@@ -322,7 +301,7 @@ _CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
 class UpdateDownloader(QThread):
-    """Download and extract update, then launch restart script."""
+    """Download the setup installer, then launch the restart/install script."""
 
     progress = pyqtSignal(int)       # percent 0-100
     status = pyqtSignal(str)         # human-readable status message
@@ -395,15 +374,15 @@ class UpdateDownloader(QThread):
                         done = sum(progress_arr)
                         self.progress.emit(int(done * 100 / total))
             if downloaded != expected_length:
-                raise RuntimeError("Сервер вернул неполный фрагмент архива")
+                raise RuntimeError("Сервер вернул неполный фрагмент установщика")
 
-    def _download_single(self, url: str, opener: urllib.request.OpenerDirector, zip_path: Path) -> None:
+    def _download_single(self, url: str, opener: urllib.request.OpenerDirector, target_path: Path) -> None:
         """Single-connection fallback download."""
         req = Request(url, headers={"User-Agent": USER_AGENT})
         with opener.open(req, timeout=_DOWNLOAD_TIMEOUT) as resp:
             total = int(resp.headers.get("Content-Length", 0))
             downloaded = 0
-            with open(zip_path, "wb") as f:
+            with open(target_path, "wb") as f:
                 while True:
                     chunk = resp.read(_CHUNK_SIZE)
                     if not chunk:
@@ -415,8 +394,8 @@ class UpdateDownloader(QThread):
                     if total > 0:
                         self.progress.emit(int(downloaded * 100 / total))
 
-    def _download(self, zip_path: Path, proxy_url: str | None) -> None:
-        """Download update zip with multi-segment acceleration.
+    def _download(self, target_path: Path, proxy_url: str | None) -> None:
+        """Download update installer with multi-segment acceleration.
 
         Tries parallel Range-based download first; falls back to single
         connection if the server doesn't support Range requests.
@@ -432,7 +411,7 @@ class UpdateDownloader(QThread):
 
         if not supports_range or total == 0 or total < _NUM_SEGMENTS * _CHUNK_SIZE:
             _log.info("Server does not support Range or file too small — single download")
-            self._download_single(url, opener, zip_path)
+            self._download_single(url, opener, target_path)
             return
 
         # Split into segments
@@ -444,7 +423,7 @@ class UpdateDownloader(QThread):
             segments.append((start, end))
 
         # Prepare temp segment files
-        seg_dir = zip_path.parent / "_segments"
+        seg_dir = target_path.parent / "_segments"
         seg_dir.mkdir(exist_ok=True)
         seg_paths = [seg_dir / f"seg_{i}" for i in range(_NUM_SEGMENTS)]
 
@@ -468,16 +447,16 @@ class UpdateDownloader(QThread):
                     fut.result()
 
             # Concatenate segments into final file
-            with open(zip_path, "wb") as out:
+            with open(target_path, "wb") as out:
                 for sp in seg_paths:
                     with open(sp, "rb") as seg_f:
                         shutil.copyfileobj(seg_f, out)
         except Exception as exc:
             _log.warning("Segmented download failed, falling back to single download: %s", exc)
-            if zip_path.exists():
-                zip_path.unlink()
+            if target_path.exists():
+                target_path.unlink()
             self.progress.emit(0)
-            self._download_single(url, opener, zip_path)
+            self._download_single(url, opener, target_path)
         finally:
             # Clean up segment temp files
             shutil.rmtree(seg_dir, ignore_errors=True)
@@ -488,7 +467,8 @@ class UpdateDownloader(QThread):
         tmp_dir: Path | None = None
         try:
             tmp_dir = Path(tempfile.mkdtemp(prefix="lumenkvn_update_"))
-            zip_path = tmp_dir / "update.zip"
+            setup_name = self._update.asset_name or "LumenKVN-Setup-windows-x64.exe"
+            setup_path = tmp_dir / setup_name
 
             downloaded_ok = False
 
@@ -496,7 +476,7 @@ class UpdateDownloader(QThread):
             if self._proxy_url:
                 self.status.emit("Загрузка через прокси...")
                 try:
-                    self._download(zip_path, self._proxy_url)
+                    self._download(setup_path, self._proxy_url)
                     downloaded_ok = True
                 except Exception as exc:
                     _log.warning("Proxy download failed: %s", exc)
@@ -505,14 +485,14 @@ class UpdateDownloader(QThread):
                     )
                     self.progress.emit(0)
                     # clean partial file
-                    if zip_path.exists():
-                        zip_path.unlink()
+                    if setup_path.exists():
+                        setup_path.unlink()
 
             # Attempt 2: direct (no proxy)
             if not downloaded_ok:
                 self.status.emit("Загрузка напрямую...")
                 try:
-                    self._download(zip_path, None)
+                    self._download(setup_path, None)
                     downloaded_ok = True
                 except Exception as exc:
                     _log.warning("Direct download failed: %s", exc)
@@ -532,44 +512,33 @@ class UpdateDownloader(QThread):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
 
-            self.status.emit("Проверка архива...")
+            self.status.emit("Проверка установщика...")
             expected_hash = _extract_digest(self._update.digest_sha256)
             if not expected_hash:
-                self.error.emit("У релизного архива отсутствует SHA-256")
+                self.error.emit("У релизного установщика отсутствует SHA-256")
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
 
-            real_hash = _sha256_file(zip_path)
+            real_hash = _sha256_file(setup_path)
             if real_hash.lower() != expected_hash.lower():
-                self.error.emit("Контрольная сумма архива не совпадает")
+                self.error.emit("Контрольная сумма установщика не совпадает")
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
 
             self.progress.emit(100)
-            self.status.emit("Распаковка...")
-
-            # Extract
-            extract_dir = tmp_dir / "extracted"
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                safe_extract_zip(zf, extract_dir)
+            self.status.emit("Подготовка установки...")
 
             exe_name = "LumenKVN.exe"
-            source_dir = _resolve_extracted_app_dir(extract_dir, exe_name)
-            if not (source_dir / exe_name).is_file():
-                self.error.emit("Архив обновления не содержит LumenKVN.exe")
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-                return
 
             # Write restart script
             current_pid = os.getpid()
             current_app_dir = BASE_DIR.resolve(strict=False)
-            app_dir = _resolve_update_app_dir(exe_name)
-            needs_elevation = _needs_elevation_for_update(app_dir)
+            app_dir = _target_app_dir(current_app_dir)
             script = tmp_dir / "_update.ps1"
             script_text = "\r\n".join([
                 "$ErrorActionPreference = 'Stop'",
                 f"$pidToWait = {current_pid}",
-                f"$sourceDir = {_powershell_literal(str(source_dir))}",
+                f"$setupPath = {_powershell_literal(str(setup_path))}",
                 f"$currentAppDir = {_powershell_literal(str(current_app_dir))}",
                 f"$appDir = {_powershell_literal(str(app_dir))}",
                 f"$exePath = {_powershell_literal(str(app_dir / exe_name))}",
@@ -578,47 +547,45 @@ class UpdateDownloader(QThread):
                 "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
                 "$runtimeDir = Join-Path (Join-Path $appDir 'data') 'runtime'",
                 "$errorLog = Join-Path $logDir 'update_error.log'",
-                "$stagingDir = Join-Path $runtimeDir 'update_staging'",
                 "if ((Split-Path -Leaf $appDir) -ieq 'Program') { throw 'Install directory resolved to C:\\Program; aborting update.' }",
                 "New-Item -ItemType Directory -Path $appDir -Force | Out-Null",
                 "New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
-                "$preserveNames = @('data')",
-                "$backupDir = Join-Path $runtimeDir 'update_backup'",
-                "Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue",
-                "Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue",
                 "New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null",
-                "New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null",
-                "$sourceItems = @(Get-ChildItem -LiteralPath $sourceDir -Force | Where-Object { $preserveNames -notcontains $_.Name })",
-                "foreach ($item in $sourceItems) {",
-                "    Copy-Item -LiteralPath $item.FullName -Destination $stagingDir -Recurse -Force",
-                "}",
-                "$stagedExe = Join-Path $stagingDir 'LumenKVN.exe'",
-                "if (-not (Test-Path -LiteralPath $stagedExe)) { throw 'Staged update does not contain LumenKVN.exe' }",
                 "for ($i = 0; $i -lt 120; $i++) {",
                 "    if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break }",
                 "    Start-Sleep -Milliseconds 500",
                 "}",
                 "$proc = Get-Process -Id $pidToWait -ErrorAction SilentlyContinue",
                 "if ($proc) { Stop-Process -Id $pidToWait -Force }",
-                "$currentDataDir = Join-Path $currentAppDir 'data'",
-                "if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir)) {",
-                "    Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force",
-                "}",
-                "$oldExeBackup = Join-Path $backupDir 'LumenKVN.exe'",
+                "Get-Process -Name 'LumenKVN' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+                "Start-Sleep -Milliseconds 800",
                 "try {",
-                "    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null",
-                "    if (Test-Path -LiteralPath $exePath) {",
-                "        Copy-Item -LiteralPath $exePath -Destination $oldExeBackup -Force",
+                "    $installDirArg = '/DIR=\"' + $appDir + '\"'",
+                "    $installerArgs = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS',$installDirArg)",
+                "    $install = Start-Process -FilePath $setupPath -ArgumentList $installerArgs -Wait -PassThru -ErrorAction Stop",
+                "    if ($install.ExitCode -ne 0) { throw ('Installer exited with code ' + $install.ExitCode) }",
+                "    $currentDataDir = Join-Path $currentAppDir 'data'",
+                "    if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir)) {",
+                "        Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force",
                 "    }",
-                "    foreach ($item in (Get-ChildItem -LiteralPath $stagingDir -Force)) {",
-                "        Copy-Item -LiteralPath $item.FullName -Destination $appDir -Recurse -Force",
-                "    }",
-                "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated LumenKVN.exe was not copied' }",
+                "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated LumenKVN.exe was not installed' }",
                 "    $versionFile = Join-Path $runtimeDir 'update_version.txt'",
                 "    Remove-Item -LiteralPath $versionFile -Force -ErrorAction SilentlyContinue",
                 "    $versionProbe = Start-Process -FilePath $exePath -ArgumentList '--version-file',$versionFile -WorkingDirectory $appDir -PassThru -Wait -ErrorAction Stop",
                 "    $installedVersion = (Get-Content -LiteralPath $versionFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim().TrimStart('v')",
                 "    if ($expectedVersion -and $installedVersion -and $installedVersion -ne $expectedVersion.TrimStart('v')) { throw ('Updated executable reports v' + $installedVersion + ', expected v' + $expectedVersion) }",
+                "    $oldExePath = Join-Path $currentAppDir 'LumenKVN.exe'",
+                "    $currentRoot = [System.IO.Path]::GetPathRoot($currentAppDir)",
+                "    $currentParent = Split-Path -Parent $currentAppDir",
+                "    $isRootProgramDir = ((Split-Path -Leaf $currentAppDir) -ieq 'Program' -and $currentParent.TrimEnd('\\') -ieq $currentRoot.TrimEnd('\\'))",
+                "    if ($currentAppDir -ine $appDir -and $isRootProgramDir -and (Test-Path -LiteralPath $oldExePath)) {",
+                "        Remove-Item -LiteralPath $currentAppDir -Recurse -Force -ErrorAction SilentlyContinue",
+                "    }",
+                "    $legacyRootProgram = 'C:\\Program'",
+                "    $legacyRootExe = Join-Path $legacyRootProgram 'LumenKVN.exe'",
+                "    if ($legacyRootProgram -ine $appDir -and (Test-Path -LiteralPath $legacyRootExe)) {",
+                "        Remove-Item -LiteralPath $legacyRootProgram -Recurse -Force -ErrorAction SilentlyContinue",
+                "    }",
                 (
                     "    $started = Start-Process -FilePath $exePath -ArgumentList '--tray' -WorkingDirectory $appDir -PassThru -ErrorAction Stop"
                     if self._restart_in_tray
@@ -628,20 +595,8 @@ class UpdateDownloader(QThread):
                 "    if ($started.HasExited) {",
                 "        throw ('Updated application exited immediately with code ' + $started.ExitCode)",
                 "    }",
-                "    Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue",
-                "    Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue",
-                "    $oldExePath = Join-Path $currentAppDir 'LumenKVN.exe'",
-                "    $currentRoot = [System.IO.Path]::GetPathRoot($currentAppDir)",
-                "    $currentParent = Split-Path -Parent $currentAppDir",
-                "    $isRootProgramDir = ((Split-Path -Leaf $currentAppDir) -ieq 'Program' -and $currentParent.TrimEnd('\\') -ieq $currentRoot.TrimEnd('\\'))",
-                "    if ($currentAppDir -ine $appDir -and $isRootProgramDir -and (Test-Path -LiteralPath $oldExePath)) {",
-                "        Remove-Item -LiteralPath $currentAppDir -Recurse -Force -ErrorAction SilentlyContinue",
-                "    }",
                 "}",
                 "catch {",
-                "    if (Test-Path -LiteralPath $oldExeBackup) {",
-                "        Copy-Item -LiteralPath $oldExeBackup -Destination $exePath -Force -ErrorAction SilentlyContinue",
-                "    }",
                 (
                     "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--tray' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null }"
                     if self._restart_in_tray
@@ -649,8 +604,6 @@ class UpdateDownloader(QThread):
                 ),
                 "    New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
                 "    ($_ | Out-String) | Set-Content -LiteralPath $errorLog -Encoding UTF8",
-                "    Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue",
-                "    Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue",
                 "    throw",
                 "}",
                 "Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue",
@@ -658,10 +611,8 @@ class UpdateDownloader(QThread):
             ])
             _write_utf8_bom_text(script, script_text)
 
-            # Launch script and exit. Program Files updates require elevation;
-            # otherwise Windows denies replacing the old exe and the script
-            # rolls back, which looks like a successful update to the user.
-            if not _launch_update_script(script, elevated=needs_elevation):
+            # The installer requires elevation and owns Windows registration.
+            if not _launch_update_script(script, elevated=True):
                 self.error.emit("Не удалось запустить установку обновления с правами администратора")
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
