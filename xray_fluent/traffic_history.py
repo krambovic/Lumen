@@ -298,6 +298,13 @@ class TrafficHistoryStorage:
         if self._current_session:
             self._save()
 
+    def clear(self) -> None:
+        """Drop all persisted traffic history and the active in-memory session."""
+        self._sessions = []
+        self._daily_totals = {}
+        self._current_session = None
+        self._save()
+
     def get_sessions(self, days: int = 30) -> list[TrafficSession]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         return [s for s in self._sessions if s.started_at >= cutoff]

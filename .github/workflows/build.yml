@@ -60,9 +60,12 @@ jobs:
           Invoke-WebRequest $xrayAsset.browser_download_url -OutFile xray.zip
           Expand-Archive xray.zip -DestinationPath _xray -Force
           Copy-Item _xray/xray.exe core/
-          Copy-Item _xray/geoip.dat core/
-          Copy-Item _xray/geosite.dat core/
           Remove-Item -Recurse _xray, xray.zip
+
+          Write-Host "Downloading RuNetFreedom geoip/geosite..."
+          $geoBase = "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download"
+          Invoke-WebRequest "$geoBase/geoip.dat" -OutFile core/geoip.dat
+          Invoke-WebRequest "$geoBase/geosite.dat" -OutFile core/geosite.dat
 
           Write-Host "Downloading tun2socks..."
           $tunRelease = Invoke-RestMethod "https://api.github.com/repos/xjasonlyu/tun2socks/releases/latest"

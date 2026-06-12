@@ -238,6 +238,15 @@ Item {
                     }
                 }
                 AccentButton { kind: "ghost"; glyph: "\uE72C"; text: I18n.t("Обновить"); onClicked: page.reload() }
+                AccentButton {
+                    kind: "ghost"
+                    glyph: "\uE74D"
+                    text: I18n.t("Сбросить")
+                    onClicked: {
+                        App.clearTrafficHistory()
+                        page.reload()
+                    }
+                }
             }
 
             // ---- summary strip ----

@@ -18,8 +18,9 @@ from .path_utils import resolve_configured_path
 from .zip_utils import safe_extract_zip
 
 SINGBOX_EXTENDED_LATEST_API = "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest"
-GEOIP_DAT_URL = "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat"
-GEOSITE_DAT_URL = "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"
+RUNETFREEDOM_RULES_BASE_URL = "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download"
+GEOIP_DAT_URL = f"{RUNETFREEDOM_RULES_BASE_URL}/geoip.dat"
+GEOSITE_DAT_URL = f"{RUNETFREEDOM_RULES_BASE_URL}/geosite.dat"
 
 
 @dataclass(slots=True)

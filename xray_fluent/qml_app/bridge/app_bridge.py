@@ -825,6 +825,15 @@ class AppBridge(QObject):
 
     # ── Updates tab ──────────────────────────────────────────────
 
+
+    @pyqtSlot()
+    def clearTrafficHistory(self) -> None:
+        try:
+            self.controller.traffic_history.clear()
+        except Exception as exc:  # noqa: BLE001 - surface failures as a toast
+            self.toast.emit("error", f"Не удалось очистить историю: {exc}")
+            return
+        self.toast.emit("success", "История очищена")
     @pyqtSlot(result="QVariantMap")
     def updatesInitialState(self):
         """Snapshot shown when the Updates tab first appears."""
