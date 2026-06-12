@@ -1,6 +1,6 @@
 # Notices
 
-Lumen KVN is distributed as a standalone project under GPL-3.0. See `LICENSE`.
+Lumen KVN is a standalone project that originated from zapret-kvn and contains modified code and components from it. Copyright and license notices are preserved below.
 
 This project preserves copyright and attribution notices required by the
 licenses of source materials and bundled third-party components.
