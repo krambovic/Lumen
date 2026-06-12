@@ -21,7 +21,7 @@ Popup {
 
     signal accepted(string hex)
 
-    // Default system accent, used by the "Сбросить" button to restore the
+    // Default system accent, used by the I18n.t("Сбросить") button to restore the
     // out-of-the-box colour (matches Theme.accent's default of #0078D4).
     property string defaultColor: "#0078D4"
 
@@ -60,7 +60,7 @@ Popup {
         spacing: 14
 
         Text {
-            text: "Цвет акцента"
+            text: I18n.t("Цвет акцента")
             color: Theme.text; font.family: Theme.fontFamily
             font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
         }
@@ -166,12 +166,12 @@ Popup {
             spacing: 8
             AccentButton {
                 kind: "ghost"
-                text: "Сбросить"
+                text: I18n.t("Сбросить")
                 // Preview the default accent in the picker; user confirms with OK.
                 onClicked: { dlg._loadHsv(dlg.defaultColor); hexField.text = dlg._hex(dlg.current) }
             }
             Item { Layout.fillWidth: true }
-            AccentButton { kind: "ghost"; text: "Отмена"; onClicked: dlg.close() }
+            AccentButton { kind: "ghost"; text: I18n.t("Отмена"); onClicked: dlg.close() }
             AccentButton { kind: "accent"; text: "OK"; onClicked: { dlg.accepted(dlg._hex(dlg.current)); dlg.close() } }
         }
     }

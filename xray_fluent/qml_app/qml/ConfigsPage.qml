@@ -18,10 +18,10 @@ Item {
 
     property string core: "singbox"
 
-    readonly property string singHint: "Если в конфиге есть outbound tag `proxy`, он будет заменён на выбранный сервер перед запуском."
-    readonly property string singDetail: "В режиме sing-box TUN правила процесса и пути применяются к перехваченному системному трафику. Если выбранный сервер нельзя запустить нативным sing-box outbound, приложение автоматически оставит этот же raw sing-box.json базой и поднимет local xray sidecar только для proxy path."
-    readonly property string xrayHint: "Если в конфиге есть outbound tag `proxy`, он будет заменён на выбранный сервер перед запуском."
-    readonly property string xrayDetail: "Direct xray mode использует тот же raw xray.json только для трафика, который уже вошёл в xray через системный прокси Windows или ручную proxy-настройку приложения. xray TUN mode использует этот же raw xray.json как true TUN path, поэтому process/path rules из xray routing начинают работать на системный трафик."
+    readonly property string singHint: I18n.t("Если в конфиге есть outbound tag `proxy`, он будет заменён на выбранный сервер перед запуском.")
+    readonly property string singDetail: I18n.t("В режиме sing-box TUN правила процесса и пути применяются к перехваченному системному трафику. Если выбранный сервер нельзя запустить нативным sing-box outbound, приложение автоматически оставит этот же raw sing-box.json базой и поднимет local xray sidecar только для proxy path.")
+    readonly property string xrayHint: I18n.t("Если в конфиге есть outbound tag `proxy`, он будет заменён на выбранный сервер перед запуском.")
+    readonly property string xrayDetail: I18n.t("Direct xray mode использует тот же raw xray.json только для трафика, который уже вошёл в xray через системный прокси Windows или ручную proxy-настройку приложения. xray TUN mode использует этот же raw xray.json как true TUN path, поэтому process/path rules из xray routing начинают работать на системный трафик.")
 
     // ---- live per-core editor state -------------------------------------
     property var cache: ({})          // core -> snapshot (preserves unsaved edits)
@@ -59,9 +59,9 @@ Item {
 
     function _statusPrefix(level) {
         return level === "success" ? "OK"
-             : level === "warning" ? "Внимание"
-             : level === "error" ? "Ошибка"
-             : level === "info" ? "Инфо" : ""
+             : level === "warning" ? I18n.t("Внимание")
+             : level === "error" ? I18n.t("Ошибка")
+             : level === "info" ? I18n.t("Инфо") : ""
     }
 
     function _syncCombos() {
@@ -210,7 +210,7 @@ Item {
         spacing: Theme.spacingLarge
 
         Text {
-            text: "Конфиги"
+            text: I18n.t("Конфиги")
             color: Theme.text; font.family: Theme.fontFamily
             font.pixelSize: Theme.fontTitle; font.weight: Font.DemiBold
         }
@@ -249,27 +249,27 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
-            Text { text: "Конфиг"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+            Text { text: I18n.t("Конфиг"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
             StyledCombo {
                 id: configCombo
                 enabled: page.configItems.length > 0
                 Layout.fillWidth: true; Layout.preferredWidth: 280
-                model: page.configItems.length > 0 ? page._labels(page.configItems) : ["Нет конфигов"]
+                model: page.configItems.length > 0 ? page._labels(page.configItems) : [I18n.t("Нет конфигов")]
                 onActivated: page.doSelectConfig(configCombo.currentIndex)
             }
             Item { Layout.preferredWidth: 12 }
-            Text { text: "Шаблон"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+            Text { text: I18n.t("Шаблон"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
             StyledCombo {
                 id: templateCombo
                 enabled: page.templateItems.length > 0
                 Layout.fillWidth: true; Layout.preferredWidth: 280
-                model: page.templateItems.length > 0 ? page._labels(page.templateItems) : ["Шаблон не выбран"]
+                model: page.templateItems.length > 0 ? page._labels(page.templateItems) : [I18n.t("Шаблон не выбран")]
                 onActivated: page.doSelectTemplate(templateCombo.currentIndex)
             }
         }
 
-        Text { text: (page.dirty ? "● " : "") + "Файл: " + page.fileLabel; color: page.dirty ? Theme.warning : Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-        Text { text: "Шаблон: " + page.templateLabel; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        Text { text: (page.dirty ? "● " : "") + I18n.t("Файл: ") + page.fileLabel; color: page.dirty ? Theme.warning : Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        Text { text: I18n.t("Шаблон: ") + page.templateLabel; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
         Text { text: page.core === "singbox" ? page.singHint : page.xrayHint; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
         Text { text: page.core === "singbox" ? page.singDetail : page.xrayDetail; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
 
@@ -277,12 +277,12 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
-            AccentButton { kind: "ghost"; text: "Импорт шаблона"; enabled: page.loaded; onClicked: page.doImportTemplate() }
-            AccentButton { kind: "ghost"; text: "Сбросить к шаблону"; enabled: page.loaded && page.hasTemplate; onClicked: page.doReset() }
-            AccentButton { kind: "ghost"; text: "Сохранить"; enabled: page.loaded; onClicked: page.doSave() }
-            AccentButton { kind: "ghost"; text: "Проверить JSON"; enabled: page.loaded; onClicked: page.doValidate() }
+            AccentButton { kind: "ghost"; text: I18n.t("Импорт шаблона"); enabled: page.loaded; onClicked: page.doImportTemplate() }
+            AccentButton { kind: "ghost"; text: I18n.t("Сбросить к шаблону"); enabled: page.loaded && page.hasTemplate; onClicked: page.doReset() }
+            AccentButton { kind: "ghost"; text: I18n.t("Сохранить"); enabled: page.loaded; onClicked: page.doSave() }
+            AccentButton { kind: "ghost"; text: I18n.t("Проверить JSON"); enabled: page.loaded; onClicked: page.doValidate() }
             Item { Layout.fillWidth: true }
-            AccentButton { kind: "accent"; text: "Применить"; enabled: page.loaded; onClicked: page.doApply() }
+            AccentButton { kind: "accent"; text: I18n.t("Применить"); enabled: page.loaded; onClicked: page.doApply() }
         }
 
         // ---- editor ----
@@ -327,7 +327,7 @@ Item {
             }
         }
 
-        Text { text: "Статус"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+        Text { text: I18n.t("Статус"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 76
@@ -341,7 +341,7 @@ Item {
                     ? (page._statusPrefix(page.statusLevel).length > 0
                         ? page._statusPrefix(page.statusLevel) + ": " + page.statusMessage
                         : page.statusMessage)
-                    : "Готов к работе."
+                    : I18n.t("Готов к работе.")
                 color: page.statusLevel === "success" ? Theme.success
                      : page.statusLevel === "warning" ? Theme.warning
                      : page.statusLevel === "error" ? Theme.danger
@@ -373,13 +373,13 @@ Item {
                 anchors.margins: 20
                 spacing: 16
                 Text {
-                    text: "Несохранённые изменения"
+                    text: I18n.t("Несохранённые изменения")
                     color: Theme.text; font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
                     Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
                 Text {
-                    text: "В текущем редакторе есть несохранённые изменения. Отменить их и продолжить?"
+                    text: I18n.t("В текущем редакторе есть несохранённые изменения. Отменить их и продолжить?")
                     color: Theme.textMuted; font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontNormal
                     Layout.fillWidth: true; wrapMode: Text.WordWrap
@@ -388,8 +388,8 @@ Item {
                     Layout.fillWidth: true
                     spacing: 8
                     Item { Layout.fillWidth: true }
-                    AccentButton { kind: "ghost"; text: "Отмена"; onClicked: page._confirmNo() }
-                    AccentButton { kind: "danger"; text: "Отменить изменения"; onClicked: page._confirmYes() }
+                    AccentButton { kind: "ghost"; text: I18n.t("Отмена"); onClicked: page._confirmNo() }
+                    AccentButton { kind: "danger"; text: I18n.t("Отменить изменения"); onClicked: page._confirmYes() }
                 }
             }
         }

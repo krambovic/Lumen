@@ -84,19 +84,19 @@ ApplicationWindow {
 
     // Ordered page entries. Index == StackLayout child index.
     readonly property var nav: [
-        { index: 0, label: "Панель",     glyph: "\uE80F", section: "top"    },
-        { index: 1, label: "Серверы",    glyph: "\uEC05", section: "top"    },
-        { index: 2, label: "Маршруты",   glyph: "\uE774", section: "top"    },
-        { index: 3, label: "Конфиги",    glyph: "\uE943", section: "top",    hideOnCompact: true },
+        { index: 0, label: I18n.t("Панель"),     glyph: "\uE80F", section: "top"    },
+        { index: 1, label: I18n.t("Серверы"),    glyph: "\uEC05", section: "top"    },
+        { index: 2, label: I18n.t("Маршруты"),   glyph: "\uE774", section: "top"    },
+        { index: 3, label: I18n.t("Конфиги"),    glyph: "\uE943", section: "top",    hideOnCompact: true },
         { index: 4, label: "Zapret",     glyph: "\uE945", section: "top"    },
-        { index: 5, label: "Логи",       glyph: "\uE8FD", section: "top",    hideOnCompact: true },
-        { index: 6, label: "История",    glyph: "\uE81C", section: "top",    hideOnCompact: true },
+        { index: 5, label: I18n.t("Логи"),       glyph: "\uE8FD", section: "top",    hideOnCompact: true },
+        { index: 6, label: I18n.t("История"),    glyph: "\uE81C", section: "top",    hideOnCompact: true },
         // Visual order matches the original FluentWindow bottom block:
         // О проекте → Обновления → Настройки. `index` stays bound to the
         // StackLayout child position; only the array order (= render order) changes.
-        { index: 9, label: "О проекте",  glyph: "\uE946", section: "bottom" },
-        { index: 7, label: "Обновления", glyph: "\uE777", section: "bottom" },
-        { index: 8, label: "Настройки",  glyph: "\uE713", section: "bottom" }
+        { index: 9, label: I18n.t("О проекте"),  glyph: "\uE946", section: "bottom" },
+        { index: 7, label: I18n.t("Обновления"), glyph: "\uE777", section: "bottom" },
+        { index: 8, label: I18n.t("Настройки"),  glyph: "\uE713", section: "bottom" }
     ]
     property int currentIndex: 0
 
@@ -318,14 +318,14 @@ ApplicationWindow {
                 }
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "Приложение заблокировано"
+                    text: I18n.t("Приложение заблокировано")
                     color: Theme.text; font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
                 }
                 Text {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignHCenter
-                    text: "Введите мастер-пароль для разблокировки"
+                    text: I18n.t("Введите мастер-пароль для разблокировки")
                     color: Theme.textFaint; font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap
                 }
@@ -333,7 +333,7 @@ ApplicationWindow {
                     id: lockField
                     Layout.fillWidth: true
                     echoMode: TextInput.Password
-                    placeholderText: "Пароль"
+                    placeholderText: I18n.t("Пароль")
                     onAccepted: lockOverlay.tryUnlock()
                 }
                 Text {
@@ -341,7 +341,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignHCenter
                     visible: false
-                    text: "Неверный пароль"
+                    text: I18n.t("Неверный пароль")
                     color: Theme.danger; font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSmall
                 }
@@ -349,7 +349,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     kind: "accent"
                     glyph: "\uE785"
-                    text: "Разблокировать"
+                    text: I18n.t("Разблокировать")
                     onClicked: lockOverlay.tryUnlock()
                 }
             }

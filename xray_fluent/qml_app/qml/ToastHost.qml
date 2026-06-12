@@ -85,7 +85,7 @@ Item {
                     }
                     Text {
                         id: label
-                        text: toast.message
+                        text: I18n.t(toast.message)
                         color: Theme.text
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontNormal

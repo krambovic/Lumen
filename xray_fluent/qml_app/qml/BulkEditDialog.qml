@@ -96,7 +96,7 @@ Popup {
             Layout.topMargin: 20
             Layout.leftMargin: 20
             Layout.rightMargin: 20
-            text: "Массовое редактирование"
+            text: I18n.t("Массовое редактирование")
             color: Theme.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontTitle
@@ -111,20 +111,20 @@ Popup {
 
             Text {
                 Layout.fillWidth: true
-                text: "Выбрано нод: " + dlg.count
+                text: I18n.t("Выбрано нод: ") + dlg.count
                 color: Theme.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontNormal
             }
 
-            FLabel { text: "Переместить в группу (пусто = пропустить)" }
+            FLabel { text: I18n.t("Переместить в группу (пусто = пропустить)") }
             FField { id: groupField }
 
-            FLabel { text: "Добавить теги (через запятую, пусто = пропустить)" }
-            FField { id: addField; placeholderText: "тег1, тег2" }
+            FLabel { text: I18n.t("Добавить теги (через запятую, пусто = пропустить)") }
+            FField { id: addField; placeholderText: I18n.t("тег1, тег2") }
 
-            FLabel { text: "Удалить теги (через запятую, пусто = пропустить)" }
-            FField { id: removeField; placeholderText: "тег1, тег2" }
+            FLabel { text: I18n.t("Удалить теги (через запятую, пусто = пропустить)") }
+            FField { id: removeField; placeholderText: I18n.t("тег1, тег2") }
         }
 
         RowLayout {
@@ -135,12 +135,12 @@ Popup {
             Item { Layout.fillWidth: true }
             AccentButton {
                 kind: "ghost"
-                text: "Отмена"
+                text: I18n.t("Отмена")
                 onClicked: dlg.close()
             }
             AccentButton {
                 kind: "accent"
-                text: "Применить"
+                text: I18n.t("Применить")
                 onClicked: dlg._apply()
             }
         }

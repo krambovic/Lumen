@@ -17,7 +17,7 @@ FluentScroll {
     clip: true
 
     // Drop to a single column a bit earlier (960 instead of 860): below this the
-    // Connection card column gets too narrow and the "Выкл" label by the Сист.
+    // Connection card column gets too narrow and the I18n.t("Выкл") label by the Сист.
     // прокси switch starts spilling over the card edge — so we stack the cards
     // (full-width) before that happens.
     readonly property bool twoColumns: width >= 960
@@ -42,16 +42,16 @@ FluentScroll {
         return (total > conn) ? (conn + " (" + total + ")") : ("" + conn);
     }
     function modeTitle(m) {
-        return m === "global" ? "Глобальный" : (m === "direct" ? "Прямой" : "Правила");
+        return m === "global" ? I18n.t("Глобальный") : (m === "direct" ? I18n.t("Прямой") : I18n.t("Правила"));
     }
     function stateTitle() {
-        if (App.transitionBusy) return "Подключение…";
-        return App.connected ? "Подключено" : "Ожидание";
+        if (App.transitionBusy) return I18n.t("Подключение…");
+        return App.connected ? I18n.t("Подключено") : I18n.t("Ожидание");
     }
     function engineText() {
         if (App.tunMode)
             return "VPN (TUN) → sing-box";
-        return App.proxyEnabled ? "Системный прокси Windows" : "Прямое подключение";
+        return App.proxyEnabled ? I18n.t("Системный прокси Windows") : I18n.t("Прямое подключение");
     }
     readonly property bool singbox: App.tunMode && App.tunEngine === "singbox"
 
@@ -64,7 +64,7 @@ FluentScroll {
             Layout.fillWidth: true
             spacing: 2
             Text {
-                text: "Панель управления"
+                text: I18n.t("Панель управления")
                 color: Theme.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontTitle
@@ -72,8 +72,8 @@ FluentScroll {
             }
             Text {
                 text: App.selectedNodeName.length > 0
-                      ? ("Готов к запуску: " + App.selectedNodeName)
-                      : "Сервер не выбран"
+                      ? (I18n.t("Готов к запуску: ") + App.selectedNodeName)
+                      : I18n.t("Сервер не выбран")
                 color: Theme.textMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSmall
@@ -100,7 +100,7 @@ FluentScroll {
                     width: parent.width
                     spacing: 6
                     Text {
-                        text: "Подключение"
+                        text: I18n.t("Подключение")
                         color: Theme.text; font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
                     }
@@ -131,11 +131,11 @@ FluentScroll {
                                 enabled: !App.transitionBusy
                                 onToggled: App.setTun(checked)
                             }
-                            Text { text: App.tunMode ? "Вкл" : "Выкл"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            Text { text: App.tunMode ? I18n.t("Вкл") : I18n.t("Выкл"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                         }
                         RowLayout {
                             spacing: 8
-                            Text { text: "Сист. прокси"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                            Text { text: I18n.t("Сист. прокси"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                             Switch {
                                 checked: App.proxyEnabled
                                 // Mutually exclusive with TUN, but still toggleable
@@ -144,7 +144,7 @@ FluentScroll {
                                 enabled: !App.transitionBusy
                                 onToggled: App.setProxy(checked)
                             }
-                            Text { text: App.proxyEnabled ? "Вкл" : "Выкл"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            Text { text: App.proxyEnabled ? I18n.t("Вкл") : I18n.t("Выкл"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                         }
                         Item { Layout.fillWidth: true }
                     }
@@ -154,17 +154,17 @@ FluentScroll {
                         kind: App.connected ? "danger" : "accent"
                         enabled: !App.transitionBusy
                         glyph: App.connected ? "\uE769" : "\uE768"  // Pause / Play
-                        text: (App.connected ? "Остановить " : "Запустить ") + (App.tunMode ? "VPN" : "прокси")
+                        text: (App.connected ? I18n.t("Остановить ") : I18n.t("Запустить ")) + (App.tunMode ? "VPN" : I18n.t("прокси"))
                         onClicked: App.toggleConnection()
                     }
                     // quick route presets
                     RowLayout {
                         Layout.topMargin: 2
                         spacing: 8
-                        Text { text: "Маршрут:"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                        AccentButton { kind: "ghost"; text: "Всё"; onClicked: App.applyRoutingPreset("global") }
-                        AccentButton { kind: "ghost"; text: "Блок"; onClicked: App.applyRoutingPreset("blocked") }
-                        AccentButton { kind: "ghost"; text: "Кроме РФ"; onClicked: App.applyRoutingPreset("except_ru") }
+                        Text { text: I18n.t("Маршрут:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                        AccentButton { kind: "ghost"; text: I18n.t("Всё"); onClicked: App.applyRoutingPreset("global") }
+                        AccentButton { kind: "ghost"; text: I18n.t("Блок"); onClicked: App.applyRoutingPreset("blocked") }
+                        AccentButton { kind: "ghost"; text: I18n.t("Кроме РФ"); onClicked: App.applyRoutingPreset("except_ru") }
                         Item { Layout.fillWidth: true }
                     }
                     // Discord voice (moved here from the old Routing card)
@@ -183,11 +183,11 @@ FluentScroll {
                             checked: App.discordProxy
                             onToggled: App.setDiscordProxy(checked)
                         }
-                        Text { text: App.discordProxy ? "Вкл" : "Выкл"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                        Text { text: App.discordProxy ? I18n.t("Вкл") : I18n.t("Выкл"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                         Item { Layout.fillWidth: true }
                     }
                     Text {
-                        text: "Голос и стримы Discord через SOCKS5 без TUN"
+                        text: I18n.t("Голос и стримы Discord через SOCKS5 без TUN")
                         color: Theme.textFaint; font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSmall
                         Layout.fillWidth: true; wrapMode: Text.WordWrap
@@ -195,13 +195,13 @@ FluentScroll {
                     Item { Layout.fillHeight: true; Layout.preferredHeight: 2 }
                     // status + target
                     Text {
-                        text: App.runtimeMessage.length > 0 ? App.runtimeMessage : (App.connected ? "Подключено" : "Отключено")
+                        text: App.runtimeMessage.length > 0 ? I18n.t(App.runtimeMessage) : (App.connected ? I18n.t("Подключено") : I18n.t("Отключено"))
                         color: Theme.textMuted; font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSmall
                         Layout.fillWidth: true; wrapMode: Text.WordWrap
                     }
                     Text {
-                        text: App.selectedNodeName.length > 0 ? App.selectedNodeName : "Сервер не выбран"
+                        text: App.selectedNodeName.length > 0 ? App.selectedNodeName : I18n.t("Сервер не выбран")
                         color: Theme.textFaint; font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSmall
                         Layout.fillWidth: true; elide: Text.ElideRight
@@ -218,15 +218,15 @@ FluentScroll {
                     width: parent.width
                     spacing: 6
                     Text {
-                        text: "Трафик"
+                        text: I18n.t("Трафик")
                         color: Theme.text; font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
                     }
-                    Text { id: downLabel; text: "Загрузка: 0 B/s"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                    Text { id: upLabel; text: "Выгрузка: 0 B/s"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                    Text { id: downLabel; text: I18n.t("Загрузка: 0 B/s"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                    Text { id: upLabel; text: I18n.t("Выгрузка: 0 B/s"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                     Text { id: rttLabel; text: "RTT: -- "; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                     TrafficGraph { id: graph; Layout.fillWidth: true; Layout.topMargin: 4 }
-                    Text { id: peakLabel; text: "Пик: 0 B/s"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                    Text { id: peakLabel; text: I18n.t("Пик: 0 B/s"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                 }
             }
 
@@ -256,7 +256,7 @@ FluentScroll {
                     width: parent.width
                     spacing: 6
                     Text {
-                        text: "Трафик по процессам"
+                        text: I18n.t("Трафик по процессам")
                         color: Theme.text; font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
                     }
@@ -265,13 +265,13 @@ FluentScroll {
                         Layout.fillWidth: true
                         Layout.topMargin: 2
                         spacing: 10
-                        Text { text: "Процесс"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colProc; elide: Text.ElideRight }
-                        Text { text: "Скорость"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colSpeed; horizontalAlignment: Text.AlignRight }
+                        Text { text: I18n.t("Процесс"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colProc; elide: Text.ElideRight }
+                        Text { text: I18n.t("Скорость"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colSpeed; horizontalAlignment: Text.AlignRight }
                         Text { text: "VPN"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colVpn; horizontalAlignment: Text.AlignRight }
-                        Text { text: "Прямой"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colDirect; horizontalAlignment: Text.AlignRight }
-                        Text { text: "Соед."; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colConns; horizontalAlignment: Text.AlignRight }
-                        Text { text: "Хост"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
-                        Text { text: "Всего"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colTotal; horizontalAlignment: Text.AlignRight }
+                        Text { text: I18n.t("Прямой"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colDirect; horizontalAlignment: Text.AlignRight }
+                        Text { text: I18n.t("Соед."); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colConns; horizontalAlignment: Text.AlignRight }
+                        Text { text: I18n.t("Хост"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: I18n.t("Всего"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colTotal; horizontalAlignment: Text.AlignRight }
                     }
                     Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
                     // ---- data rows ----
@@ -308,19 +308,19 @@ FluentScroll {
     Connections {
         target: App
         function onMetricsChanged() {
-            downLabel.text = "Загрузка: " + page.fmtSpeed(App.downBps);
-            upLabel.text   = "Выгрузка: " + page.fmtSpeed(App.upBps);
+            downLabel.text = I18n.t("Загрузка: ") + page.fmtSpeed(App.downBps);
+            upLabel.text   = I18n.t("Выгрузка: ") + page.fmtSpeed(App.upBps);
             rttLabel.text  = "RTT: " + page.fmtLatency(App.latencyMs);
             graph.push(App.downBps, App.upBps);
-            peakLabel.text = "Пик: " + page.fmtSpeed(graph.peak);
+            peakLabel.text = I18n.t("Пик: ") + page.fmtSpeed(graph.peak);
         }
         function onConnectedChanged() {
             if (!App.connected) {
                 graph.reset();
-                downLabel.text = "Загрузка: 0 B/s";
-                upLabel.text = "Выгрузка: 0 B/s";
+                downLabel.text = I18n.t("Загрузка: 0 B/s");
+                upLabel.text = I18n.t("Выгрузка: 0 B/s");
                 rttLabel.text = "RTT: -- ";
-                peakLabel.text = "Пик: 0 B/s";
+                peakLabel.text = I18n.t("Пик: 0 B/s");
             }
         }
     }

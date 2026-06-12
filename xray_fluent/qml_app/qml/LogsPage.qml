@@ -37,7 +37,7 @@ Item {
         spacing: Theme.spacing
 
         Text {
-            text: "Логи и диагностика"
+            text: I18n.t("Логи и диагностика")
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontTitle
             font.weight: Font.Bold
@@ -51,7 +51,7 @@ Item {
             TextField {
                 id: searchField
                 Layout.fillWidth: true
-                placeholderText: "Фильтр логов"
+                placeholderText: I18n.t("Фильтр логов")
                 color: Theme.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontNormal
@@ -64,16 +64,16 @@ Item {
                     border.color: searchField.activeFocus ? Theme.accent : Theme.borderSolid
                 }
             }
-            AccentButton { text: "Очистить"; kind: "ghost"; onClicked: App.clearLogs() }
+            AccentButton { text: I18n.t("Очистить"); kind: "ghost"; onClicked: App.clearLogs() }
             AccentButton {
-                text: "Экспорт диагностики"
+                text: I18n.t("Экспорт диагностики")
                 kind: "accent"
                 onClicked: { if (typeof App.exportDiagnostics === "function") App.exportDiagnostics(); }
             }
         }
 
         Text {
-            text: "Логи работы"
+            text: I18n.t("Логи работы")
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontNormal
             color: Theme.textMuted
@@ -123,7 +123,7 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     visible: logList.count === 0
-                    text: "Логи пусты"
+                    text: I18n.t("Логи пусты")
                     color: Theme.textFaint
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontNormal

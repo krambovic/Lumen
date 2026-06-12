@@ -130,7 +130,7 @@ Popup {
             Layout.fillWidth: true
             Layout.margins: 20
             Layout.bottomMargin: 6
-            text: "Редактирование сервера"
+            text: I18n.t("Редактирование сервера")
             color: Theme.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontTitle
@@ -151,22 +151,22 @@ Popup {
                 columnSpacing: 14
                 rowSpacing: 10
 
-                FLabel { text: "Псевдоним" }
+                FLabel { text: I18n.t("Псевдоним") }
                 FField { id: nameField }
 
-                FLabel { text: "Группа" }
+                FLabel { text: I18n.t("Группа") }
                 FField { id: groupField }
 
-                FLabel { text: "Теги" }
-                FField { id: tagsField; placeholderText: "тег1, тег2" }
+                FLabel { text: I18n.t("Теги") }
+                FField { id: tagsField; placeholderText: I18n.t("тег1, тег2") }
 
-                FLabel { text: "Адрес" }
+                FLabel { text: I18n.t("Адрес") }
                 FField { id: addressField }
 
-                FLabel { text: "Порт" }
+                FLabel { text: I18n.t("Порт") }
                 FField { id: portField; inputMethodHints: Qt.ImhDigitsOnly }
 
-                FLabel { text: "Протокол" }
+                FLabel { text: I18n.t("Протокол") }
                 Text {
                     id: protoLabel
                     Layout.fillWidth: true
@@ -183,10 +183,10 @@ Popup {
                 FLabel { text: "Flow" }
                 FluentCombo { id: flowCombo; Layout.fillWidth: true; model: dlg.opts.flows }
 
-                FLabel { text: "Шифрование" }
+                FLabel { text: I18n.t("Шифрование") }
                 FField { id: encField }
 
-                FLabel { text: "Транспорт" }
+                FLabel { text: I18n.t("Транспорт") }
                 FluentCombo { id: networkCombo; Layout.fillWidth: true; model: dlg.opts.networks }
 
                 FLabel { text: "Raw camouflage" }
@@ -226,12 +226,12 @@ Popup {
             Item { Layout.fillWidth: true }
             AccentButton {
                 kind: "ghost"
-                text: "Отмена"
+                text: I18n.t("Отмена")
                 onClicked: dlg.close()
             }
             AccentButton {
                 kind: "accent"
-                text: "Сохранить"
+                text: I18n.t("Сохранить")
                 onClicked: dlg._save()
             }
         }

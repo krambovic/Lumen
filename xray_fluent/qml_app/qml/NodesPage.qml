@@ -12,7 +12,7 @@ import "."
 //   * Ctrl + click          -> toggle a single row
 //   * Shift + click         -> range select from the anchor
 //   * double click          -> set this server as the ACTIVE one
-// Ping / Speed act on the current selection; the "всех" buttons act on everything.
+// Ping / Speed act on the current selection; the I18n.t("всех") buttons act on everything.
 //
 // Layout notes (this revision):
 //   * Rows/header are sized close to the original (compact) instead of the
@@ -41,9 +41,9 @@ Item {
     property string sortKey: "manual"
     property bool sortAsc: true
 
-    readonly property var groupModel: ["Все группы"].concat(App.groupOptions)
-    readonly property var tagModel: ["Все теги"].concat(App.tagOptions)
-    readonly property var sortLabels: ["Вручную", "Имя", "Группа", "Тип", "Пинг", "Скорость", "Последнее использование"]
+    readonly property var groupModel: [I18n.t("Все группы")].concat(App.groupOptions)
+    readonly property var tagModel: [I18n.t("Все теги")].concat(App.tagOptions)
+    readonly property var sortLabels: [I18n.t("Вручную"), I18n.t("Имя"), I18n.t("Группа"), I18n.t("Тип"), I18n.t("Пинг"), I18n.t("Скорость"), I18n.t("Последнее использование")]
     readonly property var sortKeys: ["manual", "name", "group", "scheme", "ping", "speed", "last"]
 
     // ── sizing ───────────────────────────────
@@ -108,7 +108,7 @@ Item {
     function fmtBytes(n) {
         var b = Number(n);
         if (!isFinite(b) || b < 0) return String(n);
-        var u = ["Б", "КБ", "МБ", "ГБ", "ТБ", "ПБ"];
+        var u = [I18n.t("Б"), I18n.t("КБ"), I18n.t("МБ"), I18n.t("ГБ"), I18n.t("ТБ"), I18n.t("ПБ")];
         var i = 0;
         while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
         return (i === 0 ? String(Math.round(b)) : b.toFixed(2)) + " " + u[i];
@@ -130,16 +130,16 @@ Item {
     function infoRows(sub) {
         var rows = [];
         if (!sub) return rows;
-        rows.push(["Группа", (sub.name && sub.name.length ? sub.name : "—")]);
+        rows.push([I18n.t("Группа"), (sub.name && sub.name.length ? sub.name : "—")]);
         if (sub.url) rows.push(["URL", sub.url]);
-        if (sub.updated_at) rows.push(["Обновлено", fmtTime(sub.updated_at)]);
-        rows.push(["Серверов", String(sub.node_count || 0)]);
+        if (sub.updated_at) rows.push([I18n.t("Обновлено"), fmtTime(sub.updated_at)]);
+        rows.push([I18n.t("Серверов"), String(sub.node_count || 0)]);
         var ui = sub.userinfo;
         if (ui && typeof ui === "object") {
-            if (ui.username) rows.push(["Пользователь", String(ui.username)]);
-            if (ui.userStatus) rows.push(["Статус", String(ui.userStatus)]);
-            else if (ui.isActive !== undefined) rows.push(["Статус", ui.isActive ? "Активна" : "Неактивна"]);
-            if (ui.daysLeft !== undefined) rows.push(["Осталось дней", String(ui.daysLeft)]);
+            if (ui.username) rows.push([I18n.t("Пользователь"), String(ui.username)]);
+            if (ui.userStatus) rows.push([I18n.t("Статус"), String(ui.userStatus)]);
+            else if (ui.isActive !== undefined) rows.push([I18n.t("Статус"), ui.isActive ? I18n.t("Активна") : I18n.t("Неактивна")]);
+            if (ui.daysLeft !== undefined) rows.push([I18n.t("Осталось дней"), String(ui.daysLeft)]);
             // Трафик: предпочитаем точные байты (форматируем), иначе готовые строки.
             var usedB = (ui.trafficUsedBytes !== undefined) ? Number(ui.trafficUsedBytes)
                       : ((ui.total !== undefined) ? Number((ui.upload || 0) + (ui.download || 0)) : undefined);
@@ -150,15 +150,15 @@ Item {
                          : (ui.trafficUsed !== undefined ? String(ui.trafficUsed) : "?");
                 var lStr = (limitB !== undefined) ? fmtBytes(limitB)
                          : (ui.trafficLimit !== undefined ? String(ui.trafficLimit) : "∞");
-                rows.push(["Трафик", uStr + " / " + lStr]);
+                rows.push([I18n.t("Трафик"), uStr + " / " + lStr]);
             } else if (ui.trafficUsed !== undefined || ui.trafficLimit !== undefined) {
                 var used = (ui.trafficUsed !== undefined ? String(ui.trafficUsed) : "?");
                 var limit = (ui.trafficLimit !== undefined ? String(ui.trafficLimit) : "∞");
-                rows.push(["Трафик", used + " / " + limit]);
+                rows.push([I18n.t("Трафик"), used + " / " + limit]);
             }
-            if (ui.expiresAt) rows.push(["Истекает", fmtTime(ui.expiresAt)]);
-            else if (ui.expire) rows.push(["Истекает", fmtTime(ui.expire)]);
-            if (ui.trafficLimitStrategy) rows.push(["Сброс трафика", String(ui.trafficLimitStrategy)]);
+            if (ui.expiresAt) rows.push([I18n.t("Истекает"), fmtTime(ui.expiresAt)]);
+            else if (ui.expire) rows.push([I18n.t("Истекает"), fmtTime(ui.expire)]);
+            if (ui.trafficLimitStrategy) rows.push([I18n.t("Сброс трафика"), String(ui.trafficLimitStrategy)]);
         }
         return rows;
     }
@@ -310,7 +310,7 @@ Item {
             spacing: Theme.spacing
 
             Text {
-                text: "Серверы"
+                text: I18n.t("Серверы")
                 color: Theme.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontTitle
@@ -318,7 +318,7 @@ Item {
             }
             Text {
                 visible: page.selCount > 0
-                text: "· выбрано: " + page.selCount
+                text: I18n.t("· выбрано: ") + page.selCount
                 color: Theme.textMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontNormal
@@ -356,7 +356,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     background: null
                     verticalAlignment: TextInput.AlignVCenter
-                    placeholderText: "Поиск серверов…"
+                    placeholderText: I18n.t("Поиск серверов…")
                     placeholderTextColor: Theme.textFaint
                     color: Theme.text
                     font.family: Theme.fontFamily
@@ -400,7 +400,7 @@ Item {
                 kind: "ghost"
                 iconOnly: true
                 glyph: page.sortAsc ? "\uE74A" : "\uE74B"
-                tip: page.sortAsc ? "По возрастанию" : "По убыванию"
+                tip: page.sortAsc ? I18n.t("По возрастанию") : I18n.t("По убыванию")
                 onClicked: {
                     page.sortAsc = !page.sortAsc;
                     App.setNodeSort(page.sortKey, page.sortAsc);
@@ -419,20 +419,20 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
                 spacing: 8
 
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B5"; text: "Импорт из буфера"; onClicked: App.importClipboard() }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8E5"; text: "Импорт .conf"; onClicked: App.importNodeFile() }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B3"; text: "Выбрать все"; onClicked: page.selectAll() }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE894"; text: "Снять выбор"; enabled: page.selCount > 0; onClicked: page.clearSel() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт из буфера"); onClicked: App.importClipboard() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8E5"; text: I18n.t("Импорт .conf"); onClicked: App.importNodeFile() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B3"; text: I18n.t("Выбрать все"); onClicked: page.selectAll() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE894"; text: I18n.t("Снять выбор"); enabled: page.selCount > 0; onClicked: page.clearSel() }
                 // Пинг — две кнопки как в оригинале (FIF.SEND / FIF.SYNC), способ из настроек
-                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE724"; text: "Пинг выбранных"; enabled: page.selCount > 0; onClicked: App.pingNodes(page.selectedIds()) }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE895"; text: "Пинг всех"; onClicked: App.pingNodes() }
+                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE724"; text: I18n.t("Пинг выбранных"); enabled: page.selCount > 0; onClicked: App.pingNodes(page.selectedIds()) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE895"; text: I18n.t("Пинг всех"); onClicked: App.pingNodes() }
                 // Тест скорости — две кнопки (выбранные / все)
-                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uEC4A"; text: "Тест скорости выбранных"; enabled: page.selCount > 0; onClicked: App.speedTestNodes(page.selectedIds()) }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uEC4A"; text: "Тест скорости всех"; onClicked: App.speedTestNodes() }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE769"; text: "Остановить тест"; onClicked: App.cancelSpeedTest() }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE943"; text: "Экспорт outbound JSON"; enabled: page.selCount === 1; onClicked: App.saveOutboundJson(page.firstSelected()) }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE792"; text: "Экспорт runtime JSON"; enabled: page.selCount === 1; onClicked: App.saveRuntimeJson(page.firstSelected()) }
-                AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: "Удалить выбранные"; enabled: page.selCount > 0; onClicked: App.deleteNodes(page.selectedIds()) }
+                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uEC4A"; text: I18n.t("Тест скорости выбранных"); enabled: page.selCount > 0; onClicked: App.speedTestNodes(page.selectedIds()) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uEC4A"; text: I18n.t("Тест скорости всех"); onClicked: App.speedTestNodes() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE769"; text: I18n.t("Остановить тест"); onClicked: App.cancelSpeedTest() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE943"; text: I18n.t("Экспорт outbound JSON"); enabled: page.selCount === 1; onClicked: App.saveOutboundJson(page.firstSelected()) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE792"; text: I18n.t("Экспорт runtime JSON"); enabled: page.selCount === 1; onClicked: App.saveRuntimeJson(page.firstSelected()) }
+                AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: I18n.t("Удалить выбранные"); enabled: page.selCount > 0; onClicked: App.deleteNodes(page.selectedIds()) }
             }
 
             // Подписки (справа, в той же линии)
@@ -440,8 +440,8 @@ Item {
                 Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
                 spacing: 8
 
-                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE946"; text: "Свойства подписки"; enabled: App.subscriptions.length > 0; onClicked: infoDialog.openInfo() }
-                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE8B5"; text: "Импорт подписки"; onClicked: subDialog.openNew() }
+                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE946"; text: I18n.t("Свойства подписки"); enabled: App.subscriptions.length > 0; onClicked: infoDialog.openInfo() }
+                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт подписки"); onClicked: subDialog.openNew() }
                 FilterCombo {
                     id: subCombo
                     Layout.preferredWidth: 220
@@ -449,11 +449,11 @@ Item {
                     enabled: App.subscriptions.length > 0
                     model: App.subscriptions.length > 0
                         ? App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
-                        : ["Нет подписок"]
+                        : [I18n.t("Нет подписок")]
                 }
-                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE72C"; text: "Обновить подписку"; enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.updateSubscription(s.url) } }
-                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE895"; text: "Обновить все подписки"; enabled: App.subscriptions.length > 0; onClicked: App.updateAllSubscriptions() }
-                AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: "Удалить подписку (с серверами)"; enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.removeSubscription(s.url, true) } }
+                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE72C"; text: I18n.t("Обновить подписку"); enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.updateSubscription(s.url) } }
+                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE895"; text: I18n.t("Обновить все подписки"); enabled: App.subscriptions.length > 0; onClicked: App.updateAllSubscriptions() }
+                AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: I18n.t("Удалить подписку (с серверами)"); enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.removeSubscription(s.url, true) } }
             }
         }
 
@@ -493,16 +493,16 @@ Item {
                         Row {
                             anchors.fill: parent
                             anchors.leftMargin: page.leftPad
-                            HeaderLabel { w: page.colName; text: "Сервер"; sortKey: "name" }
-                            HeaderLabel { w: page.colType; text: "Тип"; sortKey: "scheme" }
-                            HeaderLabel { w: page.colAddr; text: "Адрес" }
-                            HeaderLabel { w: page.colPort; text: "Порт" }
-                            HeaderLabel { w: page.colGroup; text: "Группа"; sortKey: "group" }
-                            HeaderLabel { w: page.colTags; text: "Теги" }
-                            HeaderLabel { w: page.colPing; text: "Пинг"; sortKey: "ping" }
-                            HeaderLabel { w: page.colSpeed; text: "Скорость"; sortKey: "speed" }
-                            HeaderLabel { w: page.colStatus; text: "Статус" }
-                            HeaderLabel { w: page.colLast; text: "Последнее"; sortKey: "last" }
+                            HeaderLabel { w: page.colName; text: I18n.t("Сервер"); sortKey: "name" }
+                            HeaderLabel { w: page.colType; text: I18n.t("Тип"); sortKey: "scheme" }
+                            HeaderLabel { w: page.colAddr; text: I18n.t("Адрес") }
+                            HeaderLabel { w: page.colPort; text: I18n.t("Порт") }
+                            HeaderLabel { w: page.colGroup; text: I18n.t("Группа"); sortKey: "group" }
+                            HeaderLabel { w: page.colTags; text: I18n.t("Теги") }
+                            HeaderLabel { w: page.colPing; text: I18n.t("Пинг"); sortKey: "ping" }
+                            HeaderLabel { w: page.colSpeed; text: I18n.t("Скорость"); sortKey: "speed" }
+                            HeaderLabel { w: page.colStatus; text: I18n.t("Статус") }
+                            HeaderLabel { w: page.colLast; text: I18n.t("Последнее"); sortKey: "last" }
                         }
                         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.divider }
                     }
@@ -813,14 +813,14 @@ Item {
                 }
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "Список серверов пуст"
+                    text: I18n.t("Список серверов пуст")
                     color: Theme.textFaint
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontNormal
                 }
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "Скопируйте ссылки и нажмите «Импорт»"
+                    text: I18n.t("Скопируйте ссылки и нажмите «Импорт»")
                     color: Theme.textFaint
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSmall
@@ -867,61 +867,61 @@ Item {
         }
 
         Ctx {
-            text: "Установить как активный"
+            text: I18n.t("Установить как активный")
             enabled: page.selCount === 1
             onTriggered: App.selectNode(page.menuNodeId())
         }
         Sep {}
         Ctx {
-            text: "Редактировать"
+            text: I18n.t("Редактировать")
             enabled: page.selCount === 1
             onTriggered: editDialog.openFor(page.firstSelected())
         }
         Ctx {
-            text: "Копировать ссылку"
+            text: I18n.t("Копировать ссылку")
             enabled: page.selCount === 1
             onTriggered: App.copyNodeLink(page.firstSelected())
         }
         Ctx {
-            text: "Массовое редактирование (" + page.selCount + ")"
+            text: I18n.t("Массовое редактирование (") + page.selCount + ")"
             enabled: page.selCount > 0
             onTriggered: bulkDialog.openFor(page.selectedIds())
         }
         Sep {}
         Ctx {
-            text: "Пинг — способ из настроек (" + page.selCount + ")"
+            text: I18n.t("Пинг — способ из настроек (") + page.selCount + ")"
             enabled: page.selCount > 0
             onTriggered: App.pingNodes(page.selectedIds())
         }
         Ctx {
-            text: "Тест TCP ping (" + page.selCount + ")"
+            text: I18n.t("Тест TCP ping (") + page.selCount + ")"
             enabled: page.selCount > 0
             onTriggered: App.tcpingNodes(page.selectedIds())
         }
         Ctx {
-            text: "Тест реальной задержки (" + page.selCount + ")"
+            text: I18n.t("Тест реальной задержки (") + page.selCount + ")"
             enabled: page.selCount > 0
             onTriggered: App.realDelayNodes(page.selectedIds())
         }
         Ctx {
-            text: "Тест скорости загрузки (" + page.selCount + ")"
+            text: I18n.t("Тест скорости загрузки (") + page.selCount + ")"
             enabled: page.selCount > 0
             onTriggered: App.downloadSpeedNodes(page.selectedIds())
         }
         Sep {}
         Ctx {
-            text: "В начало списка"
+            text: I18n.t("В начало списка")
             enabled: page.selCount === 1
             onTriggered: App.reorderNode(page.menuNodeId(), "top")
         }
         Ctx {
-            text: "В конец списка"
+            text: I18n.t("В конец списка")
             enabled: page.selCount === 1
             onTriggered: App.reorderNode(page.menuNodeId(), "bottom")
         }
         Sep {}
         Ctx {
-            text: "Удалить (" + page.selCount + ")"
+            text: I18n.t("Удалить (") + page.selCount + ")"
             enabled: page.selCount > 0
             onTriggered: App.deleteNodes(page.selectedIds())
         }
@@ -1002,14 +1002,14 @@ Item {
             spacing: 12
 
             Text {
-                text: "Импорт подписки"
+                text: I18n.t("Импорт подписки")
                 color: Theme.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontStrong
                 font.bold: true
             }
             Text {
-                text: "Вставьте ссылку на подписку. Серверы автоматически попадут в новую группу."
+                text: I18n.t("Вставьте ссылку на подписку. Серверы автоматически попадут в новую группу.")
                 color: Theme.textFaint
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSmall
@@ -1017,7 +1017,7 @@ Item {
                 Layout.fillWidth: true
             }
 
-            Text { text: "URL подписки"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+            Text { text: I18n.t("URL подписки"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
             TextField {
                 id: subUrlField
                 Layout.fillWidth: true
@@ -1032,7 +1032,7 @@ Item {
                 background: Rectangle { radius: Theme.radiusSmall; color: Theme.card; border.width: 1; border.color: subUrlField.activeFocus ? Theme.accent : Theme.borderSolid }
             }
 
-            Text { text: "Имя группы (необязательно)"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+            Text { text: I18n.t("Имя группы (необязательно)"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
             TextField {
                 id: subNameField
                 Layout.fillWidth: true
@@ -1042,7 +1042,7 @@ Item {
                 font.pixelSize: Theme.fontNormal
                 selectByMouse: true
                 leftPadding: 10; rightPadding: 10
-                placeholderText: "Пусто — имя будет создано автоматически"
+                placeholderText: I18n.t("Пусто — имя будет создано автоматически")
                 placeholderTextColor: Theme.textFaint
                 background: Rectangle { radius: Theme.radiusSmall; color: Theme.card; border.width: 1; border.color: subNameField.activeFocus ? Theme.accent : Theme.borderSolid }
             }
@@ -1051,9 +1051,9 @@ Item {
                 Layout.fillWidth: true
                 Layout.topMargin: 6
                 Item { Layout.fillWidth: true }
-                AccentButton { kind: "ghost"; text: "Отмена"; onClicked: subDialog.close() }
+                AccentButton { kind: "ghost"; text: I18n.t("Отмена"); onClicked: subDialog.close() }
                 AccentButton {
-                    kind: "accent"; text: "Импортировать"
+                    kind: "accent"; text: I18n.t("Импортировать")
                     enabled: subUrlField.text.trim().length > 0
                     onClicked: {
                         App.importSubscription(subUrlField.text.trim(), subNameField.text.trim());
@@ -1097,7 +1097,7 @@ Item {
             spacing: 12
 
             Text {
-                text: "Свойства подписки"
+                text: I18n.t("Свойства подписки")
                 color: Theme.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontStrong
@@ -1111,7 +1111,7 @@ Item {
                 enabled: App.subscriptions.length > 0
                 model: App.subscriptions.length > 0
                     ? App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
-                    : ["Нет подписок"]
+                    : [I18n.t("Нет подписок")]
             }
 
             // Свойства выбранной подписки
@@ -1144,7 +1144,7 @@ Item {
 
             Text {
                 visible: { var s = page.infoSub(); return s ? !(s.userinfo && typeof s.userinfo === "object" && Object.keys(s.userinfo).length > 0) : false; }
-                text: "В ссылке этой подписки нет доп. информации о пользователе."
+                text: I18n.t("В ссылке этой подписки нет доп. информации о пользователе.")
                 color: Theme.textFaint
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSmall
@@ -1156,7 +1156,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.topMargin: 6
                 Item { Layout.fillWidth: true }
-                AccentButton { kind: "accent"; text: "Закрыть"; onClicked: infoDialog.close() }
+                AccentButton { kind: "accent"; text: I18n.t("Закрыть"); onClicked: infoDialog.close() }
             }
         }
     }

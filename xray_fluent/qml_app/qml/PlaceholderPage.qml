@@ -10,7 +10,7 @@ Item {
     property string title: ""
     property string glyph: "\uE9CE"
     property string iconFont: "Segoe Fluent Icons"
-    property string note: "Этот раздел в разработке."
+    property string note: I18n.t("Этот раздел в разработке.")
 
     ColumnLayout {
         anchors.fill: parent

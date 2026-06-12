@@ -202,7 +202,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Text {
-                    text: "История"
+                    text: I18n.t("История")
                     color: Theme.text; font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontTitle; font.weight: Font.DemiBold
                 }
@@ -210,27 +210,27 @@ Item {
                 StyledCombo {
                     id: periodCombo
                     Layout.preferredWidth: 180
-                    model: ["За 7 дней", "За 30 дней", "За всё время"]
+                    model: [I18n.t("За 7 дней"), I18n.t("За 30 дней"), I18n.t("За всё время")]
                     currentIndex: 1
                     onActivated: {
                         page.periodDays = page.daysModel[currentIndex]
                         page.reload()
                     }
                 }
-                AccentButton { kind: "ghost"; glyph: "\uE72C"; text: "Обновить"; onClicked: page.reload() }
+                AccentButton { kind: "ghost"; glyph: "\uE72C"; text: I18n.t("Обновить"); onClicked: page.reload() }
             }
 
             // ---- summary strip ----
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Theme.spacing
-                StatTile { caption: "Загружено"; value: page.hist.summaryDown || "0 B"; valueColor: Theme.success }
-                StatTile { caption: "Отдано"; value: page.hist.summaryUp || "0 B" }
-                StatTile { caption: "Сессий"; value: "" + (page.hist.summarySessions || 0) }
+                StatTile { caption: I18n.t("Загружено"); value: page.hist.summaryDown || "0 B"; valueColor: Theme.success }
+                StatTile { caption: I18n.t("Отдано"); value: page.hist.summaryUp || "0 B" }
+                StatTile { caption: I18n.t("Сессий"); value: "" + (page.hist.summarySessions || 0) }
             }
 
             // ---- sessions table ----
-            Text { text: "Сессии"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold; Layout.topMargin: 4 }
+            Text { text: I18n.t("Сессии"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold; Layout.topMargin: 4 }
             TableCard {
                 bodyHeight: 250
                 ColumnLayout {
@@ -238,10 +238,10 @@ Item {
                     spacing: 0
                     RowLayout {
                         Layout.fillWidth: true; Layout.margins: 14; Layout.bottomMargin: 8; spacing: 12
-                        HCell { label: "Начало"; w: 140; sortKey: "ts"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "ts") }
-                        HCell { label: "Сервер"; sortKey: "node"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "node") }
-                        HCell { label: "Режим"; w: 150; sortKey: "mode"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "mode") }
-                        HCell { label: "Длит."; w: 80; alignRight: true; sortKey: "durSec"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "durSec") }
+                        HCell { label: I18n.t("Начало"); w: 140; sortKey: "ts"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "ts") }
+                        HCell { label: I18n.t("Сервер"); sortKey: "node"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "node") }
+                        HCell { label: I18n.t("Режим"); w: 150; sortKey: "mode"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "mode") }
+                        HCell { label: I18n.t("Длит."); w: 80; alignRight: true; sortKey: "durSec"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "durSec") }
                         HCell { label: "↓"; w: 100; alignRight: true; sortKey: "downB"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "downB") }
                         HCell { label: "↑"; w: 100; alignRight: true; sortKey: "upB"; curKey: page.sessSort; curAsc: page.sessAsc; onSortClicked: page.cycleSort("sess", "upB") }
                     }
@@ -271,14 +271,14 @@ Item {
                         Text {
                             anchors.centerIn: parent
                             visible: sessionsList.count === 0
-                            text: "Нет записей"; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                            text: I18n.t("Нет записей"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                         }
                     }
                 }
             }
 
             // ---- per-day traffic table ----
-            Text { text: "Трафик по дням"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold; Layout.topMargin: 4 }
+            Text { text: I18n.t("Трафик по дням"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold; Layout.topMargin: 4 }
             TableCard {
                 bodyHeight: 180
                 ColumnLayout {
@@ -286,9 +286,9 @@ Item {
                     spacing: 0
                     RowLayout {
                         Layout.fillWidth: true; Layout.margins: 14; Layout.bottomMargin: 8; spacing: 12
-                        HCell { label: "День"; sortKey: "day"; curKey: page.daySort; curAsc: page.dayAsc; onSortClicked: page.cycleSort("day", "day") }
-                        HCell { label: "Загружено"; w: 150; alignRight: true; sortKey: "downB"; curKey: page.daySort; curAsc: page.dayAsc; onSortClicked: page.cycleSort("day", "downB") }
-                        HCell { label: "Отдано"; w: 150; alignRight: true; sortKey: "upB"; curKey: page.daySort; curAsc: page.dayAsc; onSortClicked: page.cycleSort("day", "upB") }
+                        HCell { label: I18n.t("День"); sortKey: "day"; curKey: page.daySort; curAsc: page.dayAsc; onSortClicked: page.cycleSort("day", "day") }
+                        HCell { label: I18n.t("Загружено"); w: 150; alignRight: true; sortKey: "downB"; curKey: page.daySort; curAsc: page.dayAsc; onSortClicked: page.cycleSort("day", "downB") }
+                        HCell { label: I18n.t("Отдано"); w: 150; alignRight: true; sortKey: "upB"; curKey: page.daySort; curAsc: page.dayAsc; onSortClicked: page.cycleSort("day", "upB") }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
                     Item {
@@ -313,14 +313,14 @@ Item {
                         Text {
                             anchors.centerIn: parent
                             visible: dailyList.count === 0
-                            text: "Нет записей"; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                            text: I18n.t("Нет записей"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                         }
                     }
                 }
             }
 
             // ---- per-process traffic table ----
-            Text { text: "Трафик по процессам"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold; Layout.topMargin: 4 }
+            Text { text: I18n.t("Трафик по процессам"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold; Layout.topMargin: 4 }
             TableCard {
                 bodyHeight: 210
                 ColumnLayout {
@@ -328,10 +328,10 @@ Item {
                     spacing: 0
                     RowLayout {
                         Layout.fillWidth: true; Layout.margins: 14; Layout.bottomMargin: 8; spacing: 12
-                        HCell { label: "Процесс"; sortKey: "exe"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "exe") }
-                        HCell { label: "Загружено"; w: 140; alignRight: true; sortKey: "downB"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "downB") }
-                        HCell { label: "Отдано"; w: 140; alignRight: true; sortKey: "upB"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "upB") }
-                        HCell { label: "Маршрут"; w: 110; alignRight: true; sortKey: "route"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "route") }
+                        HCell { label: I18n.t("Процесс"); sortKey: "exe"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "exe") }
+                        HCell { label: I18n.t("Загружено"); w: 140; alignRight: true; sortKey: "downB"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "downB") }
+                        HCell { label: I18n.t("Отдано"); w: 140; alignRight: true; sortKey: "upB"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "upB") }
+                        HCell { label: I18n.t("Маршрут"); w: 110; alignRight: true; sortKey: "route"; curKey: page.procSort; curAsc: page.procAsc; onSortClicked: page.cycleSort("proc", "route") }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
                     Item {
@@ -357,7 +357,7 @@ Item {
                         Text {
                             anchors.centerIn: parent
                             visible: procList.count === 0
-                            text: "Нет записей"; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                            text: I18n.t("Нет записей"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                         }
                     }
                 }

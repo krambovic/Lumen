@@ -87,7 +87,7 @@ FluentScroll {
         spacing: Theme.spacingLarge
 
         Text {
-            text: "Настройки"
+            text: I18n.t("Настройки")
             font.family: Theme.fontFamily; font.pixelSize: Theme.fontTitle
             font.weight: Font.DemiBold; color: Theme.text
         }
@@ -98,33 +98,33 @@ FluentScroll {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: "Внешний вид"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Внешний вид"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE790"; title: "Тема"; subtitle: "Выберите светлую, тёмную или системную тему"
+                    glyph: "\uE790"; title: I18n.t("Тема"); subtitle: I18n.t("Выберите светлую, тёмную или системную тему")
                     StyledCombo {
-                        model: ["Авто", "Светлая", "Тёмная"]
+                        model: [I18n.t("Авто"), I18n.t("Светлая"), I18n.t("Тёмная")]
                         currentIndex: Math.max(0, page.themeKeys.indexOf(App.themeName))
                         onActivated: App.setTheme(page.themeKeys[currentIndex])
                     }
                 }
 
                 SettingRow {
-                    glyph: "\uE774"; title: "Язык"; subtitle: "При первом запуске выбирается по языку системы"
+                    glyph: "\uE774"; title: I18n.t("Язык"); subtitle: I18n.t("При первом запуске выбирается по языку системы")
                     StyledCombo {
-                        model: ["Русский", "English"]
+                        model: [I18n.t("Русский"), "English"]
                         currentIndex: Math.max(0, page.languageKeys.indexOf(App.language))
                         onActivated: App.setLanguage(page.languageKeys[currentIndex])
                     }
                 }
 
                 SettingRow {
-                    glyph: "\uE2B1"; title: "Цвет акцента"; subtitle: "Цвет акцента для элементов интерфейса"
+                    glyph: "\uE2B1"; title: I18n.t("Цвет акцента"); subtitle: I18n.t("Цвет акцента для элементов интерфейса")
                     AccentPicker {}
                 }
 
                 SettingRow {
-                    glyph: "\uE890"; title: "Компактный режим"; subtitle: "Скрыть продвинутые настройки и второстепенные разделы"
+                    glyph: "\uE890"; title: I18n.t("Компактный режим"); subtitle: I18n.t("Скрыть продвинутые настройки и второстепенные разделы")
                     Switch { checked: App.compactMode; onToggled: App.setInterfaceMode(checked ? "compact" : "full") }
                 }
             }
@@ -136,14 +136,14 @@ FluentScroll {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: "Сеть"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Сеть"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE80F"; title: "Прокси в обход локальной сети"; subtitle: "Не проксировать адреса локальной сети"
+                    glyph: "\uE80F"; title: I18n.t("Прокси в обход локальной сети"); subtitle: I18n.t("Не проксировать адреса локальной сети")
                     Switch { checked: App.proxyBypassLan; onToggled: App.setProxyBypassLan(checked) }
                 }
                 SettingRow {
-                    glyph: "\uE895"; title: "Переподключение при смене сети"; subtitle: "Автоматически переподключаться при изменении сети"
+                    glyph: "\uE895"; title: I18n.t("Переподключение при смене сети"); subtitle: I18n.t("Автоматически переподключаться при изменении сети")
                     Switch { checked: App.reconnectOnNetworkChange; onToggled: App.setReconnectOnNetworkChange(checked) }
                 }
             }
@@ -156,25 +156,25 @@ FluentScroll {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: "Авто-переключение"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Авто-переключение"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE895"; title: "Включить авто-переключение"; subtitle: "Переключать сервер при падении скорости"
+                    glyph: "\uE895"; title: I18n.t("Включить авто-переключение"); subtitle: I18n.t("Переключать сервер при падении скорости")
                     Switch { checked: App.autoSwitchEnabled; onToggled: App.setAutoSwitch(checked) }
                 }
 
                 SettingRow {
-                    glyph: "\uEC4A"; title: "Порог скорости"; subtitle: "КБ/с, ниже которого срабатывает переключение"
+                    glyph: "\uEC4A"; title: I18n.t("Порог скорости"); subtitle: I18n.t("КБ/с, ниже которого срабатывает переключение")
                     enabled: App.autoSwitchEnabled
                     FluentSpin { from: 1; to: 10000; value: App.autoSwitchThreshold; onValueModified: App.setAutoSwitchThreshold(value) }
                 }
                 SettingRow {
-                    glyph: "\uE916"; title: "Задержка"; subtitle: "Секунд низкой скорости перед переключением"
+                    glyph: "\uE916"; title: I18n.t("Задержка"); subtitle: I18n.t("Секунд низкой скорости перед переключением")
                     enabled: App.autoSwitchEnabled
                     FluentSpin { from: 5; to: 300; value: App.autoSwitchDelay; onValueModified: App.setAutoSwitchDelay(value) }
                 }
                 SettingRow {
-                    glyph: "\uE81C"; title: "Пауза"; subtitle: "Секунд между переключениями"
+                    glyph: "\uE81C"; title: I18n.t("Пауза"); subtitle: I18n.t("Секунд между переключениями")
                     enabled: App.autoSwitchEnabled
                     FluentSpin { from: 10; to: 600; value: App.autoSwitchCooldown; onValueModified: App.setAutoSwitchCooldown(value) }
                 }
@@ -188,17 +188,17 @@ FluentScroll {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: "Пути к ядрам"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Пути к ядрам"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE756"; title: "Ядро Xray"; subtitle: "Путь к исполняемому файлу xray"
+                    glyph: "\uE756"; title: I18n.t("Ядро Xray"); subtitle: I18n.t("Путь к исполняемому файлу xray")
                     StyledField { id: xrayField; Layout.preferredWidth: 240; text: App.xrayPath; placeholderText: "core\\xray.exe"; onEditingFinished: App.setXrayPath(text) }
-                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: "Обзор"; onClicked: { var p = App.browseXrayPath(); if (p) xrayField.text = p } }
+                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Обзор"); onClicked: { var p = App.browseXrayPath(); if (p) xrayField.text = p } }
                 }
                 SettingRow {
-                    glyph: "\uE756"; title: "Ядро sing-box-extended"; subtitle: "Путь к исполняемому файлу sing-box-extended"
+                    glyph: "\uE756"; title: I18n.t("Ядро sing-box-extended"); subtitle: I18n.t("Путь к исполняемому файлу sing-box-extended")
                     StyledField { id: sbField; Layout.preferredWidth: 240; text: App.singboxPath; placeholderText: "core\\sing-box.exe"; onEditingFinished: App.setSingboxPath(text) }
-                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: "Обзор"; onClicked: { var p = App.browseSingboxPath(); if (p) sbField.text = p } }
+                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Обзор"); onClicked: { var p = App.browseSingboxPath(); if (p) sbField.text = p } }
                 }
             }
         }
@@ -209,26 +209,26 @@ FluentScroll {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: "Запуск"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Запуск"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE7E8"; title: "Запускать при входе"; subtitle: "Автозапуск вместе с Windows"
+                    glyph: "\uE7E8"; title: I18n.t("Запускать при входе"); subtitle: I18n.t("Автозапуск вместе с Windows")
                     Switch { checked: App.launchOnStartup; onToggled: App.setLaunchOnStartup(checked) }
                 }
                 SettingRow {
-                    glyph: "\uE768"; title: "Автоподключение после запуска"; subtitle: "Подключаться к последнему использованному серверу при старте"
+                    glyph: "\uE768"; title: I18n.t("Автоподключение после запуска"); subtitle: I18n.t("Подключаться к последнему использованному серверу при старте")
                     Switch { checked: App.autoConnectLast; onToggled: App.setAutoConnectLast(checked) }
                 }
                 SettingRow {
-                    glyph: "\uE896"; title: "Автоподключение при импорте"; subtitle: "Сразу подключаться к импортированному серверу"
+                    glyph: "\uE896"; title: I18n.t("Автоподключение при импорте"); subtitle: I18n.t("Сразу подключаться к импортированному серверу")
                     Switch { checked: App.autoConnectOnImport; onToggled: App.setAutoConnectOnImport(checked) }
                 }
                 SettingRow {
-                    glyph: "\uE7EF"; title: "Всегда запускать от администратора"; subtitle: "Windows будет запрашивать повышенные права при следующем запуске"
+                    glyph: "\uE7EF"; title: I18n.t("Всегда запускать от администратора"); subtitle: I18n.t("Windows будет запрашивать повышенные права при следующем запуске")
                     Switch { checked: App.alwaysRunAsAdmin; onToggled: App.setAlwaysRunAsAdmin(checked) }
                 }
                 SettingRow {
-                    glyph: "\uE945"; title: "Автозапуск Zapret"; subtitle: "Запускать Zapret при старте приложения"
+                    glyph: "\uE945"; title: I18n.t("Автозапуск Zapret"); subtitle: I18n.t("Запускать Zapret при старте приложения")
                     Switch { checked: App.zapretAutostart; onToggled: App.setZapretAutostart(checked) }
                 }
             }
@@ -241,19 +241,19 @@ FluentScroll {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: "Тестирование серверов"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Тестирование серверов"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE724"; title: "Способ измерения ping"; subtitle: "TCP ping быстрее всего; ICMP — системный ping; реальная задержка — HTTP через сервер"
+                    glyph: "\uE724"; title: I18n.t("Способ измерения ping"); subtitle: I18n.t("TCP ping быстрее всего; ICMP — системный ping; реальная задержка — HTTP через сервер")
                     StyledCombo {
-                        model: ["TCP ping (быстро)", "ICMP (системный)", "Реальная задержка (HTTP)"]
+                        model: [I18n.t("TCP ping (быстро)"), I18n.t("ICMP (системный)"), I18n.t("Реальная задержка (HTTP)")]
                         readonly property var keys: ["tcping", "icmp", "real"]
                         currentIndex: Math.max(0, keys.indexOf(App.pingMethod))
                         onActivated: App.setPingMethod(keys[currentIndex])
                     }
                 }
                 SettingRow {
-                    glyph: "\uEC4A"; title: "URL теста скорости"; subtitle: "Пусто — стандартный (cachefly 50MB)"
+                    glyph: "\uEC4A"; title: I18n.t("URL теста скорости"); subtitle: I18n.t("Пусто — стандартный (cachefly 50MB)")
                     StyledField {
                         id: speedUrlField
                         Layout.preferredWidth: 300
@@ -356,7 +356,7 @@ FluentScroll {
                     }
                 }
                 SettingRow {
-                    glyph: "\uE8C9"; title: "Параллельных проверок"; subtitle: "Сколько серверов тестировать одновременно (0 — авто)"
+                    glyph: "\uE8C9"; title: I18n.t("Параллельных проверок"); subtitle: I18n.t("Сколько серверов тестировать одновременно (0 — авто)")
                     FluentSpin { from: 0; to: 32; value: App.speedTestConcurrency; onValueModified: App.setSpeedTestConcurrency(value) }
                 }
             }
@@ -368,28 +368,28 @@ FluentScroll {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: "Обновления"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Обновления"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE895"; title: "Автообновление подписок"; subtitle: "Как часто фоново обновлять подписки (прокси/VPN не отключается)"
+                    glyph: "\uE895"; title: I18n.t("Автообновление подписок"); subtitle: I18n.t("Как часто фоново обновлять подписки (прокси/VPN не отключается)")
                     StyledCombo {
                         Layout.preferredWidth: 200
                         readonly property var values: [0, 30, 60, 240, 720, 1440]
-                        model: ["Выкл", "30 мин", "1 час", "4 часа", "12 часов", "24 часа"]
+                        model: [I18n.t("Выкл"), I18n.t("30 мин"), I18n.t("1 час"), I18n.t("4 часа"), I18n.t("12 часов"), I18n.t("24 часа")]
                         currentIndex: Math.max(0, values.indexOf(App.subscriptionAutoUpdateMinutes))
                         onActivated: App.setSubscriptionAutoUpdateMinutes(values[currentIndex])
                     }
                 }
                 SettingRow {
-                    glyph: "\uE777"; title: "Проверять обновления"; subtitle: "Автоматически проверять наличие обновлений"
+                    glyph: "\uE777"; title: I18n.t("Проверять обновления"); subtitle: I18n.t("Автоматически проверять наличие обновлений")
                     Switch { checked: App.checkUpdates; onToggled: App.setCheckUpdates(checked) }
                 }
                 SettingRow {
-                    glyph: "\uE896"; title: "Разрешить установку"; subtitle: "Скачивать и устанавливать обновления"
+                    glyph: "\uE896"; title: I18n.t("Разрешить установку"); subtitle: I18n.t("Скачивать и устанавливать обновления")
                     Switch { checked: App.allowUpdates; onToggled: App.setAllowUpdates(checked) }
                 }
                 SettingRow {
-                    glyph: "\uEBD3"; title: "Авто-обновление Xray"; subtitle: "Обновлять ядро Xray автоматически"
+                    glyph: "\uEBD3"; title: I18n.t("Авто-обновление Xray"); subtitle: I18n.t("Обновлять ядро Xray автоматически")
                     Switch { checked: App.xrayAutoUpdate; onToggled: App.setXrayAutoUpdate(checked) }
                 }
             }
@@ -402,18 +402,18 @@ FluentScroll {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: "Данные"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Данные"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE928"; title: "Шифрование данных"; subtitle: App.encryptionActive ? "Шифрование включено" : "Данные хранятся без шифрования"
-                    StyledField { id: encField; Layout.preferredWidth: 180; echoMode: TextInput.Password; placeholderText: "Пароль" }
-                    AccentButton { kind: "accent"; text: "Включить"; onClicked: { App.setEncryptionPassword(encField.text); encField.text = "" } }
-                    AccentButton { kind: "danger"; text: "Отключить"; enabled: App.encryptionActive; onClicked: App.disableEncryption() }
+                    glyph: "\uE928"; title: I18n.t("Шифрование данных"); subtitle: App.encryptionActive ? I18n.t("Шифрование включено") : I18n.t("Данные хранятся без шифрования")
+                    StyledField { id: encField; Layout.preferredWidth: 180; echoMode: TextInput.Password; placeholderText: I18n.t("Пароль") }
+                    AccentButton { kind: "accent"; text: I18n.t("Включить"); onClicked: { App.setEncryptionPassword(encField.text); encField.text = "" } }
+                    AccentButton { kind: "danger"; text: I18n.t("Отключить"); enabled: App.encryptionActive; onClicked: App.disableEncryption() }
                 }
                 SettingRow {
-                    glyph: "\uE74E"; title: "Резервная копия"; subtitle: "Экспорт и импорт настроек и серверов"
-                    AccentButton { kind: "ghost"; glyph: "\uE74E"; text: "Экспорт"; onClicked: App.exportBackup() }
-                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: "Импорт"; onClicked: App.importBackup() }
+                    glyph: "\uE74E"; title: I18n.t("Резервная копия"); subtitle: I18n.t("Экспорт и импорт настроек и серверов")
+                    AccentButton { kind: "ghost"; glyph: "\uE74E"; text: I18n.t("Экспорт"); onClicked: App.exportBackup() }
+                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Импорт"); onClicked: App.importBackup() }
                 }
             }
         }
@@ -425,17 +425,17 @@ FluentScroll {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: "Безопасность"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Безопасность"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uEB95"; title: "Мастер-пароль"; subtitle: App.masterPasswordEnabled ? "Введите текущий пароль, чтобы отключить" : "Защитите приложение паролем"
-                    StyledField { id: pwField; Layout.preferredWidth: 160; echoMode: TextInput.Password; placeholderText: "Пароль" }
-                    AccentButton { kind: "accent"; text: "Установить"; onClicked: { App.setMasterPassword(pwField.text); pwField.text = "" } }
-                    AccentButton { kind: "danger"; text: "Отключить"; enabled: App.masterPasswordEnabled; onClicked: { if (App.disableMasterPassword(pwField.text)) pwField.text = "" } }
-                    AccentButton { kind: "ghost"; glyph: "\uE72E"; text: "Заблокировать"; enabled: App.masterPasswordEnabled; onClicked: App.lockNow() }
+                    glyph: "\uEB95"; title: I18n.t("Мастер-пароль"); subtitle: App.masterPasswordEnabled ? I18n.t("Введите текущий пароль, чтобы отключить") : I18n.t("Защитите приложение паролем")
+                    StyledField { id: pwField; Layout.preferredWidth: 160; echoMode: TextInput.Password; placeholderText: I18n.t("Пароль") }
+                    AccentButton { kind: "accent"; text: I18n.t("Установить"); onClicked: { App.setMasterPassword(pwField.text); pwField.text = "" } }
+                    AccentButton { kind: "danger"; text: I18n.t("Отключить"); enabled: App.masterPasswordEnabled; onClicked: { if (App.disableMasterPassword(pwField.text)) pwField.text = "" } }
+                    AccentButton { kind: "ghost"; glyph: "\uE72E"; text: I18n.t("Заблокировать"); enabled: App.masterPasswordEnabled; onClicked: App.lockNow() }
                 }
                 SettingRow {
-                    glyph: "\uE916"; title: "Авто-блокировка"; subtitle: "Минут бездействия до блокировки"
+                    glyph: "\uE916"; title: I18n.t("Авто-блокировка"); subtitle: I18n.t("Минут бездействия до блокировки")
                     enabled: App.masterPasswordEnabled
                     SpinBox { from: 1; to: 120; value: App.autoLockMinutes; onValueModified: App.setAutoLockMinutes(value) }
                 }

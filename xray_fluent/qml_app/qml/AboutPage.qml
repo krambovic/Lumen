@@ -6,7 +6,7 @@ import "."
 
 // Faithful port of ui/about_page.py: a flat column (no card) with the big
 // "Lumen KVN" title, a muted version caption, a hairline separator, three
-// body paragraphs, a second separator, the "Ссылки" subtitle with the two
+// body paragraphs, a second separator, the I18n.t("Ссылки") subtitle with the two
 // link buttons (Telegram канал / Купить подписку) and the footer caption.
 FluentScroll {
     id: page
@@ -43,7 +43,7 @@ FluentScroll {
             color: Theme.text
             font.family: Theme.fontFamily
             font.pixelSize: 15
-            text: "Lumen KVN — уникальный туннель до любой страны мира, созданный передовыми мировыми инженерами (не является тем чем вы думаете)."
+            text: I18n.t("Lumen KVN — уникальный туннель до любой страны мира, созданный передовыми мировыми инженерами (не является тем чем вы думаете).")
         }
         Text {
             Layout.fillWidth: true
@@ -51,7 +51,7 @@ FluentScroll {
             color: Theme.textMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontNormal
-            text: "Позволяет ускорить замедленные сервера Ютуба и Дискорда в случае если те перестали работать и начали деградировать."
+            text: I18n.t("Позволяет ускорить замедленные сервера Ютуба и Дискорда в случае если те перестали работать и начали деградировать.")
         }
         Text {
             Layout.fillWidth: true
@@ -59,7 +59,7 @@ FluentScroll {
             color: Theme.textMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontNormal
-            text: "Также подходит для ускорения игровых серверов."
+            text: I18n.t("Также подходит для ускорения игровых серверов.")
         }
 
         // ── Separator ──
@@ -67,7 +67,7 @@ FluentScroll {
 
         // ── Links ──
         Text {
-            text: "Ссылки"
+            text: I18n.t("Ссылки")
             color: Theme.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontStrong
@@ -79,13 +79,13 @@ FluentScroll {
             AccentButton {
                 kind: "accent"
                 glyph: "\uE724"  // Send
-                text: "Telegram канал"
+                text: I18n.t("Telegram канал")
                 onClicked: App.openUrl("https://t.me/vpndiscordyooutube")
             }
             AccentButton {
                 kind: "ghost"
                 glyph: "\uE7BF"  // Shopping cart
-                text: "Купить подписку"
+                text: I18n.t("Купить подписку")
                 onClicked: App.openUrl("https://t.me/zapretvpns_bot")
             }
             Item { Layout.fillWidth: true }
@@ -94,7 +94,7 @@ FluentScroll {
         // ── Footer ──
         Text {
             Layout.topMargin: 4
-            text: "Подробнее здесь @zapretvpns_bot"
+            text: I18n.t("Подробнее здесь @zapretvpns_bot")
             color: Theme.textFaint
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSmall

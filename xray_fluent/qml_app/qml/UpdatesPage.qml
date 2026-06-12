@@ -41,13 +41,13 @@ Item {
 
     function appStatusText() {
         switch (appPhase) {
-        case "checking":    return "Проверка обновлений..."
-        case "uptodate":    return "У вас последняя версия"
-        case "available":   return "Доступна новая версия: v" + appNewVersion
-        case "downloading": return appMessage !== "" ? appMessage : ("Загрузка: " + appPercent + "%")
-        case "ready":       return appMessage !== "" ? appMessage : "Обновление загружено. Перезапуск..."
-        case "error":       return appMessage !== "" ? appMessage : "Ошибка проверки обновлений"
-        default:            return "Нажмите «Проверить обновления», чтобы узнать о новых версиях."
+        case "checking":    return I18n.t("Проверка обновлений...")
+        case "uptodate":    return I18n.t("У вас последняя версия")
+        case "available":   return I18n.t("Доступна новая версия: v") + appNewVersion
+        case "downloading": return appMessage !== "" ? I18n.t(appMessage) : (I18n.t("Загрузка: ") + appPercent + "%")
+        case "ready":       return appMessage !== "" ? I18n.t(appMessage) : I18n.t("Обновление загружено. Перезапуск...")
+        case "error":       return appMessage !== "" ? I18n.t(appMessage) : I18n.t("Ошибка проверки обновлений")
+        default:            return I18n.t("Нажмите «Проверить обновления», чтобы узнать о новых версиях.")
         }
     }
     function appStatusColor() {
@@ -58,13 +58,13 @@ Item {
 
     function xrayStatusText() {
         switch (xrayPhase) {
-        case "checking": return "Проверка обновлений Xray..."
-        case "updating": return "Обновление Xray..."
+        case "checking": return I18n.t("Проверка обновлений Xray...")
+        case "updating": return I18n.t("Обновление Xray...")
         case "uptodate":
         case "available":
         case "updated":
-        case "error":    return xrayMessage
-        default:         return "Проверьте наличие новой версии ядра Xray-core от разработчиков."
+        case "error":    return I18n.t(xrayMessage)
+        default:         return I18n.t("Проверьте наличие новой версии ядра Xray-core от разработчиков.")
         }
     }
     function xrayStatusColor() {
@@ -74,12 +74,12 @@ Item {
     }
     function resourceStatusText(phase, message, fallback) {
         switch (phase) {
-        case "checking": return "Проверка обновлений..."
-        case "updating": return "Обновление..."
+        case "checking": return I18n.t("Проверка обновлений...")
+        case "updating": return I18n.t("Обновление...")
         case "uptodate":
         case "available":
         case "updated":
-        case "error":    return message
+        case "error":    return I18n.t(message)
         default:         return fallback
         }
     }
@@ -132,7 +132,7 @@ Item {
             spacing: Theme.spacingLarge
 
             Text {
-                text: "Обновления"
+                text: I18n.t("Обновления")
                 color: Theme.text; font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontTitle; font.weight: Font.DemiBold
             }
@@ -145,10 +145,10 @@ Item {
                 ColumnLayout {
                     width: parent.width
                     spacing: 10
-                    Text { text: "Приложение"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                    Text { text: I18n.t("Приложение"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
-                        Text { text: "Текущая версия:"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Text { text: I18n.t("Текущая версия:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                         Text { text: "v" + page.appVersion; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
                         Item { Layout.fillWidth: true }
                     }
@@ -192,13 +192,13 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
                         AccentButton {
-                            kind: "accent"; glyph: "\uE72C"; text: "Проверить обновления"
+                            kind: "accent"; glyph: "\uE72C"; text: I18n.t("Проверить обновления")
                             enabled: !page.appBusy
                             onClicked: App.checkAppUpdate()
                         }
                         AccentButton {
                             kind: "ghost"; glyph: "\uE896"
-                            text: page.appNewVersion !== "" ? ("Скачать v" + page.appNewVersion + " и установить") : "Скачать и установить"
+                            text: page.appNewVersion !== "" ? (I18n.t("Скачать v") + page.appNewVersion + I18n.t(" и установить")) : I18n.t("Скачать и установить")
                             visible: page.appPhase === "available" || page.appPhase === "downloading"
                             enabled: page.appPhase === "available"
                             onClicked: App.downloadAppUpdate()
@@ -216,11 +216,11 @@ Item {
                 ColumnLayout {
                     width: parent.width
                     spacing: 10
-                    Text { text: "Ядро Xray"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                    Text { text: I18n.t("Ядро Xray"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
-                        Text { text: "Версия:"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                        Text { text: page.xrayVersion !== "" ? page.xrayVersion : "не найдена"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
+                        Text { text: I18n.t("Версия:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Text { text: page.xrayVersion !== "" ? page.xrayVersion : I18n.t("не найдена"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
                         Item { Layout.fillWidth: true }
                     }
                     Text {
@@ -237,12 +237,12 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
                         AccentButton {
-                            kind: "accent"; glyph: "\uE72C"; text: "Проверить обновления Xray"
+                            kind: "accent"; glyph: "\uE72C"; text: I18n.t("Проверить обновления Xray")
                             enabled: !page.xrayBusy
                             onClicked: App.checkXrayUpdate()
                         }
                         AccentButton {
-                            kind: "ghost"; glyph: "\uE896"; text: "Обновить Xray core"
+                            kind: "ghost"; glyph: "\uE896"; text: I18n.t("Обновить Xray core")
                             enabled: !page.xrayBusy
                             onClicked: App.updateXrayCore()
                         }
@@ -258,15 +258,15 @@ Item {
                 ColumnLayout {
                     width: parent.width
                     spacing: 10
-                    Text { text: "Ядро sing-box extended"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                    Text { text: I18n.t("Ядро sing-box extended"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
-                        Text { text: "Версия:"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                        Text { text: page.singboxVersion !== "" ? page.singboxVersion : "не найдена"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
+                        Text { text: I18n.t("Версия:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Text { text: page.singboxVersion !== "" ? page.singboxVersion : I18n.t("не найдена"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
                         Item { Layout.fillWidth: true }
                     }
                     Text {
-                        text: page.resourceStatusText(page.singboxPhase, page.singboxMessage, "Проверьте наличие новой версии sing-box extended.")
+                        text: page.resourceStatusText(page.singboxPhase, page.singboxMessage, I18n.t("Проверьте наличие новой версии sing-box extended."))
                         color: page.resourceStatusColor(page.singboxPhase)
                         font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                         font.weight: (page.singboxPhase === "updated" || page.singboxPhase === "error") ? Font.DemiBold : Font.Normal
@@ -280,12 +280,12 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
                         AccentButton {
-                            kind: "accent"; glyph: "\uE72C"; text: "Проверить sing-box"
+                            kind: "accent"; glyph: "\uE72C"; text: I18n.t("Проверить sing-box")
                             enabled: !page.singboxBusy
                             onClicked: App.checkSingboxUpdate()
                         }
                         AccentButton {
-                            kind: "ghost"; glyph: "\uE896"; text: "Обновить sing-box"
+                            kind: "ghost"; glyph: "\uE896"; text: I18n.t("Обновить sing-box")
                             enabled: !page.singboxBusy
                             onClicked: App.updateSingboxCore()
                         }
@@ -301,9 +301,9 @@ Item {
                 ColumnLayout {
                     width: parent.width
                     spacing: 10
-                    Text { text: "GeoIP и GeoSite"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                    Text { text: I18n.t("GeoIP и GeoSite"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
                     Text {
-                        text: page.resourceStatusText(page.geodataPhase, page.geodataMessage, "Обновляет geoip.dat и geosite.dat для правил маршрутизации.")
+                        text: page.resourceStatusText(page.geodataPhase, page.geodataMessage, I18n.t("Обновляет geoip.dat и geosite.dat для правил маршрутизации."))
                         color: page.resourceStatusColor(page.geodataPhase)
                         font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                         font.weight: (page.geodataPhase === "updated" || page.geodataPhase === "error") ? Font.DemiBold : Font.Normal
@@ -317,7 +317,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
                         AccentButton {
-                            kind: "accent"; glyph: "\uE895"; text: "Обновить geoip/geosite"
+                            kind: "accent"; glyph: "\uE895"; text: I18n.t("Обновить geoip/geosite")
                             enabled: !page.geodataBusy
                             onClicked: App.updateGeodataFiles()
                         }

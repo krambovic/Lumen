@@ -30,9 +30,9 @@ Item {
     readonly property var dnsTypes: ["udp", "tcp", "tls", "https"]
     readonly property var tunOutKeys: ["proxy", "direct"]
     readonly property var procActionKeys: ["direct", "proxy", "block"]
-    readonly property var procActionLabels: ["Прямой", "Прокси", "Блокировка"]
+    readonly property var procActionLabels: [I18n.t("Прямой"), I18n.t("Прокси"), I18n.t("Блокировка")]
     readonly property var svcActionKeys: ["off", "proxy", "direct", "block"]
-    readonly property var svcActionLabels: ["Выкл", "Прокси", "Прямой", "Блокировка"]
+    readonly property var svcActionLabels: [I18n.t("Выкл"), I18n.t("Прокси"), I18n.t("Прямой"), I18n.t("Блокировка")]
 
     // ---- reusable styled combo (Windows 11 Fluent look) --------------
     component StyledCombo: FluentCombo {}
@@ -64,12 +64,12 @@ Item {
                 Layout.fillWidth: true
                 spacing: 10
                 Text {
-                    text: "Маршрутизация"
+                    text: I18n.t("Маршрутизация")
                     color: Theme.text; font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontTitle; font.weight: Font.Bold
                 }
                 Item { Layout.fillWidth: true }
-                AccentButton { kind: "ghost"; glyph: "\uE946"; text: "Справка"; onClicked: helpDialog.open() }
+                AccentButton { kind: "ghost"; glyph: "\uE946"; text: I18n.t("Справка"); onClicked: helpDialog.open() }
             }
 
             // ---- behaviour / DNS / bypass ----------------------------
@@ -86,15 +86,15 @@ Item {
                         ColumnLayout {
                             spacing: 4
                             Layout.fillWidth: true
-                            Text { text: "Поведение"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            Text { text: I18n.t("Поведение"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                             StyledCombo {
                                 id: modeCombo
                                 Layout.fillWidth: true
                                 textRole: "label"
                                 model: [
-                                    { key: "global", label: "Всё через VPN" },
-                                    { key: "rule",   label: "По моим правилам" },
-                                    { key: "direct", label: "Без VPN по умолчанию" }
+                                    { key: "global", label: I18n.t("Всё через VPN") },
+                                    { key: "rule",   label: I18n.t("По моим правилам") },
+                                    { key: "direct", label: I18n.t("Без VPN по умолчанию") }
                                 ]
                                 currentIndex: page.modeIndex(App.routingMode)
                                 onActivated: App.setRoutingMode(page.modeKeys[currentIndex])
@@ -107,7 +107,7 @@ Item {
                             StyledCombo {
                                 Layout.fillWidth: true
                                 textRole: "label"
-                                model: [ { key: "system", label: "Системный" }, { key: "builtin", label: "Встроенный" } ]
+                                model: [ { key: "system", label: I18n.t("Системный") }, { key: "builtin", label: I18n.t("Встроенный") } ]
                                 currentIndex: page.idxIn(page.dnsModeKeys, App.dnsMode)
                                 onActivated: App.setDnsMode(page.dnsModeKeys[currentIndex])
                             }
@@ -116,7 +116,7 @@ Item {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        Text { text: "Обход локальной сети"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Text { text: I18n.t("Обход локальной сети"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                         Item { Layout.fillWidth: true }
                         Switch {
                             id: bypassSwitch
@@ -141,7 +141,7 @@ Item {
                             spacing: 2
                             Layout.fillWidth: true
                             Text { text: "Discord voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                            Text { text: "Голос и стримы Discord через SOCKS5 без TUN"; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Text { text: I18n.t("Голос и стримы Discord через SOCKS5 без TUN"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         }
                         Switch {
                             checked: App.discordProxy
@@ -159,7 +159,7 @@ Item {
                 ColumnLayout {
                     width: parent.width
                     spacing: 10
-                    SectionLabel { text: "DNS для TUN" }
+                    SectionLabel { text: I18n.t("DNS для TUN") }
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 12
@@ -174,7 +174,7 @@ Item {
                         }
                         ColumnLayout {
                             spacing: 4
-                            Text { text: "Тип"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            Text { text: I18n.t("Тип"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                             StyledCombo {
                                 width: 130
                                 model: page.dnsTypes
@@ -197,7 +197,7 @@ Item {
                         }
                         ColumnLayout {
                             spacing: 4
-                            Text { text: "Тип"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            Text { text: I18n.t("Тип"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                             StyledCombo {
                                 width: 130
                                 model: page.dnsTypes
@@ -210,25 +210,25 @@ Item {
             }
 
             // ---- routing presets -------------------------------------
-            Text { text: "Быстрые пресеты приоритета"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+            Text { text: I18n.t("Быстрые пресеты приоритета"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
-                AccentButton { kind: "ghost"; glyph: "\uE774"; text: "Всё через VPN"; onClicked: App.applyRoutingPreset("global") }
-                AccentButton { kind: "ghost"; glyph: "\uE71B"; text: "Только заблокированное"; onClicked: App.applyRoutingPreset("blocked") }
-                AccentButton { kind: "ghost"; glyph: "\uE80F"; text: "Всё кроме РФ"; onClicked: App.applyRoutingPreset("except_ru") }
+                AccentButton { kind: "ghost"; glyph: "\uE774"; text: I18n.t("Всё через VPN"); onClicked: App.applyRoutingPreset("global") }
+                AccentButton { kind: "ghost"; glyph: "\uE71B"; text: I18n.t("Только заблокированное"); onClicked: App.applyRoutingPreset("blocked") }
+                AccentButton { kind: "ghost"; glyph: "\uE80F"; text: I18n.t("Всё кроме РФ"); onClicked: App.applyRoutingPreset("except_ru") }
             }
 
             // ---- Приложения -------------------------------------------
-            SectionLabel { text: "Приложения" }
+            SectionLabel { text: I18n.t("Приложения") }
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 12
-                Text { text: "По умолчанию (TUN)"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                Text { text: I18n.t("По умолчанию (TUN)"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                 StyledCombo {
                     width: 200
                     textRole: "label"
-                    model: [ { key: "proxy", label: "Через прокси" }, { key: "direct", label: "Напрямую" } ]
+                    model: [ { key: "proxy", label: I18n.t("Через прокси") }, { key: "direct", label: I18n.t("Напрямую") } ]
                     currentIndex: page.idxIn(page.tunOutKeys, App.tunDefaultOutbound)
                     onActivated: App.setTunDefaultOutbound(page.tunOutKeys[currentIndex])
                 }
@@ -238,8 +238,8 @@ Item {
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
-                AccentButton { kind: "ghost"; glyph: "\uE8E5"; text: "Добавить .exe"; onClicked: { procDialog.folderMode = false; procInput.text = ""; procDialog.open() } }
-                AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: "Добавить папку"; onClicked: { procDialog.folderMode = true; procInput.text = ""; procDialog.open() } }
+                AccentButton { kind: "ghost"; glyph: "\uE8E5"; text: I18n.t("Добавить .exe"); onClicked: { procDialog.folderMode = false; procInput.text = ""; procDialog.open() } }
+                AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Добавить папку"); onClicked: { procDialog.folderMode = true; procInput.text = ""; procDialog.open() } }
             }
             // process table
             Card {
@@ -254,8 +254,8 @@ Item {
                         Layout.margins: 14
                         Layout.bottomMargin: 8
                         spacing: 12
-                        Text { text: "Приложение / папка"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                        Text { text: "Действие"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: 150 }
+                        Text { text: I18n.t("Приложение / папка"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                        Text { text: I18n.t("Действие"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: 150 }
                         Item { Layout.preferredWidth: 40 }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
@@ -265,8 +265,8 @@ Item {
                         visible: App.processRules.length === 0
                         ColumnLayout {
                             anchors.centerIn: parent; spacing: 6
-                            Text { text: "Правила для приложений не заданы"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.alignment: Qt.AlignHCenter }
-                            Text { text: "Работают только в режиме TUN."; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: I18n.t("Правила для приложений не заданы"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: I18n.t("Работают только в режиме TUN."); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.alignment: Qt.AlignHCenter }
                         }
                     }
                     // rows
@@ -306,13 +306,13 @@ Item {
                 Text {
                     id: warnText
                     anchors.fill: parent; anchors.margins: 10
-                    text: "В режиме системного прокси правила по приложениям не работают — включите TUN, чтобы перехватывать трафик приложений."
+                    text: I18n.t("В режиме системного прокси правила по приложениям не работают — включите TUN, чтобы перехватывать трафик приложений.")
                     color: Theme.warning; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap
                 }
             }
 
             // ---- Сервисы ----------------------------------------------
-            SectionLabel { text: "Сервисы" }
+            SectionLabel { text: I18n.t("Сервисы") }
             Card {
                 Layout.fillWidth: true
                 padding: 16
@@ -320,7 +320,7 @@ Item {
                     width: parent.width
                     spacing: 0
                     Text {
-                        text: "Быстрые переключатели для популярных сервисов (YouTube, Discord и др.). «Выкл» — сервис не переопределяется."
+                        text: I18n.t("Быстрые переключатели для популярных сервисов (YouTube, Discord и др.). «Выкл» — сервис не переопределяется.")
                         color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true; Layout.bottomMargin: 10
                     }
                     Repeater {
@@ -351,19 +351,19 @@ Item {
                     }
                     Text {
                         visible: App.serviceList.length === 0
-                        text: "Список сервисов пуст."; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                        text: I18n.t("Список сервисов пуст."); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                     }
                 }
             }
 
             // ---- Домены и IP ------------------------------------------
-            SectionLabel { text: "Домены и IP" }
+            SectionLabel { text: I18n.t("Домены и IP") }
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
-                AccentButton { kind: "ghost"; glyph: "\uE710"; text: "Добавить"; onClicked: { domainInput.text = ""; domainDialog.open() } }
-                AccentButton { kind: "ghost"; glyph: "\uE896"; text: "Импорт"; onClicked: { importInput.text = ""; importDialog.open() } }
-                AccentButton { kind: "ghost"; glyph: "\uE72D"; text: "Экспорт"; onClicked: App.exportDomainRules() }
+                AccentButton { kind: "ghost"; glyph: "\uE710"; text: I18n.t("Добавить"); onClicked: { domainInput.text = ""; domainDialog.open() } }
+                AccentButton { kind: "ghost"; glyph: "\uE896"; text: I18n.t("Импорт"); onClicked: { importInput.text = ""; importDialog.open() } }
+                AccentButton { kind: "ghost"; glyph: "\uE72D"; text: I18n.t("Экспорт"); onClicked: App.exportDomainRules() }
             }
             Card {
                 Layout.fillWidth: true
@@ -377,8 +377,8 @@ Item {
                         Layout.margins: 14
                         Layout.bottomMargin: 8
                         spacing: 12
-                        Text { text: "Адрес"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                        Text { text: "Действие"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: 150 }
+                        Text { text: I18n.t("Адрес"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                        Text { text: I18n.t("Действие"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: 150 }
                         Item { Layout.preferredWidth: 40 }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
@@ -387,8 +387,8 @@ Item {
                         visible: App.domainRules.length === 0
                         ColumnLayout {
                             anchors.centerIn: parent; spacing: 6
-                            Text { text: "Правила по доменам и IP не заданы"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.alignment: Qt.AlignHCenter }
-                            Text { text: "Формат импорта: адрес|действие"; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: I18n.t("Правила по доменам и IP не заданы"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: I18n.t("Формат импорта: адрес|действие"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.alignment: Qt.AlignHCenter }
                         }
                     }
                     Repeater {
@@ -445,7 +445,7 @@ Item {
         }
 
         header: Text {
-            text: "Как работает маршрутизация"
+            text: I18n.t("Как работает маршрутизация")
             color: Theme.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontStrong
@@ -456,7 +456,7 @@ Item {
         }
 
         contentItem: Text {
-            text: "«Всё через VPN» отправляет весь трафик через сервер.\n«По моим правилам» использует ваши правила по приложениям, сервисам, доменам и IP.\n«Без VPN по умолчанию» пускает трафик напрямую, кроме явно указанных исключений.\n\nПравила по приложениям работают только в режиме TUN."
+            text: I18n.t("«Всё через VPN» отправляет весь трафик через сервер.\n«По моим правилам» использует ваши правила по приложениям, сервисам, доменам и IP.\n«Без VPN по умолчанию» пускает трафик напрямую, кроме явно указанных исключений.\n\nПравила по приложениям работают только в режиме TUN.")
             color: Theme.textMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontNormal
@@ -470,7 +470,7 @@ Item {
             Item { Layout.fillWidth: true }
             AccentButton {
                 kind: "accent"
-                text: "Понятно"
+                text: I18n.t("Понятно")
                 onClicked: helpDialog.close()
                 Layout.rightMargin: 20
                 Layout.topMargin: 6
@@ -485,7 +485,7 @@ Item {
         property bool folderMode: false
         anchors.centerIn: Overlay.overlay
         modal: true
-        title: folderMode ? "Добавить папку" : "Добавить приложение"
+        title: folderMode ? I18n.t("Добавить папку") : I18n.t("Добавить приложение")
         standardButtons: Dialog.Ok | Dialog.Cancel
         width: 480
         onAccepted: {
@@ -497,8 +497,8 @@ Item {
             spacing: 10
             Text {
                 text: procDialog.folderMode
-                    ? "Укажите путь к папке. Все процессы внутри будут маршрутизироваться по выбранному действию."
-                    : "Укажите имя процесса (например, chrome.exe) или полный путь к .exe."
+                    ? I18n.t("Укажите путь к папке. Все процессы внутри будут маршрутизироваться по выбранному действию.")
+                    : I18n.t("Укажите имя процесса (например, chrome.exe) или полный путь к .exe.")
                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             DnsField {
@@ -507,7 +507,7 @@ Item {
             }
             RowLayout {
                 Layout.fillWidth: true; spacing: 10
-                Text { text: "Действие"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                Text { text: I18n.t("Действие"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                 StyledCombo {
                     id: procActionCombo
                     Layout.preferredWidth: 160
@@ -523,7 +523,7 @@ Item {
         id: domainDialog
         anchors.centerIn: Overlay.overlay
         modal: true
-        title: "Добавить домен или IP"
+        title: I18n.t("Добавить домен или IP")
         standardButtons: Dialog.Ok | Dialog.Cancel
         width: 480
         onAccepted: {
@@ -534,13 +534,13 @@ Item {
         contentItem: ColumnLayout {
             spacing: 10
             Text {
-                text: "Домен (example.com), маска (*.example.com), CIDR (10.0.0.0/8) или geosite/geoip-метка."
+                text: I18n.t("Домен (example.com), маска (*.example.com), CIDR (10.0.0.0/8) или geosite/geoip-метка.")
                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             DnsField { id: domainInput; placeholderText: "example.com" }
             RowLayout {
                 Layout.fillWidth: true; spacing: 10
-                Text { text: "Действие"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                Text { text: I18n.t("Действие"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                 StyledCombo {
                     id: domainActionCombo
                     Layout.preferredWidth: 160
@@ -556,14 +556,14 @@ Item {
         id: importDialog
         anchors.centerIn: Overlay.overlay
         modal: true
-        title: "Импорт правил"
+        title: I18n.t("Импорт правил")
         standardButtons: Dialog.Ok | Dialog.Cancel
         width: 520
         onAccepted: { if (importInput.text.trim().length) App.importDomainRules(importInput.text) }
         contentItem: ColumnLayout {
             spacing: 10
             Text {
-                text: "Одно правило в строке, формат: адрес|действие (direct/proxy/block). Без «|действие» применяется proxy."
+                text: I18n.t("Одно правило в строке, формат: адрес|действие (direct/proxy/block). Без «|действие» применяется proxy.")
                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             ScrollView {

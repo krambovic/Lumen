@@ -60,8 +60,8 @@ Item {
             descField.text = info ? info.description : ""
             contentArea.text = App.readPreset(name)
             var parts = []
-            if (info && info.created) parts.push("Создан: " + info.created)
-            if (info && info.modified) parts.push("Изменён: " + info.modified)
+            if (info && info.created) parts.push(I18n.t("Создан: ") + info.created)
+            if (info && info.modified) parts.push(I18n.t("Изменён: ") + info.modified)
             metaText.text = parts.join("   |   ")
         }
         editing = true
@@ -95,7 +95,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             Text {
-                text: "Обход блокировок (zapret)"
+                text: I18n.t("Обход блокировок (zapret)")
                 color: Theme.text; font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontTitle; font.weight: Font.DemiBold
             }
@@ -112,7 +112,7 @@ Item {
                     spacing: 6
                     Rectangle { width: 8; height: 8; radius: 4; color: page.running ? Theme.success : Theme.textMuted }
                     Text {
-                        text: page.running ? ("Работает: " + page.activePreset) : "Остановлен"
+                        text: page.running ? (I18n.t("Работает: ") + page.activePreset) : I18n.t("Остановлен")
                         color: page.running ? Theme.success : Theme.textMuted
                         font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                     }
@@ -127,9 +127,9 @@ Item {
             ColumnLayout {
                 width: parent.width
                 spacing: 6
-                Text { text: "Обход DPI-блокировок"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Обход DPI-блокировок"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
                 Text {
-                    text: "Zapret запускает winws2.exe с выбранным пресетом аргументов, чтобы обходить DPI-замедления YouTube, Discord и других сервисов. Работает независимо от VPN/прокси и требует прав администратора."
+                    text: I18n.t("Zapret запускает winws2.exe с выбранным пресетом аргументов, чтобы обходить DPI-замедления YouTube, Discord и других сервисов. Работает независимо от VPN/прокси и требует прав администратора.")
                     color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                     wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
@@ -140,13 +140,13 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
-            AccentButton { kind: "ghost"; glyph: "\uE710"; text: "Добавить"; onClicked: page.openEditor("") }
-            AccentButton { kind: "ghost"; glyph: "\uE8B5"; text: "Импорт из файла"; onClicked: { var n = App.importZapretPreset(); if (n) page.selected = n } }
-            AccentButton { kind: "ghost"; glyph: "\uE74D"; text: "Удалить"; enabled: page.selected !== ""; onClicked: if (page.selected !== "") App.deletePreset(page.selected) }
-            AccentButton { kind: "ghost"; glyph: "\uE72C"; text: "Обновить"; onClicked: { page.refresh(); page.syncStatus() } }
+            AccentButton { kind: "ghost"; glyph: "\uE710"; text: I18n.t("Добавить"); onClicked: page.openEditor("") }
+            AccentButton { kind: "ghost"; glyph: "\uE8B5"; text: I18n.t("Импорт из файла"); onClicked: { var n = App.importZapretPreset(); if (n) page.selected = n } }
+            AccentButton { kind: "ghost"; glyph: "\uE74D"; text: I18n.t("Удалить"); enabled: page.selected !== ""; onClicked: if (page.selected !== "") App.deletePreset(page.selected) }
+            AccentButton { kind: "ghost"; glyph: "\uE72C"; text: I18n.t("Обновить"); onClicked: { page.refresh(); page.syncStatus() } }
             Item { Layout.fillWidth: true }
-            AccentButton { kind: "accent"; glyph: "\uE768"; text: page.running ? "Перезапустить" : "Запустить"; enabled: page.selected !== ""; onClicked: if (page.selected !== "") App.startZapret(page.selected) }
-            AccentButton { kind: "danger"; glyph: "\uE71A"; text: "Остановить"; enabled: page.running; onClicked: App.stopZapret() }
+            AccentButton { kind: "accent"; glyph: "\uE768"; text: page.running ? I18n.t("Перезапустить") : I18n.t("Запустить"); enabled: page.selected !== ""; onClicked: if (page.selected !== "") App.startZapret(page.selected) }
+            AccentButton { kind: "danger"; glyph: "\uE71A"; text: I18n.t("Остановить"); enabled: page.running; onClicked: App.stopZapret() }
         }
 
         // progress bar while running
@@ -171,10 +171,10 @@ Item {
                     Layout.margins: 14
                     Layout.bottomMargin: 8
                     spacing: 12
-                    Text { text: "Имя"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colName }
-                    Text { text: "Описание"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                    Text { text: "Аргументов"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colArgs; horizontalAlignment: Text.AlignRight }
-                    Text { text: "Изменён"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colDate; horizontalAlignment: Text.AlignRight }
+                    Text { text: I18n.t("Имя"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colName }
+                    Text { text: I18n.t("Описание"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                    Text { text: I18n.t("Аргументов"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colArgs; horizontalAlignment: Text.AlignRight }
+                    Text { text: I18n.t("Изменён"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colDate; horizontalAlignment: Text.AlignRight }
                 }
                 Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
 
@@ -241,8 +241,8 @@ Item {
                             anchors.centerIn: parent
                             spacing: 8
                             Text { text: "\uE945"; font.family: "Segoe Fluent Icons"; font.pixelSize: 30; color: Theme.textFaint; Layout.alignment: Qt.AlignHCenter }
-                            Text { text: "Нет пресетов Zapret"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.alignment: Qt.AlignHCenter }
-                            Text { text: "Создайте пресет или импортируйте файл аргументов winws2."; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: I18n.t("Нет пресетов Zapret"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: I18n.t("Создайте пресет или импортируйте файл аргументов winws2."); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.alignment: Qt.AlignHCenter }
                         }
                     }
                 }
@@ -259,13 +259,13 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
-            AccentButton { kind: "ghost"; glyph: "\uE72B"; iconOnly: true; tip: "Назад к списку"; onClicked: page.editing = false }
+            AccentButton { kind: "ghost"; glyph: "\uE72B"; iconOnly: true; tip: I18n.t("Назад к списку"); onClicked: page.editing = false }
             Text {
-                text: page.editIsNew ? "Новый пресет" : ("Редактирование: " + page.editOrigName)
+                text: page.editIsNew ? I18n.t("Новый пресет") : (I18n.t("Редактирование: ") + page.editOrigName)
                 color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontTitle; font.weight: Font.DemiBold
             }
             Item { Layout.fillWidth: true }
-            AccentButton { kind: "accent"; glyph: "\uE792"; text: "Сохранить"; onClicked: page.saveEditor() }
+            AccentButton { kind: "accent"; glyph: "\uE792"; text: I18n.t("Сохранить"); onClicked: page.saveEditor() }
         }
 
         // metadata card
@@ -278,21 +278,21 @@ Item {
                 spacing: 10
                 RowLayout {
                     Layout.fillWidth: true; spacing: 10
-                    Text { text: "Название:"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.preferredWidth: 90 }
+                    Text { text: I18n.t("Название:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.preferredWidth: 90 }
                     TextField {
                         id: nameField
                         Layout.fillWidth: true
-                        placeholderText: "Имя пресета"
+                        placeholderText: I18n.t("Имя пресета")
                         font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal
                     }
                 }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 10
-                    Text { text: "Описание:"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.preferredWidth: 90 }
+                    Text { text: I18n.t("Описание:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.preferredWidth: 90 }
                     TextField {
                         id: descField
                         Layout.fillWidth: true
-                        placeholderText: "Краткое описание (необязательно)"
+                        placeholderText: I18n.t("Краткое описание (необязательно)")
                         font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal
                     }
                 }
@@ -316,7 +316,7 @@ Item {
                 clip: true
                 TextArea {
                     id: contentArea
-                    placeholderText: "Аргументы winws2, по одному на строку.\nСтроки с # — комментарии."
+                    placeholderText: I18n.t("Аргументы winws2, по одному на строку.\nСтроки с # — комментарии.")
                     wrapMode: TextEdit.NoWrap
                     font.family: "Consolas"; font.pixelSize: 13
                     color: Theme.text
