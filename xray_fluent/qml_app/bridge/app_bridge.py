@@ -62,6 +62,7 @@ class AppBridge(QObject):
         # Reuse the existing backend untouched.
         self.controller = AppController(self)
         self.controller.resource_update_result.connect(self._on_resource_update_result)
+        self.controller.resource_update_progress.connect(self._on_resource_update_progress)
 
         # cached state for QML properties
         self._connected = False
@@ -161,7 +162,7 @@ class AppBridge(QObject):
                 return
             added, _errors = self.controller.update_all_subscriptions()
             if added:
-                self.toast.emit("info", f"Авто-обновление подписок: +{added} серверов")
+                self.toast.emit("info", self._localized_backend_message(f"Авто-обновление подписок: +{added} серверов"))
         except Exception:
             pass
 
@@ -224,7 +225,7 @@ class AppBridge(QObject):
         c.settings_changed.connect(self._on_settings_changed)
         c.subscriptions_changed.connect(self._on_subscriptions_changed)
         c.transition_state_changed.connect(self._on_transition)
-        c.status.connect(self.toast.emit)
+        c.status.connect(self._on_status_message)
         c.log_line.connect(self._log_model.append_line)
         c.ping_updated.connect(self._on_ping)
         c.speed_updated.connect(self._on_speed)
@@ -235,6 +236,54 @@ class AppBridge(QObject):
         c.connectivity_test_done.connect(self.connectivityResult.emit)
         c.lock_state_changed.connect(self._on_lock_state)
         c.admin_relaunch_requested.connect(self._on_admin_relaunch)
+
+    def _english_ui(self) -> bool:
+        return (self._language or "en").lower() != "ru"
+
+    def _localized_backend_message(self, message: str) -> str:
+        if not message or not self._english_ui():
+            return message
+        replacements = (
+            ("Остановка VPN...", "Stopping VPN..."),
+            ("Обновление уже выполняется", "Update is already running"),
+            ("Обновление Xray уже выполняется", "Xray update is already running"),
+            ("Обновление Xray...", "Updating Xray..."),
+            ("Проверка обновлений Xray...", "Checking Xray updates..."),
+            ("geoip.dat и geosite.dat обновлены", "geoip.dat and geosite.dat updated"),
+            ("Новых серверов не найдено", "No new servers found"),
+            ("Подписка удалена", "Subscription removed"),
+        )
+        for ru, en in replacements:
+            if message == ru:
+                return en
+        prefix_replacements = (
+            ("Подписка обновлена: ", "Subscription updated: "),
+            ("Подписки обновлены: ", "Subscriptions updated: "),
+            ("Импортировано серверов: ", "Servers imported: "),
+            ("Авто-обновление подписок: +", "Subscription auto update: +"),
+            ("Доступно обновление v", "Update available: v"),
+            ("Не удалось обновить geoip/geosite: ", "Could not update geoip/geosite: "),
+            ("Не удалось проверить sing-box: ", "Could not check sing-box: "),
+            ("Не удалось обновить sing-box: ", "Could not update sing-box: "),
+            ("Ошибка загрузки: ", "Download error: "),
+            ("Ошибка установки: ", "Install error: "),
+            ("Доступно обновление Xray: ", "Xray update available: "),
+            ("Xray core обновлён до ", "Xray core updated to "),
+            ("sing-box обновлен до ", "sing-box updated to "),
+            ("sing-box обновлён до ", "sing-box updated to "),
+            ("Доступен sing-box extended ", "sing-box extended available: "),
+        )
+        for ru, en in prefix_replacements:
+            if message.startswith(ru):
+                return en + message[len(ru):]
+        if message.startswith("Xray core актуален (") and message.endswith(")"):
+            return "Xray core is up to date " + message[len("Xray core актуален "):]
+        if message.startswith("sing-box актуален (") and message.endswith(")"):
+            return "sing-box is up to date " + message[len("sing-box актуален "):]
+        return message
+
+    def _on_status_message(self, level: str, message: str) -> None:
+        self.toast.emit(level, self._localized_backend_message(message))
 
     # ── controller -> QML slots ─────────────────────────────────
     def _on_nodes_changed(self, nodes: list[Node]) -> None:
@@ -887,7 +936,7 @@ class AppBridge(QObject):
         })
         if silent:
             # При тихой проверке на старте уведомляем пользователя тостом.
-            self.toast.emit("info", f"Доступно обновление v{update.version}")
+            self.toast.emit("info", self._localized_backend_message(f"Доступно обновление v{update.version}"))
 
     def _on_app_update_error(self, message: str) -> None:
         if getattr(self, "_app_update_silent", False):
@@ -957,6 +1006,7 @@ class AppBridge(QObject):
         if getattr(self, "_xray_update_wired", False):
             return
         try:
+            self.controller.xray_update_progress.connect(self._on_xray_update_progress)
             self.controller.xray_update_result.connect(self._on_xray_update_result)
             self._xray_update_wired = True
         except Exception:
@@ -965,7 +1015,7 @@ class AppBridge(QObject):
     @pyqtSlot()
     def checkXrayUpdate(self) -> None:
         self._ensure_xray_update_wired()
-        self.xrayUpdateState.emit({"phase": "checking"})
+        self.xrayUpdateState.emit({"phase": "checking", "percent": 0})
         try:
             self.controller.run_xray_core_update(False)
         except Exception as exc:  # noqa: BLE001
@@ -974,11 +1024,14 @@ class AppBridge(QObject):
     @pyqtSlot()
     def updateXrayCore(self) -> None:
         self._ensure_xray_update_wired()
-        self.xrayUpdateState.emit({"phase": "updating"})
+        self.xrayUpdateState.emit({"phase": "updating", "percent": 0})
         try:
             self.controller.run_xray_core_update(True)
         except Exception as exc:  # noqa: BLE001
             self.xrayUpdateState.emit({"phase": "error", "message": str(exc)})
+
+    def _on_xray_update_progress(self, percent: int) -> None:
+        self.xrayUpdateState.emit({"phase": "updating", "percent": int(percent)})
 
     def _on_xray_update_result(self, result) -> None:
         phase = {
@@ -991,12 +1044,13 @@ class AppBridge(QObject):
         self.xrayUpdateState.emit({
             "phase": phase,
             "version": version,
-            "message": getattr(result, "message", "") or "",
+            "message": self._localized_backend_message(getattr(result, "message", "") or ""),
+            "percent": 100 if phase == "updated" else 0,
         })
 
     @pyqtSlot()
     def checkSingboxUpdate(self) -> None:
-        self.resourceUpdateState.emit({"kind": "singbox", "phase": "checking"})
+        self.resourceUpdateState.emit({"kind": "singbox", "phase": "checking", "percent": 0})
         try:
             self.controller.run_resource_update("singbox", apply_update=False)
         except Exception as exc:  # noqa: BLE001
@@ -1004,7 +1058,7 @@ class AppBridge(QObject):
 
     @pyqtSlot()
     def updateSingboxCore(self) -> None:
-        self.resourceUpdateState.emit({"kind": "singbox", "phase": "updating"})
+        self.resourceUpdateState.emit({"kind": "singbox", "phase": "updating", "percent": 0})
         try:
             self.controller.run_resource_update("singbox", apply_update=True)
         except Exception as exc:  # noqa: BLE001
@@ -1012,11 +1066,14 @@ class AppBridge(QObject):
 
     @pyqtSlot()
     def updateGeodataFiles(self) -> None:
-        self.resourceUpdateState.emit({"kind": "geodata", "phase": "updating"})
+        self.resourceUpdateState.emit({"kind": "geodata", "phase": "updating", "percent": 0})
         try:
             self.controller.run_resource_update("geodata", apply_update=True)
         except Exception as exc:  # noqa: BLE001
             self.resourceUpdateState.emit({"kind": "geodata", "phase": "error", "message": str(exc)})
+
+    def _on_resource_update_progress(self, kind: str, percent: int) -> None:
+        self.resourceUpdateState.emit({"kind": kind, "phase": "updating", "percent": int(percent)})
 
     def _on_resource_update_result(self, result) -> None:
         phase = {
@@ -1028,8 +1085,9 @@ class AppBridge(QObject):
         payload = {
             "kind": getattr(result, "kind", ""),
             "phase": phase,
-            "message": getattr(result, "message", "") or "",
+            "message": self._localized_backend_message(getattr(result, "message", "") or ""),
             "version": getattr(result, "latest_version", "") or getattr(result, "current_version", "") or "",
+            "percent": 100 if phase == "updated" else 0,
         }
         self.resourceUpdateState.emit(payload)
 
@@ -1802,7 +1860,7 @@ class AppBridge(QObject):
         except Exception as exc:  # noqa: BLE001
             self.toast.emit("error", f"Ошибка обновления подписки: {exc}")
             return
-        self.toast.emit("success", f"Подписка обновлена: {added} серверов")
+        self.toast.emit("success", self._localized_backend_message(f"Подписка обновлена: {added} серверов"))
         if errors:
             self.toast.emit("warning", "; ".join(errors[:2]))
 
@@ -1813,7 +1871,7 @@ class AppBridge(QObject):
         except Exception as exc:  # noqa: BLE001
             self.toast.emit("error", f"Ошибка обновления подписок: {exc}")
             return
-        self.toast.emit("success", f"Подписки обновлены: {added} серверов")
+        self.toast.emit("success", self._localized_backend_message(f"Подписки обновлены: {added} серверов"))
         if errors:
             self.toast.emit("warning", "; ".join(errors[:2]))
 

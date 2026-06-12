@@ -39,6 +39,7 @@ def run_xray_core_update(controller: AppController, apply_update: bool, silent: 
         controller.state.settings.xray_update_feed_url,
         apply_update=worker_apply,
     )
+    controller._xray_update_worker.progress.connect(controller.xray_update_progress.emit)
     controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)
     controller._xray_update_worker.start()
 
@@ -75,6 +76,7 @@ def on_xray_update_worker_done(controller: AppController, result: XrayCoreUpdate
                 controller.state.settings.xray_update_feed_url,
                 apply_update=True,
             )
+            controller._xray_update_worker.progress.connect(controller.xray_update_progress.emit)
             controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)
             controller._xray_update_worker.start()
             return

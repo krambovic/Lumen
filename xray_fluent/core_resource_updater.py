@@ -133,13 +133,20 @@ def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=N
 def update_geodata(on_progress=None) -> ResourceUpdateResult:
     target_dir = _core_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
+    def _scaled_progress(offset: int, span: int):
+        def _emit(done: int, total: int) -> None:
+            if on_progress and total > 0:
+                percent = offset + int(done * span / total)
+                on_progress(max(0, min(percent, 100)), 100)
+        return _emit
+
     try:
         with tempfile.TemporaryDirectory(prefix="geodata_update_") as temp_dir_str:
             temp_dir = Path(temp_dir_str)
             geoip = temp_dir / "geoip.dat"
             geosite = temp_dir / "geosite.dat"
-            _download_direct(GEOIP_DAT_URL, geoip, on_progress=on_progress)
-            _download_direct(GEOSITE_DAT_URL, geosite, on_progress=on_progress)
+            _download_direct(GEOIP_DAT_URL, geoip, on_progress=_scaled_progress(0, 50))
+            _download_direct(GEOSITE_DAT_URL, geosite, on_progress=_scaled_progress(50, 50))
             if geoip.stat().st_size < 1024 or geosite.stat().st_size < 1024:
                 raise RuntimeError("скачанные geodata файлы выглядят поврежденными")
             for src, name in ((geoip, "geoip.dat"), (geosite, "geosite.dat")):

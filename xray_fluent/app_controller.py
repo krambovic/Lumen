@@ -236,7 +236,9 @@ class AppController(QObject):
     connectivity_test_done = pyqtSignal(bool, str, object)
     live_metrics_updated = pyqtSignal(object)
     xray_update_result = pyqtSignal(object)
+    xray_update_progress = pyqtSignal(int)
     resource_update_result = pyqtSignal(object)
+    resource_update_progress = pyqtSignal(str, int)
     lock_state_changed = pyqtSignal(bool)
     passphrase_required = pyqtSignal()
     auto_switch_triggered = pyqtSignal(str)  # node name we're switching to
@@ -1477,6 +1479,9 @@ class AppController(QObject):
             kind,
             singbox_path=self.state.settings.singbox_path,
             apply_update=apply_update,
+        )
+        self._resource_update_worker.progress.connect(
+            lambda percent, update_kind=kind: self.resource_update_progress.emit(update_kind, int(percent))
         )
         self._resource_update_worker.done.connect(self._on_resource_update_done)
         self._resource_update_worker.start()

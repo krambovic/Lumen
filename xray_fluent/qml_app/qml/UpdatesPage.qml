@@ -29,10 +29,13 @@ Item {
     // xray updater state
     property string xrayPhase: "idle"       // idle|checking|updating|available|updated|uptodate|error
     property string xrayMessage: ""
+    property int xrayPercent: 0
     property string singboxPhase: "idle"
     property string singboxMessage: ""
+    property int singboxPercent: 0
     property string geodataPhase: "idle"
     property string geodataMessage: ""
+    property int geodataPercent: 0
 
     readonly property bool appBusy: appPhase === "checking" || appPhase === "downloading"
     readonly property bool xrayBusy: xrayPhase === "checking" || xrayPhase === "updating"
@@ -59,7 +62,7 @@ Item {
     function xrayStatusText() {
         switch (xrayPhase) {
         case "checking": return I18n.t("Проверка обновлений Xray...")
-        case "updating": return I18n.t("Обновление Xray...")
+        case "updating": return xrayPercent > 0 ? (I18n.t("Обновление Xray...") + " " + xrayPercent + "%") : I18n.t("Обновление Xray...")
         case "uptodate":
         case "available":
         case "updated":
@@ -72,10 +75,10 @@ Item {
         if (xrayPhase === "updated" || xrayPhase === "uptodate" || xrayPhase === "available") return Theme.success
         return Theme.textMuted
     }
-    function resourceStatusText(phase, message, fallback) {
+    function resourceStatusText(phase, message, fallback, percent) {
         switch (phase) {
         case "checking": return I18n.t("Проверка обновлений...")
-        case "updating": return I18n.t("Обновление...")
+        case "updating": return percent > 0 ? (I18n.t("Обновление...") + " " + percent + "%") : I18n.t("Обновление...")
         case "uptodate":
         case "available":
         case "updated":
@@ -110,16 +113,21 @@ Item {
         function onXrayUpdateState(s) {
             page.xrayPhase = s.phase || "idle"
             page.xrayMessage = s.message !== undefined ? s.message : ""
+            if (s.percent !== undefined) page.xrayPercent = s.percent
+            if (s.phase === "checking") page.xrayPercent = 0
             if (s.version !== undefined && s.version !== "") page.xrayVersion = s.version
         }
         function onResourceUpdateState(s) {
             if ((s.kind || "") === "singbox") {
                 page.singboxPhase = s.phase || "idle"
                 page.singboxMessage = s.message !== undefined ? s.message : ""
+                if (s.percent !== undefined) page.singboxPercent = s.percent
+                if (s.phase === "checking") page.singboxPercent = 0
                 if (s.version !== undefined && s.version !== "") page.singboxVersion = s.version
             } else if ((s.kind || "") === "geodata") {
                 page.geodataPhase = s.phase || "idle"
                 page.geodataMessage = s.message !== undefined ? s.message : ""
+                if (s.percent !== undefined) page.geodataPercent = s.percent
             }
         }
     }
@@ -232,7 +240,8 @@ Item {
                     ProgressBar {
                         Layout.fillWidth: true
                         visible: page.xrayBusy
-                        indeterminate: true
+                        indeterminate: page.xrayPhase === "checking" || page.xrayPercent <= 0
+                        from: 0; to: 100; value: page.xrayPercent
                     }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
@@ -266,7 +275,7 @@ Item {
                         Item { Layout.fillWidth: true }
                     }
                     Text {
-                        text: page.resourceStatusText(page.singboxPhase, page.singboxMessage, I18n.t("Проверьте наличие новой версии sing-box extended."))
+                        text: page.resourceStatusText(page.singboxPhase, page.singboxMessage, I18n.t("Проверьте наличие новой версии sing-box extended."), page.singboxPercent)
                         color: page.resourceStatusColor(page.singboxPhase)
                         font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                         font.weight: (page.singboxPhase === "updated" || page.singboxPhase === "error") ? Font.DemiBold : Font.Normal
@@ -275,7 +284,8 @@ Item {
                     ProgressBar {
                         Layout.fillWidth: true
                         visible: page.singboxBusy
-                        indeterminate: true
+                        indeterminate: page.singboxPhase === "checking" || page.singboxPercent <= 0
+                        from: 0; to: 100; value: page.singboxPercent
                     }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
@@ -303,7 +313,7 @@ Item {
                     spacing: 10
                     Text { text: I18n.t("GeoIP и GeoSite"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
                     Text {
-                        text: page.resourceStatusText(page.geodataPhase, page.geodataMessage, I18n.t("Обновляет geoip.dat и geosite.dat для правил маршрутизации."))
+                        text: page.resourceStatusText(page.geodataPhase, page.geodataMessage, I18n.t("Обновляет geoip.dat и geosite.dat для правил маршрутизации."), page.geodataPercent)
                         color: page.resourceStatusColor(page.geodataPhase)
                         font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                         font.weight: (page.geodataPhase === "updated" || page.geodataPhase === "error") ? Font.DemiBold : Font.Normal
@@ -312,7 +322,8 @@ Item {
                     ProgressBar {
                         Layout.fillWidth: true
                         visible: page.geodataBusy
-                        indeterminate: true
+                        indeterminate: page.geodataPercent <= 0
+                        from: 0; to: 100; value: page.geodataPercent
                     }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
