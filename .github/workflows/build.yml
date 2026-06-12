@@ -95,11 +95,10 @@ jobs:
         shell: pwsh
         run: |
           python build.py
-          Copy-Item core/sing-box.exe dist/sing-box-extended-windows-x64.exe
 
       - name: List release assets
         shell: pwsh
-        run: Get-ChildItem dist/LumenKVN-Setup-windows-x64.exe, dist/LumenKVN-portable-windows-x64.zip, dist/sing-box-extended-windows-x64.exe | Format-Table Name, Length
+        run: Get-ChildItem dist/LumenKVN-Setup-windows-x64.exe, dist/LumenKVN-portable-windows-x64.zip | Format-Table Name, Length
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
@@ -128,4 +127,3 @@ jobs:
           files: |
             dist/LumenKVN-Setup-windows-x64.exe
             dist/LumenKVN-portable-windows-x64.zip
-            dist/sing-box-extended-windows-x64.exe
