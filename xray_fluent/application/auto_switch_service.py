@@ -93,27 +93,36 @@ def get_next_node_for_auto_switch(controller: AppController) -> Node | None:
     nodes = controller.state.nodes
     if not nodes:
         return None
+    current_node = next((node for node in nodes if node.id == current_id), None)
+    current_group = (current_node.group or "Default") if current_node is not None else ""
+    scoped_nodes = [
+        node
+        for node in nodes
+        if not current_group or (node.group or "Default") == current_group
+    ]
+    if len(scoped_nodes) < 2:
+        return None
 
     candidates = [
         node
-        for node in nodes
+        for node in scoped_nodes
         if node.id != current_id and node.is_alive is True and node.speed_mbps is not None and node.speed_mbps > 0
     ]
     if candidates:
         return max(candidates, key=lambda node: node.speed_mbps)
 
-    candidates = [node for node in nodes if node.id != current_id and node.is_alive is True]
+    candidates = [node for node in scoped_nodes if node.id != current_id and node.is_alive is True]
     if candidates:
         return min(candidates, key=lambda node: node.ping_ms if node.ping_ms is not None else float("inf"))
 
     current_idx: int | None = None
-    for idx, node in enumerate(nodes):
+    for idx, node in enumerate(scoped_nodes):
         if node.id == current_id:
             current_idx = idx
             break
     if current_idx is None:
-        return nodes[0]
-    next_idx = (current_idx + 1) % len(nodes)
-    if nodes[next_idx].id == current_id:
+        return scoped_nodes[0] if scoped_nodes else None
+    next_idx = (current_idx + 1) % len(scoped_nodes)
+    if scoped_nodes[next_idx].id == current_id:
         return None
-    return nodes[next_idx]
+    return scoped_nodes[next_idx]

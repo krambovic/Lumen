@@ -25,6 +25,7 @@ def import_nodes_from_text(
     *,
     group: str | None = None,
     auto_connect: bool | None = None,
+    select_imported: bool = True,
 ) -> tuple[int, list[str]]:
     nodes, errors = parse_links_text(text)
     if not nodes:
@@ -54,7 +55,7 @@ def import_nodes_from_text(
             first_new_id = node.id
         added += 1
 
-    if first_new_id:
+    if first_new_id and (select_imported or not controller.state.selected_node_id):
         controller.state.selected_node_id = first_new_id
     elif not controller.state.selected_node_id and controller.state.nodes:
         controller.state.selected_node_id = controller.state.nodes[0].id
@@ -370,7 +371,17 @@ def _apply_subscription_payload(
         if controller.state.selected_node_id in removed_ids:
             controller.state.selected_node_id = None
 
-    added, errors = import_nodes_from_text(controller, chosen_text, group=group, auto_connect=False)
+    selected_was_removed = controller.state.selected_node_id is None and bool(replace_existing_group)
+    added, errors = import_nodes_from_text(
+        controller,
+        chosen_text,
+        group=group,
+        auto_connect=False,
+        select_imported=selected_was_removed,
+    )
+    if selected_was_removed and added and (controller.connected or controller._desired_connected):
+        controller._desired_connected = True
+        controller._request_transition("active subscription updated")
     return added, [*chosen_errors, *errors], chosen_userinfo
 
 
