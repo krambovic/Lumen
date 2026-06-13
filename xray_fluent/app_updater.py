@@ -28,6 +28,7 @@ GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 # Список релизов (новые → старые), включая pre-release, для выбора по каналу.
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
 USER_AGENT = f"LumenKVN/{APP_VERSION}"
+APP_ID = "{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1"
 
 
 def _powershell_literal(value: str) -> str:
@@ -53,8 +54,41 @@ def _is_root_program_dir(path: Path) -> bool:
     return resolved.name.lower() == "program" and parent == Path(resolved.anchor)
 
 
+def _registered_install_dir() -> Path | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+    except Exception:
+        return None
+
+    subkeys = (
+        rf"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{APP_ID}",
+        rf"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{APP_ID}",
+    )
+    roots = (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER)
+    for root in roots:
+        for subkey in subkeys:
+            try:
+                with winreg.OpenKey(root, subkey) as key:
+                    value, _ = winreg.QueryValueEx(key, "InstallLocation")
+            except OSError:
+                continue
+            text = str(value).strip().strip('"')
+            if text:
+                return Path(text).resolve(strict=False)
+    return None
+
+
 def _target_app_dir(current_app_dir: Path) -> Path:
     if _is_root_program_dir(current_app_dir):
+        return _program_files_app_dir()
+    registered = _registered_install_dir()
+    if registered is not None:
+        if _is_root_program_dir(registered):
+            return _program_files_app_dir()
+        return registered
+    if sys.platform == "win32":
         return _program_files_app_dir()
     return current_app_dir.resolve(strict=False)
 
@@ -607,11 +641,13 @@ class UpdateDownloader(QThread):
                 f"$currentAppDir = {_powershell_literal(str(current_app_dir))}",
                 f"$appDir = {_powershell_literal(str(app_dir))}",
                 f"$exePath = {_powershell_literal(str(app_dir / exe_name))}",
+                "$fallbackExe = Join-Path $currentAppDir 'LumenKVN.exe'",
                 f"$tempDir = {_powershell_literal(str(tmp_dir))}",
                 f"$expectedVersion = {_powershell_literal(self._update.version)}",
                 "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
                 "$runtimeDir = Join-Path (Join-Path $appDir 'data') 'runtime'",
                 "$errorLog = Join-Path $logDir 'update_error.log'",
+                "$setupLog = Join-Path $logDir 'setup_update.log'",
                 "if ((Split-Path -Leaf $appDir) -ieq 'Program') { throw 'Install directory resolved to C:\\Program; aborting update.' }",
                 "New-Item -ItemType Directory -Path $appDir -Force | Out-Null",
                 "New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
@@ -626,7 +662,8 @@ class UpdateDownloader(QThread):
                 "Start-Sleep -Milliseconds 800",
                 "try {",
                 "    $installDirArg = '/DIR=\"' + $appDir + '\"'",
-                "    $installerArgs = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS',$installDirArg)",
+                "    $logArg = '/LOG=\"' + $setupLog + '\"'",
+                "    $installerArgs = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS',$installDirArg,$logArg)",
                 "    $install = Start-Process -FilePath $setupPath -ArgumentList $installerArgs -Wait -PassThru -ErrorAction Stop",
                 "    if ($install.ExitCode -ne 0) { throw ('Installer exited with code ' + $install.ExitCode) }",
                 "    $currentDataDir = Join-Path $currentAppDir 'data'",
@@ -663,9 +700,9 @@ class UpdateDownloader(QThread):
                 "}",
                 "catch {",
                 (
-                    "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--tray' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null }"
+                    "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--tray' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--tray' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
                     if self._restart_in_tray
-                    else "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null }"
+                    else "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
                 ),
                 "    New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
                 "    ($_ | Out-String) | Set-Content -LiteralPath $errorLog -Encoding UTF8",
