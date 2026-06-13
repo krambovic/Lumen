@@ -24,10 +24,15 @@ jobs:
             throw "APP_VERSION not found"
           }
           $version = $Matches[1]
-          $preTag = "v$version-pre.$env:GITHUB_RUN_NUMBER"
+          $preVersion = "$version-pre.$env:GITHUB_RUN_NUMBER"
+          $preTag = "v$preVersion"
+          # Зашиваем полную pre-release версию в бинарь: иначе сборка сообщает
+          # голый stable-номер и апдейтер не отличит pre от stable.
+          $patched = $content -replace 'APP_VERSION\s*=\s*"[^"]+"', ('APP_VERSION = "' + $preVersion + '"')
+          Set-Content $file $patched -Encoding utf8 -NoNewline
           echo "VERSION=$version" >> $env:GITHUB_ENV
           echo "PRERELEASE_TAG=$preTag" >> $env:GITHUB_ENV
-          Write-Host "Pre-release: $version (tag: $preTag)"
+          Write-Host "Pre-release: $preVersion (tag: $preTag)"
 
       - name: Setup Python
         uses: actions/setup-python@v5
