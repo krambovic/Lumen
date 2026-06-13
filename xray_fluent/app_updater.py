@@ -25,6 +25,8 @@ from .constants import APP_VERSION, BASE_DIR
 
 GITHUB_REPO = "krambovic/lumen-kvn"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+# Список релизов (новые → старые), включая pre-release, для выбора по каналу.
+RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
 USER_AGENT = f"LumenKVN/{APP_VERSION}"
 
 
@@ -109,6 +111,9 @@ class AppUpdate:
     notes: str
     digest_sha256: str = ""
     asset_name: str = ""
+    channel: str = "stable"
+    # True — целевая версия ниже установленной (откат при смене канала).
+    is_downgrade: bool = False
 
 
 _SEMVER_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?")
@@ -228,69 +233,129 @@ class UpdateChecker(QThread):
 
     def run(self) -> None:
         try:
-            req = Request(GITHUB_API, headers={"User-Agent": USER_AGENT})
-            with urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read())
-
-            tag = data.get("tag_name", "")
-
-            if not _is_newer_version(tag, APP_VERSION):
+            target = self._pick_target()
+            if target is None:
                 self.result.emit(None)
                 return
 
-            setup_assets = [
-                a for a in data.get("assets", [])
-                if str(a.get("name") or "").lower().endswith(".exe")
-                and "setup" in str(a.get("name") or "").lower()
-            ]
-            asset = max(
-                setup_assets,
-                key=lambda a: _asset_score(a, self._prefer_qml),
-                default=None,
-            )
-
-            if not asset:
-                channel_name = "nightly" if self._prefer_qml else "stable"
-                self.error.emit(
-                    f"Релиз {tag} найден, но отсутствует setup-установщик для канала {channel_name}"
-                )
+            tag = target.get("tag_name", "")
+            # Предлагаем действие, когда установленная версия отличается от целевой:
+            # вверх (обновление) или вниз (откат при смене канала).
+            if tag.strip().lstrip("v") == APP_VERSION.strip().lstrip("v"):
+                self.result.emit(None)
                 return
 
-            digest = _extract_digest(str(asset.get("digest") or ""))
-            if not digest:
-                asset_name = str(asset.get("name") or "")
-                sidecar = None
-                for suffix in (".sha256", ".dgst"):
-                    expected = f"{asset_name}{suffix}".lower()
-                    sidecar = next(
-                        (
-                            candidate for candidate in data.get("assets", [])
-                            if str(candidate.get("name") or "").lower() == expected
-                        ),
-                        None,
-                    )
-                    if sidecar:
-                        break
-                if sidecar:
-                    digest = _extract_digest(
-                        _fetch_text(str(sidecar.get("browser_download_url") or ""))
-                    )
-            if not digest:
-                self.error.emit(f"Релиз {tag} найден, но установщик не содержит SHA-256")
-                return
-
-            self.result.emit(AppUpdate(
-                version=tag.lstrip("v"),
-                tag=tag,
-                download_url=asset["browser_download_url"],
-                size=asset.get("size", 0),
-                notes=data.get("body", ""),
-                digest_sha256=digest,
-                asset_name=str(asset.get("name") or "LumenKVN-Setup-windows-x64.exe"),
-            ))
+            update = self._build_update(target)
+            if update is not None:
+                is_newer = _is_newer_version(tag, APP_VERSION)
+                # На pre-release канале предлагаем только более новые версии; откат
+                # имеет смысл лишь при переключении на Stable.
+                if not is_newer and self._is_prerelease_channel():
+                    self.result.emit(None)
+                    return
+                update.channel = self._channel
+                update.is_downgrade = not is_newer
+                self.result.emit(update)
         except Exception as exc:
             self.error.emit(str(exc))
             return
+
+    def _is_prerelease_channel(self) -> bool:
+        return self._channel in ("beta", "nightly", "prerelease", "pre-release", "pre")
+
+    def _fetch_json(self, url: str):
+        req = Request(url, headers={"User-Agent": USER_AGENT})
+        with urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+
+    def _latest_stable(self) -> dict | None:
+        # /releases/latest всегда отдаёт новейший НЕ-pre-release независимо от
+        # количества промежуточных пререлизов (404 — если стабильных нет).
+        try:
+            data = self._fetch_json(GITHUB_API)
+        except Exception:
+            return None
+        if isinstance(data, dict) and data.get("tag_name") and not data.get("draft"):
+            return data
+        return None
+
+    def _latest_prerelease(self) -> dict | None:
+        # Новейший pre-release лежит в начале списка, поэтому одной страницы хватает.
+        try:
+            releases = self._fetch_json(RELEASES_API)
+        except Exception:
+            return None
+        if not isinstance(releases, list):
+            return None
+        for r in releases:
+            if not r.get("draft") and r.get("prerelease"):
+                return r
+        return None
+
+    def _pick_target(self) -> dict | None:
+        """Выбрать релиз для текущего канала.
+
+        stable      — /releases/latest (новейший стабильный);
+        pre-release — новейший из последнего pre-release и последнего stable.
+        """
+        if not self._is_prerelease_channel():
+            return self._latest_stable()
+        stable = self._latest_stable()
+        pre = self._latest_prerelease()
+        if stable and pre:
+            return stable if _is_newer_version(stable.get("tag_name", ""), pre.get("tag_name", "")) else pre
+        return stable or pre
+
+    def _build_update(self, data: dict):
+        tag = data.get("tag_name", "")
+        setup_assets = [
+            a for a in data.get("assets", [])
+            if str(a.get("name") or "").lower().endswith(".exe")
+            and "setup" in str(a.get("name") or "").lower()
+        ]
+        asset = max(
+            setup_assets,
+            key=lambda a: _asset_score(a, self._prefer_qml),
+            default=None,
+        )
+        if not asset:
+            self.error.emit(
+                f"Релиз {tag} найден, но отсутствует setup-установщик"
+            )
+            return None
+
+        digest = _extract_digest(str(asset.get("digest") or ""))
+        if not digest:
+            asset_name = str(asset.get("name") or "")
+            sidecar = None
+            for suffix in (".sha256", ".dgst"):
+                expected = f"{asset_name}{suffix}".lower()
+                sidecar = next(
+                    (
+                        candidate for candidate in data.get("assets", [])
+                        if str(candidate.get("name") or "").lower() == expected
+                    ),
+                    None,
+                )
+                if sidecar:
+                    break
+            if sidecar:
+                digest = _extract_digest(
+                    _fetch_text(str(sidecar.get("browser_download_url") or ""))
+                )
+        if not digest:
+            self.error.emit(f"Релиз {tag} найден, но установщик не содержит SHA-256")
+            return None
+
+        return AppUpdate(
+            version=tag.lstrip("v"),
+            tag=tag,
+            download_url=asset["browser_download_url"],
+            size=asset.get("size", 0),
+            notes=data.get("body", ""),
+            digest_sha256=digest,
+            asset_name=str(asset.get("name") or "LumenKVN-Setup-windows-x64.exe"),
+        )
 
 
 _log = logging.getLogger(__name__)

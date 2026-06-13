@@ -311,44 +311,52 @@ def _find_subscription(controller: AppController, url: str) -> dict | None:
     return None
 
 
-def _import_subscription_payload(
-    controller: AppController,
-    url: str,
-    group: str,
-    *,
-    replace_existing_group: bool = False,
-) -> tuple[int, list[str], dict]:
+def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
+    """Загружает подписку по сети и возвращает (текст_ссылок, userinfo, errors).
+
+    Только сеть, не трогает controller/state — безопасно вызывать в фоновом потоке.
+    При неудаче текст пустой, а ошибки лежат в errors.
+    """
+    url = (url or "").strip()
+    if not url:
+        return "", {}, ["Пустой URL подписки"]
     first_error = ""
-    chosen_text = ""
-    chosen_userinfo: dict = {}
-    chosen_errors: list[str] = []
     try:
         text, userinfo = _fetch_subscription(url)
         nodes, errors = parse_links_text(text)
         if nodes:
-            chosen_text = text
-            chosen_userinfo = userinfo
-            chosen_errors = errors
-        else:
-            first_error = "; ".join(errors[:3]) or "no nodes parsed"
+            return text, userinfo, errors
+        first_error = "; ".join(errors[:3]) or "no nodes parsed"
     except Exception as exc:  # noqa: BLE001 - fallback to Happ-compatible panels
         first_error = str(exc)
 
-    if not chosen_text:
-        try:
-            text, userinfo = _fetch_subscription_happ(url)
-            nodes, errors = parse_links_text(text)
-            if not nodes:
-                if first_error:
-                    errors = [*errors, f"Default UA: {first_error}"]
-                return 0, errors, userinfo
-            chosen_text = text
-            chosen_userinfo = userinfo
-            chosen_errors = errors
-        except Exception as exc:  # noqa: BLE001
+    try:
+        text, userinfo = _fetch_subscription_happ(url)
+        nodes, errors = parse_links_text(text)
+        if not nodes:
             if first_error:
-                return 0, [f"Happ/1.0: {exc}", f"Default UA: {first_error}"], {}
-            return 0, [str(exc)], {}
+                errors = [*errors, f"Default UA: {first_error}"]
+            return "", userinfo, errors
+        return text, userinfo, errors
+    except Exception as exc:  # noqa: BLE001
+        if first_error:
+            return "", {}, [f"Happ/1.0: {exc}", f"Default UA: {first_error}"]
+        return "", {}, [str(exc)]
+
+
+def _apply_subscription_payload(
+    controller: AppController,
+    url: str,
+    group: str,
+    fetched: tuple[str, dict, list[str]],
+    *,
+    replace_existing_group: bool = False,
+) -> tuple[int, list[str], dict]:
+    """Применяет уже загруженную подписку к состоянию. Только GUI-поток."""
+    chosen_text, chosen_userinfo, chosen_errors = fetched
+    # Загрузка не удалась — не трогаем существующие узлы группы.
+    if not chosen_text:
+        return 0, list(chosen_errors), chosen_userinfo
 
     if replace_existing_group:
         keep: list = []
@@ -364,6 +372,20 @@ def _import_subscription_payload(
 
     added, errors = import_nodes_from_text(controller, chosen_text, group=group, auto_connect=False)
     return added, [*chosen_errors, *errors], chosen_userinfo
+
+
+def _import_subscription_payload(
+    controller: AppController,
+    url: str,
+    group: str,
+    *,
+    replace_existing_group: bool = False,
+) -> tuple[int, list[str], dict]:
+    # Синхронный путь (блокирует поток). Оставлен для обратной совместимости.
+    fetched = fetch_subscription_payload(url)
+    return _apply_subscription_payload(
+        controller, url, group, fetched, replace_existing_group=replace_existing_group
+    )
 
 
 def _record_subscription(
@@ -455,6 +477,55 @@ def update_all_subscriptions(controller: AppController) -> tuple[int, list[str]]
         total_added += added
         all_errors.extend(errors)
     return total_added, all_errors
+
+
+def apply_fetched_subscription(
+    controller: AppController,
+    url: str,
+    name: str | None,
+    kind: str,
+    text: str,
+    userinfo: dict | None,
+    errors: list[str] | None,
+) -> tuple[int, list[str]]:
+    """Применяет подписку, загруженную в фоне (вызывать в GUI-потоке).
+
+    kind: "import" — добавить/обновить по ссылке; "update" — обновить существующую.
+    """
+    url = (url or "").strip()
+    if not url:
+        return 0, ["Пустой URL подписки"]
+    existing = _find_subscription(controller, url)
+
+    if kind == "import" and existing is None:
+        group = (name or "").strip() or _derive_subscription_name(url)
+        replace = False
+    else:
+        if existing is None:
+            return 0, ["Подписка не найдена"]
+        if kind == "import":
+            # Подписка уже есть: при новом имени переименовываем группу и узлы.
+            new_name = (name or "").strip()
+            old_group = (existing.get("group") or "").strip()
+            if new_name and new_name != old_group:
+                if old_group:
+                    for node in controller.state.nodes:
+                        if (node.group or "Default") == old_group:
+                            node.group = new_name
+                existing["name"] = new_name
+                existing["group"] = new_name
+                controller.nodes_changed.emit(controller.state.nodes)
+                controller.subscriptions_changed.emit(list(controller.state.subscriptions))
+                controller.save()
+        group = (existing.get("group") or "").strip() or _derive_subscription_name(url)
+        replace = True
+
+    fetched = (text or "", dict(userinfo or {}), list(errors or []))
+    added, errs, info = _apply_subscription_payload(
+        controller, url, group, fetched, replace_existing_group=replace
+    )
+    _record_subscription(controller, url, group, added, info)
+    return added, errs
 
 
 def remove_subscription(controller: AppController, url: str, *, delete_nodes: bool = True) -> None:

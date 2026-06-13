@@ -1,13 +1,14 @@
-name: Build & Release
+name: Pre-Release
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  prerelease:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,7 +16,6 @@ jobs:
           fetch-depth: 0
 
       - name: Determine version
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         shell: pwsh
         run: |
           $file = "xray_fluent/constants.py"
@@ -24,9 +24,10 @@ jobs:
             throw "APP_VERSION not found"
           }
           $version = $Matches[1]
+          $preTag = "v$version-pre.$env:GITHUB_RUN_NUMBER"
           echo "VERSION=$version" >> $env:GITHUB_ENV
-          echo "RELEASE_TAG=v$version" >> $env:GITHUB_ENV
-          Write-Host "Release version: $version (tag: v$version)"
+          echo "PRERELEASE_TAG=$preTag" >> $env:GITHUB_ENV
+          Write-Host "Pre-release: $version (tag: $preTag)"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -40,7 +41,7 @@ jobs:
       - name: Download core binaries
         shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           New-Item -ItemType Directory -Force -Path core | Out-Null
           $githubHeaders = @{
@@ -103,47 +104,47 @@ jobs:
           name: LumenKVN-portable
           path: dist/LumenKVN/
 
-      - name: Check existing release
-        if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+      - name: Generate changelog
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $exists = $false
-
-          try {
-            gh release view $env:RELEASE_TAG *> $null
-
-            if ($LASTEXITCODE -eq 0) {
-              $exists = $true
-            }
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+          $lastPre = $releases | Where-Object { $_.prerelease -eq $true } | Select-Object -First 1
+          if ($lastPre) {
+            $range = "$($lastPre.tag_name)..HEAD"
+            Write-Host "Changelog since $($lastPre.tag_name)"
+          } else {
+            $range = ""
+            Write-Host "No previous pre-release found, using full history"
           }
-          catch {
-            $exists = $false
+          if ($range) {
+            $log = git log $range --no-merges --pretty=format:"- %s (%h)"
+          } else {
+            $log = git log --no-merges --pretty=format:"- %s (%h)"
           }
+          $lines = @("## Изменения")
+          if ($lastPre) {
+            $lines += "_С прошлого пре-релиза $($lastPre.tag_name)_"
+            $lines += ""
+          }
+          if ([string]::IsNullOrWhiteSpace($log)) {
+            $lines += "- Нет новых коммитов"
+          } else {
+            $lines += $log
+          }
+          ($lines -join "`n") | Out-File -FilePath changelog_pre.md -Encoding utf8
+          Write-Host "---- changelog ----"
+          Get-Content changelog_pre.md
 
-          if ($exists) {
-            "RELEASE_EXISTS=true" >> $env:GITHUB_ENV
-            Write-Host "Release $env:RELEASE_TAG already exists."
-          }
-          else {
-            "RELEASE_EXISTS=false" >> $env:GITHUB_ENV
-            Write-Host "Release $env:RELEASE_TAG does not exist."
-          }
-
-      - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && env.RELEASE_EXISTS != 'true'
+      - name: Create GitHub Pre-Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: "Lumen KVN ${{ env.RELEASE_TAG }}"
-          body: |
-            ## Что изменилось
-            - [Chore]&#58; Автоматическая сборка версии ${{ env.VERSION }}.
-            - [Fix]&#58; Исправлено полное замораживание приложения при подгрузке подписок.
-            - [Feat]&#58; Добавлено разделение на Stable и Pre-release сборки с возможностью переключения и отката на странице обновлений.
-          generate_release_notes: false
-          make_latest: true
+          tag_name: ${{ env.PRERELEASE_TAG }}
+          name: "Lumen KVN ${{ env.PRERELEASE_TAG }}"
+          body_path: changelog_pre.md
+          prerelease: true
+          make_latest: false
           files: |
             dist/LumenKVN-Setup-windows-x64.exe
             dist/LumenKVN-portable-windows-x64.zip

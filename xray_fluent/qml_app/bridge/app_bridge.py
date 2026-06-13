@@ -14,10 +14,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 
 from ...app_controller import AppController
+from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
 from ...application.node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
 from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY
 from ...engines.singbox import get_singbox_version
@@ -53,6 +54,9 @@ class AppBridge(QObject):
     trayMessageRequested = pyqtSignal()    # ask the tray to show its balloon
     quittingChanged = pyqtSignal()         # real-exit flag flipped on quit
 
+    # Внутренний: запуск фоновой загрузки подписок (jobs, batch_id)
+    _sub_fetch_run = pyqtSignal(object, int)
+
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._node_model = NodeListModel(self)
@@ -63,6 +67,12 @@ class AppBridge(QObject):
         self.controller = AppController(self)
         self.controller.resource_update_result.connect(self._on_resource_update_result)
         self.controller.resource_update_progress.connect(self._on_resource_update_progress)
+
+        # Фоновая загрузка подписок (ленивая инициализация потока).
+        self._sub_thread: QThread | None = None
+        self._sub_worker: SubscriptionFetchWorker | None = None
+        self._sub_batches: dict[int, dict] = {}
+        self._sub_batch_seq = 0
 
         # cached state for QML properties
         self._connected = False
@@ -135,6 +145,15 @@ class AppBridge(QObject):
             self._sub_timer.stop()
         except Exception:
             pass
+        thread = self._sub_thread
+        if thread is not None:
+            try:
+                thread.quit()
+                thread.wait(2000)
+            except Exception:
+                pass
+            self._sub_thread = None
+            self._sub_worker = None
         try:
             self.controller.shutdown()
         except Exception:
@@ -158,13 +177,87 @@ class AppBridge(QObject):
         try:
             if getattr(self.controller, "locked", False):
                 return
-            if not self.controller.state.subscriptions:
+            subs = self.controller.state.subscriptions
+            if not subs:
                 return
-            added, _errors = self.controller.update_all_subscriptions()
-            if added:
-                self.toast.emit("info", self._localized_backend_message(f"Авто-обновление подписок: +{added} серверов"))
+            jobs = [
+                SubscriptionJob(url=(s.get("url") or "").strip(), kind="update")
+                for s in subs
+                if (s.get("url") or "").strip()
+            ]
+            self._dispatch_sub_jobs(jobs, "auto")
         except Exception:
             pass
+
+    # ── Фоновая загрузка подписок (сеть вне UI-потока) ──
+    def _ensure_sub_worker(self) -> None:
+        """Лениво поднимает поток+воркер для загрузки подписок (GUI-поток)."""
+        if self._sub_thread is not None:
+            return
+        thread = QThread()
+        thread.setObjectName("lumen-subscriptions")
+        worker = SubscriptionFetchWorker()
+        worker.moveToThread(thread)
+        self._sub_fetch_run.connect(worker.run_batch)
+        worker.fetched.connect(self._on_sub_fetched)
+        worker.completed.connect(self._on_sub_batch_completed)
+        thread.start()
+        self._sub_thread = thread
+        self._sub_worker = worker
+
+    def _dispatch_sub_jobs(self, jobs: list, kind: str) -> None:
+        """Передаёт задачи в фоновый поток; тосты покажем по завершению батча."""
+        if not jobs:
+            if kind in ("update", "update_all"):
+                self.toast.emit("info", self._localized_backend_message("Подписок нет"))
+            return
+        self._sub_batch_seq += 1
+        batch_id = self._sub_batch_seq
+        self._sub_batches[batch_id] = {"kind": kind, "added": 0, "errors": []}
+        self._ensure_sub_worker()
+        self._sub_fetch_run.emit(list(jobs), batch_id)
+
+    def _on_sub_fetched(self, batch_id: int, job: object, text: str, userinfo: object, errors: object) -> None:
+        """Применяет результат одной подписки. Всегда GUI-поток (queued)."""
+        batch = self._sub_batches.get(batch_id)
+        try:
+            added, errs = self.controller.apply_fetched_subscription(
+                job.url, job.name, job.kind, text, userinfo, list(errors or [])
+            )
+        except Exception as exc:  # noqa: BLE001
+            added, errs = 0, [str(exc)]
+        if batch is not None:
+            batch["added"] += int(added or 0)
+            if errs:
+                batch["errors"].extend(errs)
+
+    def _on_sub_batch_completed(self, batch_id: int, total: int) -> None:
+        """Показывает итоговый тост после завершения всех задач батча."""
+        batch = self._sub_batches.pop(batch_id, None)
+        if batch is None:
+            return
+        kind = batch["kind"]
+        added = batch["added"]
+        errors = batch["errors"]
+        if kind == "auto":
+            if added:
+                self.toast.emit("info", self._localized_backend_message(f"Авто-обновление подписок: +{added} серверов"))
+            return
+        if kind == "import":
+            if added:
+                self.toast.emit("success", f"Импортировано серверов: {added}")
+            if errors:
+                self.toast.emit("warning", "; ".join(errors[:2]))
+            if not added and not errors:
+                self.toast.emit("info", "Новых серверов не найдено")
+        elif kind == "update":
+            self.toast.emit("success", self._localized_backend_message(f"Подписка обновлена: {added} серверов"))
+            if errors:
+                self.toast.emit("warning", "; ".join(errors[:2]))
+        else:  # update_all
+            self.toast.emit("success", self._localized_backend_message(f"Подписки обновлены: {added} серверов"))
+            if errors:
+                self.toast.emit("warning", "; ".join(errors[:2]))
 
     # ── Tray / background ───────────────────────────────────────
     def set_tray_available(self, value: bool) -> None:
@@ -525,9 +618,14 @@ class AppBridge(QObject):
     # ── «Обновления» settings persistence ───────────────────────
     @pyqtSlot(str)
     def setReleaseChannel(self, channel: str) -> None:
+        normalized = "prerelease" if str(channel).strip().lower() in ("prerelease", "pre-release", "pre", "beta", "nightly") else "stable"
         settings = deepcopy(self.controller.state.settings)
-        settings.release_channel = "stable"
+        if settings.release_channel == normalized:
+            return
+        settings.release_channel = normalized
         self.controller.update_settings(settings)
+        # Перепроверяем обновления под новый канал, чтобы виджет сразу обновил состояние.
+        self._start_app_update_check(silent=False)
 
     @pyqtSlot(bool)
     def setCheckUpdates(self, enabled: bool) -> None:
@@ -549,7 +647,11 @@ class AppBridge(QObject):
 
     @pyqtProperty(str, notify=settingsChanged)
     def releaseChannel(self) -> str:
-        return "stable"
+        try:
+            value = str(self.controller.state.settings.release_channel or "stable").strip().lower()
+        except Exception:
+            return "stable"
+        return "prerelease" if value in ("prerelease", "pre-release", "pre", "beta", "nightly") else "stable"
 
     @pyqtProperty(bool, notify=settingsChanged)
     def checkUpdates(self) -> bool:
@@ -909,7 +1011,8 @@ class AppBridge(QObject):
         self._app_update_silent = silent
         if not silent:
             self.appUpdateState.emit({"phase": "checking"})
-        checker = UpdateChecker(self, channel="stable", prefer_qml=False)
+        channel = self.releaseChannel
+        checker = UpdateChecker(self, channel=channel, prefer_qml=False)
         self._app_update_checker = checker
         checker.result.connect(self._on_app_update_result)
         checker.error.connect(self._on_app_update_error)
@@ -929,14 +1032,18 @@ class AppBridge(QObject):
         notes = (update.notes or "").strip()
         if len(notes) > 1200:
             notes = notes[:1200].rstrip() + "…"
+        is_downgrade = bool(getattr(update, "is_downgrade", False))
         self.appUpdateState.emit({
             "phase": "available",
             "version": update.version,
             "notes": notes,
+            "channel": getattr(update, "channel", self.releaseChannel),
+            "isDowngrade": is_downgrade,
         })
         if silent:
             # При тихой проверке на старте уведомляем пользователя тостом.
-            self.toast.emit("info", self._localized_backend_message(f"Доступно обновление v{update.version}"))
+            verb = "Доступен откат к v" if is_downgrade else "Доступно обновление v"
+            self.toast.emit("info", self._localized_backend_message(f"{verb}{update.version}"))
 
     def _on_app_update_error(self, message: str) -> None:
         if getattr(self, "_app_update_silent", False):
@@ -1838,42 +1945,26 @@ class AppBridge(QObject):
         if not target:
             self.toast.emit("warning", "Введите ссылку на подписку")
             return
-        try:
-            added, errors = self.controller.import_subscription(target, (name or "").strip() or None)
-        except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", f"Ошибка импорта подписки: {exc}")
-            return
-        if added:
-            self.toast.emit("success", f"Импортировано серверов: {added}")
-        if errors:
-            self.toast.emit("warning", "; ".join(errors[:2]))
-        if not added and not errors:
-            self.toast.emit("info", "Новых серверов не найдено")
+        # Сеть в фоне: UI не блокируется, итог придёт через _on_sub_batch_completed.
+        job = SubscriptionJob(url=target, kind="import", name=(name or "").strip())
+        self._dispatch_sub_jobs([job], "import")
 
     @pyqtSlot(str)
     def updateSubscription(self, url: str) -> None:
         target = (url or "").strip()
         if not target:
             return
-        try:
-            added, errors = self.controller.update_subscription(target)
-        except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", f"Ошибка обновления подписки: {exc}")
-            return
-        self.toast.emit("success", self._localized_backend_message(f"Подписка обновлена: {added} серверов"))
-        if errors:
-            self.toast.emit("warning", "; ".join(errors[:2]))
+        job = SubscriptionJob(url=target, kind="update")
+        self._dispatch_sub_jobs([job], "update")
 
     @pyqtSlot()
     def updateAllSubscriptions(self) -> None:
-        try:
-            added, errors = self.controller.update_all_subscriptions()
-        except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", f"Ошибка обновления подписок: {exc}")
-            return
-        self.toast.emit("success", self._localized_backend_message(f"Подписки обновлены: {added} серверов"))
-        if errors:
-            self.toast.emit("warning", "; ".join(errors[:2]))
+        jobs = [
+            SubscriptionJob(url=(s.get("url") or "").strip(), kind="update")
+            for s in self.controller.state.subscriptions
+            if (s.get("url") or "").strip()
+        ]
+        self._dispatch_sub_jobs(jobs, "update_all")
 
     @pyqtSlot(str)
     @pyqtSlot(str, bool)

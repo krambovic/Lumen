@@ -50,6 +50,7 @@ from .application.config import (
     xray_outbound_is_loop_protected as xray_outbound_is_loop_protected_operation,
 )
 from .application.nodes import (
+    apply_fetched_subscription as apply_fetched_subscription_operation,
     bulk_update_nodes as bulk_update_nodes_operation,
     check_auto_switch as check_auto_switch_operation,
     detect_countries_sync as detect_countries_sync_operation,
@@ -1227,6 +1228,20 @@ class AppController(QObject):
 
     def update_all_subscriptions(self) -> tuple[int, list[str]]:
         return update_all_subscriptions_operation(self)
+
+    def apply_fetched_subscription(
+        self,
+        url: str,
+        name: str | None,
+        kind: str,
+        text: str,
+        userinfo: dict | None,
+        errors: list[str] | None,
+    ) -> tuple[int, list[str]]:
+        # Применяет подписку, загруженную в фоновом потоке (вызывать в GUI-потоке).
+        return apply_fetched_subscription_operation(
+            self, url, name, kind, text, userinfo, errors
+        )
 
     def remove_subscription(self, url: str, delete_nodes: bool = True) -> None:
         remove_subscription_operation(self, url, delete_nodes=delete_nodes)

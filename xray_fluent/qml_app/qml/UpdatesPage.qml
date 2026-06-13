@@ -25,6 +25,8 @@ Item {
     property string appMessage: ""
     property string appNewVersion: ""
     property int appPercent: 0
+    property string appChannel: "stable"   // stable|prerelease
+    property bool appIsDowngrade: false     // true — целевая версия ниже (переход/откат)
 
     // xray updater state
     property string xrayPhase: "idle"       // idle|checking|updating|available|updated|uptodate|error
@@ -46,7 +48,7 @@ Item {
         switch (appPhase) {
         case "checking":    return I18n.t("Проверка обновлений...")
         case "uptodate":    return I18n.t("У вас последняя версия")
-        case "available":   return I18n.t("Доступна новая версия: v") + appNewVersion
+        case "available":   return (page.appIsDowngrade ? I18n.t("Доступен переход на v") : I18n.t("Доступна новая версия: v")) + appNewVersion
         case "downloading": return appMessage !== "" ? I18n.t(appMessage) : (I18n.t("Загрузка: ") + appPercent + "%")
         case "ready":       return appMessage !== "" ? I18n.t(appMessage) : I18n.t("Обновление загружено. Перезапуск...")
         case "error":       return appMessage !== "" ? I18n.t(appMessage) : I18n.t("Ошибка проверки обновлений")
@@ -97,6 +99,7 @@ Item {
         appVersion = s.appVersion || App.appVersion
         xrayVersion = s.xrayVersion || ""
         singboxVersion = s.singboxVersion || ""
+        appChannel = App.releaseChannel
     }
     Component.onCompleted: init()
 
@@ -108,6 +111,8 @@ Item {
             if (s.version !== undefined) page.appNewVersion = s.version
             page.appMessage = s.message !== undefined ? s.message : ""
             if (s.percent !== undefined) page.appPercent = s.percent
+            if (s.channel !== undefined) page.appChannel = s.channel
+            page.appIsDowngrade = (s.isDowngrade === true)
             if (s.phase === "checking") { page.appNotes = ""; page.appPercent = 0 }
         }
         function onXrayUpdateState(s) {
@@ -159,6 +164,67 @@ Item {
                         Text { text: I18n.t("Текущая версия:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                         Text { text: "v" + page.appVersion; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
                         Item { Layout.fillWidth: true }
+                        // Сегментированный переключатель канала обновлений приложения
+                        // (на ядра Xray/sing-box не влияет).
+                        Text { text: I18n.t("Канал:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Rectangle {
+                            implicitHeight: 30
+                            implicitWidth: segRow.implicitWidth + 4
+                            radius: height / 2
+                            color: Theme.controlFill
+                            border.width: 1
+                            border.color: Theme.borderSolid
+                            opacity: page.appBusy ? 0.5 : 1.0
+
+                            Row {
+                                id: segRow
+                                anchors.centerIn: parent
+                                spacing: 0
+
+                                Item {
+                                    width: Math.max(stableTxt.implicitWidth + 26, 76); height: 26
+                                    Rectangle {
+                                        anchors.fill: parent; radius: height / 2
+                                        color: page.appChannel === "stable" ? Theme.accent
+                                             : (stableMouse.containsMouse ? Theme.controlFillHover : "transparent")
+                                        Behavior on color { ColorAnimation { duration: 120 } }
+                                    }
+                                    Text {
+                                        id: stableTxt; anchors.centerIn: parent; text: I18n.t("Stable")
+                                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                                        font.weight: page.appChannel === "stable" ? Font.DemiBold : Font.Normal
+                                        color: page.appChannel === "stable" ? Theme.accentText : Theme.textMuted
+                                    }
+                                    MouseArea {
+                                        id: stableMouse; anchors.fill: parent; hoverEnabled: true
+                                        enabled: !page.appBusy
+                                        cursorShape: page.appBusy ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                        onClicked: if (page.appChannel !== "stable") { page.appChannel = "stable"; App.setReleaseChannel("stable") }
+                                    }
+                                }
+                                Item {
+                                    width: Math.max(preTxt.implicitWidth + 26, 76); height: 26
+                                    Rectangle {
+                                        anchors.fill: parent; radius: height / 2
+                                        color: page.appChannel === "prerelease" ? Theme.accent
+                                             : (preMouse.containsMouse ? Theme.controlFillHover : "transparent")
+                                        Behavior on color { ColorAnimation { duration: 120 } }
+                                    }
+                                    Text {
+                                        id: preTxt; anchors.centerIn: parent; text: I18n.t("Pre-release")
+                                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                                        font.weight: page.appChannel === "prerelease" ? Font.DemiBold : Font.Normal
+                                        color: page.appChannel === "prerelease" ? Theme.accentText : Theme.textMuted
+                                    }
+                                    MouseArea {
+                                        id: preMouse; anchors.fill: parent; hoverEnabled: true
+                                        enabled: !page.appBusy
+                                        cursorShape: page.appBusy ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                        onClicked: if (page.appChannel !== "prerelease") { page.appChannel = "prerelease"; App.setReleaseChannel("prerelease") }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Text {
                         text: page.appStatusText(); color: page.appStatusColor()
@@ -206,7 +272,7 @@ Item {
                         }
                         AccentButton {
                             kind: "ghost"; glyph: "\uE896"
-                            text: page.appNewVersion !== "" ? (I18n.t("Скачать v") + page.appNewVersion + I18n.t(" и установить")) : I18n.t("Скачать и установить")
+                            text: page.appNewVersion !== "" ? ((page.appIsDowngrade ? I18n.t("Перейти на v") : I18n.t("Скачать v")) + page.appNewVersion + I18n.t(" и установить")) : I18n.t("Скачать и установить")
                             visible: page.appPhase === "available" || page.appPhase === "downloading"
                             enabled: page.appPhase === "available"
                             onClicked: App.downloadAppUpdate()
