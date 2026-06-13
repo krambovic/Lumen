@@ -5,7 +5,7 @@ import sys
 
 
 APP_NAME = "Lumen KVN"
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 STATE_SCHEMA_VERSION = 1
 
 PROXY_HOST = "127.0.0.1"
