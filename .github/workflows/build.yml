@@ -131,6 +131,8 @@ jobs:
             Write-Host "Release $env:RELEASE_TAG does not exist."
           }
 
+          exit 0
+
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && env.RELEASE_EXISTS != 'true'
         uses: softprops/action-gh-release@v2
