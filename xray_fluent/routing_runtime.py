@@ -175,6 +175,24 @@ def append_xray_process_rule(rules: list[dict[str, Any]], processes: list[str], 
     rules.append({"type": "field", "process": names, "network": "tcp,udp", "outboundTag": outbound})
 
 
+def _collect_service_route_domains(routing: RoutingSettings) -> tuple[list[str], list[str], list[str]]:
+    service_direct: list[str] = []
+    service_proxy: list[str] = []
+    service_block: list[str] = []
+    for svc_id, raw_action in routing.service_routes.items():
+        action = str(raw_action or "").strip().lower()
+        if action not in {"direct", "proxy"}:
+            continue
+        preset = SERVICE_PRESETS_BY_ID.get(svc_id)
+        if not preset:
+            continue
+        if action == "direct":
+            service_direct.extend(preset.domains)
+        else:
+            service_proxy.extend(preset.domains)
+    return service_direct, service_proxy, service_block
+
+
 def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
     if routing.bypass_lan:
@@ -199,19 +217,7 @@ def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings
         for action, processes in manual_processes.items():
             append_xray_process_rule(rules, processes, action)
 
-    service_direct: list[str] = []
-    service_proxy: list[str] = []
-    service_block: list[str] = []
-    for svc_id, action in routing.service_routes.items():
-        preset = SERVICE_PRESETS_BY_ID.get(svc_id)
-        if not preset:
-            continue
-        if action == "direct":
-            service_direct.extend(preset.domains)
-        elif action == "block":
-            service_block.extend(preset.domains)
-        else:
-            service_proxy.extend(preset.domains)
+    service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
 
     append_xray_domain_ip_rule(rules, service_direct, "direct")
     append_xray_domain_ip_rule(rules, routing.direct_domains, "direct")
@@ -383,19 +389,7 @@ def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[s
         _append_singbox_process_rule(rules, manual_paths[action], action, key="process_path")
         _append_singbox_process_rule(rules, manual_regex[action], action, key="process_path_regex")
 
-    service_direct: list[str] = []
-    service_proxy: list[str] = []
-    service_block: list[str] = []
-    for svc_id, action in routing.service_routes.items():
-        preset = SERVICE_PRESETS_BY_ID.get(svc_id)
-        if not preset:
-            continue
-        if action == "direct":
-            service_direct.extend(preset.domains)
-        elif action == "block":
-            service_block.extend(preset.domains)
-        else:
-            service_proxy.extend(preset.domains)
+    service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
 
     for items, outbound in (
         (service_direct, "direct"),
@@ -416,19 +410,7 @@ def build_singbox_gui_dns_rules(routing: RoutingSettings) -> tuple[list[dict[str
     rules: list[dict[str, Any]] = []
     rule_sets: set[str] = set()
 
-    service_direct: list[str] = []
-    service_proxy: list[str] = []
-    service_block: list[str] = []
-    for svc_id, action in routing.service_routes.items():
-        preset = SERVICE_PRESETS_BY_ID.get(svc_id)
-        if not preset:
-            continue
-        if action == "direct":
-            service_direct.extend(preset.domains)
-        elif action == "block":
-            service_block.extend(preset.domains)
-        else:
-            service_proxy.extend(preset.domains)
+    service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
 
     for items, dns_action in (
         (service_direct, "bootstrap-dns"),

@@ -2076,7 +2076,7 @@ class AppBridge(QObject):
                 "name": s.name,
                 "description": s.description,
                 "defaultAction": s.default_action,
-                "action": routes.get(s.id, "off"),
+                "action": routes.get(s.id) if routes.get(s.id) in ("proxy", "direct") else "off",
             }
             for s in SERVICE_PRESETS
         ]
@@ -2144,8 +2144,10 @@ class AppBridge(QObject):
             routes = dict(r.service_routes)
             if not action or action == "off":
                 routes.pop(service_id, None)
-            else:
+            elif action in ("proxy", "direct"):
                 routes[service_id] = action
+            else:
+                routes.pop(service_id, None)
             r.service_routes = routes
         self._mutate_routing(apply)
 

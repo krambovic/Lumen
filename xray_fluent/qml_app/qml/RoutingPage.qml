@@ -31,8 +31,8 @@ Item {
     readonly property var tunOutKeys: ["proxy", "direct"]
     readonly property var procActionKeys: ["direct", "proxy", "block"]
     readonly property var procActionLabels: [I18n.t("Прямой"), I18n.t("Прокси"), I18n.t("Блокировка")]
-    readonly property var svcActionKeys: ["off", "proxy", "direct", "block"]
-    readonly property var svcActionLabels: [I18n.t("Выкл"), I18n.t("Прокси"), I18n.t("Прямой"), I18n.t("Блокировка")]
+    readonly property var svcActionKeys: ["off", "proxy", "direct"]
+    readonly property var svcActionLabels: [I18n.t("По пресету"), I18n.t("Прокси"), I18n.t("Прямой")]
 
     // ---- reusable styled combo (Windows 11 Fluent look) --------------
     component StyledCombo: FluentCombo {}
@@ -320,7 +320,7 @@ Item {
                     width: parent.width
                     spacing: 0
                     Text {
-                        text: I18n.t("Быстрые переключатели для популярных сервисов (YouTube, Discord и др.). «Выкл» — сервис не переопределяется.")
+                        text: I18n.t("Быстрые переключатели для популярных сервисов (YouTube, Discord и др.). «По пресету» снимает ручное правило и возвращает сервис под текущий пресет.")
                         color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true; Layout.bottomMargin: 10
                     }
                     Repeater {
@@ -456,7 +456,7 @@ Item {
         }
 
         contentItem: Text {
-            text: I18n.t("«Всё через VPN» отправляет весь трафик через сервер.\n«По моим правилам» использует ваши правила по приложениям, сервисам, доменам и IP.\n«Без VPN по умолчанию» пускает трафик напрямую, кроме явно указанных исключений.\n\nПравила по приложениям работают только в режиме TUN.")
+            text: I18n.t("«Всё через VPN» отправляет весь трафик через сервер.\n«По моим правилам» использует ваши правила по приложениям, сервисам, доменам и IP.\n«Без VPN по умолчанию» пускает трафик напрямую, кроме явно указанных исключений.\n\nСервисы:\n«По пресету» — убрать ручное правило и снова доверить сервис текущему пресету.\n«Прокси» — всегда вести сервис через VPN/прокси, даже если общий режим прямой.\n«Прямой» — всегда вести сервис напрямую, даже если общий режим «Всё через VPN».\n\nПравила по приложениям работают только в режиме TUN.")
             color: Theme.textMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontNormal
