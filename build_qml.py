@@ -73,6 +73,15 @@ def _read_app_version() -> str:
     return match.group(1)
 
 
+def _numeric_version(version: str) -> str:
+    core, _, suffix = version.partition("-")
+    parts = [p for p in core.split(".") if p.isdigit()][:3]
+    while len(parts) < 3:
+        parts.append("0")
+    build = "".join(ch for ch in suffix if ch.isdigit()) or "0"
+    return ".".join(parts) + "." + build
+
+
 def _find_iscc() -> Path | None:
     candidates = [
         Path(os.environ.get("ISCC_PATH", "")),
@@ -227,12 +236,14 @@ def build_installer() -> None:
     if INSTALLER_PATH.exists():
         INSTALLER_PATH.unlink()
     version = _read_app_version()
+    version_info = _numeric_version(version)
     source_dir = _windows_path(APP_DIR)
     output_dir = _windows_path(DIST_DIR)
     _run(
         [
             str(iscc),
             f"/DAppVersion={version}",
+            f"/DVersionInfo={version_info}",
             f"/DSourceDir={source_dir}",
             f"/DOutputDir={output_dir}",
             "/DAppId={{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}",

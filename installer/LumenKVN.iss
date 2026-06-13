@@ -2,6 +2,10 @@
 #define AppVersion "0.0.0"
 #endif
 
+#ifndef VersionInfo
+#define VersionInfo "0.0.0.0"
+#endif
+
 #ifndef SourceDir
 #define SourceDir "..\dist\LumenKVN"
 #endif
@@ -50,7 +54,8 @@ UninstallDisplayIcon={app}\LumenKVN.exe
 VersionInfoCompany=Lumen KVN
 VersionInfoDescription={#AppNameValue} installer
 VersionInfoProductName={#AppNameValue}
-VersionInfoProductVersion={#AppVersion}
+VersionInfoProductVersion={#VersionInfo}
+VersionInfoVersion={#VersionInfo}
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
