@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 from pathlib import Path
 import re
@@ -165,6 +166,59 @@ def get_flag_svg_data_uri(code: str) -> str:
     return uri
 
 
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+ET.register_namespace("", _SVG_NS)
+ET.register_namespace("xlink", _XLINK_NS)
+
+
+def _local_tag(elem) -> str:
+    return elem.tag.rsplit("}", 1)[-1]
+
+
+def _flatten_uses(symbol) -> None:
+    xlink_href = "{%s}href" % _XLINK_NS
+    id_map: dict = {}
+    for el in symbol.iter():
+        ident = el.get("id")
+        if ident:
+            id_map[ident] = el
+
+    def expand(parent) -> None:
+        children = list(parent)
+        for child in children:
+            parent.remove(child)
+        for child in children:
+            if _local_tag(child) == "use":
+                href = child.get(xlink_href) or child.get("href") or ""
+                ref = href.lstrip("#")
+                g = ET.Element("{%s}g" % _SVG_NS)
+                transform = child.get("transform", "")
+                x = child.get("x") or "0"
+                y = child.get("y") or "0"
+                if x != "0" or y != "0":
+                    transform = (transform + f" translate({x} {y})").strip()
+                if transform:
+                    g.set("transform", transform)
+                for key, value in child.attrib.items():
+                    local = key.rsplit("}", 1)[-1]
+                    if local in ("href", "transform", "x", "y", "width", "height"):
+                        continue
+                    g.set(key, value)
+                target = id_map.get(ref)
+                if target is not None:
+                    clone = copy.deepcopy(target)
+                    clone.attrib.pop("id", None)
+                    g.append(clone)
+                    expand(g)
+                parent.append(g)
+            else:
+                expand(child)
+                parent.append(child)
+
+    expand(symbol)
+
+
 def _load_flag_symbols() -> dict[str, tuple[str, str]]:
     global _svg_symbol_cache
     if _svg_symbol_cache is not None:
@@ -184,7 +238,15 @@ def _load_flag_symbols() -> dict[str, tuple[str, str]]:
         view_box = str(symbol.attrib.get("viewBox") or "0 0 640 480")
         if len(code) != 2 or not code.isalpha():
             continue
-        body = "".join(ET.tostring(child, encoding="unicode") for child in list(symbol))
+        try:
+            _flatten_uses(symbol)
+        except Exception:
+            pass
+        body = "".join(
+            ET.tostring(child, encoding="unicode")
+            for child in list(symbol)
+            if _local_tag(child) != "defs"
+        )
         if body:
             result[code] = (view_box, body)
     _svg_symbol_cache = result

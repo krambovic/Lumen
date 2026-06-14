@@ -1,6 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
+import QtQuick.Effects
 import App 1.0
 import "."
 
@@ -638,18 +640,51 @@ Item {
                                         spacing: 8
                                         Item {
                                             id: flagBox
-                                            width: nodeRow.flagSource ? 22 : (nodeRow.flagEmoji ? 24 : ((nodeRow.flagColors && nodeRow.flagColors.length > 0) ? 22 : 0))
+                                            // 24x18 = 4:3, как у SVG-спрайта флагов → флаг заполняет бокс без полей.
+                                            width: (nodeRow.flagSource || nodeRow.flagEmoji || (nodeRow.flagColors && nodeRow.flagColors.length > 0)) ? 24 : 0
                                             height: 18
                                             visible: width > 0
                                             clip: true
+                                            // Источник флага. sourceSize растрирует SVG сразу в нужном размере (с учётом масштаба экрана) → без алиасинга.
                                             Image {
+                                                id: flagImg
                                                 anchors.fill: parent
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                visible: !!nodeRow.flagSource
+                                                visible: false
                                                 source: nodeRow.flagSource
                                                 fillMode: Image.PreserveAspectFit
+                                                sourceSize.width: Math.round(flagBox.width * Screen.devicePixelRatio)
+                                                sourceSize.height: Math.round(flagBox.height * Screen.devicePixelRatio)
+                                                smooth: true
+                                                mipmap: true
                                                 asynchronous: true
                                                 cache: true
+                                            }
+                                            // Маска со скруглёнными углами. Рендерится в повышенном разрешении (×3 + MSAA) → гладкие углы без пикселяции.
+                                            Rectangle {
+                                                id: flagMask
+                                                anchors.fill: parent
+                                                radius: 2
+                                                visible: false
+                                                antialiasing: true
+                                                layer.enabled: true
+                                                layer.smooth: true
+                                                layer.samples: 4
+                                                layer.textureSize: Qt.size(Math.round(flagBox.width * 3), Math.round(flagBox.height * 3))
+                                            }
+                                            // Готовый SVG-флаг со скруглёнными углами. maskSpreadAtMin даёт мягкий AA-край.
+                                            MultiEffect {
+                                                anchors.fill: parent
+                                                visible: !!nodeRow.flagSource
+                                                source: flagImg
+                                                maskEnabled: true
+                                                maskSource: flagMask
+                                                maskThresholdMin: 0.5
+                                                maskSpreadAtMin: 0.5
+                                                antialiasing: true
+                                                layer.enabled: true
+                                                layer.smooth: true
+                                                layer.samples: 4
+                                                layer.textureSize: Qt.size(Math.round(flagBox.width * 3), Math.round(flagBox.height * 3))
                                             }
                                             Text {
                                                 anchors.centerIn: parent
@@ -729,9 +764,10 @@ Item {
                                             }
                                             Rectangle {
                                                 anchors.fill: parent
-                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji
+                                                visible: !nodeRow.flagEmoji
                                                 color: "transparent"
                                                 radius: 2
+                                                antialiasing: true
                                                 border.width: 1
                                                 border.color: Qt.rgba(0, 0, 0, 0.25)
                                             }
