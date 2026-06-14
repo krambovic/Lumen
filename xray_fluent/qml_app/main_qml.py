@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -191,34 +192,46 @@ def _cleanup_legacy_root_program_install() -> None:
         pass
 
 
+def _notify_primary_instance(server_name: str) -> bool:
+    try:
+        from PyQt6.QtCore import QIODevice
+        from PyQt6.QtNetwork import QLocalSocket
+    except Exception:
+        return False
+    socket = QLocalSocket()
+    socket.connectToServer(server_name, QIODevice.OpenModeFlag.WriteOnly)
+    if not socket.waitForConnected(250):
+        socket.abort()
+        return False
+    try:
+        socket.write(b"activate")
+        socket.flush()
+        socket.waitForBytesWritten(250)
+    except Exception:
+        pass
+    socket.disconnectFromServer()
+    return True
+
+
 def _create_single_instance(app):
     """Return (server, is_primary). A second launch just activates the first window."""
     try:
-        from PyQt6.QtCore import QIODevice
-        from PyQt6.QtNetwork import QLocalServer, QLocalSocket
+        from PyQt6.QtCore import QLockFile
+        from PyQt6.QtNetwork import QLocalServer
     except Exception:
         return None, True
 
     server_name = "LumenKVN.SingleInstance"
+    lock = QLockFile(str(Path(tempfile.gettempdir()) / "LumenKVN.SingleInstance.lock"))
+    lock.setStaleLockTime(30_000)
     relaunching = "--relaunch-as-admin" in sys.argv[1:]
-    deadline = time.monotonic() + (5.0 if relaunching else 0.0)
-    while True:
-        socket = QLocalSocket()
-        socket.connectToServer(server_name, QIODevice.OpenModeFlag.WriteOnly)
-        if socket.waitForConnected(250):
-            if relaunching and time.monotonic() < deadline:
-                socket.abort()
-                time.sleep(0.25)
-                continue
-            try:
-                socket.write(b"activate")
-                socket.flush()
-                socket.waitForBytesWritten(250)
-            except Exception:
-                pass
-            socket.disconnectFromServer()
+    deadline = time.monotonic() + (5.0 if relaunching else 0.5)
+
+    while not lock.tryLock(0):
+        _notify_primary_instance(server_name)
+        if time.monotonic() >= deadline:
             return None, False
-        break
+        time.sleep(0.1)
 
     try:
         QLocalServer.removeServer(server_name)
@@ -226,7 +239,10 @@ def _create_single_instance(app):
         pass
     server = QLocalServer(app)
     if not server.listen(server_name):
-        return None, True
+        lock.unlock()
+        _notify_primary_instance(server_name)
+        return None, False
+    server._single_instance_lock = lock
     return server, True
 
 

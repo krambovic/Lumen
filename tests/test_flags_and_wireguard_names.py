@@ -19,7 +19,7 @@ def test_flag_svg_data_uri_comes_from_combined_sprite() -> None:
     assert get_flag_svg_data_uri("USA") == ""
 
 
-def test_amnezia_warp_config_keeps_awg_name_and_gets_warp_tag() -> None:
+def test_amnezia_warp_config_uses_endpoint_name_and_gets_warp_tag() -> None:
     nodes, errors = parse_links_text(
         """
         [Interface]
@@ -45,11 +45,11 @@ def test_amnezia_warp_config_keeps_awg_name_and_gets_warp_tag() -> None:
     assert errors == []
     assert len(nodes) == 1
     assert nodes[0].scheme == "awg"
-    assert nodes[0].name.startswith("AWG ")
+    assert nodes[0].name == "engage.cloudflareclient.com:2408"
     assert "WARP" in nodes[0].tags
 
 
-def test_plain_cloudflare_wireguard_config_keeps_wireguard_name_and_gets_warp_tag() -> None:
+def test_plain_cloudflare_wireguard_config_uses_endpoint_name_and_gets_warp_tag() -> None:
     nodes, errors = parse_links_text(
         """
         [Interface]
@@ -66,5 +66,5 @@ def test_plain_cloudflare_wireguard_config_keeps_wireguard_name_and_gets_warp_ta
     assert errors == []
     assert len(nodes) == 1
     assert nodes[0].scheme == "wireguard"
-    assert nodes[0].name.startswith("WireGuard ")
+    assert nodes[0].name == "engage.cloudflareclient.com:2408"
     assert "WARP" in nodes[0].tags

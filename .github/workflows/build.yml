@@ -141,10 +141,10 @@ jobs:
           name: "Lumen KVN ${{ env.RELEASE_TAG }}"
           body: |
             ## Что изменилось
-            - [Fix]: Улучшено отображение флагов в списке серверов.
-            - [Fix]: Настройки пользователя перенесены в "%AppData%/Lumen KVN" для корректной работы в условиях отключенной элевации админ прав.
+            - [Fix]: Убрана техническая приставка `AWG`/`WireGuard` из начала названия импортированных `.conf` серверов. Тип подключения и тег `WARP` остаются в метаданных.
+            - [Fix]: Усилена защита от запуска двух экземпляров Lumen KVN: добавлен lock-файл и повторная активация уже открытого окна при гонке старта.
 
-            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.2.7...v1.2.8
+            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.2.8...v1.2.9
           generate_release_notes: false
           make_latest: true
           files: |
