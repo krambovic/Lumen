@@ -93,6 +93,41 @@ Item {
         if (phase === "updated" || phase === "uptodate" || phase === "available") return Theme.success
         return Theme.textMuted
     }
+    function escapeHtml(value) {
+        return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+    }
+    function formatMarkdownInline(value) {
+        var text = escapeHtml(value)
+        text = text.replace(/`([^`]+)`/g, "<span style=\"font-family:'Consolas'; color:" + Theme.text + ";\">$1</span>")
+        text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "<a href=\"$2\" style=\"color:" + Theme.accent + "; text-decoration:none;\">$1</a>")
+        text = text.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+        text = text.replace(/(^|[^*])\*([^*]+)\*/g, "$1<span style=\"font-style:italic; text-decoration:none;\">$2</span>")
+        text = text.replace(/(^|[^_])_([^_]+)_/g, "$1<span style=\"font-style:italic; text-decoration:none;\">$2</span>")
+        return text
+    }
+    function formatReleaseNotes(value) {
+        var lines = String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")
+        var out = []
+        for (var i = 0; i < lines.length; ++i) {
+            var line = lines[i]
+            if (line.trim() === "") {
+                out.push("<br>")
+            } else if (line.indexOf("## ") === 0) {
+                out.push("<div style=\"font-size:14px; font-weight:600; color:" + Theme.text + "; margin-bottom:4px;\">" + formatMarkdownInline(line.slice(3)) + "</div>")
+            } else if (line.indexOf("# ") === 0) {
+                out.push("<div style=\"font-size:15px; font-weight:600; color:" + Theme.text + "; margin-bottom:4px;\">" + formatMarkdownInline(line.slice(2)) + "</div>")
+            } else if (line.indexOf("- ") === 0) {
+                out.push("<div style=\"margin-left:2px;\">• " + formatMarkdownInline(line.slice(2)) + "</div>")
+            } else {
+                out.push("<div>" + formatMarkdownInline(line) + "</div>")
+            }
+        }
+        return out.join("")
+    }
 
     function init() {
         var s = App.updatesInitialState()
@@ -249,8 +284,8 @@ Item {
                             Text {
                                 id: notesText
                                 width: parent.width
-                                text: page.appNotes
-                                textFormat: Text.MarkdownText
+                                text: page.formatReleaseNotes(page.appNotes)
+                                textFormat: Text.RichText
                                 color: Theme.textMuted
                                 linkColor: Theme.accent
                                 font.family: Theme.fontFamily
