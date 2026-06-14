@@ -223,7 +223,15 @@ def _pack_zip(path: Path) -> None:
 
 
 def pack_portable_zip() -> None:
-    _pack_zip(PORTABLE_ZIP_PATH)
+    marker = APP_DIR / "portable"
+    created_marker = not marker.exists()
+    if created_marker:
+        marker.write_text("", encoding="utf-8")
+    try:
+        _pack_zip(PORTABLE_ZIP_PATH)
+    finally:
+        if created_marker and marker.exists():
+            marker.unlink()
     _print(f"Portable archive ready: {PORTABLE_ZIP_PATH}")
 
 
