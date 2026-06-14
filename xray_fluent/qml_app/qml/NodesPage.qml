@@ -560,6 +560,8 @@ Item {
                             required property bool selected
                             required property bool runtimeSupported
                             required property int speedProgress
+                            required property string flagSource
+                            required property string flagEmoji
                             required property string flagOrient
                             required property var flagColors
                             required property string lastUsed
@@ -636,15 +638,32 @@ Item {
                                         spacing: 8
                                         Item {
                                             id: flagBox
-                                            width: (nodeRow.flagColors && nodeRow.flagColors.length > 0) ? 22 : 0
-                                            height: 14
+                                            width: nodeRow.flagSource ? 22 : (nodeRow.flagEmoji ? 24 : ((nodeRow.flagColors && nodeRow.flagColors.length > 0) ? 22 : 0))
+                                            height: 18
                                             visible: width > 0
                                             clip: true
+                                            Image {
+                                                anchors.fill: parent
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                visible: !!nodeRow.flagSource
+                                                source: nodeRow.flagSource
+                                                fillMode: Image.PreserveAspectFit
+                                                asynchronous: true
+                                                cache: true
+                                            }
+                                            Text {
+                                                anchors.centerIn: parent
+                                                visible: !nodeRow.flagSource && !!nodeRow.flagEmoji
+                                                text: nodeRow.flagEmoji
+                                                font.pixelSize: 18
+                                                font.family: "Segoe UI Emoji"
+                                                renderType: Text.NativeRendering
+                                            }
                                             Column {
                                                 anchors.fill: parent
-                                                visible: nodeRow.flagOrient === "h"
+                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "h"
                                                 Repeater {
-                                                    model: (nodeRow.flagOrient === "h" && nodeRow.flagColors) ? nodeRow.flagColors : []
+                                                    model: (!nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "h" && nodeRow.flagColors) ? nodeRow.flagColors : []
                                                     delegate: Rectangle {
                                                         required property string modelData
                                                         width: flagBox.width
@@ -655,9 +674,9 @@ Item {
                                             }
                                             Row {
                                                 anchors.fill: parent
-                                                visible: nodeRow.flagOrient === "v"
+                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "v"
                                                 Repeater {
-                                                    model: (nodeRow.flagOrient === "v" && nodeRow.flagColors) ? nodeRow.flagColors : []
+                                                    model: (!nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "v" && nodeRow.flagColors) ? nodeRow.flagColors : []
                                                     delegate: Rectangle {
                                                         required property string modelData
                                                         width: flagBox.width / Math.max(1, nodeRow.flagColors.length)
@@ -668,7 +687,7 @@ Item {
                                             }
                                             Item {
                                                 anchors.fill: parent
-                                                visible: nodeRow.flagOrient === "nordic"
+                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "nordic"
                                                 Rectangle { anchors.fill: parent; color: (nodeRow.flagColors && nodeRow.flagColors.length > 0) ? nodeRow.flagColors[0] : "transparent" }
                                                 Rectangle {
                                                     x: 0; y: Math.round(flagBox.height * 0.36)
@@ -695,7 +714,7 @@ Item {
                                             }
                                             Item {
                                                 anchors.fill: parent
-                                                visible: nodeRow.flagOrient === "cross"
+                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "cross"
                                                 Rectangle { anchors.fill: parent; color: (nodeRow.flagColors && nodeRow.flagColors.length > 0) ? nodeRow.flagColors[0] : "transparent" }
                                                 Rectangle {
                                                     anchors.verticalCenter: parent.verticalCenter
@@ -710,6 +729,7 @@ Item {
                                             }
                                             Rectangle {
                                                 anchors.fill: parent
+                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji
                                                 color: "transparent"
                                                 radius: 2
                                                 border.width: 1

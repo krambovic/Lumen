@@ -13,7 +13,7 @@ from typing import Iterable
 from PyQt6.QtCore import QAbstractListModel, QModelIndex, Qt, pyqtSlot
 
 from ...models import Node
-from ...country_flags import detect_country, _STRIPES as _FLAG_STRIPES
+from ...country_flags import detect_country, get_flag_emoji, _STRIPES as _FLAG_STRIPES
 from ...application.node_runtime_service import is_native_singbox_only_node
 
 
@@ -36,6 +36,8 @@ class NodeListModel(QAbstractListModel):
     FlagColorsRole = Qt.ItemDataRole.UserRole + 15
     LastUsedRole = Qt.ItemDataRole.UserRole + 16
     RuntimeSupportedRole = Qt.ItemDataRole.UserRole + 17
+    FlagEmojiRole = Qt.ItemDataRole.UserRole + 18
+    FlagSourceRole = Qt.ItemDataRole.UserRole + 19
 
     _ROLE_NAMES = {
         IdRole: b"nodeId",
@@ -55,6 +57,8 @@ class NodeListModel(QAbstractListModel):
         FlagColorsRole: b"flagColors",
         LastUsedRole: b"lastUsed",
         RuntimeSupportedRole: b"runtimeSupported",
+        FlagEmojiRole: b"flagEmoji",
+        FlagSourceRole: b"flagSource",
     }
 
     def __init__(self, parent=None) -> None:
@@ -101,6 +105,11 @@ class NodeListModel(QAbstractListModel):
             return bool(node.is_alive)
         if role == self.CountryRole:
             return self._country_for(node).lower()
+        if role == self.FlagEmojiRole:
+            return get_flag_emoji(self._country_for(node))
+        if role == self.FlagSourceRole:
+            code = self._country_for(node).lower()
+            return f"assets/flags/{code}.svg" if len(code) == 2 and code.isalpha() else ""
         if role == self.FlagOrientRole:
             data = _FLAG_STRIPES.get(self._country_for(node))
             return data[0] if data else ""

@@ -960,7 +960,7 @@ def _parse_wireguard_like_link(link: str, scheme: str) -> Node:
 
     if scheme == "warp":
         endpoint = _build_warp_endpoint(params)
-        name = _clean_name(parsed.fragment, "WARP")
+        name = _clean_name(parsed.fragment, "AWG/WARP" if endpoint.get("amnezia") else "WARP")
         return Node(name=name, scheme="warp", server="engage.cloudflareclient.com", port=2408, link=link, outbound=_native_singbox_outbound(endpoint))
 
     server = parsed.hostname or _get_param(params, "server", "endpoint", "address")
@@ -986,7 +986,10 @@ def _parse_wireguard_like_link(link: str, scheme: str) -> Node:
         mtu=mtu,
         amnezia=_amnezia_from_params(params) if scheme == "awg" else {},
     )
-    name = _clean_name(parsed.fragment, f"{scheme}-{server}:{port}")
+    name = _clean_name(
+        parsed.fragment,
+        _wireguard_display_name(server, port, bool(endpoint.get("amnezia")), scheme),
+    )
     return Node(name=name, scheme=scheme, server=server, port=port, link=link, outbound=_native_singbox_outbound(endpoint))
 
 
@@ -1029,7 +1032,7 @@ def _parse_wireguard_config(text: str) -> Node:
     )
     scheme = "awg" if amnezia else "wireguard"
     return Node(
-        name=f"{scheme}-{server}:{port or 51820}",
+        name=_wireguard_display_name(server, port or 51820, bool(amnezia), scheme),
         scheme=scheme,
         server=server,
         port=port or 51820,
@@ -1055,6 +1058,41 @@ def _build_warp_endpoint(params: dict[str, str]) -> dict[str, Any]:
             profile[target] = value
     endpoint["profile"] = profile
     return endpoint
+
+
+def _wireguard_display_name(server: str, port: int, amnezia: bool, scheme: str = "wireguard") -> str:
+    if amnezia and _is_warp_endpoint(server):
+        label = "AWG/WARP"
+    elif amnezia or scheme == "awg":
+        label = "AWG"
+    elif _is_warp_endpoint(server):
+        label = "WARP"
+    else:
+        label = "WireGuard"
+    return f"{label} {server}:{int(port or 51820)}"
+
+
+def _is_warp_endpoint(server: str) -> bool:
+    host = str(server or "").strip().lower().strip(".")
+    return host in {
+        "engage.cloudflareclient.com",
+        "162.159.192.1",
+        "162.159.192.2",
+        "162.159.192.3",
+        "162.159.192.4",
+        "162.159.193.1",
+        "162.159.193.2",
+        "162.159.193.3",
+        "162.159.193.4",
+        "2606:4700:d0::a29f:c001",
+        "2606:4700:d0::a29f:c002",
+        "2606:4700:d0::a29f:c003",
+        "2606:4700:d0::a29f:c004",
+        "2606:4700:d1::a29f:c101",
+        "2606:4700:d1::a29f:c102",
+        "2606:4700:d1::a29f:c103",
+        "2606:4700:d1::a29f:c104",
+    }
 
 
 def _build_wireguard_endpoint(

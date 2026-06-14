@@ -132,6 +132,14 @@ def get_flag_icon(code: str) -> QIcon | None:
     return icon
 
 
+def get_flag_emoji(code: str) -> str:
+    """Return a regional-indicator flag emoji for an ISO 3166-1 alpha-2 code."""
+    code = str(code or "").strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return ""
+    return "".join(chr(0x1F1E6 + ord(ch) - ord("A")) for ch in code)
+
+
 def _draw_flag(code: str) -> QPixmap:
     pm = QPixmap(_W, _H)
     pm.fill(QColor(0, 0, 0, 0))
