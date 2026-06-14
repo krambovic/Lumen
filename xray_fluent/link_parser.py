@@ -1064,12 +1064,8 @@ def _build_warp_endpoint(params: dict[str, str]) -> dict[str, Any]:
 
 
 def _wireguard_display_name(server: str, port: int, amnezia: bool, scheme: str = "wireguard") -> str:
-    if amnezia and _is_warp_endpoint(server):
-        label = "AWG/WARP"
-    elif amnezia or scheme == "awg":
+    if amnezia or scheme == "awg":
         label = "AWG"
-    elif _is_warp_endpoint(server):
-        label = "WARP"
     else:
         label = "WireGuard"
     return f"{label} {server}:{int(port or 51820)}"
