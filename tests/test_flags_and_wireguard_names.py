@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from xray_fluent.country_flags import get_flag_emoji
+from xray_fluent.country_flags import get_flag_emoji, get_flag_svg_data_uri
 from xray_fluent.link_parser import parse_links_text
 
 
@@ -10,6 +10,13 @@ def test_flag_emoji_uses_real_regional_indicators() -> None:
     assert get_flag_emoji("FI") == "🇫🇮"
     assert get_flag_emoji("de") == "🇩🇪"
     assert get_flag_emoji("USA") == ""
+
+
+def test_flag_svg_data_uri_comes_from_combined_sprite() -> None:
+    uri = get_flag_svg_data_uri("GB")
+
+    assert uri.startswith("data:image/svg+xml;base64,")
+    assert get_flag_svg_data_uri("USA") == ""
 
 
 def test_amnezia_warp_config_gets_awg_warp_name() -> None:
@@ -39,6 +46,7 @@ def test_amnezia_warp_config_gets_awg_warp_name() -> None:
     assert len(nodes) == 1
     assert nodes[0].scheme == "awg"
     assert nodes[0].name.startswith("AWG/WARP ")
+    assert "WARP" in nodes[0].tags
 
 
 def test_plain_cloudflare_wireguard_config_gets_warp_name() -> None:
@@ -59,3 +67,4 @@ def test_plain_cloudflare_wireguard_config_gets_warp_name() -> None:
     assert len(nodes) == 1
     assert nodes[0].scheme == "wireguard"
     assert nodes[0].name.startswith("WARP ")
+    assert "WARP" in nodes[0].tags

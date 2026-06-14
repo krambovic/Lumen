@@ -13,7 +13,7 @@ from typing import Iterable
 from PyQt6.QtCore import QAbstractListModel, QModelIndex, Qt, pyqtSlot
 
 from ...models import Node
-from ...country_flags import detect_country, get_flag_emoji, _STRIPES as _FLAG_STRIPES
+from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri, _STRIPES as _FLAG_STRIPES
 from ...application.node_runtime_service import is_native_singbox_only_node
 
 
@@ -108,8 +108,7 @@ class NodeListModel(QAbstractListModel):
         if role == self.FlagEmojiRole:
             return get_flag_emoji(self._country_for(node))
         if role == self.FlagSourceRole:
-            code = self._country_for(node).lower()
-            return f"assets/flags/{code}.svg" if len(code) == 2 and code.isalpha() else ""
+            return get_flag_svg_data_uri(self._country_for(node))
         if role == self.FlagOrientRole:
             data = _FLAG_STRIPES.get(self._country_for(node))
             return data[0] if data else ""

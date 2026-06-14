@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import json
+from pathlib import Path
 import re
 import socket
 import urllib.request
+import xml.etree.ElementTree as ET
 
 from .http_utils import urlopen as _urlopen
 
@@ -117,6 +120,8 @@ _STRIPES: dict[str, tuple[str, list[str]]] = {
 
 # ── Icon cache & rendering ──────────────────────────────────────
 _icon_cache: dict[str, QIcon] = {}
+_svg_data_cache: dict[str, str] = {}
+_svg_symbol_cache: dict[str, tuple[str, str]] | None = None
 
 
 def get_flag_icon(code: str) -> QIcon | None:
@@ -138,6 +143,52 @@ def get_flag_emoji(code: str) -> str:
     if len(code) != 2 or not code.isalpha():
         return ""
     return "".join(chr(0x1F1E6 + ord(ch) - ord("A")) for ch in code)
+
+
+def get_flag_svg_data_uri(code: str) -> str:
+    code = str(code or "").strip().lower()
+    if len(code) != 2 or not code.isalpha():
+        return ""
+    cached = _svg_data_cache.get(code)
+    if cached is not None:
+        return cached
+    symbols = _load_flag_symbols()
+    item = symbols.get(code)
+    if not item:
+        _svg_data_cache[code] = ""
+        return ""
+    view_box, body = item
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}">{body}</svg>'
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    uri = f"data:image/svg+xml;base64,{encoded}"
+    _svg_data_cache[code] = uri
+    return uri
+
+
+def _load_flag_symbols() -> dict[str, tuple[str, str]]:
+    global _svg_symbol_cache
+    if _svg_symbol_cache is not None:
+        return _svg_symbol_cache
+
+    sprite_path = Path(__file__).resolve().parent / "qml_app" / "qml" / "assets" / "flags.svg"
+    result: dict[str, tuple[str, str]] = {}
+    try:
+        root = ET.parse(sprite_path).getroot()
+    except Exception:
+        _svg_symbol_cache = result
+        return result
+
+    ns = {"svg": "http://www.w3.org/2000/svg"}
+    for symbol in root.findall(".//svg:symbol", ns):
+        code = str(symbol.attrib.get("id") or "").strip().lower()
+        view_box = str(symbol.attrib.get("viewBox") or "0 0 640 480")
+        if len(code) != 2 or not code.isalpha():
+            continue
+        body = "".join(ET.tostring(child, encoding="unicode") for child in list(symbol))
+        if body:
+            result[code] = (view_box, body)
+    _svg_symbol_cache = result
+    return result
 
 
 def _draw_flag(code: str) -> QPixmap:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 from pathlib import Path
 from typing import Any
@@ -961,7 +962,7 @@ def _parse_wireguard_like_link(link: str, scheme: str) -> Node:
     if scheme == "warp":
         endpoint = _build_warp_endpoint(params)
         name = _clean_name(parsed.fragment, "AWG/WARP" if endpoint.get("amnezia") else "WARP")
-        return Node(name=name, scheme="warp", server="engage.cloudflareclient.com", port=2408, link=link, outbound=_native_singbox_outbound(endpoint))
+        return Node(name=name, scheme="warp", server="engage.cloudflareclient.com", port=2408, link=link, outbound=_native_singbox_outbound(endpoint), tags=["WARP"])
 
     server = parsed.hostname or _get_param(params, "server", "endpoint", "address")
     port = parsed.port or int(_get_param(params, "port", default="0") or 0) or 51820
@@ -990,7 +991,8 @@ def _parse_wireguard_like_link(link: str, scheme: str) -> Node:
         parsed.fragment,
         _wireguard_display_name(server, port, bool(endpoint.get("amnezia")), scheme),
     )
-    return Node(name=name, scheme=scheme, server=server, port=port, link=link, outbound=_native_singbox_outbound(endpoint))
+    tags = ["WARP"] if _is_warp_endpoint(server) else []
+    return Node(name=name, scheme=scheme, server=server, port=port, link=link, outbound=_native_singbox_outbound(endpoint), tags=tags)
 
 
 def _parse_wireguard_config(text: str) -> Node:
@@ -1038,6 +1040,7 @@ def _parse_wireguard_config(text: str) -> Node:
         port=port or 51820,
         link=text,
         outbound=_native_singbox_outbound(endpoint),
+        tags=["WARP"] if _is_warp_endpoint(server) else [],
     )
 
 
@@ -1074,25 +1077,22 @@ def _wireguard_display_name(server: str, port: int, amnezia: bool, scheme: str =
 
 def _is_warp_endpoint(server: str) -> bool:
     host = str(server or "").strip().lower().strip(".")
-    return host in {
-        "engage.cloudflareclient.com",
-        "162.159.192.1",
-        "162.159.192.2",
-        "162.159.192.3",
-        "162.159.192.4",
-        "162.159.193.1",
-        "162.159.193.2",
-        "162.159.193.3",
-        "162.159.193.4",
-        "2606:4700:d0::a29f:c001",
-        "2606:4700:d0::a29f:c002",
-        "2606:4700:d0::a29f:c003",
-        "2606:4700:d0::a29f:c004",
-        "2606:4700:d1::a29f:c101",
-        "2606:4700:d1::a29f:c102",
-        "2606:4700:d1::a29f:c103",
-        "2606:4700:d1::a29f:c104",
-    }
+    if host == "engage.cloudflareclient.com" or host.endswith(".cloudflareclient.com"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(
+        address in network
+        for network in (
+            ipaddress.ip_network("162.159.192.0/24"),
+            ipaddress.ip_network("162.159.193.0/24"),
+            ipaddress.ip_network("188.114.96.0/20"),
+            ipaddress.ip_network("2606:4700:d0::/48"),
+            ipaddress.ip_network("2606:4700:d1::/48"),
+        )
+    )
 
 
 def _build_wireguard_endpoint(
