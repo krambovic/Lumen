@@ -17,6 +17,8 @@ jobs:
 
       - name: Determine version
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $file = "xray_fluent/constants.py"
           $content = Get-Content $file -Raw
@@ -24,7 +26,15 @@ jobs:
             throw "APP_VERSION not found"
           }
           $version = $Matches[1]
-          $preVersion = "$version-pre.$env:GITHUB_RUN_NUMBER"
+          $tags = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ".[].tag_name"
+          $max = 0
+          foreach ($t in $tags) {
+            if ($t -match "^v?$([regex]::Escape($version))-pre\.(\d+)$") {
+              if ([int]$Matches[1] -gt $max) { $max = [int]$Matches[1] }
+            }
+          }
+          $preNum = $max + 1
+          $preVersion = "$version-pre.$preNum"
           $preTag = "v$preVersion"
           $patched = $content -replace 'APP_VERSION\s*=\s*"[^"]+"', ('APP_VERSION = "' + $preVersion + '"')
           Set-Content $file $patched -Encoding utf8 -NoNewline
