@@ -152,6 +152,49 @@ def _set_app_user_model_id() -> None:
         )
     except Exception:
         pass
+    _register_aumid_toast_identity()
+    _register_toast_protocol()
+
+
+def _register_aumid_toast_identity() -> None:
+    """Register a friendly DisplayName + icon for our AppUserModelID"""
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg
+        from ..constants import APP_ICON_PATH, APP_NAME
+        key_path = r"Software\Classes\AppUserModelId\Lumen.LumenKVN"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, APP_NAME)
+            if APP_ICON_PATH.is_file():
+                winreg.SetValueEx(
+                    key, "IconUri", 0, winreg.REG_SZ, str(APP_ICON_PATH)
+                )
+    except Exception:
+        pass
+
+
+def _register_toast_protocol() -> None:
+    """Register the lumen-kvn: URL protocol so a toast click reopens the app"""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    try:
+        import winreg
+        exe = Path(sys.executable).resolve()
+        with winreg.CreateKey(
+            winreg.HKEY_CURRENT_USER, r"Software\Classes\lumen-kvn"
+        ) as key:
+            winreg.SetValueEx(
+                key, None, 0, winreg.REG_SZ, "URL:Lumen KVN Protocol"
+            )
+            winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
+        with winreg.CreateKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Classes\lumen-kvn\shell\open\command",
+        ) as key:
+            winreg.SetValueEx(key, None, 0, winreg.REG_SZ, f'"{exe}" "%1"')
+    except Exception:
+        pass
 
 
 def _cleanup_legacy_root_program_install() -> None:

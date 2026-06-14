@@ -407,7 +407,7 @@ Item {
             // Действия над серверами (слева, переносятся при нехватке места)
             Flow {
                 Layout.fillWidth: true
-                Layout.alignment: Qt.AlignVCenter
+                Layout.alignment: Qt.AlignTop
                 spacing: 8
 
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт из буфера"); onClicked: App.importClipboard() }
@@ -426,17 +426,19 @@ Item {
                 AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: I18n.t("Удалить выбранные"); enabled: page.selCount > 0; onClicked: App.deleteNodes(page.selectedIds()) }
             }
 
-            // Подписки (справа, в той же линии)
-            RowLayout {
-                Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+            // Подписки (справа)
+            Flow {
+                id: subToolbar
+                Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                Layout.maximumWidth: 5 * Theme.controlHeight + subCombo.width + 40
+                Layout.preferredWidth: Math.min(5 * Theme.controlHeight + subCombo.width + 40, page.width * 0.4)
                 spacing: 8
 
                 AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE946"; text: I18n.t("Свойства подписки"); enabled: App.subscriptions.length > 0; onClicked: infoDialog.openInfo() }
                 AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт подписки"); onClicked: subDialog.openNew() }
                 FilterCombo {
                     id: subCombo
-                    Layout.preferredWidth: 220
-                    width: 220
+                    width: Math.round(Math.max(90, Math.min(220, page.width * 0.22)))
                     enabled: App.subscriptions.length > 0
                     model: App.subscriptions.length > 0
                         ? App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })

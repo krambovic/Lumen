@@ -6,6 +6,7 @@ from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..constants import APP_ICON_PATH, APP_NAME
+from .toast import show_toast
 
 
 class QmlTray(QObject):
@@ -152,6 +153,8 @@ class QmlTray(QObject):
         if self._notified:
             return
         self._notified = True
+        if show_toast(APP_NAME, "Приложение свёрнуто в системный трей"):
+            return
         try:
             self._tray.showMessage(
                 APP_NAME,
