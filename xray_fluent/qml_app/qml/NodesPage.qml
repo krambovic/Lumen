@@ -663,7 +663,7 @@ Item {
                                             Rectangle {
                                                 id: flagMask
                                                 anchors.fill: parent
-                                                radius: 2
+                                                radius: 3
                                                 visible: false
                                                 antialiasing: true
                                                 layer.enabled: true
@@ -766,10 +766,10 @@ Item {
                                                 anchors.fill: parent
                                                 visible: !nodeRow.flagEmoji
                                                 color: "transparent"
-                                                radius: 2
+                                                radius: 3
                                                 antialiasing: true
                                                 border.width: 1
-                                                border.color: Qt.rgba(0, 0, 0, 0.25)
+                                                border.color: Qt.rgba(0, 0, 0, 0.2)
                                             }
                                         }
                                         Text {
