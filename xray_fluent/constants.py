@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+from .data_paths import resolve_data_dir, seed_user_data
+
 
 APP_NAME = "Lumen KVN"
 APP_VERSION = "1.2.8"
@@ -28,7 +30,13 @@ def get_base_dir() -> Path:
 
 
 BASE_DIR = get_base_dir()
-DATA_DIR = BASE_DIR / "data"
+
+
+INSTALL_DATA_DIR = BASE_DIR / "data"
+DATA_DIR = resolve_data_dir(BASE_DIR, INSTALL_DATA_DIR, APP_NAME)
+if DATA_DIR != INSTALL_DATA_DIR:
+    seed_user_data(INSTALL_DATA_DIR, DATA_DIR)
+
 ASSETS_DIR = BASE_DIR / "assets"
 APP_ICON_PATH = ASSETS_DIR / "LumenKVN.ico"
 TEMPLATES_DIR = DATA_DIR / "templates"
@@ -64,10 +72,8 @@ SPEED_TEST_SLOW_GRACE_SECONDS = 2.5
 SPEED_TEST_MIN_BYTES_AFTER_GRACE = 128 * 1024
 SPEED_TEST_MIN_MBPS_AFTER_GRACE = 0.2
 
-# Ping measurement.
 PING_METHODS = ("tcping", "icmp", "real")
 ICMP_PING_TIMEOUT_MS = 1500
-# Upper bound for concurrent speed-test workers configurable from settings.
 SPEED_TEST_MAX_CONCURRENCY = 32
 
 SS_PROTECT_PORT_START = 19200
