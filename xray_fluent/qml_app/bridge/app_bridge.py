@@ -293,8 +293,21 @@ class AppBridge(QObject):
             self.controller.save()
         except Exception:
             pass
+        server = getattr(self, "_single_instance_server", None)
+        if server is not None:
+            try:
+                server.close()
+            except Exception:
+                pass
         if not relaunch_as_admin():
             self.toast.emit("error", "Не удалось перезапустить Lumen KVN от имени администратора")
+            if server is not None:
+                try:
+                    from PyQt6.QtNetwork import QLocalServer
+                    QLocalServer.removeServer("LumenKVN.SingleInstance")
+                    server.listen("LumenKVN.SingleInstance")
+                except Exception:
+                    pass
             return
         app = QGuiApplication.instance()
         if app is not None:

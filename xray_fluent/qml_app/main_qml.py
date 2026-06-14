@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -199,17 +200,25 @@ def _create_single_instance(app):
         return None, True
 
     server_name = "LumenKVN.SingleInstance"
-    socket = QLocalSocket()
-    socket.connectToServer(server_name, QIODevice.OpenModeFlag.WriteOnly)
-    if socket.waitForConnected(250):
-        try:
-            socket.write(b"activate")
-            socket.flush()
-            socket.waitForBytesWritten(250)
-        except Exception:
-            pass
-        socket.disconnectFromServer()
-        return None, False
+    relaunching = "--relaunch-as-admin" in sys.argv[1:]
+    deadline = time.monotonic() + (5.0 if relaunching else 0.0)
+    while True:
+        socket = QLocalSocket()
+        socket.connectToServer(server_name, QIODevice.OpenModeFlag.WriteOnly)
+        if socket.waitForConnected(250):
+            if relaunching and time.monotonic() < deadline:
+                socket.abort()
+                time.sleep(0.25)
+                continue
+            try:
+                socket.write(b"activate")
+                socket.flush()
+                socket.waitForBytesWritten(250)
+            except Exception:
+                pass
+            socket.disconnectFromServer()
+            return None, False
+        break
 
     try:
         QLocalServer.removeServer(server_name)
@@ -264,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
     bridge = AppBridge()
+    bridge._single_instance_server = single_server
     bridge.load()
 
     qmlRegisterSingletonInstance("App", 1, 0, "App", bridge)
