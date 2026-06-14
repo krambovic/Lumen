@@ -80,7 +80,7 @@ FluentScroll {
                 kind: "accent"
                 glyph: "\uE724"  // Send
                 text: I18n.t("Telegram канал")
-                onClicked: App.openUrl("https://t.me/vpndiscordyooutube")
+                onClicked: App.openUrl("https://t.me/lumenkvn")
             }
             AccentButton {
                 kind: "ghost"
