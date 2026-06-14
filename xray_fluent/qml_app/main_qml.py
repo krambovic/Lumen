@@ -254,7 +254,6 @@ def main(argv: list[str] | None = None) -> int:
     from .bridge import AppBridge
 
     QApplication.setApplicationName(APP_NAME)
-    QApplication.setOrganizationName("Lumen")
 
     from PyQt6.QtGui import QSurfaceFormat
     _fmt = QSurfaceFormat.defaultFormat()
