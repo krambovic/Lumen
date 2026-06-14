@@ -250,7 +250,13 @@ Item {
                                 id: notesText
                                 width: parent.width
                                 text: page.appNotes
-                                color: Theme.textMuted; font.family: "Consolas"; font.pixelSize: 12; wrapMode: Text.WordWrap
+                                textFormat: Text.MarkdownText
+                                color: Theme.textMuted
+                                linkColor: Theme.accent
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                                onLinkActivated: function(link) { Qt.openUrlExternally(link) }
                             }
                         }
                     }

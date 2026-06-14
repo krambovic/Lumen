@@ -6,9 +6,9 @@ import "."
 
 // Faithful port of ui/settings_page.py: SettingCardGroup + SettingCard rows
 // grouped into Внешний вид / Сеть / Авто-переключение / Пути к ядрам /
-// Запуск / Обновления / Данные / Безопасность. Все ряды подключены к
+// Запуск / Обновления / Данные. Все ряды подключены к
 // AppBridge. Компактный режим скрывает продвинутые группы (авто-переключение,
-// пути к ядрам, данные, безопасность) — как SettingsPage.set_compact_mode в
+// пути к ядрам, данные) — как SettingsPage.set_compact_mode в
 // классическом приложении — вместо сворачивания навигационной панели.
 FluentScroll {
     id: page
@@ -405,12 +405,6 @@ FluentScroll {
                 Text { text: I18n.t("Данные"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE928"; title: I18n.t("Шифрование данных"); subtitle: App.encryptionActive ? I18n.t("Шифрование включено") : I18n.t("Данные хранятся без шифрования")
-                    StyledField { id: encField; Layout.preferredWidth: 180; echoMode: TextInput.Password; placeholderText: I18n.t("Пароль") }
-                    AccentButton { kind: "accent"; text: I18n.t("Включить"); onClicked: { App.setEncryptionPassword(encField.text); encField.text = "" } }
-                    AccentButton { kind: "danger"; text: I18n.t("Отключить"); enabled: App.encryptionActive; onClicked: App.disableEncryption() }
-                }
-                SettingRow {
                     glyph: "\uE74E"; title: I18n.t("Резервная копия"); subtitle: I18n.t("Экспорт и импорт настроек и серверов")
                     AccentButton { kind: "ghost"; glyph: "\uE74E"; text: I18n.t("Экспорт"); onClicked: App.exportBackup() }
                     AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Импорт"); onClicked: App.importBackup() }
@@ -418,31 +412,6 @@ FluentScroll {
             }
         }
 
-        // ============================ Безопасность ============================
-        Card {
-            Layout.fillWidth: true
-            visible: !App.compactMode
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 14
-                Text { text: I18n.t("Безопасность"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
-
-                SettingRow {
-                    glyph: "\uEB95"; title: I18n.t("Мастер-пароль"); subtitle: App.masterPasswordEnabled ? I18n.t("Введите текущий пароль, чтобы отключить") : I18n.t("Защитите приложение паролем")
-                    StyledField { id: pwField; Layout.preferredWidth: 160; echoMode: TextInput.Password; placeholderText: I18n.t("Пароль") }
-                    AccentButton { kind: "accent"; text: I18n.t("Установить"); onClicked: { App.setMasterPassword(pwField.text); pwField.text = "" } }
-                    AccentButton { kind: "danger"; text: I18n.t("Отключить"); enabled: App.masterPasswordEnabled; onClicked: { if (App.disableMasterPassword(pwField.text)) pwField.text = "" } }
-                    AccentButton { kind: "ghost"; glyph: "\uE72E"; text: I18n.t("Заблокировать"); enabled: App.masterPasswordEnabled; onClicked: App.lockNow() }
-                }
-                SettingRow {
-                    glyph: "\uE916"; title: I18n.t("Авто-блокировка"); subtitle: I18n.t("Минут бездействия до блокировки")
-                    enabled: App.masterPasswordEnabled
-                    SpinBox { from: 1; to: 120; value: App.autoLockMinutes; onValueModified: App.setAutoLockMinutes(value) }
-                }
-            }
-        }
-
-        // ============================ Подвал ============================
         Text {
             Layout.topMargin: 4
             text: App.appName + " · v" + App.appVersion

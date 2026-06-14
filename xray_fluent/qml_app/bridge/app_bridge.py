@@ -13,6 +13,7 @@ Design goals:
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
 from PyQt6.QtCore import QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
@@ -719,15 +720,48 @@ class AppBridge(QObject):
     # ── Core paths ───────────────────────────────────────────────
     @pyqtSlot(str)
     def setXrayPath(self, path: str) -> None:
+        from ...constants import XRAY_PATH_DEFAULT
         settings = deepcopy(self.controller.state.settings)
-        settings.xray_path = (path or "").strip()
+        settings.xray_path = self._normalize_core_path_setting(path, XRAY_PATH_DEFAULT)
         self.controller.update_settings(settings)
 
     @pyqtSlot(str)
     def setSingboxPath(self, path: str) -> None:
+        from ...constants import SINGBOX_PATH_DEFAULT
         settings = deepcopy(self.controller.state.settings)
-        settings.singbox_path = (path or "").strip()
+        settings.singbox_path = self._normalize_core_path_setting(path, SINGBOX_PATH_DEFAULT)
         self.controller.update_settings(settings)
+
+    @staticmethod
+    def _normalize_core_path_setting(path: str, default_path: Path) -> str:
+        value = (path or "").strip().strip('"')
+        if not value:
+            return ""
+        normalized = value.replace("/", "\\")
+        default_relative = f"core\\{default_path.name}"
+        if normalized.lower() == default_relative.lower():
+            return ""
+        try:
+            if Path(value).expanduser().resolve() == default_path.resolve():
+                return ""
+        except Exception:
+            pass
+        return value
+
+    @staticmethod
+    def _display_core_path(path: str, default_path: Path) -> str:
+        value = (path or "").strip()
+        if not value:
+            return f"core\\{default_path.name}"
+        try:
+            if Path(value).expanduser().resolve() == default_path.resolve():
+                return f"core\\{default_path.name}"
+        except Exception:
+            pass
+        normalized = value.replace("/", "\\")
+        if normalized.lower() == f"core\\{default_path.name}".lower():
+            return f"core\\{default_path.name}"
+        return value
 
     @pyqtSlot(result=str)
     def browseXrayPath(self) -> str:
@@ -1818,7 +1852,7 @@ class AppBridge(QObject):
         try:
             from ...constants import XRAY_PATH_DEFAULT
             path = (self.controller.state.settings.xray_path or "").strip()
-            return path or str(XRAY_PATH_DEFAULT)
+            return self._display_core_path(path, XRAY_PATH_DEFAULT)
         except Exception:
             return ""
 
@@ -1826,7 +1860,8 @@ class AppBridge(QObject):
     def singboxPath(self) -> str:
         try:
             from ...constants import SINGBOX_PATH_DEFAULT
-            return self.controller.state.settings.singbox_path or str(SINGBOX_PATH_DEFAULT)
+            path = (self.controller.state.settings.singbox_path or "").strip()
+            return self._display_core_path(path, SINGBOX_PATH_DEFAULT)
         except Exception:
             return ""
 
