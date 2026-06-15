@@ -173,6 +173,10 @@ class AppSettings:
     launch_on_startup: bool = False
     always_run_as_admin: bool = False
     reconnect_on_network_change: bool = True
+    # Kill-switch: при неожиданном обрыве VPN не выпускать трафик напрямую (fail-closed).
+    kill_switch: bool = False
+    # Проверять обновления ядер и geoip/geosite при запуске и уведомлять.
+    resource_update_check: bool = False
     xray_path: str = ""
     log_level: str = "warning"
     check_updates: bool = True
@@ -229,6 +233,8 @@ class AppSettings:
             "launch_on_startup": self.launch_on_startup,
             "always_run_as_admin": self.always_run_as_admin,
             "reconnect_on_network_change": self.reconnect_on_network_change,
+            "kill_switch": self.kill_switch,
+            "resource_update_check": self.resource_update_check,
             "xray_path": self.xray_path,
             "log_level": self.log_level,
             "check_updates": self.check_updates,
@@ -282,6 +288,8 @@ class AppSettings:
             launch_on_startup=bool(data.get("launch_on_startup", False)),
             always_run_as_admin=bool(data.get("always_run_as_admin", False)),
             reconnect_on_network_change=bool(data.get("reconnect_on_network_change", True)),
+            kill_switch=bool(data.get("kill_switch", False)),
+            resource_update_check=bool(data.get("resource_update_check", False)),
             xray_path=str(data.get("xray_path") or ""),
             log_level=str(data.get("log_level") or "warning"),
             check_updates=bool(data.get("check_updates", True)),
@@ -329,6 +337,8 @@ class AppState:
     security: SecuritySettings = field(default_factory=SecuritySettings)
     # Импортированные подписки: [{"url", "name", "group", "updated_at", "node_count"}].
     subscriptions: list[dict[str, Any]] = field(default_factory=list)
+    # Кастомные пресеты маршрутизации: [{"id", "name", "routing": {...}}].
+    routing_presets: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -339,6 +349,7 @@ class AppState:
             "settings": self.settings.to_dict(),
             "security": self.security.to_dict(),
             "subscriptions": [dict(item) for item in self.subscriptions],
+            "routing_presets": [dict(item) for item in self.routing_presets],
         }
 
     @staticmethod
@@ -353,6 +364,7 @@ class AppState:
             settings=AppSettings.from_dict(dict(data.get("settings") or {})),
             security=SecuritySettings.from_dict(dict(data.get("security") or {})),
             subscriptions=[dict(item) for item in (data.get("subscriptions") or []) if isinstance(item, dict)],
+            routing_presets=[dict(item) for item in (data.get("routing_presets") or []) if isinstance(item, dict)],
         )
 
 

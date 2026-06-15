@@ -317,6 +317,8 @@ class AppController(QObject):
         self._auto_switch_cycle_attempts: int = 0
         self._auto_switch_exhausted: bool = False
         self._auto_switch_transitioning: bool = False
+        self._health_down_since: float = 0.0  # monotonic-метка пропажи пинга (health-check для auto-switch)
+        self._kill_switch_engaged: bool = False  # активный fail-closed kill-switch после обрыва
         self._active_session: ActiveSessionSnapshot | None = None
         self._desired_connected = False
         self._transition_active = False
@@ -1294,6 +1296,7 @@ class AppController(QObject):
         self._auto_switch_low_since = 0.0
         self._auto_switch_high_ticks = 0
         self._auto_switch_active_download = False
+        self._health_down_since = 0.0  # сброс health-check вместе с auto-switch
         if reset_cycle:
             self._auto_switch_cycle_attempts = 0
             self._auto_switch_exhausted = False
@@ -1647,8 +1650,8 @@ class AppController(QObject):
     # Minimum speed to count as "traffic exists" (1 KB/s) vs idle (0)
     _AUTO_SWITCH_IDLE_BPS = 1024.0
 
-    def _check_auto_switch(self, down_bps: float) -> None:
-        check_auto_switch_operation(self, down_bps)
+    def _check_auto_switch(self, down_bps: float, latency_ms: int | None = None) -> None:
+        check_auto_switch_operation(self, down_bps, latency_ms)
 
     def _get_next_node_for_auto_switch(self) -> Node | None:
         return get_next_node_for_auto_switch_operation(self)

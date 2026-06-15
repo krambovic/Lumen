@@ -55,7 +55,7 @@ def is_native_singbox_only_node(node: Node | None) -> bool:
     if not isinstance(outbound, dict):
         return False
     protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
-    if protocol in {"warp", "wireguard", "awg", "hysteria", "hysteria2"}:
+    if protocol in {"warp", "wireguard", "awg", "hysteria", "hysteria2", "tuic"}:
         return True
     return isinstance(outbound.get("singbox"), dict) and protocol not in {
         "vless",

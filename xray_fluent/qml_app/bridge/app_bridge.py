@@ -54,6 +54,8 @@ class AppBridge(QObject):
     lockedChanged = pyqtSignal()           # app lock/unlock state changed
     trayAvailableChanged = pyqtSignal()    # system tray availability resolved
     trayMessageRequested = pyqtSignal()    # ask the tray to show its balloon
+    trayNotify = pyqtSignal(str, str)      # (заголовок, текст) — уведомление события
+    nodeQrReady = pyqtSignal(str, str)     # (png data uri, node name)
     quittingChanged = pyqtSignal()         # real-exit flag flipped on quit
     languageChanged = pyqtSignal()         # active UI language changed
 
@@ -107,6 +109,7 @@ class AppBridge(QObject):
 
         self._tray_available = False
         self._quitting = False
+        self._updates_available = False
 
         # Таймер авто-обновления подписок (интервал берётся из настроек).
         self._sub_timer = QTimer(self)
@@ -133,6 +136,12 @@ class AppBridge(QObject):
                 QTimer.singleShot(
                     2500, lambda: self._start_app_update_check(silent=True)
                 )
+        except Exception:
+            pass
+        # Проверка обновлений ядра sing-box и geoip/geosite при запуске (тихо, с уведомлением).
+        try:
+            if getattr(self.controller.state.settings, "resource_update_check", False):
+                QTimer.singleShot(4000, self._start_resource_update_check)
         except Exception:
             pass
         # Разовое тихое обновление подписок при запуске. Таймер авто-обновления
@@ -274,6 +283,21 @@ class AppBridge(QObject):
     def trayAvailable(self) -> bool:
         return self._tray_available
 
+    def _set_updates_available(self, value: bool) -> None:
+        value = bool(value)
+        if value != self._updates_available:
+            self._updates_available = value
+            self.updatesAvailableChanged.emit()
+
+    @pyqtProperty(bool, notify=updatesAvailableChanged)
+    def updatesAvailable(self) -> bool:
+        return self._updates_available
+
+    @pyqtSlot()
+    def markUpdatesSeen(self) -> None:
+        """Сбросить бейдж обновлений (пользователь открыл вкладку)."""
+        self._set_updates_available(False)
+
     @pyqtProperty(bool, notify=quittingChanged)
     def quitting(self) -> bool:
         return self._quitting
@@ -342,7 +366,7 @@ class AppBridge(QObject):
         c.speed_progress_updated.connect(self._node_model.update_speed_progress)
         c.bulk_task_progress.connect(self.bulkTaskProgress.emit)
         c.live_metrics_updated.connect(self._on_live_metrics)
-        c.auto_switch_triggered.connect(self.autoSwitch.emit)
+        c.auto_switch_triggered.connect(self._on_auto_switch)
         c.connectivity_test_done.connect(self.connectivityResult.emit)
         c.lock_state_changed.connect(self._on_lock_state)
         c.admin_relaunch_requested.connect(self._on_admin_relaunch)
@@ -461,8 +485,14 @@ class AppBridge(QObject):
         return items
 
     def _on_selection_changed(self, node: Node | None) -> None:
-        self._selected_id = node.id if node else ""
-        self._selected_name = (node.name or node.server) if node else ""
+        prev_id = self._selected_id
+        new_id = node.id if node else ""
+        new_name = (node.name or node.server) if node else ""
+        # Уведомление о смене сервера во время активного подключения.
+        if self._connected and prev_id and new_id and new_id != prev_id:
+            self.trayNotify.emit(tr("Сервер изменён"), new_name)
+        self._selected_id = new_id
+        self._selected_name = new_name
         self._selected_latency = (
             -1 if (node is None or node.ping_ms is None) else int(node.ping_ms)
         )
@@ -570,6 +600,43 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def applyRoutingPreset(self, preset_id: str) -> None:
         self.controller.apply_routing_preset(preset_id)
+
+    @pyqtSlot(str)
+    def saveRoutingPreset(self, name: str) -> None:
+        from uuid import uuid4
+        title = (name or "").strip() or tr("Пресет")
+        preset = {
+            "id": uuid4().hex,
+            "name": title,
+            "routing": self.controller.state.routing.to_dict(),
+        }
+        self.controller.state.routing_presets.append(preset)
+        self.controller.save()
+        self.routingChanged.emit()
+        self.toast.emit("success", tr("Пресет сохранён: {name}", name=title))
+
+    @pyqtSlot(str)
+    def applyCustomRoutingPreset(self, preset_id: str) -> None:
+        preset = next(
+            (p for p in self.controller.state.routing_presets if p.get("id") == preset_id),
+            None,
+        )
+        if preset is None:
+            self.toast.emit("warning", tr("Пресет не найден"))
+            return
+        routing = RoutingSettings.from_dict(dict(preset.get("routing") or {}))
+        self.controller.update_routing(routing)
+        self.toast.emit("success", tr("Применён пресет: {name}", name=preset.get("name", "")))
+
+    @pyqtSlot(str)
+    def deleteRoutingPreset(self, preset_id: str) -> None:
+        before = len(self.controller.state.routing_presets)
+        self.controller.state.routing_presets = [
+            p for p in self.controller.state.routing_presets if p.get("id") != preset_id
+        ]
+        if len(self.controller.state.routing_presets) != before:
+            self.controller.save()
+            self.routingChanged.emit()
 
     @pyqtSlot(bool)
     def setTun(self, enabled: bool) -> None:
@@ -714,6 +781,18 @@ class AppBridge(QObject):
     def setReconnectOnNetworkChange(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.reconnect_on_network_change = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setKillSwitch(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.kill_switch = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setResourceUpdateCheck(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.resource_update_check = bool(enabled)
         self.controller.update_settings(settings)
 
     # ── Auto-switch ──────────────────────────────────────────────
@@ -1014,6 +1093,50 @@ class AppBridge(QObject):
             clipboard.setText(link)
             self.toast.emit("success", "Ссылка скопирована в буфер обмена")
 
+    @pyqtSlot('QVariantList')
+    def exportNodeLinks(self, ids: list | None = None) -> None:
+        """Copy share links of the given nodes (or all) to the clipboard, one per line."""
+        wanted = {str(i) for i in (ids or [])}
+        links: list[str] = []
+        for node in self.controller.state.nodes:
+            if wanted and node.id not in wanted:
+                continue
+            link = (getattr(node, "link", "") or "").strip()
+            if link:
+                links.append(link)
+        if not links:
+            self.toast.emit("warning", tr("Нет ссылок для экспорта"))
+            return
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText("\n".join(links))
+            self.toast.emit("success", tr("Скопировано ссылок: {count}", count=len(links)))
+
+    @pyqtSlot(str)
+    def showNodeQr(self, node_id: str = "") -> None:
+        """Render a node's share link as a QR code and hand a PNG data URI to QML."""
+        node = (
+            self.controller._get_node_by_id(node_id) if node_id
+            else self.controller.selected_node
+        )
+        link = (getattr(node, "link", "") or "").strip() if node is not None else ""
+        if not link:
+            self.toast.emit("warning", tr("У сервера нет ссылки для QR-кода"))
+            return
+        try:
+            import base64
+            import io
+            import qrcode
+            img = qrcode.make(link)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+        except Exception as exc:  # noqa: BLE001
+            self.toast.emit("error", tr("Не удалось создать QR-код: {err}", err=str(exc)))
+            return
+        name = getattr(node, "name", "") or getattr(node, "server", "") or ""
+        self.nodeQrReady.emit(data_uri, name)
+
     @pyqtSlot(int, result="QVariantMap")
     def historyData(self, days: int = 30):
         """Aggregated traffic-history payload for the History tab.
@@ -1080,6 +1203,33 @@ class AppBridge(QObject):
     def _clear_app_update_checker(self) -> None:
         self._app_update_checker = None
 
+    def _start_resource_update_check(self) -> None:
+        from ...core_resource_updater import StartupResourceCheckWorker
+        if getattr(self, "_startup_resource_worker", None) is not None:
+            return
+        worker = StartupResourceCheckWorker(
+            singbox_path=self.controller.state.settings.singbox_path,
+        )
+        self._startup_resource_worker = worker
+        worker.done.connect(self._on_startup_resource_check_done)
+        worker.finished.connect(self._clear_startup_resource_worker)
+        worker.start()
+
+    def _clear_startup_resource_worker(self) -> None:
+        self._startup_resource_worker = None
+
+    def _on_startup_resource_check_done(self, results) -> None:
+        labels = {"singbox": "sing-box", "geodata": "geoip/geosite"}
+        available = [
+            labels.get(getattr(r, "kind", ""), getattr(r, "kind", ""))
+            for r in (results or [])
+            if getattr(r, "status", "") == "available"
+        ]
+        if not available:
+            return
+        self.toast.emit("info", tr("Доступны обновления: {items}", items=", ".join(available)))
+        self.trayMessageRequested.emit()
+
     def _on_app_update_result(self, update) -> None:
         self._pending_app_update = update
         silent = getattr(self, "_app_update_silent", False)
@@ -1091,6 +1241,7 @@ class AppBridge(QObject):
         if len(notes) > 1200:
             notes = notes[:1200].rstrip() + "…"
         is_downgrade = bool(getattr(update, "is_downgrade", False))
+        self._set_updates_available(True)
         self.appUpdateState.emit({
             "phase": "available",
             "version": update.version,
@@ -1863,6 +2014,20 @@ class AppBridge(QObject):
             return True
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def killSwitch(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.kill_switch)
+        except Exception:
+            return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def resourceUpdateCheck(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.resource_update_check)
+        except Exception:
+            return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def autoSwitchEnabled(self) -> bool:
         try:
             return bool(self.controller.state.settings.auto_switch_enabled)
@@ -2175,6 +2340,13 @@ class AppBridge(QObject):
         ]
 
     # ── Routing detail: commands ─────────────────────────────────
+    @pyqtProperty('QVariantList', notify=routingChanged)
+    def customRoutingPresets(self):
+        return [
+            {"id": p.get("id", ""), "name": p.get("name", "")}
+            for p in self.controller.state.routing_presets
+        ]
+
     def _mutate_routing(self, fn) -> None:
         routing = deepcopy(self.controller.state.routing)
         fn(routing)
@@ -2256,6 +2428,15 @@ class AppBridge(QObject):
         def apply(r: RoutingSettings) -> None:
             r.process_rules = [dict(x) for x in r.process_rules if x.get("process") != process]
         self._mutate_routing(apply)
+
+    @pyqtSlot(result="QVariantList")
+    def runningProcesses(self):
+        """Список имён exe запущенных процессов для выбора в маршрутизации."""
+        try:
+            from ...win_process_list import list_running_executables
+            return list_running_executables()
+        except Exception:
+            return []
 
     @pyqtSlot(str, str)
     def addDomainRule(self, addr: str, action: str) -> None:

@@ -146,6 +146,14 @@ FluentScroll {
                     glyph: "\uE895"; title: I18n.t("Переподключение при смене сети"); subtitle: I18n.t("Автоматически переподключаться при изменении сети")
                     Switch { checked: App.reconnectOnNetworkChange; onToggled: App.setReconnectOnNetworkChange(checked) }
                 }
+                SettingRow {
+                    glyph: "\uE72E"; title: I18n.t("Kill-switch"); subtitle: I18n.t("При обрыве VPN блокировать трафик вместо выхода напрямую")
+                    Switch { checked: App.killSwitch; onToggled: App.setKillSwitch(checked) }
+                }
+                SettingRow {
+                    glyph: "\uE72C"; title: I18n.t("Проверять обновления ядра и geoip/geosite"); subtitle: I18n.t("При запуске проверять обновления и уведомлять")
+                    Switch { checked: App.resourceUpdateCheck; onToggled: App.setResourceUpdateCheck(checked) }
+                }
             }
         }
 

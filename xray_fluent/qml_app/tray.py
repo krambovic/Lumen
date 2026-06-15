@@ -59,8 +59,17 @@ class QmlTray(QObject):
             self._bridge.trayMessageRequested.connect(self.notify_hidden)
         except Exception:
             pass
+        try:
+            self._bridge.trayNotify.connect(self.notify_event)
+        except Exception:
+            pass
+        try:
+            self._bridge.selectionChanged.connect(self._update_tooltip)
+        except Exception:
+            pass
 
         self._refresh_actions()
+        self._update_tooltip()
         self._tray.show()
 
     # ── window visibility ──────────────────────────────────
@@ -153,6 +162,44 @@ class QmlTray(QObject):
             self._action_next.setText(tr("Следующий сервер"))
             self._action_admin.setText(tr("Перезапустить от администратора"))
             self._action_quit.setText(tr("Выход"))
+        except Exception:
+            pass
+        self._update_tooltip()
+
+    def _current_node_name(self) -> str:
+        try:
+            return str(self._bridge.selectedNodeName or "")
+        except Exception:
+            return ""
+
+    def _update_tooltip(self) -> None:
+        # Мини-статус в трее: состояние подключения + текущий сервер.
+        try:
+            name = self._current_node_name()
+            if self._connected():
+                state = tr("Подключено")
+                tip = f"{APP_NAME} — {state}"
+                if name:
+                    tip += f"\n{name}"
+            else:
+                tip = f"{APP_NAME} — {tr('Отключено')}"
+            self._tray.setToolTip(tip)
+        except Exception:
+            pass
+
+    def notify_event(self, title: str, message: str) -> None:
+        # Балун только когда окно скрыто (в окне уже есть тост).
+        if self._window_visible():
+            return
+        if show_toast(title or APP_NAME, message or ""):
+            return
+        try:
+            self._tray.showMessage(
+                title or APP_NAME,
+                message or "",
+                QSystemTrayIcon.MessageIcon.Information,
+                4000,
+            )
         except Exception:
             pass
 

@@ -423,6 +423,9 @@ Item {
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE769"; text: I18n.t("Остановить тест"); onClicked: App.cancelSpeedTest() }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE943"; text: I18n.t("Экспорт outbound JSON"); enabled: page.selCount === 1; onClicked: App.saveOutboundJson(page.firstSelected()) }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE792"; text: I18n.t("Экспорт runtime JSON"); enabled: page.selCount === 1; onClicked: App.saveRuntimeJson(page.firstSelected()) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE72D"; text: I18n.t("Экспорт выбранных (ссылки)"); enabled: page.selCount > 0; onClicked: App.exportNodeLinks(page.selectedIds()) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8C8"; text: I18n.t("Экспорт всех (ссылки)"); onClicked: App.exportNodeLinks([]) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE71A"; text: I18n.t("QR выбранного"); enabled: page.selCount === 1; onClicked: App.showNodeQr(page.firstSelected()) }
                 AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: I18n.t("Удалить выбранные"); enabled: page.selCount > 0; onClicked: App.deleteNodes(page.selectedIds()) }
             }
 
@@ -1203,6 +1206,43 @@ Item {
                 Item { Layout.fillWidth: true }
                 AccentButton { kind: "accent"; text: I18n.t("Закрыть"); onClicked: infoDialog.close() }
             }
+        }
+    }
+
+    // ---- QR dialog ---------------------------------------------------
+    Dialog {
+        id: qrDialog
+        property string qrSource: ""
+        property string qrName: ""
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: qrName.length ? I18n.t("QR-код: ") + qrName : I18n.t("QR-код сервера")
+        standardButtons: Dialog.Close
+        width: 360
+        contentItem: ColumnLayout {
+            spacing: 12
+            Image {
+                source: qrDialog.qrSource
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: 280
+                Layout.preferredHeight: 280
+                fillMode: Image.PreserveAspectFit
+                smooth: false
+            }
+            Text {
+                text: I18n.t("Отсканируйте код в клиенте, чтобы импортировать сервер.")
+                color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true
+            }
+        }
+    }
+
+    Connections {
+        target: App
+        function onNodeQrReady(dataUri, name) {
+            qrDialog.qrSource = dataUri;
+            qrDialog.qrName = name;
+            qrDialog.open();
         }
     }
 }

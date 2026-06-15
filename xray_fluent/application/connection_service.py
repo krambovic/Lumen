@@ -39,6 +39,7 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         controller._set_connection_status("starting", "Подключение уже выполняется...", level="info")
         return False
     controller._connecting = True
+    controller._kill_switch_engaged = False  # новая попытка подключения снимает fail-closed
     try:
         if controller._reconnecting and not allow_during_reconnect:
             controller._set_connection_status("starting", "Переподключение...", level="info")
@@ -187,6 +188,7 @@ def disconnect_current(
     fast: bool = False,
 ) -> bool:
     controller._disconnecting = True
+    controller._kill_switch_engaged = False  # ручное отключение снимает fail-closed
     try:
         controller._cleanup_connection_runtime_state(
             end_traffic_session=True,
