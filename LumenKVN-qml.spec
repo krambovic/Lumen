@@ -78,9 +78,9 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    uac_admin=False,
+    uac_admin=True,
     icon=[str(root / "assets" / "LumenKVN.ico")],
-    manifest=None,
+    manifest=str(root / "uac_admin.manifest"),
 )
 coll = COLLECT(
     exe,

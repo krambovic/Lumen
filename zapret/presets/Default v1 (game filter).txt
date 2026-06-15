@@ -401,7 +401,7 @@
 --filter-tcp=80,443
 --hostlist=lists/porn.txt
 --out-range=-d8
---payload=http,tls_client_hello
+--payload=http_req,tls_client_hello
 --lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new

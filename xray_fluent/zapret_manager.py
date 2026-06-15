@@ -36,6 +36,22 @@ PRESETS_DIR = ZAPRET_DIR / "presets"
 PROGRAM_DATA_DIR = Path(os.environ.get("ProgramData") or r"C:\ProgramData")
 AT_CONFIG_DIR = PROGRAM_DATA_DIR / "LumenKVN" / "zapret" / "winws2_at_config"
 _INLINE_ARG_SPLIT_RE = re.compile(r"(?<=\S)\s+(?=--)")
+_ELEVATION_ERROR_MARKERS = (
+    "elevation",
+    "requires elevation",
+    "operation requires elevation",
+    "requested operation requires elevation",
+    "740",
+    "требует повышения",
+    "требуются повышенные права",
+)
+
+
+def _is_elevation_launch_error(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in _ELEVATION_ERROR_MARKERS)
+
+
 _WINDIVERT_CONFLICT_MARKERS = (
     "windivert",
     "another instance",
@@ -362,6 +378,13 @@ class ZapretManager(QObject):
         self._process.start()
 
         if not self._process.waitForStarted(5000):
+            launch_error = self._process.errorString()
+            if _is_elevation_launch_error(launch_error):
+                self.log_line.emit(f"[zapret] Запуск winws2.exe отклонён Windows: {launch_error}")
+                self.error.emit("Для запуска Zapret нужны права администратора. Перезапустите Lumen KVN от имени администратора.")
+                self._process = None
+                self._launch_mode = "direct"
+                return
             if launch_mode == "direct":
                 preset_name = self._current_preset
                 self.log_line.emit("[zapret] Прямой запуск не стартовал, пробую fallback через @config из ProgramData")
@@ -373,7 +396,7 @@ class ZapretManager(QObject):
                     _launch_mode="at_config",
                 ))
                 return
-            self.error.emit("Не удалось запустить winws2.exe")
+            self.error.emit(f"Не удалось запустить winws2.exe: {launch_error}")
             self._process = None
             self._launch_mode = "direct"
             return

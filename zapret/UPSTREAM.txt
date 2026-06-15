@@ -1,9 +1,11 @@
 Source: https://github.com/youtubediscord/zapret/tree/main
-Upstream commit: 5eb790470ef93cede006153f843ffda4f12e42ee
-Commit date: 2026-05-29 01:50:02 +0300
-Latest GitHub release checked: 21.0.0.6
-Release asset checked: Zapret2Setup_21_0_0_6.exe
+Upstream pre-release checked: 21.1.0.3
+Release asset checked: Zapret2Setup_DEV_21_1_0_3.exe
+Bundled winws2: v1.0.1 (31904a564e3b316b6948679e00c901e6d11ebf93), lua_compat_ver 6
 
 Bundled update scope:
-- winws2 built-in presets copied from src/presets/builtin/winws2.
-- Executables were not replaced from main because the repository stores GUI source and presets; the latest executable is distributed as an installer asset.
+- Runtime directories exe, bin, lists, lua and windivert.filter were copied from the upstream pre-release installer.
+- winws2 built-in presets were copied from the upstream pre-release installer.
+- Two upstream preset typos were normalized for bundled dry-run compatibility:
+  - Default v1 (game filter): payload http -> http_req.
+  - Preset.X1: lists/russia-youtube-rtmps.txt -> lists/ipset-russia-youtube-rtmps.txt.

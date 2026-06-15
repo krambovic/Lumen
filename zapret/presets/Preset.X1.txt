@@ -212,7 +212,7 @@
 
 --name=youtube.com (RTMPS Россия)
 --filter-tcp=80,443-65535
---ipset=lists/russia-youtube-rtmps.txt
+--ipset=lists/ipset-russia-youtube-rtmps.txt
 --out-range=-n8
 --lua-desync=send:repeats=2
 --lua-desync=syndata:blob=tls_google

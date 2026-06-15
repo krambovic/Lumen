@@ -141,13 +141,13 @@ jobs:
           name: "Lumen KVN ${{ env.RELEASE_TAG }}"
           body: |
             ## Что изменилось
-            - [Fix]: Zapret снова запускает стратегии напрямую через argv как в оригинальном zapret-kvn, поэтому ранее рабочие пресеты больше не ломаются из-за `@config` в пути `Program Files`.
-            - [Fix]: Для длинных или сложных стратегий добавлен запасной запуск через `@config` из `C:\ProgramData\LumenKVN\zapret`, где нет пробелов в пути.
-            - [Fix]: Повторный запуск после ошибки WinDivert теперь идёт по порядку: прямой запуск, затем прямой запуск после глубокой очистки, затем `@config` fallback.
-            - [Feature]: Обновлены встроенные стратегии Zapret из актуального `youtubediscord/zapret`, включая новые пресеты 1.9.9.
-            - [Fix]: Диагностика Zapret в логах теперь показывает, каким способом стартовала стратегия: напрямую или через `@config`.
+            - [Fix]: Zapret теперь поставляется полным runtime-комплектом из pre-release `youtubediscord/zapret 21.1.0.3`, включая новый `winws2.exe`, `lua`, `lists`, `bin` и `windivert.filter`.
+            - [Fix]: Исправлена главная причина падений стратегий: новые пресеты больше не запускаются на старом `winws2.exe`.
+            - [Fix]: Все встроенные стратегии проходят проверку `winws2 --dry-run`; два некорректных upstream-поля в пресетах нормализованы для Lumen.
+            - [Fix]: LumenKVN.exe снова собирается с требованием прав администратора, а запуск Zapret из не elevated-сеанса просит перезапуск от администратора вместо молчаливого отказа Windows.
+            - [Fix]: Ошибка запуска `winws2.exe` теперь показывает реальную причину в логах, включая отказ Windows из-за отсутствия повышенных прав.
 
-            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.3.0...v1.3.1
+            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.3.1...v1.3.2
           generate_release_notes: false
           make_latest: true
           files: |

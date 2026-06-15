@@ -1291,6 +1291,10 @@ class AppBridge(QObject):
         try:
             self.controller.state.settings.zapret_preset = name
             self.controller.save()
+            if not is_process_elevated():
+                self.toast.emit("warning", "Для Zapret нужны права администратора. Перезапускаю Lumen KVN.")
+                self.controller.admin_relaunch_requested.emit()
+                return
             self.controller.zapret.start(name)
         except Exception as exc:  # noqa: BLE001
             self.zapretState.emit({"running": False, "preset": "", "error": str(exc)})
