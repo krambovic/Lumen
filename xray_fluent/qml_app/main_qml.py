@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import ctypes
 from pathlib import Path
 
 
@@ -256,6 +257,22 @@ def _notify_primary_instance(server_name: str) -> bool:
     return True
 
 
+def _create_windows_single_instance_mutex() -> tuple[object | None, bool]:
+    if sys.platform != "win32":
+        return None, True
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        handle = kernel32.CreateMutexW(None, True, "Local\\LumenKVN.SingleInstance")
+        if not handle:
+            return None, True
+        already_exists = ctypes.get_last_error() == 183
+        return handle, not already_exists
+    except Exception:
+        return None, True
+
+
 def _create_single_instance(app):
     """Return (server, is_primary). A second launch just activates the first window."""
     try:
@@ -265,6 +282,15 @@ def _create_single_instance(app):
         return None, True
 
     server_name = "LumenKVN.SingleInstance"
+    mutex_handle, owns_mutex = _create_windows_single_instance_mutex()
+    if not owns_mutex:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if _notify_primary_instance(server_name):
+                break
+            time.sleep(0.1)
+        return None, False
+
     lock = QLockFile(str(Path(tempfile.gettempdir()) / "LumenKVN.SingleInstance.lock"))
     lock.setStaleLockTime(30_000)
     relaunching = "--relaunch-as-admin" in sys.argv[1:]
@@ -286,6 +312,7 @@ def _create_single_instance(app):
         _notify_primary_instance(server_name)
         return None, False
     server._single_instance_lock = lock
+    server._single_instance_mutex_handle = mutex_handle
     return server, True
 
 

@@ -141,10 +141,12 @@ jobs:
           name: "Lumen KVN ${{ env.RELEASE_TAG }}"
           body: |
             ## Что изменилось
-            - [Fix]: Убрана техническая приставка `AWG`/`WireGuard` из начала названия импортированных `.conf` серверов. Тип подключения и тег `WARP` остаются в метаданных.
-            - [Fix]: Усилена защита от запуска двух экземпляров Lumen KVN: добавлен lock-файл и повторная активация уже открытого окна при гонке старта.
+            - [Fix]: Исправлена защита от запуска двух экземпляров Lumen KVN: добавлен Windows mutex поверх QLocalServer/lock-файла, второй запуск теперь должен только открывать уже запущенное окно.
+            - [Fix]: Запуск стратегий Zapret приближен к upstream `youtubediscord/zapret`: пресеты теперь стартуют через временный `@config`, корректно разбиваются строки с несколькими `--...` аргументами и сохраняется рабочая директория `zapret`.
+            - [Fix]: Обычный старт/стоп Zapret больше не удаляет WinDivert service каждый раз. Глубокая очистка используется только при падении `winws2` с кодом 1 и затем выполняется один автоматический повторный запуск.
+            - [Fix]: Учтены изменения pre-release 1.2.10: улучшены масштабирование панели серверов и tray-toast.
 
-            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.2.8...v1.2.9
+            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.2.9...v1.3.0
           generate_release_notes: false
           make_latest: true
           files: |
