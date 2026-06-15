@@ -7,9 +7,11 @@ from PyInstaller.utils.hooks import collect_data_files
 
 root = Path(SPECPATH)
 qml_dir = root / "xray_fluent" / "qml_app" / "qml"
+locales_dir = root / "xray_fluent" / "locales"
 
 datas = [
     (str(qml_dir), "xray_fluent/qml_app/qml"),
+    (str(locales_dir), "xray_fluent/locales"),
 ]
 datas += collect_data_files(
     "PyQt6",

@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..constants import APP_ICON_PATH, APP_NAME
 from .toast import show_toast
+from ..i18n import tr
 
 
 class QmlTray(QObject):
@@ -27,15 +28,15 @@ class QmlTray(QObject):
         self._tray.setToolTip(APP_NAME)
 
         menu = QMenu()
-        self._action_show = QAction("Скрыть", menu)
+        self._action_show = QAction(tr("Скрыть"), menu)
         self._action_show.triggered.connect(self._toggle_window)
-        self._action_connect = QAction("Подключить", menu)
+        self._action_connect = QAction(tr("Подключить"), menu)
         self._action_connect.triggered.connect(self._toggle_connection)
-        self._action_next = QAction("Следующий сервер", menu)
+        self._action_next = QAction(tr("Следующий сервер"), menu)
         self._action_next.triggered.connect(self._switch_next)
-        self._action_admin = QAction("Перезапустить от администратора", menu)
+        self._action_admin = QAction(tr("Перезапустить от администратора"), menu)
         self._action_admin.triggered.connect(self._restart_admin)
-        self._action_quit = QAction("Выход", menu)
+        self._action_quit = QAction(tr("Выход"), menu)
         self._action_quit.triggered.connect(self._quit)
 
         menu.addAction(self._action_show)
@@ -138,14 +139,20 @@ class QmlTray(QObject):
     def _refresh_actions(self) -> None:
         try:
             self._action_show.setText(
-                "Показать" if not self._window_visible() else "Скрыть"
+                tr("Показать") if not self._window_visible() else tr("Скрыть")
             )
         except Exception:
             pass
         try:
             self._action_connect.setText(
-                "Отключить" if self._connected() else "Подключить"
+                tr("Отключить") if self._connected() else tr("Подключить")
             )
+        except Exception:
+            pass
+        try:
+            self._action_next.setText(tr("Следующий сервер"))
+            self._action_admin.setText(tr("Перезапустить от администратора"))
+            self._action_quit.setText(tr("Выход"))
         except Exception:
             pass
 
@@ -153,12 +160,12 @@ class QmlTray(QObject):
         if self._notified:
             return
         self._notified = True
-        if show_toast(APP_NAME, "Приложение свёрнуто в системный трей"):
+        if show_toast(APP_NAME, tr("Приложение свёрнуто в системный трей")):
             return
         try:
             self._tray.showMessage(
                 APP_NAME,
-                "Приложение свёрнуто в системный трей",
+                tr("Приложение свёрнуто в системный трей"),
                 QSystemTrayIcon.MessageIcon.Information,
                 2000,
             )

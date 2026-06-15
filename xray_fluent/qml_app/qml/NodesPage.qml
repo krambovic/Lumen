@@ -928,28 +928,28 @@ Item {
             onTriggered: App.copyNodeLink(page.firstSelected())
         }
         Ctx {
-            text: I18n.t("Массовое редактирование (") + page.selCount + ")"
+            text: I18n.t("Массовое редактирование ({count})", { count: page.selCount })
             enabled: page.selCount > 0
             onTriggered: bulkDialog.openFor(page.selectedIds())
         }
         Sep {}
         Ctx {
-            text: I18n.t("Пинг — способ из настроек (") + page.selCount + ")"
+            text: I18n.t("Пинг — способ из настроек ({count})", { count: page.selCount })
             enabled: page.selCount > 0
             onTriggered: App.pingNodes(page.selectedIds())
         }
         Ctx {
-            text: I18n.t("Тест TCP ping (") + page.selCount + ")"
+            text: I18n.t("Тест TCP ping ({count})", { count: page.selCount })
             enabled: page.selCount > 0
             onTriggered: App.tcpingNodes(page.selectedIds())
         }
         Ctx {
-            text: I18n.t("Тест реальной задержки (") + page.selCount + ")"
+            text: I18n.t("Тест реальной задержки ({count})", { count: page.selCount })
             enabled: page.selCount > 0
             onTriggered: App.realDelayNodes(page.selectedIds())
         }
         Ctx {
-            text: I18n.t("Тест скорости загрузки (") + page.selCount + ")"
+            text: I18n.t("Тест скорости загрузки ({count})", { count: page.selCount })
             enabled: page.selCount > 0
             onTriggered: App.downloadSpeedNodes(page.selectedIds())
         }
@@ -966,7 +966,7 @@ Item {
         }
         Sep {}
         Ctx {
-            text: I18n.t("Удалить (") + page.selCount + ")"
+            text: I18n.t("Удалить ({count})", { count: page.selCount })
             enabled: page.selCount > 0
             onTriggered: App.deleteNodes(page.selectedIds())
         }

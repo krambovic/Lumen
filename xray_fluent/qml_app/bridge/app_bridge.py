@@ -28,6 +28,7 @@ from ...startup import is_process_elevated, relaunch_as_admin
 from .log_model import LogModel
 from .node_list_model import NodeListModel
 from .process_model import ProcessModel
+from ...i18n import active_map, available_languages, language_name, set_language, tr
 
 
 class AppBridge(QObject):
@@ -54,6 +55,7 @@ class AppBridge(QObject):
     trayAvailableChanged = pyqtSignal()    # system tray availability resolved
     trayMessageRequested = pyqtSignal()    # ask the tray to show its balloon
     quittingChanged = pyqtSignal()         # real-exit flag flipped on quit
+    languageChanged = pyqtSignal()         # active UI language changed
 
     # Внутренний: запуск фоновой загрузки подписок (jobs, batch_id)
     _sub_fetch_run = pyqtSignal(object, int)
@@ -93,6 +95,7 @@ class AppBridge(QObject):
         self._discord_proxy = False
         self._theme = "dark"
         self._language = "en"
+        set_language(self._language)
         self._accent = "#0078D4"
 
         # Активные фильтры списка серверов (группа/тег/текст). Фильтруем в модели
@@ -118,7 +121,7 @@ class AppBridge(QObject):
         try:
             self.controller.load()
         except Exception as exc:  # pragma: no cover - defensive
-            self.toast.emit("error", f"Ошибка загрузки: {exc}")
+            self.toast.emit("error", tr("Ошибка загрузки: {error}", error=exc))
         self._push_initial_snapshot()
         self.controller.auto_connect_if_needed()
         self._reconfigure_sub_timer()
@@ -242,21 +245,21 @@ class AppBridge(QObject):
         errors = batch["errors"]
         if kind == "auto":
             if added:
-                self.toast.emit("info", self._localized_backend_message(f"Авто-обновление подписок: +{added} серверов"))
+                self.toast.emit("info", tr("Авто-обновление подписок: +{count} серверов", count=added))
             return
         if kind == "import":
             if added:
-                self.toast.emit("success", f"Импортировано серверов: {added}")
+                self.toast.emit("success", tr("Импортировано серверов: {count}", count=added))
             if errors:
                 self.toast.emit("warning", "; ".join(errors[:2]))
             if not added and not errors:
                 self.toast.emit("info", "Новых серверов не найдено")
         elif kind == "update":
-            self.toast.emit("success", self._localized_backend_message(f"Подписка обновлена: {added} серверов"))
+            self.toast.emit("success", tr("Подписка обновлена: {count} серверов", count=added))
             if errors:
                 self.toast.emit("warning", "; ".join(errors[:2]))
         else:  # update_all
-            self.toast.emit("success", self._localized_backend_message(f"Подписки обновлены: {added} серверов"))
+            self.toast.emit("success", tr("Подписки обновлены: {count} серверов", count=added))
             if errors:
                 self.toast.emit("warning", "; ".join(errors[:2]))
 
@@ -350,6 +353,9 @@ class AppBridge(QObject):
     def _localized_backend_message(self, message: str) -> str:
         if not message or not self._english_ui():
             return message
+        catalog = active_map()
+        if message in catalog:
+            return catalog[message]
         replacements = (
             ("Остановка VPN...", "Stopping VPN..."),
             ("Обновление уже выполняется", "Update is already running"),
@@ -494,7 +500,12 @@ class AppBridge(QObject):
         self._proxy_enabled = bool(settings.enable_system_proxy)
         self._discord_proxy = bool(getattr(settings, "discord_proxy_enabled", False))
         self._theme = settings.theme
-        self._language = getattr(settings, "language", "en")
+        new_language = getattr(settings, "language", "en")
+        _language_changed = new_language != self._language
+        self._language = new_language
+        set_language(self._language)
+        if _language_changed:
+            self.languageChanged.emit()
         self._accent = settings.accent_color or "#0078D4"
         self._node_model.set_runtime_support(bool(settings.tun_mode and settings.tun_engine == "singbox"))
         self.settingsChanged.emit()
@@ -589,7 +600,7 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def setLanguage(self, language: str) -> None:
         value = (language or "en").strip().lower()
-        if value not in {"ru", "en"}:
+        if value not in available_languages():
             value = "en"
         settings = deepcopy(self.controller.state.settings)
         settings.language = value
@@ -780,7 +791,7 @@ class AppBridge(QObject):
     def browseXrayPath(self) -> str:
         from PyQt6.QtWidgets import QFileDialog
         path, _ = QFileDialog.getOpenFileName(
-            None, "Выберите xray.exe", "", "xray.exe (xray.exe);;Все файлы (*.*)"
+            None, tr("Выберите xray.exe"), "", "xray.exe (xray.exe);;" + tr("Все файлы (*.*)")
         )
         if path:
             self.setXrayPath(path)
@@ -790,7 +801,7 @@ class AppBridge(QObject):
     def browseSingboxPath(self) -> str:
         from PyQt6.QtWidgets import QFileDialog
         path, _ = QFileDialog.getOpenFileName(
-            None, "Выберите sing-box.exe", "", "sing-box.exe (sing-box.exe);;Все файлы (*.*)"
+            None, tr("Выберите sing-box.exe"), "", "sing-box.exe (sing-box.exe);;" + tr("Все файлы (*.*)")
         )
         if path:
             self.setSingboxPath(path)
@@ -867,8 +878,8 @@ class AppBridge(QObject):
         from PyQt6.QtWidgets import QFileDialog
         from pathlib import Path
         path, _ = QFileDialog.getSaveFileName(
-            None, "Сохранить резервную копию", "lumen-backup.json",
-            "Резервная копия (*.json);;Все файлы (*.*)"
+            None, tr("Сохранить резервную копию"), "lumen-backup.json",
+            tr("Резервная копия (*.json);;Все файлы (*.*)")
         )
         if not path:
             return
@@ -876,15 +887,15 @@ class AppBridge(QObject):
             self.controller.export_backup(Path(path))
             self.toast.emit("success", "Резервная копия сохранена")
         except Exception as exc:
-            self.toast.emit("error", f"Ошибка экспорта: {exc}")
+            self.toast.emit("error", tr("Ошибка экспорта: {error}", error=exc))
 
     @pyqtSlot()
     def importBackup(self) -> None:
         from PyQt6.QtWidgets import QFileDialog
         from pathlib import Path
         path, _ = QFileDialog.getOpenFileName(
-            None, "Импорт резервной копии", "",
-            "Резервная копия (*.json);;Все файлы (*.*)"
+            None, tr("Импорт резервной копии"), "",
+            tr("Резервная копия (*.json);;Все файлы (*.*)")
         )
         if not path:
             return
@@ -892,7 +903,7 @@ class AppBridge(QObject):
             self.controller.import_backup(Path(path))
             self.toast.emit("success", "Резервная копия импортирована")
         except Exception as exc:
-            self.toast.emit("error", f"Ошибка импорта: {exc}")
+            self.toast.emit("error", tr("Ошибка импорта: {error}", error=exc))
 
     @pyqtSlot()
     @pyqtSlot('QVariantList')
@@ -966,7 +977,7 @@ class AppBridge(QObject):
             updates = build_node_updates(node, dict(fields or {}))
             self.controller.update_node(node_id, updates)
         except Exception as exc:  # noqa: BLE001 - surface failures as a toast
-            self.toast.emit("error", f"Не удалось сохранить: {exc}")
+            self.toast.emit("error", tr("Не удалось сохранить: {error}", error=exc))
             return
         self.toast.emit("success", "Сервер обновлён")
 
@@ -984,7 +995,7 @@ class AppBridge(QObject):
             "remove_tags": [str(t).strip() for t in (ops.get("remove_tags") or []) if str(t).strip()],
         }
         self.controller.bulk_update_nodes(node_ids, payload)
-        self.toast.emit("success", f"Обновлено серверов: {len(node_ids)}")
+        self.toast.emit("success", tr("Обновлено серверов: {count}", count=len(node_ids)))
 
     @pyqtSlot()
     @pyqtSlot(str)
@@ -1018,7 +1029,7 @@ class AppBridge(QObject):
         try:
             return build_history_payload(storage, int(days) if days else 30)
         except Exception as exc:  # noqa: BLE001 - never break the QML binding
-            self.toast.emit("error", f"Не удалось загрузить историю: {exc}")
+            self.toast.emit("error", tr("Не удалось загрузить историю: {error}", error=exc))
             return build_history_payload(None, 30)
 
     # ── Updates tab ──────────────────────────────────────────────
@@ -1029,7 +1040,7 @@ class AppBridge(QObject):
         try:
             self.controller.traffic_history.clear()
         except Exception as exc:  # noqa: BLE001 - surface failures as a toast
-            self.toast.emit("error", f"Не удалось очистить историю: {exc}")
+            self.toast.emit("error", tr("Не удалось очистить историю: {error}", error=exc))
             return
         self.toast.emit("success", "История очищена")
     @pyqtSlot(result="QVariantMap")
@@ -1089,8 +1100,11 @@ class AppBridge(QObject):
         })
         if silent:
             # При тихой проверке на старте уведомляем пользователя тостом.
-            verb = "Доступен откат к v" if is_downgrade else "Доступно обновление v"
-            self.toast.emit("info", self._localized_backend_message(f"{verb}{update.version}"))
+            if is_downgrade:
+                _msg = tr("Доступен откат к v{version}", version=update.version)
+            else:
+                _msg = tr("Доступно обновление v{version}", version=update.version)
+            self.toast.emit("info", _msg)
 
     def _on_app_update_error(self, message: str) -> None:
         if getattr(self, "_app_update_silent", False):
@@ -1323,10 +1337,10 @@ class AppBridge(QObject):
             return
         try:
             ZapretManager.save_preset(name, content, description or "")
-            self.toast.emit("success", f"Пресет сохранён: {name}")
+            self.toast.emit("success", tr("Пресет сохранён: {name}", name=name))
             self.zapretPresetsChanged.emit()
         except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", f"Не удалось сохранить пресет: {exc}")
+            self.toast.emit("error", tr("Не удалось сохранить пресет: {error}", error=exc))
 
     @pyqtSlot(str)
     def deletePreset(self, name: str) -> None:
@@ -1337,10 +1351,10 @@ class AppBridge(QObject):
             if self.controller.zapret.running and name == self.controller.state.settings.zapret_preset:
                 self.controller.zapret.stop()
             ZapretManager.delete_preset(name)
-            self.toast.emit("success", f"Пресет удалён: {name}")
+            self.toast.emit("success", tr("Пресет удалён: {name}", name=name))
             self.zapretPresetsChanged.emit()
         except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", f"Не удалось удалить пресет: {exc}")
+            self.toast.emit("error", tr("Не удалось удалить пресет: {error}", error=exc))
 
     @pyqtSlot(result=str)
     def importZapretPreset(self) -> str:
@@ -1348,19 +1362,19 @@ class AppBridge(QObject):
         from ...zapret_manager import ZapretManager
         from PyQt6.QtWidgets import QFileDialog
         path, _ = QFileDialog.getOpenFileName(
-            None, "Импорт пресета", "", "Текстовые файлы (*.txt);;Все файлы (*)"
+            None, tr("Импорт пресета"), "", tr("Текстовые файлы (*.txt);;Все файлы (*)")
         )
         if not path:
             return ""
         try:
             info = ZapretManager.import_preset(Path(path))
         except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", f"Не удалось импортировать: {exc}")
+            self.toast.emit("error", tr("Не удалось импортировать: {error}", error=exc))
             return ""
         if info is None:
             self.toast.emit("warning", "Не удалось импортировать пресет")
             return ""
-        self.toast.emit("success", f"Импортирован пресет: {info.name}")
+        self.toast.emit("success", tr("Импортирован пресет: {name}", name=info.name))
         self.zapretPresetsChanged.emit()
         return info.name
 
@@ -1376,7 +1390,7 @@ class AppBridge(QObject):
 
     def _on_zapret_error(self, message: str) -> None:
         self.zapretState.emit({"running": False, "preset": "", "error": message})
-        self.toast.emit("error", f"Zapret: {message}")
+        self.toast.emit("error", tr("Zapret: {message}", message=self._localized_backend_message(message)))
 
     # ── Configs (sing-box / xray raw editors) ──────────────────────
     def _config_state(self, core, *, text="", file_label=None, level="", message=""):
@@ -1396,7 +1410,7 @@ class AppBridge(QObject):
             return self._config_state(core, level="error", message=str(exc))
         return self._config_state(
             core, text=text, file_label=path.as_posix(),
-            level="info", message=f"Открыта активная копия: {path.name}",
+            level="info", message=tr("Открыта активная копия: {name}", name=path.name),
         )
 
     @pyqtSlot(str, str, result="QVariantMap")
@@ -1410,10 +1424,10 @@ class AppBridge(QObject):
         except Exception as exc:  # noqa: BLE001
             self.toast.emit("error", str(exc).splitlines()[0])
             return self._config_state(core, level="error", message=str(exc))
-        self.toast.emit("success", f"Открыт конфиг: {path.name}")
+        self.toast.emit("success", tr("Открыт конфиг: {name}", name=path.name))
         return self._config_state(
             core, text=text, file_label=path.as_posix(),
-            level="info", message=f"Открыт конфиг: {path.name}",
+            level="info", message=tr("Открыт конфиг: {name}", name=path.name),
         )
 
     @pyqtSlot(str, str, result="QVariantMap")
@@ -1427,10 +1441,10 @@ class AppBridge(QObject):
             self.toast.emit("error", str(exc).splitlines()[0])
             return self._config_state(core, level="error", message=str(exc))
         name = Path(relative_path).name
-        self.toast.emit("success", f"Применён шаблон: {name}")
+        self.toast.emit("success", tr("Применён шаблон: {name}", name=name))
         return self._config_state(
             core, text=text, file_label=path.as_posix(),
-            level="info", message=f"Применён шаблон: {name}",
+            level="info", message=tr("Применён шаблон: {name}", name=name),
         )
 
     @pyqtSlot(str, result="QVariantMap")
@@ -1442,7 +1456,7 @@ class AppBridge(QObject):
         title = "sing-box" if core == "singbox" else "xray"
         base_dir = str(getattr(self.controller, f"get_{core}_template_dir")())
         file_path, _ = QFileDialog.getOpenFileName(
-            None, f"Импортировать {title} template", base_dir, "JSON files (*.json)"
+            None, tr("Импортировать {title} template", title=title), base_dir, "JSON files (*.json)"
         )
         if not file_path:
             return {"cancelled": True}
@@ -1451,10 +1465,10 @@ class AppBridge(QObject):
         except Exception as exc:  # noqa: BLE001
             self.toast.emit("error", str(exc).splitlines()[0])
             return self._config_state(core, level="error", message=str(exc))
-        self.toast.emit("success", f"Импортирован template: {Path(file_path).name}")
+        self.toast.emit("success", tr("Импортирован template: {name}", name=Path(file_path).name))
         return self._config_state(
             core, text=text, file_label=path.as_posix(),
-            level="info", message=f"Импортирован template и обновлена активная копия: {path.name}",
+            level="info", message=tr("Импортирован template и обновлена активная копия: {name}", name=path.name),
         )
 
     @pyqtSlot(str, result="QVariantMap")
@@ -1489,10 +1503,10 @@ class AppBridge(QObject):
         except Exception as exc:  # noqa: BLE001
             self.toast.emit("error", str(exc).splitlines()[0])
             return self._config_state(core, text=text, level="error", message=str(exc))
-        self.toast.emit("success", f"Сохранено: {path.name}")
+        self.toast.emit("success", tr("Сохранено: {name}", name=path.name))
         return self._config_state(
             core, text=text, file_label=path.as_posix(),
-            level="success", message=f"Сохранено: {path.name}",
+            level="success", message=tr("Сохранено: {name}", name=path.name),
         )
 
     @pyqtSlot(str, str, result="QVariantMap")
@@ -1518,13 +1532,13 @@ class AppBridge(QObject):
             return {"statusLevel": "error", "statusMessage": str(exc), "fileLabel": ""}
         if not ok:
             msg = message or "Не удалось применить"
-            self.toast.emit("error", msg.splitlines()[0])
-            return {"statusLevel": "error", "statusMessage": msg, "fileLabel": ""}
+            self.toast.emit("error", self._localized_backend_message(msg.splitlines()[0]))
+            return {"statusLevel": "error", "statusMessage": self._localized_backend_message(msg), "fileLabel": ""}
         level = "info" if "Применяю" in (message or "") else "success"
-        self.toast.emit(level, (message or "Применено").splitlines()[0])
+        self.toast.emit(level, self._localized_backend_message((message or "Применено").splitlines()[0]))
         return {
             "statusLevel": level,
-            "statusMessage": message or "",
+            "statusMessage": self._localized_backend_message(message or ""),
             "fileLabel": path.as_posix() if path is not None else "",
         }
 
@@ -1537,7 +1551,7 @@ class AppBridge(QObject):
             return
         added, errors = self.controller.import_nodes_from_text(text)
         if added:
-            self.toast.emit("success", f"Импортировано серверов: {added}")
+            self.toast.emit("success", tr("Импортировано серверов: {count}", count=added))
         if errors:
             self.toast.emit("warning", "; ".join(errors[:2]))
         if not added and not errors:
@@ -1550,7 +1564,7 @@ class AppBridge(QObject):
 
         file_path, _ = QFileDialog.getOpenFileName(
             None,
-            "Импортировать сервер",
+            tr("Импортировать сервер"),
             "",
             "VPN configs (*.conf *.txt *.json);;All files (*.*)",
         )
@@ -1559,11 +1573,11 @@ class AppBridge(QObject):
         try:
             text = Path(file_path).read_text(encoding="utf-8", errors="replace")
         except Exception as exc:
-            self.toast.emit("error", f"Не удалось прочитать файл: {exc}")
+            self.toast.emit("error", tr("Не удалось прочитать файл: {error}", error=exc))
             return
         added, errors = self.controller.import_nodes_from_text(text)
         if added:
-            self.toast.emit("success", f"Импортировано серверов: {added}")
+            self.toast.emit("success", tr("Импортировано серверов: {count}", count=added))
         if errors:
             self.toast.emit("warning", "; ".join(errors[:2]))
         if not added and not errors:
@@ -1604,16 +1618,16 @@ class AppBridge(QObject):
             return
         from PyQt6.QtWidgets import QApplication, QFileDialog
         file_path, _ = QFileDialog.getSaveFileName(
-            None, "Экспорт JSON", suggested_name, "JSON files (*.json)"
+            None, tr("Экспорт JSON"), suggested_name, "JSON files (*.json)"
         )
         if file_path:
             try:
                 with open(file_path, "w", encoding="utf-8") as fh:
                     fh.write(payload)
             except OSError as exc:
-                self.toast.emit("error", f"Не удалось сохранить файл: {exc}")
+                self.toast.emit("error", tr("Не удалось сохранить файл: {error}", error=exc))
                 return
-            self.toast.emit("success", f"JSON экспортирован: {file_path}")
+            self.toast.emit("success", tr("JSON экспортирован: {path}", path=file_path))
             return
         clipboard = QApplication.clipboard()
         if clipboard is not None:
@@ -1664,10 +1678,10 @@ class AppBridge(QObject):
         try:
             path = self.controller.build_diagnostics()
         except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", f"Не удалось собрать диагностику: {exc}")
+            self.toast.emit("error", tr("Не удалось собрать диагностику: {error}", error=exc))
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
-        self.toast.emit("success", f"Диагностика сохранена: {path.name}")
+        self.toast.emit("success", tr("Диагностика сохранена: {name}", name=path.name))
 
     @pyqtSlot(int, result=str)
     def nodeIdAt(self, row: int) -> str:
@@ -1804,7 +1818,19 @@ class AppBridge(QObject):
 
     @pyqtProperty(str, notify=settingsChanged)
     def effectiveLanguage(self) -> str:
-        return self._language if self._language in {"ru", "en"} else "en"
+        return self._language if self._language in available_languages() else "en"
+
+    @pyqtProperty("QVariantMap", notify=languageChanged)
+    def translations(self) -> dict:
+        return active_map()
+
+    @pyqtProperty("QStringList", constant=True)
+    def availableLanguages(self) -> list:
+        return available_languages()
+
+    @pyqtProperty("QStringList", constant=True)
+    def languageLabels(self) -> list:
+        return [language_name(code) for code in available_languages()]
 
     @pyqtProperty(str, notify=settingsChanged)
     def accentColor(self) -> str:
@@ -2023,7 +2049,7 @@ class AppBridge(QObject):
         try:
             self.controller.remove_subscription(target, bool(delete_nodes))
         except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", f"Ошибка удаления подписки: {exc}")
+            self.toast.emit("error", tr("Ошибка удаления подписки: {error}", error=exc))
             return
         self.toast.emit("info", "Подписка удалена")
 
@@ -2285,7 +2311,7 @@ class AppBridge(QObject):
             r.proxy_domains = proxy
             r.block_domains = block
         self._mutate_routing(apply)
-        self.toast.emit("success", f"Импортировано правил: {len(lines)}")
+        self.toast.emit("success", tr("Импортировано правил: {count}", count=len(lines)))
 
     @pyqtSlot(result=str)
     def exportDomainRules(self) -> str:

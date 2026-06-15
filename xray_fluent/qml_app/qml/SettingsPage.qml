@@ -15,7 +15,7 @@ FluentScroll {
     clip: true
 
     readonly property var themeKeys: ["system", "light", "dark"]
-    readonly property var languageKeys: ["ru", "en"]
+    readonly property var languageKeys: App.availableLanguages
 
     component StyledCombo: FluentCombo { Layout.preferredWidth: 210 }
 
@@ -112,7 +112,7 @@ FluentScroll {
                 SettingRow {
                     glyph: "\uE774"; title: I18n.t("Язык"); subtitle: I18n.t("При первом запуске выбирается по языку системы")
                     StyledCombo {
-                        model: [I18n.t("Русский"), "English"]
+                        model: App.languageLabels
                         currentIndex: Math.max(0, page.languageKeys.indexOf(App.language))
                         onActivated: App.setLanguage(page.languageKeys[currentIndex])
                     }

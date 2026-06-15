@@ -8,6 +8,7 @@ from typing import Any
 
 from .constants import SINGBOX_CLASH_API_PORT
 from .win_proc_monitor import process_name_from_pid
+from .i18n import tr
 
 # Processes to hide (internal, not user traffic)
 _HIDDEN_PROCESSES = {"xray.exe", "sing-box.exe"}
@@ -93,8 +94,8 @@ def _process_name_from_metadata(meta: dict[str, Any]) -> tuple[str, str]:
 
     host = str(_metadata_value(meta, "host", "destinationIP", "destination_ip", "dstIP", "dst_ip") or "").strip()
     if host:
-        return f"system:{host}".lower(), f"Системный трафик ({host})"
-    return "system:unknown", "Системный трафик"
+        return f"system:{host}".lower(), tr("Системный трафик ({addr})", addr=host)
+    return "system:unknown", tr("Системный трафик")
 
 
 def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[ProcessTrafficSnapshot]:
@@ -176,7 +177,7 @@ def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[
         if host:
             entry["hosts"][host] = entry["hosts"].get(host, 0) + conn_total
 
-        if str(entry["display_exe"]).startswith("Системный трафик") and not display_exe.startswith("Системный трафик"):
+        if str(entry["display_exe"]).startswith(("Системный трафик", "System traffic")) and not display_exe.startswith(("Системный трафик", "System traffic")):
             entry["display_exe"] = display_exe
 
     # Detect closed connections → accumulate their bytes into _proc_closed_bytes

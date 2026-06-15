@@ -290,7 +290,7 @@ FluentScroll {
                             required property real total
                             Layout.fillWidth: true
                             spacing: 10
-                            Text { text: name; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colProc; elide: Text.ElideRight }
+                            Text { text: I18n.t(name); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colProc; elide: Text.ElideRight }
                             Text { text: "↓ " + page.fmtSpeed(downBps) + "  ↑ " + page.fmtSpeed(upBps); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colSpeed; horizontalAlignment: Text.AlignRight }
                             Text { text: page.fmtBytes(proxyBytes); color: proxyBytes > 0 ? Theme.success : Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colVpn; horizontalAlignment: Text.AlignRight }
                             Text { text: page.fmtBytes(directBytes); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colDirect; horizontalAlignment: Text.AlignRight }

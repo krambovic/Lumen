@@ -337,7 +337,7 @@ Item {
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 2
                                     Text { text: modelData.name; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                                    Text { visible: !!modelData.description; text: modelData.description; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                    Text { visible: !!modelData.description; text: I18n.t(modelData.description); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                                 }
                                 StyledCombo {
                                     Layout.preferredWidth: 150

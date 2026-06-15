@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from ...i18n import tr
+
 
 def fmt_bytes(b: int) -> str:
     value = float(max(0, int(b)))
@@ -47,11 +49,11 @@ def fmt_duration(start: str, end: str | None) -> str:
         hours, rem = divmod(total_sec, 3600)
         minutes, secs = divmod(rem, 60)
         if hours > 0:
-            return f"{hours}ч {minutes}м"
+            return tr("{hours}ч {minutes}м", hours=hours, minutes=minutes)
         elif minutes > 0:
-            return f"{minutes}м {secs}с"
+            return tr("{minutes}м {secs}с", minutes=minutes, secs=secs)
         else:
-            return f"{secs}с"
+            return tr("{secs}с", secs=secs)
     except Exception:
         return ""
 
