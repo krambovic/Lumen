@@ -33,8 +33,8 @@ ZAPRET_DIR = BASE_DIR / "zapret"
 WINWS2_EXE = ZAPRET_DIR / "exe" / "winws2.exe"
 WINWS_EXE = ZAPRET_DIR / "exe" / "winws.exe"
 PRESETS_DIR = ZAPRET_DIR / "presets"
-TMP_DIR = ZAPRET_DIR / "tmp"
-AT_CONFIG_DIR = TMP_DIR / "winws2_at_config"
+PROGRAM_DATA_DIR = Path(os.environ.get("ProgramData") or r"C:\ProgramData")
+AT_CONFIG_DIR = PROGRAM_DATA_DIR / "LumenKVN" / "zapret" / "winws2_at_config"
 _INLINE_ARG_SPLIT_RE = re.compile(r"(?<=\S)\s+(?=--)")
 _WINDIVERT_CONFLICT_MARKERS = (
     "windivert",
@@ -71,6 +71,7 @@ class ZapretManager(QObject):
         self._start_args: list[str] = []
         self._start_retry_count = 0
         self._current_at_config: Path | None = None
+        self._launch_mode = "direct"
         self._health_timer = QTimer(self)
         self._health_timer.setInterval(3000)
         self._health_timer.timeout.connect(self._check_health)
@@ -289,7 +290,14 @@ class ZapretManager(QObject):
                          created=meta.get("Created", ""), modified=meta.get("Modified", ""),
                          arg_count=arg_count, file_path=target)
 
-    def start(self, preset_name: str, *, _retry_count: int = 0, _force_cleanup: bool = False) -> None:
+    def start(
+        self,
+        preset_name: str,
+        *,
+        _retry_count: int = 0,
+        _force_cleanup: bool = False,
+        _launch_mode: str = "direct",
+    ) -> None:
         if self.running:
             if self._current_preset == preset_name:
                 self.log_line.emit(f"[zapret] Перезапуск текущего пресета: {preset_name}")
@@ -324,11 +332,18 @@ class ZapretManager(QObject):
             self.error.emit(f"Пресет пустой: {preset_name}")
             return
 
-        at_config = self._write_at_config(preset, args)
+        launch_mode = "at_config" if _launch_mode == "at_config" else "direct"
+        at_config: Path | None = None
+        start_args = list(args)
+        if launch_mode == "at_config":
+            at_config = self._write_at_config(preset, args)
+            start_args = [f"@{at_config}"]
+
         self._current_preset = preset_name
-        self._start_args = [f"@{at_config}"]
+        self._start_args = start_args
         self._start_retry_count = int(_retry_count)
         self._current_at_config = at_config
+        self._launch_mode = launch_mode
 
         self._process = QProcess(self)
         self._process.setProgram(str(exe))
@@ -338,13 +353,29 @@ class ZapretManager(QObject):
         self._process.readyReadStandardError.connect(self._on_stderr)
         self._process.finished.connect(self._on_finished)
 
-        log.info("zapret start: %s [%s] via %s (%d args)", exe.name, preset_name, at_config.name, len(args))
-        self.log_line.emit(f"[zapret] Запуск: {preset_name} ({len(args)} аргументов через @{at_config.name})")
+        if at_config is not None:
+            log.info("zapret start: %s [%s] via %s (%d args)", exe.name, preset_name, at_config.name, len(args))
+            self.log_line.emit(f"[zapret] Запуск: {preset_name} ({len(args)} аргументов через @{at_config.name})")
+        else:
+            log.info("zapret start: %s [%s] via direct argv (%d args)", exe.name, preset_name, len(args))
+            self.log_line.emit(f"[zapret] Запуск: {preset_name} ({len(args)} аргументов напрямую)")
         self._process.start()
 
         if not self._process.waitForStarted(5000):
+            if launch_mode == "direct":
+                preset_name = self._current_preset
+                self.log_line.emit("[zapret] Прямой запуск не стартовал, пробую fallback через @config из ProgramData")
+                self._process = None
+                QTimer.singleShot(150, lambda name=preset_name: self.start(
+                    name,
+                    _retry_count=2,
+                    _force_cleanup=False,
+                    _launch_mode="at_config",
+                ))
+                return
             self.error.emit("Не удалось запустить winws2.exe")
             self._process = None
+            self._launch_mode = "direct"
             return
 
         self._health_timer.start()
@@ -375,6 +406,7 @@ class ZapretManager(QObject):
         self._start_args = []
         self._start_retry_count = 0
         self._current_at_config = None
+        self._launch_mode = "direct"
         killed = self._kill_orphaned(
             timeout=1 if fast else 5,
             taskkill_timeout=1 if fast else 3,
@@ -530,9 +562,27 @@ class ZapretManager(QObject):
             self.log_line.emit(f"[zapret] {line}")
 
         preset = self._current_preset or "?"
+        launch_mode = self._launch_mode
         log.info("zapret finished: code=%d status=%s preset=%s", exit_code, exit_status.name, preset)
 
         if exit_code != 0 or exit_status == QProcess.ExitStatus.CrashExit:
+            if (
+                launch_mode == "direct"
+                and self._start_retry_count == 0
+                and self._current_preset
+                and exit_code == 2
+            ):
+                preset_name = self._current_preset
+                self.log_line.emit("[zapret] Ошибка аргументов, пробую fallback через @config из ProgramData")
+                self._process = None
+                QTimer.singleShot(150, lambda name=preset_name: self.start(
+                    name,
+                    _retry_count=2,
+                    _force_cleanup=False,
+                    _launch_mode="at_config",
+                ))
+                return
+
             if (
                 self._start_retry_count < 1
                 and self._current_preset
@@ -541,7 +591,29 @@ class ZapretManager(QObject):
                 preset_name = self._current_preset
                 self.log_line.emit("[zapret] winws2 завершился с кодом 1, пробую повторный запуск после очистки WinDivert")
                 self._process = None
-                QTimer.singleShot(150, lambda name=preset_name: self.start(name, _retry_count=1, _force_cleanup=True))
+                QTimer.singleShot(150, lambda name=preset_name: self.start(
+                    name,
+                    _retry_count=1,
+                    _force_cleanup=True,
+                    _launch_mode="direct",
+                ))
+                return
+
+            if (
+                launch_mode == "direct"
+                and self._start_retry_count == 1
+                and self._current_preset
+                and exit_code in (1, 2)
+            ):
+                preset_name = self._current_preset
+                self.log_line.emit("[zapret] Прямой запуск не прошёл, пробую fallback через @config из ProgramData")
+                self._process = None
+                QTimer.singleShot(150, lambda name=preset_name: self.start(
+                    name,
+                    _retry_count=2,
+                    _force_cleanup=False,
+                    _launch_mode="at_config",
+                ))
                 return
 
             # Подробности в лог
@@ -568,6 +640,7 @@ class ZapretManager(QObject):
         self._start_args = []
         self._start_retry_count = 0
         self._current_at_config = None
+        self._launch_mode = "direct"
         self.stopped.emit()
 
     def _check_health(self) -> None:

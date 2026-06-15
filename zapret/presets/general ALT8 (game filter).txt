@@ -1,5 +1,5 @@
 # Preset: general ALT8 (game filter)
-# BuiltinVersion: 2.19
+# BuiltinVersion: 2.20
 # IconColor: #e6c300ff
 
 --lua-init=@lua/zapret-lib.lua
@@ -8,6 +8,8 @@
 --lua-init=@lua/custom_funcs.lua
 --lua-init=@lua/custom_diag.lua
 --lua-init=@lua/zapret-multishake.lua
+--lua-init=@lua/fakemultisplit.lua
+--lua-init=@lua/fakemultidisorder.lua
 
 --ctrack-disable=0
 --ipcache-lifetime=8400
@@ -101,13 +103,13 @@
 
 --name=Голосовые звонки/чаты
 --filter-l7=stun,discord
---payload=stun,discord_ip_discovery
 --out-range=-n8
+--payload=stun,discord_ip_discovery
 --lua-desync=fake:blob=fake_default_udp:repeats=6
 
 --new
 
---name=discord.media
+--name=discord.media (voice RTC)
 --filter-tcp=80,443,1080,2053,2083,2087,2096,8443
 --out-range=-d10
 --hostlist=lists/discord-media.txt
@@ -309,7 +311,7 @@
 
 --new
 
---name=LumenKVN TCP
+--name=ZapretKVN TCP
 --filter-tcp=80,443-65535
 --ipset=lists/ipset-zapretkvn.txt
 --out-range=-d10
@@ -433,7 +435,7 @@
 
 --new
 
---name=LumenKVN UDP
+--name=ZapretKVN UDP
 --filter-udp=443-65535
 --ipset=lists/ipset-zapretkvn.txt
 --out-range=-n2
