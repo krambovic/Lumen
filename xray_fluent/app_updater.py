@@ -700,9 +700,9 @@ class UpdateDownloader(QThread):
                 "}",
                 "catch {",
                 (
-                    "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--tray' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--tray' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
+                    "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--tray','--relaunched' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--tray','--relaunched' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
                     if self._restart_in_tray
-                    else "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
+                    else "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--relaunched' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--relaunched' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
                 ),
                 "    New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
                 "    ($_ | Out-String) | Set-Content -LiteralPath $errorLog -Encoding UTF8",

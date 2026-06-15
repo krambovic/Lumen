@@ -273,6 +273,31 @@ def _create_windows_single_instance_mutex() -> tuple[object | None, bool]:
         return None, True
 
 
+def _close_mutex_handle(handle: object | None) -> None:
+    if not handle or sys.platform != "win32":
+        return
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+
+
+def _acquire_single_instance_mutex(relaunching: bool) -> tuple[object | None, bool]:
+    handle, owns = _create_windows_single_instance_mutex()
+    if owns or not relaunching:
+        return handle, owns
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline:
+        _close_mutex_handle(handle)
+        time.sleep(0.1)
+        handle, owns = _create_windows_single_instance_mutex()
+        if owns:
+            break
+    return handle, owns
+
+
 def _create_single_instance(app):
     """Return (server, is_primary). A second launch just activates the first window."""
     try:
@@ -282,8 +307,11 @@ def _create_single_instance(app):
         return None, True
 
     server_name = "LumenKVN.SingleInstance"
-    mutex_handle, owns_mutex = _create_windows_single_instance_mutex()
+    relaunching = any(flag in sys.argv[1:] for flag in ("--relaunch-as-admin", "--relaunched"))
+
+    mutex_handle, owns_mutex = _acquire_single_instance_mutex(relaunching)
     if not owns_mutex:
+        _close_mutex_handle(mutex_handle)
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             if _notify_primary_instance(server_name):
@@ -293,12 +321,15 @@ def _create_single_instance(app):
 
     lock = QLockFile(str(Path(tempfile.gettempdir()) / "LumenKVN.SingleInstance.lock"))
     lock.setStaleLockTime(30_000)
-    relaunching = "--relaunch-as-admin" in sys.argv[1:]
-    deadline = time.monotonic() + (5.0 if relaunching else 0.5)
+    deadline = time.monotonic() + (20.0 if relaunching else 0.5)
 
     while not lock.tryLock(0):
-        _notify_primary_instance(server_name)
+        if relaunching:
+            lock.removeStaleLockFile()
+        else:
+            _notify_primary_instance(server_name)
         if time.monotonic() >= deadline:
+            _close_mutex_handle(mutex_handle)
             return None, False
         time.sleep(0.1)
 
@@ -309,6 +340,7 @@ def _create_single_instance(app):
     server = QLocalServer(app)
     if not server.listen(server_name):
         lock.unlock()
+        _close_mutex_handle(mutex_handle)
         _notify_primary_instance(server_name)
         return None, False
     server._single_instance_lock = lock
