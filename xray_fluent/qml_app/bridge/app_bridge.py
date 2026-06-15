@@ -40,6 +40,7 @@ class AppBridge(QObject):
     appUpdateState = pyqtSignal("QVariantMap")     # application updater
     xrayUpdateState = pyqtSignal("QVariantMap")    # Xray-core updater
     resourceUpdateState = pyqtSignal("QVariantMap")    # sing-box/geodata updater
+    updatesAvailableChanged = pyqtSignal()    # флаг наличия любых обновлений (бейдж)
 
     # ── property-change signals ──────────────────────────────────
     connectedChanged = pyqtSignal()
@@ -519,6 +520,12 @@ class AppBridge(QObject):
         self._runtime_phase = phase or ""
         self._runtime_message = message or ""
         self.runtimeChanged.emit()
+
+    def _on_auto_switch(self, node_name: str) -> None:
+        # Уведомление об успешном авто-переключении на резервный сервер.
+        name = node_name or ""
+        self.autoSwitch.emit(name)
+        self.trayNotify.emit(tr("Автопереключение"), name)
 
     def _on_routing_changed(self, routing: RoutingSettings) -> None:
         self._routing_mode = routing.mode
