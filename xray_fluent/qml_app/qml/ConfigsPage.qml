@@ -298,6 +298,33 @@ Item {
                 anchors.margins: 1
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
+                flickDeceleration: 5000
+                maximumFlickVelocity: 3000
+                pixelAligned: true
+                // eased mouse-wheel scroll (matches FluentScroll feel)
+                property real wheelStep: 92
+                NumberAnimation {
+                    id: editorScrollAnim
+                    target: editorFlick; property: "contentY"
+                    duration: 320; easing.type: Easing.OutQuint
+                }
+                WheelHandler {
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: (ev) => {
+                        var maxY = Math.max(0, editorFlick.contentHeight - editorFlick.height)
+                        if (maxY <= 0) { ev.accepted = true; return }
+                        if (ev.pixelDelta.y !== 0) {
+                            editorScrollAnim.stop()
+                            editorFlick.contentY = Math.max(0, Math.min(maxY, editorFlick.contentY - ev.pixelDelta.y))
+                        } else {
+                            var base = editorScrollAnim.running ? editorScrollAnim.to : editorFlick.contentY
+                            var target = Math.max(0, Math.min(maxY, base - (ev.angleDelta.y / 120) * editorFlick.wheelStep))
+                            editorScrollAnim.to = target
+                            editorScrollAnim.restart()
+                        }
+                        ev.accepted = true
+                    }
+                }
 
                 // A plain Flickable + TextArea.flickable keeps the vertical
                 // scrollbar anchored to the viewport's RIGHT edge. The previous

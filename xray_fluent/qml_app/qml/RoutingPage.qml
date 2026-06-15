@@ -52,6 +52,36 @@ Item {
         }
     }
 
+    // Fluent-стилизованный диалог (скруглённая карточка + кастомные кнопки) вместо дефолтного Metro-окна либы.
+    component FluentDialog: Dialog {
+        id: fdlg
+        property string okText: I18n.t("Добавить")
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        padding: 20
+        topPadding: 12
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle {
+            radius: 10; color: Theme.flyout
+            border.width: 1; border.color: Theme.flyoutBorder
+        }
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
+        header: Text {
+            text: fdlg.title
+            visible: fdlg.title.length > 0
+            color: Theme.text; font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
+            wrapMode: Text.WordWrap
+            leftPadding: 20; rightPadding: 20; topPadding: 18; bottomPadding: 2
+        }
+        footer: RowLayout {
+            spacing: 10
+            Item { Layout.fillWidth: true }
+            AccentButton { kind: "ghost"; text: I18n.t("Отмена"); onClicked: fdlg.reject(); Layout.topMargin: 6; Layout.bottomMargin: 18 }
+            AccentButton { kind: "accent"; text: fdlg.okText; onClicked: fdlg.accept(); Layout.rightMargin: 20; Layout.topMargin: 6; Layout.bottomMargin: 18 }
+        }
+    }
+
     FluentScroll {
         anchors.fill: parent
 
@@ -245,7 +275,7 @@ Item {
             Card {
                 Layout.fillWidth: true
                 padding: 0
-                hoverable: false
+                hoverable: true
                 ColumnLayout {
                     width: parent.width
                     spacing: 0
@@ -368,7 +398,7 @@ Item {
             Card {
                 Layout.fillWidth: true
                 padding: 0
-                hoverable: false
+                hoverable: true
                 ColumnLayout {
                     width: parent.width
                     spacing: 0
@@ -480,13 +510,10 @@ Item {
     }
 
     // ---- add process dialog ------------------------------------------
-    Dialog {
+    FluentDialog {
         id: procDialog
         property bool folderMode: false
-        anchors.centerIn: Overlay.overlay
-        modal: true
         title: folderMode ? I18n.t("Добавить папку") : I18n.t("Добавить приложение")
-        standardButtons: Dialog.Ok | Dialog.Cancel
         width: 480
         onAccepted: {
             var v = procInput.text.trim();
@@ -519,12 +546,9 @@ Item {
     }
 
     // ---- add domain dialog -------------------------------------------
-    Dialog {
+    FluentDialog {
         id: domainDialog
-        anchors.centerIn: Overlay.overlay
-        modal: true
         title: I18n.t("Добавить домен или IP")
-        standardButtons: Dialog.Ok | Dialog.Cancel
         width: 480
         onAccepted: {
             var v = domainInput.text.trim();
@@ -552,12 +576,10 @@ Item {
     }
 
     // ---- import dialog -----------------------------------------------
-    Dialog {
+    FluentDialog {
         id: importDialog
-        anchors.centerIn: Overlay.overlay
-        modal: true
+        okText: I18n.t("Импорт")
         title: I18n.t("Импорт правил")
-        standardButtons: Dialog.Ok | Dialog.Cancel
         width: 520
         onAccepted: { if (importInput.text.trim().length) App.importDomainRules(importInput.text) }
         contentItem: ColumnLayout {

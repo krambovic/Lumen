@@ -30,6 +30,20 @@ Item {
     property bool editIsNew: false
     property string editOrigName: ""
 
+    // Fluent-поле ввода (как в остальном приложении) вместо дефолтного TextField либы.
+    component FluentField: TextField {
+        Layout.fillWidth: true
+        implicitHeight: Theme.controlHeight
+        leftPadding: 10; rightPadding: 10; topPadding: 0; bottomPadding: 0
+        color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal
+        selectByMouse: true
+        verticalAlignment: TextInput.AlignVCenter
+        background: Rectangle {
+            radius: Theme.radiusSmall; color: Theme.controlFill
+            border.width: 1; border.color: parent.activeFocus ? Theme.accent : Theme.borderSolid
+        }
+    }
+
     function refresh() {
         presets = App.zapretPresets()
         // keep selection valid
@@ -168,6 +182,7 @@ Item {
                     Text { text: I18n.t("Описание"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true }
                     Text { text: I18n.t("Аргументов"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colArgs; horizontalAlignment: Text.AlignRight }
                     Text { text: I18n.t("Изменён"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colDate; horizontalAlignment: Text.AlignRight }
+                    Item { Layout.preferredWidth: 30 }
                 }
                 Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
 
@@ -222,6 +237,13 @@ Item {
                                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                                 horizontalAlignment: Text.AlignRight; Layout.preferredWidth: page.colDate
                             }
+                            AccentButton {
+                                kind: "ghost"; iconOnly: true; glyph: "\uE70F"
+                                tip: I18n.t("Редактировать")
+                                Layout.preferredWidth: 30
+                                implicitHeight: 30
+                                onClicked: page.openEditor(modelData.name)
+                            }
                         }
                         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.divider; opacity: 0.5 }
                     }
@@ -272,7 +294,7 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true; spacing: 10
                     Text { text: I18n.t("Название:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.preferredWidth: 90 }
-                    TextField {
+                    FluentField {
                         id: nameField
                         Layout.fillWidth: true
                         placeholderText: I18n.t("Имя пресета")
@@ -282,7 +304,7 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true; spacing: 10
                     Text { text: I18n.t("Описание:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.preferredWidth: 90 }
-                    TextField {
+                    FluentField {
                         id: descField
                         Layout.fillWidth: true
                         placeholderText: I18n.t("Краткое описание (необязательно)")
@@ -304,10 +326,41 @@ Item {
             Layout.fillHeight: true
             padding: 2
             hoverable: false
-            ScrollView {
+            Flickable {
+                id: editFlick
                 anchors.fill: parent
                 clip: true
-                TextArea {
+                boundsBehavior: Flickable.StopAtBounds
+                flickDeceleration: 5000
+                maximumFlickVelocity: 3000
+                pixelAligned: true
+                ScrollBar.vertical: FluentScrollBar {}
+                ScrollBar.horizontal: FluentScrollBar {}
+                // faster eased mouse-wheel scroll (matches FluentScroll feel)
+                property real wheelStep: 92
+                NumberAnimation {
+                    id: editScrollAnim
+                    target: editFlick; property: "contentY"
+                    duration: 320; easing.type: Easing.OutQuint
+                }
+                WheelHandler {
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: (ev) => {
+                        var maxY = Math.max(0, editFlick.contentHeight - editFlick.height)
+                        if (maxY <= 0) { ev.accepted = true; return }
+                        if (ev.pixelDelta.y !== 0) {
+                            editScrollAnim.stop()
+                            editFlick.contentY = Math.max(0, Math.min(maxY, editFlick.contentY - ev.pixelDelta.y))
+                        } else {
+                            var base = editScrollAnim.running ? editScrollAnim.to : editFlick.contentY
+                            var target = Math.max(0, Math.min(maxY, base - (ev.angleDelta.y / 120) * editFlick.wheelStep))
+                            editScrollAnim.to = target
+                            editScrollAnim.restart()
+                        }
+                        ev.accepted = true
+                    }
+                }
+                TextArea.flickable: TextArea {
                     id: contentArea
                     placeholderText: I18n.t("Аргументы winws2, по одному на строку.\nСтроки с # — комментарии.")
                     wrapMode: TextEdit.NoWrap
