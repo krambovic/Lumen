@@ -149,13 +149,6 @@ Item {
             AccentButton { kind: "danger"; glyph: "\uE71A"; text: I18n.t("Остановить"); enabled: page.running; onClicked: App.stopZapret() }
         }
 
-        // progress bar while running
-        ProgressBar {
-            Layout.fillWidth: true
-            visible: page.running
-            indeterminate: true
-        }
-
         // ---- presets table ----
         Card {
             Layout.fillWidth: true
