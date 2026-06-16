@@ -12,7 +12,7 @@ from pathlib import Path
 
 def _enable_gpu_friendly_defaults() -> None:
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Universal")
-    os.environ.setdefault("QSG_RENDER_LOOP", "threaded")
+    os.environ.setdefault("QSG_RENDER_LOOP", "basic")  # basic: нативное модальное меню трея на Windows не дедлочит render-поток
     os.environ.setdefault("QSG_RHI_BACKEND", "opengl")
 
 

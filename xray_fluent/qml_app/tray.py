@@ -1,6 +1,8 @@
 """System tray icon for the QML frontend (background-run support)"""
 from __future__ import annotations
 
+import logging
+
 from PyQt6.QtCore import QObject
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
@@ -8,6 +10,8 @@ from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 from ..constants import APP_ICON_PATH, APP_NAME
 from .toast import show_toast
 from ..i18n import tr
+
+_log = logging.getLogger("xray_fluent")
 
 
 # Минимальный тёмный стиль меню трея под общий Fluent-вид программы.
@@ -121,6 +125,12 @@ class QmlTray(QObject):
             self._show_window()
 
     def _on_activated(self, reason) -> None:
+        try:
+            self._on_activated_impl(reason)
+        except Exception:
+            _log.exception("[tray] _on_activated failed")
+
+    def _on_activated_impl(self, reason) -> None:
         if reason in (
             QSystemTrayIcon.ActivationReason.Trigger,
             QSystemTrayIcon.ActivationReason.DoubleClick,
@@ -186,6 +196,14 @@ class QmlTray(QObject):
         self._update_tooltip()
 
     def _build_routing_menu(self) -> None:
+        # Колбэк вызывается Qt из C++ во время показа нативного меню трея.
+        # Любое исключение здесь иначе роняет процесс без Python-трейсбэка.
+        try:
+            self._build_routing_menu_impl()
+        except Exception:
+            _log.exception("[tray] _build_routing_menu failed")
+
+    def _build_routing_menu_impl(self) -> None:
         # Перестраиваем список при каждом открытии: дефолтные + кастомные в одном меню.
         menu = getattr(self, "_menu_routing", None)
         if menu is None:
