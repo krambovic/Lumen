@@ -25,9 +25,14 @@ def check_auto_switch(controller: AppController, down_bps: float, latency_ms: in
         return
 
     now = time.monotonic()
+    # В режиме TUN прямой TCP-пинг до сервера часто недоступен (трафик идёт через
+    # виртуальный адаптер), поэтому отсутствие пинга — ложный сигнал. Health-check
+    # тут устроил бы цикл переподключений с пересозданием TUN (зависание и краш),
+    # поэтому пропускаем его и держим health-метку сброшенной.
+    tun_active = bool(controller.state.settings.tun_mode)
     # Health-check, объединённый с auto-switch: если TCP-пинг до активного
     # сервера пропал дольше grace-окна — узел мёртв, запускаем переключение.
-    if latency_ms is None:
+    if latency_ms is None and not tun_active:
         if controller._health_down_since == 0.0:
             controller._health_down_since = now
         elif (now - controller._health_down_since >= AUTO_SWITCH_HEALTH_GRACE_SEC
