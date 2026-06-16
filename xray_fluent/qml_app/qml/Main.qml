@@ -203,7 +203,8 @@ ApplicationWindow {
                         iconFont: win.iconFont
                         compact: win.railCollapsed
                         selected: win.currentIndex === modelData.index
-                        onClicked: win.currentIndex = modelData.index
+                        badge: modelData.index === 7 && App.updatesAvailable
+                        onClicked: { win.currentIndex = modelData.index; if (modelData.index === 7) App.markUpdatesSeen() }
                     }
                 }
             }

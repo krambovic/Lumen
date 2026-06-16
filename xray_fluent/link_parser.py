@@ -112,6 +112,9 @@ def parse_single(raw: str) -> Node:
     if scheme in {"hysteria2", "hy2"}:
         return _parse_hysteria2(text)
 
+    if scheme == "tuic":
+        return _parse_tuic(text)
+
     raise LinkParseError(f"unsupported scheme: {scheme or 'unknown'}")
 
 
@@ -803,7 +806,7 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         peer = peers[0] if isinstance(peers, list) and peers and isinstance(peers[0], dict) else {}
         server = str(peer.get("address") or native.get("server") or "")
         port = int(peer.get("port") or native.get("server_port") or 0)
-    elif protocol in {"hysteria", "hysteria2"} and native:
+    elif protocol in {"hysteria", "hysteria2", "tuic"} and native:
         server = str(native.get("server") or "")
         port = int(native.get("server_port") or 0)
 
@@ -840,6 +843,7 @@ def _pick_json_proxy_outbound(outbounds: list[Any]) -> dict[str, Any]:
         "hysteria2",
         "hy",
         "hy2",
+        "tuic",
     }
     for item in candidates:
         if str(item.get("tag") or "").strip().lower() == "proxy" and kind(item) not in ignored:
@@ -922,6 +926,39 @@ def _parse_hysteria2(link: str) -> Node:
     return Node(name=name, scheme="hysteria2", server=server, port=int(port), link=link, outbound=_native_singbox_outbound(outbound))
 
 
+def _parse_tuic(link: str) -> Node:
+    # Разбор TUIC-ссылки: tuic://uuid:password@host:port?congestion_control=&udp_relay_mode=&sni=&alpn=#name
+    parsed = urlsplit(link)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    params = {k: _first(query, k) for k in query}
+    server = parsed.hostname or _get_param(params, "server", "address", "host")
+    port = parsed.port or int(_get_param(params, "port", default="0") or 0) or 443
+    uuid = unquote(parsed.username or "") or _get_param(params, "uuid", "id")
+    password = unquote(parsed.password or "") or _get_param(params, "password", "passwd", "pass")
+    if not server or not uuid:
+        raise LinkParseError("tuic link must contain server and uuid")
+    outbound: dict[str, Any] = {
+        "type": "tuic",
+        "tag": "proxy",
+        "server": server,
+        "server_port": int(port),
+        "uuid": uuid,
+    }
+    if password:
+        outbound["password"] = password
+    congestion = _get_param(params, "congestion_control", "congestion", "cc")  # cubic/bbr/new_reno
+    if congestion:
+        outbound["congestion_control"] = congestion
+    udp_relay = _get_param(params, "udp_relay_mode", "udp_relay", "udpRelayMode")  # native/quic
+    if udp_relay:
+        outbound["udp_relay_mode"] = udp_relay
+    if _to_bool(_get_param(params, "zero_rtt_handshake", "zero_rtt", "reduce_rtt", default="")):
+        outbound["zero_rtt_handshake"] = True
+    _apply_hysteria_tls(outbound, params, server)  # переиспользуем TLS-хелпер (sni/alpn/insecure)
+    name = _clean_name(parsed.fragment, f"tuic-{server}:{port}")
+    return Node(name=name, scheme="tuic", server=server, port=int(port), link=link, outbound=_native_singbox_outbound(outbound))
+
+
 def _apply_hysteria_tls(outbound: dict[str, Any], params: dict[str, str], server: str) -> None:
     tls: dict[str, Any] = {"enabled": True}
     sni = _get_param(params, "sni", "peer", "server_name", "serverName")
@@ -950,7 +987,7 @@ def _apply_hysteria_obfs(outbound: dict[str, Any], params: dict[str, str]) -> No
         return
     outbound["obfs"] = {
         "type": obfs_type or "salamander",
-        "password": obfs_password,
+        **({"password": obfs_password} if obfs_password else {}),  # salamander: пароль опционален
     }
 
 

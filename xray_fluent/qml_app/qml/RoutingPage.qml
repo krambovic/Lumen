@@ -249,6 +249,32 @@ Item {
                 AccentButton { kind: "ghost"; glyph: "\uE80F"; text: I18n.t("Всё кроме РФ"); onClicked: App.applyRoutingPreset("except_ru") }
             }
 
+            // ---- custom routing presets ------------------------------
+            Text { text: I18n.t("Свои пресеты маршрутизации"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                StyledCombo {
+                    id: customPresetCombo
+                    Layout.preferredWidth: 220
+                    textRole: "name"
+                    model: App.customRoutingPresets
+                    enabled: App.customRoutingPresets.length > 0
+                }
+                AccentButton {
+                    kind: "ghost"; glyph: "\uE768"; text: I18n.t("Применить")
+                    enabled: App.customRoutingPresets.length > 0
+                    onClicked: { var p = App.customRoutingPresets[customPresetCombo.currentIndex]; if (p) App.applyCustomRoutingPreset(p.id) }
+                }
+                AccentButton {
+                    kind: "ghost"; glyph: "\uE74D"; text: I18n.t("Удалить")
+                    enabled: App.customRoutingPresets.length > 0
+                    onClicked: { var p = App.customRoutingPresets[customPresetCombo.currentIndex]; if (p) App.deleteRoutingPreset(p.id) }
+                }
+                Item { Layout.fillWidth: true }
+                AccentButton { kind: "ghost"; glyph: "\uE74E"; text: I18n.t("Сохранить текущий"); onClicked: { savePresetInput.text = ""; savePresetDialog.open() } }
+            }
+
             // ---- Приложения -------------------------------------------
             SectionLabel { text: I18n.t("Приложения") }
             RowLayout {
@@ -270,6 +296,7 @@ Item {
                 spacing: 8
                 AccentButton { kind: "ghost"; glyph: "\uE8E5"; text: I18n.t("Добавить .exe"); onClicked: { procDialog.folderMode = false; procInput.text = ""; procDialog.open() } }
                 AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Добавить папку"); onClicked: { procDialog.folderMode = true; procInput.text = ""; procDialog.open() } }
+                AccentButton { kind: "ghost"; glyph: "\uE7C4"; text: I18n.t("Из запущенных"); onClicked: { runningProcDialog.reload(); runningProcDialog.open() } }
             }
             // process table
             Card {
@@ -505,6 +532,63 @@ Item {
                 Layout.rightMargin: 20
                 Layout.topMargin: 6
                 Layout.bottomMargin: 18
+            }
+        }
+    }
+
+    // ---- save routing preset dialog ----------------------------------
+    Dialog {
+        id: savePresetDialog
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: I18n.t("Сохранить пресет маршрутизации")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: 460
+        onAccepted: { if (savePresetInput.text.trim().length) App.saveRoutingPreset(savePresetInput.text.trim()) }
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text {
+                text: I18n.t("Текущие правила маршрутизации будут сохранены как именованный пресет.")
+                color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            DnsField { id: savePresetInput; placeholderText: I18n.t("Название пресета") }
+        }
+    }
+
+    // ---- running apps picker -----------------------------------------
+    Dialog {
+        id: runningProcDialog
+        property var procList: []
+        function reload() { runningProcDialog.procList = App.runningProcesses(); runProcCombo.currentIndex = 0 }
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: I18n.t("Запущенные приложения")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: 480
+        onAccepted: {
+            var name = runningProcDialog.procList[runProcCombo.currentIndex];
+            if (name) App.addProcessRule(name, page.procActionKeys[runProcActionCombo.currentIndex]);
+        }
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text {
+                text: I18n.t("Выберите запущенное приложение и действие маршрутизации.")
+                color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            StyledCombo {
+                id: runProcCombo
+                Layout.fillWidth: true
+                model: runningProcDialog.procList
+            }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 10
+                Text { text: I18n.t("Действие"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                StyledCombo {
+                    id: runProcActionCombo
+                    Layout.preferredWidth: 160
+                    model: page.procActionLabels
+                    currentIndex: 1
+                }
             }
         }
     }

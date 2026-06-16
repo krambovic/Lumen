@@ -117,6 +117,14 @@ def handle_unexpected_disconnect(controller: AppController) -> None:
     if controller._cleaning_connection_state:
         return
     controller._cleaning_connection_state = True
+    # Kill-switch: незапланированный обрыв при желании быть на связи → fail-closed (не сбрасываем прокси).
+    kill_switch_active = (
+        controller.state.settings.kill_switch
+        and controller._desired_connected
+        and not controller._reconnecting
+        and not controller._auto_switch_transitioning
+    )
+    controller._kill_switch_engaged = kill_switch_active
     try:
         cleanup_connection_runtime_state(
             controller,
@@ -124,11 +132,14 @@ def handle_unexpected_disconnect(controller: AppController) -> None:
             reset_auto_switch_cycle=not controller._auto_switch_transitioning,
             reset_auto_switch_cooldown=True,
         )
-        stop_active_connection_processes(controller, disable_proxy=not controller._reconnecting)
+        stop_active_connection_processes(controller, disable_proxy=not controller._reconnecting and not kill_switch_active)
         controller._active_core = "xray"
         controller._clear_active_session()
         if not controller._reconnecting:
             controller._desired_connected = False
+        if kill_switch_active:
+            controller.status.emit("error", "Kill-switch: соединение разорвано — трафик заблокирован (прокси не сброшен). Переподключитесь.")
+            controller._log("[kill-switch] unexpected disconnect — system proxy kept enabled (fail-closed)")
     finally:
         controller._auto_switch_transitioning = False
         controller._cleaning_connection_state = False
@@ -151,6 +162,7 @@ def on_core_state_changed(controller: AppController, _running: bool) -> None:
         and controller._active_core == "xray"
         and controller.state.settings.enable_system_proxy
         and not controller._reconnecting
+        and not controller._kill_switch_engaged
     ):
         controller.proxy.disable(restore_previous=True)
 
@@ -158,7 +170,9 @@ def on_core_state_changed(controller: AppController, _running: bool) -> None:
 def on_live_metrics(controller: AppController, payload: dict[str, object]) -> None:
     controller.live_metrics_updated.emit(payload)
     down_bps = float(payload.get("down_bps") or 0.0)
-    controller._check_auto_switch(down_bps)
+    latency_raw = payload.get("latency_ms")
+    latency_ms = int(latency_raw) if isinstance(latency_raw, (int, float)) else None
+    controller._check_auto_switch(down_bps, latency_ms)
     process_stats = payload.get("process_stats")
     if process_stats:
         stats_dict = {}

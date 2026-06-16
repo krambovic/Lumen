@@ -10,9 +10,10 @@ if TYPE_CHECKING:
 
 AUTO_SWITCH_HIGH_TICKS_REQUIRED = 10
 AUTO_SWITCH_IDLE_BPS = 1024.0
+AUTO_SWITCH_HEALTH_GRACE_SEC = 12.0  # сколько секунд пинг может отсутствовать, прежде чем узел считается мёртвым
 
 
-def check_auto_switch(controller: AppController, down_bps: float) -> None:
+def check_auto_switch(controller: AppController, down_bps: float, latency_ms: int | None = None) -> None:
     settings = controller.state.settings
     if not settings.auto_switch_enabled:
         return
@@ -24,6 +25,21 @@ def check_auto_switch(controller: AppController, down_bps: float) -> None:
         return
 
     now = time.monotonic()
+    # Health-check, объединённый с auto-switch: если TCP-пинг до активного
+    # сервера пропал дольше grace-окна — узел мёртв, запускаем переключение.
+    if latency_ms is None:
+        if controller._health_down_since == 0.0:
+            controller._health_down_since = now
+        elif (now - controller._health_down_since >= AUTO_SWITCH_HEALTH_GRACE_SEC
+                and now - controller._auto_switch_last_switch >= settings.auto_switch_cooldown_sec):
+            _perform_auto_switch(
+                controller, now,
+                "[auto-switch] health-check: сервер не отвечает на пинг → переключаюсь",
+                "auto-switch: health-check",
+            )
+            return
+    else:
+        controller._health_down_since = 0.0
     threshold_bps = settings.auto_switch_threshold_kbps * 1024.0
 
     if down_bps >= threshold_bps:
@@ -126,3 +142,33 @@ def get_next_node_for_auto_switch(controller: AppController) -> Node | None:
     if scoped_nodes[next_idx].id == current_id:
         return None
     return scoped_nodes[next_idx]
+
+
+def _perform_auto_switch(controller: AppController, now: float, log_message: str, reason: str) -> bool:
+    # Общая процедура переключения для health-check и просадки скорости.
+    max_attempts = max(1, len(controller.state.nodes) - 1)
+    if controller._auto_switch_cycle_attempts >= max_attempts:
+        controller._auto_switch_exhausted = True
+        controller._auto_switch_low_since = 0.0
+        controller._health_down_since = 0.0
+        controller._auto_switch_active_download = False
+        controller.status.emit("warning", "Автопереключение остановлено: все серверы уже проверены")
+        controller._log("[auto-switch] exhausted all nodes for current session")
+        return False
+    next_node = get_next_node_for_auto_switch(controller)
+    if not next_node:
+        return False
+    controller._auto_switch_low_since = 0.0
+    controller._health_down_since = 0.0
+    controller._auto_switch_last_switch = now
+    controller._auto_switch_active_download = False
+    controller._auto_switch_cycle_attempts += 1
+    controller._auto_switch_transitioning = True
+    controller._log(log_message)
+    controller.auto_switch_triggered.emit(next_node.name)
+    controller.state.selected_node_id = next_node.id
+    controller.selection_changed.emit(next_node)
+    controller.save()
+    controller._desired_connected = True
+    controller._request_transition(reason)
+    return True

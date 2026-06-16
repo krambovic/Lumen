@@ -12,6 +12,7 @@ Item {
     property string iconFont: "Segoe Fluent Icons"
     property bool selected: false
     property bool compact: false
+    property bool badge: false
     signal clicked()
 
     implicitHeight: 40
@@ -56,6 +57,17 @@ Item {
                 color: root.selected ? Theme.text : Theme.textMuted
                 Layout.alignment: Qt.AlignVCenter
                 horizontalAlignment: Text.AlignLeft
+                Rectangle {  // индикатор наличия обновлений
+                    visible: root.badge
+                    width: 8; height: 8; radius: 4
+                    color: "#E81123"
+                    border.width: 1
+                    border.color: Theme.flyout
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.rightMargin: -3
+                    anchors.topMargin: -1
+                }
             }
             Text {
                 text: root.label

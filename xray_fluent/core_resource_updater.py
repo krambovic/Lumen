@@ -159,6 +159,48 @@ def update_geodata(on_progress=None) -> ResourceUpdateResult:
     return ResourceUpdateResult("geodata", "updated", "geoip.dat и geosite.dat обновлены")
 
 
+def check_geodata_update() -> ResourceUpdateResult:
+    """Лёгкая проверка обновления geoip/geosite по размеру файлов (без скачивания)."""
+    target_dir = _core_dir()
+    try:
+        changed = False
+        for url, name in ((GEOIP_DAT_URL, "geoip.dat"), (GEOSITE_DAT_URL, "geosite.dat")):
+            request = Request(url, method="HEAD", headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
+            with urlopen(request, timeout=20) as response:
+                remote_size = int(response.headers.get("Content-Length", 0) or 0)
+            dest = target_dir / name
+            local_size = dest.stat().st_size if dest.exists() else -1
+            if local_size < 0 or (remote_size > 0 and remote_size != local_size):
+                changed = True
+    except Exception as exc:
+        return ResourceUpdateResult("geodata", "error", f"Не удалось проверить geoip/geosite: {exc}")
+    if changed:
+        return ResourceUpdateResult("geodata", "available", "Доступно обновление geoip/geosite")
+    return ResourceUpdateResult("geodata", "up_to_date", "geoip/geosite актуальны")
+
+
+class StartupResourceCheckWorker(QThread):
+    """Фоновая проверка обновлений ядра sing-box и geoip/geosite при запуске."""
+
+    done = pyqtSignal(object)  # list[ResourceUpdateResult]
+
+    def __init__(self, *, singbox_path: str = "") -> None:
+        super().__init__()
+        self._singbox_path = singbox_path
+
+    def run(self) -> None:
+        results: list[ResourceUpdateResult] = []
+        try:
+            results.append(check_or_update_singbox(self._singbox_path, apply_update=False))
+        except Exception as exc:
+            results.append(ResourceUpdateResult("singbox", "error", str(exc)))
+        try:
+            results.append(check_geodata_update())
+        except Exception as exc:
+            results.append(ResourceUpdateResult("geodata", "error", str(exc)))
+        self.done.emit(results)
+
+
 class ResourceUpdateWorker(QThread):
     done = pyqtSignal(object)
     progress = pyqtSignal(int)
