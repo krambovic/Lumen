@@ -237,13 +237,6 @@ Item {
                                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                                 horizontalAlignment: Text.AlignRight; Layout.preferredWidth: page.colDate
                             }
-                            AccentButton {
-                                kind: "ghost"; iconOnly: true; glyph: "\uE70F"
-                                tip: I18n.t("Редактировать")
-                                Layout.preferredWidth: 30
-                                implicitHeight: 30
-                                onClicked: page.openEditor(modelData.name)
-                            }
                         }
                         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.divider; opacity: 0.5 }
                     }
