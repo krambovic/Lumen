@@ -67,6 +67,9 @@ class QmlTray(QObject):
 
         self._tray.activated.connect(self._on_activated)
         menu.aboutToShow.connect(self._refresh_actions)
+        # Подменю маршрутизации перестраиваем только перед показом самого
+        # подменю, чтобы не очищать пункты уже открытого меню (это роняло прогу).
+        self._menu_routing.aboutToShow.connect(self._build_routing_menu)
         try:
             self._bridge.connectedChanged.connect(self._refresh_actions)
         except Exception:
@@ -180,7 +183,6 @@ class QmlTray(QObject):
             self._action_quit.setText(tr("Выход"))
         except Exception:
             pass
-        self._build_routing_menu()
         self._update_tooltip()
 
     def _build_routing_menu(self) -> None:
