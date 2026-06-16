@@ -645,12 +645,37 @@ class AppBridge(QObject):
             self.controller.save()
             self.routingChanged.emit()
 
+    def _switch_to_supported_proxy_node(self) -> None:
+        """Leaving TUN for system proxy: AWG/native-only nodes can't run there,
+        so fall back to the most recently used node that works without TUN."""
+        try:
+            cur = self.controller.selected_node
+        except Exception:
+            cur = None
+        if cur is None or not is_native_singbox_only_node(cur):
+            return
+        candidates = [
+            n for n in self.controller.state.nodes
+            if not is_native_singbox_only_node(n)
+        ]
+        if not candidates:
+            return
+        candidates.sort(key=lambda n: getattr(n, "last_used_at", "") or "", reverse=True)
+        target = candidates[0]
+        try:
+            self.controller.set_selected_node(target.id)
+            self.toast.emit("info", tr("Сервер «{name}» несовместим с системным прокси — переключаюсь на «{target}»", name=getattr(cur, "name", ""), target=getattr(target, "name", "")))
+        except Exception:
+            pass
+
     @pyqtSlot(bool)
     def setTun(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.tun_mode = enabled
         if enabled:
             settings.enable_system_proxy = False
+        else:
+            self._switch_to_supported_proxy_node()
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
@@ -659,6 +684,7 @@ class AppBridge(QObject):
         settings.enable_system_proxy = enabled
         if enabled and settings.tun_mode:
             settings.tun_mode = False
+            self._switch_to_supported_proxy_node()
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
@@ -1100,14 +1126,34 @@ class AppBridge(QObject):
             clipboard.setText(link)
             self.toast.emit("success", "Ссылка скопирована в буфер обмена")
 
+    @staticmethod
+    def _node_export_family(node) -> str:
+        """Group nodes by config architecture for export compatibility."""
+        # WireGuard-family (warp/wireguard/awg) and URI-style configs cannot be
+        # exported together, so callers can compare families before exporting.
+        proto = ""
+        try:
+            ob = node.outbound if isinstance(getattr(node, "outbound", None), dict) else {}
+            proto = str(ob.get("protocol") or "").lower()
+        except Exception:
+            proto = ""
+        if not proto:
+            proto = str(getattr(node, "scheme", "") or "").lower()
+        if proto in ("warp", "wireguard", "awg", "amneziawg"):
+            return "wireguard"
+        return "uri"
+
     @pyqtSlot('QVariantList')
     def exportNodeLinks(self, ids: list | None = None) -> None:
         """Copy share links of the given nodes (or all) to the clipboard, one per line."""
         wanted = {str(i) for i in (ids or [])}
+        selected = [n for n in self.controller.state.nodes if not wanted or n.id in wanted]
+        # Запрет на экспорт несовместимых архитектур вместе (например awg + vless).
+        if wanted and len({self._node_export_family(n) for n in selected}) > 1:
+            self.toast.emit("warning", tr("Нельзя экспортировать вместе конфиги разных архитектур (например AWG и VLESS)"))
+            return
         links: list[str] = []
-        for node in self.controller.state.nodes:
-            if wanted and node.id not in wanted:
-                continue
+        for node in selected:
             link = (getattr(node, "link", "") or "").strip()
             if link:
                 links.append(link)
@@ -1134,12 +1180,22 @@ class AppBridge(QObject):
             import base64
             import io
             import qrcode
-            img = qrcode.make(link)
+            # Низкий уровень коррекции + авто-подбор версии: вмещает длинные
+            # awg/warp/wireguard конфиги, которые не влезали в qrcode.make().
+            qr = qrcode.QRCode(
+                version=None,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=6,
+                border=2,
+            )
+            qr.add_data(link)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
         except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", tr("Не удалось создать QR-код: {err}", err=str(exc)))
+            self.toast.emit("error", tr("Не удалось создать QR-код (слишком длинный конфиг?): {err}", err=str(exc)))
             return
         name = getattr(node, "name", "") or getattr(node, "server", "") or ""
         self.nodeQrReady.emit(data_uri, name)

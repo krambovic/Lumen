@@ -425,7 +425,7 @@ Item {
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE792"; text: I18n.t("Экспорт runtime JSON"); enabled: page.selCount === 1; onClicked: App.saveRuntimeJson(page.firstSelected()) }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE72D"; text: I18n.t("Экспорт выбранных (ссылки)"); enabled: page.selCount > 0; onClicked: App.exportNodeLinks(page.selectedIds()) }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8C8"; text: I18n.t("Экспорт всех (ссылки)"); onClicked: App.exportNodeLinks([]) }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE71A"; text: I18n.t("QR выбранного"); enabled: page.selCount === 1; onClicked: App.showNodeQr(page.firstSelected()) }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uED14"; text: I18n.t("QR выбранного"); enabled: page.selCount === 1; onClicked: App.showNodeQr(page.firstSelected()) }
                 AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: I18n.t("Удалить выбранные"); enabled: page.selCount > 0; onClicked: App.deleteNodes(page.selectedIds()) }
             }
 
@@ -934,6 +934,16 @@ Item {
             text: I18n.t("Массовое редактирование ({count})", { count: page.selCount })
             enabled: page.selCount > 0
             onTriggered: bulkDialog.openFor(page.selectedIds())
+        }
+        Ctx {
+            text: I18n.t("Экспорт выбранных — ссылки ({count})", { count: page.selCount })
+            enabled: page.selCount > 0
+            onTriggered: App.exportNodeLinks(page.selectedIds())
+        }
+        Ctx {
+            text: I18n.t("Экспорт в QR-код")
+            enabled: page.selCount === 1
+            onTriggered: App.showNodeQr(page.firstSelected())
         }
         Sep {}
         Ctx {

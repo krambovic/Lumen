@@ -10,6 +10,17 @@ from .toast import show_toast
 from ..i18n import tr
 
 
+# Минимальный тёмный стиль меню трея под общий Fluent-вид программы.
+_TRAY_MENU_QSS = (
+    "QMenu { background-color: #1b1b1f; color: #f2f2f3; "
+    "border: 1px solid #3a3a40; border-radius: 8px; padding: 4px; } "
+    "QMenu::item { padding: 6px 28px 6px 14px; border-radius: 6px; } "
+    "QMenu::item:selected { background-color: #2c2c33; } "
+    "QMenu::item:disabled { color: #6f6f78; } "
+    "QMenu::separator { height: 1px; background: #3a3a40; margin: 4px 8px; }"
+)
+
+
 class QmlTray(QObject):
     """Owns the QSystemTrayIcon and bridges it to the window + AppBridge."""
 
@@ -43,9 +54,14 @@ class QmlTray(QObject):
         menu.addAction(self._action_connect)
         menu.addAction(self._action_next)
         menu.addSeparator()
+        self._menu_routing = QMenu(tr("Маршрутизация"), menu)
+        self._menu_routing.setStyleSheet(_TRAY_MENU_QSS)
+        menu.addMenu(self._menu_routing)
+        menu.addSeparator()
         menu.addAction(self._action_admin)
         menu.addSeparator()
         menu.addAction(self._action_quit)
+        menu.setStyleSheet(_TRAY_MENU_QSS)
         self._menu = menu
         self._tray.setContextMenu(menu)
 
@@ -164,7 +180,55 @@ class QmlTray(QObject):
             self._action_quit.setText(tr("Выход"))
         except Exception:
             pass
+        self._build_routing_menu()
         self._update_tooltip()
+
+    def _build_routing_menu(self) -> None:
+        # Перестраиваем список при каждом открытии: дефолтные + кастомные в одном меню.
+        menu = getattr(self, "_menu_routing", None)
+        if menu is None:
+            return
+        menu.clear()
+        menu.setStyleSheet(_TRAY_MENU_QSS)
+        defaults = [
+            ("global", tr("Глобально (всё через VPN)")),
+            ("blocked", tr("Только блокировки")),
+            ("except_ru", tr("Всё кроме РФ")),
+        ]
+        for preset_id, label in defaults:
+            act = menu.addAction(label)
+            act.triggered.connect(
+                lambda _checked=False, pid=preset_id: self._apply_routing_preset(pid)
+            )
+        try:
+            custom = list(self._bridge.customRoutingPresets or [])
+        except Exception:
+            custom = []
+        if custom:
+            menu.addSeparator()
+            for preset in custom:
+                if not isinstance(preset, dict):
+                    continue
+                pid = str(preset.get("id", ""))
+                name = str(preset.get("name", ""))
+                if not pid:
+                    continue
+                act = menu.addAction(name or tr("Пресет"))
+                act.triggered.connect(
+                    lambda _checked=False, p=pid: self._apply_custom_routing_preset(p)
+                )
+
+    def _apply_routing_preset(self, preset_id: str) -> None:
+        try:
+            self._bridge.applyRoutingPreset(preset_id)
+        except Exception:
+            pass
+
+    def _apply_custom_routing_preset(self, preset_id: str) -> None:
+        try:
+            self._bridge.applyCustomRoutingPreset(preset_id)
+        except Exception:
+            pass
 
     def _current_node_name(self) -> str:
         try:
