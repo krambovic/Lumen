@@ -1092,7 +1092,13 @@ class AppController(QObject):
         if was_connected != is_connected:
             self.connection_changed.emit(is_connected)
             self._metrics_request.emit(is_connected)
-        if ok and action == "proxy_hot_swap" and self.connected and self.state.settings.discord_proxy_enabled:
+        if (
+            ok
+            and action in ("proxy_hot_swap", "connect", "reconnect")
+            and self.connected
+            and self.state.settings.discord_proxy_enabled
+            and not self.state.settings.tun_mode
+        ):
             QTimer.singleShot(250, self.apply_discord_proxy)
         if ok:
             self._blocked_transition_signature = ""
