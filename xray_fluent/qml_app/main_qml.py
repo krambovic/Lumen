@@ -78,8 +78,8 @@ def _resolve_dark(app, theme_name: str) -> bool:
         return False
 
 
-def _apply_mica(window, dark: bool) -> None:
-    """Enable the Windows 11 Mica backdrop + matching title-bar colour"""
+def _apply_mica(window, dark: bool, backdrop_kind: str = "mica") -> None:
+    """Enable the Windows 11 backdrop (Mica / Acrylic / none) + title-bar colour"""
     if sys.platform != "win32":
         return
     try:
@@ -92,7 +92,9 @@ def _apply_mica(window, dark: bool) -> None:
         DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19  # builds < 18985
         DWMWA_MICA_EFFECT = 1029                # Win11 21H2 (build 22000)
         DWMWA_SYSTEMBACKDROP_TYPE = 38          # Win11 22H2+ (build 22621)
+        DWMSBT_NONE = 1                         # solid (no backdrop)
         DWMSBT_MAINWINDOW = 2                   # Mica
+        DWMSBT_ACRYLIC = 3                      # Acrylic (transient)
 
         # 1) Dark / light title bar (try both the modern and legacy attribute)
         dark_flag = ctypes.c_int(1 if dark else 0)
@@ -115,16 +117,19 @@ def _apply_mica(window, dark: bool) -> None:
         margins = _Margins(-1, -1, -1, -1)
         dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
 
-        # 3) Enable Mica using the API that matches the running Windows build
+        # 3) Enable the chosen backdrop using the API matching the Windows build.
+        sbt = {"solid": DWMSBT_NONE, "acrylic": DWMSBT_ACRYLIC}.get(
+            backdrop_kind, DWMSBT_MAINWINDOW)
         build = sys.getwindowsversion().build
         if build >= 22621:
-            backdrop = ctypes.c_int(DWMSBT_MAINWINDOW)
+            backdrop = ctypes.c_int(sbt)
             dwm.DwmSetWindowAttribute(
                 hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
                 ctypes.byref(backdrop), ctypes.sizeof(backdrop),
             )
         elif build >= 22000:
-            enable = ctypes.c_int(1)
+            # Older Win11 only exposes Mica on/off; "solid" disables it.
+            enable = ctypes.c_int(0 if backdrop_kind == "solid" else 1)
             dwm.DwmSetWindowAttribute(
                 hwnd, DWMWA_MICA_EFFECT,
                 ctypes.byref(enable), ctypes.sizeof(enable),
@@ -428,7 +433,11 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     def _refresh_backdrop() -> None:
-        _apply_mica(window, _resolve_dark(app, _theme_name(bridge)))
+        try:
+            kind = str(bridge.uiBackdrop)
+        except Exception:
+            kind = "mica"
+        _apply_mica(window, _resolve_dark(app, _theme_name(bridge)), kind)
 
     from PyQt6.QtCore import QTimer
 

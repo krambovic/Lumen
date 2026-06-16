@@ -1,12 +1,10 @@
 pragma Singleton
 import QtQuick
 
-// Central design tokens, restyled to match the original qfluentwidgets
-// (Windows 11 Fluent) look: light theme by default, neutral Mica-style
-// backgrounds, white cards with a hairline border, Segoe UI typography and the
-// #0078D4 system accent. `dark` and `accent` are driven from Main.qml (which
-// resolves the saved theme — light / dark / system — and the accent colour),
-// so every consumer updates reactively through these readonly tokens.
+// Central design tokens (Windows 11 Fluent look). `dark`/`accent` plus the 2.0
+// appearance inputs (density / cornerRadius / fontScale / fontFamilyName /
+// animations / backdrop / preset) are driven from Main.qml out of saved
+// settings, so every consumer updates reactively through these tokens.
 QtObject {
     id: theme
 
@@ -14,47 +12,51 @@ QtObject {
     property bool dark: false
     property color accent: "#0078D4"
 
+    // ---- 2.0 appearance inputs (persisted settings) --------------------
+    property string density: "comfortable"    // compact | comfortable | spacious
+    property int cornerRadius: 7               // card corner, clamped 0..20
+    property real fontScale: 1.0               // 0.85..1.30
+    property string fontFamilyName: "Segoe UI"
+    property bool animations: true             // master motion switch
+    property string backdrop: "mica"           // mica | acrylic | solid
+    property string preset: "default"          // default | midnight | nord | ...
+    readonly property bool amoled: preset === "midnight"
+
     // ---- Accent derivatives --------------------------------------------
     readonly property color accentHover: dark ? Qt.lighter(accent, 1.12) : Qt.darker(accent, 1.06)
     readonly property color accentPressed: dark ? Qt.lighter(accent, 1.22) : Qt.darker(accent, 1.14)
     readonly property color accentText: "#FFFFFF"
     readonly property color accentSoft: dark ? Qt.rgba(accent.r, accent.g, accent.b, 0.22)
                                              : Qt.rgba(accent.r, accent.g, accent.b, 0.10)
+    // Curated accent palette for the Appearance Studio swatch grid.
+    readonly property var accentSwatches: ["#0078D4", "#0099BC", "#00B294", "#107C10",
+        "#744DA9", "#B146C2", "#E3008C", "#C30052", "#E81123", "#F7630C", "#FFB900", "#498205"]
 
     // ---- Surfaces (Fluent Mica / layer palette) ------------------------
-    // Window / Mica base
-    readonly property color bg: dark ? "#202020" : "#F3F3F3"
-    // Fallback fill painted behind everything in Main.qml. Transparent so the
-    // Windows 11 DWM Mica backdrop shows through the gaps between the opaque
-    // nav pane and cards. (On systems without Mica the window background falls
-    // back to the desktop; the solid panes/cards still render normally.)
-    readonly property color micaBase: "transparent"
-    // Slightly raised base (nav pane). A faint translucent layer over Mica
-    // (Fluent "Mica Alt" pane) instead of a flat solid grey, so the backdrop
-    // shows through exactly like the original FluentWindow navigation pane.
-    readonly property color bgElevated: dark ? Qt.rgba(1, 1, 1, 0.030) : Qt.rgba(1, 1, 1, 0.55)
-    // Card / layer fill = Fluent CardBackgroundFillColorDefault composited over
-    // the Mica backdrop. Translucent (not solid #2B2B2B) so cards read as the
-    // subtle lighter panels of the original instead of flat opaque grey.
-    readonly property color card: dark ? Qt.rgba(1, 1, 1, 0.0512) : Qt.rgba(1, 1, 1, 0.70)
+    readonly property color bg: dark ? (amoled ? "#000000" : "#202020") : "#F3F3F3"
+    // Window fill in Main.qml: fully transparent for Mica AND Acrylic so the DWM
+    // backdrop shows straight through the whole nav frame — the left rail stays
+    // part of the backdrop instead of becoming a separate solid strip. Opaque
+    // only for "solid". Acrylic readability is handled on the content panel, so
+    // the navbar keeps its see-through look.
+    readonly property color micaBase: backdrop === "solid" ? bg : "transparent"
+    // Slightly raised base (nav pane): a very faint layer so Mica stays visible.
+    readonly property color bgElevated: dark ? Qt.rgba(1, 1, 1, 0.016) : Qt.rgba(1, 1, 1, 0.55)
+    // Card / layer fill composited over the backdrop (translucent on purpose).
+    readonly property color card: dark ? Qt.rgba(1, 1, 1, 0.040) : Qt.rgba(1, 1, 1, 0.70)
     readonly property color cardHover: dark ? Qt.rgba(1, 1, 1, 0.0837) : Qt.rgba(0, 0, 0, 0.024)
     readonly property color cardPressed: dark ? Qt.rgba(1, 1, 1, 0.0326) : Qt.rgba(0, 0, 0, 0.040)
 
-    // Opaque flyout / menu / popup surface. The Mica tokens above (card,
-    // bgElevated) are deliberately TRANSLUCENT so the DWM backdrop shows
-    // through panes and cards. Pop-ups that float over page content - context
-    // menus, combobox dropdowns, toasts - must instead be fully OPAQUE, or the
-    // list/page behind them shows straight through (the "transparent menu"
-    // bug). Fluent flyout fill ≈ #2C2C2C (dark) / #FBFBFB (light).
-    readonly property color flyout: dark ? "#2C2C2C" : "#FBFBFB"
+    // Opaque flyout / menu / popup surface. The Mica tokens above are
+    // deliberately TRANSLUCENT so the backdrop shows through panes and cards;
+    // floating pop-ups must instead be fully OPAQUE or page content shows
+    // through them. Fluent flyout fill ~ #2C2C2C (dark) / #FBFBFB (light).
+    readonly property color flyout: dark ? (amoled ? "#1A1A1A" : "#2C2C2C") : "#FBFBFB"
     readonly property color flyoutBorder: dark ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(0, 0, 0, 0.13)
 
     // ---- Lines ----------------------------------------------------------
-    // Hairline control/card border (Fluent CardStrokeColorDefault)
     readonly property color borderSolid: dark ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.07)
-    // Stronger divider
     readonly property color divider: dark ? Qt.rgba(1, 1, 1, 0.06) : Qt.rgba(0, 0, 0, 0.06)
-    // The subtle darker bottom edge Fluent cards have
     readonly property color borderBottom: dark ? Qt.rgba(0, 0, 0, 0.20) : Qt.rgba(0, 0, 0, 0.10)
 
     // ---- Text (Fluent TextFillColor ramp) ------------------------------
@@ -66,10 +68,6 @@ QtObject {
     readonly property color success: dark ? "#6CCB5F" : "#0F7B0F"
     readonly property color warning: dark ? "#FCE100" : "#9D5D00"
     readonly property color danger: dark ? "#FF99A4" : "#C42B1C"
-    // Solid fill for destructive buttons. `danger` above is tuned for legible
-    // error TEXT (a pale pink in dark mode), which is too washed-out behind a
-    // white button label, so filled danger buttons use this stronger, more
-    // saturated red for proper contrast with the white text in both themes.
     readonly property color dangerFill: dark ? "#D13438" : "#C42B1C"
     readonly property color info: accent
 
@@ -78,22 +76,36 @@ QtObject {
     readonly property color controlFillHover: dark ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.5)
     readonly property color controlFillPressed: dark ? Qt.rgba(1, 1, 1, 0.03) : Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.3)
 
-    // ---- Geometry -------------------------------------------------------
-    readonly property int radius: 7          // cards
-    readonly property int radiusSmall: 4     // controls (Fluent control corner)
-    readonly property int spacing: 12
-    readonly property int spacingLarge: 20
+    // ---- Elevation (drop shadows via MultiEffect) ----------------------
+    readonly property color shadowColor: "#000000"
+    readonly property real shadowOpacity: dark ? 0.44 : 0.16
+    readonly property real shadowBlur: 0.85
+    readonly property int shadowVOffset: 5
+
+    // ---- Geometry (density-aware) --------------------------------------
+    readonly property real densityScale: density === "compact" ? 0.85 : density === "spacious" ? 1.18 : 1.0
+    readonly property int radius: Math.max(0, Math.min(20, cornerRadius))
+    readonly property int radiusSmall: Math.max(2, radius - 3)
+    readonly property int spacing: density === "compact" ? 8 : density === "spacious" ? 16 : 12
+    readonly property int spacingLarge: density === "compact" ? 14 : density === "spacious" ? 26 : 20
     readonly property int railWidth: 250
     readonly property int railWidthCompact: 50
-    readonly property int controlHeight: 32
+    readonly property int controlHeight: density === "compact" ? 28 : density === "spacious" ? 38 : 32
 
-    // ---- Typography (Fluent / Segoe UI) --------------------------------
-    readonly property string fontFamily: "Segoe UI"
-    readonly property int fontSmall: 12      // CaptionLabel
-    readonly property int fontNormal: 14     // BodyLabel
-    readonly property int fontStrong: 14     // StrongBodyLabel (bold)
-    readonly property int fontTitle: 20      // SubtitleLabel
-    readonly property int fontHero: 28       // TitleLabel
+    // ---- Typography (Fluent, user-scalable) ----------------------------
+    readonly property string fontFamily: (fontFamilyName && fontFamilyName.length) ? fontFamilyName : "Segoe UI"
+    readonly property int fontSmall: Math.round(12 * fontScale)   // CaptionLabel
+    readonly property int fontNormal: Math.round(14 * fontScale)  // BodyLabel
+    readonly property int fontStrong: Math.round(14 * fontScale)  // StrongBodyLabel
+    readonly property int fontTitle: Math.round(20 * fontScale)   // SubtitleLabel
+    readonly property int fontHero: Math.round(28 * fontScale)    // TitleLabel
+
+    // ---- Motion tokens (respect the animations switch) -----------------
+    readonly property int animFast: animations ? 110 : 0
+    readonly property int animNormal: animations ? 190 : 0
+    readonly property int animSlow: animations ? 320 : 0
+    readonly property int easeStandard: Easing.OutCubic
+    readonly property int easeEmphasized: Easing.OutQuint
 
     // ---- Helpers --------------------------------------------------------
     function pingColor(ping) {

@@ -96,18 +96,33 @@ FluentScroll {
                 Layout.preferredWidth: page.width
                 Layout.alignment: Qt.AlignTop
                 padding: 16
+                elevation: 1
                 ColumnLayout {
                     width: parent.width
                     spacing: 6
-                    Text {
-                        text: I18n.t("Подключение")
-                        color: Theme.text; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
-                    }
-                    Text {
-                        text: page.stateTitle()
-                        color: Theme.text; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontTitle
+                    // hero: animated status ring + state heading
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 14
+                        StatusRing {
+                            active: App.connected
+                            busy: App.transitionBusy
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+                            Text {
+                                text: I18n.t("Подключение")
+                                color: Theme.text; font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
+                            }
+                            Text {
+                                text: page.stateTitle()
+                                color: Theme.text; font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontTitle
+                            }
+                        }
                     }
                     Text {
                         text: page.engineText()
@@ -214,6 +229,7 @@ FluentScroll {
                 Layout.fillWidth: true
                 Layout.columnSpan: page.twoColumns ? 2 : 1
                 padding: 16
+                elevation: 1
                 ColumnLayout {
                     width: parent.width
                     spacing: 6

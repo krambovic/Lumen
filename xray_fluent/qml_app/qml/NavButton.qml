@@ -24,16 +24,18 @@ Item {
         radius: Theme.radiusSmall
         color: root.selected ? Theme.accentSoft
                : tap.hovered ? Theme.cardHover : "transparent"
-        Behavior on color { ColorAnimation { duration: 110 } }
+        Behavior on color { ColorAnimation { duration: Theme.animFast } }
 
-        Rectangle {  // selection indicator bar
-            visible: root.selected
+        Rectangle {  // selection indicator (WinUI-style pill that grows in/out)
             width: 3; radius: 1.5
             color: Theme.accent
             anchors.left: parent.left
             anchors.leftMargin: 3
             anchors.verticalCenter: parent.verticalCenter
-            height: parent.height * 0.5
+            height: root.selected ? parent.height * 0.5 : 0
+            opacity: root.selected ? 1 : 0
+            Behavior on height { NumberAnimation { duration: Theme.animNormal; easing.type: Theme.easeEmphasized } }
+            Behavior on opacity { NumberAnimation { duration: Theme.animFast } }
         }
 
         RowLayout {

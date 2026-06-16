@@ -2,8 +2,9 @@ import QtQuick
 import App 1.0
 import "."
 
-// Real-time traffic sparkline. Matches the original traffic_graph.py palette:
-// download = blue (0,180,255), upload = green (0,220,120), faint grid + bg.
+// Real-time traffic sparkline 2.0: smoothed (quadratic) curves with a vertical
+// gradient area fill, a soft glow on the line and a leading dot. Download = blue,
+// upload = green (same meaning as the original traffic_graph.py palette).
 // Two ring buffers, repainted on metricsChanged via push().
 Item {
     id: root
@@ -14,11 +15,10 @@ Item {
     property var up: []
     property real peak: 1
 
-    // colors identical to original widget build
-    readonly property color colorDown: "#00B4FF"
-    readonly property color colorUp:   "#00DC78"
-    readonly property color colorGrid: Qt.rgba(1, 1, 1, 0.08)
-    readonly property color colorBg:   Qt.rgba(0, 0, 0, 0.12)
+    readonly property color colorDown: "#3AA0FF"
+    readonly property color colorUp:   "#27D17C"
+    readonly property color colorGrid: Theme.dark ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(0, 0, 0, 0.06)
+    readonly property color colorBg:   Theme.dark ? Qt.rgba(1, 1, 1, 0.03) : Qt.rgba(0, 0, 0, 0.04)
 
     function push(d, u) {
         var nd = down.slice(); nd.push(d); if (nd.length > capacity) nd.shift();
@@ -60,34 +60,67 @@ Item {
                 ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
             }
 
-            drawSeries(ctx, root.down, root.colorDown, w, h);
             drawSeries(ctx, root.up,   root.colorUp,   w, h);
+            drawSeries(ctx, root.down, root.colorDown, w, h);
+        }
+
+        // Build the list of points for a series mapped into the canvas rect.
+        function points(data, w, h) {
+            var n = data.length;
+            var step = w / (root.capacity - 1);
+            var x0 = w - (n - 1) * step;
+            var pts = [];
+            for (var i = 0; i < n; i++)
+                pts.push({ x: x0 + i * step, y: h - (data[i] / root.peak) * (h - 6) - 3 });
+            return pts;
+        }
+
+        // Trace a smooth path through pts using midpoint quadratic curves.
+        function tracePath(ctx, pts) {
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (var k = 1; k < pts.length - 1; k++) {
+                var mx = (pts[k].x + pts[k + 1].x) / 2;
+                var my = (pts[k].y + pts[k + 1].y) / 2;
+                ctx.quadraticCurveTo(pts[k].x, pts[k].y, mx, my);
+            }
+            ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
         }
 
         function drawSeries(ctx, data, color, w, h) {
             var n = data.length;
             if (n < 2) return;
-            var step = w / (root.capacity - 1);
-            var x0 = w - (n - 1) * step;
-            ctx.beginPath();
-            for (var i = 0; i < n; i++) {
-                var x = x0 + i * step;
-                var y = h - (data[i] / root.peak) * (h - 4) - 2;
-                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-            }
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-            ctx.lineJoin = "round";
-            ctx.stroke();
+            var pts = points(data, w, h);
+            var last = pts[n - 1];
 
-            // soft fill under the line
-            ctx.lineTo(x0 + (n - 1) * step, h);
-            ctx.lineTo(x0, h);
+            // gradient area fill under the curve
+            var grad = ctx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, Qt.rgba(color.r, color.g, color.b, 0.34));
+            grad.addColorStop(1, Qt.rgba(color.r, color.g, color.b, 0.02));
+            ctx.beginPath();
+            tracePath(ctx, pts);
+            ctx.lineTo(last.x, h);
+            ctx.lineTo(pts[0].x, h);
             ctx.closePath();
-            ctx.globalAlpha = 0.12;
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // glowing smoothed line
+            ctx.beginPath();
+            tracePath(ctx, pts);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2.4;
+            ctx.lineJoin = "round";
+            ctx.lineCap = "round";
+            ctx.shadowColor = color;
+            ctx.shadowBlur = Theme.animations ? 10 : 0;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // leading dot
+            ctx.beginPath();
+            ctx.arc(last.x, last.y, 2.6, 0, Math.PI * 2);
             ctx.fillStyle = color;
             ctx.fill();
-            ctx.globalAlpha = 1.0;
         }
     }
 

@@ -95,6 +95,7 @@ FluentScroll {
         // ============================ Внешний вид ============================
         Card {
             Layout.fillWidth: true
+            elevation: 1
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -121,6 +122,36 @@ FluentScroll {
                 SettingRow {
                     glyph: "\uE2B1"; title: I18n.t("Цвет акцента"); subtitle: I18n.t("Цвет акцента для элементов интерфейса")
                     AccentPicker {}
+                }
+
+                SettingRow {
+                    glyph: "\uE799"; title: I18n.t("Плотность"); subtitle: I18n.t("Насколько компактно расположены элементы")
+                    StyledCombo {
+                        model: [I18n.t("Компактная"), I18n.t("Обычная"), I18n.t("Просторная")]
+                        readonly property var keys: ["compact", "comfortable", "spacious"]
+                        currentIndex: Math.max(0, keys.indexOf(App.uiDensity))
+                        onActivated: App.setUiDensity(keys[currentIndex])
+                    }
+                }
+
+                SettingRow {
+                    glyph: "\uE8B3"; title: I18n.t("Скругление углов"); subtitle: I18n.t("Радиус скругления карточек и кнопок, px")
+                    FluentSpin { from: 0; to: 20; value: App.uiCornerRadius; onValueModified: App.setUiCornerRadius(value) }
+                }
+
+                SettingRow {
+                    glyph: "\uE81E"; title: I18n.t("Фон окна"); subtitle: I18n.t("Эффект подложки Windows 11")
+                    StyledCombo {
+                        model: [I18n.t("Mica"), I18n.t("Акрил"), I18n.t("Сплошной")]
+                        readonly property var keys: ["mica", "acrylic", "solid"]
+                        currentIndex: Math.max(0, keys.indexOf(App.uiBackdrop))
+                        onActivated: App.setUiBackdrop(keys[currentIndex])
+                    }
+                }
+
+                SettingRow {
+                    glyph: "\uE945"; title: I18n.t("Анимации"); subtitle: I18n.t("Плавные переходы и движение интерфейса")
+                    Switch { checked: App.uiAnimations; onToggled: App.setUiAnimations(checked) }
                 }
 
                 SettingRow {

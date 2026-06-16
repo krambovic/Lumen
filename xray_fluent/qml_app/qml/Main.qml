@@ -72,6 +72,11 @@ ApplicationWindow {
     Component.onCompleted: {
         Theme.accent = Qt.binding(function() { return App.accentColor; });
         Theme.dark = Qt.binding(function() { return win.resolveDark(); });
+        // 2.0 appearance inputs, driven from saved settings.
+        Theme.density = Qt.binding(function() { return App.uiDensity; });
+        Theme.cornerRadius = Qt.binding(function() { return App.uiCornerRadius; });
+        Theme.animations = Qt.binding(function() { return App.uiAnimations; });
+        Theme.backdrop = Qt.binding(function() { return App.uiBackdrop; });
     }
 
     Universal.theme: Theme.dark ? Universal.Dark : Universal.Light
@@ -231,15 +236,29 @@ ApplicationWindow {
                                     || win.visibility === Window.Maximized) ? 6 : 0
                 clip: true
                 radius: Theme.radius
-                // Slightly lighter than the bare Mica frame so the panel reads as
-                // a distinct "window"; still translucent so a hint of Mica shows.
-                color: Theme.dark ? Qt.rgba(1, 1, 1, 0.045) : Qt.rgba(1, 1, 1, 0.45)
+                // Slightly lighter than the bare backdrop so the panel reads as a
+                // distinct "window" while a hint of the backdrop still shows. On
+                // Acrylic the panel is frosted a bit more opaque so page text
+                // stays readable over the see-through (transparent) navbar frame.
+                color: Theme.backdrop === "acrylic"
+                       ? (Theme.dark ? Qt.rgba(0, 0, 0, 0.32) : Qt.rgba(1, 1, 1, 0.62))
+                       : (Theme.dark ? Qt.rgba(1, 1, 1, 0.045) : Qt.rgba(1, 1, 1, 0.45))
                 // Only the top & left borders are visible (right/bottom are off
                 // the window edge), defining the panel against the frame.
                 border.width: 1
                 border.color: Theme.divider
 
-                StackLayout {
+                // Page host with a true cross-fade between sections. Every page
+                // stays instantiated and overlaps the others, so switching just
+                // cross-fades the outgoing page out while the incoming page fades
+                // in — there is never a moment where the panel goes empty, which
+                // is what previously read as a "blink". The incoming page also
+                // rises a few px into place while the outgoing one settles down,
+                // for a soft, quick vertical motion on both. Honours the
+                // Theme.animations master switch (durations collapse to 0 = an
+                // instant, flicker-free swap when animations are disabled).
+                Item {
+                    id: pageStack
                     anchors.fill: parent
                     // Real padding from the visible edges; right/bottom add the
                     // overflow back so content keeps a 24/20 gutter on screen.
@@ -247,18 +266,78 @@ ApplicationWindow {
                     anchors.topMargin: 20
                     anchors.rightMargin: 24 + Theme.radius
                     anchors.bottomMargin: 20 + Theme.radius
-                    currentIndex: win.currentIndex
+                    readonly property int slide: 6
 
-                    DashboardPage {}
-                    NodesPage {}
-                    RoutingPage {}
-                    ConfigsPage {}
-                    ZapretPage {}
-                    LogsPage {}
-                    HistoryPage {}
-                    UpdatesPage {}
-                    SettingsPage {}
-                    AboutPage {}
+                    DashboardPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 0 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 0 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
+                    NodesPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 1 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 1 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
+                    RoutingPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 2 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 2 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
+                    ConfigsPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 3 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 3 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
+                    ZapretPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 4 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 4 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
+                    LogsPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 5 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 5 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
+                    HistoryPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 6 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 6 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
+                    UpdatesPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 7 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 7 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
+                    SettingsPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 8 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 8 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
+                    AboutPage {
+                        anchors.fill: parent; visible: opacity > 0
+                        opacity: win.currentIndex === 9 ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
+                        transform: Translate { y: win.currentIndex === 9 ? 0 : pageStack.slide
+                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    }
                 }
             }
         }

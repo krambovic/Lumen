@@ -212,6 +212,14 @@ class AppSettings:
     speed_test_concurrency: int = 0
     # Интервал авто-обновления подписок в минутах (0 = выключено).
     subscription_auto_update_minutes: int = 240
+    # ── Внешний вид 2.0 (Appearance Studio) ──
+    ui_density: str = "comfortable"      # comfortable | compact | spacious
+    ui_corner_radius: int = 8            # базовый радиус скругления, px
+    ui_font_family: str = ""             # "" = системный шрифт по умолчанию
+    ui_font_scale: int = 100             # масштаб шрифта, %
+    ui_backdrop: str = "mica"            # mica | acrylic | solid
+    ui_theme_preset: str = "default"     # пресет палитры
+    ui_animations: bool = True           # глобальный тумблер анимаций
 
     def __post_init__(self) -> None:
         self.tun_engine = _normalize_tun_engine(self.tun_engine)
@@ -263,6 +271,13 @@ class AppSettings:
             "speed_test_url": self.speed_test_url,
             "speed_test_concurrency": self.speed_test_concurrency,
             "subscription_auto_update_minutes": self.subscription_auto_update_minutes,
+            "ui_density": self.ui_density,
+            "ui_corner_radius": self.ui_corner_radius,
+            "ui_font_family": self.ui_font_family,
+            "ui_font_scale": self.ui_font_scale,
+            "ui_backdrop": self.ui_backdrop,
+            "ui_theme_preset": self.ui_theme_preset,
+            "ui_animations": self.ui_animations,
         }
 
     @staticmethod
@@ -316,6 +331,13 @@ class AppSettings:
             speed_test_url=str(data.get("speed_test_url") or ""),
             speed_test_concurrency=int(data.get("speed_test_concurrency") or 0),
             subscription_auto_update_minutes=int(data.get("subscription_auto_update_minutes") or 240),
+            ui_density=str(data.get("ui_density") or "comfortable"),
+            ui_corner_radius=int(data.get("ui_corner_radius") if data.get("ui_corner_radius") is not None else 8),
+            ui_font_family=str(data.get("ui_font_family") or ""),
+            ui_font_scale=int(data.get("ui_font_scale") or 100),
+            ui_backdrop=str(data.get("ui_backdrop") or "mica"),
+            ui_theme_preset=str(data.get("ui_theme_preset") or "default"),
+            ui_animations=bool(data.get("ui_animations", True)),
         )
 
 

@@ -620,6 +620,104 @@ class AppBridge(QObject):
         settings.interface_mode = mode
         self.controller.update_settings(settings)
 
+    # ── Внешний вид 2.0 (Appearance Studio) ─────────────────────
+    @pyqtSlot(str)
+    def setUiDensity(self, value: str) -> None:
+        v = (value or "comfortable").strip().lower()
+        if v not in ("comfortable", "compact", "spacious"):
+            v = "comfortable"
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_density = v
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(int)
+    def setUiCornerRadius(self, value: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_corner_radius = max(0, min(20, int(value)))
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(str)
+    def setUiFontFamily(self, value: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_font_family = (value or "").strip()
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(int)
+    def setUiFontScale(self, value: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_font_scale = max(80, min(140, int(value)))
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(str)
+    def setUiBackdrop(self, value: str) -> None:
+        v = (value or "mica").strip().lower()
+        if v not in ("mica", "acrylic", "solid"):
+            v = "mica"
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_backdrop = v
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(str)
+    def setUiThemePreset(self, value: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_theme_preset = (value or "default").strip().lower()
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setUiAnimations(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_animations = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def uiDensity(self) -> str:
+        try:
+            return str(self.controller.state.settings.ui_density or "comfortable")
+        except Exception:
+            return "comfortable"
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def uiCornerRadius(self) -> int:
+        try:
+            return int(self.controller.state.settings.ui_corner_radius)
+        except Exception:
+            return 8
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def uiFontFamily(self) -> str:
+        try:
+            return str(self.controller.state.settings.ui_font_family or "")
+        except Exception:
+            return ""
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def uiFontScale(self) -> int:
+        try:
+            return int(self.controller.state.settings.ui_font_scale)
+        except Exception:
+            return 100
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def uiBackdrop(self) -> str:
+        try:
+            return str(self.controller.state.settings.ui_backdrop or "mica")
+        except Exception:
+            return "mica"
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def uiThemePreset(self) -> str:
+        try:
+            return str(self.controller.state.settings.ui_theme_preset or "default")
+        except Exception:
+            return "default"
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def uiAnimations(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.ui_animations)
+        except Exception:
+            return True
+
     @pyqtSlot(bool)
     def setAlwaysRunAsAdmin(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
