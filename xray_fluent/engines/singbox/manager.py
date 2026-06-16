@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 import json
 import os
+import socket
 import subprocess
 import threading
 import time
@@ -13,7 +14,13 @@ _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from ...constants import RUNTIME_DIR, SINGBOX_CONFIG_FILE, SINGBOX_PATH_DEFAULT
+from ...constants import (
+    PROXY_HOST,
+    RUNTIME_DIR,
+    SINGBOX_CLASH_API_PORT,
+    SINGBOX_CONFIG_FILE,
+    SINGBOX_PATH_DEFAULT,
+)
 from ...path_utils import resolve_configured_path
 from ...subprocess_utils import (
     decode_output,
@@ -93,6 +100,9 @@ class SingBoxManager(QObject):
         # down the common path; retry cleanup still handles real conflicts.
         self._kill_orphaned(exe)
 
+        # A freshly killed sing-box can still hold the clash-api port; wait for it.
+        self._wait_clash_api_port_released()
+
         # Set working directory to core/ so sing-box can find wintun.dll
         core_dir = exe.parent
         self._starting = True
@@ -146,8 +156,10 @@ class SingBoxManager(QObject):
                 self.stop(expected=True)
 
             if retryable and attempt < 2:
+                self._kill_orphaned(exe)
                 self.cleanup_orphaned_tun_adapters()
                 self._wait_tun_released()
+                self._wait_clash_api_port_released()
                 self._starting = True
                 continue
 
@@ -269,6 +281,25 @@ class SingBoxManager(QObject):
             waited += step
 
     @staticmethod
+    def _wait_clash_api_port_released(max_wait: float = 5.0) -> None:
+        """Wait until the clash-api controller port can be bound again."""
+        if os.name != "nt":
+            return
+        waited = 0.0
+        step = 0.2
+        while waited < max_wait:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                probe.bind((PROXY_HOST, SINGBOX_CLASH_API_PORT))
+                return
+            except OSError:
+                pass
+            finally:
+                probe.close()
+            sleep_with_events(step)
+            waited += step
+
+    @staticmethod
     def cleanup_orphaned_tun_adapters(max_wait: float = 5.0) -> None:
         """Remove routes from app-owned sing-box TUN adapters and disable them."""
         if os.name != "nt":
@@ -367,18 +398,18 @@ class SingBoxManager(QObject):
         self,
         proc: subprocess.Popen[bytes],
         tun_interface_name: str,
-        max_wait: float = 1.0,
+        max_wait: float = 8.0,
     ) -> bool:
-        # Older builds polled Get-NetIPAddress through PowerShell until the
-        # adapter had IPv4. That made successful starts feel slow and could
-        # freeze transitions on Windows. sing-box exits quickly on real startup
-        # failures, so a short alive grace is enough for the UI transition.
+        # Treat the runtime as ready only once the TUN adapter actually has an
+        # IPv4 address; bail out early if sing-box dies during startup.
         deadline = time.monotonic() + max(0.2, max_wait)
         while time.monotonic() < deadline:
             if proc.poll() is not None:
                 return False
-            sleep_with_events(0.05)
-        return proc.poll() is None
+            if os.name != "nt" or self._tun_interface_has_ipv4(tun_interface_name):
+                return True
+            sleep_with_events(0.2)
+        return False
 
     @staticmethod
     def _tun_interface_has_ipv4(tun_interface_name: str) -> bool:
@@ -401,7 +432,14 @@ class SingBoxManager(QObject):
         return result.returncode == 0
 
     def _startup_error_is_retryable(self) -> bool:
-        needles = ("already exists", "cannot create a file when that file already exists")
+        needles = (
+            "already exists",
+            "cannot create a file when that file already exists",
+            "only one usage of each socket address",
+            "external controller listen error",
+            "address already in use",
+            "bind:",
+        )
         for line in self._last_output_lines:
             text = line.lower()
             if any(needle in text for needle in needles):

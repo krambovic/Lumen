@@ -173,8 +173,8 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         controller.save()
         session_mode = "xray-tun" if tun and controller._active_core == "xray" else controller._active_core
         controller._traffic_history.start_session(session_label, session_mode)
-        if controller.state.settings.discord_proxy_enabled and not tun:
-            QTimer.singleShot(250, controller.apply_discord_proxy)
+        # Discord-proxy применяем в GUI-потоке из _on_transition_action_complete:
+        # этот код идёт в рабочем потоке перехода, QTimer оттуда запускать нельзя.
         return True
     finally:
         controller._connecting = False
