@@ -357,7 +357,61 @@ def _activate_window(window) -> None:
         pass
 
 
+def _install_crash_guards() -> None:
+    """Stop PyQt6 from turning a stray slot exception into a native abort.
+
+    On Windows an unhandled Python exception raised inside a Qt slot invoked
+    synchronously from the native message loop (for example while the tray
+    context menu is shown) makes PyQt6 call abort() inside qwindows.dll, which
+    crashes the whole app with STATUS_FATAL_USER_CALLBACK_EXCEPTION (0xc000041d).
+    Installing a custom sys.excepthook makes PyQt log the traceback and keep
+    running instead of aborting. faulthandler is armed so any genuine native
+    fault still leaves a trace on disk.
+    """
+    import logging
+
+    _log = logging.getLogger("xray_fluent")
+
+    def _hook(exc_type, exc, tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc, tb)
+            return
+        try:
+            _log.error(
+                "Unhandled exception (suppressed to avoid native abort)",
+                exc_info=(exc_type, exc, tb),
+            )
+        except Exception:
+            try:
+                import traceback
+
+                traceback.print_exception(exc_type, exc, tb)
+            except Exception:
+                pass
+
+    sys.excepthook = _hook
+
+    try:
+        import faulthandler
+
+        from ..constants import LOG_DIR
+
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        _fh = open(
+            LOG_DIR / "faulthandler.log",
+            "a",
+            buffering=1,
+            encoding="utf-8",
+            errors="replace",
+        )
+        faulthandler.enable(file=_fh)
+        globals()["_FAULTHANDLER_FILE"] = _fh
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _install_crash_guards()
     _set_app_user_model_id()
     _cleanup_legacy_root_program_install()
     _enable_gpu_friendly_defaults()
