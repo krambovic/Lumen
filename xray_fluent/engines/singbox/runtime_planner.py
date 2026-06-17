@@ -575,7 +575,6 @@ def _build_dns_server(tag: str, server: str, server_type: str, strategy: str) ->
         "tag": tag,
         "type": dns_type,
         "server": address,
-        "strategy": _dns_strategy(strategy),
     }
     if dns_type == "https":
         payload.setdefault("server_port", 443)

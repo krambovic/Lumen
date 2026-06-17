@@ -547,6 +547,16 @@ Item {
 
         footer: RowLayout {
             spacing: 0
+            Text {
+                text: I18n.t("DNS: «Системный» — домены резолвит Windows или само приложение. «Встроенный» — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.")
+                color: Theme.textFaint
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.leftMargin: 20
+                Layout.rightMargin: 12
+            }
             Item { Layout.fillWidth: true }
             AccentButton {
                 kind: "accent"
