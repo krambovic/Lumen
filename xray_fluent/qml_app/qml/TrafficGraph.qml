@@ -2,10 +2,7 @@ import QtQuick
 import App 1.0
 import "."
 
-// Real-time traffic sparkline 2.0: smoothed (quadratic) curves with a vertical
-// gradient area fill, a soft glow on the line and a leading dot. Download = blue,
-// upload = green (same meaning as the original traffic_graph.py palette).
-// Two ring buffers, repainted on metricsChanged via push().
+// Real-time traffic sparkline
 Item {
     id: root
     implicitHeight: 160
@@ -111,10 +108,7 @@ Item {
             ctx.lineWidth = 2.4;
             ctx.lineJoin = "round";
             ctx.lineCap = "round";
-            ctx.shadowColor = color;
-            ctx.shadowBlur = Theme.animations ? 10 : 0;
             ctx.stroke();
-            ctx.shadowBlur = 0;
 
             // leading dot
             ctx.beginPath();

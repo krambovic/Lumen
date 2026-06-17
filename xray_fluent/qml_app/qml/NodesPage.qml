@@ -7,24 +7,6 @@ import App 1.0
 import "."
 
 // Servers tab.
-//
-// Selection is cursor-driven (no checkboxes), mirroring the original widgets UI:
-//   * left click            -> select only this row (and set the drag anchor)
-//   * drag                  -> range select from the anchor to the row under the cursor
-//   * Ctrl + click          -> toggle a single row
-//   * Shift + click         -> range select from the anchor
-//   * double click          -> set this server as the ACTIVE one
-// Ping / Speed act on the current selection; the I18n.t("всех") buttons act on everything.
-//
-// Layout notes (this revision):
-//   * Rows/header are sized close to the original (compact) instead of the
-//     oversized 44px rows.
-//   * The table scales with the window: fixed-width columns keep their size and
-//     the flexible Name + Address columns absorb any extra width, so the list
-//     fills wide windows and only scrolls horizontally when the window is
-//     narrower than the minimum.
-//   * The search box is a clearly-visible filled field with a search glyph, and
-//     the original Group / Tags / Sort / Direction controls are restored.
 Item {
     id: page
 
@@ -88,9 +70,7 @@ Item {
     function isSelected(id) { return sel[id] === true; }
     function selectedIds() { return Object.keys(sel); }
     function firstSelected() { var k = Object.keys(sel); return k.length ? k[0] : ""; }
-    // Цели для тестов: выбранные узлы, или пустой список (= все) если ничего не выбрано.
     function testTargets() { return page.selCount > 0 ? page.selectedIds() : []; }
-    // Активная подписка в выпадающем списке (или null).
     function selectedSub() {
         var subs = App.subscriptions;
         if (!subs || subs.length === 0) return null;
@@ -142,7 +122,6 @@ Item {
             if (ui.userStatus) rows.push([I18n.t("Статус"), String(ui.userStatus)]);
             else if (ui.isActive !== undefined) rows.push([I18n.t("Статус"), ui.isActive ? I18n.t("Активна") : I18n.t("Неактивна")]);
             if (ui.daysLeft !== undefined) rows.push([I18n.t("Осталось дней"), String(ui.daysLeft)]);
-            // Трафик: предпочитаем точные байты (форматируем), иначе готовые строки.
             var usedB = (ui.trafficUsedBytes !== undefined) ? Number(ui.trafficUsedBytes)
                       : ((ui.total !== undefined) ? Number((ui.upload || 0) + (ui.download || 0)) : undefined);
             var limitB = (ui.trafficLimitBytes !== undefined) ? Number(ui.trafficLimitBytes)
@@ -193,7 +172,6 @@ Item {
     }
     function clearSel() { anchorRow = -1; _commit({}, 0); }
     function selectAll() {
-        // Модель уже отфильтрована (группа/тег/поиск) в Python — выбираем все строки.
         var o = {};
         for (var i = 0; i < list.count; i++) {
             var id = App.nodeIdAt(i);
@@ -203,17 +181,10 @@ Item {
         _commit(o, Object.keys(o).length);
     }
 
-    // Фильтрация (группа/тег/поиск) выполняется в модели на стороне Python,
-    // поэтому ListView всегда содержит только видимые строки.
     function applyFilters() {
         App.setNodeFilter(page.filterGroup, page.filterTag, page.filterText);
     }
 
-    // Apply a sort key coming from a column-header click. Three-state cycle on
-    // repeated clicks of the same column: ascending -> descending -> off (back
-    // to manual order, so the arrow disappears entirely). A different column
-    // starts ascending. Keeps the Sort dropdown in sync so both entry points
-    // agree.
     function applySort(key) {
         if (!key) return;
         if (page.sortKey === key) {
@@ -248,7 +219,6 @@ Item {
     component HeaderLabel: Text {
         id: hdr
         property int w: 80
-        // Empty sortKey = column is not sortable (no click handler / no arrow).
         property string sortKey: ""
         readonly property bool sortable: sortKey !== ""
         readonly property bool activeSort: sortable && page.sortKey === sortKey
@@ -258,7 +228,6 @@ Item {
         rightPadding: activeSort ? 16 : 0
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
-        // Highlight the column the list is currently sorted by.
         color: activeSort ? Theme.text : Theme.textFaint
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontSmall
@@ -284,8 +253,6 @@ Item {
             onClicked: page.applySort(hdr.sortKey)
         }
     }
-    // Group / Tags / Sort dropdowns. Their pop-ups are now opaque because
-    // Main.qml sets Universal.background to the opaque Theme.flyout token.
     component FilterCombo: FluentCombo {
         Layout.preferredHeight: Theme.controlHeight
     }
@@ -464,6 +431,7 @@ Item {
                 contentWidth: page.tableWidth
                 contentHeight: height
                 flickableDirection: Flickable.HorizontalFlick
+                interactive: false
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.horizontal: FluentScrollBar {
@@ -508,9 +476,6 @@ Item {
                         width: page.tableWidth
                         height: parent.height - headerRow.height
                         model: App.nodeModel
-                        // Model reset / add / remove: drop selection entries whose
-                        // nodes no longer exist so selCount (and every toolbar /
-                        // context-menu "enabled" + counter) stays accurate.
                         onCountChanged: {
                             if (page.selCount === 0)
                                 return;
@@ -526,10 +491,9 @@ Item {
                             }
                         }
                         clip: true
+                        interactive: false  // wheel/scrollbar only; no drag-to-scroll list movement
                         boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.vertical: FluentScrollBar {}
 
-                        // Плавная и более быстрая прокрутка колёсиком мыши (~3 строки на щелчок, glide как в FluentScroll); тачпад остаётся попиксельным.
                         NumberAnimation {
                             id: listScrollAnim
                             target: list
@@ -547,6 +511,7 @@ Item {
                                 var target = Math.max(0, Math.min(maxY, base - (ev.angleDelta.y / 120) * step))
                                 listScrollAnim.to = target
                                 listScrollAnim.restart()
+                                listVbarTrack.flash()
                                 ev.accepted = true
                             }
                         }
@@ -645,12 +610,10 @@ Item {
                                         spacing: 8
                                         Item {
                                             id: flagBox
-                                            // 24x18 = 4:3, как у SVG-спрайта флагов → флаг заполняет бокс без полей.
                                             width: (nodeRow.flagSource || nodeRow.flagEmoji || (nodeRow.flagColors && nodeRow.flagColors.length > 0)) ? 24 : 0
                                             height: 18
                                             visible: width > 0
                                             clip: true
-                                            // Источник флага. sourceSize растрирует SVG сразу в нужном размере (с учётом масштаба экрана) → без алиасинга.
                                             Image {
                                                 id: flagImg
                                                 anchors.fill: parent
@@ -664,7 +627,6 @@ Item {
                                                 asynchronous: true
                                                 cache: true
                                             }
-                                            // Маска со скруглёнными углами. Рендерится в повышенном разрешении (×3 + MSAA) → гладкие углы без пикселяции.
                                             Rectangle {
                                                 id: flagMask
                                                 anchors.fill: parent
@@ -676,7 +638,6 @@ Item {
                                                 layer.samples: 4
                                                 layer.textureSize: Qt.size(Math.round(flagBox.width * 3), Math.round(flagBox.height * 3))
                                             }
-                                            // Готовый SVG-флаг со скруглёнными углами. maskSpreadAtMin даёт мягкий AA-край.
                                             MultiEffect {
                                                 anchors.fill: parent
                                                 visible: !!nodeRow.flagSource
@@ -844,6 +805,76 @@ Item {
                             }
                         }
                     }
+
+                    Item {
+                        id: listVbarTrack
+                        parent: hflick
+                        z: 50
+                        width: 12
+                        x: hflick.width - width - 2
+                        y: headerRow.height
+                        height: Math.max(0, hflick.height - headerRow.height - (hbar.visible ? 10 : 0))
+                        property bool forcedVisible: false
+                        readonly property real maxY: Math.max(0, list.contentHeight - list.height)
+                        readonly property bool scrollable: maxY > 1
+                        readonly property bool shown: scrollable
+
+                        function flash() {
+                            if (!scrollable)
+                                return
+                            forcedVisible = true
+                            listBarHide.restart()
+                        }
+
+                        Timer {
+                            id: listBarHide
+                            interval: 720
+                            repeat: false
+                            onTriggered: listVbarTrack.forcedVisible = false
+                        }
+
+                        visible: scrollable
+                        opacity: shown ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 160 : 0; easing.type: Theme.easeStandard } }
+                        HoverHandler { id: listBarHover }
+
+                        Rectangle {
+                            id: listThumb
+                            readonly property real ratio: list.contentHeight <= 0 ? 1 : Math.min(1, list.height / list.contentHeight)
+                            width: listThumbMouse.drag.active || listBarHover.hovered ? 8 : 4
+                            height: Math.max(36, listVbarTrack.height * ratio)
+                            x: Math.round((listVbarTrack.width - width) / 2)
+                            y: listVbarTrack.maxY <= 0 ? 0 : (listVbarTrack.height - height) * (list.contentY / listVbarTrack.maxY)
+                            radius: width / 2
+                            color: listThumbMouse.drag.active ? Theme.textMuted : Theme.textFaint
+                            opacity: listThumbMouse.drag.active ? 0.9 : (listBarHover.hovered ? 0.68 : 0.38)
+                            Behavior on width { NumberAnimation { duration: Theme.animations ? 120 : 0; easing.type: Easing.OutCubic } }
+
+                            MouseArea {
+                                id: listThumbMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                drag.target: parent
+                                drag.axis: Drag.YAxis
+                                drag.minimumY: 0
+                                drag.maximumY: Math.max(0, listVbarTrack.height - listThumb.height)
+                                preventStealing: true
+                                onPressed: {
+                                    listScrollAnim.stop()
+                                    listVbarTrack.flash()
+                                }
+                                onPositionChanged: {
+                                    if (!drag.active)
+                                        return
+                                    var denom = Math.max(1, listVbarTrack.height - listThumb.height)
+                                    list.contentY = Math.max(0, Math.min(listVbarTrack.maxY, (listThumb.y / denom) * listVbarTrack.maxY))
+                                    listVbarTrack.flash()
+                                }
+                                onReleased: listVbarTrack.flash()
+                                onCanceled: listVbarTrack.flash()
+                            }
+                        }
+                    }
                 }
             }
 
@@ -986,10 +1017,6 @@ Item {
     }
 
     // ── keyboard shortcuts ───────────────────────
-    // Only active while the Servers tab is the visible page AND the user is not
-    // typing in the search field, a modal edit dialog, or the context menu, so
-    // they never hijack normal text editing (Ctrl+A / Ctrl+C / Ctrl+V) inside
-    // those inputs.
     readonly property bool _kbReady: page.visible
         && !searchInput.activeFocus
         && !editDialog.opened
@@ -1139,7 +1166,6 @@ Item {
             if (i < 0 || i >= App.subscriptions.length) i = 0;
             infoCombo.currentIndex = i;
             infoDialog.open();
-            // Подтягиваем свежие показатели из ссылки (прокси/VPN не трогаем).
             var s = App.subscriptions[i];
             if (s && s.url) App.updateSubscription(s.url);
         }

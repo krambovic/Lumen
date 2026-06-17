@@ -12,7 +12,7 @@ from pathlib import Path
 
 def _enable_gpu_friendly_defaults() -> None:
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Universal")
-    os.environ.setdefault("QSG_RENDER_LOOP", "basic")  # basic: нативное модальное меню трея на Windows не дедлочит render-поток
+    os.environ.setdefault("QSG_RENDER_LOOP", "threaded")  # threaded: GPU-sync рендер, плавные анимации; краш трея (0xc000041d) устранён откатом routing submenu в 69f86e4
     os.environ.setdefault("QSG_RHI_BACKEND", "opengl")
 
 
@@ -78,8 +78,8 @@ def _resolve_dark(app, theme_name: str) -> bool:
         return False
 
 
-def _apply_mica(window, dark: bool, backdrop_kind: str = "mica") -> None:
-    """Enable the Windows 11 backdrop (Mica / Acrylic / none) + title-bar colour"""
+def _apply_mica(window, dark: bool) -> None:
+    """Enable the Windows 11 Mica backdrop + dark/light title-bar colour."""
     if sys.platform != "win32":
         return
     try:
@@ -96,7 +96,6 @@ def _apply_mica(window, dark: bool, backdrop_kind: str = "mica") -> None:
         DWMSBT_MAINWINDOW = 2                   # Mica
         DWMSBT_ACRYLIC = 3                      # Acrylic (transient)
 
-        # 1) Dark / light title bar (try both the modern and legacy attribute)
         dark_flag = ctypes.c_int(1 if dark else 0)
         for attr in (DWMWA_USE_IMMERSIVE_DARK_MODE,
                      DWMWA_USE_IMMERSIVE_DARK_MODE_OLD):
@@ -105,7 +104,6 @@ def _apply_mica(window, dark: bool, backdrop_kind: str = "mica") -> None:
                 ctypes.byref(dark_flag), ctypes.sizeof(dark_flag),
             )
 
-        # 2) Extend the frame into the ENTIRE client area
         class _Margins(ctypes.Structure):
             _fields_ = [
                 ("cxLeftWidth", ctypes.c_int),
@@ -117,19 +115,16 @@ def _apply_mica(window, dark: bool, backdrop_kind: str = "mica") -> None:
         margins = _Margins(-1, -1, -1, -1)
         dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
 
-        # 3) Enable the chosen backdrop using the API matching the Windows build.
-        sbt = {"solid": DWMSBT_NONE, "acrylic": DWMSBT_ACRYLIC}.get(
-            backdrop_kind, DWMSBT_MAINWINDOW)
         build = sys.getwindowsversion().build
         if build >= 22621:
-            backdrop = ctypes.c_int(sbt)
+            backdrop = ctypes.c_int(DWMSBT_MAINWINDOW)
             dwm.DwmSetWindowAttribute(
                 hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
                 ctypes.byref(backdrop), ctypes.sizeof(backdrop),
             )
         elif build >= 22000:
-            # Older Win11 only exposes Mica on/off; "solid" disables it.
-            enable = ctypes.c_int(0 if backdrop_kind == "solid" else 1)
+            # Older Win11 only exposes Mica on/off.
+            enable = ctypes.c_int(1)
             dwm.DwmSetWindowAttribute(
                 hwnd, DWMWA_MICA_EFFECT,
                 ctypes.byref(enable), ctypes.sizeof(enable),
@@ -487,11 +482,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     def _refresh_backdrop() -> None:
-        try:
-            kind = str(bridge.uiBackdrop)
-        except Exception:
-            kind = "mica"
-        _apply_mica(window, _resolve_dark(app, _theme_name(bridge)), kind)
+        _apply_mica(window, _resolve_dark(app, _theme_name(bridge)))
 
     from PyQt6.QtCore import QTimer
 

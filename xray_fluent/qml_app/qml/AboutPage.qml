@@ -4,14 +4,8 @@ import QtQuick.Layouts
 import App 1.0
 import "."
 
-// Faithful port of ui/about_page.py: a flat column (no card) with the big
-// "Lumen KVN" title, a muted version caption, a hairline separator, three
-// body paragraphs, a second separator, the I18n.t("Ссылки") subtitle with the two
-// link buttons (Telegram канал / Купить подписку) and the footer caption.
 FluentScroll {
     id: page
-    clip: true
-
     ColumnLayout {
         width: page.width
         spacing: 16

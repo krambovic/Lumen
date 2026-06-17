@@ -4,8 +4,6 @@ import QtQuick.Layouts
 import App 1.0
 import "."
 
-// Dashboard — rebuilt to mirror the original qfluentwidgets dashboard_page.py
-// 1:1: a page header (title + summary), then a responsive grid of cards:
 //   • Подключение   — state, engine line, VPN/proxy switches (Вкл/Выкл),
 //                     ▶/⏸ start/stop button, «Маршрут» quick row, status + target.
 //   • Маршрутизация — mode controls and status caption,
@@ -14,12 +12,6 @@ import "."
 //   • Процессы     — only when the backend reports per-process stats (TUN).
 FluentScroll {
     id: page
-    clip: true
-
-    // Drop to a single column a bit earlier (960 instead of 860): below this the
-    // Connection card column gets too narrow and the I18n.t("Выкл") label by the Сист.
-    // прокси switch starts spilling over the card edge — so we stack the cards
-    // (full-width) before that happens.
     readonly property bool twoColumns: width >= 960
 
     // ---- formatting helpers (match dashboard_page.py) ----------------
@@ -30,8 +22,6 @@ FluentScroll {
         return (bps / 1073741824).toFixed(2) + " GB/s";
     }
     function fmtLatency(ms) { return ms < 0 ? "-- " : ms + " ms"; }
-    // Cumulative byte counter formatting — mirrors dashboard_page._format_bytes:
-    // integer for B, one decimal for KB/MB, two decimals for GB.
     function fmtBytes(b) {
         if (b < 1024) return Math.round(b) + " B";
         if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
@@ -45,7 +35,8 @@ FluentScroll {
         return m === "global" ? I18n.t("Глобальный") : (m === "direct" ? I18n.t("Прямой") : I18n.t("Правила"));
     }
     function stateTitle() {
-        if (App.transitionBusy) return I18n.t("Подключение…");
+        if (App.transitionBusy)
+            return App.transitionTargetConnected ? I18n.t("Подключение…") : I18n.t("Отключение…");
         return App.connected ? I18n.t("Подключено") : I18n.t("Ожидание");
     }
     function engineText() {
@@ -90,8 +81,6 @@ FluentScroll {
             // ===== Connection card =====
             Card {
                 Layout.fillWidth: true
-                // Карточка подключения занимает всю ширину (раньше была половина
-                // ряда из-за удалённого виджета маршрутизации).
                 Layout.columnSpan: page.twoColumns ? 2 : 1
                 Layout.preferredWidth: page.width
                 Layout.alignment: Qt.AlignTop
@@ -107,6 +96,7 @@ FluentScroll {
                         StatusRing {
                             active: App.connected
                             busy: App.transitionBusy
+                            targetActive: App.transitionConnecting
                             Layout.alignment: Qt.AlignVCenter
                         }
                         ColumnLayout {
@@ -128,10 +118,6 @@ FluentScroll {
                         text: page.engineText()
                         color: Theme.textMuted; font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontNormal
-                        // preferredWidth 0 + fillWidth: the variable-length engine line
-                        // wraps inside the card instead of stretching it, so the card
-                        // keeps the SAME width for every TUN / сист.прокси / off combo
-                        // (otherwise the long sing-box line steals width from the grid).
                         Layout.fillWidth: true; Layout.preferredWidth: 0; wrapMode: Text.WordWrap
                     }
                     // switches row
@@ -153,9 +139,6 @@ FluentScroll {
                             Text { text: I18n.t("Сист. прокси"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                             Switch {
                                 checked: App.proxyEnabled
-                                // Mutually exclusive with TUN, but still toggleable
-                                // FROM TUN: the bridge disables TUN and reconnects in
-                                // proxy mode in one step (mirrors the original).
                                 enabled: !App.transitionBusy
                                 onToggled: App.setProxy(checked)
                             }
@@ -246,22 +229,12 @@ FluentScroll {
                 }
             }
 
-            // ===== Process card (TUN only, when stats present) =====
-            // Faithful port of dashboard_page.py's per-process table. Seven
-            // columns: Процесс | Скорость | VPN | Прямой | Соед. | Хост | Всего.
-            // Matches the original QHeaderView resize modes exactly: Процесс is a
-            // fixed (interactive) width, the numeric columns size to content, and
-            // ХОСТ is the single stretch column that absorbs the slack — NOT the
-            // process-name column.
             Card {
                 id: procCard
                 Layout.fillWidth: true
                 Layout.columnSpan: page.twoColumns ? 2 : 1
                 padding: 16
                 visible: procRepeater.count > 0
-                // NOTE: these must be referenced as procCard.colX from children /
-                // Repeater delegates — unqualified lookup does not reach custom
-                // properties declared on an external component instance (Card).
                 readonly property int colProc: 170
                 readonly property int colSpeed: 152
                 readonly property int colVpn: 78

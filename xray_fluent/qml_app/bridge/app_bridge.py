@@ -45,6 +45,7 @@ class AppBridge(QObject):
     # ── property-change signals ──────────────────────────────────
     connectedChanged = pyqtSignal()
     transitionBusyChanged = pyqtSignal()
+    transitionDirectionChanged = pyqtSignal()
     runtimeChanged = pyqtSignal()
     metricsChanged = pyqtSignal()
     selectionChanged = pyqtSignal()
@@ -83,6 +84,8 @@ class AppBridge(QObject):
         # cached state for QML properties
         self._connected = False
         self._busy = False
+        self._transition_target_connected = False
+        self._transition_connecting = False
         self._runtime_phase = ""
         self._runtime_message = ""
         self._down_bps = 0.0
@@ -101,9 +104,7 @@ class AppBridge(QObject):
         set_language(self._language)
         self._accent = "#0078D4"
 
-        # Активные фильтры списка серверов (группа/тег/текст). Фильтруем в модели
-        # (Python), а не скрывая QML-делегаты: иначе ListView неверно оценивает
-        # contentHeight — список можно проскроллить ниже конца и он «дёргается».
+        # Активные фильтры списка серверов (группа/тег/текст)
         self._filter_group = ""
         self._filter_tag = ""
         self._filter_text = ""
@@ -129,9 +130,6 @@ class AppBridge(QObject):
         self._push_initial_snapshot()
         self.controller.auto_connect_if_needed()
         self._reconfigure_sub_timer()
-        # Проверка обновлений при запуске (как в старой widgets-версии).
-        # Тихо: ничего не показываем, если обновлений нет/ошибка; при наличии
-        # обновления — обновляем страницу «Обновления» и шлём уведомление.
         try:
             if getattr(self.controller.state.settings, "check_updates", True):
                 QTimer.singleShot(
@@ -139,15 +137,11 @@ class AppBridge(QObject):
                 )
         except Exception:
             pass
-        # Проверка обновлений ядра sing-box и geoip/geosite при запуске (тихо, с уведомлением).
         try:
             if getattr(self.controller.state.settings, "resource_update_check", False):
                 QTimer.singleShot(4000, self._start_resource_update_check)
         except Exception:
             pass
-        # Разовое тихое обновление подписок при запуске. Таймер авто-обновления
-        # стартует «с нуля» при каждом запуске, поэтому при частых перезапусках
-        # подписка иначе могла бы никогда не обновиться. Не трогает VPN/прокси.
         try:
             if self.controller.state.subscriptions:
                 QTimer.singleShot(3000, self._on_sub_auto_update)
@@ -347,6 +341,8 @@ class AppBridge(QObject):
         self._on_selection_changed(self.controller.selected_node)
         self._on_routing_changed(state.routing)
         self._on_settings_changed(state.settings)
+        self._transition_target_connected = bool(getattr(self.controller, "_desired_connected", self.controller.connected))
+        self._transition_connecting = self._transition_target_connected
         self._on_connection_changed(self.controller.connected)
 
     # ── controller signal wiring ────────────────────────────────
@@ -382,7 +378,21 @@ class AppBridge(QObject):
         if message in catalog:
             return catalog[message]
         replacements = (
+            ("Запуск VPN...", "Starting VPN..."),
+            ("Подключение VPN...", "Connecting VPN..."),
+            ("VPN подключён", "VPN connected"),
+            ("VPN отключён", "VPN disconnected"),
+            ("Остановка прокси...", "Stopping proxy..."),
+            ("Прокси подключён", "Proxy connected"),
+            ("Прокси отключён", "Proxy disconnected"),
             ("Остановка VPN...", "Stopping VPN..."),
+            ("Проверка обновлений sing-box...", "Checking sing-box updates..."),
+            ("Обновление sing-box...", "Updating sing-box..."),
+            ("Проверка обновлений geoip/geosite...", "Checking geoip/geosite updates..."),
+            ("Обновление geoip/geosite...", "Updating geoip/geosite..."),
+            ("geoip/geosite уже обновляются", "geoip/geosite update is already running"),
+            ("Проверка обновлений приложения...", "Checking app updates..."),
+            ("Приложение обновлено", "Application is up to date"),
             ("Обновление уже выполняется", "Update is already running"),
             ("Обновление Xray уже выполняется", "Xray update is already running"),
             ("Обновление Xray...", "Updating Xray..."),
@@ -395,6 +405,12 @@ class AppBridge(QObject):
             if message == ru:
                 return en
         prefix_replacements = (
+            ("Запуск прокси: ", "Starting proxy: "),
+            ("Подключено: ", "Connected: "),
+            ("Запуск VPN: ", "Starting VPN: "),
+            ("Подключение VPN: ", "Connecting VPN: "),
+            ("Не удалось подключиться: ", "Could not connect: "),
+            ("Не удалось отключиться: ", "Could not disconnect: "),
             ("Подписка обновлена: ", "Subscription updated: "),
             ("Подписки обновлены: ", "Subscriptions updated: "),
             ("Импортировано серверов: ", "Servers imported: "),
@@ -504,16 +520,38 @@ class AppBridge(QObject):
         if connected == self._connected:
             return
         self._connected = bool(connected)
+        if not self._busy:
+            self._transition_target_connected = bool(connected)
         if not connected:
             self._down_bps = self._up_bps = 0.0
             self._latency_ms = -1
             self.metricsChanged.emit()
         self.connectedChanged.emit()
 
+    def _transition_message_connecting(self, message: str) -> bool:
+        msg = message or ""
+        if "Отключ" in msg or "Disconnect" in msg:
+            return False
+        if "Подключ" in msg or "Запуск" in msg or "Переподключ" in msg or "Переключ" in msg:
+            return True
+        if "Connect" in msg or "Starting" in msg or "Reconnect" in msg or "Switch" in msg:
+            return True
+        return bool(getattr(self.controller, "_desired_connected", self._connected))
+
     def _on_transition(self, busy: bool, _message: str) -> None:
-        if busy == self._busy:
+        target = bool(getattr(self.controller, "_desired_connected", self._connected))
+        connecting = self._transition_message_connecting(_message) if busy else bool(self._connected)
+        changed = (
+            (bool(busy) != self._busy)
+            or (target != self._transition_target_connected)
+            or (connecting != self._transition_connecting)
+        )
+        if not changed:
             return
         self._busy = bool(busy)
+        self._transition_target_connected = target if self._busy else self._connected
+        self._transition_connecting = connecting if self._busy else self._connected
+        self.transitionDirectionChanged.emit()
         self.transitionBusyChanged.emit()
 
     def _on_runtime_status(self, phase: str, message: str) -> None:
@@ -579,6 +617,10 @@ class AppBridge(QObject):
     @pyqtSlot()
     def toggleConnection(self) -> None:
         self.controller.toggle_connection()
+        target = bool(getattr(self.controller, "_desired_connected", self._connected))
+        if target != self._transition_target_connected:
+            self._transition_target_connected = target
+            self.transitionBusyChanged.emit()
 
     @pyqtSlot(str)
     def selectNode(self, node_id: str) -> None:
@@ -2071,6 +2113,14 @@ class AppBridge(QObject):
     @pyqtProperty(bool, notify=transitionBusyChanged)
     def transitionBusy(self) -> bool:
         return self._busy
+
+    @pyqtProperty(bool, notify=transitionBusyChanged)
+    def transitionTargetConnected(self) -> bool:
+        return self._transition_target_connected
+
+    @pyqtProperty(bool, notify=transitionDirectionChanged)
+    def transitionConnecting(self) -> bool:
+        return self._transition_connecting
 
     @pyqtProperty(str, notify=runtimeChanged)
     def runtimePhase(self) -> str:

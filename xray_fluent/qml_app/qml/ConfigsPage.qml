@@ -322,14 +322,11 @@ Item {
                             editorScrollAnim.to = target
                             editorScrollAnim.restart()
                         }
+                        editorVbar.flash()
                         ev.accepted = true
                     }
                 }
 
-                // A plain Flickable + TextArea.flickable keeps the vertical
-                // scrollbar anchored to the viewport's RIGHT edge. The previous
-                // ScrollView + NoWrap TextArea mis-placed the bar on the LEFT
-                // once the JSON content was wider than the view.
                 TextArea.flickable: TextArea {
                     id: editor
                     placeholderText: "Raw " + (page.core === "singbox" ? "sing-box" : "xray") + ".json"
@@ -342,6 +339,7 @@ Item {
                 }
 
                 ScrollBar.vertical: FluentScrollBar {
+                    id: editorVbar
                     anchors.top: parent.top
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom

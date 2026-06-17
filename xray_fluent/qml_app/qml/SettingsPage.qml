@@ -3,17 +3,13 @@ import QtQuick.Controls.Universal
 import QtQuick.Layouts
 import App 1.0
 import "."
-
-// Faithful port of ui/settings_page.py: SettingCardGroup + SettingCard rows
-// grouped into Внешний вид / Сеть / Авто-переключение / Пути к ядрам /
+//grouped into Внешний вид / Сеть / Авто-переключение / Пути к ядрам /
 // Запуск / Обновления / Данные. Все ряды подключены к
 // AppBridge. Компактный режим скрывает продвинутые группы (авто-переключение,
 // пути к ядрам, данные) — как SettingsPage.set_compact_mode в
 // классическом приложении — вместо сворачивания навигационной панели.
 FluentScroll {
     id: page
-    clip: true
-
     readonly property var themeKeys: ["system", "light", "dark"]
     readonly property var languageKeys: App.availableLanguages
 
@@ -60,8 +56,6 @@ FluentScroll {
     }
 
     // ---- accent colour picker ----
-    // Like qfluentwidgets' ColorPickerButton: a plain colour chip (no hex code)
-    // that opens the in-window Fluent colour dialog overlay (ColorPickerDialog).
     component AccentPicker: Item {
         id: ap
         implicitWidth: 56
@@ -137,16 +131,6 @@ FluentScroll {
                 SettingRow {
                     glyph: "\uE8B3"; title: I18n.t("Скругление углов"); subtitle: I18n.t("Радиус скругления карточек и кнопок, px")
                     FluentSpin { from: 0; to: 20; value: App.uiCornerRadius; onValueModified: App.setUiCornerRadius(value) }
-                }
-
-                SettingRow {
-                    glyph: "\uE81E"; title: I18n.t("Фон окна"); subtitle: I18n.t("Эффект подложки Windows 11")
-                    StyledCombo {
-                        model: [I18n.t("Mica"), I18n.t("Акрил"), I18n.t("Сплошной")]
-                        readonly property var keys: ["mica", "acrylic", "solid"]
-                        currentIndex: Math.max(0, keys.indexOf(App.uiBackdrop))
-                        onActivated: App.setUiBackdrop(keys[currentIndex])
-                    }
                 }
 
                 SettingRow {
@@ -258,10 +242,6 @@ FluentScroll {
                 SettingRow {
                     glyph: "\uE896"; title: I18n.t("Автоподключение при импорте"); subtitle: I18n.t("Сразу подключаться к импортированному серверу")
                     Switch { checked: App.autoConnectOnImport; onToggled: App.setAutoConnectOnImport(checked) }
-                }
-                SettingRow {
-                    glyph: "\uE7EF"; title: I18n.t("Всегда запускать от администратора"); subtitle: I18n.t("Windows будет запрашивать повышенные права при следующем запуске")
-                    Switch { checked: App.alwaysRunAsAdmin; onToggled: App.setAlwaysRunAsAdmin(checked) }
                 }
                 SettingRow {
                     glyph: "\uE945"; title: I18n.t("Автозапуск Zapret"); subtitle: I18n.t("Запускать Zapret при старте приложения")

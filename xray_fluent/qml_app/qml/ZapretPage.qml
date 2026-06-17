@@ -4,15 +4,9 @@ import QtQuick.Layouts
 import App 1.0
 import "."
 
-// Live port of ui/zapret_page.py + preset_edit_widget.py. Two views inside one
-// page (mirroring the classic QStackedWidget):
+// page:
 //   editing == false -> preset list (info card, toolbar, run-state, table)
 //   editing == true  -> preset editor (name/description/content + save)
-//
-// All data + actions go through the bridge: App.zapretPresets(), startZapret /
-// stopZapret, readPreset / savePreset / deletePreset / importZapretPreset.
-// Run-state and errors arrive via the zapretState signal; the list refreshes on
-// zapretPresetsChanged. The real winws2 process stays in controller.zapret.
 Item {
     id: page
 
@@ -114,7 +108,6 @@ Item {
                 font.pixelSize: Theme.fontTitle; font.weight: Font.DemiBold
             }
             Item { Layout.fillWidth: true }
-            // Run-state pill
             Rectangle {
                 radius: 12; implicitHeight: 24
                 implicitWidth: stateRow.implicitWidth + 22
@@ -194,7 +187,33 @@ Item {
                     clip: true
                     model: page.presets
                     boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: FluentScrollBar {}
+                    ScrollBar.vertical: FluentScrollBar { id: zapretListVbar }
+
+                    NumberAnimation {
+                        id: zapretListScrollAnim
+                        target: list
+                        property: "contentY"
+                        duration: 540
+                        easing.type: Easing.OutQuint
+                    }
+                    WheelHandler {
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        onWheel: (ev) => {
+                            var maxY = Math.max(0, list.contentHeight - list.height)
+                            if (maxY <= 0) { ev.accepted = true; return }
+                            if (ev.pixelDelta.y !== 0) {
+                                zapretListScrollAnim.stop()
+                                list.contentY = Math.max(0, Math.min(maxY, list.contentY - ev.pixelDelta.y))
+                            } else {
+                                var step = 92
+                                var base = zapretListScrollAnim.running ? zapretListScrollAnim.to : list.contentY
+                                zapretListScrollAnim.to = Math.max(0, Math.min(maxY, base - (ev.angleDelta.y / 120) * step))
+                                zapretListScrollAnim.restart()
+                            }
+                            zapretListVbar.flash()
+                            ev.accepted = true
+                        }
+                    }
 
                     delegate: Rectangle {
                         width: ListView.view.width
@@ -327,9 +346,8 @@ Item {
                 flickDeceleration: 5000
                 maximumFlickVelocity: 3000
                 pixelAligned: true
-                ScrollBar.vertical: FluentScrollBar {}
+                ScrollBar.vertical: FluentScrollBar { id: zapretEditorVbar }
                 ScrollBar.horizontal: FluentScrollBar {}
-                // faster eased mouse-wheel scroll (matches FluentScroll feel)
                 property real wheelStep: 92
                 NumberAnimation {
                     id: editScrollAnim
@@ -350,6 +368,7 @@ Item {
                             editScrollAnim.to = target
                             editScrollAnim.restart()
                         }
+                        zapretEditorVbar.flash()
                         ev.accepted = true
                     }
                 }

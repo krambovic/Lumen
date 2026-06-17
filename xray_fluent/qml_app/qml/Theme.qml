@@ -18,7 +18,6 @@ QtObject {
     property real fontScale: 1.0               // 0.85..1.30
     property string fontFamilyName: "Segoe UI"
     property bool animations: true             // master motion switch
-    property string backdrop: "mica"           // mica | acrylic | solid
     property string preset: "default"          // default | midnight | nord | ...
     readonly property bool amoled: preset === "midnight"
 
@@ -34,23 +33,13 @@ QtObject {
 
     // ---- Surfaces (Fluent Mica / layer palette) ------------------------
     readonly property color bg: dark ? (amoled ? "#000000" : "#202020") : "#F3F3F3"
-    // Window fill in Main.qml: fully transparent for Mica AND Acrylic so the DWM
-    // backdrop shows straight through the whole nav frame — the left rail stays
-    // part of the backdrop instead of becoming a separate solid strip. Opaque
-    // only for "solid". Acrylic readability is handled on the content panel, so
-    // the navbar keeps its see-through look.
-    readonly property color micaBase: backdrop === "solid" ? bg : "transparent"
+    readonly property color micaBase: "transparent"
     // Slightly raised base (nav pane): a very faint layer so Mica stays visible.
     readonly property color bgElevated: dark ? Qt.rgba(1, 1, 1, 0.016) : Qt.rgba(1, 1, 1, 0.55)
     // Card / layer fill composited over the backdrop (translucent on purpose).
     readonly property color card: dark ? Qt.rgba(1, 1, 1, 0.040) : Qt.rgba(1, 1, 1, 0.70)
     readonly property color cardHover: dark ? Qt.rgba(1, 1, 1, 0.0837) : Qt.rgba(0, 0, 0, 0.024)
     readonly property color cardPressed: dark ? Qt.rgba(1, 1, 1, 0.0326) : Qt.rgba(0, 0, 0, 0.040)
-
-    // Opaque flyout / menu / popup surface. The Mica tokens above are
-    // deliberately TRANSLUCENT so the backdrop shows through panes and cards;
-    // floating pop-ups must instead be fully OPAQUE or page content shows
-    // through them. Fluent flyout fill ~ #2C2C2C (dark) / #FBFBFB (light).
     readonly property color flyout: dark ? (amoled ? "#1A1A1A" : "#2C2C2C") : "#FBFBFB"
     readonly property color flyoutBorder: dark ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(0, 0, 0, 0.13)
 
@@ -66,7 +55,7 @@ QtObject {
 
     // ---- Semantic colours ----------------------------------------------
     readonly property color success: dark ? "#6CCB5F" : "#0F7B0F"
-    readonly property color warning: dark ? "#FCE100" : "#9D5D00"
+    readonly property color warning: dark ? "#FCE100" : "#F4C900"
     readonly property color danger: dark ? "#FF99A4" : "#C42B1C"
     readonly property color dangerFill: dark ? "#D13438" : "#C42B1C"
     readonly property color info: accent

@@ -1,10 +1,6 @@
 import QtQuick
-import QtQuick.Layouts
 import "."
 
-// One entry in the left navigation pane, styled after the qfluentwidgets
-// NavigationInterface item: icon (+ label), a soft accent fill when selected
-// and a short rounded accent bar on the leading edge.
 Item {
     id: root
     property string label: ""
@@ -19,15 +15,18 @@ Item {
     implicitWidth: parent ? parent.width : 200
 
     Rectangle {
-        anchors.fill: parent
-        anchors.leftMargin: 6
-        anchors.rightMargin: 6
+        id: bg
+        x: 6
+        y: 0
+        width: root.compact ? 38 : Math.max(38, root.width - 12)
+        height: parent.height
         radius: Theme.radiusSmall
         color: root.selected ? Theme.accentSoft
                : tap.hovered ? Theme.cardHover : "transparent"
-        Behavior on color { ColorAnimation { duration: Theme.animFast } }
+        Behavior on color { ColorAnimation { duration: Theme.animations ? 130 : 0; easing.type: Theme.easeStandard } }
+        Behavior on width { NumberAnimation { duration: Theme.animations ? 170 : 0; easing.type: Theme.easeEmphasized } }
 
-        Rectangle {  // selection indicator (WinUI-style pill that grows in/out)
+        Rectangle {
             width: 3; radius: 1.5
             color: Theme.accent
             anchors.left: parent.left
@@ -35,50 +34,52 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             height: root.selected ? parent.height * 0.5 : 0
             opacity: root.selected ? 1 : 0
-            Behavior on height { NumberAnimation { duration: Theme.animNormal; easing.type: Theme.easeEmphasized } }
-            Behavior on opacity { NumberAnimation { duration: Theme.animFast } }
+            Behavior on height { NumberAnimation { duration: Theme.animations ? 210 : 0; easing.type: Theme.easeEmphasized } }
+            Behavior on opacity { NumberAnimation { duration: Theme.animations ? 150 : 0; easing.type: Theme.easeStandard } }
         }
 
-        RowLayout {
-            anchors.fill: parent
-            // Pin the icon at a fixed offset equal to its centred position in
-            // the collapsed rail. Collapsing/expanding then only grows or trims
-            // the trailing space and shows/hides the label - the icon itself
-            // never moves, so it no longer snaps to the centre of the still-wide
-            // rail on toggle (the cause of the jump).
+        Text {
+            id: icon
+            text: root.glyph
+            font.family: root.iconFont
+            font.pixelSize: 16
+            color: root.selected ? Theme.text : Theme.textMuted
+            anchors.left: parent.left
             anchors.leftMargin: 11
-            anchors.rightMargin: 12
-            spacing: 12
+            anchors.verticalCenter: parent.verticalCenter
+            width: 18
+            horizontalAlignment: Text.AlignLeft
+            Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0; easing.type: Theme.easeStandard } }
 
-            Text {
-                text: root.glyph
-                font.family: root.iconFont
-                font.pixelSize: 16
-                color: root.selected ? Theme.text : Theme.textMuted
-                Layout.alignment: Qt.AlignVCenter
-                horizontalAlignment: Text.AlignLeft
-                Rectangle {  // индикатор наличия обновлений
-                    visible: root.badge
-                    width: 8; height: 8; radius: 4
-                    color: "#E81123"
-                    border.width: 1
-                    border.color: Theme.flyout
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.rightMargin: -3
-                    anchors.topMargin: -1
-                }
+            Rectangle {
+                visible: root.badge
+                width: 8; height: 8; radius: 4
+                color: "#E81123"
+                border.width: 1
+                border.color: Theme.flyout
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.rightMargin: -3
+                anchors.topMargin: -1
             }
-            Text {
-                text: root.label
-                visible: !root.compact
-                Layout.fillWidth: true
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontNormal
-                font.weight: root.selected ? Font.DemiBold : Font.Normal
-                color: root.selected ? Theme.text : Theme.textMuted
-                elide: Text.ElideRight
-            }
+        }
+
+        Text {
+            id: labelText
+            text: root.label
+            anchors.left: parent.left
+            anchors.leftMargin: 41
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            opacity: root.compact ? 0 : 1
+            visible: !root.compact
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontNormal
+            font.weight: root.selected ? Font.DemiBold : Font.Normal
+            color: root.selected ? Theme.text : Theme.textMuted
+            elide: Text.ElideRight
+            clip: true
         }
 
         HoverHandler { id: tap }
