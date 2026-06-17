@@ -169,6 +169,18 @@ FluentScroll {
                     glyph: "\uE72C"; title: I18n.t("Проверять обновления ядра и geoip/geosite"); subtitle: I18n.t("При запуске проверять обновления и уведомлять")
                     Switch { checked: App.resourceUpdateCheck; onToggled: App.setResourceUpdateCheck(checked) }
                 }
+                SettingRow {
+                    glyph: "\uE8A6"; title: I18n.t("TLS fragment"); subtitle: I18n.t("Настройки fragment/final fragment для Xray и sing-box TUN")
+                    Switch { checked: App.xrayFragmentEnabled; onToggled: App.setXrayFragment(checked) }
+                    Switch { checked: App.finalFragmentEnabled; onToggled: App.setFinalFragment(checked) }
+                }
+                SettingRow {
+                    glyph: "\uE9D9"; title: I18n.t("Fragment параметры"); subtitle: I18n.t("packets, length, delay и tail fragment")
+                    StyledField { id: fragPackets; Layout.preferredWidth: 100; text: App.fragmentPackets; placeholderText: "tlshello"; onEditingFinished: App.setFragmentSettings(text, fragLength.text, fragDelay.text) }
+                    StyledField { id: fragLength; Layout.preferredWidth: 100; text: App.fragmentLength; placeholderText: "50-100"; onEditingFinished: App.setFragmentSettings(fragPackets.text, text, fragDelay.text) }
+                    StyledField { id: fragDelay; Layout.preferredWidth: 100; text: App.fragmentDelay; placeholderText: "10-20"; onEditingFinished: App.setFragmentSettings(fragPackets.text, fragLength.text, text) }
+                    Switch { checked: App.tailFragmentEnabled; onToggled: App.setTailFragment(checked) }
+                }
             }
         }
 

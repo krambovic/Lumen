@@ -4,13 +4,23 @@ from copy import deepcopy
 from typing import Any
 
 
-def build_fragment_mask() -> dict[str, Any]:
+def _clean_fragment_value(value: str, fallback: str) -> str:
+    cleaned = str(value or "").strip()
+    return cleaned or fallback
+
+
+def build_fragment_mask(
+    *,
+    packets: str = "tlshello",
+    length: str = "50-100",
+    delay: str = "10-20",
+) -> dict[str, Any]:
     return {
         "type": "fragment",
         "settings": {
-            "packets": "tlshello",
-            "length": "50-100",
-            "delay": "10-20",
+            "packets": _clean_fragment_value(packets, "tlshello"),
+            "length": _clean_fragment_value(length, "50-100"),
+            "delay": _clean_fragment_value(delay, "10-20"),
         },
     }
 
@@ -25,14 +35,27 @@ def build_noise_mask() -> dict[str, Any]:
     }
 
 
-def build_finalmask() -> dict[str, Any]:
-    return {
-        "tcp": [build_fragment_mask()],
-        "udp": [build_noise_mask()],
-    }
+def build_finalmask(
+    *,
+    packets: str = "tlshello",
+    length: str = "50-100",
+    delay: str = "10-20",
+    tail_fragment: bool = False,
+) -> dict[str, Any]:
+    tcp = [build_fragment_mask(packets=packets, length=length, delay=delay)]
+    if tail_fragment:
+        tcp.append(build_fragment_mask(packets="1-1", length="1-3", delay="0-0"))
+    return {"tcp": tcp, "udp": [build_noise_mask()]}
 
 
-def ensure_stream_finalmask(stream_settings: dict[str, Any]) -> bool:
+def ensure_stream_finalmask(
+    stream_settings: dict[str, Any],
+    *,
+    packets: str = "tlshello",
+    length: str = "50-100",
+    delay: str = "10-20",
+    tail_fragment: bool = False,
+) -> bool:
     changed = False
     finalmask = stream_settings.get("finalmask")
     if not isinstance(finalmask, dict):
@@ -42,7 +65,12 @@ def ensure_stream_finalmask(stream_settings: dict[str, Any]) -> bool:
 
     tcp = finalmask.get("tcp")
     if not isinstance(tcp, list) or not tcp:
-        finalmask["tcp"] = [build_fragment_mask()]
+        finalmask["tcp"] = build_finalmask(
+            packets=packets,
+            length=length,
+            delay=delay,
+            tail_fragment=tail_fragment,
+        )["tcp"]
         changed = True
 
     udp = finalmask.get("udp")
@@ -53,7 +81,14 @@ def ensure_stream_finalmask(stream_settings: dict[str, Any]) -> bool:
     return changed
 
 
-def apply_xray_outbound_fragment(payload: dict[str, Any]) -> int:
+def apply_xray_outbound_fragment(
+    payload: dict[str, Any],
+    *,
+    packets: str = "tlshello",
+    length: str = "50-100",
+    delay: str = "10-20",
+    tail_fragment: bool = False,
+) -> int:
     """Add Xray finalmask to TLS-like proxy outbounds, like v2rayN EnableFragment."""
     patched = 0
     outbounds = payload.get("outbounds")
@@ -70,12 +105,26 @@ def apply_xray_outbound_fragment(payload: dict[str, Any]) -> int:
         sockopt = stream_settings.get("sockopt")
         if isinstance(sockopt, dict) and str(sockopt.get("dialerProxy") or "").strip():
             continue
-        if ensure_stream_finalmask(stream_settings):
+        if ensure_stream_finalmask(
+            stream_settings,
+            packets=packets,
+            length=length,
+            delay=delay,
+            tail_fragment=tail_fragment,
+        ):
             patched += 1
     return patched
 
 
-def apply_xray_final_fragment(payload: dict[str, Any], *, tag_prefix: str = "proxy") -> int:
+def apply_xray_final_fragment(
+    payload: dict[str, Any],
+    *,
+    tag_prefix: str = "proxy",
+    packets: str = "tlshello",
+    length: str = "50-100",
+    delay: str = "10-20",
+    tail_fragment: bool = False,
+) -> int:
     """Insert a v2rayN-style freedom finalmask wrapper before proxy outbounds.
 
     Xray sees this as:
@@ -125,7 +174,14 @@ def apply_xray_final_fragment(payload: dict[str, Any], *, tag_prefix: str = "pro
             "tag": original_tag,
             "protocol": "freedom",
             "streamSettings": {
-                "finalmask": deepcopy(build_finalmask()),
+                "finalmask": deepcopy(
+                    build_finalmask(
+                        packets=packets,
+                        length=length,
+                        delay=delay,
+                        tail_fragment=tail_fragment,
+                    )
+                ),
                 "sockopt": {
                     "dialerProxy": after_tag,
                 },

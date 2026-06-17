@@ -338,9 +338,13 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
             if isinstance(server, dict)
         }
         target_dns = "bootstrap-dns" if final_outbound == "direct" else "proxy-dns"
+        target_strategy = (
+            routing.dns_bootstrap_strategy if final_outbound == "direct" else routing.dns_proxy_strategy
+        )
+        target_strategy = _singbox_dns_strategy(target_strategy)
         if target_dns in dns_tags:
-            dns["final"] = target_dns
-            route["default_domain_resolver"] = {"server": target_dns, "strategy": "prefer_ipv4"}
+            dns["final"] = "fake-dns" if routing.dns_fake_enabled and "fake-dns" in dns_tags else target_dns
+            route["default_domain_resolver"] = {"server": target_dns, "strategy": target_strategy}
         existing_dns_rules = dns.setdefault("rules", [])
         if not isinstance(existing_dns_rules, list):
             existing_dns_rules = []
@@ -490,6 +494,11 @@ def _is_lumen_singbox_dns_rule(rule: Any) -> bool:
     }
     allowed_keys = generated_keys | {"rule_set", "action", "server"}
     return bool(generated_keys & set(rule)) and set(rule).issubset(allowed_keys)
+
+
+def _singbox_dns_strategy(value: str) -> str:
+    strategy = str(value or "").strip().lower().replace("-", "_")
+    return strategy if strategy in {"prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"} else "prefer_ipv4"
 
 
 def _append_singbox_process_rule(
