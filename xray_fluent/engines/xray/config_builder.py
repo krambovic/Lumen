@@ -151,8 +151,20 @@ def build_xray_config(
         }
 
     if settings.enable_xray_fragment:
-        apply_xray_outbound_fragment(config)
+        apply_xray_outbound_fragment(
+            config,
+            packets=settings.fragment_packets,
+            length=settings.fragment_length,
+            delay=settings.fragment_delay,
+            tail_fragment=settings.tail_fragment_enabled,
+        )
     if settings.enable_final_fragment:
-        apply_xray_final_fragment(config)
+        apply_xray_final_fragment(
+            config,
+            packets=settings.fragment_packets,
+            length=settings.fragment_length,
+            delay=settings.fragment_delay,
+            tail_fragment=settings.tail_fragment_enabled,
+        )
 
     return config

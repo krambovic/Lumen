@@ -13,6 +13,7 @@ from ..engines.xray import (
     restart_proxy_core as restart_xray_proxy_core,
     start_proxy as start_xray_proxy,
 )
+from .server_preflight import validate_server_preflight
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -83,6 +84,10 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
 
         if node is not None and not singbox_editor_mode and not xray_raw_mode:
             problem = controller._prepare_node_for_runtime(node)
+            if problem:
+                controller._set_connection_status("error", problem, level="error")
+                return False
+            problem = validate_server_preflight(node, controller.state.settings)
             if problem:
                 controller._set_connection_status("error", problem, level="error")
                 return False

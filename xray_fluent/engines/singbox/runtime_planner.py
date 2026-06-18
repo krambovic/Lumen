@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 import json
 import secrets
 import socket
@@ -20,6 +20,7 @@ from ...constants import (
     SS_PROTECT_PORT_START,
 )
 from ...models import Node, RoutingSettings
+from ...multiplex import apply_xray_multiplex
 from ...routing_runtime import apply_singbox_gui_routing
 from ...xray_fragments import apply_xray_final_fragment
 from .config_builder import build_singbox_outbound
@@ -129,6 +130,12 @@ def plan_singbox_runtime(
     *,
     routing: RoutingSettings | None = None,
     enable_final_fragment: bool = True,
+    fragment_packets: str = "tlshello",
+    fragment_length: str = "50-100",
+    fragment_delay: str = "10-20",
+    tail_fragment_enabled: bool = False,
+    multiplex_enabled: bool = False,
+    multiplex_concurrency: int = 8,
     discord_proxy_enabled: bool = False,
     preferred_relay_port: int = 0,
     preferred_protect_port: int = 0,
@@ -137,7 +144,11 @@ def plan_singbox_runtime(
     runtime_config = deepcopy(document.payload)
     strip_singbox_proxy_inbounds(runtime_config)
     _ensure_singbox_metrics_contract(runtime_config)
-    _ensure_singbox_tun_runtime_contract(runtime_config, enable_final_fragment=enable_final_fragment)
+    _ensure_singbox_tun_runtime_contract(
+        runtime_config,
+        routing=routing,
+        enable_final_fragment=enable_final_fragment,
+    )
 
     outbounds = runtime_config.get("outbounds")
     proxy_index = _find_proxy_outbound_index(outbounds)
@@ -161,7 +172,12 @@ def plan_singbox_runtime(
 
     force_sidecar = _node_should_use_xray_sidecar(node)
     try:
-        native_proxy = None if force_sidecar else build_singbox_outbound(node, tag="proxy")
+        native_proxy = None if force_sidecar else build_singbox_outbound(
+            node,
+            tag="proxy",
+            multiplex_enabled=multiplex_enabled,
+            multiplex_concurrency=multiplex_concurrency,
+        )
     except ValueError:
         native_proxy = None
 
@@ -172,6 +188,12 @@ def plan_singbox_runtime(
             proxy_index=proxy_index,
             node=node,
             enable_final_fragment=enable_final_fragment,
+            fragment_packets=fragment_packets,
+            fragment_length=fragment_length,
+            fragment_delay=fragment_delay,
+            tail_fragment_enabled=tail_fragment_enabled,
+            multiplex_enabled=multiplex_enabled,
+            multiplex_concurrency=multiplex_concurrency,
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
@@ -214,6 +236,12 @@ def _plan_hybrid_runtime(
     proxy_index: int,
     node: Node,
     enable_final_fragment: bool,
+    fragment_packets: str,
+    fragment_length: str,
+    fragment_delay: str,
+    tail_fragment_enabled: bool,
+    multiplex_enabled: bool,
+    multiplex_concurrency: int,
     preferred_relay_port: int,
     preferred_protect_port: int,
     preferred_protect_password: str,
@@ -272,6 +300,12 @@ def _plan_hybrid_runtime(
             protect_port=protect_port,
             protect_password=protect_password,
             enable_final_fragment=enable_final_fragment,
+            fragment_packets=fragment_packets,
+            fragment_length=fragment_length,
+            fragment_delay=fragment_delay,
+            tail_fragment_enabled=tail_fragment_enabled,
+            multiplex_enabled=multiplex_enabled,
+            multiplex_concurrency=multiplex_concurrency,
         ),
     )
     return SingboxRuntimePlan(
@@ -312,6 +346,12 @@ def _build_xray_sidecar_config(
     protect_port: int,
     protect_password: str,
     enable_final_fragment: bool = True,
+    fragment_packets: str = "tlshello",
+    fragment_length: str = "50-100",
+    fragment_delay: str = "10-20",
+    tail_fragment_enabled: bool = False,
+    multiplex_enabled: bool = False,
+    multiplex_concurrency: int = 8,
 ) -> dict[str, Any]:
     if not isinstance(node.outbound, dict) or not node.outbound:
         raise ValueError("Выбранный сервер не содержит outbound JSON для xray sidecar.")
@@ -319,6 +359,11 @@ def _build_xray_sidecar_config(
         raise ValueError("Выбранный сервер не содержит protocol для xray sidecar.")
     proxy_outbound = deepcopy(node.outbound)
     proxy_outbound["tag"] = "proxy"
+    apply_xray_multiplex(
+        proxy_outbound,
+        enabled=multiplex_enabled,
+        concurrency=multiplex_concurrency,
+    )
     stream_settings = proxy_outbound.get("streamSettings")
     if not isinstance(stream_settings, dict):
         stream_settings = {}
@@ -378,7 +423,13 @@ def _build_xray_sidecar_config(
         },
     }
     if enable_final_fragment:
-        apply_xray_final_fragment(config)
+        apply_xray_final_fragment(
+            config,
+            packets=fragment_packets,
+            length=fragment_length,
+            delay=fragment_delay,
+            tail_fragment=tail_fragment_enabled,
+        )
     return config
 
 
@@ -531,6 +582,50 @@ def _is_singbox_discord_proxy_rule(rule: Any) -> bool:
     return False
 
 
+def _dns_strategy(value: str) -> str:
+    strategy = str(value or "").strip().lower().replace("-", "_")
+    return strategy if strategy in {"prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"} else "prefer_ipv4"
+
+
+def _build_dns_server(tag: str, server: str, server_type: str, strategy: str) -> dict[str, Any]:
+    dns_type = str(server_type or "").strip().lower()
+    address = str(server or "").strip() or ("8.8.8.8" if tag == "proxy-dns" else "1.1.1.1")
+    if dns_type not in {"udp", "tcp", "tls", "https"}:
+        dns_type = "https" if tag == "proxy-dns" else "udp"
+    payload: dict[str, Any] = {
+        "tag": tag,
+        "type": dns_type,
+        "server": address,
+        "strategy": _dns_strategy(strategy),
+    }
+    if dns_type == "https":
+        payload.setdefault("server_port", 443)
+        payload.setdefault("path", "/dns-query")
+    elif dns_type == "tls":
+        payload.setdefault("server_port", 853)
+    elif dns_type in {"udp", "tcp"}:
+        payload.setdefault("server_port", 53)
+    return payload
+
+
+def _normalize_route_exclude_addresses(values: list[str] | tuple[str, ...]) -> list[str]:
+    normalized: list[str] = []
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        try:
+            # sing-box accepts CIDR entries here; plain IPs are normalized to /32 or /128.
+            if "/" in value:
+                normalized.append(str(ip_network(value, strict=False)))
+            else:
+                address = ip_address(value)
+                normalized.append(f"{address}/{'128' if address.version == 6 else '32'}")
+        except ValueError:
+            continue
+    return sorted(dict.fromkeys(normalized))
+
+
 def _singbox_discord_rule_insert_index(rules: list[Any]) -> int:
     index = 0
     while index < len(rules):
@@ -553,7 +648,12 @@ def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> None:
     clash_api["external_controller"] = f"127.0.0.1:{SINGBOX_CLASH_API_PORT}"
 
 
-def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any], *, enable_final_fragment: bool = True) -> None:
+def _ensure_singbox_tun_runtime_contract(
+    payload: dict[str, Any],
+    *,
+    routing: RoutingSettings | None = None,
+    enable_final_fragment: bool = True,
+) -> None:
     """Patch app-owned runtime fields for raw sing-box configs.
 
     The source document may keep a placeholder or stale interface name, but the
@@ -576,25 +676,75 @@ def _ensure_singbox_tun_runtime_contract(payload: dict[str, Any], *, enable_fina
             inbound["auto_route"] = True
             inbound["strict_route"] = False
             inbound["stack"] = "mixed"
+            excludes = _normalize_route_exclude_addresses(
+                routing.tun_route_exclude_address if routing is not None else []
+            )
+            if excludes:
+                inbound["route_exclude_address"] = excludes
+            else:
+                inbound.pop("route_exclude_address", None)
             inbound.pop("sniff", None)
     if not has_tun:
         return
 
     route = _ensure_dict(payload, "route")
     route["auto_detect_interface"] = True
-    route["default_domain_resolver"] = {"server": "bootstrap-dns", "strategy": "prefer_ipv4"}
-    _ensure_singbox_dns_runtime_contract(payload)
+    direct_strategy = _dns_strategy(routing.dns_bootstrap_strategy if routing is not None else "")
+    route["default_domain_resolver"] = {"server": "bootstrap-dns", "strategy": direct_strategy}
+    _ensure_singbox_dns_runtime_contract(payload, routing=routing)
     rules = _ensure_list(route, "rules")
-    _ensure_singbox_tun_base_rules(rules, enable_final_fragment=enable_final_fragment)
+    _ensure_singbox_tun_base_rules(
+        rules,
+        enable_final_fragment=enable_final_fragment,
+        dns_hijack=(routing.dns_hijack_enabled if routing is not None else True),
+    )
 
 
-def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any]) -> None:
+def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any], *, routing: RoutingSettings | None = None) -> None:
     dns = payload.get("dns")
     if not isinstance(dns, dict):
-        return
+        dns = {}
+        payload["dns"] = dns
     dns["independent_cache"] = True
-    dns.setdefault("strategy", "prefer_ipv4")
-    for server in dns.get("servers") or []:
+    direct_server = routing.dns_bootstrap_server if routing is not None else "1.1.1.1"
+    direct_type = routing.dns_bootstrap_type if routing is not None else "udp"
+    direct_strategy = _dns_strategy(routing.dns_bootstrap_strategy if routing is not None else "")
+    proxy_server = routing.dns_proxy_server if routing is not None else "8.8.8.8"
+    proxy_type = routing.dns_proxy_type if routing is not None else "https"
+    proxy_strategy = _dns_strategy(routing.dns_proxy_strategy if routing is not None else "")
+    fake_enabled = bool(routing.dns_fake_enabled) if routing is not None else False
+
+    dns["strategy"] = direct_strategy
+    servers = dns.setdefault("servers", [])
+    if not isinstance(servers, list):
+        servers = []
+        dns["servers"] = servers
+    _replace_or_append_tagged(servers, "bootstrap-dns", _build_dns_server("bootstrap-dns", direct_server, direct_type, direct_strategy))
+    _replace_or_append_tagged(servers, "direct-dns", _build_dns_server("direct-dns", direct_server, direct_type, direct_strategy))
+    proxy_dns = _build_dns_server("proxy-dns", proxy_server, proxy_type, proxy_strategy)
+    proxy_dns["detour"] = "proxy"
+    if str(proxy_dns.get("type") or "").strip().lower() in {"tls", "https"}:
+        proxy_dns["domain_resolver"] = "bootstrap-dns"
+    _replace_or_append_tagged(servers, "proxy-dns", proxy_dns)
+    if fake_enabled:
+        _replace_or_append_tagged(
+            servers,
+            "fake-dns",
+            {
+                "tag": "fake-dns",
+                "type": "fakeip",
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18",
+            },
+        )
+    else:
+        servers[:] = [
+            server
+            for server in servers
+            if not (isinstance(server, dict) and str(server.get("tag") or "") == "fake-dns")
+        ]
+
+    for server in servers:
         if not isinstance(server, dict):
             continue
         tag = str(server.get("tag") or "")
@@ -621,10 +771,16 @@ def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any]) -> None:
             server["domain_resolver"] = "bootstrap-dns"
 
 
-def _ensure_singbox_tun_base_rules(rules: list[Any], *, enable_final_fragment: bool = True) -> None:
-    base_rules = [
-        {"action": "sniff"},
-        {
+def _ensure_singbox_tun_base_rules(
+    rules: list[Any],
+    *,
+    enable_final_fragment: bool = True,
+    dns_hijack: bool = True,
+) -> None:
+    base_rules = [{"action": "sniff"}]
+    if dns_hijack:
+        base_rules.append(
+            {
             "type": "logical",
             "mode": "or",
             "action": "hijack-dns",
@@ -632,8 +788,8 @@ def _ensure_singbox_tun_base_rules(rules: list[Any], *, enable_final_fragment: b
                 {"port": 53},
                 {"protocol": "dns"},
             ],
-        },
-    ]
+            }
+        )
     if enable_final_fragment:
         base_rules.append(
             {

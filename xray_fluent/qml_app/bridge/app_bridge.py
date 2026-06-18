@@ -968,6 +968,56 @@ class AppBridge(QObject):
         settings.resource_update_check = bool(enabled)
         self.controller.update_settings(settings)
 
+    @pyqtSlot(bool)
+    def setXrayFragment(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.enable_xray_fragment = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setFinalFragment(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.enable_final_fragment = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setFragmentation(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        value = bool(enabled)
+        settings.enable_xray_fragment = value
+        settings.enable_final_fragment = value
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(str, str, str)
+    def setFragmentSettings(self, packets: str, length: str, delay: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.fragment_packets = (packets or "tlshello").strip() or "tlshello"
+        settings.fragment_length = (length or "50-100").strip() or "50-100"
+        settings.fragment_delay = (delay or "10-20").strip() or "10-20"
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setTailFragment(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.tail_fragment_enabled = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setMultiplexing(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.multiplex_enabled = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(int)
+    def setMultiplexConcurrency(self, value: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        try:
+            concurrency = int(value)
+        except Exception:
+            concurrency = 8
+        settings.multiplex_concurrency = max(1, min(32, concurrency))
+        self.controller.update_settings(settings)
+
     # ── Auto-switch ──────────────────────────────────────────────
     @pyqtSlot(bool)
     def setAutoSwitch(self, enabled: bool) -> None:
@@ -2239,6 +2289,70 @@ class AppBridge(QObject):
             return False
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def xrayFragmentEnabled(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.enable_xray_fragment)
+        except Exception:
+            return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def finalFragmentEnabled(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.enable_final_fragment)
+        except Exception:
+            return True
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def fragmentationEnabled(self) -> bool:
+        try:
+            settings = self.controller.state.settings
+            return bool(settings.enable_xray_fragment or settings.enable_final_fragment)
+        except Exception:
+            return False
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def fragmentPackets(self) -> str:
+        try:
+            return str(self.controller.state.settings.fragment_packets)
+        except Exception:
+            return "tlshello"
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def fragmentLength(self) -> str:
+        try:
+            return str(self.controller.state.settings.fragment_length)
+        except Exception:
+            return "50-100"
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def fragmentDelay(self) -> str:
+        try:
+            return str(self.controller.state.settings.fragment_delay)
+        except Exception:
+            return "10-20"
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def tailFragmentEnabled(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.tail_fragment_enabled)
+        except Exception:
+            return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def multiplexingEnabled(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.multiplex_enabled)
+        except Exception:
+            return False
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def multiplexConcurrency(self) -> int:
+        try:
+            return int(self.controller.state.settings.multiplex_concurrency)
+        except Exception:
+            return 8
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def autoSwitchEnabled(self) -> bool:
         try:
             return bool(self.controller.state.settings.auto_switch_enabled)
@@ -2500,6 +2614,18 @@ class AppBridge(QObject):
     def dnsProxyType(self) -> str:
         return self.controller.state.routing.dns_proxy_type
 
+    @pyqtProperty(bool, notify=routingChanged)
+    def dnsFakeEnabled(self) -> bool:
+        return bool(self.controller.state.routing.dns_fake_enabled)
+
+    @pyqtProperty(bool, notify=routingChanged)
+    def dnsHijackEnabled(self) -> bool:
+        return bool(self.controller.state.routing.dns_hijack_enabled)
+
+    @pyqtProperty(str, notify=routingChanged)
+    def tunRouteExcludeAddress(self) -> str:
+        return "\n".join(self.controller.state.routing.tun_route_exclude_address)
+
     @pyqtProperty(str, notify=routingChanged)
     def tunDefaultOutbound(self) -> str:
         return self.controller.state.routing.tun_default_outbound
@@ -2591,6 +2717,29 @@ class AppBridge(QObject):
                 r.dns_proxy_server = server.strip()
             if dns_type:
                 r.dns_proxy_type = dns_type
+        self._mutate_routing(apply)
+
+    @pyqtSlot(bool)
+    def setDnsFakeEnabled(self, enabled: bool) -> None:
+        def apply(r: RoutingSettings) -> None:
+            r.dns_fake_enabled = bool(enabled)
+        self._mutate_routing(apply)
+
+    @pyqtSlot(bool)
+    def setDnsHijackEnabled(self, enabled: bool) -> None:
+        def apply(r: RoutingSettings) -> None:
+            r.dns_hijack_enabled = bool(enabled)
+        self._mutate_routing(apply)
+
+    @pyqtSlot(str)
+    def setTunRouteExcludeAddress(self, text: str) -> None:
+        def apply(r: RoutingSettings) -> None:
+            items: list[str] = []
+            for chunk in str(text or "").replace(",", "\n").replace(";", "\n").splitlines():
+                value = chunk.strip()
+                if value:
+                    items.append(value)
+            r.tun_route_exclude_address = items
         self._mutate_routing(apply)
 
     @pyqtSlot(str)

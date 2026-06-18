@@ -781,6 +781,12 @@ class AppController(QObject):
             node,
             routing=self.state.routing,
             enable_final_fragment=self.state.settings.enable_final_fragment,
+            fragment_packets=self.state.settings.fragment_packets,
+            fragment_length=self.state.settings.fragment_length,
+            fragment_delay=self.state.settings.fragment_delay,
+            tail_fragment_enabled=self.state.settings.tail_fragment_enabled,
+            multiplex_enabled=self.state.settings.multiplex_enabled,
+            multiplex_concurrency=self.state.settings.multiplex_concurrency,
             discord_proxy_enabled=self.state.settings.discord_proxy_enabled,
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
@@ -1380,7 +1386,7 @@ class AppController(QObject):
             self._log(f"[discord-proxy] disabled while TUN is active: {result.message}")
             return
         if not self.connected and not self._desired_connected:
-            self.status.emit("warning", "Сначала запустите прокси Lumen KVN, потом включите Discord voice через прокси")
+            self.status.emit("warning", "Сначала запустите прокси Lumen KVN, потом включите Discord Voice через прокси")
             return
         result = self.discord_proxy.enable(int(DEFAULT_DISCORD_SOCKS_PORT))
         self._log(f"[discord-proxy] enable: {result.message}")

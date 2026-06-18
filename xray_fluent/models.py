@@ -90,8 +90,13 @@ class RoutingSettings:
     dns_mode: str = "system"  # system | builtin
     dns_bootstrap_server: str = "1.1.1.1"  # DNS for direct traffic
     dns_bootstrap_type: str = "udp"        # udp | tcp | tls | https
+    dns_bootstrap_strategy: str = "prefer_ipv4"
     dns_proxy_server: str = "8.8.8.8"     # DNS for proxy traffic
     dns_proxy_type: str = "https"          # tcp | tls | https
+    dns_proxy_strategy: str = "prefer_ipv4"
+    dns_fake_enabled: bool = False
+    dns_hijack_enabled: bool = True
+    tun_route_exclude_address: list[str] = field(default_factory=list)
     process_rules: list[dict[str, str]] = field(default_factory=list)  # [{"process": "chrome.exe", "action": "direct|proxy|block"}]
     process_preset_routes: dict[str, str] = field(default_factory=dict)  # {"telegram": "proxy", "windows_system": "direct"}
     service_routes: dict[str, str] = field(default_factory=dict)  # {"youtube": "proxy", "steam": "direct", ...}
@@ -107,8 +112,13 @@ class RoutingSettings:
             "dns_mode": self.dns_mode,
             "dns_bootstrap_server": self.dns_bootstrap_server,
             "dns_bootstrap_type": self.dns_bootstrap_type,
+            "dns_bootstrap_strategy": self.dns_bootstrap_strategy,
             "dns_proxy_server": self.dns_proxy_server,
             "dns_proxy_type": self.dns_proxy_type,
+            "dns_proxy_strategy": self.dns_proxy_strategy,
+            "dns_fake_enabled": self.dns_fake_enabled,
+            "dns_hijack_enabled": self.dns_hijack_enabled,
+            "tun_route_exclude_address": list(self.tun_route_exclude_address),
             "process_rules": list(self.process_rules),
             "process_preset_routes": dict(self.process_preset_routes),
             "service_routes": dict(self.service_routes),
@@ -126,8 +136,17 @@ class RoutingSettings:
             dns_mode=str(data.get("dns_mode") or "system"),
             dns_bootstrap_server=str(data.get("dns_bootstrap_server") or "1.1.1.1"),
             dns_bootstrap_type=str(data.get("dns_bootstrap_type") or "udp"),
+            dns_bootstrap_strategy=str(data.get("dns_bootstrap_strategy") or "prefer_ipv4"),
             dns_proxy_server=str(data.get("dns_proxy_server") or "8.8.8.8"),
             dns_proxy_type=str(data.get("dns_proxy_type") or "https"),
+            dns_proxy_strategy=str(data.get("dns_proxy_strategy") or "prefer_ipv4"),
+            dns_fake_enabled=bool(data.get("dns_fake_enabled", False)),
+            dns_hijack_enabled=bool(data.get("dns_hijack_enabled", True)),
+            tun_route_exclude_address=[
+                str(item).strip()
+                for item in (data.get("tun_route_exclude_address") or [])
+                if str(item).strip()
+            ],
             process_rules=list(data.get("process_rules") or []),
             process_preset_routes=dict(data.get("process_preset_routes") or {}),
             service_routes=dict(data.get("service_routes") or {}),
@@ -188,6 +207,12 @@ class AppSettings:
     xray_auto_update: bool = False
     enable_xray_fragment: bool = False
     enable_final_fragment: bool = True
+    fragment_packets: str = "tlshello"
+    fragment_length: str = "50-100"
+    fragment_delay: str = "10-20"
+    tail_fragment_enabled: bool = False
+    multiplex_enabled: bool = False
+    multiplex_concurrency: int = 8
     discord_proxy_enabled: bool = False
     tun_mode: bool = False
     tun_engine: str = "singbox"
@@ -254,6 +279,12 @@ class AppSettings:
             "xray_auto_update": self.xray_auto_update,
             "enable_xray_fragment": self.enable_xray_fragment,
             "enable_final_fragment": self.enable_final_fragment,
+            "fragment_packets": self.fragment_packets,
+            "fragment_length": self.fragment_length,
+            "fragment_delay": self.fragment_delay,
+            "tail_fragment_enabled": self.tail_fragment_enabled,
+            "multiplex_enabled": self.multiplex_enabled,
+            "multiplex_concurrency": self.multiplex_concurrency,
             "discord_proxy_enabled": self.discord_proxy_enabled,
             "tun_mode": self.tun_mode,
             "tun_engine": self.tun_engine,
@@ -316,6 +347,12 @@ class AppSettings:
             xray_auto_update=bool(data.get("xray_auto_update", False)),
             enable_xray_fragment=bool(data.get("enable_xray_fragment", False)),
             enable_final_fragment=bool(data.get("enable_final_fragment", True)),
+            fragment_packets=str(data.get("fragment_packets") or "tlshello"),
+            fragment_length=str(data.get("fragment_length") or "50-100"),
+            fragment_delay=str(data.get("fragment_delay") or "10-20"),
+            tail_fragment_enabled=bool(data.get("tail_fragment_enabled", False)),
+            multiplex_enabled=bool(data.get("multiplex_enabled", False)),
+            multiplex_concurrency=int(data.get("multiplex_concurrency") or 8),
             discord_proxy_enabled=bool(data.get("discord_proxy_enabled", False)),
             tun_mode=bool(data.get("tun_mode", False)),
             tun_engine=_normalize_tun_engine(data.get("tun_engine")),
