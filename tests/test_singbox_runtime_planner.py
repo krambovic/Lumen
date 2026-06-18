@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from xray_fluent.engines.singbox.runtime_planner import (
     parse_singbox_document,
     plan_singbox_runtime,
@@ -107,5 +109,60 @@ def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
 
     assert any(rule.get("action") == "hijack-dns" for rule in rules)
     assert servers["bootstrap-dns"]["type"] == "udp"
+    assert servers["bootstrap-dns"]["detour"] == "direct"
+    assert servers["direct-dns"]["detour"] == "direct"
     assert servers["proxy-dns"]["detour"] == "proxy"
     assert servers["fake-dns"]["type"] == "fakeip"
+
+
+@pytest.mark.parametrize("dns_type", ["udp", "tcp", "tls", "https"])
+def test_builtin_dns_uses_independent_resolver_for_dns_server_hostnames(dns_type: str) -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="builtin",
+            dns_bootstrap_server="resolver.example.com",
+            dns_bootstrap_type=dns_type,
+            dns_proxy_server="proxied-resolver.example.com",
+            dns_proxy_type=dns_type,
+            tun_default_outbound="proxy",
+        )
+    )
+
+    servers = _dns_servers(config)
+
+    assert servers["system-dns"]["type"] == "local"
+    assert servers["bootstrap-dns"]["detour"] == "direct"
+    assert servers["bootstrap-dns"]["domain_resolver"] == "system-dns"
+    assert servers["direct-dns"]["detour"] == "direct"
+    assert servers["direct-dns"]["domain_resolver"] == "system-dns"
+    assert servers["proxy-dns"]["detour"] == "proxy"
+    assert servers["proxy-dns"]["domain_resolver"] == "bootstrap-dns"
+
+
+@pytest.mark.parametrize("dns_type", ["udp", "tcp", "tls", "https"])
+def test_builtin_dns_does_not_add_resolver_for_ip_dns_servers(dns_type: str) -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="builtin",
+            dns_bootstrap_server="1.1.1.1",
+            dns_bootstrap_type=dns_type,
+            dns_proxy_server="8.8.8.8",
+            dns_proxy_type=dns_type,
+            tun_default_outbound="proxy",
+        )
+    )
+
+    servers = _dns_servers(config)
+
+    assert servers["bootstrap-dns"]["detour"] == "direct"
+    assert "domain_resolver" not in servers["bootstrap-dns"]
+    assert servers["direct-dns"]["detour"] == "direct"
+    assert "domain_resolver" not in servers["direct-dns"]
+    assert servers["proxy-dns"]["detour"] == "proxy"
+    if dns_type == "tcp":
+        assert servers["proxy-dns"]["server"] == "dns.google"
+        assert servers["proxy-dns"]["domain_resolver"] == "bootstrap-dns"
+    else:
+        assert "domain_resolver" not in servers["proxy-dns"]

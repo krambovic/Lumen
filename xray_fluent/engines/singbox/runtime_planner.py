@@ -607,6 +607,14 @@ def _build_dns_server(tag: str, server: str, server_type: str, strategy: str) ->
     return payload
 
 
+def _set_dns_server_dial_contract(server: dict[str, Any], *, detour: str, resolver: str = "") -> None:
+    server["detour"] = detour
+    if _is_domain_name(str(server.get("server") or "")):
+        server["domain_resolver"] = resolver or "system-dns"
+    else:
+        server.pop("domain_resolver", None)
+
+
 def _normalize_route_exclude_addresses(values: list[str] | tuple[str, ...]) -> list[str]:
     normalized: list[str] = []
     for raw in values:
@@ -721,12 +729,15 @@ def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any], *, routing: Ro
         servers = []
         dns["servers"] = servers
     if use_builtin_dns:
-        _replace_or_append_tagged(servers, "bootstrap-dns", _build_dns_server("bootstrap-dns", direct_server, direct_type, direct_strategy))
-        _replace_or_append_tagged(servers, "direct-dns", _build_dns_server("direct-dns", direct_server, direct_type, direct_strategy))
+        _replace_or_append_tagged(servers, "system-dns", {"tag": "system-dns", "type": "local"})
+        bootstrap_dns = _build_dns_server("bootstrap-dns", direct_server, direct_type, direct_strategy)
+        _set_dns_server_dial_contract(bootstrap_dns, detour="direct")
+        direct_dns = _build_dns_server("direct-dns", direct_server, direct_type, direct_strategy)
+        _set_dns_server_dial_contract(direct_dns, detour="direct")
+        _replace_or_append_tagged(servers, "bootstrap-dns", bootstrap_dns)
+        _replace_or_append_tagged(servers, "direct-dns", direct_dns)
         proxy_dns = _build_dns_server("proxy-dns", proxy_server, proxy_type, proxy_strategy)
-        proxy_dns["detour"] = "proxy"
-        if str(proxy_dns.get("type") or "").strip().lower() in {"tls", "https"}:
-            proxy_dns["domain_resolver"] = "bootstrap-dns"
+        _set_dns_server_dial_contract(proxy_dns, detour="proxy", resolver="bootstrap-dns")
     else:
         system_dns = {"tag": "bootstrap-dns", "type": "local"}
         _replace_or_append_tagged(servers, "bootstrap-dns", system_dns)
@@ -774,8 +785,6 @@ def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any], *, routing: Ro
                 }
             )
             continue
-        if tag == "proxy-dns" and server_type in {"tls", "https"} and "domain_resolver" not in server:
-            server["domain_resolver"] = "bootstrap-dns"
 
 
 def _singbox_uses_builtin_dns(routing: RoutingSettings | None) -> bool:
