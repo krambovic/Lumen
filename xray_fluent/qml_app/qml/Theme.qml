@@ -54,10 +54,10 @@ QtObject {
     readonly property color textFaint: dark ? Qt.rgba(1, 1, 1, 0.55) : Qt.rgba(0, 0, 0, 0.45)
 
     // ---- Semantic colours ----------------------------------------------
-    readonly property color success: dark ? "#6CCB5F" : "#0F7B0F"
+    readonly property color success: dark ? "#6CCB5F" : "#3BAE45"
     readonly property color warning: dark ? "#FCE100" : "#F4C900"
-    readonly property color danger: dark ? "#FF99A4" : "#C42B1C"
-    readonly property color dangerFill: dark ? "#D13438" : "#C42B1C"
+    readonly property color danger: dark ? "#FF99A4" : "#B84A4A"
+    readonly property color dangerFill: dark ? "#D13438" : "#D65A5A"
     readonly property color info: accent
 
     // ---- Standard (non-accent) button fill -----------------------------

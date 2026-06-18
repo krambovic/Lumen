@@ -89,7 +89,6 @@ FluentScroll {
         // ============================ Внешний вид ============================
         Card {
             Layout.fillWidth: true
-            elevation: 1
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -170,11 +169,15 @@ FluentScroll {
                     Switch { checked: App.resourceUpdateCheck; onToggled: App.setResourceUpdateCheck(checked) }
                 }
                 SettingRow {
+                    visible: !App.compactMode
+                    Layout.fillWidth: true
                     glyph: "\uE8A6"; title: I18n.t("TLS fragment"); subtitle: I18n.t("Настройки fragment/final fragment для Xray и sing-box TUN")
                     Switch { checked: App.xrayFragmentEnabled; onToggled: App.setXrayFragment(checked) }
                     Switch { checked: App.finalFragmentEnabled; onToggled: App.setFinalFragment(checked) }
                 }
                 SettingRow {
+                    visible: !App.compactMode
+                    Layout.fillWidth: true
                     glyph: "\uE9D9"; title: I18n.t("Fragment параметры"); subtitle: I18n.t("packets, length, delay и tail fragment")
                     StyledField { id: fragPackets; Layout.preferredWidth: 100; text: App.fragmentPackets; placeholderText: "tlshello"; onEditingFinished: App.setFragmentSettings(text, fragLength.text, fragDelay.text) }
                     StyledField { id: fragLength; Layout.preferredWidth: 100; text: App.fragmentLength; placeholderText: "50-100"; onEditingFinished: App.setFragmentSettings(fragPackets.text, text, fragDelay.text) }
