@@ -343,7 +343,7 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         )
         target_strategy = _singbox_dns_strategy(target_strategy)
         if target_dns in dns_tags:
-            dns["final"] = "fake-dns" if routing.dns_fake_enabled and "fake-dns" in dns_tags else target_dns
+            dns["final"] = target_dns
             route["default_domain_resolver"] = {"server": target_dns, "strategy": target_strategy}
         existing_dns_rules = dns.setdefault("rules", [])
         if not isinstance(existing_dns_rules, list):
@@ -352,6 +352,17 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         existing_dns_rules[:] = [
             rule for rule in existing_dns_rules if not _is_lumen_singbox_dns_rule(rule)
         ]
+        if routing.dns_fake_enabled and "fake-dns" in dns_tags:
+            existing_dns_rules.insert(
+                0,
+                {
+                    "query_type": ["A", "AAAA"],
+                    "action": "route",
+                    "server": "fake-dns",
+                    "rewrite_ttl": 1,
+                    "_lumen": "dns",
+                },
+            )
         if dns_rules:
             existing_dns_rules[0:0] = dns_rules
 
@@ -474,6 +485,8 @@ def _is_legacy_lumen_singbox_route_rule(rule: Any) -> bool:
 def _is_lumen_singbox_dns_rule(rule: Any) -> bool:
     if not isinstance(rule, dict):
         return False
+    if rule.get("_lumen") == "dns":
+        return True
     action = str(rule.get("action") or "")
     if action not in {"route", "reject"}:
         return False

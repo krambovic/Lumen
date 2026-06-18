@@ -768,6 +768,10 @@ def _singbox_discord_rule_insert_index(rules: list[Any]) -> int:
 
 
 def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> None:
+    log = _ensure_dict(payload, "log")
+    if str(log.get("level") or "").strip().lower() in {"", "warn", "warning", "error", "fatal", "panic"}:
+        log["level"] = "info"
+    log.setdefault("timestamp", True)
     experimental = _ensure_dict(payload, "experimental")
     clash_api = _ensure_dict(experimental, "clash_api")
     clash_api["external_controller"] = f"127.0.0.1:{SINGBOX_CLASH_API_PORT}"

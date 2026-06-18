@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .runtime_planner import SingboxRuntimePlan
 
@@ -46,6 +46,8 @@ def start_tun(
     route_final = route.get("final") if isinstance(route, dict) else ""
     dns_final = dns.get("final") if isinstance(dns, dict) else ""
     controller._log(f"[tun] routing final={route_final or '--'} dns_final={dns_final or '--'}")
+    for line in _runtime_summary_lines(plan.singbox_config):
+        controller._log(f"[tun] {line}")
     if plan.used_selected_node and node is not None:
         if plan.is_hybrid:
             controller._log(
@@ -95,6 +97,8 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
         route_final = route.get("final") if isinstance(route, dict) else ""
         dns_final = dns.get("final") if isinstance(dns, dict) else ""
         controller._log(f"[tun-hot-swap] routing final={route_final or '--'} dns_final={dns_final or '--'}")
+        for line in _runtime_summary_lines(plan.singbox_config):
+            controller._log(f"[tun-hot-swap] {line}")
         controller._stop_metrics_worker()
 
         if controller.singbox.is_running and not controller.singbox.stop():
@@ -153,3 +157,84 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
             controller._start_metrics_worker()
         else:
             controller._stop_metrics_worker()
+
+
+def _runtime_summary_lines(config: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    if not isinstance(config, dict):
+        return lines
+
+    dns = config.get("dns")
+    if isinstance(dns, dict):
+        servers = dns.get("servers") if isinstance(dns.get("servers"), list) else []
+        server_tags = [
+            str(server.get("tag") or "")
+            for server in servers
+            if isinstance(server, dict) and str(server.get("tag") or "")
+        ]
+        fake_enabled = any(
+            isinstance(server, dict)
+            and str(server.get("tag") or "") == "fake-dns"
+            and str(server.get("type") or "") == "fakeip"
+            for server in servers
+        )
+        lines.append(
+            "dns servers="
+            + ",".join(server_tags)
+            + f" final={dns.get('final') or '--'} fake={'on' if fake_enabled else 'off'}"
+        )
+        rules = dns.get("rules") if isinstance(dns.get("rules"), list) else []
+        fake_rules = sum(
+            1
+            for rule in rules
+            if isinstance(rule, dict) and str(rule.get("server") or "") == "fake-dns"
+        )
+        if fake_enabled:
+            lines.append(f"dns fake rules={fake_rules} total_dns_rules={len(rules)}")
+
+    proxy = _find_tagged(config.get("outbounds"), "proxy") or _find_tagged(config.get("endpoints"), "proxy")
+    if proxy:
+        server = str(proxy.get("server") or "")
+        if not server and str(proxy.get("type") or "") in {"wireguard", "warp"}:
+            peers = proxy.get("peers") if isinstance(proxy.get("peers"), list) else []
+            first_peer = next((peer for peer in peers if isinstance(peer, dict)), {})
+            server = str(first_peer.get("address") or "")
+        tls = proxy.get("tls") if isinstance(proxy.get("tls"), dict) else {}
+        server_name = str(tls.get("server_name") or "")
+        resolver = proxy.get("domain_resolver")
+        resolver_text = resolver if isinstance(resolver, str) else ""
+        lines.append(
+            f"proxy type={proxy.get('type') or '--'} server={server or '--'}"
+            + (f" sni={server_name}" if server_name else "")
+            + (f" resolver={resolver_text}" if resolver_text else "")
+        )
+
+    tun = next(
+        (
+            inbound
+            for inbound in config.get("inbounds") or []
+            if isinstance(inbound, dict) and str(inbound.get("type") or "") == "tun"
+        ),
+        None,
+    )
+    if isinstance(tun, dict):
+        excludes = tun.get("route_exclude_address")
+        excludes_list = [str(item) for item in excludes] if isinstance(excludes, list) else []
+        preview = ",".join(excludes_list[:4])
+        if len(excludes_list) > 4:
+            preview += ",..."
+        lines.append(
+            f"tun interface={tun.get('interface_name') or '--'} stack={tun.get('stack') or '--'}"
+            f" route_exclude={len(excludes_list)}"
+            + (f" [{preview}]" if preview else "")
+        )
+    return lines
+
+
+def _find_tagged(items: Any, tag: str) -> dict[str, Any] | None:
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        if isinstance(item, dict) and str(item.get("tag") or "") == tag:
+            return item
+    return None
