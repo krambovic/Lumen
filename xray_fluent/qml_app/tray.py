@@ -55,7 +55,7 @@ class QmlTray(QObject):
         self._tray.setContextMenu(self._menu)
 
         self._tray.activated.connect(self._on_activated)
-        self._menu.aboutToShow.connect(self._refresh_actions)
+        self._menu.aboutToShow.connect(self._refresh_menu_actions)
         try:
             self._bridge.connectedChanged.connect(self._refresh_actions)
         except Exception:
@@ -158,9 +158,12 @@ class QmlTray(QObject):
             self._action_admin.setText(tr("Перезапустить от администратора"))
             self._action_quit.setText(tr("Выход"))
             self._routing_menu.setTitle(tr("Маршрутизация"))
-            self._refresh_routing_actions()
         except Exception:
             pass
+
+    def _refresh_menu_actions(self) -> None:
+        self._refresh_actions()
+        self._refresh_routing_actions()
 
     def _refresh_routing_actions(self) -> None:
         for action in self._routing_actions:
