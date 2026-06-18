@@ -163,8 +163,13 @@ class QmlTray(QObject):
             pass
 
     def _refresh_routing_actions(self) -> None:
+        for action in self._routing_actions:
+            try:
+                self._routing_menu.removeAction(action)
+                action.deleteLater()
+            except Exception:
+                pass
         self._routing_actions = []
-        self._routing_menu.clear()
 
         current = str(getattr(self._bridge, "routingMode", "") or "")
         presets = [
@@ -173,7 +178,7 @@ class QmlTray(QObject):
             ("except_ru", tr("Все кроме РФ")),
         ]
         for preset_id, label in presets:
-            action = QAction(label, self._menu)
+            action = QAction(label, self._routing_menu)
             action.setCheckable(True)
             action.setChecked(
                 (preset_id == "global" and current == "global")
@@ -184,7 +189,7 @@ class QmlTray(QObject):
 
         custom = getattr(self._bridge, "customRoutingPresets", []) or []
         if custom:
-            sep = QAction(self._menu)
+            sep = QAction(self._routing_menu)
             sep.setSeparator(True)
             self._insert_routing_action(sep)
         for item in custom:
@@ -194,7 +199,7 @@ class QmlTray(QObject):
             if not preset_id:
                 continue
             name = str(item.get("name") or "") or tr("Пресет")
-            action = QAction(name, self._menu)
+            action = QAction(name, self._routing_menu)
             action.triggered.connect(lambda _checked=False, pid=preset_id: self._apply_custom_routing(pid))
             self._insert_routing_action(action)
 
