@@ -7,7 +7,7 @@ import "."
 //   • Подключение   — state, engine line, VPN/proxy switches (Вкл/Выкл),
 //                     ▶/⏸ start/stop button, «Маршрут» quick row, status + target.
 //   • Маршрутизация — mode controls and status caption,
-//                     Discord voice switch (ON/OFF) + hint, dns/rules/bypass info.
+//                     Discord Voice switch (ON/OFF) + hint, dns/rules/bypass info.
 //   • Трафик       — Загрузка/Выгрузка/RTT stacked, sparkline, peak.
 //   • Процессы     — only when the backend reports per-process stats (TUN).
 FluentScroll {
@@ -165,7 +165,7 @@ FluentScroll {
                         AccentButton { kind: "ghost"; text: I18n.t("Кроме РФ"); onClicked: App.applyRoutingPreset("except_ru") }
                         Item { Layout.fillWidth: true }
                     }
-                    // Discord voice (moved here from the old Routing card)
+                    // Discord Voice (moved here from the old Routing card)
                     Rectangle { Layout.fillWidth: true; Layout.topMargin: 4; height: 1; color: Theme.divider }
                     RowLayout {
                         Layout.topMargin: 2
@@ -176,7 +176,7 @@ FluentScroll {
                             color: App.discordProxy ? Theme.accent : Theme.textMuted
                             font.pixelSize: Theme.fontNormal
                         }
-                        Text { text: "Discord voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Text { text: "Discord Voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                         Switch {
                             checked: App.discordProxy
                             onToggled: App.setDiscordProxy(checked)

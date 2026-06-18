@@ -1384,7 +1384,7 @@ class AppController(QObject):
             self._log(f"[discord-proxy] disabled while TUN is active: {result.message}")
             return
         if not self.connected and not self._desired_connected:
-            self.status.emit("warning", "Сначала запустите прокси Lumen KVN, потом включите Discord voice через прокси")
+            self.status.emit("warning", "Сначала запустите прокси Lumen KVN, потом включите Discord Voice через прокси")
             return
         result = self.discord_proxy.enable(int(DEFAULT_DISCORD_SOCKS_PORT))
         self._log(f"[discord-proxy] enable: {result.message}")

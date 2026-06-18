@@ -980,6 +980,14 @@ class AppBridge(QObject):
         settings.enable_final_fragment = bool(enabled)
         self.controller.update_settings(settings)
 
+    @pyqtSlot(bool)
+    def setFragmentation(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        value = bool(enabled)
+        settings.enable_xray_fragment = value
+        settings.enable_final_fragment = value
+        self.controller.update_settings(settings)
+
     @pyqtSlot(str, str, str)
     def setFragmentSettings(self, packets: str, length: str, delay: str) -> None:
         settings = deepcopy(self.controller.state.settings)
@@ -2277,6 +2285,14 @@ class AppBridge(QObject):
             return bool(self.controller.state.settings.enable_final_fragment)
         except Exception:
             return True
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def fragmentationEnabled(self) -> bool:
+        try:
+            settings = self.controller.state.settings
+            return bool(settings.enable_xray_fragment or settings.enable_final_fragment)
+        except Exception:
+            return False
 
     @pyqtProperty(str, notify=settingsChanged)
     def fragmentPackets(self) -> str:

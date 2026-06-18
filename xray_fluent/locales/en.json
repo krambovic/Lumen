@@ -717,5 +717,8 @@
   "Экспорт выбранных — ссылки ({count})": "Export selected — links ({count})",
   "Экспорт выбранных — ссылки": "Export selected — links",
   "Экспорт в QR-код": "Export to QR code",
-  "Назначить активным": "Set as active"
+  "Назначить активным": "Set as active",
+  "Фрагментирование": "TLS Fragment",
+  "Настройки фрагментирования": "Fragment Settings",
+  "DNS:\nСистемный DNS — домены резолвит Windows или само приложение.\nВстроенный DNS — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.": "DNS:\nSystem DNS — domains are resolved by Windows or the app itself.\nBuilt-in DNS — DNS goes through Lumen/sing-box and follows direct/proxy/fake DNS rules."
 }

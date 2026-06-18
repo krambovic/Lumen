@@ -157,7 +157,7 @@ Item {
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
 
-                    // Discord voice — SOCKS5 без TUN (дублирует переключатель с главного экрана)
+                    // Discord Voice — SOCKS5 без TUN (дублирует переключатель с главного экрана)
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 8
@@ -170,7 +170,7 @@ Item {
                         ColumnLayout {
                             spacing: 2
                             Layout.fillWidth: true
-                            Text { text: "Discord voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                            Text { text: "Discord Voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                             Text { text: I18n.t("Голос и стримы Discord через SOCKS5 без TUN"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         }
                         Switch {
@@ -535,28 +535,33 @@ Item {
             topPadding: 18; bottomPadding: 6
         }
 
-        contentItem: Text {
-            text: I18n.t("«Всё через VPN» отправляет весь трафик через сервер.\n«По моим правилам» использует ваши правила по приложениям, сервисам, доменам и IP.\n«Без VPN по умолчанию» пускает трафик напрямую, кроме явно указанных исключений.\n\nСервисы:\n«По пресету» — убрать ручное правило и снова доверить сервис текущему пресету.\n«Прокси» — всегда вести сервис через VPN/прокси, даже если общий режим прямой.\n«Прямой» — всегда вести сервис напрямую, даже если общий режим «Всё через VPN».\n\nПравила по приложениям работают только в режиме TUN.")
-            color: Theme.textMuted
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontNormal
-            wrapMode: Text.WordWrap
-            lineHeight: 1.25
-            leftPadding: 20; rightPadding: 20; bottomPadding: 6
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text {
+                Layout.fillWidth: true
+                text: I18n.t("DNS:\nСистемный DNS — домены резолвит Windows или само приложение.\nВстроенный DNS — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.")
+                color: Theme.textMuted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontNormal
+                wrapMode: Text.WordWrap
+                lineHeight: 1.25
+                leftPadding: 20; rightPadding: 20
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: I18n.t("«Всё через VPN» отправляет весь трафик через сервер.\n«По моим правилам» использует ваши правила по приложениям, сервисам, доменам и IP.\n«Без VPN по умолчанию» пускает трафик напрямую, кроме явно указанных исключений.\n\nСервисы:\n«По пресету» — убрать ручное правило и снова доверить сервис текущему пресету.\n«Прокси» — всегда вести сервис через VPN/прокси, даже если общий режим прямой.\n«Прямой» — всегда вести сервис напрямую, даже если общий режим «Всё через VPN».\n\nПравила по приложениям работают только в режиме TUN.")
+                color: Theme.textMuted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontNormal
+                wrapMode: Text.WordWrap
+                lineHeight: 1.25
+                leftPadding: 20; rightPadding: 20; bottomPadding: 6
+            }
         }
 
         footer: RowLayout {
             spacing: 0
-            Text {
-                text: I18n.t("DNS: «Системный» — домены резолвит Windows или само приложение. «Встроенный» — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.")
-                color: Theme.textFaint
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSmall
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-                Layout.leftMargin: 20
-                Layout.rightMargin: 12
-            }
             Item { Layout.fillWidth: true }
             AccentButton {
                 kind: "accent"

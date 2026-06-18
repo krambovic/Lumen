@@ -41,12 +41,14 @@ class QmlTray(QObject):
         self._action_admin.triggered.connect(self._restart_admin)
         self._action_quit = QAction(tr("Выход"), self._menu)
         self._action_quit.triggered.connect(self._quit)
+        self._routing_menu = QMenu(tr("Маршрутизация"), self._menu)
+        self._apply_menu_style(self._routing_menu)
 
         self._menu.addAction(self._action_show)
         self._menu.addAction(self._action_connect)
         self._menu.addAction(self._action_next)
-        self._routing_separator = self._menu.addSeparator()
-        self._admin_separator = self._menu.addSeparator()
+        self._menu.addMenu(self._routing_menu)
+        self._menu.addSeparator()
         self._menu.addAction(self._action_admin)
         self._menu.addSeparator()
         self._menu.addAction(self._action_quit)
@@ -155,22 +157,14 @@ class QmlTray(QObject):
             self._action_next.setText(tr("Следующий сервер"))
             self._action_admin.setText(tr("Перезапустить от администратора"))
             self._action_quit.setText(tr("Выход"))
+            self._routing_menu.setTitle(tr("Маршрутизация"))
             self._refresh_routing_actions()
         except Exception:
             pass
 
     def _refresh_routing_actions(self) -> None:
-        for action in self._routing_actions:
-            try:
-                self._menu.removeAction(action)
-                action.deleteLater()
-            except Exception:
-                pass
         self._routing_actions = []
-
-        header = QAction(tr("Маршрутизация"), self._menu)
-        header.setEnabled(False)
-        self._insert_routing_action(header)
+        self._routing_menu.clear()
 
         current = str(getattr(self._bridge, "routingMode", "") or "")
         presets = [
@@ -205,7 +199,7 @@ class QmlTray(QObject):
             self._insert_routing_action(action)
 
     def _insert_routing_action(self, action: QAction) -> None:
-        self._menu.insertAction(self._admin_separator, action)
+        self._routing_menu.addAction(action)
         self._routing_actions.append(action)
 
     @staticmethod
