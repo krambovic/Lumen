@@ -58,10 +58,41 @@ def _node() -> Node:
     )
 
 
-def _plan(routing: RoutingSettings) -> dict:
+def _node_with_server(server: str) -> Node:
+    node = _node()
+    node.server = server
+    node.outbound["settings"]["vnext"][0]["address"] = server
+    return node
+
+
+def _wireguard_node(server: str) -> Node:
+    return Node(
+        scheme="wireguard",
+        server=server,
+        outbound={
+            "protocol": "wireguard",
+            "singbox": {
+                "type": "wireguard",
+                "tag": "proxy",
+                "address": ["10.0.0.2/32"],
+                "private_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "peers": [
+                    {
+                        "address": server,
+                        "port": 51820,
+                        "public_key": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+                        "allowed_ips": ["0.0.0.0/0"],
+                    }
+                ],
+            },
+        },
+    )
+
+
+def _plan(routing: RoutingSettings, node: Node | None = None) -> dict:
     text = json.dumps(_base_config())
     document = parse_singbox_document(Path("test.json"), text)
-    return plan_singbox_runtime(document, _node(), routing=routing).singbox_config
+    return plan_singbox_runtime(document, node or _node(), routing=routing).singbox_config
 
 
 def _dns_servers(config: dict) -> dict[str, dict]:
@@ -70,6 +101,10 @@ def _dns_servers(config: dict) -> dict[str, dict]:
         for server in config["dns"]["servers"]
         if isinstance(server, dict)
     }
+
+
+def _tun_inbound(config: dict) -> dict:
+    return next(inbound for inbound in config["inbounds"] if inbound.get("type") == "tun")
 
 
 def test_system_dns_mode_does_not_hijack_dns_or_force_remote_dns() -> None:
@@ -166,3 +201,74 @@ def test_builtin_dns_does_not_add_resolver_for_ip_dns_servers(dns_type: str) -> 
         assert servers["proxy-dns"]["domain_resolver"] == "bootstrap-dns"
     else:
         assert "domain_resolver" not in servers["proxy-dns"]
+
+
+@pytest.mark.parametrize(
+    ("server", "cidr"),
+    [
+        ("95.128.157.251", "95.128.157.251/32"),
+        ("2001:db8::2208", "2001:db8::2208/128"),
+    ],
+)
+def test_native_tun_excludes_ip_proxy_endpoint_from_tun_routes(server: str, cidr: str) -> None:
+    config = _plan(
+        RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
+        _node_with_server(server),
+    )
+
+    rules = config["route"]["rules"]
+    route_excludes = _tun_inbound(config)["route_exclude_address"]
+
+    assert cidr in route_excludes
+    assert any(rule.get("outbound") == "direct" and cidr in rule.get("ip_cidr", []) for rule in rules)
+
+
+def test_native_tun_preserves_user_route_excludes_when_adding_endpoint_exclude() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="builtin",
+            tun_default_outbound="proxy",
+            tun_route_exclude_address=["192.168.0.0/16"],
+        ),
+        _node_with_server("95.128.157.251"),
+    )
+
+    route_excludes = _tun_inbound(config)["route_exclude_address"]
+
+    assert "192.168.0.0/16" in route_excludes
+    assert "95.128.157.251/32" in route_excludes
+
+
+def test_native_tun_keeps_domain_proxy_endpoint_as_bootstrap_domain_route() -> None:
+    config = _plan(
+        RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
+        _node_with_server("vpn.example.com"),
+    )
+
+    rules = config["route"]["rules"]
+    inbound = _tun_inbound(config)
+
+    assert "route_exclude_address" not in inbound
+    assert any(
+        rule.get("outbound") == "direct"
+        and "vpn.example.com" in rule.get("domain", [])
+        for rule in rules
+    )
+
+
+def test_endpoint_tun_excludes_ip_peer_from_tun_routes() -> None:
+    config = _plan(
+        RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
+        _wireguard_node("46.17.101.82"),
+    )
+
+    rules = config["route"]["rules"]
+    route_excludes = _tun_inbound(config)["route_exclude_address"]
+
+    assert "46.17.101.82/32" in route_excludes
+    assert any(
+        rule.get("outbound") == "direct"
+        and "46.17.101.82/32" in rule.get("ip_cidr", [])
+        for rule in rules
+    )

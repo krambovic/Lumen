@@ -209,12 +209,13 @@ def plan_singbox_runtime(
     if native_is_endpoint:
         outbounds.pop(proxy_index)
         _replace_or_append_tagged(_ensure_list(runtime_config, "endpoints"), "proxy", native_proxy)
-        _ensure_endpoint_server_bootstrap_contract(runtime_config, native_proxy)
     else:
         outbounds[proxy_index] = native_proxy
     if routing is not None:
         apply_singbox_gui_routing(runtime_config, routing)
-    if not native_is_endpoint:
+    if native_is_endpoint:
+        _ensure_endpoint_server_bootstrap_contract(runtime_config, native_proxy)
+    else:
         _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
     _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
     _validate_runtime_dns_contract(runtime_config)
@@ -450,7 +451,12 @@ def _ensure_proxy_server_bootstrap_contract(
     preferred_server: str,
 ) -> None:
     server = str(preferred_server or proxy_outbound.get("server") or "").strip()
-    if not _is_domain_name(server):
+    if not server:
+        return
+    endpoint_cidr = _endpoint_ip_cidr(server)
+    if endpoint_cidr:
+        _ensure_tun_route_exclude_addresses(payload, [endpoint_cidr])
+        _ensure_direct_ip_route(payload, endpoint_cidr)
         return
 
     # Domain-based proxy servers must resolve through bootstrap-dns, otherwise
@@ -471,9 +477,41 @@ def _ensure_endpoint_server_bootstrap_contract(payload: dict[str, Any], endpoint
         endpoint["domain_resolver"] = "bootstrap-dns"
         hosts.append("engage.cloudflareclient.com")
 
+    endpoint_cidrs = [_endpoint_ip_cidr(host) for host in hosts]
+    _ensure_tun_route_exclude_addresses(payload, [cidr for cidr in endpoint_cidrs if cidr])
     for host in hosts:
-        if _is_domain_name(host):
+        endpoint_cidr = _endpoint_ip_cidr(host)
+        if endpoint_cidr:
+            _ensure_direct_ip_route(payload, endpoint_cidr)
+        elif _is_domain_name(host):
             _ensure_direct_domain_route(payload, host)
+
+
+def _endpoint_ip_cidr(value: str) -> str:
+    try:
+        address = ip_address(str(value or "").strip())
+    except ValueError:
+        return ""
+    return f"{address}/{'128' if address.version == 6 else '32'}"
+
+
+def _ensure_tun_route_exclude_addresses(payload: dict[str, Any], addresses: list[str]) -> None:
+    normalized = _normalize_route_exclude_addresses(addresses)
+    if not normalized:
+        return
+    inbounds = payload.get("inbounds")
+    if not isinstance(inbounds, list):
+        return
+    for inbound in inbounds:
+        if not isinstance(inbound, dict):
+            continue
+        if str(inbound.get("type") or "").strip().lower() != "tun":
+            continue
+        existing = inbound.get("route_exclude_address")
+        values = existing if isinstance(existing, list) else []
+        inbound["route_exclude_address"] = _normalize_route_exclude_addresses(
+            [str(item) for item in values] + normalized
+        )
 
 
 def _ensure_direct_domain_route(payload: dict[str, Any], server: str) -> None:
@@ -490,6 +528,34 @@ def _ensure_direct_domain_route(payload: dict[str, Any], server: str) -> None:
             continue
         domain_value = rule.get("domain")
         if isinstance(domain_value, list) and server in [str(item) for item in domain_value]:
+            rules[index] = direct_rule
+            return
+
+    insert_index = 0
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            continue
+        if rule.get("action") == "sniff" or rule.get("protocol") == "dns":
+            insert_index = index + 1
+            continue
+        break
+    rules.insert(insert_index, direct_rule)
+
+
+def _ensure_direct_ip_route(payload: dict[str, Any], cidr: str) -> None:
+    cidr = str(cidr or "").strip()
+    if not cidr:
+        return
+
+    route = _ensure_dict(payload, "route")
+    rules = _ensure_list(route, "rules")
+    direct_rule = {"ip_cidr": [cidr], "action": "route", "outbound": "direct"}
+
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            continue
+        ip_value = rule.get("ip_cidr")
+        if isinstance(ip_value, list) and cidr in [str(item) for item in ip_value]:
             rules[index] = direct_rule
             return
 
