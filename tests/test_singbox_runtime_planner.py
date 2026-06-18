@@ -258,9 +258,13 @@ def test_native_tun_excludes_resolved_domain_proxy_endpoint_from_tun_routes(monk
 
     rules = config["route"]["rules"]
     inbound = _tun_inbound(config)
+    proxy = next(outbound for outbound in config["outbounds"] if outbound.get("tag") == "proxy")
 
     assert "203.0.113.10/32" in inbound["route_exclude_address"]
     assert "2001:db8::10/128" in inbound["route_exclude_address"]
+    assert proxy["server"] == "203.0.113.10"
+    assert "domain_resolver" not in proxy
+    assert proxy["tls"]["server_name"] == "vpn.example.com"
     assert any(rule.get("outbound") == "direct" and "203.0.113.10/32" in rule.get("ip_cidr", []) for rule in rules)
     assert any(
         rule.get("outbound") == "direct"
@@ -282,8 +286,11 @@ def test_native_tun_keeps_domain_proxy_endpoint_route_when_resolution_fails(monk
 
     rules = config["route"]["rules"]
     inbound = _tun_inbound(config)
+    proxy = next(outbound for outbound in config["outbounds"] if outbound.get("tag") == "proxy")
 
     assert "route_exclude_address" not in inbound
+    assert proxy["server"] == "vpn.example.com"
+    assert proxy["domain_resolver"] == "bootstrap-dns"
     assert any(
         rule.get("outbound") == "direct"
         and "vpn.example.com" in rule.get("domain", [])

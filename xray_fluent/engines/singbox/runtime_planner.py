@@ -462,8 +462,10 @@ def _ensure_proxy_server_bootstrap_contract(
     # Domain-based proxy servers must resolve through bootstrap-dns, otherwise
     # proxy-dns can recurse into the proxy outbound before the tunnel is ready.
     proxy_outbound["domain_resolver"] = "bootstrap-dns"
-    endpoint_cidrs = _resolve_endpoint_ip_cidrs(server)
+    endpoint_addresses = _resolve_endpoint_addresses(server)
+    endpoint_cidrs = [_endpoint_ip_cidr(address) for address in endpoint_addresses]
     if endpoint_cidrs:
+        _pin_proxy_outbound_to_endpoint_ip(proxy_outbound, server, endpoint_addresses[0])
         _ensure_tun_route_exclude_addresses(payload, endpoint_cidrs)
         for cidr in endpoint_cidrs:
             _ensure_direct_ip_route(payload, cidr)
@@ -510,7 +512,21 @@ def _endpoint_ip_cidr(value: str) -> str:
     return f"{address}/{'128' if address.version == 6 else '32'}"
 
 
+def _pin_proxy_outbound_to_endpoint_ip(proxy_outbound: dict[str, Any], original_server: str, endpoint_ip: str) -> None:
+    if not endpoint_ip:
+        return
+    proxy_outbound["server"] = endpoint_ip
+    proxy_outbound.pop("domain_resolver", None)
+    tls = proxy_outbound.get("tls")
+    if isinstance(tls, dict) and not str(tls.get("server_name") or "").strip():
+        tls["server_name"] = original_server
+
+
 def _resolve_endpoint_ip_cidrs(host: str) -> list[str]:
+    return [_endpoint_ip_cidr(address) for address in _resolve_endpoint_addresses(host)]
+
+
+def _resolve_endpoint_addresses(host: str) -> list[str]:
     if not _is_domain_name(host):
         return []
     try:
@@ -518,18 +534,17 @@ def _resolve_endpoint_ip_cidrs(host: str) -> list[str]:
     except OSError:
         return []
 
-    cidrs: list[str] = []
+    addresses: list[str] = []
     for info in infos:
         try:
             sockaddr = info[4]
             if not sockaddr:
                 continue
-            cidr = _endpoint_ip_cidr(str(sockaddr[0]))
+            address = ip_address(str(sockaddr[0]))
         except (IndexError, TypeError, ValueError):
             continue
-        if cidr:
-            cidrs.append(cidr)
-    return sorted(dict.fromkeys(cidrs))
+        addresses.append(str(address))
+    return sorted(dict.fromkeys(addresses), key=lambda value: (ip_address(value).version, value))
 
 
 def _ensure_tun_route_exclude_addresses(payload: dict[str, Any], addresses: list[str]) -> None:
