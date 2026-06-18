@@ -314,17 +314,24 @@ class UpdateChecker(QThread):
         return None
 
     def _latest_prerelease(self) -> dict | None:
-        # Новейший pre-release лежит в начале списка, поэтому одной страницы хватает.
+        # GitHub may order tags such as pre.10 below pre.9 in /releases.
+        # Pick the newest pre-release by semver instead of trusting API order.
         try:
             releases = self._fetch_json(RELEASES_API)
         except Exception:
             return None
         if not isinstance(releases, list):
             return None
-        for r in releases:
-            if not r.get("draft") and r.get("prerelease"):
-                return r
-        return None
+        best: dict | None = None
+        for release in releases:
+            if not (isinstance(release, dict) and not release.get("draft") and release.get("prerelease")):
+                continue
+            if best is None or _is_newer_version(
+                str(release.get("tag_name") or ""),
+                str(best.get("tag_name") or ""),
+            ):
+                best = release
+        return best
 
     def _pick_target(self) -> dict | None:
         """Выбрать релиз для текущего канала.

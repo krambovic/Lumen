@@ -34,7 +34,8 @@ jobs:
             }
           }
           $preNum = $max + 1
-          $preVersion = "$version-pre.$preNum"
+          $preNumText = "{0:D2}" -f $preNum
+          $preVersion = "$version-pre.$preNumText"
           $preTag = "v$preVersion"
           $patched = $content -replace 'APP_VERSION\s*=\s*"[^"]+"', ('APP_VERSION = "' + $preVersion + '"')
           Set-Content $file $patched -Encoding utf8 -NoNewline
