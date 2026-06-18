@@ -209,12 +209,13 @@ def plan_singbox_runtime(
     if native_is_endpoint:
         outbounds.pop(proxy_index)
         _replace_or_append_tagged(_ensure_list(runtime_config, "endpoints"), "proxy", native_proxy)
-        _ensure_endpoint_server_bootstrap_contract(runtime_config, native_proxy)
     else:
         outbounds[proxy_index] = native_proxy
     if routing is not None:
         apply_singbox_gui_routing(runtime_config, routing)
-    if not native_is_endpoint:
+    if native_is_endpoint:
+        _ensure_endpoint_server_bootstrap_contract(runtime_config, native_proxy)
+    else:
         _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
     _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
     _validate_runtime_dns_contract(runtime_config)
@@ -450,7 +451,12 @@ def _ensure_proxy_server_bootstrap_contract(
     preferred_server: str,
 ) -> None:
     server = str(preferred_server or proxy_outbound.get("server") or "").strip()
-    if not _is_domain_name(server):
+    if not server:
+        return
+    endpoint_cidr = _endpoint_ip_cidr(server)
+    if endpoint_cidr:
+        _ensure_tun_route_exclude_addresses(payload, [endpoint_cidr])
+        _ensure_direct_ip_route(payload, endpoint_cidr)
         return
 
     # Domain-based proxy servers must resolve through bootstrap-dns, otherwise
@@ -471,9 +477,41 @@ def _ensure_endpoint_server_bootstrap_contract(payload: dict[str, Any], endpoint
         endpoint["domain_resolver"] = "bootstrap-dns"
         hosts.append("engage.cloudflareclient.com")
 
+    endpoint_cidrs = [_endpoint_ip_cidr(host) for host in hosts]
+    _ensure_tun_route_exclude_addresses(payload, [cidr for cidr in endpoint_cidrs if cidr])
     for host in hosts:
-        if _is_domain_name(host):
+        endpoint_cidr = _endpoint_ip_cidr(host)
+        if endpoint_cidr:
+            _ensure_direct_ip_route(payload, endpoint_cidr)
+        elif _is_domain_name(host):
             _ensure_direct_domain_route(payload, host)
+
+
+def _endpoint_ip_cidr(value: str) -> str:
+    try:
+        address = ip_address(str(value or "").strip())
+    except ValueError:
+        return ""
+    return f"{address}/{'128' if address.version == 6 else '32'}"
+
+
+def _ensure_tun_route_exclude_addresses(payload: dict[str, Any], addresses: list[str]) -> None:
+    normalized = _normalize_route_exclude_addresses(addresses)
+    if not normalized:
+        return
+    inbounds = payload.get("inbounds")
+    if not isinstance(inbounds, list):
+        return
+    for inbound in inbounds:
+        if not isinstance(inbound, dict):
+            continue
+        if str(inbound.get("type") or "").strip().lower() != "tun":
+            continue
+        existing = inbound.get("route_exclude_address")
+        values = existing if isinstance(existing, list) else []
+        inbound["route_exclude_address"] = _normalize_route_exclude_addresses(
+            [str(item) for item in values] + normalized
+        )
 
 
 def _ensure_direct_domain_route(payload: dict[str, Any], server: str) -> None:
@@ -490,6 +528,34 @@ def _ensure_direct_domain_route(payload: dict[str, Any], server: str) -> None:
             continue
         domain_value = rule.get("domain")
         if isinstance(domain_value, list) and server in [str(item) for item in domain_value]:
+            rules[index] = direct_rule
+            return
+
+    insert_index = 0
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            continue
+        if rule.get("action") == "sniff" or rule.get("protocol") == "dns":
+            insert_index = index + 1
+            continue
+        break
+    rules.insert(insert_index, direct_rule)
+
+
+def _ensure_direct_ip_route(payload: dict[str, Any], cidr: str) -> None:
+    cidr = str(cidr or "").strip()
+    if not cidr:
+        return
+
+    route = _ensure_dict(payload, "route")
+    rules = _ensure_list(route, "rules")
+    direct_rule = {"ip_cidr": [cidr], "action": "route", "outbound": "direct"}
+
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            continue
+        ip_value = rule.get("ip_cidr")
+        if isinstance(ip_value, list) and cidr in [str(item) for item in ip_value]:
             rules[index] = direct_rule
             return
 
@@ -596,7 +662,6 @@ def _build_dns_server(tag: str, server: str, server_type: str, strategy: str) ->
         "tag": tag,
         "type": dns_type,
         "server": address,
-        "strategy": _dns_strategy(strategy),
     }
     if dns_type == "https":
         payload.setdefault("server_port", 443)
@@ -606,6 +671,14 @@ def _build_dns_server(tag: str, server: str, server_type: str, strategy: str) ->
     elif dns_type in {"udp", "tcp"}:
         payload.setdefault("server_port", 53)
     return payload
+
+
+def _set_dns_server_dial_contract(server: dict[str, Any], *, detour: str, resolver: str = "") -> None:
+    server["detour"] = detour
+    if _is_domain_name(str(server.get("server") or "")):
+        server["domain_resolver"] = resolver or "system-dns"
+    else:
+        server.pop("domain_resolver", None)
 
 
 def _normalize_route_exclude_addresses(values: list[str] | tuple[str, ...]) -> list[str]:
@@ -689,6 +762,7 @@ def _ensure_singbox_tun_runtime_contract(
 
     route = _ensure_dict(payload, "route")
     route["auto_detect_interface"] = True
+    use_builtin_dns = _singbox_uses_builtin_dns(routing)
     direct_strategy = _dns_strategy(routing.dns_bootstrap_strategy if routing is not None else "")
     route["default_domain_resolver"] = {"server": "bootstrap-dns", "strategy": direct_strategy}
     _ensure_singbox_dns_runtime_contract(payload, routing=routing)
@@ -696,7 +770,7 @@ def _ensure_singbox_tun_runtime_contract(
     _ensure_singbox_tun_base_rules(
         rules,
         enable_final_fragment=enable_final_fragment,
-        dns_hijack=(routing.dns_hijack_enabled if routing is not None else True),
+        dns_hijack=(use_builtin_dns and (routing.dns_hijack_enabled if routing is not None else True)),
     )
 
 
@@ -712,19 +786,29 @@ def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any], *, routing: Ro
     proxy_server = routing.dns_proxy_server if routing is not None else "8.8.8.8"
     proxy_type = routing.dns_proxy_type if routing is not None else "https"
     proxy_strategy = _dns_strategy(routing.dns_proxy_strategy if routing is not None else "")
-    fake_enabled = bool(routing.dns_fake_enabled) if routing is not None else False
+    use_builtin_dns = _singbox_uses_builtin_dns(routing)
+    fake_enabled = use_builtin_dns and (bool(routing.dns_fake_enabled) if routing is not None else False)
 
     dns["strategy"] = direct_strategy
     servers = dns.setdefault("servers", [])
     if not isinstance(servers, list):
         servers = []
         dns["servers"] = servers
-    _replace_or_append_tagged(servers, "bootstrap-dns", _build_dns_server("bootstrap-dns", direct_server, direct_type, direct_strategy))
-    _replace_or_append_tagged(servers, "direct-dns", _build_dns_server("direct-dns", direct_server, direct_type, direct_strategy))
-    proxy_dns = _build_dns_server("proxy-dns", proxy_server, proxy_type, proxy_strategy)
-    proxy_dns["detour"] = "proxy"
-    if str(proxy_dns.get("type") or "").strip().lower() in {"tls", "https"}:
-        proxy_dns["domain_resolver"] = "bootstrap-dns"
+    if use_builtin_dns:
+        _replace_or_append_tagged(servers, "system-dns", {"tag": "system-dns", "type": "local"})
+        bootstrap_dns = _build_dns_server("bootstrap-dns", direct_server, direct_type, direct_strategy)
+        _set_dns_server_dial_contract(bootstrap_dns, detour="direct")
+        direct_dns = _build_dns_server("direct-dns", direct_server, direct_type, direct_strategy)
+        _set_dns_server_dial_contract(direct_dns, detour="direct")
+        _replace_or_append_tagged(servers, "bootstrap-dns", bootstrap_dns)
+        _replace_or_append_tagged(servers, "direct-dns", direct_dns)
+        proxy_dns = _build_dns_server("proxy-dns", proxy_server, proxy_type, proxy_strategy)
+        _set_dns_server_dial_contract(proxy_dns, detour="proxy", resolver="bootstrap-dns")
+    else:
+        system_dns = {"tag": "bootstrap-dns", "type": "local"}
+        _replace_or_append_tagged(servers, "bootstrap-dns", system_dns)
+        _replace_or_append_tagged(servers, "direct-dns", {"tag": "direct-dns", "type": "local"})
+        proxy_dns = {"tag": "proxy-dns", "type": "local"}
     _replace_or_append_tagged(servers, "proxy-dns", proxy_dns)
     if fake_enabled:
         _replace_or_append_tagged(
@@ -767,8 +851,10 @@ def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any], *, routing: Ro
                 }
             )
             continue
-        if tag == "proxy-dns" and server_type in {"tls", "https"} and "domain_resolver" not in server:
-            server["domain_resolver"] = "bootstrap-dns"
+
+
+def _singbox_uses_builtin_dns(routing: RoutingSettings | None) -> bool:
+    return str(routing.dns_mode if routing is not None else "builtin").strip().lower() == "builtin"
 
 
 def _ensure_singbox_tun_base_rules(
