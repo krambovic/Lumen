@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PyQt6.QtGui import QAction, QCursor, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
-from PyQt6.QtCore import QObject, QPoint, QRect, QTimer
+from PyQt6.QtCore import QObject, QPoint, QRect, Qt, QTimer
 
 from ..constants import APP_ICON_PATH, APP_NAME
 from ..i18n import tr
@@ -29,9 +29,8 @@ class QmlTray(QObject):
         self._tray.setToolTip(APP_NAME)
 
         self._menu = QMenu()
-        self._apply_menu_style(self._menu)
         self._routing_menu = QMenu()
-        self._apply_menu_style(self._routing_menu)
+        self._refresh_menu_style()
         self._routing_hover_timer = QTimer(self)
         self._routing_hover_timer.setInterval(120)
         self._routing_hover_timer.timeout.connect(self._sync_routing_hover)
@@ -75,7 +74,19 @@ class QmlTray(QObject):
         except Exception:
             pass
         try:
+            self._bridge.settingsChanged.connect(self._refresh_actions)
+        except Exception:
+            pass
+        try:
+            self._bridge.languageChanged.connect(self._refresh_actions)
+        except Exception:
+            pass
+        try:
             self._bridge.trayMessageRequested.connect(self.notify_hidden)
+        except Exception:
+            pass
+        try:
+            self._app.styleHints().colorSchemeChanged.connect(lambda _scheme: self._refresh_actions())
         except Exception:
             pass
 
@@ -179,6 +190,7 @@ class QmlTray(QObject):
 
     def _refresh_actions(self) -> None:
         try:
+            self._refresh_menu_style()
             self._action_show.setText(tr("Показать") if not self._window_visible() else tr("Скрыть"))
             self._action_connect.setText(tr("Отключить") if self._connected() else tr("Подключить"))
             self._action_next.setText(tr("Следующий сервер"))
@@ -187,6 +199,25 @@ class QmlTray(QObject):
             self._action_routing.setText(tr("Маршрутизация") + "  ›")
         except Exception:
             pass
+
+    def _dark_theme(self) -> bool:
+        try:
+            theme = str(self._bridge.themeName or "").strip().lower()
+        except Exception:
+            theme = "system"
+        if theme == "dark":
+            return True
+        if theme == "light":
+            return False
+        try:
+            return self._app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+        except Exception:
+            return True
+
+    def _refresh_menu_style(self) -> None:
+        dark = self._dark_theme()
+        self._apply_menu_style(self._menu, dark=dark)
+        self._apply_menu_style(self._routing_menu, dark=dark)
 
     def _refresh_routing_actions(self) -> None:
         self._routing_menu.clear()
@@ -271,36 +302,50 @@ class QmlTray(QObject):
             pass
 
     @staticmethod
-    def _apply_menu_style(menu: QMenu) -> None:
+    def _apply_menu_style(menu: QMenu, *, dark: bool) -> None:
         try:
+            if dark:
+                background = "#242424"
+                text = "#FFFFFF"
+                border = "#3B3B3B"
+                selected = "#343434"
+                disabled = "#9A9A9A"
+                separator = "#3D3D3D"
+            else:
+                background = "#FFFFFF"
+                text = "#1A1A1A"
+                border = "#D6D6D6"
+                selected = "#F0F0F0"
+                disabled = "#757575"
+                separator = "#E5E5E5"
             menu.setStyleSheet(
-                """
-                QMenu {
-                    background: #242424;
-                    color: #FFFFFF;
-                    border: 1px solid #3B3B3B;
+                f"""
+                QMenu {{
+                    background: {background};
+                    color: {text};
+                    border: 1px solid {border};
                     border-radius: 4px;
                     padding: 6px;
                     min-width: 210px;
-                }
-                QMenu::item {
+                }}
+                QMenu::item {{
                     min-height: 24px;
                     padding: 5px 28px 5px 12px;
                     background: transparent;
-                }
-                QMenu::item:selected {
-                    background: #343434;
-                    color: #FFFFFF;
-                }
-                QMenu::item:disabled {
-                    color: #9A9A9A;
+                }}
+                QMenu::item:selected {{
+                    background: {selected};
+                    color: {text};
+                }}
+                QMenu::item:disabled {{
+                    color: {disabled};
                     background-color: transparent;
-                }
-                QMenu::separator {
+                }}
+                QMenu::separator {{
                     height: 1px;
-                    background: #3D3D3D;
+                    background: {separator};
                     margin: 6px 2px;
-                }
+                }}
                 """
             )
         except Exception:

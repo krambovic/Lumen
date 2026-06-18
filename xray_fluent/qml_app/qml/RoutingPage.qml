@@ -539,7 +539,7 @@ Item {
             spacing: 10
             Text {
                 Layout.fillWidth: true
-                text: I18n.t("DNS:\nСистемный DNS — домены резолвит Windows или само приложение.\nВстроенный DNS — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.\n\nПоведение ниже показывает, что именно будет идти через VPN/прокси, напрямую или по текущему пресету.")
+                text: I18n.t("DNS:\nСистемный DNS — домены резолвит Windows или само приложение.\nВстроенный DNS — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.")
                 color: Theme.textMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontNormal
