@@ -462,6 +462,11 @@ def _ensure_proxy_server_bootstrap_contract(
     # Domain-based proxy servers must resolve through bootstrap-dns, otherwise
     # proxy-dns can recurse into the proxy outbound before the tunnel is ready.
     proxy_outbound["domain_resolver"] = "bootstrap-dns"
+    endpoint_cidrs = _resolve_endpoint_ip_cidrs(server)
+    if endpoint_cidrs:
+        _ensure_tun_route_exclude_addresses(payload, endpoint_cidrs)
+        for cidr in endpoint_cidrs:
+            _ensure_direct_ip_route(payload, cidr)
     _ensure_direct_domain_route(payload, server)
 
 
@@ -477,13 +482,23 @@ def _ensure_endpoint_server_bootstrap_contract(payload: dict[str, Any], endpoint
         endpoint["domain_resolver"] = "bootstrap-dns"
         hosts.append("engage.cloudflareclient.com")
 
-    endpoint_cidrs = [_endpoint_ip_cidr(host) for host in hosts]
+    resolved_by_host: dict[str, list[str]] = {}
+    endpoint_cidrs: list[str] = []
+    for host in hosts:
+        cidr = _endpoint_ip_cidr(host)
+        if cidr:
+            endpoint_cidrs.append(cidr)
+        elif _is_domain_name(host):
+            resolved_by_host[host] = _resolve_endpoint_ip_cidrs(host)
+            endpoint_cidrs.extend(resolved_by_host[host])
     _ensure_tun_route_exclude_addresses(payload, [cidr for cidr in endpoint_cidrs if cidr])
     for host in hosts:
         endpoint_cidr = _endpoint_ip_cidr(host)
         if endpoint_cidr:
             _ensure_direct_ip_route(payload, endpoint_cidr)
         elif _is_domain_name(host):
+            for cidr in resolved_by_host.get(host, []):
+                _ensure_direct_ip_route(payload, cidr)
             _ensure_direct_domain_route(payload, host)
 
 
@@ -493,6 +508,28 @@ def _endpoint_ip_cidr(value: str) -> str:
     except ValueError:
         return ""
     return f"{address}/{'128' if address.version == 6 else '32'}"
+
+
+def _resolve_endpoint_ip_cidrs(host: str) -> list[str]:
+    if not _is_domain_name(host):
+        return []
+    try:
+        infos = socket.getaddrinfo(str(host).strip(), None, 0, socket.SOCK_STREAM)
+    except OSError:
+        return []
+
+    cidrs: list[str] = []
+    for info in infos:
+        try:
+            sockaddr = info[4]
+            if not sockaddr:
+                continue
+            cidr = _endpoint_ip_cidr(str(sockaddr[0]))
+        except (IndexError, TypeError, ValueError):
+            continue
+        if cidr:
+            cidrs.append(cidr)
+    return sorted(dict.fromkeys(cidrs))
 
 
 def _ensure_tun_route_exclude_addresses(payload: dict[str, Any], addresses: list[str]) -> None:

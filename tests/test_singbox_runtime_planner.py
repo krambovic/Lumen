@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 
 import pytest
@@ -240,7 +241,40 @@ def test_native_tun_preserves_user_route_excludes_when_adding_endpoint_exclude()
     assert "95.128.157.251/32" in route_excludes
 
 
-def test_native_tun_keeps_domain_proxy_endpoint_as_bootstrap_domain_route() -> None:
+def test_native_tun_excludes_resolved_domain_proxy_endpoint_from_tun_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_getaddrinfo(host: str, *_args, **_kwargs):
+        assert host == "vpn.example.com"
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("203.0.113.10", 0)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("2001:db8::10", 0, 0, 0)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    config = _plan(
+        RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
+        _node_with_server("vpn.example.com"),
+    )
+
+    rules = config["route"]["rules"]
+    inbound = _tun_inbound(config)
+
+    assert "203.0.113.10/32" in inbound["route_exclude_address"]
+    assert "2001:db8::10/128" in inbound["route_exclude_address"]
+    assert any(rule.get("outbound") == "direct" and "203.0.113.10/32" in rule.get("ip_cidr", []) for rule in rules)
+    assert any(
+        rule.get("outbound") == "direct"
+        and "vpn.example.com" in rule.get("domain", [])
+        for rule in rules
+    )
+
+
+def test_native_tun_keeps_domain_proxy_endpoint_route_when_resolution_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_getaddrinfo(*_args, **_kwargs):
+        raise socket.gaierror()
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_getaddrinfo)
+
     config = _plan(
         RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
         _node_with_server("vpn.example.com"),
@@ -270,5 +304,33 @@ def test_endpoint_tun_excludes_ip_peer_from_tun_routes() -> None:
     assert any(
         rule.get("outbound") == "direct"
         and "46.17.101.82/32" in rule.get("ip_cidr", [])
+        for rule in rules
+    )
+
+
+def test_endpoint_tun_excludes_resolved_domain_peer_from_tun_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_getaddrinfo(host: str, *_args, **_kwargs):
+        assert host == "wg.example.com"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("198.51.100.20", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    config = _plan(
+        RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
+        _wireguard_node("wg.example.com"),
+    )
+
+    rules = config["route"]["rules"]
+    route_excludes = _tun_inbound(config)["route_exclude_address"]
+
+    assert "198.51.100.20/32" in route_excludes
+    assert any(
+        rule.get("outbound") == "direct"
+        and "198.51.100.20/32" in rule.get("ip_cidr", [])
+        for rule in rules
+    )
+    assert any(
+        rule.get("outbound") == "direct"
+        and "wg.example.com" in rule.get("domain", [])
         for rule in rules
     )
