@@ -1,7 +1,7 @@
 """System tray icon for the QML frontend."""
 from __future__ import annotations
 
-from PyQt6.QtGui import QAction, QIcon
+from PyQt6.QtGui import QAction, QCursor, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 from PyQt6.QtCore import QObject, QPoint
 
@@ -39,7 +39,7 @@ class QmlTray(QObject):
         self._action_connect.triggered.connect(self._toggle_connection)
         self._action_next = QAction(tr("Следующий сервер"), self._menu)
         self._action_next.triggered.connect(self._switch_next)
-        self._action_routing = QAction(tr("Маршрутизация") + "  >", self._menu)
+        self._action_routing = QAction(tr("Маршрутизация") + "  ›", self._menu)
         self._action_routing.hovered.connect(self._show_routing_menu)
         self._action_routing.triggered.connect(self._show_routing_menu)
         self._action_admin = QAction(tr("Перезапустить от администратора"), self._menu)
@@ -56,7 +56,15 @@ class QmlTray(QObject):
         self._menu.addSeparator()
         self._menu.addAction(self._action_quit)
         self._menu.aboutToHide.connect(self._routing_menu.hide)
-        self._tray.setContextMenu(self._menu)
+        self._menu.aboutToShow.connect(self._refresh_actions)
+        for action in (
+            self._action_show,
+            self._action_connect,
+            self._action_next,
+            self._action_admin,
+            self._action_quit,
+        ):
+            action.hovered.connect(self._routing_menu.hide)
 
         self._tray.activated.connect(self._on_activated)
         try:
@@ -100,11 +108,22 @@ class QmlTray(QObject):
             self._show_window()
 
     def _on_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.Context:
+            self._show_context_menu()
+            return
         if reason in (
             QSystemTrayIcon.ActivationReason.Trigger,
             QSystemTrayIcon.ActivationReason.DoubleClick,
         ):
             self._toggle_window()
+
+    def _show_context_menu(self) -> None:
+        try:
+            self._refresh_actions()
+            self._routing_menu.hide()
+            self._menu.popup(QCursor.pos())
+        except Exception:
+            pass
 
     def _toggle_connection(self) -> None:
         try:
@@ -123,12 +142,14 @@ class QmlTray(QObject):
             self._bridge.applyRoutingPreset(preset_id)
         except Exception:
             pass
+        self._hide_menus()
 
     def _apply_custom_routing(self, preset_id: str) -> None:
         try:
             self._bridge.applyCustomRoutingPreset(preset_id)
         except Exception:
             pass
+        self._hide_menus()
 
     def _restart_admin(self) -> None:
         try:
@@ -160,7 +181,7 @@ class QmlTray(QObject):
             self._action_next.setText(tr("Следующий сервер"))
             self._action_admin.setText(tr("Перезапустить от администратора"))
             self._action_quit.setText(tr("Выход"))
-            self._action_routing.setText(tr("Маршрутизация") + "  >")
+            self._action_routing.setText(tr("Маршрутизация") + "  ›")
         except Exception:
             pass
 
@@ -202,8 +223,15 @@ class QmlTray(QObject):
         try:
             self._refresh_routing_actions()
             geometry = self._menu.actionGeometry(self._action_routing)
-            pos = self._menu.mapToGlobal(geometry.topRight() + QPoint(2, 0))
+            pos = self._menu.mapToGlobal(geometry.topRight() + QPoint(4, 0))
             self._routing_menu.popup(pos)
+        except Exception:
+            pass
+
+    def _hide_menus(self) -> None:
+        try:
+            self._routing_menu.hide()
+            self._menu.hide()
         except Exception:
             pass
 
@@ -213,17 +241,20 @@ class QmlTray(QObject):
             menu.setStyleSheet(
                 """
                 QMenu {
-                    background: #202020;
-                    color: #F3F3F3;
-                    border: 1px solid #404040;
-                    padding: 5px;
+                    background: #242424;
+                    color: #FFFFFF;
+                    border: 1px solid #3B3B3B;
+                    border-radius: 4px;
+                    padding: 6px;
+                    min-width: 210px;
                 }
                 QMenu::item {
                     min-height: 24px;
-                    padding: 6px 26px 6px 12px;
+                    padding: 5px 28px 5px 12px;
+                    background: transparent;
                 }
                 QMenu::item:selected {
-                    background: #0A84FF;
+                    background: #343434;
                     color: #FFFFFF;
                 }
                 QMenu::item:disabled {
@@ -232,8 +263,8 @@ class QmlTray(QObject):
                 }
                 QMenu::separator {
                     height: 1px;
-                    background: #3A3A3A;
-                    margin: 6px 4px;
+                    background: #3D3D3D;
+                    margin: 6px 2px;
                 }
                 """
             )
