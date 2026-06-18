@@ -314,24 +314,17 @@ class UpdateChecker(QThread):
         return None
 
     def _latest_prerelease(self) -> dict | None:
-        # GitHub may order tags such as pre.10 below pre.9 in /releases.
-        # Pick the newest pre-release by semver instead of trusting API order.
+        # Новейший pre-release лежит в начале списка, поэтому одной страницы хватает.
         try:
             releases = self._fetch_json(RELEASES_API)
         except Exception:
             return None
         if not isinstance(releases, list):
             return None
-        best: dict | None = None
-        for release in releases:
-            if not (isinstance(release, dict) and not release.get("draft") and release.get("prerelease")):
-                continue
-            if best is None or _is_newer_version(
-                str(release.get("tag_name") or ""),
-                str(best.get("tag_name") or ""),
-            ):
-                best = release
-        return best
+        for r in releases:
+            if not r.get("draft") and r.get("prerelease"):
+                return r
+        return None
 
     def _pick_target(self) -> dict | None:
         """Выбрать релиз для текущего канала.
@@ -712,13 +705,8 @@ class UpdateDownloader(QThread):
                 "    $versionFile = Join-Path $runtimeDir 'update_version.txt'",
                 "    Remove-Item -LiteralPath $versionFile -Force -ErrorAction SilentlyContinue",
                 "    $versionProbe = Start-Process -FilePath $exePath -ArgumentList '--version-file',$versionFile -WorkingDirectory $appDir -PassThru -Wait -ErrorAction Stop",
-                "    $versionLine = Get-Content -LiteralPath $versionFile -ErrorAction SilentlyContinue | Select-Object -First 1",
-                "    if ($null -eq $versionLine -or [string]::IsNullOrWhiteSpace([string]$versionLine)) {",
-                "        Write-Log 'Updated executable did not write version probe file; continuing because installer finished successfully'",
-                "    } else {",
-                "        $installedVersion = ([string]$versionLine).Trim().TrimStart('v')",
-                "        if ($expectedVersion -and $installedVersion -and $installedVersion -ne $expectedVersion.TrimStart('v')) { throw ('Updated executable reports v' + $installedVersion + ', expected v' + $expectedVersion) }",
-                "    }",
+                "    $installedVersion = (Get-Content -LiteralPath $versionFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim().TrimStart('v')",
+                "    if ($expectedVersion -and $installedVersion -and $installedVersion -ne $expectedVersion.TrimStart('v')) { throw ('Updated executable reports v' + $installedVersion + ', expected v' + $expectedVersion) }",
                 "    $oldExePath = Join-Path $currentAppDir 'LumenKVN.exe'",
                 "    $currentRoot = [System.IO.Path]::GetPathRoot($currentAppDir)",
                 "    $currentParent = Split-Path -Parent $currentAppDir",
