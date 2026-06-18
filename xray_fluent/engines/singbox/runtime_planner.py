@@ -20,6 +20,7 @@ from ...constants import (
     SS_PROTECT_PORT_START,
 )
 from ...models import Node, RoutingSettings
+from ...multiplex import apply_xray_multiplex
 from ...routing_runtime import apply_singbox_gui_routing
 from ...xray_fragments import apply_xray_final_fragment
 from .config_builder import build_singbox_outbound
@@ -133,6 +134,8 @@ def plan_singbox_runtime(
     fragment_length: str = "50-100",
     fragment_delay: str = "10-20",
     tail_fragment_enabled: bool = False,
+    multiplex_enabled: bool = False,
+    multiplex_concurrency: int = 8,
     discord_proxy_enabled: bool = False,
     preferred_relay_port: int = 0,
     preferred_protect_port: int = 0,
@@ -169,7 +172,12 @@ def plan_singbox_runtime(
 
     force_sidecar = _node_should_use_xray_sidecar(node)
     try:
-        native_proxy = None if force_sidecar else build_singbox_outbound(node, tag="proxy")
+        native_proxy = None if force_sidecar else build_singbox_outbound(
+            node,
+            tag="proxy",
+            multiplex_enabled=multiplex_enabled,
+            multiplex_concurrency=multiplex_concurrency,
+        )
     except ValueError:
         native_proxy = None
 
@@ -184,6 +192,8 @@ def plan_singbox_runtime(
             fragment_length=fragment_length,
             fragment_delay=fragment_delay,
             tail_fragment_enabled=tail_fragment_enabled,
+            multiplex_enabled=multiplex_enabled,
+            multiplex_concurrency=multiplex_concurrency,
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
@@ -230,6 +240,8 @@ def _plan_hybrid_runtime(
     fragment_length: str,
     fragment_delay: str,
     tail_fragment_enabled: bool,
+    multiplex_enabled: bool,
+    multiplex_concurrency: int,
     preferred_relay_port: int,
     preferred_protect_port: int,
     preferred_protect_password: str,
@@ -292,6 +304,8 @@ def _plan_hybrid_runtime(
             fragment_length=fragment_length,
             fragment_delay=fragment_delay,
             tail_fragment_enabled=tail_fragment_enabled,
+            multiplex_enabled=multiplex_enabled,
+            multiplex_concurrency=multiplex_concurrency,
         ),
     )
     return SingboxRuntimePlan(
@@ -336,6 +350,8 @@ def _build_xray_sidecar_config(
     fragment_length: str = "50-100",
     fragment_delay: str = "10-20",
     tail_fragment_enabled: bool = False,
+    multiplex_enabled: bool = False,
+    multiplex_concurrency: int = 8,
 ) -> dict[str, Any]:
     if not isinstance(node.outbound, dict) or not node.outbound:
         raise ValueError("Выбранный сервер не содержит outbound JSON для xray sidecar.")
@@ -343,6 +359,11 @@ def _build_xray_sidecar_config(
         raise ValueError("Выбранный сервер не содержит protocol для xray sidecar.")
     proxy_outbound = deepcopy(node.outbound)
     proxy_outbound["tag"] = "proxy"
+    apply_xray_multiplex(
+        proxy_outbound,
+        enabled=multiplex_enabled,
+        concurrency=multiplex_concurrency,
+    )
     stream_settings = proxy_outbound.get("streamSettings")
     if not isinstance(stream_settings, dict):
         stream_settings = {}

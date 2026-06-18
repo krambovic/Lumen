@@ -211,6 +211,8 @@ class AppSettings:
     fragment_length: str = "50-100"
     fragment_delay: str = "10-20"
     tail_fragment_enabled: bool = False
+    multiplex_enabled: bool = False
+    multiplex_concurrency: int = 8
     discord_proxy_enabled: bool = False
     tun_mode: bool = False
     tun_engine: str = "singbox"
@@ -281,6 +283,8 @@ class AppSettings:
             "fragment_length": self.fragment_length,
             "fragment_delay": self.fragment_delay,
             "tail_fragment_enabled": self.tail_fragment_enabled,
+            "multiplex_enabled": self.multiplex_enabled,
+            "multiplex_concurrency": self.multiplex_concurrency,
             "discord_proxy_enabled": self.discord_proxy_enabled,
             "tun_mode": self.tun_mode,
             "tun_engine": self.tun_engine,
@@ -347,6 +351,8 @@ class AppSettings:
             fragment_length=str(data.get("fragment_length") or "50-100"),
             fragment_delay=str(data.get("fragment_delay") or "10-20"),
             tail_fragment_enabled=bool(data.get("tail_fragment_enabled", False)),
+            multiplex_enabled=bool(data.get("multiplex_enabled", False)),
+            multiplex_concurrency=int(data.get("multiplex_concurrency") or 8),
             discord_proxy_enabled=bool(data.get("discord_proxy_enabled", False)),
             tun_mode=bool(data.get("tun_mode", False)),
             tun_engine=_normalize_tun_engine(data.get("tun_engine")),

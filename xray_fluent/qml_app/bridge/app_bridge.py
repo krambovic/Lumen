@@ -1002,6 +1002,22 @@ class AppBridge(QObject):
         settings.tail_fragment_enabled = bool(enabled)
         self.controller.update_settings(settings)
 
+    @pyqtSlot(bool)
+    def setMultiplexing(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.multiplex_enabled = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(int)
+    def setMultiplexConcurrency(self, value: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        try:
+            concurrency = int(value)
+        except Exception:
+            concurrency = 8
+        settings.multiplex_concurrency = max(1, min(32, concurrency))
+        self.controller.update_settings(settings)
+
     # ── Auto-switch ──────────────────────────────────────────────
     @pyqtSlot(bool)
     def setAutoSwitch(self, enabled: bool) -> None:
@@ -2321,6 +2337,20 @@ class AppBridge(QObject):
             return bool(self.controller.state.settings.tail_fragment_enabled)
         except Exception:
             return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def multiplexingEnabled(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.multiplex_enabled)
+        except Exception:
+            return False
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def multiplexConcurrency(self) -> int:
+        try:
+            return int(self.controller.state.settings.multiplex_concurrency)
+        except Exception:
+            return 8
 
     @pyqtProperty(bool, notify=settingsChanged)
     def autoSwitchEnabled(self) -> bool:

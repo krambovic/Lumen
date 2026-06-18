@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PyQt6.QtGui import QAction, QCursor, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
-from PyQt6.QtCore import QObject, QPoint
+from PyQt6.QtCore import QObject, QPoint, QRect, QTimer
 
 from ..constants import APP_ICON_PATH, APP_NAME
 from ..i18n import tr
@@ -32,6 +32,9 @@ class QmlTray(QObject):
         self._apply_menu_style(self._menu)
         self._routing_menu = QMenu()
         self._apply_menu_style(self._routing_menu)
+        self._routing_hover_timer = QTimer(self)
+        self._routing_hover_timer.setInterval(120)
+        self._routing_hover_timer.timeout.connect(self._sync_routing_hover)
 
         self._action_show = QAction(tr("Скрыть"), self._menu)
         self._action_show.triggered.connect(self._toggle_window)
@@ -55,7 +58,7 @@ class QmlTray(QObject):
         self._menu.addAction(self._action_admin)
         self._menu.addSeparator()
         self._menu.addAction(self._action_quit)
-        self._menu.aboutToHide.connect(self._routing_menu.hide)
+        self._menu.aboutToHide.connect(self._hide_routing_menu)
         self._menu.aboutToShow.connect(self._refresh_actions)
         for action in (
             self._action_show,
@@ -64,7 +67,7 @@ class QmlTray(QObject):
             self._action_admin,
             self._action_quit,
         ):
-            action.hovered.connect(self._routing_menu.hide)
+            action.hovered.connect(self._hide_routing_menu)
 
         self._tray.activated.connect(self._on_activated)
         try:
@@ -120,7 +123,7 @@ class QmlTray(QObject):
     def _show_context_menu(self) -> None:
         try:
             self._refresh_actions()
-            self._routing_menu.hide()
+            self._hide_routing_menu()
             self._menu.popup(QCursor.pos())
         except Exception:
             pass
@@ -223,14 +226,46 @@ class QmlTray(QObject):
         try:
             self._refresh_routing_actions()
             geometry = self._menu.actionGeometry(self._action_routing)
-            pos = self._menu.mapToGlobal(geometry.topRight() + QPoint(4, 0))
+            pos = self._menu.mapToGlobal(geometry.topRight() + QPoint(6, 0))
             self._routing_menu.popup(pos)
+            self._routing_hover_timer.start()
         except Exception:
             pass
 
-    def _hide_menus(self) -> None:
+    def _hide_routing_menu(self) -> None:
+        try:
+            self._routing_hover_timer.stop()
+        except Exception:
+            pass
         try:
             self._routing_menu.hide()
+        except Exception:
+            pass
+
+    def _sync_routing_hover(self) -> None:
+        try:
+            if not self._menu.isVisible() or not self._routing_menu.isVisible():
+                self._hide_routing_menu()
+                return
+
+            cursor = QCursor.pos()
+            action_geometry = self._menu.actionGeometry(self._action_routing)
+            action_top_left = self._menu.mapToGlobal(action_geometry.topLeft())
+            action_rect = QRect(
+                action_top_left.x(),
+                action_top_left.y(),
+                action_geometry.width(),
+                action_geometry.height(),
+            ).adjusted(-8, -6, 12, 6)
+            routing_rect = self._routing_menu.frameGeometry().adjusted(-8, -8, 8, 8)
+            if not action_rect.contains(cursor) and not routing_rect.contains(cursor):
+                self._hide_routing_menu()
+        except Exception:
+            self._hide_routing_menu()
+
+    def _hide_menus(self) -> None:
+        try:
+            self._hide_routing_menu()
             self._menu.hide()
         except Exception:
             pass

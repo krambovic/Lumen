@@ -785,6 +785,8 @@ class AppController(QObject):
             fragment_length=self.state.settings.fragment_length,
             fragment_delay=self.state.settings.fragment_delay,
             tail_fragment_enabled=self.state.settings.tail_fragment_enabled,
+            multiplex_enabled=self.state.settings.multiplex_enabled,
+            multiplex_concurrency=self.state.settings.multiplex_concurrency,
             discord_proxy_enabled=self.state.settings.discord_proxy_enabled,
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,

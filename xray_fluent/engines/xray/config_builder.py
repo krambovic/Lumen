@@ -11,6 +11,7 @@ from ...constants import (
     DEFAULT_XRAY_STATS_API_PORT,
 )
 from ...models import AppSettings, Node, RoutingSettings
+from ...multiplex import apply_xray_multiplex
 from ...routing_runtime import build_xray_gui_routing_rules
 from ...xray_inbounds import build_xray_http_compat_inbound, build_xray_mixed_inbound
 from ...xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
@@ -38,6 +39,11 @@ def build_xray_config(
         api_port = DEFAULT_XRAY_STATS_API_PORT
     proxy_outbound = deepcopy(node.outbound)
     proxy_outbound["tag"] = "proxy"
+    apply_xray_multiplex(
+        proxy_outbound,
+        enabled=settings.multiplex_enabled,
+        concurrency=settings.multiplex_concurrency,
+    )
 
     routing_rules: list[dict[str, Any]] = [
         {

@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from ...multiplex import apply_singbox_multiplex
+
 _SUPPORTED_NATIVE_PROTOCOLS = {
     "vless",
     "vmess",
@@ -18,7 +20,13 @@ _SUPPORTED_NATIVE_PROTOCOLS = {
 }
 
 
-def build_singbox_outbound(node, *, tag: str = "proxy") -> dict[str, Any]:
+def build_singbox_outbound(
+    node,
+    *,
+    tag: str = "proxy",
+    multiplex_enabled: bool = False,
+    multiplex_concurrency: int = 8,
+) -> dict[str, Any]:
     """Convert a stored node outbound into a native sing-box outbound."""
     protocol = str((node.outbound or {}).get("protocol") or "").lower()
     if protocol not in _SUPPORTED_NATIVE_PROTOCOLS:
@@ -34,6 +42,11 @@ def build_singbox_outbound(node, *, tag: str = "proxy") -> dict[str, Any]:
         )
 
     outbound["tag"] = tag
+    apply_singbox_multiplex(
+        outbound,
+        enabled=multiplex_enabled,
+        concurrency=multiplex_concurrency,
+    )
     return outbound
 
 

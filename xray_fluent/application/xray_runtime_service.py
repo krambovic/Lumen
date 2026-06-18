@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..constants import DEFAULT_DISCORD_SOCKS_PORT, PROXY_HOST, XRAY_TUN_DEFAULT_INTERFACE_NAME
 from ..engines.xray import get_windows_default_route_context
+from ..multiplex import apply_xray_multiplex
 from ..routing_runtime import apply_xray_gui_routing
 from ..xray_inbounds import build_xray_sniffing, ensure_xray_mixed_proxy_inbound, normalize_xray_sniffing
 from ..xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
@@ -297,6 +298,11 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
                 raise ValueError(problem)
             proxy_outbound = deepcopy(node.outbound)
             proxy_outbound["tag"] = "proxy"
+            apply_xray_multiplex(
+                proxy_outbound,
+                enabled=controller.state.settings.multiplex_enabled,
+                concurrency=controller.state.settings.multiplex_concurrency,
+            )
             outbounds[index] = proxy_outbound
             used_selected_node = True
             break
