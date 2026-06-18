@@ -238,14 +238,15 @@ def _apply_transport(sb: dict[str, Any], stream: dict[str, Any]) -> None:
         if isinstance(headers, dict) and headers:
             transport["headers"] = headers
         _copy_xhttp_value(xhttp_settings, transport, "scMaxEachPostBytes", "sc_max_each_post_bytes", int)
-        _copy_xhttp_value(xhttp_settings, transport, "scMaxBufferedPosts", "sc_max_buffered_posts", int)
         _copy_xhttp_value(xhttp_settings, transport, "scMinPostsIntervalMs", "sc_min_posts_interval_ms", int)
         _copy_xhttp_value(xhttp_settings, transport, "xPaddingBytes", "x_padding_bytes", str)
-        _copy_xhttp_value(xhttp_settings, transport, "padding", "x_padding_bytes", str)
-        _copy_xhttp_value(xhttp_settings, transport, "noGRPCHeader", "no_grpc_header", _to_bool)
-        _copy_xhttp_download_settings(xhttp_settings, transport)
-        _merge_xhttp_extra(xhttp_settings.get("extra"), transport)
         transport.setdefault("x_padding_bytes", "100-1000")
+        _copy_xhttp_value(xhttp_settings, transport, "noGRPCHeader", "no_grpc_header", _to_bool)
+        extra = xhttp_settings.get("extra")
+        if isinstance(extra, dict):
+            for key, value in extra.items():
+                if isinstance(key, str) and key and key not in transport:
+                    transport[key] = value
         sb["transport"] = transport
         return
 
@@ -282,78 +283,6 @@ def _copy_xhttp_value(
         target[target_key] = caster(value)
     except Exception:
         target[target_key] = value
-
-
-def _copy_xhttp_download_settings(source: dict[str, Any], target: dict[str, Any]) -> None:
-    value = source.get("downloadSettings")
-    if value is None:
-        value = source.get("download_settings")
-    if not _is_json_safe(value):
-        return
-    target["download_settings"] = _normalize_json_keys(value)
-
-
-def _merge_xhttp_extra(extra: Any, target: dict[str, Any]) -> None:
-    if not isinstance(extra, dict):
-        return
-    allowed = {
-        "mode",
-        "downloadSettings",
-        "download_settings",
-        "download_detour",
-        "host",
-        "headers",
-        "path",
-        "scMaxEachPostBytes",
-        "scMaxBufferedPosts",
-        "scMinPostsIntervalMs",
-        "xPaddingBytes",
-        "padding",
-        "noGRPCHeader",
-        "no_grpc_header",
-        "sc_max_each_post_bytes",
-        "sc_max_buffered_posts",
-        "sc_min_posts_interval_ms",
-        "x_padding_bytes",
-    }
-    for key, value in extra.items():
-        if not isinstance(key, str) or key not in allowed or not _is_json_safe(value):
-            continue
-        if key in {"downloadSettings", "download_settings"}:
-            target["download_settings"] = _normalize_json_keys(value)
-            continue
-        normalized = _normalize_xhttp_key(key)
-        if normalized and normalized not in target:
-            target[normalized] = _normalize_json_keys(value)
-
-
-def _normalize_xhttp_key(key: str) -> str:
-    return {
-        "scMaxEachPostBytes": "sc_max_each_post_bytes",
-        "scMaxBufferedPosts": "sc_max_buffered_posts",
-        "scMinPostsIntervalMs": "sc_min_posts_interval_ms",
-        "xPaddingBytes": "x_padding_bytes",
-        "padding": "x_padding_bytes",
-        "noGRPCHeader": "no_grpc_header",
-    }.get(key, key)
-
-
-def _normalize_json_keys(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {_normalize_xhttp_key(str(k)): _normalize_json_keys(v) for k, v in value.items() if isinstance(k, str)}
-    if isinstance(value, list):
-        return [_normalize_json_keys(item) for item in value]
-    return value
-
-
-def _is_json_safe(value: Any) -> bool:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return True
-    if isinstance(value, list):
-        return all(_is_json_safe(item) for item in value)
-    if isinstance(value, dict):
-        return all(isinstance(key, str) and _is_json_safe(item) for key, item in value.items())
-    return False
 
 
 def _to_bool(value: Any) -> bool:

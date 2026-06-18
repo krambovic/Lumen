@@ -233,25 +233,10 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
                 decoded_extra = None
             if isinstance(decoded_extra, dict):
                 xhttp_settings["extra"] = decoded_extra
-        for key in (
-            "scMaxEachPostBytes",
-            "scMaxBufferedPosts",
-            "scMinPostsIntervalMs",
-            "xPaddingBytes",
-            "padding",
-            "downloadSettings",
-            "download_settings",
-            "noGRPCHeader",
-        ):
+        for key in ("scMaxEachPostBytes", "scMaxBufferedPosts", "xPaddingBytes"):
             value = _get_param(params, key)
             if value:
-                if key in {"downloadSettings", "download_settings"}:
-                    try:
-                        xhttp_settings[key] = json.loads(unquote(value))
-                    except Exception:
-                        xhttp_settings[key] = value
-                else:
-                    xhttp_settings[key] = value
+                xhttp_settings[key] = value
         stream["xhttpSettings"] = xhttp_settings
     elif network == "httpupgrade":
         httpupgrade_settings: dict[str, Any] = {}

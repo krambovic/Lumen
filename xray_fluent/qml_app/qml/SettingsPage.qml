@@ -30,31 +30,6 @@ FluentScroll {
         }
     }
 
-    component InfoIcon: ToolButton {
-        property string tip: ""
-        Layout.preferredWidth: 28
-        Layout.preferredHeight: 28
-        text: "\uE946"
-        font.family: "Segoe Fluent Icons"
-        font.pixelSize: 14
-        hoverEnabled: true
-        ToolTip.visible: hovered
-        ToolTip.delay: 250
-        ToolTip.text: tip
-        contentItem: Text {
-            text: parent.text
-            font: parent.font
-            color: parent.hovered ? Theme.text : Theme.textMuted
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            radius: Theme.radiusSmall
-            color: parent.hovered ? Theme.controlFillHover : "transparent"
-            border.width: 0
-        }
-    }
-
     component SettingRow: RowLayout {
         id: sr
         property string glyph: ""
@@ -114,6 +89,7 @@ FluentScroll {
         // ============================ Внешний вид ============================
         Card {
             Layout.fillWidth: true
+            elevation: 1
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -192,36 +168,6 @@ FluentScroll {
                 SettingRow {
                     glyph: "\uE72C"; title: I18n.t("Проверять обновления ядра и geoip/geosite"); subtitle: I18n.t("При запуске проверять обновления и уведомлять")
                     Switch { checked: App.resourceUpdateCheck; onToggled: App.setResourceUpdateCheck(checked) }
-                }
-                SettingRow {
-                    visible: !App.compactMode
-                    Layout.fillWidth: true
-                    glyph: "\uE8A6"; title: I18n.t("Фрагментирование"); subtitle: I18n.t("TLS Fragment")
-                    InfoIcon { tip: I18n.t("Фрагментирование делит TLS-рукопожатие на части. Может помочь обходу DPI, но иногда снижает стабильность.") }
-                    Switch { checked: App.fragmentationEnabled; onToggled: App.setFragmentation(checked) }
-                }
-                SettingRow {
-                    visible: !App.compactMode && App.fragmentationEnabled
-                    Layout.fillWidth: true
-                    glyph: "\uE9D9"; title: I18n.t("Настройки фрагментирования"); subtitle: I18n.t("Fragment Settings")
-                    InfoIcon { tip: I18n.t("Packets выбирает часть трафика, Length размер фрагментов, Delay задержку между ними.") }
-                    StyledField { id: fragPackets; Layout.preferredWidth: 100; text: App.fragmentPackets; placeholderText: "tlshello"; onEditingFinished: App.setFragmentSettings(text, fragLength.text, fragDelay.text) }
-                    StyledField { id: fragLength; Layout.preferredWidth: 100; text: App.fragmentLength; placeholderText: "50-100"; onEditingFinished: App.setFragmentSettings(fragPackets.text, text, fragDelay.text) }
-                    StyledField { id: fragDelay; Layout.preferredWidth: 100; text: App.fragmentDelay; placeholderText: "10-20"; onEditingFinished: App.setFragmentSettings(fragPackets.text, fragLength.text, text) }
-                }
-                SettingRow {
-                    visible: !App.compactMode
-                    Layout.fillWidth: true
-                    glyph: "\uE7C3"; title: I18n.t("Мультиплексирование"); subtitle: I18n.t("Multiplex")
-                    InfoIcon { tip: I18n.t("Мультиплексирование объединяет несколько запросов в один канал. Может ускорить много мелких соединений, но зависит от поддержки сервера.") }
-                    Switch { checked: App.multiplexingEnabled; onToggled: App.setMultiplexing(checked) }
-                }
-                SettingRow {
-                    visible: !App.compactMode && App.multiplexingEnabled
-                    Layout.fillWidth: true
-                    glyph: "\uE9D9"; title: I18n.t("Настройки мультиплексирования"); subtitle: I18n.t("Multiplex Settings")
-                    InfoIcon { tip: I18n.t("Потоки задают, сколько запросов можно вести внутри одного мультиплексированного соединения.") }
-                    FluentSpin { from: 1; to: 32; value: App.multiplexConcurrency; onValueModified: App.setMultiplexConcurrency(value) }
                 }
             }
         }

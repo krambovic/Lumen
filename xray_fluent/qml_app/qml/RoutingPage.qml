@@ -236,29 +236,6 @@ Item {
                             }
                         }
                     }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
-                        Text { text: I18n.t("Перехватывать DNS"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.fillWidth: true }
-                        Switch { checked: App.dnsHijackEnabled; onToggled: App.setDnsHijackEnabled(checked) }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
-                        Text { text: I18n.t("Fake DNS"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.fillWidth: true }
-                        Switch { checked: App.dnsFakeEnabled; onToggled: App.setDnsFakeEnabled(checked) }
-                    }
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
-                        Text { text: "route_exclude_address"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                        DnsField {
-                            Layout.fillWidth: true
-                            text: App.tunRouteExcludeAddress
-                            placeholderText: "192.168.0.0/16, 10.0.0.0/8"
-                            onEditingFinished: App.setTunRouteExcludeAddress(text)
-                        }
-                    }
                 }
             }
 

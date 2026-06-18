@@ -1,7 +1,7 @@
 """System tray icon for the QML frontend (background-run support)"""
 from __future__ import annotations
 
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QObject
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
@@ -19,7 +19,6 @@ class QmlTray(QObject):
         self._window = window
         self._bridge = bridge
         self._notified = False
-        self._routing_rebuild_scheduled = False
 
         self._tray = QSystemTrayIcon(self)
         if APP_ICON_PATH.is_file():
@@ -29,7 +28,6 @@ class QmlTray(QObject):
         self._tray.setToolTip(APP_NAME)
 
         menu = QMenu()
-        self._apply_menu_style(menu)
         self._action_show = QAction(tr("Скрыть"), menu)
         self._action_show.triggered.connect(self._toggle_window)
         self._action_connect = QAction(tr("Подключить"), menu)
@@ -40,13 +38,10 @@ class QmlTray(QObject):
         self._action_admin.triggered.connect(self._restart_admin)
         self._action_quit = QAction(tr("Выход"), menu)
         self._action_quit.triggered.connect(self._quit)
-        self._routing_menu = QMenu(tr("Маршрутизация"), menu)
-        self._apply_menu_style(self._routing_menu)
 
         menu.addAction(self._action_show)
         menu.addAction(self._action_connect)
         menu.addAction(self._action_next)
-        menu.addMenu(self._routing_menu)
         menu.addSeparator()
         menu.addAction(self._action_admin)
         menu.addSeparator()
@@ -64,13 +59,8 @@ class QmlTray(QObject):
             self._bridge.trayMessageRequested.connect(self.notify_hidden)
         except Exception:
             pass
-        try:
-            self._bridge.routingChanged.connect(self._schedule_routing_rebuild)
-        except Exception:
-            pass
 
         self._refresh_actions()
-        self._rebuild_routing_menu()
         self._tray.show()
 
     # ── window visibility ──────────────────────────────────
@@ -122,20 +112,6 @@ class QmlTray(QObject):
         except Exception:
             pass
 
-    def _apply_default_routing(self, preset_id: str) -> None:
-        try:
-            self._bridge.applyRoutingPreset(preset_id)
-        except Exception:
-            pass
-        self._schedule_routing_rebuild()
-
-    def _apply_custom_routing(self, preset_id: str) -> None:
-        try:
-            self._bridge.applyCustomRoutingPreset(preset_id)
-        except Exception:
-            pass
-        self._schedule_routing_rebuild()
-
     def _restart_admin(self) -> None:
         try:
             self._bridge._on_admin_relaunch()
@@ -177,59 +153,6 @@ class QmlTray(QObject):
             self._action_next.setText(tr("Следующий сервер"))
             self._action_admin.setText(tr("Перезапустить от администратора"))
             self._action_quit.setText(tr("Выход"))
-        except Exception:
-            pass
-
-    def _schedule_routing_rebuild(self) -> None:
-        if self._routing_rebuild_scheduled:
-            return
-        self._routing_rebuild_scheduled = True
-        QTimer.singleShot(0, self._rebuild_routing_menu)
-
-    def _rebuild_routing_menu(self) -> None:
-        self._routing_rebuild_scheduled = False
-        try:
-            self._routing_menu.clear()
-            current = str(getattr(self._bridge, "routingMode", "") or "")
-            presets = [
-                ("global", tr("Всё через VPN")),
-                ("blocked", tr("Только заблокированное")),
-                ("except_ru", tr("Всё кроме РФ")),
-            ]
-            for preset_id, label in presets:
-                action = QAction(label, self._routing_menu)
-                action.setCheckable(True)
-                action.setChecked(
-                    (preset_id == "global" and current == "global")
-                    or (preset_id == "blocked" and current == "rule")
-                )
-                action.triggered.connect(lambda _checked=False, pid=preset_id: self._apply_default_routing(pid))
-                self._routing_menu.addAction(action)
-            custom = list(getattr(self._bridge, "customRoutingPresets", []) or [])
-            if custom:
-                self._routing_menu.addSeparator()
-            for item in custom:
-                if not isinstance(item, dict):
-                    continue
-                preset_id = str(item.get("id") or "")
-                if not preset_id:
-                    continue
-                name = str(item.get("name") or "") or tr("Пресет")
-                action = QAction(name, self._routing_menu)
-                action.triggered.connect(lambda _checked=False, pid=preset_id: self._apply_custom_routing(pid))
-                self._routing_menu.addAction(action)
-        except Exception:
-            pass
-
-    @staticmethod
-    def _apply_menu_style(menu: QMenu) -> None:
-        try:
-            menu.setStyleSheet(
-                "QMenu{background:#202020;color:#F3F3F3;border:1px solid #3A3A3A;padding:6px;}"
-                "QMenu::item{min-height:24px;padding:5px 28px 5px 12px;border-radius:4px;}"
-                "QMenu::item:selected{background:#2D76D2;color:#FFFFFF;}"
-                "QMenu::separator{height:1px;background:#3A3A3A;margin:6px 4px;}"
-            )
         except Exception:
             pass
 

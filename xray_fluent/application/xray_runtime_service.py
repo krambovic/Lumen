@@ -309,23 +309,11 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
 
     apply_xray_gui_routing(payload, controller.state.routing, controller.state.settings)
     if controller.state.settings.enable_xray_fragment:
-        patched = apply_xray_outbound_fragment(
-            payload,
-            packets=controller.state.settings.fragment_packets,
-            length=controller.state.settings.fragment_length,
-            delay=controller.state.settings.fragment_delay,
-            tail_fragment=controller.state.settings.tail_fragment_enabled,
-        )
+        patched = apply_xray_outbound_fragment(payload)
         if patched:
             controller._log(f"[xray] outbound fragment enabled for {patched} outbound(s)")
     if controller.state.settings.enable_final_fragment:
-        patched = apply_xray_final_fragment(
-            payload,
-            packets=controller.state.settings.fragment_packets,
-            length=controller.state.settings.fragment_length,
-            delay=controller.state.settings.fragment_delay,
-            tail_fragment=controller.state.settings.tail_fragment_enabled,
-        )
+        patched = apply_xray_final_fragment(payload)
         if patched:
             controller._log(f"[xray] final TLS fragment enabled for {patched} proxy outbound(s)")
 
