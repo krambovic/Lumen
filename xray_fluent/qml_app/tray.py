@@ -1,11 +1,9 @@
 """System tray icon for the QML frontend."""
 from __future__ import annotations
 
-import sys
-
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, QPoint
 
 from ..constants import APP_ICON_PATH, APP_NAME
 from ..i18n import tr
@@ -32,6 +30,8 @@ class QmlTray(QObject):
 
         self._menu = QMenu()
         self._apply_menu_style(self._menu)
+        self._routing_menu = QMenu()
+        self._apply_menu_style(self._routing_menu)
 
         self._action_show = QAction(tr("Скрыть"), self._menu)
         self._action_show.triggered.connect(self._toggle_window)
@@ -39,21 +39,23 @@ class QmlTray(QObject):
         self._action_connect.triggered.connect(self._toggle_connection)
         self._action_next = QAction(tr("Следующий сервер"), self._menu)
         self._action_next.triggered.connect(self._switch_next)
+        self._action_routing = QAction(tr("Маршрутизация") + "  >", self._menu)
+        self._action_routing.hovered.connect(self._show_routing_menu)
+        self._action_routing.triggered.connect(self._show_routing_menu)
         self._action_admin = QAction(tr("Перезапустить от администратора"), self._menu)
         self._action_admin.triggered.connect(self._restart_admin)
         self._action_quit = QAction(tr("Выход"), self._menu)
         self._action_quit.triggered.connect(self._quit)
-        self._routing_menu = QMenu(tr("Маршрутизация"), self._menu)
-        self._apply_menu_style(self._routing_menu)
 
         self._menu.addAction(self._action_show)
         self._menu.addAction(self._action_connect)
         self._menu.addAction(self._action_next)
-        self._menu.addMenu(self._routing_menu)
+        self._menu.addAction(self._action_routing)
         self._menu.addSeparator()
         self._menu.addAction(self._action_admin)
         self._menu.addSeparator()
         self._menu.addAction(self._action_quit)
+        self._menu.aboutToHide.connect(self._routing_menu.hide)
         self._tray.setContextMenu(self._menu)
 
         self._tray.activated.connect(self._on_activated)
@@ -67,7 +69,6 @@ class QmlTray(QObject):
             pass
 
         self._refresh_actions()
-        self._refresh_routing_actions()
         self._tray.show()
 
     def _window_visible(self) -> bool:
@@ -159,13 +160,13 @@ class QmlTray(QObject):
             self._action_next.setText(tr("Следующий сервер"))
             self._action_admin.setText(tr("Перезапустить от администратора"))
             self._action_quit.setText(tr("Выход"))
-            self._routing_menu.setTitle(tr("Маршрутизация"))
+            self._action_routing.setText(tr("Маршрутизация") + "  >")
         except Exception:
             pass
 
     def _refresh_routing_actions(self) -> None:
-        if self._routing_actions:
-            return
+        self._routing_menu.clear()
+        self._routing_actions.clear()
 
         presets = [
             ("global", tr("Все через VPN")),
@@ -197,26 +198,32 @@ class QmlTray(QObject):
         self._routing_menu.addAction(action)
         self._routing_actions.append(action)
 
+    def _show_routing_menu(self) -> None:
+        try:
+            self._refresh_routing_actions()
+            geometry = self._menu.actionGeometry(self._action_routing)
+            pos = self._menu.mapToGlobal(geometry.topRight() + QPoint(2, 0))
+            self._routing_menu.popup(pos)
+        except Exception:
+            pass
+
     @staticmethod
     def _apply_menu_style(menu: QMenu) -> None:
-        if sys.platform == "win32":
-            return
         try:
             menu.setStyleSheet(
                 """
                 QMenu {
-                    background-color: #202020;
+                    background: #202020;
                     color: #F3F3F3;
-                    border: 1px solid #3A3A3A;
-                    padding: 6px;
+                    border: 1px solid #404040;
+                    padding: 5px;
                 }
                 QMenu::item {
                     min-height: 24px;
-                    padding: 5px 28px 5px 12px;
-                    border-radius: 4px;
+                    padding: 6px 26px 6px 12px;
                 }
                 QMenu::item:selected {
-                    background-color: #2D76D2;
+                    background: #0A84FF;
                     color: #FFFFFF;
                 }
                 QMenu::item:disabled {
