@@ -20,6 +20,7 @@ class QmlTray(QObject):
         self._bridge = bridge
         self._notified = False
         self._routing_actions: list[QAction] = []
+        self._routing_default_actions: dict[str, QAction] = {}
 
         self._tray = QSystemTrayIcon(self)
         if APP_ICON_PATH.is_file():
@@ -66,6 +67,7 @@ class QmlTray(QObject):
             pass
 
         self._refresh_actions()
+        self._refresh_routing_actions()
         self._tray.show()
 
     def _window_visible(self) -> bool:
@@ -163,18 +165,13 @@ class QmlTray(QObject):
 
     def _refresh_menu_actions(self) -> None:
         self._refresh_actions()
-        self._refresh_routing_actions()
+        self._sync_routing_checks()
 
     def _refresh_routing_actions(self) -> None:
-        for action in self._routing_actions:
-            try:
-                self._routing_menu.removeAction(action)
-                action.deleteLater()
-            except Exception:
-                pass
-        self._routing_actions = []
+        if self._routing_actions:
+            self._sync_routing_checks()
+            return
 
-        current = str(getattr(self._bridge, "routingMode", "") or "")
         presets = [
             ("global", tr("Все через VPN")),
             ("blocked", tr("Только заблокированное")),
@@ -183,11 +180,8 @@ class QmlTray(QObject):
         for preset_id, label in presets:
             action = QAction(label, self._routing_menu)
             action.setCheckable(True)
-            action.setChecked(
-                (preset_id == "global" and current == "global")
-                or (preset_id == "blocked" and current == "rule")
-            )
             action.triggered.connect(lambda _checked=False, pid=preset_id: self._apply_default_routing(pid))
+            self._routing_default_actions[preset_id] = action
             self._insert_routing_action(action)
 
         custom = getattr(self._bridge, "customRoutingPresets", []) or []
@@ -205,6 +199,19 @@ class QmlTray(QObject):
             action = QAction(name, self._routing_menu)
             action.triggered.connect(lambda _checked=False, pid=preset_id: self._apply_custom_routing(pid))
             self._insert_routing_action(action)
+        self._sync_routing_checks()
+
+    def _sync_routing_checks(self) -> None:
+        current = str(getattr(self._bridge, "routingMode", "") or "")
+        for preset_id, action in self._routing_default_actions.items():
+            try:
+                action.setChecked(
+                    (preset_id == "global" and current == "global")
+                    or (preset_id == "blocked" and current == "rule")
+                    or (preset_id == "except_ru" and current == "rule")
+                )
+            except Exception:
+                pass
 
     def _insert_routing_action(self, action: QAction) -> None:
         self._routing_menu.addAction(action)
