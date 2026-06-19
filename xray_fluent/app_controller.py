@@ -1608,6 +1608,18 @@ class AppController(QObject):
         text = line.lower()
         if "accepted" in text:
             return True
+        if any(
+            marker in text
+            for marker in (
+                "inbound connection from",
+                "inbound connection to",
+                "inbound packet connection from",
+                "inbound packet connection to",
+                "outbound connection to",
+                "outbound packet connection",
+            )
+        ):
+            return True
         if "connection upload closed" in text or "connection download closed" in text:
             return True
         if "an existing connection was forcibly closed by the remote host" in text:

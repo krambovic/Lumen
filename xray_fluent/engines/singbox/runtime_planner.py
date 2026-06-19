@@ -834,7 +834,8 @@ def _ensure_singbox_tun_runtime_contract(
     _ensure_singbox_tun_base_rules(
         rules,
         enable_final_fragment=enable_final_fragment,
-        dns_hijack=(use_builtin_dns and (routing.dns_hijack_enabled if routing is not None else True)),
+        builtin_dns=use_builtin_dns,
+        dns_hijack_all=(routing.dns_hijack_enabled if routing is not None else True),
     )
 
 
@@ -925,21 +926,27 @@ def _ensure_singbox_tun_base_rules(
     rules: list[Any],
     *,
     enable_final_fragment: bool = True,
-    dns_hijack: bool = True,
+    builtin_dns: bool = True,
+    dns_hijack_all: bool = True,
 ) -> None:
     base_rules = [{"action": "sniff"}]
-    if dns_hijack:
+    # sing-box registers virtual DNS peers on the Windows TUN adapter. Port 53
+    # must always be intercepted, as in v2rayN, or uncached lookups wait for the
+    # unreachable peer before Windows falls back to another interface.
+    if builtin_dns and dns_hijack_all:
         base_rules.append(
             {
-            "type": "logical",
-            "mode": "or",
-            "action": "hijack-dns",
-            "rules": [
-                {"port": 53},
-                {"protocol": "dns"},
-            ],
+                "type": "logical",
+                "mode": "or",
+                "action": "hijack-dns",
+                "rules": [
+                    {"port": 53},
+                    {"protocol": "dns"},
+                ],
             }
         )
+    else:
+        base_rules.append({"port": 53, "action": "hijack-dns"})
     if enable_final_fragment:
         base_rules.append(
             {
@@ -950,11 +957,6 @@ def _ensure_singbox_tun_base_rules(
         )
     base_rules.extend(
         [
-            {
-                "network": "udp",
-                "port": 443,
-                "action": "reject",
-            },
             {
                 "network": "udp",
                 "port": [135, 137, 138, 139, 5353],

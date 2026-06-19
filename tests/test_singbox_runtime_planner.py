@@ -121,7 +121,7 @@ def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults() -> None:
     assert inbound["strict_route"] is False
 
 
-def test_system_dns_mode_does_not_hijack_dns_or_force_remote_dns() -> None:
+def test_system_dns_mode_delegates_the_tun_peer_to_local_dns() -> None:
     config = _plan(
         RoutingSettings(
             mode="global",
@@ -135,7 +135,9 @@ def test_system_dns_mode_does_not_hijack_dns_or_force_remote_dns() -> None:
     rules = config["route"]["rules"]
     servers = _dns_servers(config)
 
-    assert not any(rule.get("action") == "hijack-dns" for rule in rules)
+    assert [rule for rule in rules if rule.get("action") == "hijack-dns"] == [
+        {"port": 53, "action": "hijack-dns"}
+    ]
     assert servers["bootstrap-dns"]["type"] == "local"
     assert servers["direct-dns"]["type"] == "local"
     assert servers["proxy-dns"]["type"] == "local"
@@ -169,6 +171,21 @@ def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
         for rule in config["dns"]["rules"]
     )
     assert config["log"]["level"] == "info"
+
+
+def test_builtin_dns_always_hijacks_the_tun_dns_peer() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="builtin",
+            dns_hijack_enabled=False,
+            tun_default_outbound="proxy",
+        )
+    )
+
+    hijack_rules = [rule for rule in config["route"]["rules"] if rule.get("action") == "hijack-dns"]
+
+    assert hijack_rules == [{"port": 53, "action": "hijack-dns"}]
 
 
 def test_builtin_fake_dns_keeps_real_dns_final_for_direct_default() -> None:
@@ -332,7 +349,7 @@ def test_native_tun_excludes_resolved_domain_proxy_endpoint_from_tun_routes(monk
     )
 
 
-def test_explicit_direct_domain_precedes_quic_fallback_reject() -> None:
+def test_tun_runtime_does_not_reject_quic_globally() -> None:
     config = _plan(
         RoutingSettings(
             mode="rule",
@@ -344,18 +361,14 @@ def test_explicit_direct_domain_precedes_quic_fallback_reject() -> None:
     )
 
     rules = config["route"]["rules"]
-    direct_index = next(
-        index
-        for index, rule in enumerate(rules)
-        if rule.get("outbound") == "direct" and "2ip.ru" in rule.get("domain_suffix", [])
+    assert any(
+        rule.get("outbound") == "direct" and "2ip.ru" in rule.get("domain_suffix", [])
+        for rule in rules
     )
-    quic_reject_index = next(
-        index
-        for index, rule in enumerate(rules)
-        if rule.get("action") == "reject" and rule.get("network") == "udp" and rule.get("port") == 443
+    assert not any(
+        rule.get("action") == "reject" and rule.get("network") == "udp" and rule.get("port") == 443
+        for rule in rules
     )
-
-    assert direct_index < quic_reject_index
 
 
 def test_native_tun_keeps_domain_proxy_endpoint_route_when_resolution_fails(monkeypatch: pytest.MonkeyPatch) -> None:

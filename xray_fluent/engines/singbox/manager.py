@@ -51,6 +51,7 @@ class SingBoxManager(QObject):
         self._runtime_error_reported = False
         self._last_output_lines: deque[str] = deque(maxlen=20)
         self._suppressed_noisy_lines = 0
+        self._last_noisy_summary_at = 0.0
         self._last_exit_code: int | None = None
         self._exe_path: Path | None = None
 
@@ -109,6 +110,7 @@ class SingBoxManager(QObject):
         self._runtime_error_reported = False
         self._last_output_lines.clear()
         self._suppressed_noisy_lines = 0
+        self._last_noisy_summary_at = time.monotonic()
 
         # Try up to 3 times — wintun adapter may need time to be released
         for attempt in range(3):
@@ -345,11 +347,13 @@ class SingBoxManager(QObject):
                     for line in text.splitlines():
                         clean = line.rstrip()
                         if clean:
-                            if not self._starting and self._is_noisy_runtime_line(clean):
+                            if self._is_noisy_runtime_line(clean):
                                 self._suppressed_noisy_lines += 1
-                                if self._suppressed_noisy_lines % 25 == 0:
+                                now = time.monotonic()
+                                if now - self._last_noisy_summary_at >= 30.0:
+                                    self._last_noisy_summary_at = now
                                     self.log_received.emit(
-                                        f"[tun] {self._suppressed_noisy_lines} noisy connection logs suppressed..."
+                                        f"[tun] {self._suppressed_noisy_lines} routine connection logs suppressed..."
                                     )
                                 continue
                             self._last_output_lines.append(clean)
@@ -514,14 +518,26 @@ class SingBoxManager(QObject):
     @staticmethod
     def _is_noisy_runtime_line(line: str) -> bool:
         text = line.lower()
-        if any(marker in text for marker in ("error", "failed", "timeout", "deadline", "fatal", "panic")):
-            return False
+        if any(
+            marker in text
+            for marker in (
+                "inbound connection from",
+                "inbound connection to",
+                "inbound packet connection from",
+                "inbound packet connection to",
+                "outbound connection to",
+                "outbound packet connection",
+            )
+        ):
+            return True
         if "connection upload closed" in text or "connection download closed" in text:
             return True
         if "an existing connection was forcibly closed by the remote host" in text:
             return True
         if "wsarecv" in text or "wsasend" in text:
             return True
+        if any(marker in text for marker in ("error", "failed", "timeout", "deadline", "fatal", "panic")):
+            return False
         return False
 
 
