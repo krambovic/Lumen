@@ -58,6 +58,7 @@ class AppBridge(QObject):
     trayMessageRequested = pyqtSignal()    # ask the tray to show its balloon
     trayNotify = pyqtSignal(str, str)      # (заголовок, текст) — уведомление события
     nodeQrReady = pyqtSignal(str, str)     # (png data uri, node name)
+    nodeImported = pyqtSignal(str)         # first newly imported node id
     quittingChanged = pyqtSignal()         # real-exit flag flipped on quit
     languageChanged = pyqtSignal()         # active UI language changed
 
@@ -1959,6 +1960,7 @@ class AppBridge(QObject):
             return
         added, errors = self.controller.import_nodes_from_text(text)
         if added:
+            self.nodeImported.emit(self.controller.state.selected_node_id or "")
             self.toast.emit("success", tr("Импортировано серверов: {count}", count=added))
         if errors:
             self.toast.emit("warning", "; ".join(errors[:2]))
@@ -1985,6 +1987,7 @@ class AppBridge(QObject):
             return
         added, errors = self.controller.import_nodes_from_text(text)
         if added:
+            self.nodeImported.emit(self.controller.state.selected_node_id or "")
             self.toast.emit("success", tr("Импортировано серверов: {count}", count=added))
         if errors:
             self.toast.emit("warning", "; ".join(errors[:2]))
@@ -2095,6 +2098,10 @@ class AppBridge(QObject):
     def nodeIdAt(self, row: int) -> str:
         """Map a ListView row index to a node id (used for drag/shift range select)."""
         return self._node_model.node_id_at(row) or ""
+
+    @pyqtSlot(str, result=int)
+    def nodeIndexById(self, node_id: str) -> int:
+        return self._node_model.index_of_id(node_id)
 
     @pyqtSlot(int, result="QVariant")
     def nodeRowAt(self, row: int):

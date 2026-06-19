@@ -114,6 +114,7 @@ def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults() -> None:
     inbound = _tun_inbound(config)
 
     assert inbound["interface_name"] == "singbox_tun"
+    assert inbound["address"] == ["172.18.0.1/30", "fdfe:dcba:9876::1/126"]
     assert inbound["mtu"] == 1280
     assert inbound["stack"] == "gvisor"
     assert inbound["auto_route"] is True
@@ -329,6 +330,32 @@ def test_native_tun_excludes_resolved_domain_proxy_endpoint_from_tun_routes(monk
         and "vpn.example.com" in rule.get("domain", [])
         for rule in rules
     )
+
+
+def test_explicit_direct_domain_precedes_quic_fallback_reject() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="rule",
+            dns_mode="system",
+            direct_domains=["2ip.ru"],
+            tun_default_outbound="direct",
+        ),
+        _node_with_server("vpn.example.com"),
+    )
+
+    rules = config["route"]["rules"]
+    direct_index = next(
+        index
+        for index, rule in enumerate(rules)
+        if rule.get("outbound") == "direct" and "2ip.ru" in rule.get("domain_suffix", [])
+    )
+    quic_reject_index = next(
+        index
+        for index, rule in enumerate(rules)
+        if rule.get("action") == "reject" and rule.get("network") == "udp" and rule.get("port") == 443
+    )
+
+    assert direct_index < quic_reject_index
 
 
 def test_native_tun_keeps_domain_proxy_endpoint_route_when_resolution_fails(monkeypatch: pytest.MonkeyPatch) -> None:

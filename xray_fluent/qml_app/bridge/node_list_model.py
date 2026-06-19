@@ -213,6 +213,9 @@ class NodeListModel(QAbstractListModel):
             return self._nodes[row].id
         return None
 
+    def index_of_id(self, node_id: str) -> int:
+        return self._index_by_id.get(node_id, -1)
+
     def node_row_at(self, row: int) -> dict | None:
         """Return the filterable fields of a row by index (for Ctrl+A respecting filters)."""
         if 0 <= row < len(self._nodes):

@@ -7,7 +7,7 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen KVN"
-APP_VERSION = "1.5.4"
+APP_VERSION = "1.5.5"
 STATE_SCHEMA_VERSION = 1
 
 PROXY_HOST = "127.0.0.1"

@@ -808,7 +808,7 @@ def _ensure_singbox_tun_runtime_contract(
                 continue
             has_tun = True
             inbound["interface_name"] = "singbox_tun"
-            inbound["address"] = ["172.18.0.1/30"]
+            inbound["address"] = ["172.18.0.1/30", "fdfe:dcba:9876::1/126"]
             inbound["mtu"] = 1280
             inbound["auto_route"] = True
             inbound["strict_route"] = False

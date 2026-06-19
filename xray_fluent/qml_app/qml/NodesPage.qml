@@ -185,6 +185,23 @@ Item {
         App.setNodeFilter(page.filterGroup, page.filterTag, page.filterText);
     }
 
+    function revealImportedNode(nodeId) {
+        if (!nodeId) return;
+        page.filterText = "";
+        page.filterGroup = "";
+        page.filterTag = "";
+        searchInput.text = "";
+        groupCombo.currentIndex = 0;
+        tagCombo.currentIndex = 0;
+        page.applyFilters();
+        Qt.callLater(function() {
+            var row = App.nodeIndexById(nodeId);
+            if (row < 0) return;
+            page.selectOnly(row);
+            list.positionViewAtIndex(row, ListView.Center);
+        });
+    }
+
     function applySort(key) {
         if (!key) return;
         if (page.sortKey === key) {
@@ -1275,6 +1292,9 @@ Item {
 
     Connections {
         target: App
+        function onNodeImported(nodeId) {
+            page.revealImportedNode(nodeId);
+        }
         function onNodeQrReady(dataUri, name) {
             qrDialog.qrSource = dataUri;
             qrDialog.qrName = name;

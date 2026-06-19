@@ -765,7 +765,7 @@ def _singbox_runtime_rule_insert_index(rules: list[Any]) -> int:
         rule = rules[index]
         if not isinstance(rule, dict):
             break
-        if rule.get("action") in {"sniff", "hijack-dns", "route-options", "reject"}:
+        if rule.get("action") in {"sniff", "hijack-dns", "route-options"}:
             index += 1
             continue
         if rule.get("inbound"):

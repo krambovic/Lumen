@@ -148,7 +148,12 @@ class SingBoxManager(QObject):
             if self._wait_until_tun_ready(proc, tun_interface_name):
                 adapter_ms = int((time.monotonic() - attempt_started) * 1000)
                 self.log_received.emit(f"[tun] adapter and routes ready in {adapter_ms} ms")
-                self._warm_windows_dns(proc)
+                threading.Thread(
+                    target=self._warm_windows_dns,
+                    args=(proc,),
+                    name="tun-dns-warmup",
+                    daemon=True,
+                ).start()
                 self._starting = False
                 total_ms = int((time.monotonic() - attempt_started) * 1000)
                 self.log_received.emit(
@@ -447,16 +452,15 @@ class SingBoxManager(QObject):
         started = time.monotonic()
         script = (
             "$ErrorActionPreference = 'Stop'; "
-            "Clear-DnsClientCache; "
-            "$answer = Resolve-DnsName -Name 'www.gstatic.com' -Type A -DnsOnly -QuickTimeout "
+            "$answer = Resolve-DnsName -Name 'example.com' -Type A -DnsOnly -QuickTimeout "
             "| Where-Object { $_.IPAddress } | Select-Object -First 1; "
             "if ($answer) { Write-Output $answer.IPAddress; exit 0 } else { exit 1 }"
         )
-        self.log_received.emit("[tun] refreshing Windows DNS cache and warming resolver...")
+        self.log_received.emit("[tun] warming Windows direct DNS resolver...")
         try:
             result = run_text_pumped(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                timeout=4,
+                timeout=2,
                 check=False,
                 creationflags=_CREATE_NO_WINDOW,
             )
