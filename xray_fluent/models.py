@@ -88,7 +88,7 @@ class RoutingSettings:
     proxy_domains: list[str] = field(default_factory=list)
     block_domains: list[str] = field(default_factory=list)
     dns_mode: str = "system"  # system | builtin
-    dns_bootstrap_server: str = "1.1.1.1"  # DNS for direct traffic
+    dns_bootstrap_server: str = "8.8.8.8"  # DNS for direct traffic
     dns_bootstrap_type: str = "udp"        # udp | tcp | tls | https
     dns_bootstrap_strategy: str = "prefer_ipv4"
     dns_proxy_server: str = "8.8.8.8"     # DNS for proxy traffic
@@ -134,7 +134,7 @@ class RoutingSettings:
             proxy_domains=list(data.get("proxy_domains") or []),
             block_domains=list(data.get("block_domains") or []),
             dns_mode=str(data.get("dns_mode") or "system"),
-            dns_bootstrap_server=str(data.get("dns_bootstrap_server") or "1.1.1.1"),
+            dns_bootstrap_server=str(data.get("dns_bootstrap_server") or "8.8.8.8"),
             dns_bootstrap_type=str(data.get("dns_bootstrap_type") or "udp"),
             dns_bootstrap_strategy=str(data.get("dns_bootstrap_strategy") or "prefer_ipv4"),
             dns_proxy_server=str(data.get("dns_proxy_server") or "8.8.8.8"),

@@ -113,6 +113,8 @@ class SingBoxManager(QObject):
 
         # Try up to 3 times — wintun adapter may need time to be released
         for attempt in range(3):
+            attempt_started = time.monotonic()
+            self.log_received.emit(f"[tun] startup attempt {attempt + 1}/3, interface={tun_interface_name}")
             self._last_output_lines.clear()
             self._stop_requested = False
             self._last_exit_code = None
@@ -145,8 +147,14 @@ class SingBoxManager(QObject):
             # sing-box is only considered "connected" once the TUN interface has
             # a usable IPv4 address — not merely when the process spawns.
             if self._wait_until_tun_ready(proc, tun_interface_name):
+                adapter_ms = int((time.monotonic() - attempt_started) * 1000)
+                self.log_received.emit(f"[tun] adapter and routes ready in {adapter_ms} ms")
+                self._warm_windows_dns(proc)
                 self._starting = False
-                self.log_received.emit(f"[tun] sing-box runtime ready, interface={tun_interface_name}")
+                total_ms = int((time.monotonic() - attempt_started) * 1000)
+                self.log_received.emit(
+                    f"[tun] sing-box runtime ready in {total_ms} ms, interface={tun_interface_name}"
+                )
                 self._mark_running()
                 return True
 
@@ -431,6 +439,36 @@ class SingBoxManager(QObject):
             return False
         return result.returncode == 0
 
+    def _warm_windows_dns(self, proc: subprocess.Popen[bytes]) -> None:
+        if os.name != "nt" or proc.poll() is not None:
+            return
+        started = time.monotonic()
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            "Clear-DnsClientCache; "
+            "$answer = Resolve-DnsName -Name 'www.gstatic.com' -Type A -DnsOnly -QuickTimeout "
+            "| Where-Object { $_.IPAddress } | Select-Object -First 1; "
+            "if ($answer) { Write-Output $answer.IPAddress; exit 0 } else { exit 1 }"
+        )
+        self.log_received.emit("[tun] refreshing Windows DNS cache and warming resolver...")
+        try:
+            result = run_text_pumped(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                timeout=4,
+                check=False,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            output = result_output_text(result).strip().splitlines()
+            if result.returncode == 0:
+                answer = output[-1].strip() if output else "ok"
+                self.log_received.emit(f"[tun] DNS warm-up ready in {elapsed_ms} ms ({answer})")
+            else:
+                self.log_received.emit(f"[tun] DNS warm-up did not answer in {elapsed_ms} ms; continuing")
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            self.log_received.emit(f"[tun] DNS warm-up skipped after {elapsed_ms} ms: {exc}")
+
     def _startup_error_is_retryable(self) -> bool:
         needles = (
             "already exists",
@@ -470,6 +508,8 @@ class SingBoxManager(QObject):
     @staticmethod
     def _is_noisy_runtime_line(line: str) -> bool:
         text = line.lower()
+        if any(marker in text for marker in ("error", "failed", "timeout", "deadline", "fatal", "panic")):
+            return False
         if "connection upload closed" in text or "connection download closed" in text:
             return True
         if "an existing connection was forcibly closed by the remote host" in text:

@@ -184,7 +184,7 @@ Item {
             // ---- TUN-only DNS block ----------------------------------
             Card {
                 Layout.fillWidth: true
-                visible: App.tunMode
+                visible: App.tunMode && !App.compactMode
                 padding: 16
                 ColumnLayout {
                     width: parent.width
@@ -198,7 +198,7 @@ Item {
                             Text { text: "Bootstrap DNS"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                             DnsField {
                                 text: App.dnsBootstrapServer
-                                placeholderText: "1.1.1.1"
+                                placeholderText: "8.8.8.8"
                                 onEditingFinished: App.setBootstrapDns(text, "")
                             }
                         }

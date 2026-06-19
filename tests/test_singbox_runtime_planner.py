@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from pathlib import Path
 
 import pytest
@@ -42,13 +43,13 @@ def _base_config() -> dict:
 def _node() -> Node:
     return Node(
         scheme="vless",
-        server="vpn.example.com",
+        server="203.0.113.1",
         outbound={
             "protocol": "vless",
             "settings": {
                 "vnext": [
                     {
-                        "address": "vpn.example.com",
+                        "address": "203.0.113.1",
                         "port": 443,
                         "users": [{"id": "00000000-0000-0000-0000-000000000000"}],
                     }
@@ -149,6 +150,52 @@ def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
     assert servers["direct-dns"]["detour"] == "direct"
     assert servers["proxy-dns"]["detour"] == "proxy"
     assert servers["fake-dns"]["type"] == "fakeip"
+    assert config["dns"]["final"] == "proxy-dns"
+    assert any(
+        rule.get("server") == "fake-dns"
+        and rule.get("query_type") == ["A", "AAAA"]
+        for rule in config["dns"]["rules"]
+    )
+    assert config["log"]["level"] == "info"
+
+
+def test_builtin_fake_dns_keeps_real_dns_final_for_direct_default() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="direct",
+            dns_mode="builtin",
+            dns_hijack_enabled=True,
+            dns_fake_enabled=True,
+            tun_default_outbound="direct",
+        )
+    )
+
+    assert config["route"]["final"] == "direct"
+    assert config["dns"]["final"] == "bootstrap-dns"
+    assert any(rule.get("server") == "fake-dns" for rule in config["dns"]["rules"])
+
+
+def test_builtin_fake_dns_keeps_service_dns_rules_ahead_of_fakeip() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            service_routes={"youtube": "direct"},
+            dns_mode="builtin",
+            dns_fake_enabled=True,
+            tun_default_outbound="proxy",
+        )
+    )
+
+    rules = config["dns"]["rules"]
+    service_index = next(
+        index
+        for index, rule in enumerate(rules)
+        if rule.get("server") == "bootstrap-dns"
+        and "youtube.com" in rule.get("domain_suffix", [])
+    )
+    fake_index = next(index for index, rule in enumerate(rules) if rule.get("server") == "fake-dns")
+
+    assert service_index < fake_index
 
 
 @pytest.mark.parametrize("dns_type", ["udp", "tcp", "tls", "https"])
@@ -296,6 +343,25 @@ def test_native_tun_keeps_domain_proxy_endpoint_route_when_resolution_fails(monk
         and "vpn.example.com" in rule.get("domain", [])
         for rule in rules
     )
+
+
+def test_native_tun_does_not_block_startup_on_slow_endpoint_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    def slow_getaddrinfo(*_args, **_kwargs):
+        time.sleep(5)
+        return []
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow_getaddrinfo)
+    started = time.monotonic()
+
+    config = _plan(
+        RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
+        _node_with_server("vpn.example.com"),
+    )
+
+    assert time.monotonic() - started < 2
+    proxy = next(outbound for outbound in config["outbounds"] if outbound.get("tag") == "proxy")
+    assert proxy["server"] == "vpn.example.com"
+    assert proxy["domain_resolver"] == "bootstrap-dns"
 
 
 def test_endpoint_tun_excludes_ip_peer_from_tun_routes() -> None:

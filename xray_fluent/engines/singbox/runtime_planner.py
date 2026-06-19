@@ -7,6 +7,7 @@ from ipaddress import ip_address, ip_network
 import json
 import secrets
 import socket
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -529,13 +530,23 @@ def _resolve_endpoint_ip_cidrs(host: str) -> list[str]:
 def _resolve_endpoint_addresses(host: str) -> list[str]:
     if not _is_domain_name(host):
         return []
-    try:
-        infos = socket.getaddrinfo(str(host).strip(), None, 0, socket.SOCK_STREAM)
-    except OSError:
+    result: list[Any] = []
+    completed = threading.Event()
+
+    def resolve() -> None:
+        try:
+            result.extend(socket.getaddrinfo(str(host).strip(), None, 0, socket.SOCK_STREAM))
+        except OSError:
+            pass
+        finally:
+            completed.set()
+
+    threading.Thread(target=resolve, name="tun-endpoint-resolver", daemon=True).start()
+    if not completed.wait(1.2):
         return []
 
     addresses: list[str] = []
-    for info in infos:
+    for info in result:
         try:
             sockaddr = info[4]
             if not sockaddr:
@@ -836,7 +847,7 @@ def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any], *, routing: Ro
         dns = {}
         payload["dns"] = dns
     dns["independent_cache"] = True
-    direct_server = routing.dns_bootstrap_server if routing is not None else "1.1.1.1"
+    direct_server = routing.dns_bootstrap_server if routing is not None else "8.8.8.8"
     direct_type = routing.dns_bootstrap_type if routing is not None else "udp"
     direct_strategy = _dns_strategy(routing.dns_bootstrap_strategy if routing is not None else "")
     proxy_server = routing.dns_proxy_server if routing is not None else "8.8.8.8"

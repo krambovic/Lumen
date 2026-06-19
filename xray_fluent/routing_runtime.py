@@ -357,10 +357,8 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
                 0,
                 {
                     "query_type": ["A", "AAAA"],
-                    "action": "route",
                     "server": "fake-dns",
                     "rewrite_ttl": 1,
-                    "_lumen": "dns",
                 },
             )
         if dns_rules:
@@ -485,7 +483,11 @@ def _is_legacy_lumen_singbox_route_rule(rule: Any) -> bool:
 def _is_lumen_singbox_dns_rule(rule: Any) -> bool:
     if not isinstance(rule, dict):
         return False
-    if rule.get("_lumen") == "dns":
+    if (
+        str(rule.get("server") or "") == "fake-dns"
+        and set(str(item) for item in rule.get("query_type") or []) == {"A", "AAAA"}
+        and set(rule).issubset({"query_type", "server", "rewrite_ttl", "action"})
+    ):
         return True
     action = str(rule.get("action") or "")
     if action not in {"route", "reject"}:
