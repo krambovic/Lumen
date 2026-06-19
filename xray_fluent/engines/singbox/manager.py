@@ -95,9 +95,8 @@ class SingBoxManager(QObject):
             self._running = False
             self.state_changed.emit(False)
 
-        # Kill only orphaned processes before start. Runtime uses a fresh
-        # xftun* name every time, so a full adapter cleanup here only slows
-        # down the common path; retry cleanup still handles real conflicts.
+        # Kill only orphaned processes before start. The stable singbox_tun
+        # adapter is reused by Wintun; retry cleanup handles real conflicts.
         self._kill_orphaned(exe)
 
         # A freshly killed sing-box can still hold the clash-api port; wait for it.
@@ -217,7 +216,6 @@ class SingBoxManager(QObject):
         kill_timeout = 0.5 if fast else 2.0
         orphan_timeout = 2 if fast else 5
         final_timeout = 0.3 if fast else 1.0
-        cleanup_timeout = 1.0 if fast else 2.0
         release_timeout = 0.5 if fast else 1.0
 
         if not self._wait_proc(proc, terminate_timeout):
@@ -241,9 +239,10 @@ class SingBoxManager(QObject):
             self.error.emit("failed to stop sing-box process in time")
             return False
 
-        # Wait for TUN adapter to be released by OS (active polling)
+        # Let sing-box/Wintun perform the normal adapter teardown. Disabling a
+        # healthy adapter here makes Windows rebuild its network state on every
+        # reconnect and delays the first real connections.
         self._starting = False
-        self.cleanup_orphaned_tun_adapters(max_wait=cleanup_timeout)
         self._wait_tun_released(max_wait=release_timeout)
         return True
 
@@ -272,7 +271,7 @@ class SingBoxManager(QObject):
                         "-NonInteractive",
                         "-Command",
                         (
-                            "$active = @(Get-NetAdapter -Name 'xftun*' -ErrorAction SilentlyContinue "
+                            "$active = @(Get-NetAdapter -Name @('xftun*','singbox_tun') -ErrorAction SilentlyContinue "
                             "| Where-Object { $_.Status -notin @('Disabled','Not Present') }); "
                             "if ($active.Count -eq 0) { exit 0 } else { exit 1 }"
                         ),
@@ -314,7 +313,7 @@ class SingBoxManager(QObject):
             return
         script = (
             "$ErrorActionPreference = 'SilentlyContinue'; "
-            "$adapters = @(Get-NetAdapter -Name 'xftun*' -ErrorAction SilentlyContinue); "
+            "$adapters = @(Get-NetAdapter -Name @('xftun*','singbox_tun') -ErrorAction SilentlyContinue); "
             "foreach ($adapter in $adapters) { "
             "$alias = $adapter.Name; "
             "Get-NetRoute -InterfaceAlias $alias -ErrorAction SilentlyContinue "
@@ -408,8 +407,8 @@ class SingBoxManager(QObject):
         tun_interface_name: str,
         max_wait: float = 8.0,
     ) -> bool:
-        # Treat the runtime as ready only once the TUN adapter actually has an
-        # IPv4 address; bail out early if sing-box dies during startup.
+        # Treat the runtime as ready only after Windows sees both the adapter
+        # address and a broad route through it.
         deadline = time.monotonic() + max(0.2, max_wait)
         while time.monotonic() < deadline:
             if proc.poll() is not None:
@@ -426,7 +425,10 @@ class SingBoxManager(QObject):
             f"$ipv4 = Get-NetIPAddress -InterfaceAlias '{escaped_name}' -AddressFamily IPv4 -ErrorAction SilentlyContinue "
             "| Where-Object { $_.IPAddress -and $_.IPAddress -ne '0.0.0.0' } "
             "| Select-Object -First 1 IPAddress; "
-            "if ($ipv4) { exit 0 } else { exit 1 }"
+            f"$route = Get-NetRoute -InterfaceAlias '{escaped_name}' -AddressFamily IPv4 -ErrorAction SilentlyContinue "
+            "| Where-Object { $_.DestinationPrefix -in @('0.0.0.0/0','0.0.0.0/1','128.0.0.0/1') } "
+            "| Select-Object -First 1 DestinationPrefix; "
+            "if ($ipv4 -and $route) { exit 0 } else { exit 1 }"
         )
         try:
             result = run_text_pumped(

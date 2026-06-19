@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import hashlib
 from ipaddress import ip_address, ip_network
 import json
-import secrets
 import socket
 import threading
 from pathlib import Path
@@ -796,10 +795,8 @@ def _ensure_singbox_tun_runtime_contract(
 ) -> None:
     """Patch app-owned runtime fields for raw sing-box configs.
 
-    The source document may keep a placeholder or stale interface name, but the
-    runtime launch should always use a fresh xftun-prefixed adapter name. This
-    avoids collisions during reconnect/apply while Windows is still releasing
-    the previous wintun interface.
+    Keep the Windows adapter identity stable so route and DNS registration can
+    be reused across reconnects. MTU and stack match v2rayN's current defaults.
     """
     inbounds = payload.get("inbounds")
     has_tun = False
@@ -810,12 +807,12 @@ def _ensure_singbox_tun_runtime_contract(
             if str(inbound.get("type") or "").strip().lower() != "tun":
                 continue
             has_tun = True
-            inbound["interface_name"] = _generate_tun_interface_name()
+            inbound["interface_name"] = "singbox_tun"
             inbound["address"] = ["172.18.0.1/30"]
-            inbound["mtu"] = 1500
+            inbound["mtu"] = 1280
             inbound["auto_route"] = True
             inbound["strict_route"] = False
-            inbound["stack"] = "mixed"
+            inbound["stack"] = "gvisor"
             excludes = _normalize_route_exclude_addresses(
                 routing.tun_route_exclude_address if routing is not None else []
             )
@@ -1150,10 +1147,6 @@ def _find_free_port(
 def _generate_ss_password(length: int = 24) -> str:
     _, password = generate_local_proxy_credentials(prefix="protect", password_length=length)
     return password
-
-
-def _generate_tun_interface_name() -> str:
-    return f"xftun{secrets.token_hex(3)}"
 
 
 def _format_json_error_message(text: str, exc: json.JSONDecodeError) -> str:

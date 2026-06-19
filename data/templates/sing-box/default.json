@@ -7,14 +7,14 @@
     {
       "type": "tun",
       "tag": "tun-in",
-      "interface_name": "xftun",
+      "interface_name": "singbox_tun",
       "address": [
         "172.18.0.1/30"
       ],
-      "mtu": 1500,
+      "mtu": 1280,
       "auto_route": true,
       "strict_route": false,
-      "stack": "mixed"
+      "stack": "gvisor"
     }
   ],
   "outbounds": [

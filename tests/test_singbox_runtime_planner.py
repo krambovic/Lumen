@@ -109,6 +109,17 @@ def _tun_inbound(config: dict) -> dict:
     return next(inbound for inbound in config["inbounds"] if inbound.get("type") == "tun")
 
 
+def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults() -> None:
+    config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
+    inbound = _tun_inbound(config)
+
+    assert inbound["interface_name"] == "singbox_tun"
+    assert inbound["mtu"] == 1280
+    assert inbound["stack"] == "gvisor"
+    assert inbound["auto_route"] is True
+    assert inbound["strict_route"] is False
+
+
 def test_system_dns_mode_does_not_hijack_dns_or_force_remote_dns() -> None:
     config = _plan(
         RoutingSettings(
