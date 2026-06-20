@@ -329,13 +329,16 @@ def _node_should_use_xray_sidecar(node: Node | None) -> bool:
         return False
 
     protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
-    if protocol != "vless":
-        return False
-
     stream_settings = outbound.get("streamSettings")
     if isinstance(stream_settings, dict):
         network = str(stream_settings.get("network") or "").strip().lower()
-        if network == "raw" or "finalmask" in stream_settings:
+        # sing-box-extended accepts VMess + XHTTP configs, but its current
+        # client closes the stream before the destination TLS handshake with
+        # Xray-compatible VMess XHTTP servers. Keep working VLESS/Trojan XHTTP
+        # native and route only this combination through the Xray sidecar.
+        if protocol == "vmess" and network == "xhttp":
+            return True
+        if protocol == "vless" and (network == "raw" or "finalmask" in stream_settings):
             return True
     return False
 

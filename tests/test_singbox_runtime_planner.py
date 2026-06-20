@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from xray_fluent.engines.singbox.runtime_planner import (
+    classify_node_for_singbox,
     parse_singbox_document,
     plan_singbox_runtime,
 )
@@ -91,6 +92,38 @@ def _wireguard_node(server: str) -> Node:
     )
 
 
+def _xhttp_node(protocol: str) -> Node:
+    user = {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "encryption": "none",
+    }
+    if protocol == "vmess":
+        user = {"id": user["id"], "alterId": 0, "security": "auto"}
+    return Node(
+        scheme=protocol,
+        server="203.0.113.1",
+        port=443,
+        outbound={
+            "protocol": protocol,
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "203.0.113.1",
+                        "port": 443,
+                        "users": [user],
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "xhttp",
+                "security": "tls",
+                "tlsSettings": {"serverName": "server.example.com"},
+                "xhttpSettings": {"path": "/", "mode": "auto"},
+            },
+        },
+    )
+
+
 def _plan(routing: RoutingSettings, node: Node | None = None) -> dict:
     text = json.dumps(_base_config())
     document = parse_singbox_document(Path("test.json"), text)
@@ -132,6 +165,30 @@ def test_disabled_tls_fragment_is_not_added_to_tun_rules() -> None:
     ).singbox_config
 
     assert not any(rule.get("tls_record_fragment") for rule in config["route"]["rules"])
+
+
+def test_vmess_xhttp_uses_xray_sidecar_but_vless_xhttp_stays_native() -> None:
+    assert classify_node_for_singbox(_xhttp_node("vmess")) == "hybrid_xray_sidecar"
+    assert classify_node_for_singbox(_xhttp_node("vless")) == "native_singbox"
+
+
+def test_vmess_xhttp_hybrid_plan_preserves_original_xray_outbound() -> None:
+    text = json.dumps(_base_config())
+    document = parse_singbox_document(Path("test.json"), text)
+    plan = plan_singbox_runtime(
+        document,
+        _xhttp_node("vmess"),
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+        enable_final_fragment=False,
+    )
+
+    assert plan.is_hybrid
+    assert plan.xray_sidecar is not None
+    proxy = next(outbound for outbound in plan.singbox_config["outbounds"] if outbound.get("tag") == "proxy")
+    xray_proxy = next(outbound for outbound in plan.xray_sidecar.config["outbounds"] if outbound.get("tag") == "proxy")
+    assert proxy["type"] == "socks"
+    assert xray_proxy["protocol"] == "vmess"
+    assert xray_proxy["streamSettings"]["network"] == "xhttp"
 
 
 def test_system_dns_mode_uses_physical_adapter_dns_without_local_recursion() -> None:
