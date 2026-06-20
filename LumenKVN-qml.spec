@@ -64,7 +64,7 @@ a = Analysis(
     runtime_hooks=[],
     excludes=["qfluentwidgets"],
     noarchive=True,
-    optimize=0,
+    optimize=2,
 )
 pyz = PYZ(a.pure)
 

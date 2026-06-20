@@ -17,6 +17,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -219,7 +221,10 @@ def _pack_zip(path: Path) -> None:
     if path.exists():
         path.unlink()
     _print(f"Creating {path} ...")
-    shutil.make_archive(str(path.with_suffix("")), "zip", str(APP_DIR.parent), APP_DIR.name)
+    base = APP_DIR.parent
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+        for item in APP_DIR.rglob("*"):
+            zf.write(item, item.relative_to(base))
 
 
 def pack_portable_zip() -> None:
@@ -282,11 +287,27 @@ def main() -> int:
     clean()
     build_exe()
 
-    if not args.no_zip:
-        pack_portable_zip()
+    errors: list[BaseException] = []
 
+    def _guard(fn):
+        def wrapper():
+            try:
+                fn()
+            except BaseException as exc:
+                errors.append(exc)
+        return wrapper
+
+    threads = []
+    if not args.no_zip:
+        threads.append(threading.Thread(target=_guard(pack_portable_zip)))
     if not args.no_installer:
-        build_installer()
+        threads.append(threading.Thread(target=_guard(build_installer)))
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    if errors:
+        raise errors[0]
 
     _print("All done!")
     return 0

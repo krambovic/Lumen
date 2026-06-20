@@ -38,6 +38,7 @@ desktop.ini
 /docs/changelog
 /.agent
 /.codex
+/.codegraph
 CLAUDE.md
 AGENTS.md
 HANDOFF.md

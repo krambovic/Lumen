@@ -47,8 +47,24 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Cache venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
+
+      - name: Cache Inno Setup
+        id: cache-inno
+        uses: actions/cache@v4
+        with:
+          path: C:\Program Files (x86)\Inno Setup 6
+          key: innosetup-6
 
       - name: Install Inno Setup
+        if: steps.cache-inno.outputs.cache-hit != 'true'
         shell: pwsh
         run: choco install innosetup --yes --no-progress
 
@@ -116,7 +132,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: LumenKVN-portable
-          path: dist/LumenKVN/
+          path: dist/LumenKVN-portable-windows-x64.zip
 
       - name: Generate changelog
         shell: pwsh
