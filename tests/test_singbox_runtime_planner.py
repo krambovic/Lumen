@@ -114,23 +114,41 @@ def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults() -> None:
     inbound = _tun_inbound(config)
 
     assert inbound["interface_name"] == "singbox_tun"
-    assert inbound["address"] == ["172.18.0.1/30", "fdfe:dcba:9876::1/126"]
+    assert inbound["address"] == ["172.18.0.1/30"]
     assert inbound["mtu"] == 1280
     assert inbound["stack"] == "gvisor"
     assert inbound["auto_route"] is True
     assert inbound["strict_route"] is False
 
 
-def test_system_dns_mode_delegates_the_tun_peer_to_local_dns() -> None:
-    config = _plan(
-        RoutingSettings(
+def test_disabled_tls_fragment_is_not_added_to_tun_rules() -> None:
+    text = json.dumps(_base_config())
+    document = parse_singbox_document(Path("test.json"), text)
+    config = plan_singbox_runtime(
+        document,
+        _node(),
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+        enable_final_fragment=False,
+    ).singbox_config
+
+    assert not any(rule.get("tls_record_fragment") for rule in config["route"]["rules"])
+
+
+def test_system_dns_mode_uses_physical_adapter_dns_without_local_recursion() -> None:
+    text = json.dumps(_base_config())
+    document = parse_singbox_document(Path("test.json"), text)
+    config = plan_singbox_runtime(
+        document,
+        _node(),
+        routing=RoutingSettings(
             mode="global",
             dns_mode="system",
             dns_hijack_enabled=True,
             dns_fake_enabled=True,
             tun_default_outbound="proxy",
-        )
-    )
+        ),
+        system_dns_servers=("192.0.2.53",),
+    ).singbox_config
 
     rules = config["route"]["rules"]
     servers = _dns_servers(config)
@@ -138,10 +156,29 @@ def test_system_dns_mode_delegates_the_tun_peer_to_local_dns() -> None:
     assert [rule for rule in rules if rule.get("action") == "hijack-dns"] == [
         {"port": 53, "action": "hijack-dns"}
     ]
-    assert servers["bootstrap-dns"]["type"] == "local"
-    assert servers["direct-dns"]["type"] == "local"
-    assert servers["proxy-dns"]["type"] == "local"
+    for tag in ("bootstrap-dns", "direct-dns", "proxy-dns"):
+        assert servers[tag]["type"] == "udp"
+        assert servers[tag]["server"] == "192.0.2.53"
+        assert servers[tag]["detour"] == "direct"
     assert "fake-dns" not in servers
+
+
+def test_system_dns_mode_falls_back_to_explicit_bootstrap_server() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="system",
+            dns_bootstrap_server="1.1.1.1",
+            dns_bootstrap_type="udp",
+            tun_default_outbound="proxy",
+        )
+    )
+
+    servers = _dns_servers(config)
+
+    assert servers["proxy-dns"]["type"] == "udp"
+    assert servers["proxy-dns"]["server"] == "1.1.1.1"
+    assert servers["proxy-dns"]["detour"] == "direct"
 
 
 def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
@@ -229,8 +266,12 @@ def test_builtin_fake_dns_keeps_service_dns_rules_ahead_of_fakeip() -> None:
 
 @pytest.mark.parametrize("dns_type", ["udp", "tcp", "tls", "https"])
 def test_builtin_dns_uses_independent_resolver_for_dns_server_hostnames(dns_type: str) -> None:
-    config = _plan(
-        RoutingSettings(
+    text = json.dumps(_base_config())
+    document = parse_singbox_document(Path("test.json"), text)
+    config = plan_singbox_runtime(
+        document,
+        _node(),
+        routing=RoutingSettings(
             mode="global",
             dns_mode="builtin",
             dns_bootstrap_server="resolver.example.com",
@@ -238,12 +279,15 @@ def test_builtin_dns_uses_independent_resolver_for_dns_server_hostnames(dns_type
             dns_proxy_server="proxied-resolver.example.com",
             dns_proxy_type=dns_type,
             tun_default_outbound="proxy",
-        )
-    )
+        ),
+        system_dns_servers=("192.0.2.53",),
+    ).singbox_config
 
     servers = _dns_servers(config)
 
-    assert servers["system-dns"]["type"] == "local"
+    assert servers["system-dns"]["type"] == "udp"
+    assert servers["system-dns"]["server"] == "192.0.2.53"
+    assert servers["system-dns"]["detour"] == "direct"
     assert servers["bootstrap-dns"]["detour"] == "direct"
     assert servers["bootstrap-dns"]["domain_resolver"] == "system-dns"
     assert servers["direct-dns"]["detour"] == "direct"

@@ -768,6 +768,8 @@ class AppController(QObject):
     def _plan_runtime_singbox(self, node: Node | None = None) -> SingboxRuntimePlan:
         state = self._get_singbox_document_state()
         document = parse_singbox_document(state.source_path, state.text)
+        route_context = get_windows_default_route_context()
+        system_dns_servers = route_context.dns_servers if route_context is not None else ()
         preferred_relay_port = 0
         preferred_protect_port = 0
         preferred_protect_password = ""
@@ -791,6 +793,7 @@ class AppController(QObject):
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
+            system_dns_servers=system_dns_servers,
         )
 
     def _start_singbox_runtime_plan(self, plan: SingboxRuntimePlan) -> bool:

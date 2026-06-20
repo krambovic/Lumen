@@ -13,6 +13,7 @@ from ...subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_p
 @dataclass(slots=True)
 class WindowsDefaultRouteContext:
     interface_alias: str
+    dns_servers: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -30,10 +31,18 @@ def get_windows_default_route_context() -> WindowsDefaultRouteContext | None:
     if os.name != "nt":
         return None
     script = (
-        "$route = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' "
-        "| Sort-Object RouteMetric, InterfaceMetric | Select-Object -First 1; "
+        "$routes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue "
+        "| Where-Object { $_.NextHop -and $_.NextHop -ne '0.0.0.0' } "
+        "| Sort-Object RouteMetric, InterfaceMetric); "
+        "$route = $routes | Where-Object { "
+        "$alias = [string]$_.InterfaceAlias; $alias -notmatch '(?i)lumen|xftun|singbox|wintun|tun' "
+        "} | Select-Object -First 1; "
+        "if (-not $route) { $route = $routes | Select-Object -First 1 }; "
         "if (-not $route) { exit 1 }; "
-        "@{ interface_alias = $route.InterfaceAlias } | ConvertTo-Json -Compress"
+        "$dns = @(Get-DnsClientServerAddress -InterfaceIndex $route.InterfaceIndex -AddressFamily IPv4 "
+        "-ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses } "
+        "| Where-Object { $_ -match '^\\d{1,3}(\\.\\d{1,3}){3}$' }); "
+        "@{ interface_alias = $route.InterfaceAlias; dns_servers = $dns } | ConvertTo-Json -Compress"
     )
     try:
         result = run_text_pumped(
@@ -52,7 +61,11 @@ def get_windows_default_route_context() -> WindowsDefaultRouteContext | None:
     interface_alias = str(payload.get("interface_alias") or "").strip()
     if not interface_alias:
         return None
-    return WindowsDefaultRouteContext(interface_alias=interface_alias)
+    dns_raw = payload.get("dns_servers") or []
+    if isinstance(dns_raw, str):
+        dns_raw = [dns_raw]
+    dns_servers = tuple(str(item).strip() for item in dns_raw if str(item).strip())
+    return WindowsDefaultRouteContext(interface_alias=interface_alias, dns_servers=dns_servers)
 
 
 class XrayTunRouteManager(QObject):

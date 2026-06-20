@@ -140,6 +140,7 @@ def plan_singbox_runtime(
     preferred_relay_port: int = 0,
     preferred_protect_port: int = 0,
     preferred_protect_password: str = "",
+    system_dns_servers: tuple[str, ...] = (),
 ) -> SingboxRuntimePlan:
     runtime_config = deepcopy(document.payload)
     strip_singbox_proxy_inbounds(runtime_config)
@@ -148,6 +149,7 @@ def plan_singbox_runtime(
         runtime_config,
         routing=routing,
         enable_final_fragment=enable_final_fragment,
+        system_dns_servers=system_dns_servers,
     )
 
     outbounds = runtime_config.get("outbounds")
@@ -792,6 +794,7 @@ def _ensure_singbox_tun_runtime_contract(
     *,
     routing: RoutingSettings | None = None,
     enable_final_fragment: bool = True,
+    system_dns_servers: tuple[str, ...] = (),
 ) -> None:
     """Patch app-owned runtime fields for raw sing-box configs.
 
@@ -808,7 +811,7 @@ def _ensure_singbox_tun_runtime_contract(
                 continue
             has_tun = True
             inbound["interface_name"] = "singbox_tun"
-            inbound["address"] = ["172.18.0.1/30", "fdfe:dcba:9876::1/126"]
+            inbound["address"] = ["172.18.0.1/30"]
             inbound["mtu"] = 1280
             inbound["auto_route"] = True
             inbound["strict_route"] = False
@@ -829,7 +832,11 @@ def _ensure_singbox_tun_runtime_contract(
     use_builtin_dns = _singbox_uses_builtin_dns(routing)
     direct_strategy = _dns_strategy(routing.dns_bootstrap_strategy if routing is not None else "")
     route["default_domain_resolver"] = {"server": "bootstrap-dns", "strategy": direct_strategy}
-    _ensure_singbox_dns_runtime_contract(payload, routing=routing)
+    _ensure_singbox_dns_runtime_contract(
+        payload,
+        routing=routing,
+        system_dns_servers=system_dns_servers,
+    )
     rules = _ensure_list(route, "rules")
     _ensure_singbox_tun_base_rules(
         rules,
@@ -839,7 +846,12 @@ def _ensure_singbox_tun_runtime_contract(
     )
 
 
-def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any], *, routing: RoutingSettings | None = None) -> None:
+def _ensure_singbox_dns_runtime_contract(
+    payload: dict[str, Any],
+    *,
+    routing: RoutingSettings | None = None,
+    system_dns_servers: tuple[str, ...] = (),
+) -> None:
     dns = payload.get("dns")
     if not isinstance(dns, dict):
         dns = {}
@@ -859,8 +871,14 @@ def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any], *, routing: Ro
     if not isinstance(servers, list):
         servers = []
         dns["servers"] = servers
+    system_server = next((str(item).strip() for item in system_dns_servers if str(item).strip()), "")
+    if not system_server:
+        system_server = direct_server if not _is_domain_name(str(direct_server)) else "8.8.8.8"
+    system_type = "udp" if system_dns_servers or _is_domain_name(str(direct_server)) else direct_type
     if use_builtin_dns:
-        _replace_or_append_tagged(servers, "system-dns", {"tag": "system-dns", "type": "local"})
+        system_dns = _build_dns_server("system-dns", system_server, system_type, direct_strategy)
+        _set_dns_server_dial_contract(system_dns, detour="direct")
+        _replace_or_append_tagged(servers, "system-dns", system_dns)
         bootstrap_dns = _build_dns_server("bootstrap-dns", direct_server, direct_type, direct_strategy)
         _set_dns_server_dial_contract(bootstrap_dns, detour="direct")
         direct_dns = _build_dns_server("direct-dns", direct_server, direct_type, direct_strategy)
@@ -870,10 +888,17 @@ def _ensure_singbox_dns_runtime_contract(payload: dict[str, Any], *, routing: Ro
         proxy_dns = _build_dns_server("proxy-dns", proxy_server, proxy_type, proxy_strategy)
         _set_dns_server_dial_contract(proxy_dns, detour="proxy", resolver="bootstrap-dns")
     else:
-        system_dns = {"tag": "bootstrap-dns", "type": "local"}
-        _replace_or_append_tagged(servers, "bootstrap-dns", system_dns)
-        _replace_or_append_tagged(servers, "direct-dns", {"tag": "direct-dns", "type": "local"})
-        proxy_dns = {"tag": "proxy-dns", "type": "local"}
+        # A local resolver can recurse into the TUN adapter after Windows makes
+        # its virtual DNS peer primary. Pin system mode to the physical
+        # adapter's IPv4 DNS server captured before planning the runtime.
+        bootstrap_dns = _build_dns_server("bootstrap-dns", system_server, system_type, direct_strategy)
+        direct_dns = _build_dns_server("direct-dns", system_server, system_type, direct_strategy)
+        proxy_dns = _build_dns_server("proxy-dns", system_server, system_type, direct_strategy)
+        _set_dns_server_dial_contract(bootstrap_dns, detour="direct")
+        _set_dns_server_dial_contract(direct_dns, detour="direct")
+        _set_dns_server_dial_contract(proxy_dns, detour="direct")
+        _replace_or_append_tagged(servers, "bootstrap-dns", bootstrap_dns)
+        _replace_or_append_tagged(servers, "direct-dns", direct_dns)
     _replace_or_append_tagged(servers, "proxy-dns", proxy_dns)
     if fake_enabled:
         _replace_or_append_tagged(

@@ -456,15 +456,19 @@ class SingBoxManager(QObject):
         started = time.monotonic()
         script = (
             "$ErrorActionPreference = 'Stop'; "
-            "$answer = Resolve-DnsName -Name 'example.com' -Type A -DnsOnly -QuickTimeout "
+            "$answers = @(); "
+            "foreach ($name in @('2ip.ru', 'chatgpt.com')) { "
+            "$answer = Resolve-DnsName -Name $name -Type A -DnsOnly -QuickTimeout "
             "| Where-Object { $_.IPAddress } | Select-Object -First 1; "
-            "if ($answer) { Write-Output $answer.IPAddress; exit 0 } else { exit 1 }"
+            "if ($answer) { $answers += [string]$answer.IPAddress } "
+            "}; "
+            "if ($answers.Count -eq 2) { $answers -join ','; exit 0 } else { exit 1 }"
         )
-        self.log_received.emit("[tun] warming Windows direct DNS resolver...")
+        self.log_received.emit("[tun] warming direct and proxy DNS paths...")
         try:
             result = run_text_pumped(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                timeout=2,
+                timeout=5,
                 check=False,
                 creationflags=_CREATE_NO_WINDOW,
             )
