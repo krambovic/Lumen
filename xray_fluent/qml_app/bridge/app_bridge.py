@@ -13,7 +13,11 @@ Design goals:
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+import logging
 from pathlib import Path
+import socket
+import threading
 
 from PyQt6.QtCore import QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
@@ -26,15 +30,35 @@ from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
 from ...startup import is_process_elevated, relaunch_as_admin
-from .log_model import LogModel
+from .log_model import LogFilterModel, LogModel
 from .node_list_model import NodeListModel
 from .process_model import ProcessModel
 from ...i18n import active_map, available_languages, language_name, set_language, tr
+from ...log_utils import parse_log_line
+from ...process_conflicts import find_conflicting_network_apps
+
+
+class _ApplicationLogEmitter(QObject):
+    line = pyqtSignal(str)
+
+
+class _ApplicationLogHandler(logging.Handler):
+    def __init__(self, emitter: _ApplicationLogEmitter) -> None:
+        super().__init__(logging.WARNING)
+        self._emitter = emitter
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            source = record.name.rsplit(".", 1)[-1] or "app"
+            self._emitter.line.emit(f"[{source}] {self.format(record)}")
+        except Exception:
+            pass
 
 
 class AppBridge(QObject):
     # ── notification signals ─────────────────────────────────────
     toast = pyqtSignal(str, str)              # (level, message)
+    actionToast = pyqtSignal(str, str, str, str)  # level, message, action id, button label
     autoSwitch = pyqtSignal(str)              # (node name)
     bulkTaskProgress = pyqtSignal(str, int, int, bool)  # task, cur, total, done
     connectivityResult = pyqtSignal(bool, str, int)
@@ -62,6 +86,7 @@ class AppBridge(QObject):
     nodeImported = pyqtSignal(str)         # first newly imported node id
     quittingChanged = pyqtSignal()         # real-exit flag flipped on quit
     languageChanged = pyqtSignal()         # active UI language changed
+    conflictScanFinished = pyqtSignal(object)
 
     # Внутренний: запуск фоновой загрузки подписок (jobs, batch_id)
     _sub_fetch_run = pyqtSignal(object, int)
@@ -69,13 +94,19 @@ class AppBridge(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._node_model = NodeListModel(self)
-        self._log_model = LogModel(parent=self)
+        self._log_source_model = LogModel(parent=self)
+        self._log_model = LogFilterModel(self._log_source_model, parent=self)
         self._process_model = ProcessModel(self)
 
         # Reuse the existing backend untouched.
         self.controller = AppController(self)
         self.controller.resource_update_result.connect(self._on_resource_update_result)
         self.controller.resource_update_progress.connect(self._on_resource_update_progress)
+        self._application_log_emitter = _ApplicationLogEmitter(self)
+        self._application_log_emitter.line.connect(self._capture_application_log)
+        self._application_log_handler = _ApplicationLogHandler(self._application_log_emitter)
+        self._application_log_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        logging.getLogger("xray_fluent").addHandler(self._application_log_handler)
 
         # Фоновая загрузка подписок (ленивая инициализация потока).
         self._sub_thread: QThread | None = None
@@ -127,6 +158,13 @@ class AppBridge(QObject):
         )
 
         self._wire_controller()
+        self.conflictScanFinished.connect(self._warn_about_conflicting_apps)
+
+    def _capture_application_log(self, line: str) -> None:
+        self.controller.recent_logs.append(line)
+        if len(self.controller.recent_logs) > 5000:
+            self.controller.recent_logs = self.controller.recent_logs[-5000:]
+        self._log_source_model.append_line(line)
 
     # ── lifecycle ──────────────────────────────────────────
     def load(self) -> None:
@@ -160,6 +198,7 @@ class AppBridge(QObject):
                 QTimer.singleShot(3000, self._on_sub_auto_update)
         except Exception:
             pass
+        QTimer.singleShot(1800, self._start_conflict_scan)
 
     def shutdown(self) -> None:
         try:
@@ -178,6 +217,10 @@ class AppBridge(QObject):
             self._sub_worker = None
         try:
             self.controller.shutdown()
+        except Exception:
+            pass
+        try:
+            logging.getLogger("xray_fluent").removeHandler(self._application_log_handler)
         except Exception:
             pass
 
@@ -378,7 +421,7 @@ class AppBridge(QObject):
         c.subscriptions_changed.connect(self._on_subscriptions_changed)
         c.transition_state_changed.connect(self._on_transition)
         c.status.connect(self._on_status_message)
-        c.log_line.connect(self._log_model.append_line)
+        c.log_line.connect(self._log_source_model.append_line)
         c.ping_updated.connect(self._on_ping)
         c.speed_updated.connect(self._on_speed)
         c.speed_progress_updated.connect(self._node_model.update_speed_progress)
@@ -458,7 +501,38 @@ class AppBridge(QObject):
         return message
 
     def _on_status_message(self, level: str, message: str) -> None:
-        self.toast.emit(level, self._localized_backend_message(message))
+        localized = self._localized_backend_message(message)
+        if level in {"error", "warning"}:
+            recent = self.controller.recent_logs[-3:]
+            if not any(localized in item for item in recent):
+                self.controller._log(f"[app-{level}] {localized}")
+            entry = parse_log_line(localized)
+            if entry.action_id:
+                self.actionToast.emit(level, entry.message + "\n" + entry.details.split(". ", 1)[0] + ".", entry.action_id, tr(entry.action_label))
+                return
+            if entry.message != entry.details:
+                self.toast.emit(level, entry.message + "\n" + entry.details.split(". ", 1)[0] + ".")
+                return
+        self.toast.emit(level, localized)
+
+    def _start_conflict_scan(self) -> None:
+        threading.Thread(
+            target=lambda: self.conflictScanFinished.emit(find_conflicting_network_apps()),
+            name="network-app-conflict-scan",
+            daemon=True,
+        ).start()
+
+    def _warn_about_conflicting_apps(self, conflicts: object) -> None:
+        conflicts = list(conflicts or [])
+        if not conflicts:
+            return
+        names = ", ".join(conflicts[:4])
+        message = tr(
+            "Обнаружены другие VPN/прокси-приложения: {names}. Они могут занять локальные порты или изменить маршруты. Закройте их, если Lumen KVN не подключается.",
+            names=names,
+        )
+        self.controller._log(f"[warning] {message}")
+        self.toast.emit("warning", message)
 
     # ── controller -> QML slots ─────────────────────────────────
     def _on_nodes_changed(self, nodes: list[Node]) -> None:
@@ -2186,6 +2260,62 @@ class AppBridge(QObject):
     @pyqtSlot()
     def clearLogs(self) -> None:
         self._log_model.clear()
+
+    @pyqtSlot(str)
+    def setLogLevelFilter(self, value: str) -> None:
+        self._log_model.setLevelFilter(value)
+
+    @pyqtSlot(str)
+    def setLogSearch(self, value: str) -> None:
+        self._log_model.setSearchText(value)
+
+    @staticmethod
+    def _find_free_local_port(start: int, excluded: set[int]) -> int:
+        for port in range(max(1024, start), 65535):
+            if port in excluded:
+                continue
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                try:
+                    probe.bind(("127.0.0.1", port))
+                except OSError:
+                    continue
+            return port
+        raise RuntimeError("Не удалось найти свободный локальный порт")
+
+    @pyqtSlot(str)
+    def runToastAction(self, action_id: str) -> None:
+        if not action_id.startswith("change-port:"):
+            return
+        try:
+            occupied = int(action_id.split(":", 1)[1])
+            path, text = self.controller.load_active_xray_config_text()
+            payload = json.loads(text)
+            inbounds = payload.get("inbounds")
+            if not isinstance(inbounds, list):
+                raise RuntimeError("В активном Xray-конфиге нет локальных входящих портов")
+            used = {
+                int(item.get("port"))
+                for item in inbounds
+                if isinstance(item, dict) and isinstance(item.get("port"), int)
+            }
+            new_port = self._find_free_local_port(occupied + 1, used)
+            changed = False
+            for inbound in inbounds:
+                if isinstance(inbound, dict) and inbound.get("port") == occupied:
+                    inbound["port"] = new_port
+                    changed = True
+            if not changed:
+                raise RuntimeError(f"Порт {occupied} не найден в активном Xray-конфиге")
+            self.controller.save_xray_config_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), path
+            )
+            self.controller._log(f"[proxy] Локальный порт автоматически изменён: {occupied} -> {new_port}")
+            if self.controller.connected or getattr(self.controller, "_desired_connected", False):
+                self.controller._request_transition("local proxy port changed")
+            self.toast.emit("success", tr("Порт изменён: {old} → {new}", old=occupied, new=new_port))
+        except Exception as exc:
+            self.controller._log(f"[app-error] Не удалось автоматически сменить порт: {exc}")
+            self.toast.emit("error", tr("Не удалось сменить порт: {error}", error=exc))
 
     @pyqtSlot(str)
     def testConnectivity(self, url: str) -> None:

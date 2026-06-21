@@ -7,7 +7,7 @@ import "."
 Item {
     id: page
 
-    property string filterText: ""
+    property string activeLevel: "all"
 
     // Scroll the log list to the newest entry. Defined as a named function so
     // it can be handed to Qt.callLater: passing logList.positionViewAtEnd
@@ -56,7 +56,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontNormal
                 selectByMouse: true
-                onTextChanged: page.filterText = text
+                onTextChanged: App.setLogSearch(text)
                 background: Rectangle {
                     radius: Theme.radiusSmall
                     color: Theme.card
@@ -70,6 +70,29 @@ Item {
                 kind: "accent"
                 onClicked: { if (typeof App.exportDiagnostics === "function") App.exportDiagnostics(); }
             }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+            Repeater {
+                model: [
+                    { key: "all", title: I18n.t("Все") },
+                    { key: "error", title: I18n.t("Ошибки") },
+                    { key: "warning", title: I18n.t("Предупреждения") },
+                    { key: "info", title: I18n.t("События") }
+                ]
+                delegate: AccentButton {
+                    required property var modelData
+                    kind: page.activeLevel === modelData.key ? "accent" : "ghost"
+                    text: modelData.title
+                    onClicked: {
+                        page.activeLevel = modelData.key
+                        App.setLogLevelFilter(modelData.key)
+                    }
+                }
+            }
+            Item { Layout.fillWidth: true }
         }
 
         Text {
@@ -100,23 +123,56 @@ Item {
                 // Open the tab already scrolled to the newest line.
                 Component.onCompleted: Qt.callLater(page.scrollLogsToBottom)
 
-                delegate: Row {
+                delegate: Rectangle {
                     width: logList.width
-                    spacing: 8
-                    visible: page.filterText === "" || line.toLowerCase().indexOf(page.filterText.toLowerCase()) >= 0
-                    height: visible ? lineText.implicitHeight : 0
+                    height: logContent.implicitHeight + 12
+                    color: index % 2 === 0 ? "transparent" : Theme.card
+                    radius: Theme.radiusSmall
                     Rectangle {
-                        width: 3; height: lineText.implicitHeight
+                        width: 3; height: parent.height - 8
+                        anchors.left: parent.left
+                        anchors.leftMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        radius: 2
                         color: page.levelColor(level)
                     }
-                    Text {
-                        id: lineText
-                        width: parent.width - 11
-                        text: line
-                        color: Theme.textMuted
-                        font.family: "Consolas, 'Courier New', monospace"
-                        font.pixelSize: Theme.fontSmall
-                        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                    ColumnLayout {
+                        id: logContent
+                        anchors.left: parent.left
+                        anchors.leftMargin: 15
+                        anchors.right: parent.right
+                        anchors.rightMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 2
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Text { text: time; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            Text { text: source; color: page.levelColor(level); font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold }
+                            Text {
+                                Layout.fillWidth: true
+                                text: line
+                                color: Theme.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontNormal
+                                wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                            }
+                            AccentButton {
+                                visible: actionId.length > 0
+                                text: I18n.t(actionLabel)
+                                kind: "ghost"
+                                onClicked: App.runToastAction(actionId)
+                            }
+                        }
+                        Text {
+                            visible: details.length > 0 && details !== line
+                            Layout.fillWidth: true
+                            text: details
+                            color: Theme.textMuted
+                            font.family: "Consolas, 'Courier New', monospace"
+                            font.pixelSize: Theme.fontSmall
+                            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                        }
                     }
                 }
 

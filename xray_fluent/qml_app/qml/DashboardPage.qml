@@ -145,6 +145,63 @@ FluentScroll {
                             Text { text: App.proxyEnabled ? I18n.t("Вкл") : I18n.t("Выкл"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                         }
                         Item { Layout.fillWidth: true }
+                        Rectangle {
+                            width: 28; height: 28; radius: 14
+                            color: modeHelpHover.hovered ? Theme.cardHover : Theme.controlFill
+                            border.width: 1; border.color: Theme.borderSolid
+                            Text {
+                                anchors.centerIn: parent
+                                text: "?"
+                                color: Theme.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontNormal
+                                font.weight: Font.Bold
+                            }
+                            HoverHandler { id: modeHelpHover }
+                            TapHandler { onTapped: modeHelp.open() }
+                            ToolTip.visible: modeHelpHover.hovered
+                            ToolTip.text: I18n.t("Чем отличаются TUN и системный прокси")
+                        }
+                    }
+                    Popup {
+                        id: modeHelp
+                        width: Math.min(460, page.width - 48)
+                        padding: 16
+                        modal: false
+                        focus: true
+                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                        background: Rectangle {
+                            color: Theme.flyout
+                            border.width: 1
+                            border.color: Theme.flyoutBorder
+                            radius: Theme.radius
+                        }
+                        contentItem: ColumnLayout {
+                            spacing: 10
+                            Text {
+                                text: I18n.t("Системный прокси")
+                                color: Theme.text; font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: I18n.t("Работает с браузерами, мессенджерами и приложениями, которые используют настройки прокси Windows. Обычно запускается быстрее, но чаще не действует в играх и программах без поддержки прокси.")
+                                color: Theme.textMuted; font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontNormal; wrapMode: Text.WordWrap
+                            }
+                            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
+                            Text {
+                                text: "VPN (TUN)"
+                                color: Theme.text; font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: I18n.t("Перехватывает трафик почти всех приложений, включая игры, и применяет правила маршрутизации на уровне системы. Требует прав администратора и запускается немного дольше.")
+                                color: Theme.textMuted; font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontNormal; wrapMode: Text.WordWrap
+                            }
+                        }
                     }
                     // start / stop
                     AccentButton {

@@ -25,12 +25,20 @@ Item {
     Connections {
         target: App
         function onToast(level, message) { host.show(message, level); }
+        function onActionToast(level, message, actionId, actionLabel) {
+            host.show(message, level, actionId, actionLabel);
+        }
     }
 
-    function show(message, kind) {
+    function show(message, kind, actionId, actionLabel) {
         if (!message || message.length === 0)
             return;
-        toastModel.append({ message: message, kind: kind || "info" });
+        toastModel.append({
+            message: message,
+            kind: kind || "info",
+            actionId: actionId || "",
+            actionLabel: actionLabel || ""
+        });
     }
 
     ListModel { id: toastModel }
@@ -48,6 +56,8 @@ Item {
                 id: toast
                 required property string message
                 required property string kind
+                required property string actionId
+                required property string actionLabel
                 required property int index
 
                 Layout.alignment: Qt.AlignRight
@@ -55,7 +65,7 @@ Item {
                 color: Theme.flyout
                 border.width: 1
                 border.color: Theme.flyoutBorder
-                implicitWidth: Math.min(360, row.implicitWidth + 28)
+                implicitWidth: Math.min(420, row.implicitWidth + 28)
                 implicitHeight: row.implicitHeight + 20
 
                 opacity: 0
@@ -91,6 +101,15 @@ Item {
                         font.pixelSize: Theme.fontNormal
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
+                    }
+                    AccentButton {
+                        visible: toast.actionId.length > 0
+                        text: toast.actionLabel
+                        kind: "accent"
+                        onClicked: {
+                            App.runToastAction(toast.actionId)
+                            disappear.start()
+                        }
                     }
                 }
             }

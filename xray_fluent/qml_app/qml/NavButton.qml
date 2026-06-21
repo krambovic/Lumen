@@ -24,7 +24,6 @@ Item {
         color: root.selected ? Theme.accentSoft
                : tap.hovered ? Theme.cardHover : "transparent"
         Behavior on color { ColorAnimation { duration: Theme.animations ? 130 : 0; easing.type: Theme.easeStandard } }
-        Behavior on width { NumberAnimation { duration: Theme.animations ? 170 : 0; easing.type: Theme.easeEmphasized } }
 
         Rectangle {
             width: 3; radius: 1.5

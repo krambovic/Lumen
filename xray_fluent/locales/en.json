@@ -611,7 +611,6 @@
   "Проверьте раздел dns.servers: ": "Check the dns.servers section: ",
   "Текущий сервер нельзя конвертировать в native sing-box outbound: ": "The current server can't be converted to a native sing-box outbound: ",
   "ChatGPT, OpenAI, CDN и авторизация": "ChatGPT, OpenAI, CDN and authorization",
-  "Max.ru и поддомены": "Max.ru and subdomains",
   "Roblox, rbxcdn и зеркала": "Roblox, rbxcdn and mirrors",
   "Rutor и зеркала": "Rutor and mirrors",
   "RuTracker и зеркала": "RuTracker and mirrors",
@@ -733,5 +732,17 @@
   "Потоки задают, сколько запросов можно вести внутри одного мультиплексированного соединения.": "Streams define how many requests can run inside one multiplexed connection.",
   "DNS:\nСистемный DNS — домены резолвит Windows или само приложение.\nВстроенный DNS — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.\n\nПоведение ниже показывает, что именно будет идти через VPN/прокси, напрямую или по текущему пресету.": "DNS:\nSystem DNS — domains are resolved by Windows or the app itself.\nBuilt-in DNS — DNS goes through Lumen/sing-box and follows direct/proxy/fake DNS rules.\n\nThe behavior section below shows what will go through VPN/proxy, direct, or by the current preset.",
   "Поведение:\n«Всё через VPN» отправляет весь трафик через сервер.\n«По моим правилам» использует ваши правила по приложениям, сервисам, доменам и IP.\n«Без VPN по умолчанию» пускает трафик напрямую, кроме явно указанных исключений.\n\nСервисы:\n«По пресету» — убрать ручное правило и снова доверить сервис текущему пресету.\n«Прокси» — всегда вести сервис через VPN/прокси, даже если общий режим прямой.\n«Прямой» — всегда вести сервис напрямую, даже если общий режим «Всё через VPN».\n\nПравила по приложениям работают только в режиме TUN.": "Behavior:\n\"Everything through VPN\" sends all traffic through the server.\n\"My rules\" uses your app, service, domain, and IP rules.\n\"No VPN by default\" sends traffic directly except explicit exceptions.\n\nServices:\n\"By preset\" removes the manual rule and lets the current preset decide again.\n\"Proxy\" always sends the service through VPN/proxy, even when the global mode is direct.\n\"Direct\" always sends the service directly, even when the global mode is \"Everything through VPN\".\n\nApplication rules work only in TUN mode.",
-  "DNS:\nСистемный DNS — домены резолвит Windows или само приложение.\nВстроенный DNS — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.": "DNS:\nSystem DNS — domains are resolved by Windows or the app itself.\nBuilt-in DNS — DNS goes through Lumen/sing-box and follows direct/proxy/fake DNS rules."
+  "DNS:\nСистемный DNS — домены резолвит Windows или само приложение.\nВстроенный DNS — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.": "DNS:\nSystem DNS — domains are resolved by Windows or the app itself.\nBuilt-in DNS — DNS goes through Lumen/sing-box and follows direct/proxy/fake DNS rules.",
+  "Все": "All",
+  "Ошибки": "Errors",
+  "Предупреждения": "Warnings",
+  "События": "Events",
+  "Сменить порт": "Change port",
+  "Чем отличаются TUN и системный прокси": "Difference between TUN and system proxy",
+  "Системный прокси": "System proxy",
+  "Работает с браузерами, мессенджерами и приложениями, которые используют настройки прокси Windows. Обычно запускается быстрее, но чаще не действует в играх и программах без поддержки прокси.": "Works with browsers, messengers, and applications that use Windows proxy settings. It usually starts faster, but often does not affect games or apps without proxy support.",
+  "Перехватывает трафик почти всех приложений, включая игры, и применяет правила маршрутизации на уровне системы. Требует прав администратора и запускается немного дольше.": "Captures traffic from almost all applications, including games, and applies routing rules system-wide. It requires administrator rights and takes slightly longer to start.",
+  "Обнаружены другие VPN/прокси-приложения: {names}. Они могут занять локальные порты или изменить маршруты. Закройте их, если Lumen KVN не подключается.": "Other VPN/proxy applications were detected: {names}. They may occupy local ports or change routes. Close them if Lumen KVN cannot connect.",
+  "Порт изменён: {old} → {new}": "Port changed: {old} → {new}",
+  "Не удалось сменить порт: {error}": "Could not change port: {error}"
 }

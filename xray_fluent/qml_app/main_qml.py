@@ -51,9 +51,20 @@ def _install_message_filter() -> None:
         ):
             return
         try:
-            sys.stderr.write(text + "\n")
+            import logging
+
+            logger = logging.getLogger("xray_fluent.qt")
+            if msg_type in (QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg):
+                logger.error(text)
+            elif msg_type == QtMsgType.QtWarningMsg:
+                logger.warning(text)
+            else:
+                logger.debug(text)
         except Exception:
-            pass
+            try:
+                sys.stderr.write(text + "\n")
+            except Exception:
+                pass
 
     qInstallMessageHandler(_handler)
 

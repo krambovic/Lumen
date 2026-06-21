@@ -97,8 +97,12 @@ ApplicationWindow {
             width: win.railVisualWidth
             height: parent.height
             clip: true
-            color: "transparent"
+            color: Theme.bgElevated
+            border.width: win.navExpanded ? 1 : 0
+            border.color: Theme.divider
             z: 2
+            layer.enabled: win.railAnimating
+            layer.smooth: true
 
             ColumnLayout {
                 width: Theme.railWidth
@@ -120,7 +124,6 @@ ApplicationWindow {
                         radius: Theme.radiusSmall
                         color: burgerHover.hovered ? Theme.cardHover : "transparent"
                         Behavior on color { ColorAnimation { duration: Theme.animations ? 130 : 0; easing.type: Theme.easeStandard } }
-                        Behavior on width { NumberAnimation { duration: Theme.animations ? 170 : 0; easing.type: Theme.easeEmphasized } }
                         Text {
                             text: "\uE700"  // GlobalNavButton
                             font.family: win.iconFont
@@ -184,9 +187,12 @@ ApplicationWindow {
         // edges, leaving just the top-left curve visible (mirrors FluentWindow).
         Item {
             id: contentHost
-            x: win.railVisualWidth
+            // Keep the expensive page tree at a stable size. The navigation
+            // pane expands over it, so opening the menu animates one clipped
+            // layer instead of relaying out every visible page on every frame.
+            x: Theme.railWidthCompact
             y: 0
-            width: Math.max(0, parent.width - win.railVisualWidth)
+            width: Math.max(0, parent.width - Theme.railWidthCompact)
             height: parent.height
             clip: true
             z: 1

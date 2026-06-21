@@ -154,6 +154,8 @@ from .constants import (
 )
 from .diagnostics import export_diagnostics
 from .discord_proxy_manager import DiscordProxyManager
+from .live_metrics_worker import LiveMetricsWorker
+from .log_utils import clean_log_text
 from .models import AppSettings, AppState, Node, RoutingSettings
 from .network_monitor import NetworkMonitor
 from .proxy_manager import ProxyManager
@@ -169,7 +171,6 @@ if TYPE_CHECKING:
     from .country_flags import CountryResolver as CountryResolverType
     from .connectivity_test import ConnectivityTestWorker
     from .engines.xray import XrayCoreUpdateResult, XrayCoreUpdateWorker
-    from .live_metrics_worker import LiveMetricsWorker
     from .ping_worker import PingWorker
     from .speed_test_worker import SpeedTestWorker
 
@@ -328,17 +329,17 @@ class AppController(QObject):
         self._transition_generation = 0
         self._blocked_transition_signature = ""
 
-        self.xray.log_received.connect(self._on_xray_log)
+        self.xray.log_received.connect(lambda line: self._on_core_log("xray", line))
         self.xray.error.connect(self._on_xray_error)
         self.xray.state_changed.connect(self._on_core_state_changed)
         self.xray.stopped.connect(lambda code: self._on_core_stopped("xray", code))
 
-        self.singbox.log_received.connect(self._on_xray_log)
+        self.singbox.log_received.connect(lambda line: self._on_core_log("singbox", line))
         self.singbox.error.connect(self._on_singbox_error)
         self.singbox.state_changed.connect(self._on_core_state_changed)
         self.singbox.stopped.connect(lambda code: self._on_core_stopped("singbox", code))
 
-        self._xray_tun_routes.log_received.connect(self._on_xray_log)
+        self._xray_tun_routes.log_received.connect(lambda line: self._on_core_log("tun", line))
 
         self.network_monitor.network_changed.connect(self._on_network_changed)
 
@@ -1588,6 +1589,9 @@ class AppController(QObject):
 
     def _log(self, line: str) -> None:
         """Send a log line to the UI and write it to the log file."""
+        line = clean_log_text(line)
+        if not line:
+            return
         self.recent_logs.append(line)
         if len(self.recent_logs) > 5000:
             self.recent_logs = self.recent_logs[-5000:]
@@ -1605,6 +1609,15 @@ class AppController(QObject):
                 self.log_line.emit(f"[tun] {self._tun_log_count} connections routed...")
             return
         self._log(line)
+
+    def _on_core_log(self, source: str, line: str) -> None:
+        clean = str(line or "").strip()
+        if not clean:
+            return
+        if clean.lower().startswith(("[tun]", "[xray]", "[singbox]", "[xray-tun]")):
+            self._on_xray_log(clean)
+        else:
+            self._on_xray_log(f"[{source}] {clean}")
 
     @staticmethod
     def _is_noisy_tun_log(line: str) -> bool:
