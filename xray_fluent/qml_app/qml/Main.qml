@@ -97,7 +97,9 @@ ApplicationWindow {
             width: win.railVisualWidth
             height: parent.height
             clip: true
-            color: Theme.bgElevated
+            // The pane overlays the page while it animates, so its surface
+            // must be opaque. A translucent layer lets page text bleed through.
+            color: Theme.bg
             border.width: win.navExpanded ? 1 : 0
             border.color: Theme.divider
             z: 2
@@ -196,6 +198,15 @@ ApplicationWindow {
             height: parent.height
             clip: true
             z: 1
+            transform: Translate {
+                x: win.navExpanded ? Theme.railWidth - Theme.railWidthCompact : 0
+                Behavior on x {
+                    NumberAnimation {
+                        duration: Theme.animations ? 155 : 0
+                        easing.type: Easing.OutCubic
+                    }
+                }
+            }
 
             Rectangle {
                 id: contentWindow
