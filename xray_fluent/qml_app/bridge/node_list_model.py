@@ -15,6 +15,7 @@ from PyQt6.QtCore import QAbstractListModel, QModelIndex, Qt, pyqtSlot
 from ...models import Node
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri, _STRIPES as _FLAG_STRIPES
 from ...application.node_runtime_service import is_native_singbox_only_node
+from ...node_transport import node_transport
 
 
 class NodeListModel(QAbstractListModel):
@@ -38,6 +39,7 @@ class NodeListModel(QAbstractListModel):
     RuntimeSupportedRole = Qt.ItemDataRole.UserRole + 17
     FlagEmojiRole = Qt.ItemDataRole.UserRole + 18
     FlagSourceRole = Qt.ItemDataRole.UserRole + 19
+    TransportRole = Qt.ItemDataRole.UserRole + 20
 
     _ROLE_NAMES = {
         IdRole: b"nodeId",
@@ -59,6 +61,7 @@ class NodeListModel(QAbstractListModel):
         RuntimeSupportedRole: b"runtimeSupported",
         FlagEmojiRole: b"flagEmoji",
         FlagSourceRole: b"flagSource",
+        TransportRole: b"transport",
     }
 
     def __init__(self, parent=None) -> None:
@@ -89,6 +92,8 @@ class NodeListModel(QAbstractListModel):
             return node.name or node.server or "(\u0431\u0435\u0437 \u0438\u043c\u0435\u043d\u0438)"
         if role == self.SchemeRole:
             return (node.scheme or "").upper()
+        if role == self.TransportRole:
+            return node_transport(node)
         if role == self.ServerRole:
             return node.server or ""
         if role == self.PortRole:
@@ -226,6 +231,7 @@ class NodeListModel(QAbstractListModel):
                 "server": node.server or "",
                 "group": node.group or "",
                 "tags": list(node.tags or []),
+                "transport": node_transport(node),
             }
         return None
 

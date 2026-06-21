@@ -27,8 +27,8 @@ Item {
 
     readonly property var groupModel: [I18n.t("Все группы")].concat(App.groupOptions)
     readonly property var tagModel: [I18n.t("Все теги")].concat(App.tagOptions)
-    readonly property var sortLabels: [I18n.t("Вручную"), I18n.t("Имя"), I18n.t("Группа"), I18n.t("Тип"), I18n.t("Пинг"), I18n.t("Скорость"), I18n.t("Последнее использование")]
-    readonly property var sortKeys: ["manual", "name", "group", "scheme", "ping", "speed", "last"]
+    readonly property var sortLabels: [I18n.t("Вручную"), I18n.t("Имя"), I18n.t("Группа"), I18n.t("Тип"), I18n.t("Транспорт"), I18n.t("Пинг"), I18n.t("Скорость"), I18n.t("Последнее использование")]
+    readonly property var sortKeys: ["manual", "name", "group", "scheme", "transport", "ping", "speed", "last"]
 
     // ── sizing ───────────────────────────────
     // Closer to the original compact rows (was 36/44).
@@ -37,6 +37,7 @@ Item {
 
     // Fixed-width columns.
     readonly property int colType: 78
+    readonly property int colTransport: 92
     readonly property int colPort: 60
     readonly property int colGroup: 120
     readonly property int colTags: 150
@@ -51,7 +52,7 @@ Item {
     readonly property int colNameMin: 160
     readonly property int colAddrMin: 150
 
-    readonly property int fixedCols: colType + colPort + colGroup + colTags
+    readonly property int fixedCols: colType + colTransport + colPort + colGroup + colTags
         + colPing + colSpeed + colStatus + colLast
     readonly property int minTableWidth: fixedCols + colNameMin + colAddrMin + leftPad + trailPad
 
@@ -476,6 +477,7 @@ Item {
                             anchors.leftMargin: page.leftPad
                             HeaderLabel { w: page.colName; text: I18n.t("Сервер"); sortKey: "name" }
                             HeaderLabel { w: page.colType; text: I18n.t("Тип"); sortKey: "scheme" }
+                            HeaderLabel { w: page.colTransport; text: I18n.t("Транспорт"); sortKey: "transport" }
                             HeaderLabel { w: page.colAddr; text: I18n.t("Адрес") }
                             HeaderLabel { w: page.colPort; text: I18n.t("Порт") }
                             HeaderLabel { w: page.colGroup; text: I18n.t("Группа"); sortKey: "group" }
@@ -539,6 +541,7 @@ Item {
                             required property string nodeId
                             required property string name
                             required property string scheme
+                            required property string transport
                             required property string server
                             required property int port
                             required property string group
@@ -769,6 +772,7 @@ Item {
                                 }
 
                                 CellText { w: page.colType; text: nodeRow.scheme }
+                                CellText { w: page.colTransport; text: nodeRow.transport }
                                 CellText { w: page.colAddr; text: nodeRow.server; color: Theme.text }
                                 CellText { w: page.colPort; text: nodeRow.port > 0 ? ("" + nodeRow.port) : "—" }
                                 CellText { w: page.colGroup; text: nodeRow.group || "—" }

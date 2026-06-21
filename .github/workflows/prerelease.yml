@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Determine version
         shell: pwsh
@@ -68,7 +68,30 @@ jobs:
         shell: pwsh
         run: choco install innosetup --yes --no-progress
 
+      - name: Resolve core releases
+        id: core-releases
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; "User-Agent" = "Lumen-KVN-CI" }
+          $xray = Invoke-RestMethod "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=30" -Headers $headers |
+            Where-Object { -not $_.draft -and $_.tag_name -match '^v?\d+\.\d+\.\d+' } |
+            Sort-Object { [version](([regex]::Matches($_.tag_name, '\d+') | ForEach-Object Value)[0..2] -join '.') } -Descending |
+            Select-Object -First 1
+          $singbox = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest" -Headers $headers
+          $geodata = Invoke-RestMethod "https://api.github.com/repos/runetfreedom/russia-v2ray-rules-dat/releases/latest" -Headers $headers
+          "cache-key=$($xray.id)-$($singbox.id)-$($geodata.id)-wintun-0.14.1" >> $env:GITHUB_OUTPUT
+
+      - name: Cache core binaries
+        id: cache-cores
+        uses: actions/cache@v4
+        with:
+          path: core
+          key: cores-${{ runner.os }}-${{ steps.core-releases.outputs.cache-key }}
+
       - name: Download core binaries
+        if: steps.cache-cores.outputs.cache-hit != 'true'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

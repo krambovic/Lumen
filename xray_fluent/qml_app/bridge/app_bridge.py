@@ -24,6 +24,7 @@ from ...application.node_runtime_service import is_native_singbox_only_node, nat
 from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
+from ...node_transport import node_transport
 from ...startup import is_process_elevated, relaunch_as_admin
 from .log_model import LogModel
 from .node_list_model import NodeListModel
@@ -475,6 +476,7 @@ class AppBridge(QObject):
                 or text in (n.server or "").lower()
                 or text in (n.group or "").lower()
                 or text in " ".join(n.tags or []).lower()
+                or text in node_transport(n).lower()
             ):
                 continue
             result.append(n)
@@ -489,6 +491,8 @@ class AppBridge(QObject):
             items.sort(key=lambda n: (n.group or "").lower())
         elif key == "scheme":
             items.sort(key=lambda n: (n.scheme or "").lower())
+        elif key == "transport":
+            items.sort(key=lambda n: node_transport(n).lower())
         elif key == "ping":
             items.sort(key=lambda n: (n.ping_ms is None, n.ping_ms if n.ping_ms is not None else 1e12))
         elif key == "speed":
