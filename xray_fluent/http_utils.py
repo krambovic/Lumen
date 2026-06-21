@@ -8,12 +8,19 @@ from urllib.request import Request
 
 
 def _make_ssl_context() -> ssl.SSLContext:
-    """Create an SSL context tolerant of abrupt server-side connection closes.
+    """Create a verified SSL context backed by the native Windows trust store.
 
-    OpenSSL 3.x raises UNEXPECTED_EOF_WHILE_READING when the remote
-    doesn't send close_notify.  Setting OP_IGNORE_UNEXPECTED_EOF avoids that.
+    PyInstaller's embedded OpenSSL does not always see locally installed root
+    certificates (for example antivirus HTTPS inspection certificates).
+    ``truststore`` delegates validation to the operating system and keeps the
+    same strict hostname and certificate checks as the standard context.
     """
-    ctx = ssl.create_default_context()
+    try:
+        import truststore
+
+        ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except (ImportError, RuntimeError):
+        ctx = ssl.create_default_context()
     # Available since OpenSSL 3.0 / Python 3.10+
     if hasattr(ssl, "OP_IGNORE_UNEXPECTED_EOF"):
         ctx.options |= ssl.OP_IGNORE_UNEXPECTED_EOF
