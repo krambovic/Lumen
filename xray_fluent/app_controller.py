@@ -159,6 +159,7 @@ from .log_utils import clean_log_text
 from .models import AppSettings, AppState, Node, RoutingSettings
 from .network_monitor import NetworkMonitor
 from .proxy_manager import ProxyManager
+from .process_conflicts import scan_network_conflicts
 from .routing_presets import build_routing_preset
 from .security import create_password_hash, get_idle_seconds, verify_password
 from .storage import PassphraseRequired, StateStorage
@@ -1366,6 +1367,18 @@ class AppController(QObject):
 
     def set_discord_proxy_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
+        if enabled:
+            snapshot = scan_network_conflicts({DEFAULT_SOCKS_PORT, DEFAULT_HTTP_PORT, DEFAULT_DISCORD_SOCKS_PORT})
+            conflicts = list(snapshot.get("apps") or [])
+            if conflicts or snapshot.get("unknown_client"):
+                name = ", ".join(conflicts[:4]) if conflicts else "другой VPN/прокси-клиент"
+                self.status.emit(
+                    "error",
+                    "Нельзя включить Discord Voice одновременно с другим VPN/прокси-клиентом: "
+                    + name
+                    + ". Отключите или закройте его.",
+                )
+                return
         if self.state.settings.discord_proxy_enabled == enabled:
             return
         settings = deepcopy(self.state.settings)

@@ -13,6 +13,7 @@ from ..engines.xray import (
     restart_proxy_core as restart_xray_proxy_core,
     start_proxy as start_xray_proxy,
 )
+from ..process_conflicts import scan_network_conflicts
 from .server_preflight import validate_server_preflight
 
 if TYPE_CHECKING:
@@ -51,6 +52,36 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
                 "error",
                 "Приложение заблокировано. Разблокируйте для подключения.",
                 level="warning",
+            )
+            return False
+
+        ignored_pids = {
+            int(proc.pid)
+            for manager in (controller.xray, controller.singbox)
+            if (proc := getattr(manager, "_proc", None)) is not None and getattr(proc, "pid", 0)
+        }
+        conflicts = scan_network_conflicts(
+            {DEFAULT_SOCKS_PORT, DEFAULT_HTTP_PORT, 10818},
+            ignored_pids=ignored_pids,
+        )
+        conflicting_apps = list(conflicts.get("apps") or [])
+        unknown_client = bool(conflicts.get("unknown_client"))
+        if conflicting_apps or unknown_client:
+            if conflicting_apps:
+                names = ", ".join(conflicting_apps[:4])
+                message = (
+                    f"Нельзя запустить Lumen KVN: одновременно работает другой VPN/прокси-клиент — {names}. "
+                    f"Отключите или закройте {names} и повторите запуск."
+                )
+            else:
+                message = (
+                    "Нельзя запустить Lumen KVN: уже работает другой VPN/прокси-клиент. "
+                    "Отключите или закройте его и повторите запуск."
+                )
+            controller._set_connection_status(
+                "error",
+                message,
+                level="error",
             )
             return False
 

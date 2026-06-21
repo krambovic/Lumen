@@ -94,7 +94,7 @@ class LogFilterModel(QSortFilterProxyModel):
     @pyqtSlot(str)
     def setLevelFilter(self, value: str) -> None:
         value = (value or "all").strip().lower()
-        if value not in {"all", "error", "warning", "info"}:
+        if value not in {"all", "error", "warning", "success", "info"}:
             value = "all"
         if value == self._level:
             return
@@ -124,7 +124,9 @@ class LogFilterModel(QSortFilterProxyModel):
             return False
         if self._level == "warning" and level != "warning":
             return False
-        if self._level == "info" and level not in {"info", "success"}:
+        if self._level == "success" and level != "success":
+            return False
+        if self._level == "info" and level != "info":
             return False
         if self._search:
             haystack = " ".join(

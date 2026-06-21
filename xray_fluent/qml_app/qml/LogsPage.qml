@@ -80,7 +80,8 @@ Item {
                     { key: "all", title: I18n.t("Все") },
                     { key: "error", title: I18n.t("Ошибки") },
                     { key: "warning", title: I18n.t("Предупреждения") },
-                    { key: "info", title: I18n.t("События") }
+                    { key: "success", title: I18n.t("События") },
+                    { key: "info", title: I18n.t("Работа") }
                 ]
                 delegate: AccentButton {
                     required property var modelData

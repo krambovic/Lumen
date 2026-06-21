@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import ctypes
 import json
 import os
 import socket
@@ -271,12 +272,23 @@ class XrayManager(QObject):
             if owner is None:
                 continue
             pid, name = owner
-            if pid > 0 and (name or "").strip().lower() == "xray.exe" and self._kill_pid(pid):
+            owner_path = self._lookup_process_path(pid)
+            is_own_stale_xray = (
+                pid > 0
+                and (name or "").strip().lower() == "xray.exe"
+                and self._exe_path is not None
+                and owner_path is not None
+                and self._same_path(owner_path, self._exe_path)
+            )
+            if is_own_stale_xray and self._kill_pid(pid):
                 sleep_with_events(0.5)
                 if not self._is_port_ready(port):
                     self.log_received.emit(f"[xray] terminated stale xray.exe PID {pid} on port {port}")
                     continue
-            return self._port_conflict_message(port, role, pid, name)
+            display_name = name
+            if (name or "").strip().lower() == "xray.exe":
+                display_name = "другой VPN/прокси-клиент"
+            return self._port_conflict_message(port, role, pid, display_name)
         return None
 
     def _find_listening_port_owner(self, port: int) -> tuple[int, str] | None:
@@ -343,6 +355,41 @@ class XrayManager(QObject):
         return name
 
     @staticmethod
+    def _lookup_process_path(pid: int) -> Path | None:
+        if os.name != "nt" or pid <= 0:
+            return None
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_bool, ctypes.c_uint32)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.QueryFullProcessImageNameW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_wchar_p,
+            ctypes.POINTER(ctypes.c_uint32),
+        )
+        kernel32.QueryFullProcessImageNameW.restype = ctypes.c_bool
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return None
+        try:
+            size = ctypes.c_uint32(32768)
+            buffer = ctypes.create_unicode_buffer(size.value)
+            if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+                return None
+            return Path(buffer.value)
+        finally:
+            kernel32.CloseHandle(handle)
+
+    @staticmethod
+    def _same_path(left: Path, right: Path) -> bool:
+        try:
+            return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
+        except OSError:
+            return os.path.normcase(str(left)) == os.path.normcase(str(right))
+
+    @staticmethod
     def _kill_pid(pid: int) -> bool:
         if pid <= 0:
             return False
@@ -361,7 +408,9 @@ class XrayManager(QObject):
     def _port_conflict_message(port: int, role: str, pid: int, name: str) -> str:
         prefix = f"{role} порт {port}" if role else f"Порт {port}"
         owner = "другим процессом"
-        if name and pid > 0:
+        if name == "другой VPN/прокси-клиент" and pid > 0:
+            owner = f"другим VPN/прокси-клиентом (PID {pid})"
+        elif name and pid > 0:
             owner = f"процессом {name} (PID {pid})"
         elif pid > 0:
             owner = f"PID {pid}"

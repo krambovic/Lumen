@@ -45,9 +45,15 @@ def test_log_proxy_filters_by_level_and_search() -> None:
     source.append_line("[xray] connected")
     source.append_line("[singbox] FATAL failed to start")
     source.append_line("[tun] WARN deprecated option")
-    assert proxy.rowCount() == 3
+    source.append_line("[core] config loaded")
+    assert proxy.rowCount() == 4
     proxy.setLevelFilter("error")
     assert proxy.rowCount() == 1
     proxy.setLevelFilter("all")
     proxy.setSearchText("deprecated")
+    assert proxy.rowCount() == 1
+    proxy.setSearchText("")
+    proxy.setLevelFilter("success")
+    assert proxy.rowCount() == 1
+    proxy.setLevelFilter("info")
     assert proxy.rowCount() == 1

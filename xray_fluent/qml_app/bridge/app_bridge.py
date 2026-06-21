@@ -15,6 +15,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import logging
+import os
 from pathlib import Path
 import socket
 import threading
@@ -35,7 +36,7 @@ from .node_list_model import NodeListModel
 from .process_model import ProcessModel
 from ...i18n import active_map, available_languages, language_name, set_language, tr
 from ...log_utils import parse_log_line
-from ...process_conflicts import find_conflicting_network_apps
+from ...process_conflicts import PortConflict, scan_network_conflicts
 
 
 class _ApplicationLogEmitter(QObject):
@@ -145,6 +146,8 @@ class AppBridge(QObject):
         self._tray_available = False
         self._quitting = False
         self._updates_available = False
+        self._conflict_scan_running = False
+        self._last_conflict_signature = ""
 
         # Таймер авто-обновления подписок (интервал берётся из настроек).
         self._sub_timer = QTimer(self)
@@ -156,6 +159,9 @@ class AppBridge(QObject):
         self._app_update_timer.timeout.connect(
             lambda: self._start_app_update_check(silent=True)
         )
+        self._conflict_timer = QTimer(self)
+        self._conflict_timer.setInterval(30_000)
+        self._conflict_timer.timeout.connect(self._start_conflict_scan)
 
         self._wire_controller()
         self.conflictScanFinished.connect(self._warn_about_conflicting_apps)
@@ -199,11 +205,13 @@ class AppBridge(QObject):
         except Exception:
             pass
         QTimer.singleShot(1800, self._start_conflict_scan)
+        self._conflict_timer.start()
 
     def shutdown(self) -> None:
         try:
             self._sub_timer.stop()
             self._app_update_timer.stop()
+            self._conflict_timer.stop()
         except Exception:
             pass
         thread = self._sub_thread
@@ -516,23 +524,62 @@ class AppBridge(QObject):
         self.toast.emit(level, localized)
 
     def _start_conflict_scan(self) -> None:
+        if self._conflict_scan_running:
+            return
+        self._conflict_scan_running = True
+        ignored_pids: set[int] = {os.getpid()}
+        for manager in (self.controller.xray, self.controller.singbox):
+            proc = getattr(manager, "_proc", None)
+            pid = getattr(proc, "pid", 0)
+            if pid:
+                ignored_pids.add(int(pid))
         threading.Thread(
-            target=lambda: self.conflictScanFinished.emit(find_conflicting_network_apps()),
+            target=lambda: self.conflictScanFinished.emit(
+                scan_network_conflicts({10808, 10809, 10818}, ignored_pids=ignored_pids)
+            ),
             name="network-app-conflict-scan",
             daemon=True,
         ).start()
 
-    def _warn_about_conflicting_apps(self, conflicts: object) -> None:
-        conflicts = list(conflicts or [])
-        if not conflicts:
+    def _warn_about_conflicting_apps(self, snapshot: object) -> None:
+        self._conflict_scan_running = False
+        data = snapshot if isinstance(snapshot, dict) else {}
+        apps = [str(item) for item in data.get("apps", [])]
+        ports = [item for item in data.get("ports", []) if isinstance(item, PortConflict)]
+        unknown_client = bool(data.get("unknown_client"))
+        signature = repr((apps, unknown_client, [(item.port, item.pid, item.process_name) for item in ports]))
+        if not apps and not ports and not unknown_client:
+            self._last_conflict_signature = ""
             return
-        names = ", ".join(conflicts[:4])
-        message = tr(
-            "Обнаружены другие VPN/прокси-приложения: {names}. Они могут занять локальные порты или изменить маршруты. Закройте их, если Lumen KVN не подключается.",
-            names=names,
-        )
+        if signature == self._last_conflict_signature:
+            return
+        self._last_conflict_signature = signature
+        parts: list[str] = []
+        if apps:
+            parts.append(
+                tr(
+                    "Работе Lumen KVN мешает другой VPN/прокси-клиент: {names}.",
+                    names=", ".join(apps[:4]),
+                )
+            )
+        elif unknown_client:
+            parts.append(tr("Работе Lumen KVN мешает другой VPN/прокси-клиент."))
+        if ports:
+            if apps:
+                occupied = ", ".join(str(item.port) for item in ports)
+            else:
+                occupied = ", ".join(
+                    f"{item.port} — другая программа (PID {item.pid})" for item in ports
+                )
+            parts.append(tr("Заняты локальные порты: {ports}.", ports=occupied))
+        parts.append(tr("Отключите или закройте другую программу перед запуском подключения."))
+        message = " ".join(parts)
+        if self.controller.connected or getattr(self.controller, "_desired_connected", False):
+            self.controller._desired_connected = False
+            self.controller._request_transition("conflicting VPN/proxy client detected")
+            message = tr("Подключение Lumen KVN остановлено, чтобы клиенты не конфликтовали. ") + message
         self.controller._log(f"[warning] {message}")
-        self.toast.emit("warning", message)
+        self.toast.emit("error", message)
 
     # ── controller -> QML slots ─────────────────────────────────
     def _on_nodes_changed(self, nodes: list[Node]) -> None:

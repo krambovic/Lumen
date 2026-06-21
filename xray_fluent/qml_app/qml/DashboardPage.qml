@@ -145,36 +145,36 @@ FluentScroll {
                             Text { text: App.proxyEnabled ? I18n.t("Вкл") : I18n.t("Выкл"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                         }
                         Item { Layout.fillWidth: true }
-                        Rectangle {
-                            width: 28; height: 28; radius: 14
-                            color: modeHelpHover.hovered ? Theme.cardHover : Theme.controlFill
-                            border.width: 1; border.color: Theme.borderSolid
-                            Text {
-                                anchors.centerIn: parent
-                                text: "?"
-                                color: Theme.text
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontNormal
-                                font.weight: Font.Bold
-                            }
-                            HoverHandler { id: modeHelpHover }
-                            TapHandler { onTapped: modeHelp.open() }
-                            ToolTip.visible: modeHelpHover.hovered
-                            ToolTip.text: I18n.t("Чем отличаются TUN и системный прокси")
+                        AccentButton {
+                            kind: "ghost"
+                            glyph: "\uE946"
+                            text: I18n.t("Справка")
+                            onClicked: modeHelp.open()
                         }
                     }
-                    Popup {
+                    Dialog {
                         id: modeHelp
-                        width: Math.min(460, page.width - 48)
-                        padding: 16
-                        modal: false
-                        focus: true
+                        anchors.centerIn: Overlay.overlay
+                        width: 460
+                        padding: 0
+                        modal: true
                         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
                         background: Rectangle {
                             color: Theme.flyout
                             border.width: 1
                             border.color: Theme.flyoutBorder
-                            radius: Theme.radius
+                            radius: 10
+                        }
+                        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
+                        header: Text {
+                            text: I18n.t("VPN (TUN) или системный прокси")
+                            color: Theme.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontStrong
+                            font.weight: Font.DemiBold
+                            wrapMode: Text.WordWrap
+                            leftPadding: 20; rightPadding: 20
+                            topPadding: 18; bottomPadding: 6
                         }
                         contentItem: ColumnLayout {
                             spacing: 10
@@ -182,24 +182,40 @@ FluentScroll {
                                 text: I18n.t("Системный прокси")
                                 color: Theme.text; font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
+                                leftPadding: 20; rightPadding: 20
                             }
                             Text {
                                 Layout.fillWidth: true
                                 text: I18n.t("Работает с браузерами, мессенджерами и приложениями, которые используют настройки прокси Windows. Обычно запускается быстрее, но чаще не действует в играх и программах без поддержки прокси.")
                                 color: Theme.textMuted; font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontNormal; wrapMode: Text.WordWrap
+                                lineHeight: 1.25; leftPadding: 20; rightPadding: 20
                             }
-                            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
+                            Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: Theme.divider }
                             Text {
                                 text: "VPN (TUN)"
                                 color: Theme.text; font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
+                                leftPadding: 20; rightPadding: 20
                             }
                             Text {
                                 Layout.fillWidth: true
                                 text: I18n.t("Перехватывает трафик почти всех приложений, включая игры, и применяет правила маршрутизации на уровне системы. Требует прав администратора и запускается немного дольше.")
                                 color: Theme.textMuted; font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontNormal; wrapMode: Text.WordWrap
+                                lineHeight: 1.25; leftPadding: 20; rightPadding: 20
+                            }
+                        }
+                        footer: RowLayout {
+                            spacing: 0
+                            Item { Layout.fillWidth: true }
+                            AccentButton {
+                                kind: "accent"
+                                text: I18n.t("Понятно")
+                                onClicked: modeHelp.close()
+                                Layout.rightMargin: 20
+                                Layout.topMargin: 6
+                                Layout.bottomMargin: 18
                             }
                         }
                     }
