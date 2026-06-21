@@ -150,6 +150,21 @@ class AppUpdate:
     is_downgrade: bool = False
 
 
+def should_auto_install(
+    update: AppUpdate | None,
+    *,
+    enabled: bool,
+    allow_updates: bool,
+) -> bool:
+    """Automatic updates may upgrade the app, but must never downgrade it."""
+    return bool(
+        update is not None
+        and enabled
+        and allow_updates
+        and not update.is_downgrade
+    )
+
+
 _SEMVER_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?")
 
 

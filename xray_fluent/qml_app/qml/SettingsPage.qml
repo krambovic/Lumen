@@ -459,6 +459,10 @@ FluentScroll {
                     Switch { checked: App.allowUpdates; onToggled: App.setAllowUpdates(checked) }
                 }
                 SettingRow {
+                    glyph: "\uE895"; title: I18n.t("Автообновление приложения"); subtitle: I18n.t("Автоматически скачивать и устанавливать новые версии")
+                    Switch { checked: App.appAutoUpdate; onToggled: App.setAppAutoUpdate(checked) }
+                }
+                SettingRow {
                     glyph: "\uEBD3"; title: I18n.t("Авто-обновление Xray"); subtitle: I18n.t("Обновлять ядро Xray автоматически")
                     Switch { checked: App.xrayAutoUpdate; onToggled: App.setXrayAutoUpdate(checked) }
                 }

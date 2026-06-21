@@ -200,6 +200,7 @@ class AppSettings:
     log_level: str = "warning"
     check_updates: bool = True
     allow_updates: bool = True
+    app_auto_update: bool = False
     release_channel: str = "stable"  # stable | beta | nightly
     update_feed_url: str = ""
     xray_release_channel: str = "beta"  # stable | beta | nightly
@@ -272,6 +273,7 @@ class AppSettings:
             "log_level": self.log_level,
             "check_updates": self.check_updates,
             "allow_updates": self.allow_updates,
+            "app_auto_update": self.app_auto_update,
             "release_channel": self.release_channel,
             "update_feed_url": self.update_feed_url,
             "xray_release_channel": self.xray_release_channel,
@@ -340,6 +342,7 @@ class AppSettings:
             log_level=str(data.get("log_level") or "warning"),
             check_updates=bool(data.get("check_updates", True)),
             allow_updates=bool(data.get("allow_updates", True)),
+            app_auto_update=bool(data.get("app_auto_update", False)),
             release_channel=str(data.get("release_channel") or "stable"),
             update_feed_url=str(data.get("update_feed_url") or ""),
             xray_release_channel=xray_release_channel,

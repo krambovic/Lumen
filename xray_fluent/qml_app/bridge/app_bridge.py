@@ -120,6 +120,12 @@ class AppBridge(QObject):
         self._sub_timer.setSingleShot(False)
         self._sub_timer.timeout.connect(self._on_sub_auto_update)
 
+        self._app_update_timer = QTimer(self)
+        self._app_update_timer.setInterval(6 * 60 * 60 * 1000)
+        self._app_update_timer.timeout.connect(
+            lambda: self._start_app_update_check(silent=True)
+        )
+
         self._wire_controller()
 
     # ── lifecycle ──────────────────────────────────────────
@@ -132,8 +138,13 @@ class AppBridge(QObject):
         self._push_initial_snapshot()
         self.controller.auto_connect_if_needed()
         self._reconfigure_sub_timer()
+        self._reconfigure_app_update_timer()
         try:
-            if getattr(self.controller.state.settings, "check_updates", True):
+            settings = self.controller.state.settings
+            if (
+                getattr(settings, "check_updates", True)
+                or getattr(settings, "app_auto_update", False)
+            ):
                 QTimer.singleShot(
                     2500, lambda: self._start_app_update_check(silent=True)
                 )
@@ -153,6 +164,7 @@ class AppBridge(QObject):
     def shutdown(self) -> None:
         try:
             self._sub_timer.stop()
+            self._app_update_timer.stop()
         except Exception:
             pass
         thread = self._sub_thread
@@ -198,6 +210,13 @@ class AppBridge(QObject):
             self._dispatch_sub_jobs(jobs, "auto")
         except Exception:
             pass
+
+    def _reconfigure_app_update_timer(self) -> None:
+        settings = self.controller.state.settings
+        if bool(getattr(settings, "app_auto_update", False)):
+            self._app_update_timer.start()
+        else:
+            self._app_update_timer.stop()
 
     # ── Фоновая загрузка подписок (сеть вне UI-потока) ──
     def _ensure_sub_worker(self) -> None:
@@ -901,13 +920,31 @@ class AppBridge(QObject):
     def setCheckUpdates(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.check_updates = bool(enabled)
+        if not settings.check_updates:
+            settings.app_auto_update = False
         self.controller.update_settings(settings)
+        self._reconfigure_app_update_timer()
 
     @pyqtSlot(bool)
     def setAllowUpdates(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.allow_updates = bool(enabled)
+        if not settings.allow_updates:
+            settings.app_auto_update = False
         self.controller.update_settings(settings)
+        self._reconfigure_app_update_timer()
+
+    @pyqtSlot(bool)
+    def setAppAutoUpdate(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.app_auto_update = bool(enabled)
+        if settings.app_auto_update:
+            settings.check_updates = True
+            settings.allow_updates = True
+        self.controller.update_settings(settings)
+        self._reconfigure_app_update_timer()
+        if settings.app_auto_update:
+            QTimer.singleShot(0, lambda: self._start_app_update_check(silent=True))
 
     @pyqtSlot(bool)
     def setXrayAutoUpdate(self, enabled: bool) -> None:
@@ -936,6 +973,13 @@ class AppBridge(QObject):
             return bool(self.controller.state.settings.allow_updates)
         except Exception:
             return True
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def appAutoUpdate(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.app_auto_update)
+        except Exception:
+            return False
 
     @pyqtProperty(bool, notify=settingsChanged)
     def xrayAutoUpdate(self) -> bool:
@@ -1445,7 +1489,11 @@ class AppBridge(QObject):
 
     def _start_app_update_check(self, silent: bool = False) -> None:
         from ...app_updater import UpdateChecker
-        if getattr(self, "_app_update_checker", None) is not None:
+        if (
+            self._quitting
+            or getattr(self, "_app_update_checker", None) is not None
+            or getattr(self, "_app_update_downloader", None) is not None
+        ):
             return
         self._app_update_silent = silent
         if not silent:
@@ -1514,6 +1562,15 @@ class AppBridge(QObject):
             else:
                 _msg = tr("Доступно обновление v{version}", version=update.version)
             self.toast.emit("info", _msg)
+        from ...app_updater import should_auto_install
+        settings = self.controller.state.settings
+        if should_auto_install(
+            update,
+            enabled=bool(getattr(settings, "app_auto_update", False)),
+            allow_updates=bool(getattr(settings, "allow_updates", True)),
+        ):
+            self._app_update_auto_installing = True
+            QTimer.singleShot(0, self.downloadAppUpdate)
 
     def _on_app_update_error(self, message: str) -> None:
         if getattr(self, "_app_update_silent", False):
@@ -1577,6 +1634,12 @@ class AppBridge(QObject):
 
     def _on_app_download_error(self, message: str) -> None:
         self.appUpdateState.emit({"phase": "error", "message": message})
+        if getattr(self, "_app_update_auto_installing", False):
+            self.toast.emit(
+                "error",
+                tr("Не удалось автоматически установить обновление: {error}", error=message),
+            )
+        self._app_update_auto_installing = False
 
     # -- Xray core updater --
     def _ensure_xray_update_wired(self) -> None:
