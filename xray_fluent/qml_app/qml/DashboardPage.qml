@@ -148,7 +148,10 @@ FluentScroll {
                         AccentButton {
                             kind: "ghost"
                             glyph: "\uE946"
-                            text: I18n.t("Справка")
+                            text: ""
+                            Layout.preferredWidth: 32
+                            ToolTip.visible: hovered
+                            ToolTip.text: I18n.t("Справка")
                             onClicked: modeHelp.open()
                         }
                     }

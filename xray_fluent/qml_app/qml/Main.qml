@@ -34,7 +34,10 @@ ApplicationWindow {
     readonly property bool railCollapsed: !navExpanded
     property real railVisualWidth: railCollapsed ? Theme.railWidthCompact : Theme.railWidth
     property bool railAnimating: false
-    readonly property bool contentNarrow: navExpanded || railAnimating
+    readonly property real targetContentWidth: Math.max(
+        0,
+        width - (navExpanded ? Theme.railWidth : Theme.railWidthCompact)
+    )
     Behavior on railVisualWidth {
         NumberAnimation {
             duration: Theme.animations ? 155 : 0
@@ -98,22 +101,8 @@ ApplicationWindow {
             width: win.railVisualWidth
             height: parent.height
             clip: true
-            // The pane overlays the page while it animates, so its surface
-            // must be opaque. A translucent layer lets page text bleed through.
-            color: Theme.bg
-            border.width: 0
+            color: "transparent"
             z: 2
-            layer.enabled: win.railAnimating
-            layer.smooth: true
-
-            Rectangle {
-                anchors.top: parent.top
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                width: 1
-                visible: win.navExpanded
-                color: Theme.divider
-            }
 
             ColumnLayout {
                 width: Theme.railWidth
@@ -135,6 +124,7 @@ ApplicationWindow {
                         radius: Theme.radiusSmall
                         color: burgerHover.hovered ? Theme.cardHover : "transparent"
                         Behavior on color { ColorAnimation { duration: Theme.animations ? 130 : 0; easing.type: Theme.easeStandard } }
+                        Behavior on width { NumberAnimation { duration: Theme.animations ? 170 : 0; easing.type: Theme.easeEmphasized } }
                         Text {
                             text: "\uE700"  // GlobalNavButton
                             font.family: win.iconFont
@@ -198,26 +188,12 @@ ApplicationWindow {
         // edges, leaving just the top-left curve visible (mirrors FluentWindow).
         Item {
             id: contentHost
-            // Keep the expensive page tree at a stable size. The navigation
-            // pane expands over it, so opening the menu animates one clipped
-            // layer instead of relaying out every visible page on every frame.
-            x: Theme.railWidthCompact
+            x: win.railVisualWidth
             y: 0
-            // Reflow the page only once per transition. While the pane moves,
-            // the page itself is translated by the render thread.
-            width: Math.max(0, parent.width - (win.contentNarrow ? Theme.railWidth : Theme.railWidthCompact))
+            width: Math.max(0, parent.width - win.railVisualWidth)
             height: parent.height
             clip: true
             z: 1
-            transform: Translate {
-                x: win.navExpanded ? Theme.railWidth - Theme.railWidthCompact : 0
-                Behavior on x {
-                    NumberAnimation {
-                        duration: Theme.animations ? 155 : 0
-                        easing.type: Easing.OutCubic
-                    }
-                }
-            }
 
             Rectangle {
                 id: contentWindow
@@ -236,11 +212,22 @@ ApplicationWindow {
 
                 Item {
                     id: pageStack
-                    anchors.fill: parent
+                    anchors.left: parent.left
                     anchors.leftMargin: 24
+                    anchors.top: parent.top
                     anchors.topMargin: 20
-                    anchors.rightMargin: 24 + Theme.radius
+                    anchors.bottom: parent.bottom
                     anchors.bottomMargin: 20 + Theme.radius
+                    // During the 155 ms pane transition, heavy pages receive
+                    // their final width once and are cached as one texture.
+                    // The outer panel still follows the original x/width
+                    // animation exactly, without relaying out every card each frame.
+                    width: Math.max(
+                        0,
+                        (win.railAnimating ? win.targetContentWidth : contentHost.width) - 48
+                    )
+                    layer.enabled: win.railAnimating
+                    layer.smooth: true
                     readonly property int slide: 6
 
                     DashboardPage {
