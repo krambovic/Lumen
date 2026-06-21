@@ -34,6 +34,7 @@ ApplicationWindow {
     readonly property bool railCollapsed: !navExpanded
     property real railVisualWidth: railCollapsed ? Theme.railWidthCompact : Theme.railWidth
     property bool railAnimating: false
+    readonly property bool contentNarrow: navExpanded || railAnimating
     Behavior on railVisualWidth {
         NumberAnimation {
             duration: Theme.animations ? 155 : 0
@@ -100,11 +101,19 @@ ApplicationWindow {
             // The pane overlays the page while it animates, so its surface
             // must be opaque. A translucent layer lets page text bleed through.
             color: Theme.bg
-            border.width: win.navExpanded ? 1 : 0
-            border.color: Theme.divider
+            border.width: 0
             z: 2
             layer.enabled: win.railAnimating
             layer.smooth: true
+
+            Rectangle {
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                width: 1
+                visible: win.navExpanded
+                color: Theme.divider
+            }
 
             ColumnLayout {
                 width: Theme.railWidth
@@ -194,7 +203,9 @@ ApplicationWindow {
             // layer instead of relaying out every visible page on every frame.
             x: Theme.railWidthCompact
             y: 0
-            width: Math.max(0, parent.width - Theme.railWidthCompact)
+            // Reflow the page only once per transition. While the pane moves,
+            // the page itself is translated by the render thread.
+            width: Math.max(0, parent.width - (win.contentNarrow ? Theme.railWidth : Theme.railWidthCompact))
             height: parent.height
             clip: true
             z: 1
