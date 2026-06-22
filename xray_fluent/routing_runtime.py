@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from .constants import DATA_DIR, ROUTING_DIRECT, ROUTING_GLOBAL
+from .geodata_resources import singbox_rule_set_path
 from .models import AppSettings, RoutingSettings
 from .process_presets import PROCESS_PRESETS_BY_ID
+from .routing_presets import custom_domain_rules, preset_domain_rules
 from .service_presets import SERVICE_PRESETS_BY_ID
 
 _SINGBOX_RULE_SET_DIR = DATA_DIR / "runtime" / "sing-box-rule-sets"
@@ -37,6 +39,14 @@ _SINGBOX_RULE_SET_SOURCES = {
             "zapret/lists/russia-discord.txt",
             "zapret/lists/russia-youtube.txt",
             "zapret/lists/youtube.txt",
+        ),
+        "domain_suffix": (),
+        "ips": (),
+    },
+    "geosite:ru-blocked": {
+        "domains": (
+            "zapret/lists/list-general.txt",
+            "zapret/lists/list-google.txt",
         ),
         "domain_suffix": (),
         "ips": (),
@@ -72,6 +82,7 @@ _XRAY_UNSUPPORTED_GEOIP_CODES = {
     "geoip:ru-blocked",
     "geoip:ru-blocked-community",
 }
+_XRAY_UNSUPPORTED_GEOSITE_CODES = {"geosite:lumen-exclude"}
 _XRAY_EXPANDED_GEOIP_CACHE: dict[str, tuple[str, ...]] = {}
 _XRAY_EXPANDED_GEOSITE_CACHE: dict[str, tuple[str, ...]] = {}
 
@@ -94,7 +105,7 @@ def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
         if not value:
             continue
         lowered = value.lower()
-        if value.startswith("geosite:") and lowered in _SINGBOX_RULE_SET_SOURCES:
+        if lowered in _XRAY_UNSUPPORTED_GEOSITE_CODES:
             domains.extend(_expand_xray_local_geosite(lowered))
             continue
         if value.startswith(("domain:", "full:", "regexp:", "keyword:", "geosite:", "ext:")):
@@ -218,13 +229,16 @@ def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings
             append_xray_process_rule(rules, processes, action)
 
     service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
+    preset_direct, preset_proxy = preset_domain_rules(routing.preset_id)
 
     append_xray_domain_ip_rule(rules, service_direct, "direct")
-    append_xray_domain_ip_rule(rules, routing.direct_domains, "direct")
+    append_xray_domain_ip_rule(rules, custom_domain_rules(routing.direct_domains), "direct")
     append_xray_domain_ip_rule(rules, service_block, "block")
-    append_xray_domain_ip_rule(rules, routing.block_domains, "block")
+    append_xray_domain_ip_rule(rules, custom_domain_rules(routing.block_domains), "block")
     append_xray_domain_ip_rule(rules, service_proxy, "proxy")
-    append_xray_domain_ip_rule(rules, routing.proxy_domains, "proxy")
+    append_xray_domain_ip_rule(rules, custom_domain_rules(routing.proxy_domains), "proxy")
+    append_xray_domain_ip_rule(rules, preset_direct, "direct")
+    append_xray_domain_ip_rule(rules, preset_proxy, "proxy")
 
     rules.append(
         {
@@ -403,14 +417,17 @@ def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[s
         _append_singbox_process_rule(rules, manual_regex[action], action, key="process_path_regex")
 
     service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
+    preset_direct, preset_proxy = preset_domain_rules(routing.preset_id)
 
     for items, outbound in (
         (service_direct, "direct"),
-        (routing.direct_domains, "direct"),
+        (custom_domain_rules(routing.direct_domains), "direct"),
         (service_block, "block"),
-        (routing.block_domains, "block"),
+        (custom_domain_rules(routing.block_domains), "block"),
         (service_proxy, "proxy"),
-        (routing.proxy_domains, "proxy"),
+        (custom_domain_rules(routing.proxy_domains), "proxy"),
+        (preset_direct, "direct"),
+        (preset_proxy, "proxy"),
     ):
         rule, used_sets = _singbox_domain_ip_rule(items, outbound)
         if rule:
@@ -424,14 +441,17 @@ def build_singbox_gui_dns_rules(routing: RoutingSettings) -> tuple[list[dict[str
     rule_sets: set[str] = set()
 
     service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
+    preset_direct, preset_proxy = preset_domain_rules(routing.preset_id)
 
     for items, dns_action in (
         (service_direct, "bootstrap-dns"),
-        (routing.direct_domains, "bootstrap-dns"),
+        (custom_domain_rules(routing.direct_domains), "bootstrap-dns"),
         (service_block, "reject"),
-        (routing.block_domains, "reject"),
+        (custom_domain_rules(routing.block_domains), "reject"),
         (service_proxy, "proxy-dns"),
-        (routing.proxy_domains, "proxy-dns"),
+        (custom_domain_rules(routing.proxy_domains), "proxy-dns"),
+        (preset_direct, "bootstrap-dns"),
+        (preset_proxy, "proxy-dns"),
     ):
         rule, used_sets = _singbox_domain_dns_rule(items, dns_action)
         if rule:
@@ -669,12 +689,18 @@ def _ensure_singbox_rule_sets(route: dict[str, Any], tags: set[str]) -> None:
         key = reverse_keys.get(tag)
         if not key:
             continue
-        path = _ensure_singbox_local_rule_set(key)
+        binary_path = singbox_rule_set_path(key)
+        if binary_path is not None and binary_path.is_file():
+            path = binary_path
+            rule_format = "binary"
+        else:
+            path = _ensure_singbox_local_rule_set(key)
+            rule_format = "source"
         existing.append(
             {
                 "type": "local",
                 "tag": tag,
-                "format": "source",
+                "format": rule_format,
                 "path": str(path),
             }
         )

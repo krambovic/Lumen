@@ -789,6 +789,7 @@ class AppBridge(QObject):
     def setRoutingMode(self, mode: str) -> None:
         routing = deepcopy(self.controller.state.routing)
         routing.mode = mode
+        routing.preset_id = "custom"
         self.controller.update_routing(routing)
 
     @pyqtSlot(str)
@@ -2890,12 +2891,20 @@ class AppBridge(QObject):
         routing = self.controller.state.routing
         out: list[dict[str, str]] = []
         for addr in routing.direct_domains:
-            out.append({"addr": addr, "action": "direct"})
+            if not self._is_internal_domain_rule(addr):
+                out.append({"addr": addr, "action": "direct"})
         for addr in routing.proxy_domains:
-            out.append({"addr": addr, "action": "proxy"})
+            if not self._is_internal_domain_rule(addr):
+                out.append({"addr": addr, "action": "proxy"})
         for addr in routing.block_domains:
-            out.append({"addr": addr, "action": "block"})
+            if not self._is_internal_domain_rule(addr):
+                out.append({"addr": addr, "action": "block"})
         return out
+
+    @staticmethod
+    def _is_internal_domain_rule(addr: str) -> bool:
+        value = str(addr or "").strip().lower()
+        return value.startswith(("geosite:", "geoip:"))
 
     @pyqtProperty('QVariantList', notify=routingChanged)
     def serviceList(self):
@@ -3054,6 +3063,9 @@ class AppBridge(QObject):
         addr = (addr or "").strip()
         if not addr:
             return
+        if self._is_internal_domain_rule(addr):
+            self.toast.emit("warning", tr("Добавляйте конкретный домен, IP или CIDR"))
+            return
         def apply(r: RoutingSettings) -> None:
             r.direct_domains = [d for d in r.direct_domains if d != addr]
             r.proxy_domains = [d for d in r.proxy_domains if d != addr]
@@ -3080,20 +3092,27 @@ class AppBridge(QObject):
         if not lines:
             self.toast.emit("warning", "Нет строк для импорта")
             return
+        accepted_lines: list[tuple[str, str]] = []
+        for ln in lines:
+            if "|" in ln:
+                addr, _, act = ln.partition("|")
+                addr = addr.strip()
+                act = act.strip().lower()
+            else:
+                addr = ln.strip()
+                act = "proxy"
+            if addr and not self._is_internal_domain_rule(addr):
+                accepted_lines.append((addr, act))
+        if not accepted_lines:
+            self.toast.emit("warning", tr("Добавляйте конкретный домен, IP или CIDR"))
+            return
+        imported_count = len(accepted_lines)
+
         def apply(r: RoutingSettings) -> None:
             direct = list(r.direct_domains)
             proxy = list(r.proxy_domains)
             block = list(r.block_domains)
-            for ln in lines:
-                if "|" in ln:
-                    addr, _, act = ln.partition("|")
-                    addr = addr.strip()
-                    act = act.strip().lower()
-                else:
-                    addr = ln
-                    act = "proxy"
-                if not addr:
-                    continue
+            for addr, act in accepted_lines:
                 for lst in (direct, proxy, block):
                     if addr in lst:
                         lst.remove(addr)
@@ -3107,18 +3126,21 @@ class AppBridge(QObject):
             r.proxy_domains = proxy
             r.block_domains = block
         self._mutate_routing(apply)
-        self.toast.emit("success", tr("Импортировано правил: {count}", count=len(lines)))
+        self.toast.emit("success", tr("Импортировано правил: {count}", count=imported_count))
 
     @pyqtSlot(result=str)
     def exportDomainRules(self) -> str:
         routing = self.controller.state.routing
         lines: list[str] = []
         for addr in routing.direct_domains:
-            lines.append(f"{addr}|direct")
+            if not self._is_internal_domain_rule(addr):
+                lines.append(f"{addr}|direct")
         for addr in routing.proxy_domains:
-            lines.append(f"{addr}|proxy")
+            if not self._is_internal_domain_rule(addr):
+                lines.append(f"{addr}|proxy")
         for addr in routing.block_domains:
-            lines.append(f"{addr}|block")
+            if not self._is_internal_domain_rule(addr):
+                lines.append(f"{addr}|block")
         payload = "\n".join(lines)
         if not payload:
             self.toast.emit("warning", "Нет правил для экспорта")

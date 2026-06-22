@@ -12,13 +12,18 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import APP_VERSION, SINGBOX_PATH_DEFAULT, XRAY_PATH_DEFAULT
 from .engines.singbox import get_singbox_version
+from .geodata_resources import (
+    RUNETFREEDOM_RULES_BASE_URL,
+    SINGBOX_BINARY_RULE_SETS,
+    SINGBOX_RULE_SET_DIR,
+    SINGBOX_RULES_ARCHIVE_URL,
+)
 from .engines.xray.core_updater import _download_file, _extract_version, _is_newer, _request_json
 from .http_utils import urlopen
 from .path_utils import resolve_configured_path
 from .zip_utils import safe_extract_zip
 
 SINGBOX_EXTENDED_LATEST_API = "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest"
-RUNETFREEDOM_RULES_BASE_URL = "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download"
 GEOIP_DAT_URL = f"{RUNETFREEDOM_RULES_BASE_URL}/geoip.dat"
 GEOSITE_DAT_URL = f"{RUNETFREEDOM_RULES_BASE_URL}/geosite.dat"
 
@@ -57,6 +62,23 @@ def _extract_singbox_version(text: str) -> str:
     value = _extract_version(text or "")
     match = re.search(r"(\d+\.\d+\.\d+(?:-extended-\d+\.\d+\.\d+)?)", text or "")
     return match.group(1) if match else value
+
+
+def _install_singbox_rule_sets(archive: Path, target_dir: Path = SINGBOX_RULE_SET_DIR) -> None:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive, "r") as zip_file:
+        names = set(zip_file.namelist())
+        missing = sorted(set(SINGBOX_BINARY_RULE_SETS.values()) - names)
+        if missing:
+            raise RuntimeError(f"в архиве sing-box отсутствуют rule-set: {', '.join(missing)}")
+        for member in SINGBOX_BINARY_RULE_SETS.values():
+            payload = zip_file.read(member)
+            if len(payload) < 64:
+                raise RuntimeError(f"rule-set {member} выглядит повреждённым")
+            destination = target_dir / Path(member).name
+            staged = destination.with_suffix(destination.suffix + ".new")
+            staged.write_bytes(payload)
+            staged.replace(destination)
 
 
 def _pick_singbox_asset(release: dict) -> tuple[str, str]:
@@ -145,10 +167,17 @@ def update_geodata(on_progress=None) -> ResourceUpdateResult:
             temp_dir = Path(temp_dir_str)
             geoip = temp_dir / "geoip.dat"
             geosite = temp_dir / "geosite.dat"
-            _download_direct(GEOIP_DAT_URL, geoip, on_progress=_scaled_progress(0, 50))
-            _download_direct(GEOSITE_DAT_URL, geosite, on_progress=_scaled_progress(50, 50))
+            singbox_rules = temp_dir / "sing-box.zip"
+            _download_direct(GEOIP_DAT_URL, geoip, on_progress=_scaled_progress(0, 30))
+            _download_direct(GEOSITE_DAT_URL, geosite, on_progress=_scaled_progress(30, 30))
+            _download_direct(
+                SINGBOX_RULES_ARCHIVE_URL,
+                singbox_rules,
+                on_progress=_scaled_progress(60, 40),
+            )
             if geoip.stat().st_size < 1024 or geosite.stat().st_size < 1024:
                 raise RuntimeError("скачанные geodata файлы выглядят поврежденными")
+            _install_singbox_rule_sets(singbox_rules)
             for src, name in ((geoip, "geoip.dat"), (geosite, "geosite.dat")):
                 dest = target_dir / name
                 if dest.exists():
@@ -172,6 +201,8 @@ def check_geodata_update() -> ResourceUpdateResult:
             local_size = dest.stat().st_size if dest.exists() else -1
             if local_size < 0 or (remote_size > 0 and remote_size != local_size):
                 changed = True
+        if any(not (SINGBOX_RULE_SET_DIR / Path(member).name).is_file() for member in SINGBOX_BINARY_RULE_SETS.values()):
+            changed = True
     except Exception as exc:
         return ResourceUpdateResult("geodata", "error", f"Не удалось проверить geoip/geosite: {exc}")
     if changed:

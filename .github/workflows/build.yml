@@ -66,7 +66,7 @@ jobs:
             Select-Object -First 1
           $singbox = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest" -Headers $headers
           $geodata = Invoke-RestMethod "https://api.github.com/repos/runetfreedom/russia-v2ray-rules-dat/releases/latest" -Headers $headers
-          "cache-key=$($xray.id)-$($singbox.id)-$($geodata.id)-wintun-0.14.1" >> $env:GITHUB_OUTPUT
+          "cache-key=$($xray.id)-$($singbox.id)-$($geodata.id)-wintun-0.14.1-rulesets-v1" >> $env:GITHUB_OUTPUT
 
       - name: Cache core binaries
         id: cache-cores
@@ -108,6 +108,20 @@ jobs:
           $geoBase = "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download"
           Invoke-WebRequest "$geoBase/geoip.dat" -OutFile core/geoip.dat
           Invoke-WebRequest "$geoBase/geosite.dat" -OutFile core/geosite.dat
+          Invoke-WebRequest "$geoBase/sing-box.zip" -OutFile geodata-singbox.zip
+          Expand-Archive geodata-singbox.zip -DestinationPath _geodata-singbox -Force
+          New-Item -ItemType Directory -Force -Path core/rule-sets | Out-Null
+          $ruleSets = @(
+            "rule-set-geosite/geosite-category-ru.srs",
+            "rule-set-geosite/geosite-ru-blocked.srs",
+            "rule-set-geoip/geoip-ru.srs",
+            "rule-set-geoip/geoip-ru-blocked.srs",
+            "rule-set-geoip/geoip-ru-blocked-community.srs"
+          )
+          foreach ($ruleSet in $ruleSets) {
+            Copy-Item (Join-Path _geodata-singbox $ruleSet) core/rule-sets/
+          }
+          Remove-Item -Recurse _geodata-singbox, geodata-singbox.zip
 
           Write-Host "Downloading wintun..."
           Invoke-WebRequest "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile wintun.zip

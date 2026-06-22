@@ -463,6 +463,8 @@
   "Тестирование серверов": "Server testing",
   "Тип": "Type",
   "Только заблокированное": "Blocked only",
+  "Добавляйте конкретный домен, IP или CIDR": "Add a specific domain, IP address, or CIDR",
+  "Домен (example.com), маска (*.example.com), IP или CIDR (10.0.0.0/8).": "Domain (example.com), wildcard (*.example.com), IP address, or CIDR (10.0.0.0/8).",
   "Транспорт": "Transport",
   "Трафик": "Traffic",
   "Трафик по дням": "Traffic by day",

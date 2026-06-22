@@ -83,6 +83,7 @@ class Node:
 @dataclass(slots=True)
 class RoutingSettings:
     mode: str = ROUTING_RULE
+    preset_id: str = "blocked"  # global | blocked | except_ru | custom
     bypass_lan: bool = True
     direct_domains: list[str] = field(default_factory=list)
     proxy_domains: list[str] = field(default_factory=list)
@@ -105,6 +106,7 @@ class RoutingSettings:
     def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
+            "preset_id": self.preset_id,
             "bypass_lan": self.bypass_lan,
             "direct_domains": list(self.direct_domains),
             "proxy_domains": list(self.proxy_domains),
@@ -127,8 +129,26 @@ class RoutingSettings:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "RoutingSettings":
+        preset_id = str(data.get("preset_id") or "").strip().lower()
+        if not preset_id:
+            direct = {str(item).strip().lower() for item in (data.get("direct_domains") or [])}
+            proxy = {str(item).strip().lower() for item in (data.get("proxy_domains") or [])}
+            if {"geosite:category-ru", "geoip:ru"} & direct:
+                preset_id = "except_ru"
+            elif {
+                "geosite:ru-blocked",
+                "geosite:category-media-ru-blocked",
+                "geoip:ru-blocked",
+                "geoip:ru-blocked-community",
+            } & proxy:
+                preset_id = "blocked"
+            elif str(data.get("mode") or ROUTING_RULE) == "global":
+                preset_id = "global"
+            else:
+                preset_id = "custom"
         return RoutingSettings(
             mode=str(data.get("mode") or ROUTING_RULE),
+            preset_id=preset_id,
             bypass_lan=bool(data.get("bypass_lan", True)),
             direct_domains=list(data.get("direct_domains") or []),
             proxy_domains=list(data.get("proxy_domains") or []),

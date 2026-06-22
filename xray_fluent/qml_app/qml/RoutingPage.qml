@@ -680,7 +680,7 @@ Item {
         contentItem: ColumnLayout {
             spacing: 10
             Text {
-                text: I18n.t("Домен (example.com), маска (*.example.com), CIDR (10.0.0.0/8) или geosite/geoip-метка.")
+                text: I18n.t("Домен (example.com), маска (*.example.com), IP или CIDR (10.0.0.0/8).")
                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             DnsField { id: domainInput; placeholderText: "example.com" }
@@ -717,7 +717,7 @@ Item {
                     id: importInput
                     wrapMode: TextArea.NoWrap
                     color: Theme.text; font.family: "Cascadia Mono, Consolas, monospace"; font.pixelSize: Theme.fontSmall
-                    placeholderText: "example.com|proxy\nads.example.net|block\ngeosite:category-ru|direct"
+                    placeholderText: "example.com|proxy\nads.example.net|block\n10.0.0.0/8|direct"
                     background: Rectangle { radius: Theme.radiusSmall; color: Theme.card; border.width: 1; border.color: Theme.borderSolid }
                 }
             }
