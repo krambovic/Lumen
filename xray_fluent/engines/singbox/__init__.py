@@ -12,6 +12,7 @@ from .runtime_planner import (
     inspect_singbox_document_text,
     parse_singbox_document,
     plan_singbox_runtime,
+    prime_endpoint_resolution,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "inspect_singbox_document_text",
     "parse_singbox_document",
     "plan_singbox_runtime",
+    "prime_endpoint_resolution",
 ]

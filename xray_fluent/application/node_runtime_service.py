@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from ..models import Node
 
 
-def detect_countries_sync(controller: AppController) -> None:
+def detect_countries_sync(controller: AppController) -> bool:
     changed = False
     for node in controller.state.nodes:
         if not node.country_code:
@@ -19,7 +19,8 @@ def detect_countries_sync(controller: AppController) -> None:
                 node.country_code = code
                 changed = True
     if changed:
-        controller.save()
+        controller.schedule_save()
+    return changed
 
 
 def start_country_ip_resolution(controller: AppController) -> None:

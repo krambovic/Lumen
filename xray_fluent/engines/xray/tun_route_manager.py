@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -23,13 +25,57 @@ class WindowsTunInterface:
     ipv6_address: str
 
 
+_ROUTE_CONTEXT_TTL_SECONDS = 30.0
+_route_context_lock = threading.Lock()
+_route_context_value: WindowsDefaultRouteContext | None = None
+_route_context_cached_at = 0.0
+_route_context_refresh: threading.Event | None = None
+
+
 def _powershell_string_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
-def get_windows_default_route_context() -> WindowsDefaultRouteContext | None:
+def invalidate_windows_default_route_context() -> None:
+    global _route_context_cached_at
+    with _route_context_lock:
+        _route_context_cached_at = 0.0
+
+
+def get_windows_default_route_context(*, force_refresh: bool = False) -> WindowsDefaultRouteContext | None:
     if os.name != "nt":
         return None
+    global _route_context_value, _route_context_cached_at, _route_context_refresh
+    now = time.monotonic()
+    with _route_context_lock:
+        if not force_refresh and now - _route_context_cached_at < _ROUTE_CONTEXT_TTL_SECONDS:
+            return _route_context_value
+        refresh = _route_context_refresh
+        owns_refresh = refresh is None
+        if owns_refresh:
+            refresh = threading.Event()
+            _route_context_refresh = refresh
+    if not owns_refresh:
+        refresh.wait(6.5)
+        with _route_context_lock:
+            return _route_context_value
+
+    try:
+        value = _query_windows_default_route_context()
+    except Exception:
+        value = None
+    finally:
+        with _route_context_lock:
+            _route_context_value = value
+            _route_context_cached_at = time.monotonic()
+            active_refresh = _route_context_refresh
+            _route_context_refresh = None
+            if active_refresh is not None:
+                active_refresh.set()
+    return value
+
+
+def _query_windows_default_route_context() -> WindowsDefaultRouteContext | None:
     script = (
         "$routes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue "
         "| Where-Object { $_.NextHop -and $_.NextHop -ne '0.0.0.0' } "

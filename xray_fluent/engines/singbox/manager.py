@@ -22,6 +22,7 @@ from ...constants import (
     SINGBOX_PATH_DEFAULT,
 )
 from ...path_utils import resolve_configured_path
+from ...process_conflicts import is_process_name_running
 from ...subprocess_utils import (
     decode_output,
     kill_processes_by_path,
@@ -196,6 +197,8 @@ class SingBoxManager(QObject):
     def _kill_orphaned(exe: Path) -> None:
         """Kill orphaned sing-box processes that hold the TUN adapter."""
         if os.name != "nt":
+            return
+        if not is_process_name_running(exe.name):
             return
         try:
             if kill_processes_by_path(exe.name, exe, timeout=5):
@@ -417,15 +420,43 @@ class SingBoxManager(QObject):
         max_wait: float = 8.0,
     ) -> bool:
         # Treat the runtime as ready only after Windows sees both the adapter
-        # address and a broad route through it.
-        deadline = time.monotonic() + max(0.2, max_wait)
-        while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                return False
-            if os.name != "nt" or self._tun_interface_has_ipv4(tun_interface_name):
-                return True
-            sleep_with_events(0.2)
-        return False
+        # address and a broad route through it. One persistent PowerShell probe
+        # avoids paying process/module startup cost on every 200 ms poll.
+        if os.name == "nt":
+            return self._wait_for_windows_tun_ready(proc, tun_interface_name, max_wait)
+        return proc.poll() is None
+
+    @staticmethod
+    def _wait_for_windows_tun_ready(
+        proc: subprocess.Popen[bytes],
+        tun_interface_name: str,
+        max_wait: float,
+    ) -> bool:
+        escaped_name = tun_interface_name.replace("'", "''")
+        wait_ms = max(200, int(max_wait * 1000))
+        script = (
+            f"$deadline = [DateTime]::UtcNow.AddMilliseconds({wait_ms}); "
+            f"while ([DateTime]::UtcNow -lt $deadline) {{ "
+            f"if (-not (Get-Process -Id {int(proc.pid)} -ErrorAction SilentlyContinue)) {{ exit 2 }}; "
+            f"$ipv4 = Get-NetIPAddress -InterfaceAlias '{escaped_name}' -AddressFamily IPv4 "
+            "-ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -and $_.IPAddress -ne '0.0.0.0' } "
+            "| Select-Object -First 1 IPAddress; "
+            f"$route = Get-NetRoute -InterfaceAlias '{escaped_name}' -AddressFamily IPv4 "
+            "-ErrorAction SilentlyContinue | Where-Object { "
+            "$_.DestinationPrefix -in @('0.0.0.0/0','0.0.0.0/1','128.0.0.0/1') } "
+            "| Select-Object -First 1 DestinationPrefix; "
+            "if ($ipv4 -and $route) { exit 0 }; Start-Sleep -Milliseconds 75 }; exit 1"
+        )
+        try:
+            result = run_text_pumped(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                timeout=max_wait + 2.0,
+                check=False,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        except Exception:
+            return False
+        return result.returncode == 0 and proc.poll() is None
 
     @staticmethod
     def _tun_interface_has_ipv4(tun_interface_name: str) -> bool:

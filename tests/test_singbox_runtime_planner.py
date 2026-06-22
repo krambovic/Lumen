@@ -450,6 +450,25 @@ def test_native_tun_excludes_resolved_domain_proxy_endpoint_from_tun_routes(monk
     )
 
 
+def test_endpoint_resolution_is_reused_within_cache_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    import xray_fluent.engines.singbox.runtime_planner as planner
+
+    calls = 0
+
+    def fake_getaddrinfo(host: str, *_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("203.0.113.25", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    with planner._endpoint_dns_cache_lock:
+        planner._endpoint_dns_cache.clear()
+
+    assert planner._resolve_endpoint_addresses("cache.example.com") == ["203.0.113.25"]
+    assert planner._resolve_endpoint_addresses("cache.example.com") == ["203.0.113.25"]
+    assert calls == 1
+
+
 def test_tun_runtime_does_not_reject_quic_globally() -> None:
     config = _plan(
         RoutingSettings(

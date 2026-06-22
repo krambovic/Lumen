@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import xray_fluent.engines.singbox.manager as manager_module
 from xray_fluent.engines.singbox.manager import SingBoxManager
 
 
@@ -22,3 +25,18 @@ def test_actionable_runtime_errors_are_not_suppressed() -> None:
     ]
 
     assert not any(SingBoxManager._is_noisy_runtime_line(line) for line in lines)
+
+
+def test_windows_tun_readiness_uses_single_persistent_probe(monkeypatch) -> None:
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0)
+
+    proc = SimpleNamespace(pid=1234, poll=lambda: None)
+    monkeypatch.setattr(manager_module, "run_text_pumped", fake_run)
+
+    assert SingBoxManager._wait_for_windows_tun_ready(proc, "singbox_tun", 8.0)
+    assert len(calls) == 1
+    assert "Get-NetIPAddress" in calls[0][0][-1]

@@ -7,6 +7,7 @@ from ipaddress import ip_address, ip_network
 import json
 import socket
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,9 @@ _APP_SINGBOX_HYBRID_PROTECT_INBOUND_TAG = "__app_hybrid_protect_in"
 _APP_XRAY_SIDECAR_RELAY_INBOUND_TAG = "__app_hybrid_relay_in"
 _APP_XRAY_SIDECAR_PROTECT_OUTBOUND_TAG = "__app_hybrid_protect_out"
 _APP_DISCORD_PROXY_INBOUND_TAG = "discord-socks-in"
+_ENDPOINT_DNS_CACHE_TTL_SECONDS = 300.0
+_endpoint_dns_cache: dict[tuple[str, int], tuple[float, tuple[str, ...]]] = {}
+_endpoint_dns_cache_lock = threading.Lock()
 
 
 @dataclass(slots=True)
@@ -534,21 +538,35 @@ def _resolve_endpoint_ip_cidrs(host: str) -> list[str]:
 def _resolve_endpoint_addresses(host: str) -> list[str]:
     if not _is_domain_name(host):
         return []
+    normalized_host = str(host).strip().lower()
+    cache_key = (normalized_host, id(socket.getaddrinfo))
+    with _endpoint_dns_cache_lock:
+        cached = _endpoint_dns_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < _ENDPOINT_DNS_CACHE_TTL_SECONDS:
+            return list(cached[1])
     result: list[Any] = []
     completed = threading.Event()
 
     def resolve() -> None:
         try:
-            result.extend(socket.getaddrinfo(str(host).strip(), None, 0, socket.SOCK_STREAM))
+            result.extend(socket.getaddrinfo(normalized_host, None, 0, socket.SOCK_STREAM))
         except OSError:
             pass
         finally:
+            addresses = _resolved_addresses(result)
+            if addresses:
+                with _endpoint_dns_cache_lock:
+                    _endpoint_dns_cache[cache_key] = (time.monotonic(), tuple(addresses))
             completed.set()
 
     threading.Thread(target=resolve, name="tun-endpoint-resolver", daemon=True).start()
     if not completed.wait(1.2):
         return []
 
+    return _resolved_addresses(result)
+
+
+def _resolved_addresses(result: list[Any]) -> list[str]:
     addresses: list[str] = []
     for info in result:
         try:
@@ -560,6 +578,18 @@ def _resolve_endpoint_addresses(host: str) -> list[str]:
             continue
         addresses.append(str(address))
     return sorted(dict.fromkeys(addresses), key=lambda value: (ip_address(value).version, value))
+
+
+def prime_endpoint_resolution(host: str) -> None:
+    """Warm endpoint DNS without delaying application or connection startup."""
+    if not _is_domain_name(host):
+        return
+    threading.Thread(
+        target=_resolve_endpoint_addresses,
+        args=(host,),
+        name="tun-endpoint-prewarm",
+        daemon=True,
+    ).start()
 
 
 def _ensure_tun_route_exclude_addresses(payload: dict[str, Any], addresses: list[str]) -> None:

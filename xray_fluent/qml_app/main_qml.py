@@ -523,6 +523,7 @@ def main(argv: list[str] | None = None) -> int:
         if _recomposited["done"]:
             return
         _recomposited["done"] = True
+        QTimer.singleShot(0, bridge.startDeferred)
         QTimer.singleShot(0, _force_recomposite)
 
     _refresh_backdrop()
@@ -532,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
         # Fall back to deferred timers if the signal is unavailable.
         QTimer.singleShot(0, _force_recomposite)
         QTimer.singleShot(200, _force_recomposite)
+    QTimer.singleShot(750, bridge.startDeferred)
     try:
         bridge.settingsChanged.connect(_refresh_backdrop)
     except Exception:

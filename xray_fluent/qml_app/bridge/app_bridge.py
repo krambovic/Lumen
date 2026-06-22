@@ -148,6 +148,7 @@ class AppBridge(QObject):
         self._updates_available = False
         self._conflict_scan_running = False
         self._last_conflict_signature = ""
+        self._deferred_started = False
 
         # Таймер авто-обновления подписок (интервал берётся из настроек).
         self._sub_timer = QTimer(self)
@@ -180,7 +181,6 @@ class AppBridge(QObject):
         except Exception as exc:  # pragma: no cover - defensive
             self.toast.emit("error", tr("Ошибка загрузки: {error}", error=exc))
         self._push_initial_snapshot()
-        self.controller.auto_connect_if_needed()
         self._reconfigure_sub_timer()
         self._reconfigure_app_update_timer()
         try:
@@ -206,6 +206,14 @@ class AppBridge(QObject):
             pass
         QTimer.singleShot(1800, self._start_conflict_scan)
         self._conflict_timer.start()
+
+    @pyqtSlot()
+    def startDeferred(self) -> None:
+        if self._deferred_started:
+            return
+        self._deferred_started = True
+        self.controller.start_deferred_services()
+        QTimer.singleShot(150, self.controller.auto_connect_if_needed)
 
     def shutdown(self) -> None:
         try:

@@ -4,6 +4,7 @@ from copy import deepcopy
 import hashlib
 import logging
 import socket
+import threading
 from datetime import datetime, timezone
 import json
 from logging.handlers import RotatingFileHandler
@@ -122,14 +123,17 @@ from .engines.xray import (
     build_xray_config,
     get_windows_default_route_context,
     get_xray_version,
+    invalidate_windows_default_route_context,
     restart_proxy_core as restart_xray_proxy_core,
 )
 from .engines.singbox import (
     SingBoxManager,
     classify_node_for_singbox,
     get_singbox_version,
+    ParsedSingboxDocument,
     parse_singbox_document,
     plan_singbox_runtime,
+    prime_endpoint_resolution,
     restart_runtime as restart_singbox_runtime_operation,
     SingboxDocumentState,
     SingboxRuntimePlan,
@@ -290,6 +294,7 @@ class AppController(QObject):
         self._xray_update_worker: XrayCoreUpdateWorker | None = None
         self._resource_update_worker = None
         self._singbox_documents = SingboxDocumentCache()
+        self._parsed_singbox_document: ParsedSingboxDocument | None = None
         self._ping_total = 0
         self._ping_completed = 0
         self._speed_total = 0
@@ -329,6 +334,7 @@ class AppController(QObject):
         self._transition_reason = ""
         self._transition_generation = 0
         self._blocked_transition_signature = ""
+        self._deferred_services_started = False
 
         self.xray.log_received.connect(lambda line: self._on_core_log("xray", line))
         self.xray.error.connect(self._on_xray_error)
@@ -363,7 +369,6 @@ class AppController(QObject):
             self.passphrase_required.emit()
             return False
 
-        self._detect_countries_sync()
         self._migrate_sort_order()
         self.nodes_changed.emit(self.state.nodes)
         self.selection_changed.emit(self.selected_node)
@@ -371,20 +376,31 @@ class AppController(QObject):
         self.settings_changed.emit(self.state.settings)
         # Без этого список подписок не пересчитывается в QML после загрузки (подписки "пропадают" после перезапуска).
         self.subscriptions_changed.emit(list(self.state.subscriptions))
-        QTimer.singleShot(500, self._start_country_ip_resolution)
+        return True
 
-        version = get_xray_version(self.state.settings.xray_path)
-        if version:
-            self._log(f"[core] {version}")
-        else:
-            self.status.emit("warning", "Не удалось прочитать версию Xray")
-
-        sb_version = get_singbox_version(self.state.settings.singbox_path)
-        if sb_version:
-            self._log(f"[core] sing-box: {sb_version}")
-
+    def start_deferred_services(self) -> None:
+        """Start non-visual work only after the first QML frame is available."""
+        if self._deferred_services_started:
+            return
+        self._deferred_services_started = True
         self.network_monitor.start()
         self._lock_timer.start()
+
+        if self._detect_countries_sync():
+            self.nodes_changed.emit(self.state.nodes)
+        QTimer.singleShot(500, self._start_country_ip_resolution)
+
+        threading.Thread(
+            target=self._probe_core_versions,
+            name="core-version-probe",
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._prewarm_connection_context,
+            name="connection-context-prewarm",
+            daemon=True,
+        ).start()
+
         if self.state.settings.always_run_as_admin:
             try:
                 set_always_run_as_admin(True)
@@ -395,7 +411,22 @@ class AppController(QObject):
                 "warning",
                 "Lumen KVN запущен без прав администратора. TUN, Zapret и WinDivert могут работать нестабильно.",
             )
-        return True
+
+    def _probe_core_versions(self) -> None:
+        version = get_xray_version(self.state.settings.xray_path)
+        if version:
+            self._log(f"[core] {version}")
+        else:
+            self.status.emit("warning", "Не удалось прочитать версию Xray")
+        sb_version = get_singbox_version(self.state.settings.singbox_path)
+        if sb_version:
+            self._log(f"[core] sing-box: {sb_version}")
+
+    def _prewarm_connection_context(self) -> None:
+        get_windows_default_route_context()
+        node = self.selected_node
+        if node is not None:
+            prime_endpoint_resolution(node.server)
 
     def set_data_passphrase(self, passphrase: str) -> None:
         self.storage.passphrase = passphrase
@@ -618,7 +649,11 @@ class AppController(QObject):
         return http_port if http_port > 0 else None
 
     def _cache_singbox_document_state(self, path: Path, text: str) -> SingboxDocumentState:
-        return self._singbox_documents.cache_state(path, text)
+        state = self._singbox_documents.cache_state(path, text)
+        parsed = self._parsed_singbox_document
+        if parsed is not None and (parsed.source_path != state.source_path or parsed.text_hash != state.text_hash):
+            self._parsed_singbox_document = None
+        return state
 
     def _get_singbox_document_state(self) -> SingboxDocumentState:
         path = self._ensure_active_singbox_config()
@@ -769,7 +804,10 @@ class AppController(QObject):
 
     def _plan_runtime_singbox(self, node: Node | None = None) -> SingboxRuntimePlan:
         state = self._get_singbox_document_state()
-        document = parse_singbox_document(state.source_path, state.text)
+        document = self._parsed_singbox_document
+        if document is None or document.source_path != state.source_path or document.text_hash != state.text_hash:
+            document = parse_singbox_document(state.source_path, state.text)
+            self._parsed_singbox_document = document
         route_context = get_windows_default_route_context()
         system_dns_servers = route_context.dns_servers if route_context is not None else ()
         preferred_relay_port = 0
@@ -1291,6 +1329,9 @@ class AppController(QObject):
 
     def set_selected_node(self, node_id: str) -> None:
         set_selected_node_operation(self, node_id)
+        node = self._get_node_by_id(node_id)
+        if node is not None:
+            prime_endpoint_resolution(node.server)
 
     def _set_connection_status(self, phase: str, message: str, level: str | None = None) -> None:
         self.connection_status_changed.emit(phase, message)
@@ -1714,6 +1755,7 @@ class AppController(QObject):
 
     def _on_network_changed(self, old: str, new: str) -> None:
         self._log(f"[network] changed: {old} -> {new}")
+        invalidate_windows_default_route_context()
         # TUN mode creates a virtual adapter which triggers network change —
         # reconnecting would kill the TUN and cause an infinite loop
         if self.state.settings.tun_mode:

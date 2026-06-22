@@ -215,75 +215,46 @@ ApplicationWindow {
                     anchors.bottomMargin: 20 + Theme.radius
                     readonly property int slide: 6
 
-                    DashboardPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 0 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 0 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 0
+                        loadAsynchronously: false
+                        pageComponent: Component { DashboardPage { anchors.fill: parent } }
                     }
-                    NodesPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 1 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 1 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 1
+                        pageComponent: Component { NodesPage { anchors.fill: parent } }
                     }
-                    RoutingPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 2 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 2 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 2
+                        pageComponent: Component { RoutingPage { anchors.fill: parent } }
                     }
-                    ConfigsPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 3 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 3 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 3
+                        pageComponent: Component { ConfigsPage { anchors.fill: parent } }
                     }
-                    ZapretPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 4 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 4 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 4
+                        pageComponent: Component { ZapretPage { anchors.fill: parent } }
                     }
-                    LogsPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 5 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 5 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 5
+                        pageComponent: Component { LogsPage { anchors.fill: parent } }
                     }
-                    HistoryPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 6 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 6 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 6
+                        pageComponent: Component { HistoryPage { anchors.fill: parent } }
                     }
-                    UpdatesPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 7 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 7 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 7
+                        pageComponent: Component { UpdatesPage { anchors.fill: parent } }
                     }
-                    SettingsPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 8 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 8 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 8
+                        pageComponent: Component { SettingsPage { anchors.fill: parent } }
                     }
-                    AboutPage {
-                        anchors.fill: parent; visible: opacity > 0
-                        opacity: win.currentIndex === 9 ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 220 : 0; easing.type: Theme.easeStandard } }
-                        transform: Translate { y: win.currentIndex === 9 ? 0 : pageStack.slide
-                            Behavior on y { NumberAnimation { duration: Theme.animations ? 260 : 0; easing.type: Theme.easeEmphasized } } }
+                    LazyPageLoader {
+                        current: win.currentIndex === 9
+                        pageComponent: Component { AboutPage { anchors.fill: parent } }
                     }
                 }
             }
