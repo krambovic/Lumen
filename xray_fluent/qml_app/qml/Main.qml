@@ -34,10 +34,6 @@ ApplicationWindow {
     readonly property bool railCollapsed: !navExpanded
     property real railVisualWidth: railCollapsed ? Theme.railWidthCompact : Theme.railWidth
     property bool railAnimating: false
-    readonly property real targetContentWidth: Math.max(
-        0,
-        width - (navExpanded ? Theme.railWidth : Theme.railWidthCompact)
-    )
     Behavior on railVisualWidth {
         NumberAnimation {
             duration: Theme.animations ? 155 : 0
@@ -212,22 +208,11 @@ ApplicationWindow {
 
                 Item {
                     id: pageStack
-                    anchors.left: parent.left
+                    anchors.fill: parent
                     anchors.leftMargin: 24
-                    anchors.top: parent.top
                     anchors.topMargin: 20
-                    anchors.bottom: parent.bottom
+                    anchors.rightMargin: 24 + Theme.radius
                     anchors.bottomMargin: 20 + Theme.radius
-                    // During the 155 ms pane transition, heavy pages receive
-                    // their final width once and are cached as one texture.
-                    // The outer panel still follows the original x/width
-                    // animation exactly, without relaying out every card each frame.
-                    width: Math.max(
-                        0,
-                        (win.railAnimating ? win.targetContentWidth : contentHost.width) - 48
-                    )
-                    layer.enabled: win.railAnimating
-                    layer.smooth: true
                     readonly property int slide: 6
 
                     DashboardPage {
