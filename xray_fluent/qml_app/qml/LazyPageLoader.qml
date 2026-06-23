@@ -6,6 +6,7 @@ Item {
     property bool current: false
     property bool loaded: false
     property bool loadAsynchronously: true
+    property bool preloadRequested: false
     property Component pageComponent
     property int slide: 6
 
@@ -17,8 +18,12 @@ Item {
         if (current)
             loaded = true
     }
+    onPreloadRequestedChanged: {
+        if (preloadRequested)
+            loaded = true
+    }
     Component.onCompleted: {
-        if (current)
+        if (current || preloadRequested)
             loaded = true
     }
 

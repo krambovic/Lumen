@@ -495,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
     def _refresh_backdrop() -> None:
         _apply_mica(window, _resolve_dark(app, _theme_name(bridge)))
 
-    from PyQt6.QtCore import QTimer
+    from PyQt6.QtCore import QMetaObject, QTimer
 
     _recomposited = {"done": False}
 
@@ -524,6 +524,7 @@ def main(argv: list[str] | None = None) -> int:
             return
         _recomposited["done"] = True
         QTimer.singleShot(0, bridge.startDeferred)
+        QTimer.singleShot(250, lambda: QMetaObject.invokeMethod(window, "beginBackgroundPageWarmup"))
         QTimer.singleShot(0, _force_recomposite)
 
     _refresh_backdrop()
@@ -534,6 +535,7 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(0, _force_recomposite)
         QTimer.singleShot(200, _force_recomposite)
     QTimer.singleShot(750, bridge.startDeferred)
+    QTimer.singleShot(1200, lambda: QMetaObject.invokeMethod(window, "beginBackgroundPageWarmup"))
     try:
         bridge.settingsChanged.connect(_refresh_backdrop)
     except Exception:

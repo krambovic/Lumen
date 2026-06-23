@@ -79,6 +79,49 @@ ApplicationWindow {
         { index: 8, label: I18n.t("Настройки"),  glyph: "\uE713", section: "bottom" }
     ]
     property int currentIndex: 0
+    property int preloadCursor: 0
+    property var preloadOrder: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+    function beginBackgroundPageWarmup() {
+        if (!backgroundPreloadTimer.running)
+            backgroundPreloadTimer.start()
+    }
+
+    function preloadPage(index) {
+        if (index === 1)
+            nodesLoader.preloadRequested = true;
+        else if (index === 2)
+            routingLoader.preloadRequested = true;
+        else if (index === 3)
+            configsLoader.preloadRequested = true;
+        else if (index === 4)
+            zapretLoader.preloadRequested = true;
+        else if (index === 5)
+            logsLoader.preloadRequested = true;
+        else if (index === 6)
+            historyLoader.preloadRequested = true;
+        else if (index === 7)
+            updatesLoader.preloadRequested = true;
+        else if (index === 8)
+            settingsLoader.preloadRequested = true;
+        else if (index === 9)
+            aboutLoader.preloadRequested = true;
+    }
+
+    Timer {
+        id: backgroundPreloadTimer
+        interval: 120
+        repeat: true
+        running: false
+        onTriggered: {
+            if (win.preloadCursor >= win.preloadOrder.length) {
+                stop();
+                return;
+            }
+            win.preloadPage(win.preloadOrder[win.preloadCursor]);
+            win.preloadCursor += 1;
+        }
+    }
 
     Connections {
         target: App
@@ -216,43 +259,53 @@ ApplicationWindow {
                     readonly property int slide: 6
 
                     LazyPageLoader {
+                        id: dashboardLoader
                         current: win.currentIndex === 0
                         loadAsynchronously: false
                         pageComponent: Component { DashboardPage { anchors.fill: parent } }
                     }
                     LazyPageLoader {
+                        id: nodesLoader
                         current: win.currentIndex === 1
                         pageComponent: Component { NodesPage { anchors.fill: parent } }
                     }
                     LazyPageLoader {
+                        id: routingLoader
                         current: win.currentIndex === 2
                         pageComponent: Component { RoutingPage { anchors.fill: parent } }
                     }
                     LazyPageLoader {
+                        id: configsLoader
                         current: win.currentIndex === 3
                         pageComponent: Component { ConfigsPage { anchors.fill: parent } }
                     }
                     LazyPageLoader {
+                        id: zapretLoader
                         current: win.currentIndex === 4
                         pageComponent: Component { ZapretPage { anchors.fill: parent } }
                     }
                     LazyPageLoader {
+                        id: logsLoader
                         current: win.currentIndex === 5
                         pageComponent: Component { LogsPage { anchors.fill: parent } }
                     }
                     LazyPageLoader {
+                        id: historyLoader
                         current: win.currentIndex === 6
                         pageComponent: Component { HistoryPage { anchors.fill: parent } }
                     }
                     LazyPageLoader {
+                        id: updatesLoader
                         current: win.currentIndex === 7
                         pageComponent: Component { UpdatesPage { anchors.fill: parent } }
                     }
                     LazyPageLoader {
+                        id: settingsLoader
                         current: win.currentIndex === 8
                         pageComponent: Component { SettingsPage { anchors.fill: parent } }
                     }
                     LazyPageLoader {
+                        id: aboutLoader
                         current: win.currentIndex === 9
                         pageComponent: Component { AboutPage { anchors.fill: parent } }
                     }
