@@ -402,14 +402,50 @@ def _install_crash_guards() -> None:
 
     sys.excepthook = _hook
 
+    def _thread_hook(args) -> None:
+        if issubclass(args.exc_type, SystemExit):
+            return
+        try:
+            _log.error(
+                "Unhandled exception in thread %r",
+                getattr(args.thread, "name", None),
+                exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+            )
+        except Exception:
+            pass
+
+    def _unraisable_hook(args) -> None:
+        try:
+            _log.error(
+                "Unraisable exception in %r",
+                args.object,
+                exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+            )
+        except Exception:
+            pass
+
+    import threading
+
+    threading.excepthook = _thread_hook
+    sys.unraisablehook = _unraisable_hook
+
     try:
         import faulthandler
 
         from ..constants import LOG_DIR
 
         LOG_DIR.mkdir(parents=True, exist_ok=True)
+        fh_path = LOG_DIR / "faulthandler.log"
+        prev_path = LOG_DIR / "faulthandler.prev"
+        if fh_path.is_file() and fh_path.stat().st_size > 0:
+            try:
+                if prev_path.exists():
+                    prev_path.unlink()
+                fh_path.rename(prev_path)
+            except Exception:
+                pass
         _fh = open(
-            LOG_DIR / "faulthandler.log",
+            fh_path,
             "a",
             buffering=1,
             encoding="utf-8",
@@ -481,11 +517,6 @@ def main(argv: list[str] | None = None) -> int:
 
         single_server.newConnection.connect(_on_second_instance)
 
-    # Apply the icon directly to the top-level QQuickWindow. Setting it only on
-    # the QApplication doesn't reliably reach the first-shown QML window's
-    # taskbar button on Windows — the icon would otherwise stay the generic
-    # default until the window was hidden to tray and re-shown. Setting it on
-    # the QWindow itself makes the correct taskbar icon appear on first launch.
     if APP_ICON_PATH.is_file():
         try:
             window.setIcon(QIcon(str(APP_ICON_PATH)))
@@ -531,7 +562,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         window.frameSwapped.connect(_on_first_frame)
     except Exception:
-        # Fall back to deferred timers if the signal is unavailable.
         QTimer.singleShot(0, _force_recomposite)
         QTimer.singleShot(200, _force_recomposite)
     QTimer.singleShot(750, bridge.startDeferred)

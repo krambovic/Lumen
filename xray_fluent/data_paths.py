@@ -74,3 +74,32 @@ def seed_user_data(src: Path, dst: Path) -> None:
                 source.unlink()
             except Exception:
                 pass
+
+
+_install_id_cache: str | None = None
+
+
+def get_install_id() -> str:
+    """Stable anonymous client id to correlate diagnostics."""
+    global _install_id_cache
+    if _install_id_cache:
+        return _install_id_cache
+
+    from .constants import DATA_DIR
+
+    path = DATA_DIR / "install_id"
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except Exception:
+        value = ""
+    if not value:
+        import uuid
+
+        value = uuid.uuid4().hex
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(value, encoding="utf-8")
+        except Exception:
+            pass
+    _install_id_cache = value
+    return value

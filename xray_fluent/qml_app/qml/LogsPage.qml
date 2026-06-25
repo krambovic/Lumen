@@ -68,7 +68,7 @@ Item {
             AccentButton {
                 text: I18n.t("Экспорт диагностики")
                 kind: "accent"
-                onClicked: { if (typeof App.exportDiagnostics === "function") App.exportDiagnostics(); }
+                onClicked: exportDialog.open()
             }
         }
 
@@ -188,4 +188,6 @@ Item {
             }
         }
     }
+
+    DiagnosticsExportDialog { id: exportDialog }
 }

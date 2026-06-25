@@ -50,6 +50,8 @@ class _ApplicationLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            if getattr(record, "from_controller", False):
+                return
             source = record.name.rsplit(".", 1)[-1] or "app"
             self._emitter.line.emit(f"[{source}] {self.format(record)}")
         except Exception:
@@ -2290,6 +2292,33 @@ class AppBridge(QObject):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
         self.toast.emit("success", tr("Диагностика сохранена: {name}", name=path.name))
+
+    @pyqtSlot("QVariantMap")
+    def runDiagnosticsExport(self, options) -> None:
+        """Build a diagnostics zip from the chosen sections; optionally upload it."""
+        opts = dict(options) if options else {}
+        include = {
+            "errors": bool(opts.get("errors", True)),
+            "core": bool(opts.get("core", True)),
+            "app": bool(opts.get("app", True)),
+            "traffic": bool(opts.get("traffic", True)),
+            "state": bool(opts.get("state", True)),
+            "recent": bool(opts.get("recent", True)),
+        }
+        upload = bool(opts.get("upload", False))
+        if not any(include.values()):
+            self.toast.emit("error", tr("Выберите хотя бы один раздел для экспорта"))
+            return
+        try:
+            path = self.controller.build_diagnostics(include=include, upload=upload)
+        except Exception as exc:  # noqa: BLE001
+            self.toast.emit("error", tr("Не удалось собрать диагностику: {error}", error=exc))
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+        if upload:
+            self.toast.emit("success", tr("Диагностика собрана и отправлена: {name}", name=path.name))
+        else:
+            self.toast.emit("success", tr("Диагностика сохранена: {name}", name=path.name))
 
     @pyqtSlot(int, result=str)
     def nodeIdAt(self, row: int) -> str:

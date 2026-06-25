@@ -9,6 +9,10 @@ from datetime import datetime, timezone
 import json
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+from .constants import APP_VERSION, DIAGNOSTICS_UPLOAD_URL
+from .logging_setup import configure_logging, get_logger
+from .diagnostics_uploader import upload_bundle
 from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
@@ -159,7 +163,7 @@ from .constants import (
 from .diagnostics import export_diagnostics
 from .discord_proxy_manager import DiscordProxyManager
 from .live_metrics_worker import LiveMetricsWorker
-from .log_utils import clean_log_text
+from .log_utils import classify_log_level, clean_log_text
 from .models import AppSettings, AppState, Node, RoutingSettings
 from .network_monitor import NetworkMonitor
 from .proxy_manager import ProxyManager
@@ -269,19 +273,32 @@ class AppController(QObject):
         self.connected = False
         self.locked = False
 
-        # --- File logger (5 MB × 3 rotated files in data/logs/) ---
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        self._logger = logging.getLogger("xray_fluent")
-        self._logger.setLevel(logging.DEBUG)
-        if not self._logger.handlers:
-            handler = RotatingFileHandler(
-                LOG_DIR / "app.log",
-                maxBytes=5 * 1024 * 1024,
-                backupCount=3,
-                encoding="utf-8",
-            )
-            handler.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-            self._logger.addHandler(handler)
+        # --- Domain-separated logging (core / app / traffic / errors) ---
+        configure_logging(
+            LOG_DIR,
+            upload_url=DIAGNOSTICS_UPLOAD_URL,
+            app_version=APP_VERSION,
+        )
+        self._logger = get_logger("app")
+        # Check and log previous native crash logs (faulthandler)
+        prev_fh_path = LOG_DIR / "faulthandler.prev"
+        if prev_fh_path.is_file():
+            try:
+                prev_content = prev_fh_path.read_text(encoding="utf-8", errors="replace").strip()
+                if prev_content:
+                    self._logger.error(
+                        f"[app] Native crash traceback detected from the previous run:\n{prev_content}"
+                    )
+                prev_fh_path.unlink()
+            except Exception:
+                pass
+        self._core_logger = get_logger("core")
+        self._traffic_logger = get_logger("traffic")
+        self._domain_loggers = {
+            "core": self._core_logger,
+            "traffic": self._traffic_logger,
+            "app": self._logger,
+        }
 
         self._country_resolver: CountryResolver | None = None
         self._ping_worker: PingWorker | None = None
@@ -301,14 +318,12 @@ class AppController(QObject):
         self._speed_completed = 0
         self._xray_update_silent = False
         self._reconnect_after_xray_update = False
-        # True while a user-requested core update is in its check-only first pass,
-        # so the live connection is only dropped once a real update is confirmed.
         self._xray_update_apply_requested = False
         self._reconnecting = False
         self._connecting = False
         self._disconnecting = False
         self._cleaning_connection_state = False
-        self._switching = False  # suppress intermediate UI updates during stop→start
+        self._switching = False
         self._active_core: str = "xray"  # "xray" | "singbox"
         self._protect_ss_port: int = 0
         self._protect_ss_password: str = ""
@@ -317,15 +332,15 @@ class AppController(QObject):
         self._traffic_save_counter = 0
 
         # --- Auto-switch state ---
-        self._auto_switch_low_since: float = 0.0  # monotonic timestamp when speed first dropped
-        self._auto_switch_last_switch: float = 0.0  # monotonic timestamp of last auto-switch
-        self._auto_switch_high_ticks: int = 0  # consecutive readings above threshold
-        self._auto_switch_active_download: bool = False  # True after sustained traffic
+        self._auto_switch_low_since: float = 0.0
+        self._auto_switch_last_switch: float = 0.0
+        self._auto_switch_high_ticks: int = 0
+        self._auto_switch_active_download: bool = False
         self._auto_switch_cycle_attempts: int = 0
         self._auto_switch_exhausted: bool = False
         self._auto_switch_transitioning: bool = False
-        self._health_down_since: float = 0.0  # monotonic-метка пропажи пинга (health-check для auto-switch)
-        self._kill_switch_engaged: bool = False  # активный fail-closed kill-switch после обрыва
+        self._health_down_since: float = 0.0
+        self._kill_switch_engaged: bool = False
         self._active_session: ActiveSessionSnapshot | None = None
         self._desired_connected = False
         self._transition_active = False
@@ -347,6 +362,7 @@ class AppController(QObject):
         self.singbox.stopped.connect(lambda code: self._on_core_stopped("singbox", code))
 
         self._xray_tun_routes.log_received.connect(lambda line: self._on_core_log("tun", line))
+        self.zapret.log_line.connect(lambda line: self._on_core_log("zapret", line))
 
         self.network_monitor.network_changed.connect(self._on_network_changed)
 
@@ -374,7 +390,6 @@ class AppController(QObject):
         self.selection_changed.emit(self.selected_node)
         self.routing_changed.emit(self.state.routing)
         self.settings_changed.emit(self.state.settings)
-        # Без этого список подписок не пересчитывается в QML после загрузки (подписки "пропадают" после перезапуска).
         self.subscriptions_changed.emit(list(self.state.subscriptions))
         return True
 
@@ -1354,7 +1369,7 @@ class AppController(QObject):
         self._auto_switch_low_since = 0.0
         self._auto_switch_high_ticks = 0
         self._auto_switch_active_download = False
-        self._health_down_since = 0.0  # сброс health-check вместе с auto-switch
+        self._health_down_since = 0.0
         if reset_cycle:
             self._auto_switch_cycle_attempts = 0
             self._auto_switch_exhausted = False
@@ -1508,9 +1523,6 @@ class AppController(QObject):
         self.schedule_save()
 
         if old_proxy and not settings.enable_system_proxy:
-            # Only Firefox-family/Necko profiles are touched here. WinINET is
-            # still handled by the normal runtime proxy transition, but browser
-            # profile overrides must be removed even when VPN is currently off.
             self.proxy.disable_necko_overrides()
 
         if old_launch != settings.launch_on_startup:
@@ -1579,12 +1591,16 @@ class AppController(QObject):
         self.resource_update_result.emit(result)
         status = getattr(result, "status", "")
         message = getattr(result, "message", "") or ""
+        kind = getattr(result, "kind", "resources")
         if status == "error":
             self.status.emit("error", message)
+            self._logger.error(f"[updater] Failed to update {kind}: {message}")
         elif status in {"updated", "up_to_date"}:
             self.status.emit("success" if status == "updated" else "info", message)
+            self._logger.info(f"[updater] Resource update ({kind}) finished: status={status}, message={message}")
         else:
             self.status.emit("warning", message)
+            self._logger.warning(f"[updater] Resource update ({kind}) warning: status={status}, message={message}")
 
     def _start_metrics_worker(self) -> None:
         start_metrics_worker_operation(self)
@@ -1627,10 +1643,13 @@ class AppController(QObject):
         self._desired_connected = False
         self.disconnect_current()
 
-    def build_diagnostics(self) -> Path:
+    def build_diagnostics(self, *, include: dict | None = None, upload: bool = True) -> Path:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output = LOG_DIR / f"diagnostics_{stamp}.zip"
-        return export_diagnostics(output, self.state, self.recent_logs)
+        bundle = export_diagnostics(output, self.state, self.recent_logs, include=include)
+        if upload and DIAGNOSTICS_UPLOAD_URL:
+            upload_bundle(DIAGNOSTICS_UPLOAD_URL, bundle, app_version=APP_VERSION)
+        return bundle
 
     def auto_connect_if_needed(self) -> None:
         if not self.state.settings.auto_connect_last or self.locked:
@@ -1641,25 +1660,65 @@ class AppController(QObject):
             self._desired_connected = True
             self._request_transition("auto connect")
 
+    _CORE_TAGS = frozenset({
+        "xray", "singbox", "sing-box", "tun", "xray-tun", "zapret", "proxy",
+        "core", "xray-error", "singbox-error", "zapret-error", "discord",
+        "discord-proxy",
+    })
+    _TRAFFIC_TAGS = frozenset({
+        "speed", "ping", "traffic", "metrics", "auto-switch", "autoswitch",
+        "kill-switch", "killswitch", "health",
+    })
+
+    def _classify_log(self, line: str) -> tuple[str, int]:
+        """Infer (domain, level) from a leading [tag] in the log line."""
+        tag = ""
+        text = line.lstrip()
+        if text.startswith("["):
+            end = text.find("]")
+            if end != -1:
+                tag = text[1:end].strip().lower()
+        if tag in self._TRAFFIC_TAGS or tag.startswith(
+            ("speed", "ping", "auto", "traffic", "kill", "health")
+        ):
+            domain = "traffic"
+        elif tag in self._CORE_TAGS or tag.startswith(
+            ("xray", "singbox", "sing-box", "tun", "zapret", "proxy", "core", "discord")
+        ):
+            domain = "core"
+        else:
+            domain = "app"
+        if "error" in tag:
+            level = logging.ERROR
+        elif "warn" in tag:
+            level = logging.WARNING
+        else:
+            parsed_level = classify_log_level(line)
+            if parsed_level == "error":
+                level = logging.ERROR
+            elif parsed_level == "warning":
+                level = logging.WARNING
+            else:
+                level = logging.INFO
+        return domain, level
+
     def _log(self, line: str) -> None:
-        """Send a log line to the UI and write it to the log file."""
+        """Route a log line to its domain file + the UI, with a severity level."""
         line = clean_log_text(line)
         if not line:
             return
         self.recent_logs.append(line)
         if len(self.recent_logs) > 5000:
             self.recent_logs = self.recent_logs[-5000:]
-        self._logger.info(line)
+        domain, level = self._classify_log(line)
+        self._domain_loggers.get(domain, self._logger).log(level, line, extra={"from_controller": True})
         self.log_line.emit(line)
 
     def _on_xray_log(self, line: str) -> None:
-        # In TUN mode, throttle noisy per-connection logs to prevent UI freeze
         if self.state.settings.tun_mode and self._is_noisy_tun_log(line):
             self._tun_log_count = getattr(self, "_tun_log_count", 0) + 1
-            # Skip per-connection noise in both UI and app.log; keep a compact
-            # heartbeat so diagnostics still show that TUN is routing traffic.
             if self._tun_log_count % 50 == 0:
-                self._logger.info("[tun] %d noisy connection logs suppressed", self._tun_log_count)
+                self._core_logger.info("[tun] %d noisy connection logs suppressed", self._tun_log_count)
                 self.log_line.emit(f"[tun] {self._tun_log_count} connections routed...")
             return
         self._log(line)
@@ -1698,16 +1757,37 @@ class AppController(QObject):
             return True
         return False
 
+    def _log_network_context(self) -> None:
+        try:
+            from .diagnostics import collect_network_context
+            net = collect_network_context()
+            self._logger.info(
+                "[network-diagnostic] IPv4 Internet: %s, IPv6 Internet: %s, DNS: %s",
+                "OK" if net.get("ipv4_internet") else "FAIL",
+                "OK" if net.get("ipv6_internet") else "FAIL",
+                ", ".join(net.get("system_dns", [])) or "None",
+            )
+        except Exception as exc:
+            self._logger.debug("[network-diagnostic] Failed to collect net context: %s", exc)
+
     def _on_xray_error(self, message: str) -> None:
         self._log(f"[xray-error] {message}")
+        self._log_network_context()
         self._set_connection_status("error", message, level="error")
 
     def _on_singbox_error(self, message: str) -> None:
         self._log(f"[singbox-error] {message}")
+        self._log_network_context()
         self._set_connection_status("error", message, level="error")
 
     def _on_core_stopped(self, core: str, exit_code: int) -> None:
-        self._log(f"[{core}] process stopped with code {exit_code}")
+        expected = (
+            getattr(self, "_disconnecting", False)
+            or getattr(self, "_reconnecting", False)
+            or getattr(self, "_switching", False)
+        )
+        suffix = " (expected)" if expected else ""
+        self._log(f"[{core}] process stopped with code {exit_code}{suffix}")
 
     def _on_core_state_changed(self, _running: bool) -> None:
         on_core_state_changed_operation(self, _running)
@@ -1739,9 +1819,7 @@ class AppController(QObject):
     def _on_live_metrics(self, payload: dict[str, object]) -> None:
         on_live_metrics_operation(self, payload)
 
-    # Require N consecutive high-speed readings to confirm "active download"
-    _AUTO_SWITCH_HIGH_TICKS_REQUIRED = 10  # ~10s of sustained traffic above threshold
-    # Minimum speed to count as "traffic exists" (1 KB/s) vs idle (0)
+    _AUTO_SWITCH_HIGH_TICKS_REQUIRED = 10
     _AUTO_SWITCH_IDLE_BPS = 1024.0
 
     def _check_auto_switch(self, down_bps: float, latency_ms: int | None = None) -> None:
@@ -1756,8 +1834,6 @@ class AppController(QObject):
     def _on_network_changed(self, old: str, new: str) -> None:
         self._log(f"[network] changed: {old} -> {new}")
         invalidate_windows_default_route_context()
-        # TUN mode creates a virtual adapter which triggers network change —
-        # reconnecting would kill the TUN and cause an infinite loop
         if self.state.settings.tun_mode:
             self._log("[network] ignoring change in TUN mode")
             return
@@ -1783,8 +1859,6 @@ class AppController(QObject):
             finally:
                 self._auto_switch_transitioning = False
 
-        # sing-box raw mode keeps the user config as the source of truth and may
-        # switch between native and hybrid planner outcomes, so reconnect.
         return self._reconnect(f"{reason} (sing-box config change)")
 
     def _reconnect(self, reason: str) -> bool:

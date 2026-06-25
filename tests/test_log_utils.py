@@ -29,7 +29,7 @@ def test_control_characters_are_removed() -> None:
 
 def test_expected_core_exit_is_not_reported_as_error() -> None:
     entry = parse_log_line("[xray] process stopped with code 0")
-    assert entry.level == "info"
+    assert entry.level == "success"
     assert entry.message == "process stopped with code 0"
 
 
@@ -57,3 +57,54 @@ def test_log_proxy_filters_by_level_and_search() -> None:
     assert proxy.rowCount() == 1
     proxy.setLevelFilter("info")
     assert proxy.rowCount() == 1
+
+
+def test_zapret_log_levels() -> None:
+    from xray_fluent.log_utils import classify_log_level
+    assert classify_log_level("[zapret] ERROR: windivert: access denied") == "error"
+    assert classify_log_level("[zapret] WARN: deprecated option") == "warning"
+    assert classify_log_level("[zapret] Перезапуск текущего пресета") == "info"
+
+
+def test_collect_network_context() -> None:
+    from xray_fluent.diagnostics import collect_network_context
+    net = collect_network_context()
+    assert isinstance(net, dict)
+    assert "ipv4_internet" in net
+    assert "ipv6_internet" in net
+    assert "system_dns" in net
+    assert isinstance(net["system_dns"], list)
+    assert "proxy_info" in net
+    assert isinstance(net["proxy_info"], dict)
+    assert "env_proxies" in net["proxy_info"]
+    assert "connected_adapters" in net
+    assert isinstance(net["connected_adapters"], list)
+
+
+def test_connection_errors_are_warnings() -> None:
+    from xray_fluent.log_utils import classify_log_level
+    msg1 = "[singbox] ERROR [4263401339 226ms] connection: open connection to 142.251.9.188:5228 using outbound/trojan[proxy]: unexpected HTTP response status: 502"
+    msg2 = "dial tcp 127.0.0.1:10808: connectex: A connection attempt failed..."
+    msg3 = "tls: handshake failed"
+    assert classify_log_level(msg1) == "warning"
+    assert classify_log_level(msg2) == "warning"
+    assert classify_log_level(msg3) == "warning"
+
+
+def test_expected_core_exit_with_nonzero_code_is_not_error() -> None:
+    from xray_fluent.log_utils import classify_log_level
+    assert classify_log_level("[singbox] process stopped with code 1 (expected)") == "success"
+    assert classify_log_level("[xray] process stopped with code -1 (expected)") == "success"
+
+
+def test_diagnostic_filter_ignores_connection_errors() -> None:
+    import logging
+    from xray_fluent.logging_setup import _DiagnosticFilter
+    f = _DiagnosticFilter()
+    rec1 = logging.LogRecord("xray_fluent", logging.WARNING, "", 0, "unexpected HTTP response status: 502", (), None)
+    rec2 = logging.LogRecord("xray_fluent", logging.WARNING, "", 0, "Normal application warning", (), None)
+    assert f.filter(rec1) is False
+    assert f.filter(rec2) is True
+
+
+

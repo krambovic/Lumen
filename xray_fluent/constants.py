@@ -7,8 +7,11 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen KVN"
-APP_VERSION = "1.6.6"
+APP_VERSION = "1.6.7"
 STATE_SCHEMA_VERSION = 1
+
+DIAGNOSTICS_UPLOAD_URL = "https://diagnostics.lumen-kvn.eu.cc/api/ingest"
+DIAGNOSTICS_SECRET = "07f7d005166286e354645dcbce892998987bd8d8d20f296026dbb01ff05a9b8a"
 
 PROXY_HOST = "127.0.0.1"
 DEFAULT_SOCKS_PORT = 10808
@@ -23,13 +26,11 @@ ROUTING_DIRECT = "direct"
 ROUTING_MODES = (ROUTING_GLOBAL, ROUTING_RULE, ROUTING_DIRECT)
 
 
-def get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[1]
-
-
-BASE_DIR = get_base_dir()
+BASE_DIR = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parents[1]
+)
 
 
 INSTALL_DATA_DIR = BASE_DIR / "data"
@@ -61,7 +62,7 @@ SINGBOX_XRAY_RELAY_PORT = 11808
 
 SPEED_TEST_DEFAULT_URL = "https://cachefly.cachefly.net/50mb.test"
 SPEED_TEST_PING_URL = "https://www.google.com/generate_204"
-SPEED_TEST_TIMEOUT = 10  # v2rayN-style timeout per speed test
+SPEED_TEST_TIMEOUT = 10
 SPEED_TEST_MIXED_CONCURRENCY = 10
 SPEED_TEST_PROCESS_CONCURRENCY_CAP = 6
 SPEED_TEST_STARTUP_TIMEOUT = 5.0

@@ -56,12 +56,26 @@ def _split_source(text: str) -> tuple[str, str]:
 def classify_log_level(text: str) -> str:
     low = text.lower()
     exit_match = re.search(r"(?:code|код(?:ом)?)\s+(-?\d+)", low)
-    if exit_match and int(exit_match.group(1)) != 0:
+    if exit_match:
+        if int(exit_match.group(1)) != 0 and "expected" not in low:
+            return "error"
+        return "success"
+    if "[error]" in low or "[critical]" in low or "[fatal]" in low or "[panic]" in low:
         return "error"
-    if any(token in low for token in ("fatal", "panic", "error", "ошибк", "failed", "не удалось")):
-        return "error"
-    if any(token in low for token in ("warn", "warning", "предупреж", "deprecated", "timeout", "timed out")):
+    if "[warning]" in low or "[warn]" in low:
         return "warning"
+    if any(token in low for token in ("connection:", "handshake", "dial tcp", "unexpected http response status", "unexpected response status")):
+        return "warning"
+    if re.search(r"\b(error|critical|fatal|panic)\b", low) and not "common/errors" in low:
+        return "error"
+    if re.search(r"\b(warning|warn)\b", low):
+        return "warning"
+    if any(token in low for token in ("failed", "не удалось")):
+        return "error"
+    if any(token in low for token in ("deprecated", "timeout", "timed out", "предупреж")):
+        return "warning"
+    if "ошибк" in low:
+        return "error"
     if any(token in low for token in ("ready", "started", "connected", "успеш", "готов", "подключено", "updated")):
         return "success"
     return "info"
