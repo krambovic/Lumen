@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import "."
 Item {
     id: root
@@ -12,6 +13,8 @@ Item {
     property real wheelStep: 92
     property int glide: 540
     property bool barForcedVisible: false
+    property bool roundedClip: true
+    property real clipRadius: Theme.radius
 
     readonly property real maxY: Math.max(0, flick.contentHeight - flick.height)
     readonly property bool scrollable: maxY > 1
@@ -36,7 +39,23 @@ Item {
     Flickable {
         id: flick
         anchors.fill: parent
-        clip: true
+        clip: !root.roundedClip
+        layer.enabled: root.roundedClip && root.clipRadius > 0
+        layer.smooth: true
+        layer.effect: MultiEffect {
+            maskEnabled: true
+            maskThresholdMin: 0.5
+            maskSpreadAtMin: 1.0
+            maskSource: ShaderEffectSource {
+                hideSource: true
+                sourceItem: Rectangle {
+                    width: flick.width
+                    height: flick.height
+                    radius: root.clipRadius
+                    color: "black"
+                }
+            }
+        }
         boundsBehavior: Flickable.StopAtBounds
         boundsMovement: Flickable.StopAtBounds
         contentWidth: width

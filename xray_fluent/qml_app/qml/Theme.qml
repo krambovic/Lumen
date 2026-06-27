@@ -20,14 +20,16 @@ QtObject {
     property bool animations: true             // master motion switch
     property string preset: "default"          // default | midnight | nord | ...
     property string baseTint: ""               // "" = выкл; иначе #RRGGBB — свой базовый тон окна (приоритет над пресетом)
+    property string backdrop: "mica"           // mica | acrylic | solid
     property bool backdropAvailable: true       // false на Win10 (нет Mica) → непрозрачный фон
 
+    readonly property bool isTranslucent: backdropAvailable && backdrop !== "solid"
     readonly property bool amoled: preset === "midnight"
 
     // ---- Theme presets (surface palettes) ------------------------------
     readonly property var _presetMap: ({
         "default":   { d0: "#202020", d1: "#2C2C2C", lt: "#F3F3F3", win: "" },
-        "absolutely": { d0: "#15111A", d1: "#211926", lt: "#F4EEF7", win: "#15111A", elevated: "#1B1420", card: "#241B2A", cardHover: "#31233A", cardPressed: "#1E1724", flyout: "#211926", flyoutBorder: "#3A2A45", border: "#3A2A45", divider: "#30243A", text: "#F4EAF7", muted: "#BBA6C7", faint: "#887394", control: "#241B2A", controlHover: "#31233A", controlPressed: "#1E1724", colored: true },
+        "absolutely": { d0: "#2D2D2B", d1: "#21211F", lt: "#F5F3ED", win: "#2D2D2B", elevated: "#21211F", card: "#383835", cardHover: "#42423E", cardPressed: "#31312E", flyout: "#252523", flyoutBorder: "#474744", border: "#42423E", divider: "#383835", text: "#F9F9F7", muted: "#B5B5B0", faint: "#888882", control: "#383835", controlHover: "#42423E", controlPressed: "#31312E", colored: true },
         "ayu":        { d0: "#0B0E14", d1: "#11151C", lt: "#FAFAFA", win: "#0B0E14", elevated: "#101521", card: "#151B26", cardHover: "#1F2937", cardPressed: "#10151E", flyout: "#11151C", flyoutBorder: "#2D3646", border: "#2D3646", divider: "#232B38", text: "#E6E1CF", muted: "#B3B1AD", faint: "#7F8692", control: "#151B26", controlHover: "#1F2937", controlPressed: "#10151E", colored: true },
         "dracula":   {
             d0: "#282A36", d1: "#343746", lt: "#F8F8F2", win: "#282A36",
@@ -72,7 +74,7 @@ QtObject {
     })
     readonly property var _lightPresetMap: ({
         "default":     { bg: "#F3F3F3", layer: "#FFFFFF", hover: "#F4F4F4", press: "#ECECEC", border: "#D6D6D6", divider: "#E2E2E2", text: "#1F1F1F", muted: "#666666", faint: "#8A8A8A" },
-        "absolutely":  { bg: "#F7F4FA", layer: "#FFFFFF", hover: "#F2EEF7", press: "#EAE2F1", border: "#D8D0E0", divider: "#E5DEE9", text: "#28222E", muted: "#655B70", faint: "#8A8192" },
+        "absolutely":  { bg: "#F5F3ED", layer: "#FFFFFF", hover: "#EFECE3", press: "#E4E0D5", border: "#D5CFC1", divider: "#E6E1D4", text: "#32302C", muted: "#686358", faint: "#8E897D" },
         "ayu":         { bg: "#F8F6F0", layer: "#FFFFFF", hover: "#F1EDE4", press: "#E8E0D2", border: "#D8D0C0", divider: "#E6DED0", text: "#2F302A", muted: "#68655D", faint: "#8C877C" },
         "catppuccin":  { bg: "#EFF1F5", layer: "#FFFFFF", hover: "#E9ECF2", press: "#DDE2EC", border: "#CAD0DC", divider: "#DCE0E8", text: "#4C4F69", muted: "#6C6F85", faint: "#8C8FA1" },
         "codex":       { bg: "#F5F6F8", layer: "#FFFFFF", hover: "#EAEEF5", press: "#DDE3ED", border: "#D6DCE7", divider: "#E4E8F0", text: "#1C2430", muted: "#5C6675", faint: "#7C8796" },
@@ -114,7 +116,7 @@ QtObject {
     readonly property color accentPressed: dark ? Qt.lighter(accent, 1.22) : Qt.darker(accent, 1.14)
     readonly property color accentText: _accentIsLight(accent) ? "#111111" : "#FFFFFF"
     readonly property color accentSoft: dark ? Qt.rgba(accent.r, accent.g, accent.b, 0.22)
-                                             : Qt.rgba(accent.r, accent.g, accent.b, 0.10)
+                                             : Qt.rgba(accent.r, accent.g, accent.b, 0.20)
     // Curated accent palette for the Appearance Studio swatch grid.
     readonly property var accentSwatches: ["#0078D4", "#0099BC", "#00B294", "#107C10",
         "#744DA9", "#BD93F9", "#CBA6F7", "#B146C2", "#E3008C", "#C30052", "#E81123", "#F7630C", "#FFB900", "#498205"]
@@ -141,7 +143,9 @@ QtObject {
         if (!(dark && presetColored))
             return _palColor(name, fallback)
         var value = _pal[name]
-        return value === undefined || value === "" ? fallback : _hexWithAlpha(value, alpha)
+        if (value === undefined || value === "")
+            return fallback
+        return isTranslucent ? _hexWithAlpha(value, alpha) : value
     }
 
     function _lightColor(name, fallback) {
@@ -153,7 +157,9 @@ QtObject {
         if (!presetColored)
             return fallback
         var value = _lightPal[name]
-        return value === undefined || value === "" ? fallback : _hexWithAlpha(value, alpha)
+        if (value === undefined || value === "")
+            return fallback
+        return isTranslucent ? _hexWithAlpha(value, alpha) : value
     }
 
     function _lightBackground(alpha) {
@@ -181,21 +187,32 @@ QtObject {
                        (g * 0.30 + base * 0.70) / 255,
                        (b * 0.30 + base * 0.70) / 255, 1)
     }
+    readonly property real lightGlassWindowAlpha: 0.22
+    readonly property real lightGlassPanelAlpha: 0.18
+    readonly property real lightGlassCardAlpha: 0.50
+    readonly property real lightGlassCardHoverAlpha: 0.62
+    readonly property real lightGlassCardPressedAlpha: 0.70
+    readonly property real lightGlassControlAlpha: 0.44
+    readonly property real lightGlassControlHoverAlpha: 0.58
+    readonly property real lightGlassControlPressedAlpha: 0.68
+
     readonly property color windowBase: baseTint !== ""
         ? (dark ? _darkTint(baseTint) : _lightTint(baseTint))
-        : (presetColored
-            ? (dark
-                ? _hexWithAlpha(_pal.win !== "" ? _pal.win : _pal.d0, 0.34)
-                : _lightBackground(0.86))
-            : (dark ? (backdropAvailable ? "transparent" : _pal.d0) : _lightBackground(0.86)))
+        : (isTranslucent
+            ? (presetColored
+                ? (dark ? _hexWithAlpha(_pal.win !== "" ? _pal.win : _pal.d0, 0.34) : _lightBackground(lightGlassWindowAlpha))
+                : (dark ? "transparent" : _lightBackground(lightGlassWindowAlpha)))
+            : (dark
+                ? (_pal.win !== "" && _pal.win !== undefined ? _pal.win : _pal.d0)
+                : _lightPal.bg))
     readonly property color micaBase: "transparent"
     // Slightly raised base (nav pane): a very faint layer so Mica stays visible.
-    readonly property color bgElevated: dark ? _palLayer("elevated", Qt.rgba(1, 1, 1, 0.016), 0.34) : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.55), 0.82)
+    readonly property color bgElevated: dark ? _palLayer("elevated", Qt.rgba(1, 1, 1, 0.016), 0.34) : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.18), lightGlassPanelAlpha)
     // Card / layer fill composited over the backdrop (translucent on purpose).
-    readonly property color card: dark ? _palLayer("card", Qt.rgba(1, 1, 1, 0.040), 0.52) : _lightLayer("layer", Qt.rgba(1, 1, 1, 0.70), 0.88)
-    readonly property color cardHover: dark ? _palLayer("cardHover", Qt.rgba(1, 1, 1, 0.0837), 0.66) : _lightLayer("layer", Qt.rgba(0, 0, 0, 0.024), 0.94)
-    readonly property color cardPressed: dark ? _palLayer("cardPressed", Qt.rgba(1, 1, 1, 0.0326), 0.44) : _lightLayer("hover", Qt.rgba(0, 0, 0, 0.040), 0.92)
-    readonly property color navHover: dark ? cardHover : _lightColor("hover", Qt.rgba(0, 0, 0, 0.045))
+    readonly property color card: dark ? _palLayer("card", Qt.rgba(1, 1, 1, 0.040), 0.52) : _lightLayer("layer", Qt.rgba(1, 1, 1, lightGlassCardAlpha), lightGlassCardAlpha)
+    readonly property color cardHover: dark ? _palLayer("cardHover", Qt.rgba(1, 1, 1, 0.0837), 0.66) : _lightLayer("hover", Qt.rgba(1, 1, 1, lightGlassCardHoverAlpha), lightGlassCardHoverAlpha)
+    readonly property color cardPressed: dark ? _palLayer("cardPressed", Qt.rgba(1, 1, 1, 0.0326), 0.44) : _lightLayer("press", Qt.rgba(1, 1, 1, lightGlassCardPressedAlpha), lightGlassCardPressedAlpha)
+    readonly property color navHover: dark ? cardHover : Qt.rgba(accent.r, accent.g, accent.b, 0.11)
     readonly property color flyout: dark ? _palLayer("flyout", _pal.d1, 0.86) : _lightColor("layer", "#FBFBFB")
     readonly property color flyoutBorder: dark ? _palLayer("flyoutBorder", Qt.rgba(1, 1, 1, 0.10), 0.72) : _lightColor("border", Qt.rgba(0, 0, 0, 0.13))
 
@@ -217,9 +234,9 @@ QtObject {
     readonly property color info: accent
 
     // ---- Standard (non-accent) button fill -----------------------------
-    readonly property color controlFill: dark ? _palLayer("control", Qt.rgba(1, 1, 1, 0.06), 0.48) : _lightLayer("layer", Qt.rgba(1, 1, 1, 0.70), 0.88)
-    readonly property color controlFillHover: dark ? _palLayer("controlHover", Qt.rgba(1, 1, 1, 0.08), 0.62) : _lightLayer("layer", Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.5), 0.94)
-    readonly property color controlFillPressed: dark ? _palLayer("controlPressed", Qt.rgba(1, 1, 1, 0.03), 0.40) : _lightLayer("hover", Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.3), 0.92)
+    readonly property color controlFill: dark ? _palLayer("control", Qt.rgba(1, 1, 1, 0.06), 0.48) : _lightLayer("layer", Qt.rgba(1, 1, 1, lightGlassControlAlpha), lightGlassControlAlpha)
+    readonly property color controlFillHover: dark ? _palLayer("controlHover", Qt.rgba(1, 1, 1, 0.08), 0.62) : _lightLayer("hover", Qt.rgba(1, 1, 1, lightGlassControlHoverAlpha), lightGlassControlHoverAlpha)
+    readonly property color controlFillPressed: dark ? _palLayer("controlPressed", Qt.rgba(1, 1, 1, 0.03), 0.40) : _lightLayer("press", Qt.rgba(1, 1, 1, lightGlassControlPressedAlpha), lightGlassControlPressedAlpha)
 
     // ---- Elevation (drop shadows via MultiEffect) ----------------------
     readonly property color shadowColor: "#000000"

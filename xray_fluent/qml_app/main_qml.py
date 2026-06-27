@@ -128,6 +128,14 @@ def _apply_mica(window, dark: bool) -> None:
             margins = _Margins(-1, -1, -1, -1)
             dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
 
+            # Customize window border color to prevent accent-colored border glitches during scroll
+            DWMWA_BORDER_COLOR = 34
+            border_color = ctypes.c_int(0x003A3A3A if dark else 0x00D6D6D6)
+            dwm.DwmSetWindowAttribute(
+                hwnd, DWMWA_BORDER_COLOR,
+                ctypes.byref(border_color), ctypes.sizeof(border_color),
+            )
+
             if build >= 22621:
                 backdrop = ctypes.c_int(DWMSBT_MAINWINDOW)
                 dwm.DwmSetWindowAttribute(

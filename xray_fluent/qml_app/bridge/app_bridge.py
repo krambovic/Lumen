@@ -980,7 +980,7 @@ class AppBridge(QObject):
     def _accent_for_theme_preset(value: str) -> str:
         return {
             "default": "#0078D4",
-            "absolutely": "#A855F7",
+            "absolutely": "#CC7D5E",
             "ayu": "#D97706",
             "catppuccin": "#CBA6F7",
             "codex": "#2563EB",

@@ -53,11 +53,13 @@ ApplicationWindow {
         }
         Behavior on opacity { NumberAnimation { duration: Theme.animations ? 200 : 0 } }
 
+
         Rectangle {
             anchors.fill: parent
-            color: "black"
+            color: Theme.dark ? "black" : "white"
             visible: App.uiWallpaperBrightness < 100
-            opacity: (100 - App.uiWallpaperBrightness) / 100
+            opacity: Theme.dark ? (100 - App.uiWallpaperBrightness) / 100
+                                : Math.min(0.58, (100 - App.uiWallpaperBrightness) / 145)
             Behavior on opacity { NumberAnimation { duration: Theme.animations ? 200 : 0 } }
         }
     }
@@ -273,6 +275,17 @@ ApplicationWindow {
             clip: true
             z: 1
 
+            // Vertical divider line separating sidebar from content
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.topMargin: Theme.radius
+                width: 1
+                color: Theme.divider
+                z: 10
+            }
+
             Rectangle {
                 id: contentWindow
                 anchors.fill: parent
@@ -281,10 +294,41 @@ ApplicationWindow {
                 clip: true
                 radius: Theme.radius
                 color: Theme.backdrop === "acrylic"
-                       ? (Theme.dark ? Qt.rgba(0, 0, 0, 0.32) : Qt.rgba(1, 1, 1, 0.62))
-                       : (Theme.dark ? Qt.rgba(1, 1, 1, 0.045) : Qt.rgba(1, 1, 1, 0.45))
-                border.width: 1
+                       ? (Theme.dark ? Qt.rgba(0, 0, 0, 0.32) : Qt.rgba(1, 1, 1, 0.24))
+                       : (Theme.dark ? Qt.rgba(1, 1, 1, 0.045) : Qt.rgba(1, 1, 1, 0.16))
+                border.width: 0
                 border.color: Theme.divider
+
+                Canvas {
+                    id: contentFrameTop
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: Math.max(1, Theme.radius + 1)
+                    z: 2
+                    property color lineColor: Theme.divider
+                    property real frameRadius: Theme.radius
+                    onLineColorChanged: requestPaint()
+                    onFrameRadiusChanged: requestPaint()
+                    onWidthChanged: requestPaint()
+                    onHeightChanged: requestPaint()
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        var r = Math.max(0, Math.min(frameRadius, height - 1, width / 2))
+                        ctx.clearRect(0, 0, width, height)
+                        ctx.lineWidth = 1
+                        ctx.strokeStyle = lineColor
+                        ctx.beginPath()
+                        if (r > 0) {
+                            ctx.moveTo(0.5, r + 0.5)
+                            ctx.quadraticCurveTo(0.5, 0.5, r + 0.5, 0.5)
+                        } else {
+                            ctx.moveTo(0.5, 0.5)
+                        }
+                        ctx.lineTo(width, 0.5)
+                        ctx.stroke()
+                    }
+                }
 
                 Item {
                     id: pageStack

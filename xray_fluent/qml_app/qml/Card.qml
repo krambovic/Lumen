@@ -19,19 +19,20 @@ Item {
 
     Rectangle {
         id: bg
+        antialiasing: true
         anchors.fill: parent
         radius: Theme.radius
         color: root.color
         border.width: 1
-        border.color: root._hot && root.hoverable && Theme.dark ? Theme.divider : Theme.borderSolid
+        border.color: root._hot && root.hoverable ? Theme.divider : Theme.borderSolid
         Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
         layer.enabled: root.elevation > 0
         layer.effect: MultiEffect {
             shadowEnabled: true
             shadowColor: Theme.shadowColor
-            shadowOpacity: Theme.shadowOpacity * (root._hot ? 1.4 : 1.0) * Math.min(1, root.elevation)
+            shadowOpacity: Theme.shadowOpacity * (root.elevation > 0 ? (root._hot ? 1.4 : 1.0) : (root._hot ? 0.6 : 0.0)) * (root.elevation > 0 ? Math.min(1, root.elevation) : 1.0)
             shadowBlur: Theme.shadowBlur
-            shadowVerticalOffset: Theme.shadowVOffset + (root._hot ? 2 : 0)
+            shadowVerticalOffset: root.elevation > 0 ? (Theme.shadowVOffset + (root._hot ? 2 : 0)) : (root._hot ? 3 : 0)
             autoPaddingEnabled: true
             Behavior on shadowOpacity { NumberAnimation { duration: Theme.animFast } }
             Behavior on shadowVerticalOffset { NumberAnimation { duration: Theme.animFast } }
@@ -41,7 +42,7 @@ Item {
             anchors.fill: parent
             anchors.margins: 1
             radius: Math.max(0, parent.radius - 1)
-            color: Theme.dark ? Qt.rgba(1, 1, 1, 0.017) : Theme.cardHover
+            color: Theme.dark ? Qt.rgba(1, 1, 1, 0.017) : Qt.rgba(0, 0, 0, 0.015)
             opacity: root._hot ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Theme.animFast } }
         }
@@ -52,7 +53,7 @@ Item {
             anchors.bottom: parent.bottom
             height: bg.radius + 1
             clip: true
-            visible: !Theme.dark
+            visible: !Theme.dark && root.elevation > 0
 
             Rectangle {
                 anchors.left: parent.left
