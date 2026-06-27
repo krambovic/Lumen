@@ -27,6 +27,27 @@ Lumen KVN is a standalone Windows client for VPN/TUN, system proxy, routing, ser
 
 ---
 
+## Screenshots
+
+<table>
+  <tr>
+    <td width="33%">
+      <img src="assets/screenshots/dashboard-dark.png" alt="Dashboard in dark theme">
+      <sub><b>Dashboard</b> · dark theme</sub>
+    </td>
+    <td width="33%">
+      <img src="assets/screenshots/dashboard-light.png" alt="Dashboard in light theme">
+      <sub><b>Dashboard</b> · light theme</sub>
+    </td>
+    <td width="33%">
+      <img src="assets/screenshots/zapret-dark.png" alt="Zapret DPI bypass screen">
+      <sub><b>zapret</b> · DPI bypass presets</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Features
 
 | Category | Components Used | Description |
@@ -45,6 +66,17 @@ Go to the **[Releases](https://github.com/krambovic/Lumen-KVN/releases)** page a
 
 * **Installer (`LumenKVN-Setup-windows-x64.exe`):** Recommended for most users.
 * **Portable version (`LumenKVN-portable-windows-x64.zip`):** Standalone archive that runs without installation.
+
+---
+
+## Quick Start
+
+1. Run Lumen KVN as Administrator.
+2. Import a server link or a supported `.conf` file.
+3. Choose the connection mode: system proxy, VPN/TUN, or zapret DPI bypass.
+4. Select a routing preset and connect.
+
+WARP, WireGuard, and AmneziaWG configs are handled through TUN mode with `sing-box-extended`; regular VLESS, Trojan, Shadowsocks, and VMess links can be used through system proxy mode.
 
 ---
 

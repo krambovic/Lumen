@@ -27,6 +27,27 @@ Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, 
 
 ---
 
+## Скриншоты
+
+<table>
+  <tr>
+    <td width="33%">
+      <img src="assets/screenshots/dashboard-dark.png" alt="Панель управления в темной теме">
+      <sub><b>Панель управления</b> · темная тема</sub>
+    </td>
+    <td width="33%">
+      <img src="assets/screenshots/dashboard-light.png" alt="Панель управления в светлой теме">
+      <sub><b>Панель управления</b> · светлая тема</sub>
+    </td>
+    <td width="33%">
+      <img src="assets/screenshots/zapret-dark.png" alt="Экран обхода DPI через zapret">
+      <sub><b>zapret</b> · пресеты обхода DPI</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Возможности программы
 
 | Раздел | Используемые компоненты | Описание |
@@ -45,6 +66,17 @@ Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, 
 
 * **Установщик (`LumenKVN-Setup-windows-x64.exe`):** Рекомендуется для большинства пользователей.
 * **Портативная версия (`LumenKVN-portable-windows-x64.zip`):** Работает без установки.
+
+---
+
+## Быстрый старт
+
+1. Запустите Lumen KVN от имени администратора.
+2. Импортируйте ссылку сервера или поддерживаемый `.conf` файл.
+3. Выберите режим подключения: системный прокси, VPN/TUN или обход DPI через zapret.
+4. Выберите пресет маршрутизации и подключитесь.
+
+WARP, WireGuard и AmneziaWG конфиги работают через TUN на `sing-box-extended`; обычные VLESS, Trojan, Shadowsocks и VMess ссылки можно использовать через режим системного прокси.
 
 ---
 
