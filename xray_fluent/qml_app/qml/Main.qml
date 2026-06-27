@@ -274,6 +274,11 @@ ApplicationWindow {
             z: 1
 
             Rectangle {
+                anchors.fill: parent
+                color: Theme.chromePanel
+            }
+
+            Rectangle {
                 id: contentWindow
                 anchors.fill: parent
                 anchors.rightMargin: -Theme.radius
