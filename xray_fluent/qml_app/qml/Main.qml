@@ -181,7 +181,7 @@ ApplicationWindow {
             width: win.railVisualWidth
             height: parent.height
             clip: true
-            color: "transparent"
+            color: Theme.railPanel
             z: 2
 
             ColumnLayout {
@@ -275,6 +275,11 @@ ApplicationWindow {
             clip: true
             z: 1
 
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.railPanel
+            }
+
             // Vertical divider line separating sidebar from content
             Rectangle {
                 anchors.left: parent.left
@@ -293,9 +298,7 @@ ApplicationWindow {
                 anchors.bottomMargin: -Theme.radius
                 clip: true
                 radius: Theme.radius
-                color: Theme.backdrop === "acrylic"
-                       ? (Theme.dark ? Qt.rgba(0, 0, 0, 0.32) : Qt.rgba(1, 1, 1, 0.24))
-                       : (Theme.dark ? Qt.rgba(1, 1, 1, 0.045) : Qt.rgba(1, 1, 1, 0.16))
+                color: Theme.contentPanel
                 border.width: 0
                 border.color: Theme.divider
 

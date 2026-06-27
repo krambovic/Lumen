@@ -21,7 +21,7 @@ from pathlib import Path
 import socket
 import threading
 
-from PyQt6.QtCore import QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 
 from ...app_controller import AppController
@@ -166,7 +166,7 @@ class AppBridge(QObject):
         self.controller.resource_update_result.connect(self._on_resource_update_result)
         self.controller.resource_update_progress.connect(self._on_resource_update_progress)
         self._application_log_emitter = _ApplicationLogEmitter(self)
-        self._application_log_emitter.line.connect(self._capture_application_log)
+        self._application_log_emitter.line.connect(self._capture_application_log, type=Qt.ConnectionType.QueuedConnection)
         self._application_log_handler = _ApplicationLogHandler(self._application_log_emitter)
         self._application_log_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
         logging.getLogger("xray_fluent").addHandler(self._application_log_handler)
@@ -227,8 +227,9 @@ class AppBridge(QObject):
         self._conflict_timer.timeout.connect(self._start_conflict_scan)
 
         self._wire_controller()
-        self.conflictScanFinished.connect(self._warn_about_conflicting_apps)
+        self.conflictScanFinished.connect(self._warn_about_conflicting_apps, type=Qt.ConnectionType.QueuedConnection)
 
+    @pyqtSlot(str)
     def _capture_application_log(self, line: str) -> None:
         self.controller.recent_logs.append(line)
         if len(self.controller.recent_logs) > 5000:
@@ -503,7 +504,7 @@ class AppBridge(QObject):
         c.subscriptions_changed.connect(self._on_subscriptions_changed)
         c.transition_state_changed.connect(self._on_transition)
         c.status.connect(self._on_status_message)
-        c.log_line.connect(self._log_source_model.append_line)
+        c.log_line.connect(self._log_source_model.append_line, type=Qt.ConnectionType.QueuedConnection)
         c.ping_updated.connect(self._on_ping)
         c.speed_updated.connect(self._on_speed)
         c.speed_progress_updated.connect(self._node_model.update_speed_progress)
@@ -615,6 +616,7 @@ class AppBridge(QObject):
             daemon=True,
         ).start()
 
+    @pyqtSlot(object)
     def _warn_about_conflicting_apps(self, snapshot: object) -> None:
         self._conflict_scan_running = False
         data = snapshot if isinstance(snapshot, dict) else {}

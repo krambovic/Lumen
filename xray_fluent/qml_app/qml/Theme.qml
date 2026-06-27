@@ -172,9 +172,9 @@ QtObject {
         var r = parseInt(h.substr(0, 2), 16)
         var g = parseInt(h.substr(2, 2), 16)
         var b = parseInt(h.substr(4, 2), 16)
-        return Qt.rgba((r * 0.20 + 0.80 * 255) / 255,
-                       (g * 0.20 + 0.80 * 255) / 255,
-                       (b * 0.20 + 0.80 * 255) / 255, 1)
+        return Qt.rgba((r * 0.46 + 0.54 * 255) / 255,
+                       (g * 0.46 + 0.54 * 255) / 255,
+                       (b * 0.46 + 0.54 * 255) / 255, 1)
     }
     function _darkTint(hex) {
         var h = ("" + hex).replace("#", "")
@@ -182,13 +182,17 @@ QtObject {
         var r = parseInt(h.substr(0, 2), 16)
         var g = parseInt(h.substr(2, 2), 16)
         var b = parseInt(h.substr(4, 2), 16)
-        var base = 0x20
-        return Qt.rgba((r * 0.30 + base * 0.70) / 255,
-                       (g * 0.30 + base * 0.70) / 255,
-                       (b * 0.30 + base * 0.70) / 255, 1)
+        var base = 0x16
+        return Qt.rgba((r * 0.56 + base * 0.44) / 255,
+                       (g * 0.56 + base * 0.44) / 255,
+                       (b * 0.56 + base * 0.44) / 255, 1)
     }
+    readonly property real darkPaletteWindowAlpha: 0.50
+    readonly property real darkPalettePanelAlpha: 0.46
     readonly property real lightGlassWindowAlpha: 0.22
     readonly property real lightGlassPanelAlpha: 0.18
+    readonly property real lightPaletteWindowAlpha: 0.30
+    readonly property real lightPalettePanelAlpha: 0.32
     readonly property real lightGlassCardAlpha: 0.50
     readonly property real lightGlassCardHoverAlpha: 0.62
     readonly property real lightGlassCardPressedAlpha: 0.70
@@ -200,26 +204,28 @@ QtObject {
         ? (dark ? _darkTint(baseTint) : _lightTint(baseTint))
         : (isTranslucent
             ? (presetColored
-                ? (dark ? _hexWithAlpha(_pal.win !== "" ? _pal.win : _pal.d0, 0.34) : _lightBackground(lightGlassWindowAlpha))
+                ? (dark ? _hexWithAlpha(_pal.win !== "" ? _pal.win : _pal.d0, darkPaletteWindowAlpha) : _lightBackground(lightPaletteWindowAlpha))
                 : (dark ? "transparent" : _lightBackground(lightGlassWindowAlpha)))
             : (dark
                 ? (_pal.win !== "" && _pal.win !== undefined ? _pal.win : _pal.d0)
                 : _lightPal.bg))
     readonly property color micaBase: "transparent"
+    readonly property color contentPanel: dark ? _palLayer("elevated", Qt.rgba(1, 1, 1, 0.035), darkPalettePanelAlpha) : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.18), lightPalettePanelAlpha)
+    readonly property color railPanel: dark ? _palLayer("control", Qt.rgba(1, 1, 1, 0.065), 0.72) : _lightLayer("press", Qt.rgba(1, 1, 1, 0.34), 0.70)
     // Slightly raised base (nav pane): a very faint layer so Mica stays visible.
     readonly property color bgElevated: dark ? _palLayer("elevated", Qt.rgba(1, 1, 1, 0.016), 0.34) : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.18), lightGlassPanelAlpha)
     // Card / layer fill composited over the backdrop (translucent on purpose).
     readonly property color card: dark ? _palLayer("card", Qt.rgba(1, 1, 1, 0.040), 0.52) : _lightLayer("layer", Qt.rgba(1, 1, 1, lightGlassCardAlpha), lightGlassCardAlpha)
-    readonly property color cardHover: dark ? _palLayer("cardHover", Qt.rgba(1, 1, 1, 0.0837), 0.66) : _lightLayer("hover", Qt.rgba(1, 1, 1, lightGlassCardHoverAlpha), lightGlassCardHoverAlpha)
+    readonly property color cardHover: dark ? _palLayer("cardHover", Qt.rgba(1, 1, 1, 0.052), 0.56) : _lightLayer("hover", Qt.rgba(1, 1, 1, lightGlassCardHoverAlpha), lightGlassCardHoverAlpha)
     readonly property color cardPressed: dark ? _palLayer("cardPressed", Qt.rgba(1, 1, 1, 0.0326), 0.44) : _lightLayer("press", Qt.rgba(1, 1, 1, lightGlassCardPressedAlpha), lightGlassCardPressedAlpha)
     readonly property color navHover: dark ? cardHover : Qt.rgba(accent.r, accent.g, accent.b, 0.11)
     readonly property color flyout: dark ? _palLayer("flyout", _pal.d1, 0.86) : _lightColor("layer", "#FBFBFB")
-    readonly property color flyoutBorder: dark ? _palLayer("flyoutBorder", Qt.rgba(1, 1, 1, 0.10), 0.72) : _lightColor("border", Qt.rgba(0, 0, 0, 0.13))
+    readonly property color flyoutBorder: dark ? _palLayer("flyoutBorder", Qt.rgba(1, 1, 1, 0.07), 0.28) : _lightLayer("border", Qt.rgba(0, 0, 0, 0.07), 0.36)
 
     // ---- Lines ----------------------------------------------------------
-    readonly property color borderSolid: dark ? _palColor("border", Qt.rgba(1, 1, 1, 0.09)) : _lightColor("border", Qt.rgba(0, 0, 0, 0.07))
-    readonly property color divider: dark ? _palColor("divider", Qt.rgba(1, 1, 1, 0.06)) : _lightColor("divider", Qt.rgba(0, 0, 0, 0.06))
-    readonly property color borderBottom: dark ? Qt.rgba(0, 0, 0, 0.20) : Qt.rgba(0, 0, 0, 0.10)
+    readonly property color borderSolid: dark ? _palLayer("border", Qt.rgba(1, 1, 1, 0.055), 0.22) : _lightLayer("border", Qt.rgba(0, 0, 0, 0.055), 0.28)
+    readonly property color divider: dark ? _palLayer("divider", Qt.rgba(1, 1, 1, 0.040), 0.18) : _lightLayer("divider", Qt.rgba(0, 0, 0, 0.045), 0.22)
+    readonly property color borderBottom: dark ? Qt.rgba(0, 0, 0, 0.13) : Qt.rgba(0, 0, 0, 0.055)
 
     // ---- Text (Fluent TextFillColor ramp) ------------------------------
     readonly property color text: dark ? _palColor("text", Qt.rgba(1, 1, 1, 1.0)) : _lightColor("text", Qt.rgba(0, 0, 0, 0.89))

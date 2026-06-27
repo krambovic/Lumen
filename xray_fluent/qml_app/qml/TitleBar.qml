@@ -11,6 +11,11 @@ Item {
                                             || win.visibility === Window.Maximized)
     height: Math.round(34 * Theme.fontScale) + (_maxified ? 2 : 0)
 
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.railPanel
+    }
+
     function toggleMax() {
         if (!win) return
         if (win.visibility === Window.Maximized) win.showNormal()

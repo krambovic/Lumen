@@ -60,6 +60,7 @@ class LogModel(QAbstractListModel):
             return entry.action_label
         return None
 
+    @pyqtSlot(str)
     def append_line(self, line: str) -> None:
         if len(self._lines) >= self._max_lines:
             self.beginRemoveRows(QModelIndex(), 0, 0)

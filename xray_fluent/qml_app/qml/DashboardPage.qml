@@ -85,7 +85,7 @@ FluentScroll {
                 Layout.preferredWidth: page.width
                 Layout.alignment: Qt.AlignTop
                 padding: 16
-                elevation: 1
+                elevation: 0
                 ColumnLayout {
                     width: parent.width
                     spacing: 6
@@ -288,7 +288,7 @@ FluentScroll {
                 Layout.fillWidth: true
                 Layout.columnSpan: page.twoColumns ? 2 : 1
                 padding: 16
-                elevation: 1
+                elevation: 0
                 ColumnLayout {
                     width: parent.width
                     spacing: 6
