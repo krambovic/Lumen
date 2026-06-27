@@ -110,11 +110,18 @@ class _EngineNoiseFilter(logging.Filter):
 class _JsonLinesFormatter(logging.Formatter):
     """One compact JSON object per line"""
 
+    def __init__(self, *, utc: bool = False) -> None:
+        super().__init__()
+        self._utc = utc
+
     def format(self, record: logging.LogRecord) -> str:
         domain = getattr(record, "xdomain", "") or _domain_for(record.name)
+        tm = time.gmtime(record.created) if self._utc else time.localtime(record.created)
+        ts = time.strftime("%Y-%m-%dT%H:%M:%S", tm) + f".{int(record.msecs):03d}"
+        if self._utc:
+            ts += "Z"
         payload = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(record.created))
-            + f".{int(record.msecs):03d}",
+            "ts": ts,
             "level": record.levelname,
             "domain": domain,
             "logger": record.name,
@@ -190,7 +197,7 @@ def configure_diagnostics_upload(*, upload_url: str = "", app_version: str = "")
             uploader.addFilter(_DomainFilter(None))
             uploader.addFilter(_DiagnosticFilter())
             uploader.addFilter(_EngineNoiseFilter())
-            uploader.setFormatter(_JsonLinesFormatter())
+            uploader.setFormatter(_JsonLinesFormatter(utc=True))
             root.addHandler(uploader)
             _upload_handler = uploader
         except Exception:
