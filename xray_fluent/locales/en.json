@@ -825,5 +825,7 @@
   "Не удалось создать QR-код (слишком длинный конфиг?): {err}": "Failed to create a QR code (config too long?): {err}",
   "Доступны обновления: {items}": "Updates available: {items}",
   "Выберите хотя бы один раздел для экспорта": "Select at least one section to export",
-  "Диагностика собрана и отправлена: {name}": "Diagnostics collected and sent: {name}"
+  "Диагностика собрана и отправлена: {name}": "Diagnostics collected and sent: {name}",
+  "Телеметрия": "Telemetry",
+  "Отправлять диагностические ошибки на сервер Lumen KVN": "Send diagnostic errors to the Lumen KVN server"
 }

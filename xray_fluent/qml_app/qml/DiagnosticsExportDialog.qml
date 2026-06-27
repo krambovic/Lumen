@@ -135,7 +135,8 @@ Popup {
             id: rowUpload
             Layout.leftMargin: 20
             Layout.rightMargin: 20
-            defaultChecked: false
+            enabled: App.diagnosticsUploadEnabled
+            defaultChecked: App.diagnosticsUploadEnabled
             title: I18n.t("Отправить на сервер")
             subtitle: I18n.t("Автоматически загрузить архив на сервер диагностики")
         }
@@ -162,7 +163,7 @@ Popup {
                         "traffic": rowTraffic.checked,
                         "state": rowState.checked,
                         "recent": rowRecent.checked,
-                        "upload": rowUpload.checked
+                        "upload": App.diagnosticsUploadEnabled && rowUpload.checked
                     });
                     dlg.close();
                 }

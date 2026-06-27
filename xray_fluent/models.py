@@ -227,7 +227,7 @@ class AppSettings:
     xray_update_feed_url: str = ""
     xray_auto_update: bool = False
     enable_xray_fragment: bool = False
-    enable_final_fragment: bool = True
+    enable_final_fragment: bool = False
     fragment_packets: str = "tlshello"
     fragment_length: str = "50-100"
     fragment_delay: str = "10-20"
@@ -276,6 +276,7 @@ class AppSettings:
     ui_wallpaper_opacity: int = 50       # непрозрачность обоев, %
     ui_wallpaper_blur: int = 10          # размытие обоев, 0..100
     ui_wallpaper_brightness: int = 50    # яркость обоев, 0..100 (100 = оригинал)
+    diagnostics_upload_enabled: bool = True
 
     def __post_init__(self) -> None:
         self.tun_engine = _normalize_tun_engine(self.tun_engine)
@@ -349,6 +350,7 @@ class AppSettings:
             "ui_wallpaper_opacity": self.ui_wallpaper_opacity,
             "ui_wallpaper_blur": self.ui_wallpaper_blur,
             "ui_wallpaper_brightness": self.ui_wallpaper_brightness,
+            "diagnostics_upload_enabled": self.diagnostics_upload_enabled,
         }
 
     @staticmethod
@@ -381,7 +383,7 @@ class AppSettings:
             xray_update_feed_url=str(data.get("xray_update_feed_url") or ""),
             xray_auto_update=bool(data.get("xray_auto_update", False)),
             enable_xray_fragment=bool(data.get("enable_xray_fragment", False)),
-            enable_final_fragment=bool(data.get("enable_final_fragment", True)),
+            enable_final_fragment=bool(data.get("enable_final_fragment", False)),
             fragment_packets=str(data.get("fragment_packets") or "tlshello"),
             fragment_length=str(data.get("fragment_length") or "50-100"),
             fragment_delay=str(data.get("fragment_delay") or "10-20"),
@@ -424,6 +426,7 @@ class AppSettings:
             ui_wallpaper_opacity=int(data.get("ui_wallpaper_opacity") if data.get("ui_wallpaper_opacity") is not None else 50),
             ui_wallpaper_blur=int(data.get("ui_wallpaper_blur") if data.get("ui_wallpaper_blur") is not None else 10),
             ui_wallpaper_brightness=int(data.get("ui_wallpaper_brightness") if data.get("ui_wallpaper_brightness") is not None else 50),
+            diagnostics_upload_enabled=bool(data.get("diagnostics_upload_enabled", True)),
         )
 
 

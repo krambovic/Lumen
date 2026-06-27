@@ -976,6 +976,17 @@ class AppBridge(QObject):
         settings.accent_color = hex_color
         self.controller.update_settings(settings)
 
+    @staticmethod
+    def _accent_for_theme_preset(value: str) -> str:
+        return {
+            "default": "#0078D4",
+            "midnight": "#4CC2FF",
+            "nord": "#88C0D0",
+            "solarized": "#268BD2",
+            "dracula": "#BD93F9",
+            "catppuccin": "#89B4FA",
+        }.get((value or "default").strip().lower(), "#0078D4")
+
     @pyqtSlot(result=str)
     def systemAccent(self) -> str:
         """Читает текущий акцентный цвет Windows из реестра.
@@ -1052,8 +1063,10 @@ class AppBridge(QObject):
 
     @pyqtSlot(str)
     def setUiThemePreset(self, value: str) -> None:
+        preset = (value or "default").strip().lower()
         settings = deepcopy(self.controller.state.settings)
-        settings.ui_theme_preset = (value or "default").strip().lower()
+        settings.ui_theme_preset = preset
+        settings.accent_color = self._accent_for_theme_preset(preset)
         self.controller.update_settings(settings)
 
     @pyqtProperty(str, notify=settingsChanged)
@@ -1332,6 +1345,12 @@ class AppBridge(QObject):
     def setResourceUpdateCheck(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.resource_update_check = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setDiagnosticsUpload(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.diagnostics_upload_enabled = bool(enabled)
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
@@ -2763,6 +2782,13 @@ class AppBridge(QObject):
             return False
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def diagnosticsUploadEnabled(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.diagnostics_upload_enabled)
+        except Exception:
+            return True
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def xrayFragmentEnabled(self) -> bool:
         try:
             return bool(self.controller.state.settings.enable_xray_fragment)
@@ -2774,7 +2800,7 @@ class AppBridge(QObject):
         try:
             return bool(self.controller.state.settings.enable_final_fragment)
         except Exception:
-            return True
+            return False
 
     @pyqtProperty(bool, notify=settingsChanged)
     def fragmentationEnabled(self) -> bool:

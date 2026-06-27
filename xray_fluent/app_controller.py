@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .constants import APP_VERSION, DIAGNOSTICS_UPLOAD_URL
-from .logging_setup import configure_logging, get_logger
+from .logging_setup import configure_diagnostics_upload, configure_logging, get_logger
 from .diagnostics_uploader import upload_bundle
 from typing import TYPE_CHECKING, Any
 
@@ -276,7 +276,7 @@ class AppController(QObject):
         # --- Domain-separated logging (core / app / traffic / errors) ---
         configure_logging(
             LOG_DIR,
-            upload_url=DIAGNOSTICS_UPLOAD_URL,
+            upload_url="",
             app_version=APP_VERSION,
         )
         self._logger = get_logger("app")
@@ -390,8 +390,17 @@ class AppController(QObject):
         self.selection_changed.emit(self.selected_node)
         self.routing_changed.emit(self.state.routing)
         self.settings_changed.emit(self.state.settings)
+        self._configure_diagnostics_upload()
         self.subscriptions_changed.emit(list(self.state.subscriptions))
         return True
+
+    def _configure_diagnostics_upload(self) -> None:
+        upload_url = (
+            DIAGNOSTICS_UPLOAD_URL
+            if getattr(self.state.settings, "diagnostics_upload_enabled", True)
+            else ""
+        )
+        configure_diagnostics_upload(upload_url=upload_url, app_version=APP_VERSION)
 
     def start_deferred_services(self) -> None:
         """Start non-visual work only after the first QML frame is available."""
@@ -1518,7 +1527,10 @@ class AppController(QObject):
         old_tun = old_settings.tun_mode
         old_tun_engine = old_settings.tun_engine
         old_proxy = old_settings.enable_system_proxy
+        old_diagnostics_upload = getattr(old_settings, "diagnostics_upload_enabled", True)
         self.state.settings = settings
+        if old_diagnostics_upload != getattr(settings, "diagnostics_upload_enabled", True):
+            self._configure_diagnostics_upload()
         self.settings_changed.emit(self.state.settings)
         self.schedule_save()
 
@@ -1647,7 +1659,7 @@ class AppController(QObject):
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output = LOG_DIR / f"diagnostics_{stamp}.zip"
         bundle = export_diagnostics(output, self.state, self.recent_logs, include=include)
-        if upload and DIAGNOSTICS_UPLOAD_URL:
+        if upload and DIAGNOSTICS_UPLOAD_URL and self.state.settings.diagnostics_upload_enabled:
             upload_bundle(DIAGNOSTICS_UPLOAD_URL, bundle, app_version=APP_VERSION)
         return bundle
 

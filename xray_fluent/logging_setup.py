@@ -29,6 +29,7 @@ _HUMAN_FMT = "%(asctime)s | %(levelname)-7s | %(xdomain)-7s | %(name)s | %(messa
 _DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 _configured = False
+_upload_handler: logging.Handler | None = None
 
 
 def _domain_for(name: str) -> str:
@@ -163,6 +164,23 @@ def configure_logging(log_dir: Path, *, upload_url: str = "", app_version: str =
     errors_handler.setFormatter(_JsonLinesFormatter())
     root.addHandler(errors_handler)
 
+    configure_diagnostics_upload(upload_url=upload_url, app_version=app_version)
+
+    _configured = True
+
+
+def configure_diagnostics_upload(*, upload_url: str = "", app_version: str = "") -> None:
+    """Enable or disable the background diagnostics upload handler."""
+    global _upload_handler
+    root = logging.getLogger(ROOT_LOGGER_NAME)
+    if _upload_handler is not None:
+        try:
+            root.removeHandler(_upload_handler)
+            _upload_handler.close()
+        except Exception:
+            pass
+        _upload_handler = None
+
     if upload_url:
         try:
             from .diagnostics_uploader import HttpDiagnosticsHandler
@@ -174,13 +192,12 @@ def configure_logging(log_dir: Path, *, upload_url: str = "", app_version: str =
             uploader.addFilter(_EngineNoiseFilter())
             uploader.setFormatter(_JsonLinesFormatter())
             root.addHandler(uploader)
+            _upload_handler = uploader
         except Exception:
             root.warning(
                 "[app] diagnostics auto-upload init failed",
                 exc_info=True,
             )
-
-    _configured = True
 
 
 def get_logger(domain: str) -> logging.Logger:
