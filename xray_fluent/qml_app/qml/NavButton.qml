@@ -21,10 +21,16 @@ Item {
         width: root.compact ? 38 : Math.max(38, root.width - 12)
         height: parent.height
         radius: Theme.radiusSmall
-        color: root.selected ? Theme.accentSoft
-               : tap.hovered ? Theme.cardHover : "transparent"
-        Behavior on color { ColorAnimation { duration: Theme.animations ? 130 : 0; easing.type: Theme.easeStandard } }
+        color: "transparent"
         Behavior on width { NumberAnimation { duration: Theme.animations ? 170 : 0; easing.type: Theme.easeEmphasized } }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: parent.radius
+            color: root.selected ? Theme.accentSoft : Theme.navHover
+            opacity: root.selected || tap.containsMouse ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: Theme.animations ? 130 : 0; easing.type: Theme.easeStandard } }
+        }
 
         Rectangle {
             width: 3; radius: 1.5
@@ -82,7 +88,11 @@ Item {
             clip: true
         }
 
-        HoverHandler { id: tap }
-        TapHandler { onTapped: root.clicked() }
+        MouseArea {
+            id: tap
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: root.clicked()
+        }
     }
 }

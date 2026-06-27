@@ -70,7 +70,39 @@ QtObject {
         "vscode-plus": { d0: "#1E1E1E", d1: "#252526", lt: "#FFFFFF", win: "#1E1E1E", elevated: "#202020", card: "#2D2D30", cardHover: "#37373D", cardPressed: "#252526", flyout: "#252526", flyoutBorder: "#3E3E42", border: "#3E3E42", divider: "#333333", text: "#D4D4D4", muted: "#B5B5B5", faint: "#858585", control: "#2D2D30", controlHover: "#37373D", controlPressed: "#252526", colored: true },
         "xcode":      { d0: "#17191F", d1: "#20242D", lt: "#FFFFFF", win: "#17191F", elevated: "#1C2028", card: "#272D38", cardHover: "#323A49", cardPressed: "#20242D", flyout: "#20242D", flyoutBorder: "#3B4658", border: "#3B4658", divider: "#303746", text: "#E7EEF8", muted: "#B7C4D8", faint: "#7D8BA3", control: "#272D38", controlHover: "#323A49", controlPressed: "#20242D", colored: true }
     })
+    readonly property var _lightPresetMap: ({
+        "default":     { bg: "#F3F3F3", layer: "#FFFFFF", hover: "#F4F4F4", press: "#ECECEC", border: "#D6D6D6", divider: "#E2E2E2", text: "#1F1F1F", muted: "#666666", faint: "#8A8A8A" },
+        "absolutely":  { bg: "#F7F4FA", layer: "#FFFFFF", hover: "#F2EEF7", press: "#EAE2F1", border: "#D8D0E0", divider: "#E5DEE9", text: "#28222E", muted: "#655B70", faint: "#8A8192" },
+        "ayu":         { bg: "#F8F6F0", layer: "#FFFFFF", hover: "#F1EDE4", press: "#E8E0D2", border: "#D8D0C0", divider: "#E6DED0", text: "#2F302A", muted: "#68655D", faint: "#8C877C" },
+        "catppuccin":  { bg: "#EFF1F5", layer: "#FFFFFF", hover: "#E9ECF2", press: "#DDE2EC", border: "#CAD0DC", divider: "#DCE0E8", text: "#4C4F69", muted: "#6C6F85", faint: "#8C8FA1" },
+        "codex":       { bg: "#F5F6F8", layer: "#FFFFFF", hover: "#EAEEF5", press: "#DDE3ED", border: "#D6DCE7", divider: "#E4E8F0", text: "#1C2430", muted: "#5C6675", faint: "#7C8796" },
+        "dracula":     { bg: "#F7F4FC", layer: "#FFFFFF", hover: "#F0EAF8", press: "#E6DEF0", border: "#D8CCE4", divider: "#E7DEEF", text: "#2B2334", muted: "#6C5D7E", faint: "#9385A2" },
+        "everforest":  { bg: "#F7F5EC", layer: "#FFFFFF", hover: "#EFEBDD", press: "#E6DFCC", border: "#D5CAB4", divider: "#E5DECD", text: "#3C4033", muted: "#677151", faint: "#8B9278" },
+        "github":      { bg: "#F6F8FA", layer: "#FFFFFF", hover: "#F0F3F6", press: "#EAEFF4", border: "#D0D7DE", divider: "#D8DEE4", text: "#24292F", muted: "#57606A", faint: "#6E7781" },
+        "gruvbox":     { bg: "#F8F3E4", layer: "#FFFFFF", hover: "#EFE7D4", press: "#E4D9C2", border: "#D6C7AC", divider: "#E7DCC8", text: "#3C3836", muted: "#665C54", faint: "#928374" },
+        "linear":      { bg: "#F7F7F8", layer: "#FFFFFF", hover: "#EEEFF4", press: "#E2E4EC", border: "#D8DAE4", divider: "#E6E8EF", text: "#20242D", muted: "#5F6675", faint: "#858C9A" },
+        "lobster":     { bg: "#FAF3F5", layer: "#FFFFFF", hover: "#F3E7EB", press: "#EAD9DF", border: "#DBC4CC", divider: "#E9D8DE", text: "#3B1D29", muted: "#835466", faint: "#A77A89" },
+        "material":    { bg: "#F1F4F6", layer: "#FFFFFF", hover: "#E9EEF2", press: "#DEE6EC", border: "#CAD4DC", divider: "#E0E8ED", text: "#263238", muted: "#546E7A", faint: "#78909C" },
+        "matrix":      { bg: "#F1FAF1", layer: "#FFFFFF", hover: "#E7F2E7", press: "#DAE9DA", border: "#C4D8C4", divider: "#DCEADC", text: "#0F2A13", muted: "#2F6F3A", faint: "#5D9567" },
+        "midnight":    { bg: "#F3F3F3", layer: "#FFFFFF", hover: "#F4F4F4", press: "#ECECEC", border: "#D6D6D6", divider: "#E2E2E2", text: "#1F1F1F", muted: "#666666", faint: "#8A8A8A" },
+        "monokai":     { bg: "#F7F6EF", layer: "#FFFFFF", hover: "#EFEEE4", press: "#E5E2D4", border: "#D5CEB8", divider: "#E6E1CF", text: "#272822", muted: "#6F6B58", faint: "#918C76" },
+        "night-owl":   { bg: "#F0F4F8", layer: "#FAFDFF", hover: "#E3EEF7", press: "#D7E5F0", border: "#C4D3DF", divider: "#DAE6EF", text: "#183348", muted: "#4D6477", faint: "#768A9A" },
+        "nord":        { bg: "#ECEFF4", layer: "#F7F9FC", hover: "#E5E9F0", press: "#D8DEE9", border: "#C7CFDC", divider: "#D8DEE9", text: "#2E3440", muted: "#4C566A", faint: "#6B7587" },
+        "notion":      { bg: "#FFFFFF", layer: "#FBFBFA", hover: "#F1F1EF", press: "#E9E9E7", border: "#D9D9D6", divider: "#E7E7E4", text: "#37352F", muted: "#6B6A66", faint: "#9B9A97" },
+        "one":         { bg: "#FAFAFA", layer: "#FFFFFF", hover: "#EDEFF3", press: "#E0E4EA", border: "#D2D7E0", divider: "#E2E5EA", text: "#383A42", muted: "#6B7080", faint: "#8D93A2" },
+        "oscurange":   { bg: "#FAF4EC", layer: "#FFFFFF", hover: "#F1E7DA", press: "#E7DAC9", border: "#D8C6AE", divider: "#E8DBC9", text: "#3A2515", muted: "#775437", faint: "#9D7959" },
+        "raycast":     { bg: "#FFFFFF", layer: "#FAFAFA", hover: "#F0F0F0", press: "#E7E7E7", border: "#D8D8D8", divider: "#E5E5E5", text: "#1F1F1F", muted: "#666666", faint: "#909090" },
+        "rose-pine":   { bg: "#FAF6F1", layer: "#FFFFFF", hover: "#F1EBE6", press: "#E8DED8", border: "#D8CAC4", divider: "#E8DED8", text: "#575279", muted: "#797593", faint: "#9893A5" },
+        "sentry":      { bg: "#FAF7FF", layer: "#FFFFFF", hover: "#EFE7FA", press: "#E4D6F5", border: "#D4BEEB", divider: "#E8DCF5", text: "#2F253B", muted: "#6E5B84", faint: "#9582A8" },
+        "solarized":   { bg: "#FAF5E6", layer: "#FFFFFF", hover: "#F0E9D6", press: "#E6DCC6", border: "#D7C9AE", divider: "#E8DEC8", text: "#586E75", muted: "#657B83", faint: "#93A1A1" },
+        "temple":      { bg: "#F6FAEF", layer: "#FFFFFF", hover: "#EDF3E1", press: "#E3EBD4", border: "#CDD9B7", divider: "#E1EBD3", text: "#26331B", muted: "#657A3C", faint: "#8B9D68" },
+        "tokyo-night": { bg: "#D5D6DB", layer: "#F5F6FA", hover: "#E7E9F2", press: "#DDE0EA", border: "#C8CEDD", divider: "#DDE0EA", text: "#343B58", muted: "#565F89", faint: "#7B829E" },
+        "vercel":      { bg: "#FFFFFF", layer: "#FAFAFA", hover: "#F0F0F0", press: "#E7E7E7", border: "#D8D8D8", divider: "#E5E5E5", text: "#111111", muted: "#666666", faint: "#8C8C8C" },
+        "vscode-plus": { bg: "#FFFFFF", layer: "#FAFAFA", hover: "#F0F3F7", press: "#E5EBF2", border: "#D0D7E2", divider: "#E1E6ED", text: "#1E1E1E", muted: "#5F6B7A", faint: "#7F8996" },
+        "xcode":       { bg: "#FFFFFF", layer: "#F8FAFD", hover: "#EAF2FC", press: "#DCEAF8", border: "#C8D6E6", divider: "#DDE7F2", text: "#1B2430", muted: "#56677F", faint: "#7C8DA3" }
+    })
     readonly property var _pal: _presetMap[preset] !== undefined ? _presetMap[preset] : _presetMap["default"]
+    readonly property var _lightPal: _lightPresetMap[preset] !== undefined ? _lightPresetMap[preset] : _lightPresetMap["default"]
     readonly property bool presetColored: _pal.colored === true || preset === "nord" || preset === "solarized" || preset === "dracula" || preset === "catppuccin" || (preset === "midnight" && dark)
 
     function _accentIsLight(c) {
@@ -88,11 +120,44 @@ QtObject {
         "#744DA9", "#BD93F9", "#CBA6F7", "#B146C2", "#E3008C", "#C30052", "#E81123", "#F7630C", "#FFB900", "#498205"]
 
     // ---- Surfaces (Fluent Mica / layer palette) ------------------------
-    readonly property color bg: dark ? _pal.d0 : _pal.lt
+    readonly property color bg: dark ? _pal.d0 : _lightPal.bg
 
     function _palColor(name, fallback) {
         var value = _pal[name]
         return value === undefined || value === "" ? fallback : value
+    }
+
+    function _hexWithAlpha(hex, alpha) {
+        var h = ("" + hex).replace("#", "")
+        if (h.length < 6)
+            return hex
+        var r = parseInt(h.substr(0, 2), 16)
+        var g = parseInt(h.substr(2, 2), 16)
+        var b = parseInt(h.substr(4, 2), 16)
+        return Qt.rgba(r / 255, g / 255, b / 255, alpha)
+    }
+
+    function _palLayer(name, fallback, alpha) {
+        if (!(dark && presetColored))
+            return _palColor(name, fallback)
+        var value = _pal[name]
+        return value === undefined || value === "" ? fallback : _hexWithAlpha(value, alpha)
+    }
+
+    function _lightColor(name, fallback) {
+        var value = _lightPal[name]
+        return value === undefined || value === "" ? fallback : value
+    }
+
+    function _lightLayer(name, fallback, alpha) {
+        if (!presetColored)
+            return fallback
+        var value = _lightPal[name]
+        return value === undefined || value === "" ? fallback : _hexWithAlpha(value, alpha)
+    }
+
+    function _lightBackground(alpha) {
+        return _hexWithAlpha(_lightPal.bg, alpha)
     }
 
     function _lightTint(hex) {
@@ -119,27 +184,30 @@ QtObject {
     readonly property color windowBase: baseTint !== ""
         ? (dark ? _darkTint(baseTint) : _lightTint(baseTint))
         : (presetColored
-            ? (dark ? (_pal.win !== "" ? _pal.win : _pal.d0) : _pal.lt)
-            : (backdropAvailable ? "transparent" : (dark ? _pal.d0 : _pal.lt)))
+            ? (dark
+                ? _hexWithAlpha(_pal.win !== "" ? _pal.win : _pal.d0, 0.34)
+                : _lightBackground(0.86))
+            : (dark ? (backdropAvailable ? "transparent" : _pal.d0) : _lightBackground(0.86)))
     readonly property color micaBase: "transparent"
     // Slightly raised base (nav pane): a very faint layer so Mica stays visible.
-    readonly property color bgElevated: dark ? _palColor("elevated", Qt.rgba(1, 1, 1, 0.016)) : Qt.rgba(1, 1, 1, 0.55)
+    readonly property color bgElevated: dark ? _palLayer("elevated", Qt.rgba(1, 1, 1, 0.016), 0.34) : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.55), 0.82)
     // Card / layer fill composited over the backdrop (translucent on purpose).
-    readonly property color card: dark ? _palColor("card", Qt.rgba(1, 1, 1, 0.040)) : Qt.rgba(1, 1, 1, 0.70)
-    readonly property color cardHover: dark ? _palColor("cardHover", Qt.rgba(1, 1, 1, 0.0837)) : Qt.rgba(0, 0, 0, 0.024)
-    readonly property color cardPressed: dark ? _palColor("cardPressed", Qt.rgba(1, 1, 1, 0.0326)) : Qt.rgba(0, 0, 0, 0.040)
-    readonly property color flyout: dark ? _palColor("flyout", _pal.d1) : "#FBFBFB"
-    readonly property color flyoutBorder: dark ? _palColor("flyoutBorder", Qt.rgba(1, 1, 1, 0.10)) : Qt.rgba(0, 0, 0, 0.13)
+    readonly property color card: dark ? _palLayer("card", Qt.rgba(1, 1, 1, 0.040), 0.52) : _lightLayer("layer", Qt.rgba(1, 1, 1, 0.70), 0.88)
+    readonly property color cardHover: dark ? _palLayer("cardHover", Qt.rgba(1, 1, 1, 0.0837), 0.66) : _lightLayer("layer", Qt.rgba(0, 0, 0, 0.024), 0.94)
+    readonly property color cardPressed: dark ? _palLayer("cardPressed", Qt.rgba(1, 1, 1, 0.0326), 0.44) : _lightLayer("hover", Qt.rgba(0, 0, 0, 0.040), 0.92)
+    readonly property color navHover: dark ? cardHover : _lightColor("hover", Qt.rgba(0, 0, 0, 0.045))
+    readonly property color flyout: dark ? _palLayer("flyout", _pal.d1, 0.86) : _lightColor("layer", "#FBFBFB")
+    readonly property color flyoutBorder: dark ? _palLayer("flyoutBorder", Qt.rgba(1, 1, 1, 0.10), 0.72) : _lightColor("border", Qt.rgba(0, 0, 0, 0.13))
 
     // ---- Lines ----------------------------------------------------------
-    readonly property color borderSolid: dark ? _palColor("border", Qt.rgba(1, 1, 1, 0.09)) : Qt.rgba(0, 0, 0, 0.07)
-    readonly property color divider: dark ? _palColor("divider", Qt.rgba(1, 1, 1, 0.06)) : Qt.rgba(0, 0, 0, 0.06)
+    readonly property color borderSolid: dark ? _palColor("border", Qt.rgba(1, 1, 1, 0.09)) : _lightColor("border", Qt.rgba(0, 0, 0, 0.07))
+    readonly property color divider: dark ? _palColor("divider", Qt.rgba(1, 1, 1, 0.06)) : _lightColor("divider", Qt.rgba(0, 0, 0, 0.06))
     readonly property color borderBottom: dark ? Qt.rgba(0, 0, 0, 0.20) : Qt.rgba(0, 0, 0, 0.10)
 
     // ---- Text (Fluent TextFillColor ramp) ------------------------------
-    readonly property color text: dark ? _palColor("text", Qt.rgba(1, 1, 1, 1.0)) : Qt.rgba(0, 0, 0, 0.89)
-    readonly property color textMuted: dark ? _palColor("muted", Qt.rgba(1, 1, 1, 0.79)) : Qt.rgba(0, 0, 0, 0.61)
-    readonly property color textFaint: dark ? _palColor("faint", Qt.rgba(1, 1, 1, 0.55)) : Qt.rgba(0, 0, 0, 0.45)
+    readonly property color text: dark ? _palColor("text", Qt.rgba(1, 1, 1, 1.0)) : _lightColor("text", Qt.rgba(0, 0, 0, 0.89))
+    readonly property color textMuted: dark ? _palColor("muted", Qt.rgba(1, 1, 1, 0.79)) : _lightColor("muted", Qt.rgba(0, 0, 0, 0.61))
+    readonly property color textFaint: dark ? _palColor("faint", Qt.rgba(1, 1, 1, 0.55)) : _lightColor("faint", Qt.rgba(0, 0, 0, 0.45))
 
     // ---- Semantic colours ----------------------------------------------
     readonly property color success: dark ? "#6CCB5F" : "#3BAE45"
@@ -149,9 +217,9 @@ QtObject {
     readonly property color info: accent
 
     // ---- Standard (non-accent) button fill -----------------------------
-    readonly property color controlFill: dark ? _palColor("control", Qt.rgba(1, 1, 1, 0.06)) : Qt.rgba(1, 1, 1, 0.70)
-    readonly property color controlFillHover: dark ? _palColor("controlHover", Qt.rgba(1, 1, 1, 0.08)) : Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.5)
-    readonly property color controlFillPressed: dark ? _palColor("controlPressed", Qt.rgba(1, 1, 1, 0.03)) : Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.3)
+    readonly property color controlFill: dark ? _palLayer("control", Qt.rgba(1, 1, 1, 0.06), 0.48) : _lightLayer("layer", Qt.rgba(1, 1, 1, 0.70), 0.88)
+    readonly property color controlFillHover: dark ? _palLayer("controlHover", Qt.rgba(1, 1, 1, 0.08), 0.62) : _lightLayer("layer", Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.5), 0.94)
+    readonly property color controlFillPressed: dark ? _palLayer("controlPressed", Qt.rgba(1, 1, 1, 0.03), 0.40) : _lightLayer("hover", Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.3), 0.92)
 
     // ---- Elevation (drop shadows via MultiEffect) ----------------------
     readonly property color shadowColor: "#000000"

@@ -209,9 +209,14 @@ Item {
                         Layout.preferredWidth: 1
                         Layout.fillHeight: true
                         radius: Theme.radiusSmall
-                        color: current ? Theme.accentSoft
-                              : (tabHover.hovered ? Theme.cardHover : "transparent")
-                        Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0 } }
+                        color: "transparent"
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: parent.radius
+                            color: current ? Theme.accentSoft : Theme.navHover
+                            opacity: current || tabMouse.containsMouse ? 1 : 0
+                            Behavior on opacity { NumberAnimation { duration: Theme.animations ? 140 : 0 } }
+                        }
                         Row {
                             anchors.centerIn: parent
                             spacing: 8
@@ -233,8 +238,12 @@ Item {
                                 Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0 } }
                             }
                         }
-                        HoverHandler { id: tabHover }
-                        TapHandler { onTapped: page.currentTab = modelData.pageIndex }
+                        MouseArea {
+                            id: tabMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: page.currentTab = modelData.pageIndex
+                        }
                     }
                 }
             }

@@ -23,7 +23,7 @@ Item {
         radius: Theme.radius
         color: root.color
         border.width: 1
-        border.color: root._hot && root.hoverable ? Theme.divider : Theme.borderSolid
+        border.color: root._hot && root.hoverable && Theme.dark ? Theme.divider : Theme.borderSolid
         Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
         layer.enabled: root.elevation > 0
         layer.effect: MultiEffect {
@@ -39,7 +39,8 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            radius: parent.radius
+            anchors.margins: 1
+            radius: Math.max(0, parent.radius - 1)
             color: Theme.dark ? Qt.rgba(1, 1, 1, 0.017) : Theme.cardHover
             opacity: root._hot ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Theme.animFast } }

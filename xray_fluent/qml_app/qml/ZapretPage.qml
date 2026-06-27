@@ -220,11 +220,15 @@ Item {
                         height: 40
                         readonly property bool isActive: page.running && modelData.name === page.activePreset
                         readonly property bool isSel: modelData.name === page.selected
-                        color: isSel ? Theme.cardHover : (rowHover.hovered ? Theme.controlFill : "transparent")
+                        radius: Theme.radiusSmall
+                        color: isSel ? Theme.cardHover : (rowMouse.containsMouse ? Theme.controlFill : "transparent")
+                        border.width: isSel || rowMouse.containsMouse ? 1 : 0
+                        border.color: Theme.borderSolid
 
-                        HoverHandler { id: rowHover }
                         MouseArea {
+                            id: rowMouse
                             anchors.fill: parent
+                            hoverEnabled: true
                             onClicked: page.selected = modelData.name
                             onDoubleClicked: page.openEditor(modelData.name)
                         }
