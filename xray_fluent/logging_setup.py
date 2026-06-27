@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import logging.handlers
+import re
 import time
 from pathlib import Path
 
@@ -65,6 +66,42 @@ class _DiagnosticFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         msg = str(record.msg or "").lower()
         if any(token in msg for token in ("connection:", "handshake", "dial tcp", "unexpected http response status", "unexpected response status")):
+            return False
+        return True
+
+
+class _EngineNoiseFilter(logging.Filter):
+    """Core logs filter for server upload (Xray / sing-box / zapret)"""
+
+    _ENGINE_LINE_RE = re.compile(r"\[(info|warning|error|debug)\]", re.IGNORECASE)
+    _ENGINE_TOKENS = (
+        "common/errors",
+        "infra/conf",
+        "deprecated",
+        "migrate to",
+    )
+
+    _APP_TOKENS = (
+        "права администратора",
+        "прав администратора",
+        "повышенными правами",
+        "windivert могут работать нестабильно",
+        "select a server first",
+        "сначала выберите сервер",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        low0 = str(record.getMessage() or "").lower()
+        if any(tok in low0 for tok in self._APP_TOKENS):
+            return False
+        domain = getattr(record, "xdomain", "") or _domain_for(record.name)
+        if domain != "core":
+            return True
+        msg = str(record.getMessage() or "")
+        low = msg.lower()
+        if self._ENGINE_LINE_RE.search(msg):
+            return False
+        if any(tok in low for tok in self._ENGINE_TOKENS):
             return False
         return True
 
@@ -134,6 +171,7 @@ def configure_logging(log_dir: Path, *, upload_url: str = "", app_version: str =
             uploader.setLevel(logging.WARNING)
             uploader.addFilter(_DomainFilter(None))
             uploader.addFilter(_DiagnosticFilter())
+            uploader.addFilter(_EngineNoiseFilter())
             uploader.setFormatter(_JsonLinesFormatter())
             root.addHandler(uploader)
         except Exception:

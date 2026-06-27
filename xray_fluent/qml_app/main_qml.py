@@ -115,31 +115,32 @@ def _apply_mica(window, dark: bool) -> None:
                 ctypes.byref(dark_flag), ctypes.sizeof(dark_flag),
             )
 
-        class _Margins(ctypes.Structure):
-            _fields_ = [
-                ("cxLeftWidth", ctypes.c_int),
-                ("cxRightWidth", ctypes.c_int),
-                ("cyTopHeight", ctypes.c_int),
-                ("cyBottomHeight", ctypes.c_int),
-            ]
-
-        margins = _Margins(-1, -1, -1, -1)
-        dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
-
         build = sys.getwindowsversion().build
-        if build >= 22621:
-            backdrop = ctypes.c_int(DWMSBT_MAINWINDOW)
-            dwm.DwmSetWindowAttribute(
-                hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
-                ctypes.byref(backdrop), ctypes.sizeof(backdrop),
-            )
-        elif build >= 22000:
-            # Older Win11 only exposes Mica on/off.
-            enable = ctypes.c_int(1)
-            dwm.DwmSetWindowAttribute(
-                hwnd, DWMWA_MICA_EFFECT,
-                ctypes.byref(enable), ctypes.sizeof(enable),
-            )
+        if build >= 22000:
+            class _Margins(ctypes.Structure):
+                _fields_ = [
+                    ("cxLeftWidth", ctypes.c_int),
+                    ("cxRightWidth", ctypes.c_int),
+                    ("cyTopHeight", ctypes.c_int),
+                    ("cyBottomHeight", ctypes.c_int),
+                ]
+
+            margins = _Margins(-1, -1, -1, -1)
+            dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+
+            if build >= 22621:
+                backdrop = ctypes.c_int(DWMSBT_MAINWINDOW)
+                dwm.DwmSetWindowAttribute(
+                    hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
+                    ctypes.byref(backdrop), ctypes.sizeof(backdrop),
+                )
+            else:
+                # Older Win11 only exposes Mica on/off.
+                enable = ctypes.c_int(1)
+                dwm.DwmSetWindowAttribute(
+                    hwnd, DWMWA_MICA_EFFECT,
+                    ctypes.byref(enable), ctypes.sizeof(enable),
+                )
         else:
             print("Mica backdrop unavailable: requires Windows 11",
                   file=sys.stderr)
@@ -457,6 +458,80 @@ def _install_crash_guards() -> None:
         pass
 
 
+def _load_bundled_fonts() -> None:
+    try:
+        from PyQt6.QtGui import QFontDatabase
+        if getattr(sys, "frozen", False):
+            font_path = Path(sys._MEIPASS) / "xray_fluent" / "qml_app" / "assets" / "fonts" / "SegoeIcons.ttf"
+        else:
+            font_path = Path(__file__).resolve().parent / "assets" / "fonts" / "SegoeIcons.ttf"
+            
+        if font_path.is_file():
+            font_id = QFontDatabase.addApplicationFont(str(font_path))
+            if font_id == -1:
+                print(f"Failed to load bundled icon font: QFontDatabase returned -1", file=sys.stderr)
+        else:
+            print(f"Bundled icon font file not found at: {font_path}", file=sys.stderr)
+    except Exception as exc:
+        print(f"Failed to load bundled icon font: {exc}", file=sys.stderr)
+
+
+def _attach_qwindowkit(window) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import os
+        import ctypes
+        import PyQt6
+        from PyQt6 import sip
+        from PyQt6.QtQuick import QQuickItem
+
+        if getattr(sys, "frozen", False):
+            qwk_dir = os.path.join(sys._MEIPASS, "qwk")
+        else:
+            qwk_dir = os.path.join(os.path.dirname(__file__), "vendor", "qwk")
+            qt_bin = os.path.join(os.path.dirname(PyQt6.__file__), "Qt6", "bin")
+            if os.path.isdir(qt_bin) and hasattr(os, "add_dll_directory"):
+                os.add_dll_directory(qt_bin)
+
+        if os.path.isdir(qwk_dir) and hasattr(os, "add_dll_directory"):
+            os.add_dll_directory(qwk_dir)
+
+        qwkshim_path = os.path.join(qwk_dir, "qwkshim.dll")
+        if not os.path.isfile(qwkshim_path):
+            print(f"qwkshim.dll not found at: {qwkshim_path}", file=sys.stderr)
+            return
+
+        qwk = ctypes.CDLL(qwkshim_path)
+        
+        qwk.qwk_attach_by_hwnd.argtypes = [
+            ctypes.c_ulonglong,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+        ]
+        qwk.qwk_attach_by_hwnd.restype = ctypes.c_int
+
+        hwnd = int(window.winId())
+        
+        rc = qwk.qwk_attach_by_hwnd(
+            hwnd,
+            b"qwkTitleBar",
+            b"qwkMinBtn",
+            b"qwkMaxBtn",
+            b"qwkCloseBtn",
+        )
+        if rc != 0:
+            print(f"qwk_attach_by_hwnd rc={rc}", file=sys.stderr)
+            
+        window._qwk_lib = qwk
+        window._qwk_attach_ok = (rc == 0)
+        
+    except Exception as exc:
+        print(f"QWindowKit attachment failed: {exc}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     _install_crash_guards()
     _set_app_user_model_id()
@@ -483,6 +558,7 @@ def main(argv: list[str] | None = None) -> int:
     QQuickWindow.setDefaultAlphaBuffer(True)
 
     app = QApplication(argv if argv is not None else sys.argv)
+    _load_bundled_fonts()
     single_server, is_primary = _create_single_instance(app)
     if not is_primary:
         return 0
@@ -506,6 +582,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     window = engine.rootObjects()[0]
+    _attach_qwindowkit(window)
+    window.setVisible(True)
 
     if single_server is not None:
         def _on_second_instance() -> None:

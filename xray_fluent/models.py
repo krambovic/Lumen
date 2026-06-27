@@ -270,6 +270,12 @@ class AppSettings:
     ui_backdrop: str = "mica"            # mica | acrylic | solid
     ui_theme_preset: str = "default"     # пресет палитры
     ui_animations: bool = True           # глобальный тумблер анимаций
+    ui_base_tint: str = ""               # "" = выкл; иначе #RRGGBB — свой базовый тон окна (финальный, приглушённый)
+    ui_base_tint_src: str = ""           # "#RRGGBB|mute" — состояние пикера (база + приглушение)
+    ui_wallpaper: str = ""               # путь к файлу обоев; "" = выкл
+    ui_wallpaper_opacity: int = 50       # непрозрачность обоев, %
+    ui_wallpaper_blur: int = 10          # размытие обоев, 0..100
+    ui_wallpaper_brightness: int = 50    # яркость обоев, 0..100 (100 = оригинал)
 
     def __post_init__(self) -> None:
         self.tun_engine = _normalize_tun_engine(self.tun_engine)
@@ -337,6 +343,12 @@ class AppSettings:
             "ui_backdrop": self.ui_backdrop,
             "ui_theme_preset": self.ui_theme_preset,
             "ui_animations": self.ui_animations,
+            "ui_base_tint": self.ui_base_tint,
+            "ui_base_tint_src": self.ui_base_tint_src,
+            "ui_wallpaper": self.ui_wallpaper,
+            "ui_wallpaper_opacity": self.ui_wallpaper_opacity,
+            "ui_wallpaper_blur": self.ui_wallpaper_blur,
+            "ui_wallpaper_brightness": self.ui_wallpaper_brightness,
         }
 
     @staticmethod
@@ -406,6 +418,12 @@ class AppSettings:
             ui_backdrop=str(data.get("ui_backdrop") or "mica"),
             ui_theme_preset=str(data.get("ui_theme_preset") or "default"),
             ui_animations=bool(data.get("ui_animations", True)),
+            ui_base_tint=str(data.get("ui_base_tint") or ""),
+            ui_base_tint_src=str(data.get("ui_base_tint_src") or ""),
+            ui_wallpaper=str(data.get("ui_wallpaper") or ""),
+            ui_wallpaper_opacity=int(data.get("ui_wallpaper_opacity") if data.get("ui_wallpaper_opacity") is not None else 50),
+            ui_wallpaper_blur=int(data.get("ui_wallpaper_blur") if data.get("ui_wallpaper_blur") is not None else 10),
+            ui_wallpaper_brightness=int(data.get("ui_wallpaper_brightness") if data.get("ui_wallpaper_brightness") is not None else 50),
         )
 
 

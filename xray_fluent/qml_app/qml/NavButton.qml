@@ -11,7 +11,7 @@ Item {
     property bool badge: false
     signal clicked()
 
-    implicitHeight: 40
+    implicitHeight: Math.round(40 * Theme.fontScale)
     implicitWidth: parent ? parent.width : 200
 
     Rectangle {
@@ -42,7 +42,7 @@ Item {
             id: icon
             text: root.glyph
             font.family: root.iconFont
-            font.pixelSize: 16
+            font.pixelSize: Math.round(16 * Theme.fontScale)
             color: root.selected ? Theme.text : Theme.textMuted
             anchors.left: parent.left
             anchors.leftMargin: 11

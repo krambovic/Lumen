@@ -10,33 +10,12 @@ Item {
     property color color: Theme.card
     property bool hoverable: true
     property alias radius: bg.radius
-    // 0 = flat (Fluent default, unchanged). >0 adds a soft drop shadow so a card
-    // reads as a raised surface; the shadow deepens slightly on hover.
     property real elevation: 0
     readonly property Item _contentItem: container.children.length > 0 ? container.children[0] : null
     implicitWidth: (_contentItem ? _contentItem.implicitWidth : 0) + padding * 2
     implicitHeight: (_contentItem ? _contentItem.implicitHeight : 0) + padding * 2
 
     readonly property bool _hot: root.hoverable && hover.hovered
-
-    // Drop shadow is only instantiated when elevation > 0, so flat cards never
-    // get layered into an FBO (keeps their hairline borders perfectly crisp).
-    Loader {
-        active: root.elevation > 0
-        anchors.fill: bg
-        z: -1
-        sourceComponent: MultiEffect {
-            source: bg
-            shadowEnabled: true
-            shadowColor: Theme.shadowColor
-            shadowOpacity: Theme.shadowOpacity * (root._hot ? 1.4 : 1.0) * Math.min(1, root.elevation)
-            shadowBlur: Theme.shadowBlur
-            shadowVerticalOffset: Theme.shadowVOffset + (root._hot ? 2 : 0)
-            autoPaddingEnabled: true
-            Behavior on shadowOpacity { NumberAnimation { duration: Theme.animFast } }
-            Behavior on shadowVerticalOffset { NumberAnimation { duration: Theme.animFast } }
-        }
-    }
 
     Rectangle {
         id: bg
@@ -46,6 +25,18 @@ Item {
         border.width: 1
         border.color: root._hot && root.hoverable ? Theme.divider : Theme.borderSolid
         Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+        layer.enabled: root.elevation > 0
+        layer.effect: MultiEffect {
+            shadowEnabled: true
+            shadowColor: Theme.shadowColor
+            shadowOpacity: Theme.shadowOpacity * (root._hot ? 1.4 : 1.0) * Math.min(1, root.elevation)
+            shadowBlur: Theme.shadowBlur
+            shadowVerticalOffset: Theme.shadowVOffset + (root._hot ? 2 : 0)
+            autoPaddingEnabled: true
+            Behavior on shadowOpacity { NumberAnimation { duration: Theme.animFast } }
+            Behavior on shadowVerticalOffset { NumberAnimation { duration: Theme.animFast } }
+        }
+
         Rectangle {
             anchors.fill: parent
             radius: parent.radius

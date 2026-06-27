@@ -8,10 +8,18 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 root = Path(SPECPATH)
 qml_dir = root / "xray_fluent" / "qml_app" / "qml"
 locales_dir = root / "xray_fluent" / "locales"
+fonts_dir = root / "xray_fluent" / "qml_app" / "assets" / "fonts"
+qwk_dir = root / "xray_fluent" / "qml_app" / "vendor" / "qwk"
+qwk_binaries = [
+    (str(qwk_dir / "QWKCore.dll"), "qwk"),
+    (str(qwk_dir / "QWKQuick.dll"), "qwk"),
+    (str(qwk_dir / "qwkshim.dll"), "qwk"),
+]
 
 datas = [
     (str(qml_dir), "xray_fluent/qml_app/qml"),
     (str(locales_dir), "xray_fluent/locales"),
+    (str(fonts_dir), "xray_fluent/qml_app/assets/fonts"),
 ]
 datas += collect_data_files(
     "PyQt6",
@@ -39,7 +47,7 @@ datas += collect_data_files(
 a = Analysis(
     [str(root / "run_qml.py")],
     pathex=[str(root)],
-    binaries=[],
+    binaries=qwk_binaries,
     datas=datas,
     hiddenimports=collect_submodules("truststore") + [
         "PyQt6.QtCore",

@@ -16,6 +16,7 @@ from copy import deepcopy
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 import socket
 import threading
@@ -26,7 +27,7 @@ from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from ...app_controller import AppController
 from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
 from ...application.node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
-from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY
+from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, DATA_DIR
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
@@ -56,6 +57,65 @@ class _ApplicationLogHandler(logging.Handler):
             self._emitter.line.emit(f"[{source}] {self.format(record)}")
         except Exception:
             pass
+
+
+def is_mica_supported() -> bool:
+    """Check if the system supports the Mica backdrop effect and it is enabled."""
+    if sys.platform != "win32":
+        return False
+    try:
+        win_ver = sys.getwindowsversion()
+        if win_ver.build < 22000:
+            return False
+
+        import ctypes
+        from ctypes import wintypes
+
+        # 1. Check DWM Composition
+        enabled = ctypes.c_bool(False)
+        hr = ctypes.windll.dwmapi.DwmIsCompositionEnabled(ctypes.byref(enabled))
+        if hr != 0 or not enabled.value:
+            return False
+
+        # 2. Check High Contrast mode
+        class HIGHCONTRAST(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.UINT),
+                ("dwFlags", wintypes.DWORD),
+                ("lpszDefaultScheme", wintypes.LPWSTR),
+            ]
+        SPI_GETHIGHCONTRAST = 0x0042
+        HCF_HIGHCONTRASTON = 0x00000001
+
+        hc = HIGHCONTRAST()
+        hc.cbSize = ctypes.sizeof(HIGHCONTRAST)
+
+        user32 = ctypes.windll.user32
+        SystemParametersInfo = user32.SystemParametersInfoW
+        SystemParametersInfo.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+        SystemParametersInfo.restype = wintypes.BOOL
+
+        success = SystemParametersInfo(SPI_GETHIGHCONTRAST, hc.cbSize, ctypes.byref(hc), 0)
+        if success and (hc.dwFlags & HCF_HIGHCONTRASTON) != 0:
+            return False
+
+        # 3. Check Transparency setting in registry
+        import winreg
+        try:
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            )
+            val, _ = winreg.QueryValueEx(key, "EnableTransparency")
+            winreg.CloseKey(key)
+            if val == 0:
+                return False
+        except Exception:
+            pass
+
+        return True
+    except Exception:
+        return False
 
 
 class AppBridge(QObject):
@@ -359,6 +419,10 @@ class AppBridge(QObject):
     @pyqtProperty(bool, notify=trayAvailableChanged)
     def trayAvailable(self) -> bool:
         return self._tray_available
+
+    @pyqtProperty(bool, constant=True)
+    def uiBackdropAvailable(self) -> bool:
+        return is_mica_supported()
 
     def _set_updates_available(self, value: bool) -> None:
         value = bool(value)
@@ -912,6 +976,37 @@ class AppBridge(QObject):
         settings.accent_color = hex_color
         self.controller.update_settings(settings)
 
+    @pyqtSlot(result=str)
+    def systemAccent(self) -> str:
+        """Читает текущий акцентный цвет Windows из реестра.
+        DWM\\AccentColor хранится как DWORD в формате ABGR (0xAABBGGRR).
+        Возвращает '#RRGGBB' или '' если недоступно."""
+        if sys.platform != "win32":
+            return ""
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\DWM"
+            ) as key:
+                raw, _ = winreg.QueryValueEx(key, "AccentColor")
+            val = int(raw) & 0xFFFFFFFF
+            r = val & 0xFF
+            g = (val >> 8) & 0xFF
+            b = (val >> 16) & 0xFF
+            return "#{:02X}{:02X}{:02X}".format(r, g, b)
+        except Exception:
+            return ""
+
+    @pyqtSlot()
+    def useSystemAccent(self) -> None:
+        """Применяет системный акцент Windows как акцент приложения."""
+        hex_color = self.systemAccent()
+        if not hex_color:
+            self.toast.emit("warning", tr("Не удалось получить системный акцент"))
+            return
+        self.setAccent(hex_color)
+
     @pyqtSlot(str)
     def setInterfaceMode(self, mode: str) -> None:
         settings = deepcopy(self.controller.state.settings)
@@ -960,6 +1055,96 @@ class AppBridge(QObject):
         settings = deepcopy(self.controller.state.settings)
         settings.ui_theme_preset = (value or "default").strip().lower()
         self.controller.update_settings(settings)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def uiBaseTint(self) -> str:
+        try:
+            return str(self.controller.state.settings.ui_base_tint or "")
+        except Exception:
+            return ""
+
+    @pyqtSlot(str)
+    def setUiBaseTint(self, value: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_base_tint = (value or "").strip()
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def uiBaseTintSrc(self) -> str:
+        """Состояние пикера базового тона: "#RRGGBB|mute" (база + приглушение)."""
+        try:
+            return str(self.controller.state.settings.ui_base_tint_src or "")
+        except Exception:
+            return ""
+
+    @pyqtSlot(str)
+    def setUiBaseTintSrc(self, value: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_base_tint_src = (value or "").strip()
+        self.controller.update_settings(settings)
+
+    # ── Обои (B7) ───────────────────────────────────────
+    @pyqtProperty(str, notify=settingsChanged)
+    def uiWallpaper(self) -> str:
+        try:
+            return str(self.controller.state.settings.ui_wallpaper or "")
+        except Exception:
+            return ""
+
+    @pyqtSlot(str)
+    def setUiWallpaper(self, value: str) -> None:
+        v = (value or "").strip()
+        if v.startswith("file://"):
+            v = QUrl(v).toLocalFile()
+        settings = deepcopy(self.controller.state.settings)
+        new_image = bool(v)
+        settings.ui_wallpaper = v
+        if new_image:
+            settings.ui_wallpaper_opacity = 50
+            settings.ui_wallpaper_blur = 10
+            settings.ui_wallpaper_brightness = 50
+        self.controller.update_settings(settings)
+
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def uiWallpaperOpacity(self) -> int:
+        try:
+            return int(self.controller.state.settings.ui_wallpaper_opacity)
+        except Exception:
+            return 100
+
+    @pyqtSlot(int)
+    def setUiWallpaperOpacity(self, value: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_wallpaper_opacity = max(0, min(100, int(value)))
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def uiWallpaperBlur(self) -> int:
+        try:
+            return int(self.controller.state.settings.ui_wallpaper_blur)
+        except Exception:
+            return 0
+
+    @pyqtSlot(int)
+    def setUiWallpaperBlur(self, value: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_wallpaper_blur = max(0, min(100, int(value)))
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def uiWallpaperBrightness(self) -> int:
+        try:
+            return int(self.controller.state.settings.ui_wallpaper_brightness)
+        except Exception:
+            return 50
+
+    @pyqtSlot(int)
+    def setUiWallpaperBrightness(self, value: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_wallpaper_brightness = max(0, min(100, int(value)))
+        self.controller.update_settings(settings)
+
 
     @pyqtSlot(bool)
     def setUiAnimations(self, enabled: bool) -> None:

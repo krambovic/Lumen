@@ -1,17 +1,39 @@
 import QtQuick
 import QtQuick.Controls.Universal
 import QtQuick.Layouts
+import QtQuick.Effects
+import QtQuick.Dialogs
 import App 1.0
 import "."
-//grouped into Внешний вид / Сеть / Авто-переключение / Пути к ядрам /
-// Запуск / Обновления / Данные. Все ряды подключены к
-// AppBridge. Компактный режим скрывает продвинутые группы (авто-переключение,
-// пути к ядрам, данные) — как SettingsPage.set_compact_mode в
-// классическом приложении — вместо сворачивания навигационной панели.
-FluentScroll {
+Item {
     id: page
     readonly property var themeKeys: ["system", "light", "dark"]
     readonly property var languageKeys: App.availableLanguages
+    readonly property var presetKeys: Theme.dark ? ["default", "midnight", "nord", "solarized", "dracula", "catppuccin"] : ["default", "nord", "solarized", "dracula", "catppuccin"]
+    readonly property var presetLabels: Theme.dark ? ["Default", "Midnight", "Nord", "Solarized", "Dracula", "Catppuccin"] : ["Default", "Nord", "Solarized", "Dracula", "Catppuccin"]
+    property int currentTab: 0
+    readonly property var tabModel: [
+        { glyph: "\uE790", label: I18n.t("Внешний вид"),        pageIndex: 0, compactHidden: false },
+        { glyph: "\uE774", label: I18n.t("Сеть"),               pageIndex: 1, compactHidden: false },
+        { glyph: "\uE8AB", label: I18n.t("Авто-переключение"),  pageIndex: 2, compactHidden: true  },
+        { glyph: "\uE7E8", label: I18n.t("Запуск и тесты"),     pageIndex: 3, compactHidden: false },
+        { glyph: "\uE895", label: I18n.t("Обновления"),         pageIndex: 4, compactHidden: false },
+        { glyph: "\uE74E", label: I18n.t("Данные"),             pageIndex: 5, compactHidden: true  }
+    ]
+    readonly property var visibleTabs: tabModel.filter(function(t) { return !(t.compactHidden && App.compactMode); })
+    readonly property int activeVisibleIndex: {
+        for (var i = 0; i < visibleTabs.length; i++)
+            if (visibleTabs[i].pageIndex === currentTab) return i;
+        return 0;
+    }
+    onVisibleTabsChanged: {
+        var ok = false;
+        for (var i = 0; i < visibleTabs.length; i++)
+            if (visibleTabs[i].pageIndex === currentTab) { ok = true; break; }
+        if (!ok && visibleTabs.length > 0) currentTab = visibleTabs[0].pageIndex;
+    }
+
+
 
     component StyledCombo: FluentCombo { Layout.preferredWidth: 210 }
 
@@ -97,12 +119,69 @@ FluentScroll {
         }
         ColorPickerDialog {
             id: accentDlg
+            showSystem: true
+            showDarkness: true
             onAccepted: (hex) => App.setAccent(hex)
         }
     }
 
+    component BaseTintPicker: Item {
+        id: bt
+        implicitWidth: 56
+        implicitHeight: Theme.controlHeight
+        Rectangle {
+            id: btSwatch
+            anchors.fill: parent
+            radius: Theme.radiusSmall
+            color: App.uiBaseTint !== "" ? App.uiBaseTint : "transparent"
+            border.width: 1
+            border.color: btHover.hovered ? Theme.text : Theme.divider
+            Text {
+                anchors.centerIn: parent
+                visible: App.uiBaseTint === ""
+                text: "\u2014"
+                font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal
+                color: Theme.textFaint
+            }
+            HoverHandler { id: btHover }
+            TapHandler {
+                onTapped: {
+                    var src = App.uiBaseTintSrc
+                    if (src && src.indexOf("|") > 0) {
+                        var parts = src.split("|")
+                        baseTintDlg.openWith(parts[0], parseFloat(parts[1]))
+                    } else if (App.uiBaseTint !== "") {
+                        baseTintDlg.openWith(App.uiBaseTint, 0)
+                    } else {
+                        baseTintDlg.openWith("#5B6B8C", 0.6)
+                    }
+                }
+            }
+        }
+        ColorPickerDialog {
+            id: baseTintDlg
+            showDarkness: true
+            heading: I18n.t("Свой базовый тон")
+            onAccepted: (hex) => {
+                App.setUiBaseTint(hex)
+                App.setUiBaseTintSrc(baseTintDlg._baseHex() + "|" + baseTintDlg._mute)
+            }
+        }
+    }
+
+
+    FileDialog {
+        id: wallpaperDlg
+        title: I18n.t("Выберите изображение")
+        nameFilters: [I18n.t("Изображения") + " (*.png *.jpg *.jpeg *.bmp *.webp)"]
+        onAccepted: App.setUiWallpaper(selectedFile.toString())
+    }
+
     ColumnLayout {
-        width: page.width
+        anchors.fill: parent
+        anchors.topMargin: 20
+        anchors.bottomMargin: 8
+        anchors.rightMargin: 12
         spacing: Theme.spacingLarge
 
         Text {
@@ -111,7 +190,105 @@ FluentScroll {
             font.weight: Font.DemiBold; color: Theme.text
         }
 
-        // ============================ Внешний вид ============================
+        // ===== Адаптивный таб-бар с анимированным индикатором =====
+        Item {
+            Layout.fillWidth: true
+            implicitHeight: Math.round(40 * Theme.fontScale)
+
+            RowLayout {
+                id: tabRow
+                anchors.fill: parent
+                spacing: 4
+                Repeater {
+                    model: page.visibleTabs
+                    delegate: Rectangle {
+                        required property int index
+                        required property var modelData
+                        readonly property bool current: page.currentTab === modelData.pageIndex
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        Layout.fillHeight: true
+                        radius: Theme.radiusSmall
+                        color: current ? Theme.accentSoft
+                              : (tabHover.hovered ? Theme.cardHover : "transparent")
+                        Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0 } }
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 8
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.glyph
+                                font.family: "Segoe Fluent Icons"
+                                font.pixelSize: Theme.fontNormal
+                                color: current ? Theme.accent : Theme.textMuted
+                                Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0 } }
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.label
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontNormal
+                                font.weight: current ? Font.DemiBold : Font.Normal
+                                color: current ? Theme.text : Theme.textMuted
+                                Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0 } }
+                            }
+                        }
+                        HoverHandler { id: tabHover }
+                        TapHandler { onTapped: page.currentTab = modelData.pageIndex }
+                    }
+                }
+            }
+
+            // Скользящий индикатор активной вкладки
+            Rectangle {
+                id: tabIndicator
+                readonly property int count: page.visibleTabs.length
+                readonly property real tw: (tabRow.width - tabRow.spacing * (count - 1)) / count
+                height: 2.5
+                radius: 2
+                color: Theme.accent
+                y: tabRow.height - height
+                width: tw * 0.5
+                x: page.activeVisibleIndex * (tw + tabRow.spacing) + (tw - width) / 2
+                Behavior on x { NumberAnimation { duration: Theme.animations ? 240 : 0; easing.type: Theme.easeEmphasized } }
+                Behavior on width { NumberAnimation { duration: Theme.animations ? 240 : 0 } }
+            }
+        }
+
+        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
+
+        SwipeView {
+            id: tabStack
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+            interactive: false
+            currentIndex: page.currentTab
+
+            Binding { target: tabStack.contentItem; property: "highlightMoveDuration"; value: Theme.animations ? 250 : 0 }
+            Binding { target: tabStack.contentItem; property: "highlightMoveVelocity"; value: Theme.animations ? -1 : -1 }
+
+            layer.enabled: true
+            layer.smooth: true
+            layer.effect: MultiEffect {
+                maskEnabled: true
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1.0
+                maskSource: ShaderEffectSource {
+                    hideSource: true
+                    sourceItem: Rectangle {
+                        width: tabStack.width
+                        height: tabStack.height
+                        radius: Theme.radius
+                        color: "black"
+                    }
+                }
+            }
+
+        FluentScroll {
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingLarge
         Card {
             Layout.fillWidth: true
             ColumnLayout {
@@ -125,6 +302,15 @@ FluentScroll {
                         model: [I18n.t("Авто"), I18n.t("Светлая"), I18n.t("Тёмная")]
                         currentIndex: Math.max(0, page.themeKeys.indexOf(App.themeName))
                         onActivated: App.setTheme(page.themeKeys[currentIndex])
+                    }
+                }
+
+                SettingRow {
+                    glyph: "\uE771"; title: I18n.t("Палитра (пресет)"); subtitle: I18n.t("Готовая цветовая тема поверх светлой/тёмной")
+                    StyledCombo {
+                        model: page.presetLabels
+                        currentIndex: Math.max(0, page.presetKeys.indexOf(App.uiThemePreset))
+                        onActivated: App.setUiThemePreset(page.presetKeys[currentIndex])
                     }
                 }
 
@@ -143,6 +329,49 @@ FluentScroll {
                 }
 
                 SettingRow {
+                    glyph: "\uE7E6"; title: I18n.t("Свой базовый тон"); subtitle: I18n.t("Кастомный цвет подложки окна (поверх пресета)")
+                    AccentButton {
+                        kind: "ghost"
+                        text: I18n.t("Сбросить")
+                        visible: App.uiBaseTint !== ""
+                        onClicked: App.setUiBaseTint("")
+                    }
+                    BaseTintPicker {}
+                }
+
+                SettingRow {
+                    glyph: "\uEB9F"; title: I18n.t("Обои окна"); subtitle: I18n.t("Фоновое изображение под интерфейсом")
+                    AccentButton {
+                        kind: "ghost"
+                        text: I18n.t("Сбросить")
+                        visible: App.uiWallpaper !== ""
+                        onClicked: App.setUiWallpaper("")
+                    }
+                    AccentButton {
+                        text: I18n.t("Выбрать\u2026")
+                        onClicked: wallpaperDlg.open()
+                    }
+                }
+
+                SettingRow {
+                    visible: App.uiWallpaper !== ""
+                    glyph: "\uE890"; title: I18n.t("Непрозрачность обоев"); subtitle: I18n.t("Насколько ярко видно изображение, %")
+                    FluentSpin { from: 0; to: 100; stepSize: 5; value: App.uiWallpaperOpacity; onValueModified: App.setUiWallpaperOpacity(value) }
+                }
+
+                SettingRow {
+                    visible: App.uiWallpaper !== ""
+                    glyph: "\uE7B3"; title: I18n.t("Размытие обоев"); subtitle: I18n.t("Сила размытия фона, 0–100")
+                    FluentSpin { from: 0; to: 100; stepSize: 5; value: App.uiWallpaperBlur; onValueModified: App.setUiWallpaperBlur(value) }
+                }
+
+                SettingRow {
+                    visible: App.uiWallpaper !== ""
+                    glyph: "\uE706"; title: I18n.t("Яркость обоев"); subtitle: I18n.t("100 = оригинал, меньше = темнее")
+                    FluentSpin { from: 0; to: 100; stepSize: 5; value: App.uiWallpaperBrightness; onValueModified: App.setUiWallpaperBrightness(value) }
+                }
+
+                SettingRow {
                     glyph: "\uE799"; title: I18n.t("Плотность"); subtitle: I18n.t("Насколько компактно расположены элементы")
                     StyledCombo {
                         model: [I18n.t("Компактная"), I18n.t("Обычная"), I18n.t("Просторная")]
@@ -150,6 +379,11 @@ FluentScroll {
                         currentIndex: Math.max(0, keys.indexOf(App.uiDensity))
                         onActivated: App.setUiDensity(keys[currentIndex])
                     }
+                }
+
+                SettingRow {
+                    glyph: "\uE8E9"; title: I18n.t("Масштаб интерфейса"); subtitle: I18n.t("Размер шрифта и всего интерфейса, % (80–140)")
+                    FluentSpin { from: 80; to: 140; stepSize: 5; value: App.uiFontScale; onValueModified: App.setUiFontScale(value) }
                 }
 
                 SettingRow {
@@ -168,8 +402,14 @@ FluentScroll {
                 }
             }
         }
+                Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
+            }
+        }
 
-        // ============================ Сеть ============================
+        FluentScroll {
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingLarge
         Card {
             Layout.fillWidth: true
             ColumnLayout {
@@ -225,8 +465,14 @@ FluentScroll {
                 }
             }
         }
+                Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
+            }
+        }
 
-        // ============================ Авто-переключение ============================
+        FluentScroll {
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingLarge
         Card {
             Layout.fillWidth: true
             visible: !App.compactMode
@@ -254,30 +500,14 @@ FluentScroll {
                 }
             }
         }
-
-        // ============================ Пути к ядрам ============================
-        Card {
-            Layout.fillWidth: true
-            visible: !App.compactMode
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 14
-                Text { text: I18n.t("Пути к ядрам"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
-
-                SettingRow {
-                    glyph: "\uE756"; title: I18n.t("Ядро Xray"); subtitle: I18n.t("Путь к исполняемому файлу xray")
-                    StyledField { id: xrayField; Layout.preferredWidth: 240; text: App.xrayPath; placeholderText: "core\\xray.exe"; onEditingFinished: App.setXrayPath(text) }
-                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Обзор"); onClicked: { var p = App.browseXrayPath(); if (p) xrayField.text = p } }
-                }
-                SettingRow {
-                    glyph: "\uE756"; title: I18n.t("Ядро sing-box-extended"); subtitle: I18n.t("Путь к исполняемому файлу sing-box-extended")
-                    StyledField { id: sbField; Layout.preferredWidth: 240; text: App.singboxPath; placeholderText: "core\\sing-box.exe"; onEditingFinished: App.setSingboxPath(text) }
-                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Обзор"); onClicked: { var p = App.browseSingboxPath(); if (p) sbField.text = p } }
-                }
+                Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
             }
         }
 
-        // ============================ Запуск ============================
+        FluentScroll {
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingLarge
         Card {
             Layout.fillWidth: true
             ColumnLayout {
@@ -303,8 +533,6 @@ FluentScroll {
                 }
             }
         }
-
-        // ============================ Тестирование серверов ============================
         Card {
             Layout.fillWidth: true
             visible: !App.compactMode
@@ -351,7 +579,6 @@ FluentScroll {
                         }
                         onClicked: speedPresetMenu.visible ? speedPresetMenu.close() : speedPresetMenu.open()
                         function pick(u) { App.setSpeedTestUrl(u); speedUrlField.text = u; }
-                        // Fluent-flyout в стиле FluentCombo: скруглённый, Theme.flyout, строки-«пилюли» с hover.
                         Popup {
                             id: speedPresetMenu
                             y: speedPresetBtn.height + 4
@@ -359,9 +586,6 @@ FluentScroll {
                             width: 230
                             padding: 4
                             modal: false
-                            // Клик по самой кнопке не должен закрывать-и-сразу-открывать список:
-                            // считаем «вне поповера» только клики за пределами кнопки-родителя,
-                            // тогда onClicked корректно переключает open/close (как у FluentCombo).
                             parent: speedPresetBtn
                             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
                             readonly property var presets: [
@@ -431,8 +655,14 @@ FluentScroll {
                 }
             }
         }
+                Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
+            }
+        }
 
-        // ============================ Обновления ============================
+        FluentScroll {
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingLarge
         Card {
             Layout.fillWidth: true
             ColumnLayout {
@@ -468,8 +698,14 @@ FluentScroll {
                 }
             }
         }
+                Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
+            }
+        }
 
-        // ============================ Данные ============================
+        FluentScroll {
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingLarge
         Card {
             Layout.fillWidth: true
             visible: !App.compactMode
@@ -485,13 +721,35 @@ FluentScroll {
                 }
             }
         }
+        Card {
+            Layout.fillWidth: true
+            visible: !App.compactMode
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 14
+                Text { text: I18n.t("Пути к ядрам"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
+                SettingRow {
+                    glyph: "\uE756"; title: I18n.t("Ядро Xray"); subtitle: I18n.t("Путь к исполняемому файлу xray")
+                    StyledField { id: xrayField; Layout.preferredWidth: 240; text: App.xrayPath; placeholderText: "core\\xray.exe"; onEditingFinished: App.setXrayPath(text) }
+                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Обзор"); onClicked: { var p = App.browseXrayPath(); if (p) xrayField.text = p } }
+                }
+                SettingRow {
+                    glyph: "\uE756"; title: I18n.t("Ядро sing-box-extended"); subtitle: I18n.t("Путь к исполняемому файлу sing-box-extended")
+                    StyledField { id: sbField; Layout.preferredWidth: 240; text: App.singboxPath; placeholderText: "core\\sing-box.exe"; onEditingFinished: App.setSingboxPath(text) }
+                    AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Обзор"); onClicked: { var p = App.browseSingboxPath(); if (p) sbField.text = p } }
+                }
+            }
+        }
         Text {
             Layout.topMargin: 4
             text: App.appName + " · v" + App.appVersion
             color: Theme.textFaint
             font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
         }
-        Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
+                Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
+            }
+        }
+        }
     }
 }

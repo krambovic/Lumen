@@ -19,7 +19,22 @@ QtObject {
     property string fontFamilyName: "Segoe UI"
     property bool animations: true             // master motion switch
     property string preset: "default"          // default | midnight | nord | ...
+    property string baseTint: ""               // "" = выкл; иначе #RRGGBB — свой базовый тон окна (приоритет над пресетом)
+    property bool backdropAvailable: true       // false на Win10 (нет Mica) → непрозрачный фон
+
     readonly property bool amoled: preset === "midnight"
+
+    // ---- Theme presets (surface palettes) ------------------------------
+    readonly property var _presetMap: ({
+        "default":   { d0: "#202020", d1: "#2C2C2C", lt: "#F3F3F3", win: "" },
+        "midnight":  { d0: "#000000", d1: "#1A1A1A", lt: "#F3F3F3", win: "#000000" },
+        "nord":      { d0: "#2E3440", d1: "#3B4252", lt: "#D8DEE9", win: "#2E3440" },
+        "solarized": { d0: "#1E2A2E", d1: "#26343A", lt: "#FDF6E3", win: "#1A2529" },
+        "dracula":   { d0: "#2E2A3C", d1: "#383350", lt: "#E6E1F2", win: "#2E2A3C" },
+        "catppuccin": { d0: "#151521", d1: "#20202F", lt: "#DCE0F5", win: "#151521" }
+    })
+    readonly property var _pal: _presetMap[preset] !== undefined ? _presetMap[preset] : _presetMap["default"]
+    readonly property bool presetColored: preset === "nord" || preset === "solarized" || preset === "dracula" || preset === "catppuccin" || (preset === "midnight" && dark)
 
     // ---- Accent derivatives --------------------------------------------
     readonly property color accentHover: dark ? Qt.lighter(accent, 1.12) : Qt.darker(accent, 1.06)
@@ -32,7 +47,34 @@ QtObject {
         "#744DA9", "#B146C2", "#E3008C", "#C30052", "#E81123", "#F7630C", "#FFB900", "#498205"]
 
     // ---- Surfaces (Fluent Mica / layer palette) ------------------------
-    readonly property color bg: dark ? (amoled ? "#000000" : "#202020") : "#F3F3F3"
+    readonly property color bg: dark ? _pal.d0 : _pal.lt
+
+    function _lightTint(hex) {
+        var h = ("" + hex).replace("#", "")
+        if (h.length < 6) return hex
+        var r = parseInt(h.substr(0, 2), 16)
+        var g = parseInt(h.substr(2, 2), 16)
+        var b = parseInt(h.substr(4, 2), 16)
+        return Qt.rgba((r * 0.20 + 0.80 * 255) / 255,
+                       (g * 0.20 + 0.80 * 255) / 255,
+                       (b * 0.20 + 0.80 * 255) / 255, 1)
+    }
+    function _darkTint(hex) {
+        var h = ("" + hex).replace("#", "")
+        if (h.length < 6) return hex
+        var r = parseInt(h.substr(0, 2), 16)
+        var g = parseInt(h.substr(2, 2), 16)
+        var b = parseInt(h.substr(4, 2), 16)
+        var base = 0x20
+        return Qt.rgba((r * 0.30 + base * 0.70) / 255,
+                       (g * 0.30 + base * 0.70) / 255,
+                       (b * 0.30 + base * 0.70) / 255, 1)
+    }
+    readonly property color windowBase: baseTint !== ""
+        ? (dark ? _darkTint(baseTint) : _lightTint(baseTint))
+        : (presetColored
+            ? (dark ? (_pal.win !== "" ? _pal.win : _pal.d0) : _pal.lt)
+            : (backdropAvailable ? "transparent" : (dark ? _pal.d0 : _pal.lt)))
     readonly property color micaBase: "transparent"
     // Slightly raised base (nav pane): a very faint layer so Mica stays visible.
     readonly property color bgElevated: dark ? Qt.rgba(1, 1, 1, 0.016) : Qt.rgba(1, 1, 1, 0.55)
@@ -40,7 +82,7 @@ QtObject {
     readonly property color card: dark ? Qt.rgba(1, 1, 1, 0.040) : Qt.rgba(1, 1, 1, 0.70)
     readonly property color cardHover: dark ? Qt.rgba(1, 1, 1, 0.0837) : Qt.rgba(0, 0, 0, 0.024)
     readonly property color cardPressed: dark ? Qt.rgba(1, 1, 1, 0.0326) : Qt.rgba(0, 0, 0, 0.040)
-    readonly property color flyout: dark ? (amoled ? "#1A1A1A" : "#2C2C2C") : "#FBFBFB"
+    readonly property color flyout: dark ? _pal.d1 : "#FBFBFB"
     readonly property color flyoutBorder: dark ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(0, 0, 0, 0.13)
 
     // ---- Lines ----------------------------------------------------------
@@ -75,11 +117,11 @@ QtObject {
     readonly property real densityScale: density === "compact" ? 0.85 : density === "spacious" ? 1.18 : 1.0
     readonly property int radius: Math.max(0, Math.min(20, cornerRadius))
     readonly property int radiusSmall: Math.max(2, radius - 3)
-    readonly property int spacing: density === "compact" ? 8 : density === "spacious" ? 16 : 12
-    readonly property int spacingLarge: density === "compact" ? 14 : density === "spacious" ? 26 : 20
-    readonly property int railWidth: 250
-    readonly property int railWidthCompact: 50
-    readonly property int controlHeight: density === "compact" ? 28 : density === "spacious" ? 38 : 32
+    readonly property int spacing: Math.round((density === "compact" ? 8 : density === "spacious" ? 16 : 12) * fontScale)
+    readonly property int spacingLarge: Math.round((density === "compact" ? 14 : density === "spacious" ? 26 : 20) * fontScale)
+    readonly property int railWidth: Math.round(250 * fontScale)
+    readonly property int railWidthCompact: Math.round(50 * fontScale)
+    readonly property int controlHeight: Math.round((density === "compact" ? 28 : density === "spacious" ? 38 : 32) * fontScale)
 
     // ---- Typography (Fluent, user-scalable) ----------------------------
     readonly property string fontFamily: (fontFamilyName && fontFamilyName.length) ? fontFamilyName : "Segoe UI"

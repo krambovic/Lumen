@@ -2,18 +2,20 @@ import QtQuick
 import QtQuick.Controls.Universal
 import QtQuick.Layouts
 import QtQuick.Window
+import QtQuick.Effects
 import App 1.0
 import "."
 
 ApplicationWindow {
     id: win
-    visible: true
+    visible: false
     width: 1280
     height: 720
     minimumWidth: 640
     minimumHeight: 360
     title: App.appName
     color: "transparent"
+
 
     onClosing: (close) => {
         if (App.trayAvailable && !App.quitting) {
@@ -25,8 +27,39 @@ ApplicationWindow {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.micaBase
+        color: ((win.visibility === Window.Maximized || win.visibility === Window.FullScreen) && Theme.windowBase.a === 0) ? Theme.bg : Theme.windowBase
         z: -1
+    }
+    Image {
+        id: wallpaperImg
+        anchors.fill: parent
+        z: -1
+        source: App.uiWallpaper !== ""
+                ? "file:///" + ("" + App.uiWallpaper).replace(/\\/g, "/")
+                : ""
+        visible: source != "" && status === Image.Ready
+        fillMode: Image.PreserveAspectCrop
+        opacity: App.uiWallpaperOpacity / 100
+        asynchronous: true
+        cache: true
+        smooth: true
+        mipmap: true
+        layer.enabled: App.uiWallpaperBlur > 0 || App.uiWallpaperBrightness < 100
+        layer.effect: MultiEffect {
+            blurEnabled: true
+            blur: App.uiWallpaperBlur / 100
+            blurMax: 64
+            autoPaddingEnabled: false
+        }
+        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 200 : 0 } }
+
+        Rectangle {
+            anchors.fill: parent
+            color: "black"
+            visible: App.uiWallpaperBrightness < 100
+            opacity: (100 - App.uiWallpaperBrightness) / 100
+            Behavior on opacity { NumberAnimation { duration: Theme.animations ? 200 : 0 } }
+        }
     }
 
     readonly property string iconFont: "Segoe Fluent Icons"
@@ -58,6 +91,11 @@ ApplicationWindow {
         Theme.cornerRadius = Qt.binding(function() { return App.uiCornerRadius; });
         Theme.animations = Qt.binding(function() { return App.uiAnimations; });
         Theme.backdrop = Qt.binding(function() { return App.uiBackdrop; });
+        Theme.fontScale = Qt.binding(function() { return App.uiFontScale / 100; });
+        Theme.preset = Qt.binding(function() { return App.uiThemePreset; });
+        Theme.baseTint = Qt.binding(function() { return App.uiBaseTint; });
+        Theme.backdropAvailable = Qt.binding(function() { return App.uiBackdropAvailable; });
+
     }
 
     Universal.theme: Theme.dark ? Universal.Dark : Universal.Light
@@ -133,6 +171,7 @@ ApplicationWindow {
 
     Item {
         anchors.fill: parent
+        anchors.topMargin: titleBar.height
 
         // ── navigation pane ──────────────────────
         Rectangle {
@@ -154,11 +193,11 @@ ApplicationWindow {
 
                 Item {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 40
+                    Layout.preferredHeight: Math.round(40 * Theme.fontScale)
                     Rectangle {
                         x: 6
                         y: 0
-                        width: win.railCollapsed ? 38 : Math.max(38, parent.width - 12)
+                        width: win.railCollapsed ? Math.round(38 * Theme.fontScale) : Math.max(Math.round(38 * Theme.fontScale), parent.width - 12)
                         height: parent.height
                         radius: Theme.radiusSmall
                         color: burgerHover.hovered ? Theme.cardHover : "transparent"
@@ -167,7 +206,7 @@ ApplicationWindow {
                         Text {
                             text: "\uE700"  // GlobalNavButton
                             font.family: win.iconFont
-                            font.pixelSize: 16
+                            font.pixelSize: Math.round(16 * Theme.fontScale)
                             color: Theme.textMuted
                             anchors.left: parent.left
                             anchors.leftMargin: 11
@@ -239,8 +278,6 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.rightMargin: -Theme.radius
                 anchors.bottomMargin: -Theme.radius
-                anchors.topMargin: (win.visibility === Window.FullScreen
-                                    || win.visibility === Window.Maximized) ? 6 : 0
                 clip: true
                 radius: Theme.radius
                 color: Theme.backdrop === "acrylic"
@@ -314,7 +351,16 @@ ApplicationWindow {
         }
     }
 
-    // toast overlay sits above everything
+    TitleBar {
+        id: titleBar
+        win: win
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+
+        z: 50
+    }
+
     ToastHost {}
 
     // ── lock overlay: blocks the whole UI until the master password is entered ──
