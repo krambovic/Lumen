@@ -12,8 +12,6 @@
     <img src="https://img.shields.io/github/downloads/krambovic/Lumen-KVN/total?color=8000FF&style=for-the-badge" alt="Скачивания">
   </a>
   <img src="https://img.shields.io/badge/Platform-Windows%2011%20%7C%2010-0078d4?style=for-the-badge&logo=windows" alt="Платформа">
-  <img src="https://img.shields.io/badge/UI-PyQt6%20%2F%20QML-41CD52?style=for-the-badge&logo=qt" alt="Интерфейс">
-  <img src="https://img.shields.io/badge/License-GPL--3.0-green?style=for-the-badge" alt="Лицензия">
 </p>
 
 <p align="center">
