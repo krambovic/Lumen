@@ -1,94 +1,86 @@
 # Lumen KVN
 
 <p align="center">
-  <img src="assets/LumenKVN.png" alt="Lumen KVN" width="160">
+  <img src="assets/LumenKVN.png" alt="Lumen KVN Logo" width="140">
 </p>
 
-**Язык:** [English](README.md) | Русский
+<p align="center">
+  <a href="https://github.com/krambovic/Lumen-KVN/releases">
+    <img src="https://img.shields.io/github/v/release/krambovic/Lumen-KVN?color=8000FF&style=for-the-badge" alt="Версия">
+  </a>
+  <a href="https://github.com/krambovic/Lumen-KVN/releases">
+    <img src="https://img.shields.io/github/downloads/krambovic/Lumen-KVN/total?color=8000FF&style=for-the-badge" alt="Скачивания">
+  </a>
+  <img src="https://img.shields.io/badge/Platform-Windows%2011%20%7C%2010-0078d4?style=for-the-badge&logo=windows" alt="Платформа">
+  <img src="https://img.shields.io/badge/UI-PyQt6%20%2F%20QML-41CD52?style=for-the-badge&logo=qt" alt="Интерфейс">
+  <img src="https://img.shields.io/badge/License-GPL--3.0-green?style=for-the-badge" alt="Лицензия">
+</p>
 
-Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, системного прокси, маршрутизации, управления серверами и DPI bypass через zapret.
+<p align="center">
+  <b>Язык:</b> <a href="README.md">English</a> | <b>Русский</b>
+</p>
 
-Проект сохраняет copyright и лицензионные уведомления исходных материалов и сторонних компонентов. Подробнее: [LICENSE](LICENSE) и [NOTICE.md](NOTICE.md).
+---
 
-## Что Это
+Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, системного прокси, маршрутизации, управления серверами и обхода DPI (DPI bypass) через zapret. Проект предлагает графический интерфейс на базе QML с эффектами Mica/Acrylic и аппаратным ускорением рендеринга.
 
-Lumen KVN объединяет xray-core, sing-box-extended, zapret, пресеты маршрутизации и QML-интерфейс без необходимости вручную редактировать JSON-конфиги для обычных задач.
+> [!IMPORTANT]
+> Для работы TUN/VPN режимов и запуска средств обхода DPI (zapret) требуются права администратора.
 
-Основные возможности:
+---
 
-- импорт VLESS, Trojan, Shadowsocks, VMess, WARP, WireGuard и AWG/AmneziaWG конфигов;
-- системный прокси через xray-core;
-- VPN/TUN режим через sing-box-extended;
-- поддержка XHTTP, WARP, WireGuard и AWG 2.0 через sing-box-extended;
-- встроенный zapret/DPI bypass;
-- проверка ping и скорости серверов;
-- маршрутизация по доменам, IP, сервисам и приложениям;
-- пресеты маршрутизации: всё, заблокированное и всё кроме РФ;
-- Discord voice proxy через droute без TUN;
-- компактный и полный режим интерфейса;
-- обновление приложения, xray-core, sing-box-extended, geoip.dat и geosite.dat;
-- QML-интерфейс с GPU-отрисовкой.
+## Возможности программы
 
-## Установка
+| Раздел | Используемые компоненты | Описание |
+| :--- | :--- | :--- |
+| **Обход DPI** | zapret / WinDivert | Обход замедлений и блокировок YouTube, Discord и других сервисов на уровне пакетов. |
+| **TUN / VPN** | sing-box-extended | Полноценный TUN-режим с поддержкой AmneziaWG (AWG 2.0), WireGuard и Necko/XHTTP. |
+| **Прокси** | xray-core | Системный прокси (VLESS, Trojan, Shadowsocks, VMess). |
+| **Диагностика** | встроенные тесты | Проверка ping и реальной скорости скачивания серверов. |
+| **Интерфейс** | PyQt6 / QML | Динамические акцентные цвета, темы оформления (включая Codex) и поддержка фоновых обоев. |
 
-Скачайте последнюю версию на странице [Releases](https://github.com/krambovic/lumen-kvn/releases).
+---
 
-- `LumenKVN-Setup-windows-x64.exe` - обычный установщик Windows.
-- `LumenKVN-portable-windows-x64.zip` - portable-версия без установки.
+## Установка и запуск
 
-Для TUN/VPN и zapret требуются права администратора.
+Перейдите на страницу **[Releases](https://github.com/krambovic/Lumen-KVN/releases)** и скачайте актуальную версию:
 
-## sing-box-extended
+* **Установщик (`LumenKVN-Setup-windows-x64.exe`):** Рекомендуется для большинства пользователей.
+* **Портативная версия (`LumenKVN-portable-windows-x64.zip`):** Работает без установки.
 
-В Lumen KVN `sing-box-extended` используется как основное ядро TUN-режима.
+---
 
-Через него работают:
+## Сборка проекта (для разработчиков)
 
-- WARP и WireGuard `.conf`;
-- AWG 2.0 / AmneziaWG `.conf`;
-- native XHTTP для поддерживаемых серверов;
-- маршрутизация TUN по доменам, IP, сервисам и приложениям.
+<details>
+<summary><b>Показать инструкции по сборке</b></summary>
 
-WARP/WireGuard/AWG-конфиги доступны только в TUN на sing-box-extended. В системном прокси они специально недоступны, потому что xray-core не может запускать такие конфиги напрямую.
+1. Установите зависимости проекта:
+   ```powershell
+   pip install -r requirements.txt
+   ```
+2. Поместите исполняемые файлы ядер (`xray.exe`, `sing-box.exe`, `wintun.dll`, файлы базы GeoIP) в каталог `core/`.
+3. Запустите скрипт компиляции и сборки:
+   ```powershell
+   python build_qml.py
+   ```
+Сборка создает установщик и портативный архив в директории `dist/`.
+</details>
 
-## Импорт Конфигов
+---
 
-Обычные proxy-ссылки можно вставлять из буфера обмена.
+## История звезд
 
-Для WARP/WireGuard/AWG:
+[![История звезд](https://api.star-history.com/svg?repos=krambovic/Lumen-KVN&type=Date)](https://star-history.com/#krambovic/Lumen-KVN&Date)
 
-1. Откройте вкладку серверов.
-2. Нажмите `Import .conf`.
-3. Выберите файл с блоками `[Interface]` и `[Peer]`.
+---
 
-Также можно вставить сам текст `.conf`, обычный путь к файлу или `file:///...` ссылку.
+## Участники проекта
 
-AWG 2.0 параметры вроде `Jc`, `Jmin`, `Jmax`, `S1-S4`, `H1-H4` считываются из `[Interface]` автоматически.
+[![Участники](https://contrib.rocks/image?repo=krambovic/Lumen-KVN)](https://github.com/krambovic/Lumen-KVN/graphs/contributors)
 
-## Сборка
-
-```powershell
-python build_qml.py
-```
-
-Сборка создает:
-
-- `dist/LumenKVN-Setup-windows-x64.exe`
-- `dist/LumenKVN-portable-windows-x64.zip`
-
-Перед релизной сборкой в каталоге `core/` должны лежать `xray.exe`, `sing-box.exe`, `wintun.dll`, `geoip.dat` и `geosite.dat`.
-
-## Сторонние Компоненты
-
-Сторонние компоненты сохраняют свои лицензии и notices:
-
-- [Xray-core](https://github.com/XTLS/Xray-core)
-- [sing-box-extended](https://github.com/shtorm-7/sing-box-extended)
-- zapret/WinDivert bundle в каталоге `zapret/`
-- droute helper для Discord voice proxy, скачивается/используется отдельно
-
-Подробнее: [NOTICE.md](NOTICE.md).
+---
 
 ## Лицензия
 
-GPL-3.0. См. [LICENSE](LICENSE).
+Проект Lumen KVN поставляется под лицензией GPL-3.0. Сторонние бинарные файлы и библиотеки сохраняют свои оригинальные лицензии. Подробнее: [LICENSE](LICENSE) и [NOTICE.md](NOTICE.md).
