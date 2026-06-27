@@ -13,7 +13,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.railPanel
+        color: Theme.chromePanel
     }
 
     function toggleMax() {
