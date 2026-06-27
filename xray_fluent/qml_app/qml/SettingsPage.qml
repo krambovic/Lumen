@@ -9,8 +9,8 @@ Item {
     id: page
     readonly property var themeKeys: ["system", "light", "dark"]
     readonly property var languageKeys: App.availableLanguages
-    readonly property var presetKeys: Theme.dark ? ["default", "midnight", "nord", "solarized", "dracula", "catppuccin"] : ["default", "nord", "solarized", "dracula", "catppuccin"]
-    readonly property var presetLabels: Theme.dark ? ["Default", "Midnight", "Nord", "Solarized", "Dracula", "Catppuccin"] : ["Default", "Nord", "Solarized", "Dracula", "Catppuccin"]
+    readonly property var presetKeys: ["default", "absolutely", "ayu", "catppuccin", "codex", "dracula", "everforest", "github", "gruvbox", "linear", "lobster", "material", "matrix", "midnight", "monokai", "night-owl", "nord", "notion", "one", "oscurange", "raycast", "rose-pine", "sentry", "solarized", "temple", "tokyo-night", "vercel", "vscode-plus", "xcode"]
+    readonly property var presetLabels: ["Default", "Absolutely", "Ayu", "Catppuccin", "Codex", "Dracula", "Everforest", "GitHub", "Gruvbox", "Linear", "Lobster", "Material", "Matrix", "Midnight", "Monokai", "Night Owl", "Nord", "Notion", "One", "Oscurange", "Raycast", "Rose Pine", "Sentry", "Solarized", "Temple", "Tokyo Night", "Vercel", "VS Code Plus", "Xcode"]
     property int currentTab: 0
     readonly property var tabModel: [
         { glyph: "\uE790", label: I18n.t("Внешний вид"),        pageIndex: 0, compactHidden: false },
