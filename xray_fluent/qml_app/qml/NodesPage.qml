@@ -144,6 +144,12 @@ Item {
         }
         return rows;
     }
+    function subscriptionMeta(sub) {
+        if (!sub || !sub.userinfo || typeof sub.userinfo !== "object") return null;
+        var ui = sub.userinfo;
+        if (!ui.profileTitle && !ui.supportUrl && !ui.profileUrl && !ui.clientProfile) return null;
+        return ui;
+    }
     function menuNodeId() { return App.nodeIdAt(page.menuRow); }
 
     function selectOnly(rowIndex) {
@@ -200,6 +206,15 @@ Item {
             if (row < 0) return;
             page.selectOnly(row);
             list.positionViewAtIndex(row, ListView.Center);
+        });
+    }
+    function selectGroupByName(groupName) {
+        Qt.callLater(function() {
+            var idx = page.groupModel.indexOf(groupName);
+            if (idx <= 0) return;
+            groupCombo.currentIndex = idx;
+            page.filterGroup = groupName;
+            page.applyFilters();
         });
     }
 
@@ -305,7 +320,9 @@ Item {
             // Visible, filled search field with a search glyph.
             Rectangle {
                 id: searchBox
-                Layout.preferredWidth: 300
+                Layout.preferredWidth: Math.min(300, Math.max(220, page.width * 0.28))
+                Layout.minimumWidth: 220
+                Layout.maximumWidth: 300
                 Layout.alignment: Qt.AlignVCenter
                 height: Theme.controlHeight
                 radius: Theme.radiusSmall
@@ -384,6 +401,53 @@ Item {
             }
         }
 
+        // ── subscription metadata: does not push server/search toolbars ─────
+        RowLayout {
+            visible: page.subscriptionMeta(page.selectedSub()) !== null
+            Layout.fillWidth: true
+            spacing: 8
+
+            Item { Layout.fillWidth: true }
+            Text {
+                Layout.maximumWidth: Math.max(220, page.width * 0.42)
+                text: {
+                    var meta = page.subscriptionMeta(page.selectedSub());
+                    if (!meta) return "";
+                    var title = meta.profileTitle || "";
+                    var profile = meta.clientProfile ? (" · " + meta.clientProfile) : "";
+                    return title.length ? (title + profile) : (I18n.t("Профиль подписки") + profile);
+                }
+                color: Theme.textMuted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSmall
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignRight
+                verticalAlignment: Text.AlignVCenter
+            }
+            AccentButton {
+                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.supportUrl; }
+                kind: "ghost"
+                iconOnly: true
+                glyph: "\uE8F2"
+                text: I18n.t("Поддержка подписки")
+                onClicked: {
+                    var meta = page.subscriptionMeta(page.selectedSub());
+                    if (meta && meta.supportUrl) App.openUrl(meta.supportUrl);
+                }
+            }
+            AccentButton {
+                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.profileUrl; }
+                kind: "ghost"
+                iconOnly: true
+                glyph: "\uE774"
+                text: I18n.t("Страница подписки")
+                onClicked: {
+                    var meta = page.subscriptionMeta(page.selectedSub());
+                    if (meta && meta.profileUrl) App.openUrl(meta.profileUrl);
+                }
+            }
+        }
+
         // ── action toolbar ───────────────────────
         RowLayout {
             Layout.fillWidth: true
@@ -397,14 +461,12 @@ Item {
 
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт из буфера"); onClicked: App.importClipboard() }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8E5"; text: I18n.t("Импорт .conf"); onClicked: App.importNodeFile() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE710"; text: I18n.t("Создать группу"); onClicked: groupDialog.openNew() }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B3"; text: I18n.t("Выбрать все"); onClicked: page.selectAll() }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE894"; text: I18n.t("Снять выбор"); enabled: page.selCount > 0; onClicked: page.clearSel() }
                 // Пинг — две кнопки как в оригинале (FIF.SEND / FIF.SYNC), способ из настроек
                 AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE724"; text: I18n.t("Пинг выбранных"); enabled: page.selCount > 0; onClicked: App.pingNodes(page.selectedIds()) }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE895"; text: I18n.t("Пинг всех"); onClicked: App.pingNodes() }
                 // Тест скорости — две кнопки (выбранные / все)
                 AccentButton { kind: "accent"; iconOnly: true; glyph: "\uEC4A"; text: I18n.t("Тест скорости выбранных"); enabled: page.selCount > 0; onClicked: App.speedTestNodes(page.selectedIds()) }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uEC4A"; text: I18n.t("Тест скорости всех"); onClicked: App.speedTestNodes() }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE769"; text: I18n.t("Остановить тест"); onClicked: App.cancelSpeedTest() }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE943"; text: I18n.t("Экспорт outbound JSON"); enabled: page.selCount === 1; onClicked: App.saveOutboundJson(page.firstSelected()) }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE792"; text: I18n.t("Экспорт runtime JSON"); enabled: page.selCount === 1; onClicked: App.saveRuntimeJson(page.firstSelected()) }
@@ -419,14 +481,14 @@ Item {
                 id: subToolbar
                 Layout.alignment: Qt.AlignTop | Qt.AlignRight
                 Layout.maximumWidth: 5 * Theme.controlHeight + subCombo.width + 40
-                Layout.preferredWidth: Math.min(5 * Theme.controlHeight + subCombo.width + 40, page.width * 0.4)
+                Layout.preferredWidth: Math.min(5 * Theme.controlHeight + subCombo.width + 40, page.width * 0.38)
                 spacing: 8
 
                 AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE946"; text: I18n.t("Свойства подписки"); enabled: App.subscriptions.length > 0; onClicked: infoDialog.openInfo() }
                 AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт подписки"); onClicked: subDialog.openNew() }
                 FilterCombo {
                     id: subCombo
-                    width: Math.round(Math.max(90, Math.min(220, page.width * 0.22)))
+                    width: Math.round(Math.max(90, Math.min(220, page.width * 0.20)))
                     enabled: App.subscriptions.length > 0
                     model: App.subscriptions.length > 0
                         ? App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
@@ -1042,6 +1104,7 @@ Item {
         && !searchInput.activeFocus
         && !editDialog.opened
         && !bulkDialog.opened
+        && !groupDialog.opened
         && !ctxMenu.opened
 
     Shortcut {                              // Ctrl+V → импорт из буфера
@@ -1078,6 +1141,87 @@ Item {
     // Диалоги редактирования (одиночного и массового) — порт ui/node_edit_dialog.py и ui/bulk_edit_dialog.py.
     NodeEditDialog { id: editDialog }
     BulkEditDialog { id: bulkDialog }
+
+    // ── диалог создания ручной группы без подписки ──────────────
+    Dialog {
+        id: groupDialog
+        modal: true
+        dim: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: 420
+        padding: 18
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        function openNew() {
+            groupNameField.text = "";
+            groupDialog.open();
+            groupNameField.forceActiveFocus();
+        }
+
+        background: Rectangle {
+            color: Theme.flyout
+            radius: 10
+            border.width: 1
+            border.color: Theme.flyoutBorder
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            Text {
+                text: I18n.t("Новая группа")
+                color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontStrong
+                font.bold: true
+            }
+            Text {
+                text: I18n.t("Группа будет создана отдельно от подписок. В неё можно переносить серверы через редактирование или массовое редактирование.")
+                color: Theme.textFaint
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            Text { text: I18n.t("Имя группы"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+            TextField {
+                id: groupNameField
+                Layout.fillWidth: true
+                implicitHeight: Theme.controlHeight
+                color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontNormal
+                selectByMouse: true
+                leftPadding: 10; rightPadding: 10
+                placeholderText: I18n.t("Например: Мои серверы")
+                placeholderTextColor: Theme.textFaint
+                background: Rectangle { radius: Theme.radiusSmall; color: Theme.card; border.width: 1; border.color: groupNameField.activeFocus ? Theme.accent : Theme.borderSolid }
+                Keys.onReturnPressed: createGroupButton.clicked()
+                Keys.onEnterPressed: createGroupButton.clicked()
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+                Item { Layout.fillWidth: true }
+                AccentButton { kind: "ghost"; text: I18n.t("Отмена"); onClicked: groupDialog.close() }
+                AccentButton {
+                    id: createGroupButton
+                    kind: "accent"; text: I18n.t("Создать")
+                    enabled: groupNameField.text.trim().length > 0
+                    onClicked: {
+                        var name = groupNameField.text.trim();
+                        if (App.createManualGroup(name)) {
+                            groupDialog.close();
+                            page.selectGroupByName(name);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // ── диалог импорта подписки (URL + имя группы) ──────────────
     Dialog {

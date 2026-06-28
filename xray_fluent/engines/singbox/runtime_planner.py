@@ -119,6 +119,8 @@ def parse_singbox_document(source_path: Path, text: str) -> ParsedSingboxDocumen
 def classify_node_for_singbox(node: Node | None) -> str:
     if node is None:
         return "native_singbox"
+    if _node_is_full_singbox_config(node):
+        return "native_singbox"
     if _node_should_use_xray_sidecar(node):
         return "hybrid_xray_sidecar"
     try:
@@ -146,6 +148,32 @@ def plan_singbox_runtime(
     preferred_protect_password: str = "",
     system_dns_servers: tuple[str, ...] = (),
 ) -> SingboxRuntimePlan:
+    if _node_is_full_singbox_config(node):
+        runtime_config = deepcopy((node.outbound or {}).get("singbox_config") or {})
+        strip_singbox_proxy_inbounds(runtime_config)
+        _ensure_tun_inbound(runtime_config)
+        _ensure_singbox_metrics_contract(runtime_config)
+        _ensure_singbox_tun_runtime_contract(
+            runtime_config,
+            routing=routing,
+            enable_final_fragment=enable_final_fragment,
+            system_dns_servers=system_dns_servers,
+        )
+        _ensure_full_config_proxy_alias(runtime_config)
+        if routing is not None:
+            apply_singbox_gui_routing(runtime_config, routing)
+        _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
+        _validate_runtime_dns_contract(runtime_config)
+        return SingboxRuntimePlan(
+            outcome="native_singbox",
+            source_path=document.source_path,
+            text_hash=document.text_hash,
+            singbox_config=runtime_config,
+            has_proxy_outbound=True,
+            used_selected_node=True,
+            xray_sidecar=None,
+        )
+
     runtime_config = deepcopy(document.payload)
     strip_singbox_proxy_inbounds(runtime_config)
     _ensure_singbox_metrics_contract(runtime_config)
@@ -345,6 +373,66 @@ def _node_should_use_xray_sidecar(node: Node | None) -> bool:
         if protocol == "vless" and (network == "raw" or "finalmask" in stream_settings):
             return True
     return False
+
+
+def _node_is_full_singbox_config(node: Node | None) -> bool:
+    outbound = node.outbound if node is not None else None
+    if not isinstance(outbound, dict):
+        return False
+    return str(outbound.get("protocol") or node.scheme or "").strip().lower() == "singbox_config" and isinstance(
+        outbound.get("singbox_config"),
+        dict,
+    )
+
+
+def _ensure_full_config_proxy_alias(config: dict[str, Any]) -> None:
+    outbounds = config.get("outbounds")
+    if not isinstance(outbounds, list):
+        return
+    tags = {
+        str(outbound.get("tag") or "")
+        for outbound in outbounds
+        if isinstance(outbound, dict)
+    }
+    if "proxy" in tags:
+        return
+    route = config.get("route") if isinstance(config.get("route"), dict) else {}
+    preferred = str(route.get("final") or "").strip()
+    ignored = {"", "direct", "block", "dns"}
+    if not preferred or preferred in ignored or preferred not in tags:
+        for outbound in outbounds:
+            if not isinstance(outbound, dict):
+                continue
+            tag = str(outbound.get("tag") or "").strip()
+            outbound_type = str(outbound.get("type") or "").strip().lower()
+            if tag and tag not in ignored and outbound_type not in ignored:
+                preferred = tag
+                break
+    if not preferred or preferred in ignored:
+        return
+    outbounds.append(
+        {
+            "type": "selector",
+            "tag": "proxy",
+            "outbounds": [preferred],
+            "default": preferred,
+            "interrupt_exist_connections": True,
+        }
+    )
+
+
+def _ensure_tun_inbound(config: dict[str, Any]) -> None:
+    inbounds = _ensure_list(config, "inbounds")
+    if any(isinstance(inbound, dict) and str(inbound.get("type") or "").strip().lower() == "tun" for inbound in inbounds):
+        return
+    inbounds.insert(
+        0,
+        {
+            "type": "tun",
+            "tag": "tun-in",
+            "interface_name": "singbox_tun",
+        },
+    )
 
 
 def _build_xray_sidecar_config(

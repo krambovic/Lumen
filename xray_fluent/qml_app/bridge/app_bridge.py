@@ -19,7 +19,6 @@ import os
 import sys
 from pathlib import Path
 import socket
-import threading
 
 from PyQt6.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
@@ -37,7 +36,6 @@ from .node_list_model import NodeListModel
 from .process_model import ProcessModel
 from ...i18n import active_map, available_languages, language_name, set_language, tr
 from ...log_utils import parse_log_line
-from ...process_conflicts import PortConflict, scan_network_conflicts
 
 
 class _ApplicationLogEmitter(QObject):
@@ -149,7 +147,6 @@ class AppBridge(QObject):
     nodeImported = pyqtSignal(str)         # first newly imported node id
     quittingChanged = pyqtSignal()         # real-exit flag flipped on quit
     languageChanged = pyqtSignal()         # active UI language changed
-    conflictScanFinished = pyqtSignal(object)
 
     # Внутренний: запуск фоновой загрузки подписок (jobs, batch_id)
     _sub_fetch_run = pyqtSignal(object, int)
@@ -208,8 +205,6 @@ class AppBridge(QObject):
         self._tray_available = False
         self._quitting = False
         self._updates_available = False
-        self._conflict_scan_running = False
-        self._last_conflict_signature = ""
         self._deferred_started = False
 
         # Таймер авто-обновления подписок (интервал берётся из настроек).
@@ -222,12 +217,7 @@ class AppBridge(QObject):
         self._app_update_timer.timeout.connect(
             lambda: self._start_app_update_check(silent=True)
         )
-        self._conflict_timer = QTimer(self)
-        self._conflict_timer.setInterval(30_000)
-        self._conflict_timer.timeout.connect(self._start_conflict_scan)
-
         self._wire_controller()
-        self.conflictScanFinished.connect(self._warn_about_conflicting_apps, type=Qt.ConnectionType.QueuedConnection)
 
     @pyqtSlot(str)
     def _capture_application_log(self, line: str) -> None:
@@ -267,9 +257,6 @@ class AppBridge(QObject):
                 QTimer.singleShot(3000, self._on_sub_auto_update)
         except Exception:
             pass
-        QTimer.singleShot(1800, self._start_conflict_scan)
-        self._conflict_timer.start()
-
     @pyqtSlot()
     def startDeferred(self) -> None:
         if self._deferred_started:
@@ -282,7 +269,6 @@ class AppBridge(QObject):
         try:
             self._sub_timer.stop()
             self._app_update_timer.stop()
-            self._conflict_timer.stop()
         except Exception:
             pass
         thread = self._sub_thread
@@ -597,65 +583,6 @@ class AppBridge(QObject):
                 self.toast.emit(level, entry.message + "\n" + entry.details.split(". ", 1)[0] + ".")
                 return
         self.toast.emit(level, localized)
-
-    def _start_conflict_scan(self) -> None:
-        if self._conflict_scan_running:
-            return
-        self._conflict_scan_running = True
-        ignored_pids: set[int] = {os.getpid()}
-        for manager in (self.controller.xray, self.controller.singbox):
-            proc = getattr(manager, "_proc", None)
-            pid = getattr(proc, "pid", 0)
-            if pid:
-                ignored_pids.add(int(pid))
-        threading.Thread(
-            target=lambda: self.conflictScanFinished.emit(
-                scan_network_conflicts({10808, 10809, 10818}, ignored_pids=ignored_pids)
-            ),
-            name="network-app-conflict-scan",
-            daemon=True,
-        ).start()
-
-    @pyqtSlot(object)
-    def _warn_about_conflicting_apps(self, snapshot: object) -> None:
-        self._conflict_scan_running = False
-        data = snapshot if isinstance(snapshot, dict) else {}
-        apps = [str(item) for item in data.get("apps", [])]
-        ports = [item for item in data.get("ports", []) if isinstance(item, PortConflict)]
-        unknown_client = bool(data.get("unknown_client"))
-        signature = repr((apps, unknown_client, [(item.port, item.pid, item.process_name) for item in ports]))
-        if not apps and not ports and not unknown_client:
-            self._last_conflict_signature = ""
-            return
-        if signature == self._last_conflict_signature:
-            return
-        self._last_conflict_signature = signature
-        parts: list[str] = []
-        if apps:
-            parts.append(
-                tr(
-                    "Работе Lumen KVN мешает другой VPN/прокси-клиент: {names}.",
-                    names=", ".join(apps[:4]),
-                )
-            )
-        elif unknown_client:
-            parts.append(tr("Работе Lumen KVN мешает другой VPN/прокси-клиент."))
-        if ports:
-            if apps:
-                occupied = ", ".join(str(item.port) for item in ports)
-            else:
-                occupied = ", ".join(
-                    f"{item.port} — другая программа (PID {item.pid})" for item in ports
-                )
-            parts.append(tr("Заняты локальные порты: {ports}.", ports=occupied))
-        parts.append(tr("Отключите или закройте другую программу перед запуском подключения."))
-        message = " ".join(parts)
-        if self.controller.connected or getattr(self.controller, "_desired_connected", False):
-            self.controller._desired_connected = False
-            self.controller._request_transition("conflicting VPN/proxy client detected")
-            message = tr("Подключение Lumen KVN остановлено, чтобы клиенты не конфликтовали. ") + message
-        self.controller._log(f"[warning] {message}")
-        self.toast.emit("error", message)
 
     # ── controller -> QML slots ─────────────────────────────────
     def _on_nodes_changed(self, nodes: list[Node]) -> None:
@@ -2489,10 +2416,31 @@ class AppBridge(QObject):
         self._filter_text = text or ""
         self._apply_node_model()
 
+    @pyqtSlot(str, result=bool)
+    def createManualGroup(self, name: str) -> bool:
+        group = (name or "").strip()
+        if not group:
+            self.toast.emit("warning", tr("Введите имя группы"))
+            return False
+        existing = {str(item).strip().lower() for item in getattr(self.controller.state, "manual_groups", [])}
+        existing.update((node.group or "Default").strip().lower() for node in self.controller.state.nodes)
+        if group.lower() in existing:
+            self.toast.emit("info", tr("Такая группа уже есть"))
+            return False
+        self.controller.state.manual_groups.append(group)
+        self.controller.save()
+        self.nodeFiltersChanged.emit()
+        self.toast.emit("success", tr("Группа создана: {name}", name=group))
+        return True
+
     @pyqtProperty("QVariantList", notify=nodeFiltersChanged)
     def groupOptions(self) -> list:
         """Distinct group names across all nodes (for the Группа filter combo)."""
         seen: list[str] = []
+        for group in getattr(self.controller.state, "manual_groups", []):
+            grp = str(group or "").strip()
+            if grp and grp not in seen:
+                seen.append(grp)
         for node in self.controller.state.nodes:
             grp = node.group or "Default"
             if grp not in seen:

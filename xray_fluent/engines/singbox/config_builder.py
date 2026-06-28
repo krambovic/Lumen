@@ -17,6 +17,8 @@ _SUPPORTED_NATIVE_PROTOCOLS = {
     "awg",
     "hysteria",
     "hysteria2",
+    "mieru",
+    "masque",
 }
 
 
@@ -261,6 +263,30 @@ def _apply_transport(sb: dict[str, Any], stream: dict[str, Any]) -> None:
         headers = settings.get("headers")
         if isinstance(headers, dict) and headers:
             transport["headers"] = headers
+        sb["transport"] = transport
+        return
+
+    if network in {"kcp", "mkcp"}:
+        settings = dict(stream.get("kcpSettings") or {})
+        transport: dict[str, Any] = {"type": "mkcp"}
+        for source_key, target_key, caster in (
+            ("mtu", "mtu", int),
+            ("tti", "tti", int),
+            ("uplinkCapacity", "uplink_capacity", int),
+            ("downlinkCapacity", "downlink_capacity", int),
+            ("readBufferSize", "read_buffer_size", int),
+            ("writeBufferSize", "write_buffer_size", int),
+            ("seed", "seed", str),
+        ):
+            _copy_xhttp_value(settings, transport, source_key, target_key, caster)
+        congestion = settings.get("congestion")
+        if congestion not in (None, ""):
+            transport["congestion"] = _to_bool(congestion)
+        header = settings.get("header")
+        if isinstance(header, dict):
+            header_type = str(header.get("type") or "").strip()
+            if header_type:
+                transport["header_type"] = header_type
         sb["transport"] = transport
         return
 

@@ -152,7 +152,13 @@ def bulk_update_nodes(controller: AppController, node_ids: set[str], operations:
 
 
 def get_all_groups(controller: AppController) -> list[str]:
-    return sorted({node.group for node in controller.state.nodes if node.group})
+    groups = {node.group for node in controller.state.nodes if node.group}
+    groups.update(
+        str(group).strip()
+        for group in getattr(controller.state, "manual_groups", [])
+        if str(group).strip()
+    )
+    return sorted(groups)
 
 
 def get_all_tags(controller: AppController) -> list[str]:
@@ -266,19 +272,115 @@ def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
     return text, info
 
 
-def _fetch_subscription_with_user_agent(url: str, user_agent: str) -> tuple[str, dict]:
+_SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
+    (
+        "Happ Windows",
+        {
+            "User-Agent": "Happ/2.18.3/Windows/2606241603601",
+            "Accept": "*/*",
+            "Accept-Language": "ru-RU,en,*",
+            "Profile-Update-Interval": "24",
+            "X-App-Version": "2.18.3",
+            "X-Device-Locale": "RU",
+            "X-Device-Model": "Windows_x86_64",
+            "X-Device-Os": "Windows",
+            "X-Hwid": "00000000-0000-4000-8000-000000000000",
+            "X-Ver-Os": "11_10.0.26200",
+        },
+    ),
+    (
+        "SFA",
+        {
+            "User-Agent": "SFA/1.11.0",
+            "Accept": "application/json,*/*",
+            "Profile-Update-Interval": "24",
+        },
+    ),
+    (
+        "Clash Verge",
+        {
+            "User-Agent": "ClashVerge/2.0.0",
+            "Accept": "text/yaml,application/yaml,*/*",
+            "Profile-Update-Interval": "24",
+        },
+    ),
+    (
+        "Clash Meta",
+        {
+            "User-Agent": "clash.meta",
+            "Accept": "text/yaml,application/yaml,*/*",
+            "Profile-Update-Interval": "24",
+        },
+    ),
+    (
+        "FlClashX",
+        {
+            "User-Agent": "FlClashX/1.0",
+            "Accept": "text/yaml,application/yaml,*/*",
+            "Profile-Update-Interval": "24",
+        },
+    ),
+    (
+        "Happ",
+        {
+            "User-Agent": "Happ/1.0",
+            "Accept": "*/*",
+            "Profile-Update-Interval": "24",
+        },
+    ),
+    (
+        "Lumen",
+        {
+            "User-Agent": "LumenKVN-Subscription/1.0",
+            "Accept": "*/*",
+        },
+    ),
+)
+
+
+def _decode_profile_header(value: str) -> str:
+    text = str(value or "").strip()
+    if text.lower().startswith("base64:"):
+        raw = text.split(":", 1)[1].strip()
+        try:
+            return base64.b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", errors="replace").strip()
+        except Exception:
+            return text
+    return text
+
+
+def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
+    info: dict = {"clientProfile": profile_name}
+    try:
+        profile_title = _decode_profile_header(headers.get("profile-title", ""))
+        support_url = str(headers.get("support-url", "") or "").strip()
+        profile_url = str(headers.get("profile-web-page-url", "") or "").strip()
+    except Exception:
+        return info
+    if profile_title:
+        info["profileTitle"] = profile_title
+    if support_url:
+        info["supportUrl"] = support_url
+    if profile_url:
+        info["profileUrl"] = profile_url
+    return info
+
+
+def _fetch_subscription_with_headers(url: str, profile_name: str, headers: dict[str, str]) -> tuple[str, dict]:
     """Загружает подписку и возвращает (текст_со_ссылками, userinfo).
 
     userinfo берётся из HTTP-заголовка subscription-userinfo и/или из JSON-тела.
     """
-    request = Request(url, headers={"User-Agent": user_agent})
+    request = Request(url, headers=dict(headers))
     with urlopen(request, timeout=20) as response:
         raw = response.read()
         try:
             header_value = response.headers.get("subscription-userinfo", "")
         except Exception:  # noqa: BLE001 - защита от нестандартных ответов
             header_value = ""
+        metadata = _extract_subscription_metadata(response.headers, profile_name)
     userinfo = _parse_userinfo_header(header_value)
+    userinfo = {**userinfo, **metadata}
     text = raw.decode("utf-8", errors="replace").strip()
     # JSON-тело (например, формат с {"user": {...}, "links": [...]}).
     text, body_info = _extract_userinfo_from_body(text)
@@ -290,11 +392,31 @@ def _fetch_subscription_with_user_agent(url: str, user_agent: str) -> tuple[str,
 
 
 def _fetch_subscription(url: str, *, user_agent: str = "LumenKVN-Subscription/1.0") -> tuple[str, dict]:
-    return _fetch_subscription_with_user_agent(url, user_agent)
+    return _fetch_subscription_with_headers(url, "Lumen", {"User-Agent": user_agent, "Accept": "*/*"})
 
 
 def _fetch_subscription_happ(url: str) -> tuple[str, dict]:
-    return _fetch_subscription_with_user_agent(url, "Happ/1.0")
+    return _fetch_subscription_with_headers(url, "Happ", {"User-Agent": "Happ/1.0", "Accept": "*/*"})
+
+
+def _parsed_nodes_are_usable(nodes: list) -> bool:
+    for node in nodes:
+        normalize_node_outbound(node)
+        if validate_node_outbound(node) is None:
+            return True
+    return False
+
+
+def _node_validation_errors(nodes: list) -> list[str]:
+    errors: list[str] = []
+    seen: set[str] = set()
+    for node in nodes:
+        normalize_node_outbound(node)
+        problem = validate_node_outbound(node)
+        if problem and problem not in seen:
+            errors.append(problem)
+            seen.add(problem)
+    return errors
 
 
 def _derive_subscription_name(url: str) -> str:
@@ -321,28 +443,22 @@ def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
     url = (url or "").strip()
     if not url:
         return "", {}, ["Пустой URL подписки"]
-    first_error = ""
-    try:
-        text, userinfo = _fetch_subscription(url)
-        nodes, errors = parse_links_text(text)
-        if nodes:
-            return text, userinfo, errors
-        first_error = "; ".join(errors[:3]) or "no nodes parsed"
-    except Exception as exc:  # noqa: BLE001 - fallback to Happ-compatible panels
-        first_error = str(exc)
-
-    try:
-        text, userinfo = _fetch_subscription_happ(url)
-        nodes, errors = parse_links_text(text)
-        if not nodes:
-            if first_error:
-                errors = [*errors, f"Default UA: {first_error}"]
-            return "", userinfo, errors
-        return text, userinfo, errors
-    except Exception as exc:  # noqa: BLE001
-        if first_error:
-            return "", {}, [f"Happ/1.0: {exc}", f"Default UA: {first_error}"]
-        return "", {}, [str(exc)]
+    attempts: list[str] = []
+    first_userinfo: dict = {}
+    for profile_name, headers in _SUBSCRIPTION_CLIENT_PROFILES:
+        try:
+            text, userinfo = _fetch_subscription_with_headers(url, profile_name, headers)
+            if userinfo and not first_userinfo:
+                first_userinfo = dict(userinfo)
+            nodes, errors = parse_links_text(text)
+            if nodes and _parsed_nodes_are_usable(nodes):
+                return text, userinfo, errors
+            validation_errors = _node_validation_errors(nodes)
+            detail = "; ".join((validation_errors or errors or [])[:2]) or "нет подходящих серверов"
+            attempts.append(f"{profile_name}: {detail}")
+        except Exception as exc:  # noqa: BLE001 - пробуем следующий профиль клиента
+            attempts.append(f"{profile_name}: {exc}")
+    return "", first_userinfo, attempts or ["Не удалось загрузить подписку"]
 
 
 def _apply_subscription_payload(

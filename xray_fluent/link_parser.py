@@ -10,6 +10,11 @@ from urllib.request import url2pathname
 
 from .models import Node
 
+try:  # Optional at runtime, listed in requirements for bundled builds.
+    import yaml
+except Exception:  # pragma: no cover - dependency fallback
+    yaml = None
+
 
 class LinkParseError(ValueError):
     pass
@@ -27,6 +32,11 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
         except Exception as exc:
             if stripped.startswith("{"):
                 return [], [f"JSON: {exc}"]
+    if _looks_like_clash_yaml(stripped):
+        try:
+            return _parse_clash_yaml_nodes_text(stripped)
+        except Exception as exc:
+            return [], [f"Clash YAML: {exc}"]
     lowered = stripped.lower()
     if "[interface]" in lowered and "[peer]" in lowered:
         try:
@@ -114,6 +124,10 @@ def parse_single(raw: str) -> Node:
 
     if scheme == "tuic":
         return _parse_tuic(text)
+    if scheme in {"mieru", "mierus"}:
+        return _parse_mieru(text)
+    if scheme == "masque":
+        return _parse_masque(text)
 
     raise LinkParseError(f"unsupported scheme: {scheme or 'unknown'}")
 
@@ -174,6 +188,17 @@ def _json_name(payload: dict[str, Any], fallback: str) -> str:
 
 def _to_bool(value: str) -> bool:
     return str(value).lower() in {"1", "true", "yes", "on"}
+
+
+def _camel_to_snake(value: str) -> str:
+    result: list[str] = []
+    for char in value:
+        if char.isupper():
+            result.append("_")
+            result.append(char.lower())
+        else:
+            result.append(char)
+    return "".join(result).lstrip("_")
 
 
 def _build_stream_settings(params: dict[str, str], default_network: str = "tcp", default_security: str = "none") -> dict[str, Any]:
@@ -269,10 +294,34 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
             "key": _get_param(params, "key") or "",
             "header": {"type": _get_param(params, "headerType", "header_type") or "none"},
         }
-    elif network == "kcp":
-        stream["kcpSettings"] = {
+    elif network in {"kcp", "mkcp"}:
+        kcp_settings: dict[str, Any] = {
             "header": {"type": _get_param(params, "headerType", "header_type") or "none"},
         }
+        for key in (
+            "mtu",
+            "tti",
+            "uplinkCapacity",
+            "downlinkCapacity",
+            "readBufferSize",
+            "writeBufferSize",
+            "seed",
+            "congestion",
+        ):
+            value = _get_param(params, key, _camel_to_snake(key))
+            if not value:
+                continue
+            if key in {"mtu", "tti", "uplinkCapacity", "downlinkCapacity", "readBufferSize", "writeBufferSize"}:
+                try:
+                    kcp_settings[key] = int(value)
+                except Exception:
+                    kcp_settings[key] = value
+            elif key == "congestion":
+                kcp_settings[key] = _to_bool(value)
+            else:
+                kcp_settings[key] = value
+        stream["network"] = "kcp"
+        stream["kcpSettings"] = kcp_settings
 
     if security == "tls":
         tls_settings: dict[str, Any] = {}
@@ -474,6 +523,34 @@ def _infer_transport_host(stream_settings: dict[str, Any]) -> str:
 
 
 def validate_node_outbound(node: Node) -> str | None:
+    name_l = str(node.name or "").strip().lower()
+    if str(node.scheme or "").strip().lower() in {
+        "vless",
+        "vmess",
+        "trojan",
+        "shadowsocks",
+        "socks",
+        "http",
+        "hysteria",
+        "hysteria2",
+        "tuic",
+        "mieru",
+    } and (not str(node.server or "").strip() or int(node.port or 0) <= 0):
+        return f"Сервер {node.name or node.scheme} пропущен: нет адреса или порта."
+
+    if str(node.server or "").strip() in {"0.0.0.0", "::"} and int(node.port or 0) <= 1:
+        if (
+            "приложение не поддерживается" in name_l
+            or "установите другое приложение" in name_l
+            or "happ" in name_l
+            or "unsupported" in name_l
+        ):
+            return "Провайдер подписки отдал заглушку «приложение не поддерживается». Lumen попробует совместимые профили клиента; если ошибка повторяется, нужен формат sing-box/SFA или Clash."
+        label = str(node.name or "").strip()
+        if label:
+            return f"Провайдер подписки вернул служебное сообщение: {label}"
+        return "Сервер-заглушка 0.0.0.0:1 пропущен."
+
     outbound = node.outbound if isinstance(node.outbound, dict) else {}
     stream_settings = outbound.get("streamSettings") if isinstance(outbound, dict) else None
     if not isinstance(stream_settings, dict):
@@ -740,6 +817,10 @@ def _parse_json_nodes_payload(payload: Any) -> tuple[list[Node], list[str]]:
             items = payload["nodes"]
         elif isinstance(payload.get("items"), list):
             items = payload["items"]
+        elif isinstance(payload.get("providers"), list) and isinstance(payload.get("outbounds"), list):
+            items = [payload]
+        elif isinstance(payload.get("outbounds"), list):
+            items = _json_proxy_outbounds(payload["outbounds"])
         elif _json_payload_can_be_node(payload):
             items = [payload]
         else:
@@ -761,12 +842,228 @@ def _parse_json_nodes_payload(payload: Any) -> tuple[list[Node], list[str]]:
     return nodes, errors
 
 
+def _json_proxy_outbounds(outbounds: list[Any]) -> list[dict[str, Any]]:
+    supported = {
+        "vless",
+        "vmess",
+        "trojan",
+        "shadowsocks",
+        "socks",
+        "http",
+        "warp",
+        "wireguard",
+        "awg",
+        "hysteria",
+        "hysteria2",
+        "hy",
+        "hy2",
+        "tuic",
+        "mieru",
+        "masque",
+    }
+    ignored = {"freedom", "blackhole", "dns", "direct", "block", "selector", "urltest", "url-test"}
+    result: list[dict[str, Any]] = []
+    for item in outbounds:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("protocol") or item.get("type") or "").strip().lower()
+        if kind in supported:
+            result.append(dict(item))
+        elif kind and kind not in ignored:
+            result.append(dict(item))
+    return result
+
+
+def _looks_like_clash_yaml(text: str) -> bool:
+    lowered = text[:4096].lower()
+    return (
+        "proxies:" in lowered
+        or "proxy-providers:" in lowered
+        or ("proxy-groups:" in lowered and "rules:" in lowered)
+    )
+
+
+def _parse_clash_yaml_nodes_text(text: str) -> tuple[list[Node], list[str]]:
+    if yaml is None:
+        raise LinkParseError("PyYAML is not installed")
+    payload = yaml.safe_load(text)
+    if not isinstance(payload, dict):
+        raise LinkParseError("YAML root must be an object")
+    proxies = payload.get("proxies")
+    if not isinstance(proxies, list):
+        raise LinkParseError("YAML must contain a proxies list")
+    nodes: list[Node] = []
+    errors: list[str] = []
+    for idx, item in enumerate(proxies, start=1):
+        try:
+            if not isinstance(item, dict):
+                raise LinkParseError(f"unsupported proxy item type: {type(item).__name__}")
+            nodes.append(_parse_clash_proxy_payload(item))
+        except Exception as exc:
+            errors.append(f"Clash proxy {idx}: {exc}")
+    return nodes, errors
+
+
+def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
+    kind = str(payload.get("type") or "").strip().lower()
+    if kind in {"ss", "shadowsocks"}:
+        kind = "shadowsocks"
+    elif kind in {"hy", "hysteria"}:
+        kind = "hysteria"
+    elif kind in {"hy2", "hysteria2"}:
+        kind = "hysteria2"
+    if kind not in {"vless", "vmess", "trojan", "shadowsocks", "hysteria", "hysteria2", "tuic"}:
+        raise LinkParseError(f"unsupported Clash proxy type: {kind or 'unknown'}")
+
+    server = str(payload.get("server") or "").strip()
+    port = int(payload.get("port") or payload.get("server-port") or 0)
+    name = str(payload.get("name") or payload.get("tag") or f"{kind}-{server}:{port}").strip()
+    if not server or port <= 0:
+        raise LinkParseError("proxy must contain server and port")
+
+    outbound: dict[str, Any]
+    if kind in {"hysteria", "hysteria2", "tuic"}:
+        outbound = _native_singbox_outbound(_clash_to_singbox_outbound(payload, kind))
+    else:
+        outbound = _clash_to_xray_outbound(payload, kind)
+
+    return Node(
+        name=name,
+        scheme=kind,
+        server=server,
+        port=port,
+        link=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        outbound=outbound,
+    )
+
+
+def _clash_to_xray_outbound(payload: dict[str, Any], kind: str) -> dict[str, Any]:
+    server = str(payload.get("server") or "").strip()
+    port = int(payload.get("port") or payload.get("server-port") or 0)
+    user_id = str(payload.get("uuid") or payload.get("id") or "").strip()
+    password = str(payload.get("password") or "").strip()
+
+    if kind in {"vless", "vmess"}:
+        user: dict[str, Any] = {"id": user_id}
+        if kind == "vless":
+            user["encryption"] = str(payload.get("encryption") or "none")
+            flow = str(payload.get("flow") or "").strip()
+            if flow:
+                user["flow"] = flow
+        else:
+            user["alterId"] = int(payload.get("alterId") or payload.get("alter-id") or 0)
+            user["security"] = str(payload.get("cipher") or "auto")
+        settings = {"vnext": [{"address": server, "port": port, "users": [user]}]}
+    elif kind == "trojan":
+        settings = {"servers": [{"address": server, "port": port, "password": password}]}
+    else:
+        settings = {
+            "servers": [
+                {
+                    "address": server,
+                    "port": port,
+                    "method": str(payload.get("cipher") or payload.get("method") or "none"),
+                    "password": password,
+                }
+            ]
+        }
+
+    return {
+        "protocol": kind,
+        "settings": settings,
+        "streamSettings": _clash_stream_settings(payload),
+    }
+
+
+def _clash_stream_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    network = str(payload.get("network") or "tcp").strip().lower()
+    if network in {"httpupgrade", "http-upgrade"}:
+        network = "httpupgrade"
+    security = "tls" if payload.get("tls") else "none"
+    if str(payload.get("reality-opts") or "").strip() or payload.get("reality"):
+        security = "reality"
+    stream = {"network": network, "security": security}
+
+    ws_opts = payload.get("ws-opts") if isinstance(payload.get("ws-opts"), dict) else {}
+    grpc_opts = payload.get("grpc-opts") if isinstance(payload.get("grpc-opts"), dict) else {}
+    http_opts = payload.get("http-opts") if isinstance(payload.get("http-opts"), dict) else {}
+    xhttp_opts = payload.get("xhttp-opts") if isinstance(payload.get("xhttp-opts"), dict) else {}
+
+    if network == "ws":
+        headers = dict(ws_opts.get("headers") or {}) if isinstance(ws_opts.get("headers"), dict) else {}
+        stream["wsSettings"] = {
+            "path": str(ws_opts.get("path") or payload.get("path") or "/"),
+            "headers": headers,
+        }
+    elif network == "grpc":
+        stream["grpcSettings"] = {
+            "serviceName": str(grpc_opts.get("grpc-service-name") or grpc_opts.get("serviceName") or payload.get("service-name") or "")
+        }
+    elif network in {"http", "h2"}:
+        host = http_opts.get("host") or payload.get("host") or []
+        if isinstance(host, str):
+            host = [host]
+        stream["httpSettings"] = {"host": host, "path": str(http_opts.get("path") or payload.get("path") or "/")}
+    elif network == "xhttp":
+        stream["xhttpSettings"] = {
+            "path": str(xhttp_opts.get("path") or payload.get("path") or "/"),
+            "host": str(xhttp_opts.get("host") or payload.get("host") or ""),
+            "mode": str(xhttp_opts.get("mode") or payload.get("mode") or "auto"),
+        }
+
+    if security == "tls":
+        stream["tlsSettings"] = {
+            "serverName": str(payload.get("servername") or payload.get("sni") or payload.get("server") or ""),
+            "fingerprint": str(payload.get("client-fingerprint") or payload.get("fingerprint") or ""),
+            "allowInsecure": bool(payload.get("skip-cert-verify", False)),
+        }
+    elif security == "reality":
+        reality_opts = payload.get("reality-opts") if isinstance(payload.get("reality-opts"), dict) else {}
+        stream["realitySettings"] = {
+            "serverName": str(payload.get("servername") or payload.get("sni") or ""),
+            "fingerprint": str(payload.get("client-fingerprint") or payload.get("fingerprint") or ""),
+            "publicKey": str(reality_opts.get("public-key") or reality_opts.get("publicKey") or payload.get("pbk") or ""),
+            "shortId": str(reality_opts.get("short-id") or reality_opts.get("shortId") or payload.get("sid") or ""),
+            "spiderX": str(reality_opts.get("spider-x") or reality_opts.get("spiderX") or payload.get("spx") or "/"),
+        }
+    return stream
+
+
+def _clash_to_singbox_outbound(payload: dict[str, Any], kind: str) -> dict[str, Any]:
+    native = {
+        "type": kind,
+        "tag": str(payload.get("name") or kind),
+        "server": str(payload.get("server") or ""),
+        "server_port": int(payload.get("port") or payload.get("server-port") or 0),
+    }
+    for clash_key, singbox_key in (
+        ("password", "password"),
+        ("auth", "auth_str"),
+        ("auth-str", "auth_str"),
+        ("uuid", "uuid"),
+        ("congestion-controller", "congestion_control"),
+        ("udp-relay-mode", "udp_relay_mode"),
+    ):
+        value = payload.get(clash_key)
+        if value not in (None, ""):
+            native[singbox_key] = value
+    server_name = str(payload.get("servername") or payload.get("sni") or "").strip()
+    if payload.get("tls") or server_name:
+        native["tls"] = {"enabled": True}
+        if server_name:
+            native["tls"]["server_name"] = server_name
+        if payload.get("skip-cert-verify"):
+            native["tls"]["insecure"] = True
+    return native
+
+
 def _json_payload_can_be_node(payload: dict[str, Any]) -> bool:
     return (
         "type" in payload
         or "protocol" in payload
         or isinstance(payload.get("endpoints"), list)
         or isinstance(payload.get("outbounds"), list)
+        or isinstance(payload.get("providers"), list)
     )
 
 
@@ -785,6 +1082,8 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         outbound = _native_singbox_outbound(payload)
     elif "protocol" in payload:
         outbound = dict(payload)
+    elif isinstance(payload.get("providers"), list) and isinstance(payload.get("outbounds"), list):
+        outbound = _native_singbox_config(payload)
     elif isinstance(payload.get("endpoints"), list) and payload["endpoints"]:
         outbound = _native_singbox_outbound(payload["endpoints"][0])
     elif isinstance(payload.get("outbounds"), list) and payload["outbounds"]:
@@ -821,9 +1120,22 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         peer = peers[0] if isinstance(peers, list) and peers and isinstance(peers[0], dict) else {}
         server = str(peer.get("address") or native.get("server") or "")
         port = int(peer.get("port") or native.get("server_port") or 0)
-    elif protocol in {"hysteria", "hysteria2", "tuic"} and native:
-        server = str(native.get("server") or "")
+    elif protocol in {"hysteria", "hysteria2", "tuic", "mieru"}:
+        if native:
+            server = str(native.get("server") or "")
+            port = int(native.get("server_port") or 0)
+        else:
+            server = str(settings.get("address") or settings.get("server") or "")
+            port = int(settings.get("port") or settings.get("server_port") or 0)
+    elif protocol == "masque" and native:
+        server = str((native.get("profile") or {}).get("id") or native.get("server") or "")
         port = int(native.get("server_port") or 0)
+    elif protocol == "singbox_config":
+        full_config = outbound.get("singbox_config") if isinstance(outbound.get("singbox_config"), dict) else {}
+        proxy = _pick_json_proxy_outbound(list(full_config.get("outbounds") or [])) if isinstance(full_config.get("outbounds"), list) else {}
+        native_proxy = proxy if isinstance(proxy, dict) else {}
+        server = str(native_proxy.get("server") or "")
+        port = int(native_proxy.get("server_port") or 0)
 
     return Node(
         name=_json_name(original_payload, f"json-{tag}"),
@@ -859,6 +1171,8 @@ def _pick_json_proxy_outbound(outbounds: list[Any]) -> dict[str, Any]:
         "hy",
         "hy2",
         "tuic",
+        "mieru",
+        "masque",
     }
     for item in candidates:
         if str(item.get("tag") or "").strip().lower() == "proxy" and kind(item) not in ignored:
@@ -882,6 +1196,16 @@ def _native_singbox_outbound(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "protocol": "awg" if protocol == "wireguard" and isinstance(native.get("amnezia"), dict) else protocol,
         "singbox": native,
+    }
+
+
+def _native_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
+    name = str(payload.get("tag") or payload.get("name") or "").strip()
+    config = dict(payload)
+    return {
+        "protocol": "singbox_config",
+        "tag": name or "sing-box providers",
+        "singbox_config": config,
     }
 
 
@@ -972,6 +1296,75 @@ def _parse_tuic(link: str) -> Node:
     _apply_hysteria_tls(outbound, params, server)  # переиспользуем TLS-хелпер (sni/alpn/insecure)
     name = _clean_name(parsed.fragment, f"tuic-{server}:{port}")
     return Node(name=name, scheme="tuic", server=server, port=int(port), link=link, outbound=_native_singbox_outbound(outbound))
+
+
+def _parse_mieru(link: str) -> Node:
+    parsed = urlsplit(link)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    params = {k: _first(query, k) for k in query}
+    server = parsed.hostname or _get_param(params, "server", "address", "host")
+    port = parsed.port or int(_get_param(params, "port", "server_port", default="0") or 0)
+    username = unquote(parsed.username or "") or _get_param(params, "username", "user")
+    password = unquote(parsed.password or "") or _get_param(params, "password", "pass")
+    if not server or not username or not password:
+        raise LinkParseError("mieru link must contain server, username and password")
+
+    outbound: dict[str, Any] = {
+        "type": "mieru",
+        "tag": "proxy",
+        "server": server,
+        "transport": (_get_param(params, "transport", default="TCP") or "TCP").upper(),
+        "username": username,
+        "password": password,
+    }
+    if port:
+        outbound["server_port"] = int(port)
+    ports = _get_param(params, "server_ports", "ports")
+    if ports:
+        outbound["server_ports"] = [item.strip() for item in ports.split(",") if item.strip()]
+    multiplexing = _get_param(params, "multiplexing", "mux")
+    if multiplexing:
+        outbound["multiplexing"] = multiplexing
+    traffic_pattern = _get_param(params, "traffic_pattern", "trafficPattern")
+    if traffic_pattern:
+        outbound["traffic_pattern"] = traffic_pattern
+    name = _clean_name(parsed.fragment, f"mieru-{server}:{port or 'range'}")
+    return Node(name=name, scheme="mieru", server=server, port=int(port or 0), link=link, outbound=_native_singbox_outbound(outbound))
+
+
+def _parse_masque(link: str) -> Node:
+    parsed = urlsplit(link)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    params = {k: _first(query, k) for k in query}
+    profile_id = unquote(parsed.hostname or "") or _get_param(params, "id", "profile_id")
+    auth_token = unquote(parsed.username or "") or _get_param(params, "auth_token", "token")
+    outbound: dict[str, Any] = {
+        "type": "masque",
+        "tag": "proxy",
+        "system": _to_bool(_get_param(params, "system", default="false")),
+        "name": _get_param(params, "name", default="masque0") or "masque0",
+        "use_http2": _to_bool(_get_param(params, "use_http2", "http2", default="false")),
+        "use_ipv6": _to_bool(_get_param(params, "use_ipv6", "ipv6", default="false")),
+        "profile": {},
+    }
+    if profile_id:
+        outbound["profile"]["id"] = profile_id
+    if auth_token:
+        outbound["profile"]["auth_token"] = auth_token
+    allowed_ips = _get_param(params, "allowed_ips", "allowedIPs")
+    if allowed_ips:
+        outbound["allowed_ips"] = _split_csv(allowed_ips)
+    server_name = _get_param(params, "sni", "server_name", "serverName")
+    insecure = _get_param(params, "insecure", "allowInsecure")
+    if server_name or insecure:
+        tls: dict[str, Any] = {}
+        if server_name:
+            tls["server_name"] = server_name
+        if insecure:
+            tls["insecure"] = _to_bool(insecure)
+        outbound["tls"] = tls
+    name = _clean_name(parsed.fragment, "MASQUE")
+    return Node(name=name, scheme="masque", server=profile_id, port=0, link=link, outbound=_native_singbox_outbound(outbound))
 
 
 def _apply_hysteria_tls(outbound: dict[str, Any], params: dict[str, str], server: str) -> None:

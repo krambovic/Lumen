@@ -440,6 +440,8 @@ class AppState:
     security: SecuritySettings = field(default_factory=SecuritySettings)
     # Импортированные подписки: [{"url", "name", "group", "updated_at", "node_count"}].
     subscriptions: list[dict[str, Any]] = field(default_factory=list)
+    # Ручные группы без подписки. Нужны, чтобы пустая группа была видна в фильтре.
+    manual_groups: list[str] = field(default_factory=list)
     # Кастомные пресеты маршрутизации: [{"id", "name", "routing": {...}}].
     routing_presets: list[dict[str, Any]] = field(default_factory=list)
 
@@ -452,6 +454,7 @@ class AppState:
             "settings": self.settings.to_dict(),
             "security": self.security.to_dict(),
             "subscriptions": [dict(item) for item in self.subscriptions],
+            "manual_groups": list(self.manual_groups),
             "routing_presets": [dict(item) for item in self.routing_presets],
         }
 
@@ -467,6 +470,11 @@ class AppState:
             settings=AppSettings.from_dict(dict(data.get("settings") or {})),
             security=SecuritySettings.from_dict(dict(data.get("security") or {})),
             subscriptions=[dict(item) for item in (data.get("subscriptions") or []) if isinstance(item, dict)],
+            manual_groups=[
+                str(item).strip()
+                for item in (data.get("manual_groups") or [])
+                if str(item).strip()
+            ],
             routing_presets=[dict(item) for item in (data.get("routing_presets") or []) if isinstance(item, dict)],
         )
 

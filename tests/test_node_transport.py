@@ -27,6 +27,14 @@ def test_native_singbox_transport_is_displayed() -> None:
         "protocol": "vless",
         "singbox": {"transport": {"type": "grpc"}},
     })) == "GRPC"
+    assert node_transport(_node("mieru", {
+        "protocol": "mieru",
+        "singbox": {"type": "mieru", "transport": "TCP"},
+    })) == "MIERU/TCP"
+    assert node_transport(_node("masque", {
+        "protocol": "masque",
+        "singbox": {"type": "masque"},
+    })) == "MASQUE"
 
 
 def test_transport_falls_back_to_protocol_carrier() -> None:
