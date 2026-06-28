@@ -5,13 +5,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/krambovic/Lumen-KVN/releases">
-    <img src="https://img.shields.io/github/v/release/krambovic/Lumen-KVN?color=8000FF&style=for-the-badge" alt="Версия">
-  </a>
-  <a href="https://github.com/krambovic/Lumen-KVN/releases">
-    <img src="https://img.shields.io/github/downloads/krambovic/Lumen-KVN/total?color=8000FF&style=for-the-badge" alt="Скачивания">
-  </a>
-  <img src="https://img.shields.io/badge/Platform-Windows%2011%20%7C%2010-0078d4?style=for-the-badge&logo=windows" alt="Платформа">
+  <a href="https://github.com/krambovic/Lumen-KVN/releases"><img src="https://img.shields.io/github/v/release/krambovic/Lumen-KVN?style=for-the-badge&label=Release&labelColor=3A3A3A&color=8A2BE2" alt="Релиз"></a>
+  <a href="https://github.com/krambovic/Lumen-KVN/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen-KVN/total?style=for-the-badge&label=Downloads&labelColor=3A3A3A&color=17A673" alt="Скачивания"></a>
+  <img src="https://img.shields.io/badge/Platform-Windows%2011%20%7C%2010-29B6F6?style=for-the-badge&labelColor=3A3A3A" alt="Платформа">
 </p>
 
 <p align="center">
@@ -29,22 +25,21 @@ Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, 
 
 ## Скриншоты
 
-<table>
-  <tr>
-    <td width="33%">
-      <img src="assets/screenshots/dashboard-dark.png" alt="Панель управления в темной теме">
-      <sub><b>Панель управления</b> · темная тема</sub>
-    </td>
-    <td width="33%">
-      <img src="assets/screenshots/dashboard-light.png" alt="Панель управления в светлой теме">
-      <sub><b>Панель управления</b> · светлая тема</sub>
-    </td>
-    <td width="33%">
-      <img src="assets/screenshots/zapret-dark.png" alt="Экран обхода DPI через zapret">
-      <sub><b>zapret</b> · пресеты обхода DPI</sub>
-    </td>
-  </tr>
-</table>
+<details>
+<summary>Панель управления и темы оформления</summary>
+<br>
+
+<img src="assets/screenshots/dashboard-dark.png" alt="Панель управления в темной теме" width="100%">
+<br><br>
+<img src="assets/screenshots/dashboard-red.png" alt="Панель управления с красным акцентом" width="100%">
+<br><br>
+<img src="assets/screenshots/settings-rose-pine.png" alt="Настройки в теме Rose Pine" width="100%">
+<br><br>
+<img src="assets/screenshots/dashboard-light.png" alt="Панель управления в светлой теме" width="100%">
+<br><br>
+<img src="assets/screenshots/zapret-dark.png" alt="Экран обхода DPI через zapret" width="100%">
+
+</details>
 
 ---
 
@@ -53,10 +48,12 @@ Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, 
 | Раздел | Используемые компоненты | Описание |
 | :--- | :--- | :--- |
 | **Обход DPI** | zapret / WinDivert | Обход замедлений и блокировок YouTube, Discord и других сервисов на уровне пакетов. |
-| **TUN / VPN** | sing-box-extended | Полноценный TUN-режим с поддержкой AmneziaWG (AWG 2.0), WireGuard и Necko/XHTTP. |
+| **TUN / VPN** | sing-box-extended | Полноценный TUN-режим с поддержкой AmneziaWG (AWG 2.0), WireGuard и XHTTP. |
 | **Прокси** | xray-core | Системный прокси (VLESS, Trojan, Shadowsocks, VMess). |
+| **Маршрутизация** | GUI-пресеты | Удобная настройка маршрутов через интерфейс: пресеты, пользовательские домены, IP-правила и поведение отдельных сервисов. |
+| **Discord Voice** | droute / SOCKS5 | Направляет голосовые каналы и стримы Discord через прокси без включения полного TUN-режима. |
 | **Диагностика** | встроенные тесты | Проверка ping и реальной скорости скачивания серверов. |
-| **Интерфейс** | PyQt6 / QML | Динамические акцентные цвета, темы оформления (включая Codex) и поддержка фоновых обоев. |
+| **Интерфейс** | PyQt6 / QML | Динамические акцентные цвета, темы оформления и поддержка фоновых обоев. |
 
 ---
 
@@ -101,7 +98,13 @@ WARP, WireGuard и AmneziaWG конфиги работают через TUN на
 
 ## История звезд
 
-[![История звезд](https://api.star-history.com/svg?repos=krambovic/Lumen-KVN&type=Date)](https://star-history.com/#krambovic/Lumen-KVN&Date)
+<a href="https://www.star-history.com/?repos=krambovic%2FLumen-KVN&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=krambovic/Lumen-KVN&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=krambovic/Lumen-KVN&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=krambovic/Lumen-KVN&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ---
 
