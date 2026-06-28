@@ -861,8 +861,20 @@ def _json_proxy_outbounds(outbounds: list[Any]) -> list[dict[str, Any]]:
         "mieru",
         "masque",
     }
-    ignored = {"freedom", "blackhole", "dns", "direct", "block", "selector", "urltest", "url-test"}
+    auto_kinds = {"selector", "urltest", "url-test"}
+    ignored = {"freedom", "blackhole", "dns", "direct", "block", *auto_kinds}
     result: list[dict[str, Any]] = []
+    candidates = [dict(item) for item in outbounds if isinstance(item, dict)]
+    tag_map = {str(item.get("tag") or "").strip(): item for item in candidates if str(item.get("tag") or "").strip()}
+
+    for item in candidates:
+        kind = str(item.get("protocol") or item.get("type") or "").strip().lower()
+        if kind not in auto_kinds:
+            continue
+        resolved = _resolve_auto_selector_payload(item, tag_map)
+        if resolved:
+            result.append(resolved)
+
     for item in outbounds:
         if not isinstance(item, dict):
             continue
@@ -872,6 +884,36 @@ def _json_proxy_outbounds(outbounds: list[Any]) -> list[dict[str, Any]]:
         elif kind and kind not in ignored:
             result.append(dict(item))
     return result
+
+
+def _resolve_auto_selector_payload(selector: dict[str, Any], tag_map: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    refs = selector.get("outbounds")
+    if not isinstance(refs, list):
+        return None
+    for ref in refs:
+        target = tag_map.get(str(ref or "").strip())
+        if not isinstance(target, dict):
+            continue
+        target_kind = str(target.get("protocol") or target.get("type") or "").strip().lower()
+        if target_kind in {"freedom", "blackhole", "dns", "direct", "block", "selector", "urltest", "url-test"}:
+            continue
+        config = {
+            "outbounds": [dict(item) for item in tag_map.values()],
+            "route": {"final": str(selector.get("tag") or "proxy")},
+        }
+        name = str(selector.get("name") or selector.get("remarks") or selector.get("tag") or "Автовыбор сервера").strip()
+        server = str(target.get("server") or target.get("address") or "")
+        port = int(target.get("server_port") or target.get("port") or 0)
+        return {
+            "protocol": "singbox_config",
+            "tag": name,
+            "remarks": name,
+            "singbox_config": config,
+            "__lumen_scheme": "hysteria2" if target_kind == "hy2" else ("hysteria" if target_kind == "hy" else target_kind),
+            "__lumen_server": server,
+            "__lumen_port": port,
+        }
+    return None
 
 
 def _looks_like_clash_yaml(text: str) -> bool:
@@ -1078,7 +1120,9 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
     original_payload = payload
 
     outbound: dict[str, Any]
-    if "type" in payload:
+    if str(payload.get("protocol") or "").strip().lower() == "singbox_config" and isinstance(payload.get("singbox_config"), dict):
+        outbound = dict(payload)
+    elif "type" in payload:
         outbound = _native_singbox_outbound(payload)
     elif "protocol" in payload:
         outbound = dict(payload)
@@ -1137,9 +1181,15 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         server = str(native_proxy.get("server") or "")
         port = int(native_proxy.get("server_port") or 0)
 
+    display_scheme = str(original_payload.get("__lumen_scheme") or protocol)
+    if original_payload.get("__lumen_server"):
+        server = str(original_payload.get("__lumen_server") or server)
+    if original_payload.get("__lumen_port"):
+        port = int(original_payload.get("__lumen_port") or port)
+
     return Node(
         name=_json_name(original_payload, f"json-{tag}"),
-        scheme=protocol,
+        scheme=display_scheme,
         server=server,
         port=port,
         link=json.dumps(original_payload, ensure_ascii=False, separators=(",", ":")),

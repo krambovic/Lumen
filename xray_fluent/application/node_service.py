@@ -7,12 +7,12 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
-from urllib.request import Request
+from urllib.request import ProxyHandler, Request
 
 from PyQt6.QtCore import QTimer
 
 from ..country_flags import detect_country
-from ..http_utils import urlopen
+from ..http_utils import build_opener, urlopen
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
 
 if TYPE_CHECKING:
@@ -353,8 +353,18 @@ def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
     info: dict = {"clientProfile": profile_name}
     try:
         profile_title = _decode_profile_header(headers.get("profile-title", ""))
-        support_url = str(headers.get("support-url", "") or "").strip()
-        profile_url = str(headers.get("profile-web-page-url", "") or "").strip()
+        support_url = _first_header(headers, "support-url", "support_url", "support-link", "support")
+        profile_url = _first_header(
+            headers,
+            "profile-web-page-url",
+            "profile-url",
+            "profile_url",
+            "panel-url",
+            "panel_url",
+            "sub-web-page-url",
+            "subscription-url",
+        )
+        telegram_url = _first_header(headers, "telegram-url", "telegram_url", "telegram-link", "telegram")
     except Exception:
         return info
     if profile_title:
@@ -363,16 +373,37 @@ def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
         info["supportUrl"] = support_url
     if profile_url:
         info["profileUrl"] = profile_url
+    if telegram_url:
+        info["telegramUrl"] = telegram_url
     return info
 
 
-def _fetch_subscription_with_headers(url: str, profile_name: str, headers: dict[str, str]) -> tuple[str, dict]:
+def _first_header(headers: object, *names: str) -> str:
+    for name in names:
+        try:
+            value = str(headers.get(name, "") or "").strip()
+        except Exception:
+            value = ""
+        if value:
+            return value
+    return ""
+
+
+def _fetch_subscription_with_headers(
+    url: str,
+    profile_name: str,
+    headers: dict[str, str],
+    *,
+    direct: bool = False,
+) -> tuple[str, dict]:
     """Загружает подписку и возвращает (текст_со_ссылками, userinfo).
 
     userinfo берётся из HTTP-заголовка subscription-userinfo и/или из JSON-тела.
     """
     request = Request(url, headers=dict(headers))
-    with urlopen(request, timeout=20) as response:
+    opener = build_opener(ProxyHandler({})) if direct else None
+    open_fn = opener.open if opener is not None else urlopen
+    with open_fn(request, timeout=20) as response:
         raw = response.read()
         try:
             header_value = response.headers.get("subscription-userinfo", "")
@@ -397,6 +428,16 @@ def _fetch_subscription(url: str, *, user_agent: str = "LumenKVN-Subscription/1.
 
 def _fetch_subscription_happ(url: str) -> tuple[str, dict]:
     return _fetch_subscription_with_headers(url, "Happ", {"User-Agent": "Happ/1.0", "Accept": "*/*"})
+
+
+def _is_tls_eof_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return (
+        "tls/ssl connection has been closed" in text
+        or "_ssl.c:1010" in text
+        or "unexpected eof" in text
+        or "eof occurred in violation of protocol" in text
+    )
 
 
 def _parsed_nodes_are_usable(nodes: list) -> bool:
@@ -457,6 +498,21 @@ def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
             detail = "; ".join((validation_errors or errors or [])[:2]) or "нет подходящих серверов"
             attempts.append(f"{profile_name}: {detail}")
         except Exception as exc:  # noqa: BLE001 - пробуем следующий профиль клиента
+            if _is_tls_eof_error(exc):
+                try:
+                    text, userinfo = _fetch_subscription_with_headers(url, profile_name, headers, direct=True)
+                    if userinfo and not first_userinfo:
+                        first_userinfo = dict(userinfo)
+                    nodes, errors = parse_links_text(text)
+                    if nodes and _parsed_nodes_are_usable(nodes):
+                        return text, {**userinfo, "networkPath": "direct"}, errors
+                    validation_errors = _node_validation_errors(nodes)
+                    detail = "; ".join((validation_errors or errors or [])[:2]) or "нет подходящих серверов"
+                    attempts.append(f"{profile_name} direct: {detail}")
+                    continue
+                except Exception as direct_exc:
+                    attempts.append(f"{profile_name} direct: {direct_exc}")
+                    continue
             attempts.append(f"{profile_name}: {exc}")
     return "", first_userinfo, attempts or ["Не удалось загрузить подписку"]
 

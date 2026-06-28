@@ -274,8 +274,9 @@ Item {
             interactive: false
             currentIndex: page.currentTab
 
-            Binding { target: tabStack.contentItem; property: "highlightMoveDuration"; value: Theme.animations ? 250 : 0 }
-            Binding { target: tabStack.contentItem; property: "highlightMoveVelocity"; value: Theme.animations ? -1 : -1 }
+            Binding { target: tabStack.contentItem; property: "highlightMoveDuration"; value: Theme.animations ? 520 : 0 }
+            Binding { target: tabStack.contentItem; property: "highlightResizeDuration"; value: Theme.animations ? 160 : 0 }
+            Binding { target: tabStack.contentItem; property: "highlightMoveVelocity"; value: Theme.animations ? 2800 : -1 }
 
         FluentScroll {
             roundedClip: false

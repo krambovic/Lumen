@@ -24,6 +24,7 @@ from .subprocess_utils import (
     kill_processes_by_path,
     run_text_pumped,
     sleep_with_events,
+    wait_for_qprocess_started,
     wait_for_qprocess_finished,
 )
 
@@ -72,6 +73,13 @@ class PresetInfo:
     file_path: Path
 
 
+@dataclass(frozen=True)
+class _PresetArgsCacheEntry:
+    mtime_ns: int
+    size: int
+    args: tuple[str, ...]
+
+
 class ZapretManager(QObject):
     """Start / stop winws2.exe with a preset file."""
 
@@ -79,6 +87,12 @@ class ZapretManager(QObject):
     stopped = pyqtSignal()
     error = pyqtSignal(str)
     log_line = pyqtSignal(str)
+
+    _preset_names_cache: tuple[tuple[tuple[str, int, int], ...], list[str]] | None = None
+    _preset_infos_cache: tuple[tuple[tuple[str, int, int], ...], list[PresetInfo]] | None = None
+    _preset_args_cache: dict[str, _PresetArgsCacheEntry] = {}
+    _windivert_services_cache: list[str] | None = None
+    _standard_cleanup_done: bool = False
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -92,6 +106,27 @@ class ZapretManager(QObject):
         self._health_timer.setInterval(3000)
         self._health_timer.timeout.connect(self._check_health)
 
+    @staticmethod
+    def _presets_signature() -> tuple[tuple[str, int, int], ...]:
+        if not PRESETS_DIR.is_dir():
+            return ()
+        entries: list[tuple[str, int, int]] = []
+        for path in PRESETS_DIR.iterdir():
+            if path.suffix != ".txt" or path.name.startswith("_"):
+                continue
+            try:
+                stat = path.stat()
+                entries.append((path.name, int(stat.st_mtime_ns), int(stat.st_size)))
+            except OSError:
+                continue
+        return tuple(sorted(entries))
+
+    @classmethod
+    def invalidate_preset_cache(cls) -> None:
+        cls._preset_names_cache = None
+        cls._preset_infos_cache = None
+        cls._preset_args_cache.clear()
+
     # ── public API ──────────────────────────────────────────────
 
     @property
@@ -101,12 +136,13 @@ class ZapretManager(QObject):
     @staticmethod
     def list_presets() -> list[str]:
         """Return sorted list of available preset names (without .txt)."""
-        if not PRESETS_DIR.is_dir():
-            return []
-        return sorted(
-            p.stem for p in PRESETS_DIR.iterdir()
-            if p.suffix == ".txt" and not p.name.startswith("_")
-        )
+        signature = ZapretManager._presets_signature()
+        cached = ZapretManager._preset_names_cache
+        if cached and cached[0] == signature:
+            return list(cached[1])
+        names = sorted(path_name[:-4] for path_name, _mtime, _size in signature)
+        ZapretManager._preset_names_cache = (signature, names)
+        return list(names)
 
     @staticmethod
     def preset_path(name: str) -> Path:
@@ -124,12 +160,27 @@ class ZapretManager(QObject):
     @staticmethod
     def _parse_preset_args(preset: Path) -> list[str]:
         """Read preset file and return argv items like upstream winws2 runner."""
+        try:
+            stat = preset.stat()
+            cache_key = str(preset.resolve())
+            cached = ZapretManager._preset_args_cache.get(cache_key)
+            if cached and cached.mtime_ns == stat.st_mtime_ns and cached.size == stat.st_size:
+                return list(cached.args)
+        except OSError:
+            stat = None
+            cache_key = str(preset)
         args: list[str] = []
         text = preset.read_text(encoding="utf-8", errors="replace")
         for line in text.splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith("#"):
                 args.extend(ZapretManager._split_launch_line(stripped))
+        if stat is not None:
+            ZapretManager._preset_args_cache[cache_key] = _PresetArgsCacheEntry(
+                int(stat.st_mtime_ns),
+                int(stat.st_size),
+                tuple(args),
+            )
         return args
 
     @staticmethod
@@ -186,7 +237,12 @@ class ZapretManager(QObject):
     @staticmethod
     def list_preset_infos() -> list[PresetInfo]:
         """Return list of PresetInfo for all presets, sorted by name."""
+        signature = ZapretManager._presets_signature()
+        cached = ZapretManager._preset_infos_cache
+        if cached and cached[0] == signature:
+            return list(cached[1])
         if not PRESETS_DIR.is_dir():
+            ZapretManager._preset_infos_cache = (signature, [])
             return []
         result = []
         for p in sorted(PRESETS_DIR.iterdir()):
@@ -204,6 +260,7 @@ class ZapretManager(QObject):
                 arg_count=arg_count,
                 file_path=p,
             ))
+        ZapretManager._preset_infos_cache = (signature, result)
         return result
 
     @staticmethod
@@ -248,6 +305,7 @@ class ZapretManager(QObject):
         header = f"# Preset: {name}\n# Description: {description}\n# Created: {created}\n# Modified: {now}\n\n"
         full_text = header + "\n".join(body_lines) + "\n"
         path.write_text(full_text, encoding="utf-8")
+        ZapretManager.invalidate_preset_cache()
 
         arg_count = sum(1 for l in body_lines if l.strip() and not l.strip().startswith("#"))
         return PresetInfo(name=name, description=description, created=created,
@@ -266,6 +324,7 @@ class ZapretManager(QObject):
         text = text.replace(f"# Preset: {old_name}", f"# Preset: {new_name}", 1)
         new_path.write_text(text, encoding="utf-8")
         old_path.unlink()
+        ZapretManager.invalidate_preset_cache()
 
         meta = ZapretManager._parse_metadata(text)
         arg_count = sum(1 for l in text.splitlines() if l.strip() and not l.strip().startswith("#"))
@@ -279,6 +338,7 @@ class ZapretManager(QObject):
         path = PRESETS_DIR / f"{name}.txt"
         if path.is_file():
             path.unlink()
+            ZapretManager.invalidate_preset_cache()
             return True
         return False
 
@@ -297,6 +357,7 @@ class ZapretManager(QObject):
             counter += 1
 
         shutil.copy2(source_path, target)
+        ZapretManager.invalidate_preset_cache()
 
         # Read and return info
         text = target.read_text(encoding="utf-8", errors="replace")
@@ -306,6 +367,20 @@ class ZapretManager(QObject):
                          created=meta.get("Created", ""), modified=meta.get("Modified", ""),
                          arg_count=arg_count, file_path=target)
 
+    def _preflight_start(self, exe: Path, preset: Path, preset_name: str) -> str:
+        if not preset_name:
+            return "Не выбран пресет Zapret."
+        if not exe.exists():
+            return f"winws2.exe не найден: {exe}"
+        if not preset.exists():
+            return f"Пресет не найден: {preset}"
+        exe_dir = exe.parent
+        required = ("WinDivert.dll", "Monkey64.sys")
+        missing = [name for name in required if not (exe_dir / name).exists()]
+        if missing:
+            return f"Не найдены файлы Zapret: {', '.join(missing)}"
+        return ""
+
     def start(
         self,
         preset_name: str,
@@ -314,39 +389,43 @@ class ZapretManager(QObject):
         _force_cleanup: bool = False,
         _launch_mode: str = "direct",
     ) -> None:
+        preset_name = (preset_name or "").strip()
+        exe = WINWS2_EXE
+        preset = self.preset_path(preset_name)
+        preflight_error = self._preflight_start(exe, preset, preset_name)
+        if preflight_error:
+            self.error.emit(preflight_error)
+            return
+
+        args = self._parse_preset_args(preset)
+        if not args:
+            self.error.emit(f"Пресет пустой: {preset_name}")
+            return
+
+        was_running = self.running
         if self.running:
             if self._current_preset == preset_name:
                 self.log_line.emit(f"[zapret] Перезапуск текущего пресета: {preset_name}")
             else:
                 self.log_line.emit(f"[zapret] Переключение пресета: {self._current_preset} -> {preset_name}")
-            self.stop()
+            self.stop(fast=True, cleanup=False, emit_stopped=False)
 
-        killed = self._kill_orphaned()
+        killed = [] if was_running and not _force_cleanup else self._kill_orphaned(
+            timeout=0.8 if not _force_cleanup else 5,
+            taskkill_timeout=0.8 if not _force_cleanup else 3,
+            settle_delay=0.1 if not _force_cleanup else 1.25,
+        )
         for name in killed:
             self.log_line.emit(f"[zapret] Завершён сторонний процесс: {name}")
 
         if _force_cleanup:
             self.log_line.emit("[zapret] WinDivert конфликт: выполняется глубокая очистка перед повторным запуском")
-            self._cleanup_windivert(timeout=4)
-            sleep_with_events(0.8)
-        else:
+            self._cleanup_windivert(timeout=2.5)
+            sleep_with_events(0.15)
+        elif not was_running:
             self._standard_windivert_cleanup()
-
-        exe = WINWS2_EXE
-        if not exe.exists():
-            self.error.emit(f"winws2.exe не найден: {exe}")
-            return
-
-        preset = self.preset_path(preset_name)
-        if not preset.exists():
-            self.error.emit(f"Пресет не найден: {preset}")
-            return
-
-        # Parse preset and pass args directly (winws2 @file can't handle spaces in path)
-        args = self._parse_preset_args(preset)
-        if not args:
-            self.error.emit(f"Пресет пустой: {preset_name}")
-            return
+        else:
+            sleep_with_events(0.05)
 
         launch_mode = "at_config" if _launch_mode == "at_config" else "direct"
         at_config: Path | None = None
@@ -377,7 +456,7 @@ class ZapretManager(QObject):
             self.log_line.emit(f"[zapret] Запуск: {preset_name} ({len(args)} аргументов напрямую)")
         self._process.start()
 
-        if not self._process.waitForStarted(5000):
+        if not wait_for_qprocess_started(self._process, 1200):
             launch_error = self._process.errorString()
             if _is_elevation_launch_error(launch_error):
                 self.log_line.emit(f"[zapret] Запуск winws2.exe отклонён Windows: {launch_error}")
@@ -404,7 +483,7 @@ class ZapretManager(QObject):
         self._health_timer.start()
         self.started.emit()
 
-    def stop(self, *, fast: bool = False) -> None:
+    def stop(self, *, fast: bool = False, cleanup: bool = True, emit_stopped: bool = True) -> None:
         self._health_timer.stop()
         process = self._process
         if process is None:
@@ -437,10 +516,12 @@ class ZapretManager(QObject):
         )
         for name in killed:
             self.log_line.emit(f"[zapret] Завершён оставшийся процесс: {name}")
-        self._standard_windivert_cleanup()
-        if not fast:
+        if cleanup:
+            self._standard_windivert_cleanup()
+        if cleanup and not fast:
             sleep_with_events(0.5)
-        self.stopped.emit()
+        if emit_stopped:
+            self.stopped.emit()
 
     # ── internals ───────────────────────────────────────────────
 
@@ -476,6 +557,8 @@ class ZapretManager(QObject):
     def _find_windivert_services() -> list[str]:
         if os.name != "nt":
             return []
+        if ZapretManager._windivert_services_cache is not None:
+            return list(ZapretManager._windivert_services_cache)
         found: set[str] = {"WinDivert", "WinDivert14", "WinDivert64", "WinDivert2", "Monkey"}
         try:
             with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services") as root:
@@ -496,25 +579,32 @@ class ZapretManager(QObject):
                         found.add(name)
         except OSError:
             pass
-        return sorted(found)
+        services = sorted(found)
+        ZapretManager._windivert_services_cache = services
+        return list(services)
 
-    def _standard_windivert_cleanup(self) -> None:
+    def _standard_windivert_cleanup(self, *, force: bool = False) -> None:
         if os.name != "nt":
+            return
+        if ZapretManager._standard_cleanup_done and not force:
             return
         for service in self._find_windivert_services():
             try:
                 run_text_pumped(
                     ["sc", "config", service, "start=", "demand"],
-                    timeout=1.5,
+                    timeout=0.8,
                     creationflags=CREATE_NO_WINDOW,
                 )
             except Exception:
                 pass
-        sleep_with_events(0.45)
+        ZapretManager._standard_cleanup_done = True
+        sleep_with_events(0.05 if not force else 0.2)
 
     def _cleanup_windivert(self, *, timeout: float = 3.0) -> None:
         if os.name != "nt":
             return
+        ZapretManager._windivert_services_cache = None
+        ZapretManager._standard_cleanup_done = False
         for service in self._find_windivert_services():
             for action in ("stop", "delete"):
                 try:

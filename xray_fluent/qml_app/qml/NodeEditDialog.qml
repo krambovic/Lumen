@@ -30,6 +30,17 @@ Popup {
     readonly property bool isTls: secVal === "tls" || secVal === "reality"
     readonly property bool isReality: secVal === "reality"
     readonly property bool isRaw: networkCombo.currentText === "raw"
+    property var caps: ({})
+    readonly property bool canEditEndpoint: caps.endpoint === true
+    readonly property bool showIdentity: caps.identity === true
+    readonly property bool showFlow: caps.flow === true
+    readonly property bool showEncryption: caps.encryption === true
+    readonly property bool showTransport: caps.transport === true
+    readonly property bool showRawHeader: caps.rawHeader === true
+    readonly property bool showTls: caps.tls === true
+    readonly property bool showReality: caps.reality === true && dlg.isReality
+    readonly property bool showFinalmask: caps.finalmask === true
+    readonly property bool showHint: editHint.text.length > 0
 
     background: Rectangle {
         color: Theme.flyout
@@ -48,6 +59,7 @@ Popup {
     function openFor(id) {
         nodeId = id
         var f = App.nodeEditFields(id) || {}
+        caps = f.capabilities || {}
         nameField.text = f.name || ""
         groupField.text = f.group || ""
         tagsField.text = f.tags || ""
@@ -63,6 +75,7 @@ Popup {
         spxField.text = f.spiderX || ""
         pqvField.text = f.pqv || ""
         fmField.text = f.finalmask || ""
+        editHint.text = f.editHint || ""
         _setCombo(flowCombo, opts.flows, f.flow || "")
         _setCombo(networkCombo, opts.networks, f.network || "tcp")
         _setCombo(rawCombo, opts.rawHeaders, f.rawHeader || "none")
@@ -160,11 +173,11 @@ Popup {
                 FLabel { text: I18n.t("Теги") }
                 FField { id: tagsField; placeholderText: I18n.t("тег1, тег2") }
 
-                FLabel { text: I18n.t("Адрес") }
-                FField { id: addressField }
+                FLabel { text: I18n.t("Адрес"); visible: dlg.canEditEndpoint }
+                FField { id: addressField; visible: dlg.canEditEndpoint; enabled: dlg.canEditEndpoint }
 
-                FLabel { text: I18n.t("Порт") }
-                FField { id: portField; inputMethodHints: Qt.ImhDigitsOnly }
+                FLabel { text: I18n.t("Порт"); visible: dlg.canEditEndpoint }
+                FField { id: portField; visible: dlg.canEditEndpoint; enabled: dlg.canEditEndpoint; inputMethodHints: Qt.ImhDigitsOnly }
 
                 FLabel { text: I18n.t("Протокол") }
                 Text {
@@ -177,44 +190,55 @@ Popup {
                     verticalAlignment: Text.AlignVCenter
                 }
 
-                FLabel { text: "UUID / id" }
-                FField { id: uuidField }
+                Item { visible: dlg.showHint; Layout.preferredWidth: 130 }
+                Text {
+                    id: editHint
+                    visible: dlg.showHint
+                    Layout.fillWidth: true
+                    color: Theme.textFaint
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSmall
+                    wrapMode: Text.WordWrap
+                }
 
-                FLabel { text: "Flow" }
-                FluentCombo { id: flowCombo; Layout.fillWidth: true; model: dlg.opts.flows }
+                FLabel { text: "UUID / id"; visible: dlg.showIdentity }
+                FField { id: uuidField; visible: dlg.showIdentity }
 
-                FLabel { text: I18n.t("Шифрование") }
-                FField { id: encField }
+                FLabel { text: "Flow"; visible: dlg.showFlow }
+                FluentCombo { id: flowCombo; visible: dlg.showFlow; Layout.fillWidth: true; model: dlg.opts.flows }
 
-                FLabel { text: I18n.t("Транспорт") }
-                FluentCombo { id: networkCombo; Layout.fillWidth: true; model: dlg.opts.networks }
+                FLabel { text: I18n.t("Шифрование"); visible: dlg.showEncryption }
+                FField { id: encField; visible: dlg.showEncryption }
 
-                FLabel { text: "Raw camouflage" }
-                FluentCombo { id: rawCombo; Layout.fillWidth: true; model: dlg.opts.rawHeaders; enabled: dlg.isRaw }
+                FLabel { text: I18n.t("Транспорт"); visible: dlg.showTransport }
+                FluentCombo { id: networkCombo; visible: dlg.showTransport; Layout.fillWidth: true; model: dlg.opts.networks }
 
-                FLabel { text: "TLS" }
-                FluentCombo { id: secCombo; Layout.fillWidth: true; model: dlg.opts.security }
+                FLabel { text: "Raw camouflage"; visible: dlg.showRawHeader }
+                FluentCombo { id: rawCombo; visible: dlg.showRawHeader; Layout.fillWidth: true; model: dlg.opts.rawHeaders; enabled: dlg.isRaw }
 
-                FLabel { text: "SNI" }
-                FField { id: sniField; enabled: dlg.isTls }
+                FLabel { text: "TLS"; visible: dlg.showTls }
+                FluentCombo { id: secCombo; visible: dlg.showTls; Layout.fillWidth: true; model: dlg.opts.security }
 
-                FLabel { text: "Fingerprint" }
-                FField { id: fpField; enabled: dlg.isTls; placeholderText: "chrome, firefox, …" }
+                FLabel { text: "SNI"; visible: dlg.showTls }
+                FField { id: sniField; visible: dlg.showTls; enabled: dlg.isTls }
 
-                FLabel { text: "Public key" }
-                FField { id: pbkField; enabled: dlg.isReality }
+                FLabel { text: "Fingerprint"; visible: dlg.showTls }
+                FField { id: fpField; visible: dlg.showTls; enabled: dlg.isTls; placeholderText: "chrome, firefox, …" }
 
-                FLabel { text: "ShortId" }
-                FField { id: sidField; enabled: dlg.isReality }
+                FLabel { text: "Public key"; visible: dlg.showReality }
+                FField { id: pbkField; visible: dlg.showReality; enabled: dlg.isReality }
 
-                FLabel { text: "SpiderX" }
-                FField { id: spxField; enabled: dlg.isReality }
+                FLabel { text: "ShortId"; visible: dlg.showReality }
+                FField { id: sidField; visible: dlg.showReality; enabled: dlg.isReality }
 
-                FLabel { text: "Mldsa65Verify" }
-                FField { id: pqvField; enabled: dlg.isReality }
+                FLabel { text: "SpiderX"; visible: dlg.showReality }
+                FField { id: spxField; visible: dlg.showReality; enabled: dlg.isReality }
 
-                FLabel { text: "Finalmask" }
-                FField { id: fmField }
+                FLabel { text: "Mldsa65Verify"; visible: dlg.showReality }
+                FField { id: pqvField; visible: dlg.showReality; enabled: dlg.isReality }
+
+                FLabel { text: "Finalmask"; visible: dlg.showFinalmask }
+                FField { id: fmField; visible: dlg.showFinalmask }
             }
         }
 

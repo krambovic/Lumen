@@ -147,7 +147,7 @@ Item {
     function subscriptionMeta(sub) {
         if (!sub || !sub.userinfo || typeof sub.userinfo !== "object") return null;
         var ui = sub.userinfo;
-        if (!ui.profileTitle && !ui.supportUrl && !ui.profileUrl && !ui.clientProfile) return null;
+        if (!ui.profileTitle && !ui.supportUrl && !ui.profileUrl && !ui.telegramUrl && !ui.clientProfile) return null;
         return ui;
     }
     function menuNodeId() { return App.nodeIdAt(page.menuRow); }
@@ -403,7 +403,8 @@ Item {
 
         // ── subscription metadata: does not push server/search toolbars ─────
         RowLayout {
-            visible: page.subscriptionMeta(page.selectedSub()) !== null
+            visible: false
+            Layout.preferredHeight: 0
             Layout.fillWidth: true
             spacing: 8
 
@@ -456,7 +457,7 @@ Item {
             // Действия над серверами (слева, переносятся при нехватке места)
             Flow {
                 Layout.fillWidth: true
-                Layout.alignment: Qt.AlignTop
+                Layout.alignment: Qt.AlignBottom
                 spacing: 8
 
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт из буфера"); onClicked: App.importClipboard() }
@@ -477,26 +478,100 @@ Item {
             }
 
             // Подписки (справа)
-            Flow {
+            Item {
                 id: subToolbar
-                Layout.alignment: Qt.AlignTop | Qt.AlignRight
-                Layout.maximumWidth: 5 * Theme.controlHeight + subCombo.width + 40
-                Layout.preferredWidth: Math.min(5 * Theme.controlHeight + subCombo.width + 40, page.width * 0.38)
-                spacing: 8
+                Layout.alignment: Qt.AlignBottom | Qt.AlignRight
+                Layout.maximumWidth: Math.min(620, page.width * 0.58)
+                Layout.preferredWidth: Math.min(620, page.width * 0.58)
+                Layout.preferredHeight: Theme.controlHeight
+                Layout.minimumHeight: Theme.controlHeight
+                Layout.maximumHeight: Theme.controlHeight
 
-                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE946"; text: I18n.t("Свойства подписки"); enabled: App.subscriptions.length > 0; onClicked: infoDialog.openInfo() }
-                AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт подписки"); onClicked: subDialog.openNew() }
-                FilterCombo {
-                    id: subCombo
-                    width: Math.round(Math.max(90, Math.min(220, page.width * 0.20)))
-                    enabled: App.subscriptions.length > 0
-                    model: App.subscriptions.length > 0
-                        ? App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
-                        : [I18n.t("Нет подписок")]
+                RowLayout {
+                    id: subMetaRow
+                    anchors.right: parent.right
+                    anchors.bottom: subControls.top
+                    anchors.bottomMargin: 8
+                    width: parent.width
+                    height: 28
+                    spacing: 6
+
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        Layout.maximumWidth: Math.max(160, subToolbar.width - 96)
+                        Layout.preferredHeight: 20
+                        opacity: page.subscriptionMeta(page.selectedSub()) !== null ? 1 : 0
+                        text: {
+                            var meta = page.subscriptionMeta(page.selectedSub());
+                            if (!meta) return "";
+                            var title = meta.profileTitle || "";
+                            var profile = meta.clientProfile ? (" · " + meta.clientProfile) : "";
+                            return title.length ? (title + profile) : (I18n.t("Профиль подписки") + profile);
+                        }
+                        color: Theme.textMuted
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSmall
+                        elide: Text.ElideRight
+                        horizontalAlignment: Text.AlignRight
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    AccentButton {
+                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.supportUrl; }
+                        kind: "ghost"
+                        iconOnly: true
+                        glyph: "\uE8F2"
+                        text: I18n.t("Поддержка подписки")
+                        onClicked: {
+                            var meta = page.subscriptionMeta(page.selectedSub());
+                            if (meta && meta.supportUrl) App.openUrl(meta.supportUrl);
+                        }
+                    }
+                    AccentButton {
+                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.telegramUrl; }
+                        kind: "ghost"
+                        iconOnly: true
+                        glyph: "\uE8BD"
+                        text: "Telegram"
+                        onClicked: {
+                            var meta = page.subscriptionMeta(page.selectedSub());
+                            if (meta && meta.telegramUrl) App.openUrl(meta.telegramUrl);
+                        }
+                    }
+                    AccentButton {
+                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.profileUrl; }
+                        kind: "ghost"
+                        iconOnly: true
+                        glyph: "\uE774"
+                        text: I18n.t("Страница подписки")
+                        onClicked: {
+                            var meta = page.subscriptionMeta(page.selectedSub());
+                            if (meta && meta.profileUrl) App.openUrl(meta.profileUrl);
+                        }
+                    }
                 }
-                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE72C"; text: I18n.t("Обновить подписку"); enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.updateSubscription(s.url) } }
-                AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE895"; text: I18n.t("Обновить все подписки"); enabled: App.subscriptions.length > 0; onClicked: App.updateAllSubscriptions() }
-                AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: I18n.t("Удалить подписку (с серверами)"); enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.removeSubscription(s.url, true) } }
+                RowLayout {
+                    id: subControls
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    height: Theme.controlHeight
+                    spacing: 8
+
+                    Item { Layout.fillWidth: true }
+                    AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE946"; text: I18n.t("Свойства подписки"); enabled: App.subscriptions.length > 0; onClicked: infoDialog.openInfo() }
+                    AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт подписки"); onClicked: subDialog.openNew() }
+                    FilterCombo {
+                        id: subCombo
+                        Layout.preferredWidth: Math.round(Math.max(150, Math.min(260, page.width * 0.20)))
+                        enabled: App.subscriptions.length > 0
+                        model: App.subscriptions.length > 0
+                            ? App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
+                            : [I18n.t("Нет подписок")]
+                    }
+                    AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE72C"; text: I18n.t("Обновить подписку"); enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.updateSubscription(s.url) } }
+                    AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE895"; text: I18n.t("Обновить все подписки"); enabled: App.subscriptions.length > 0; onClicked: App.updateAllSubscriptions() }
+                    AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: I18n.t("Удалить подписку (с серверами)"); enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.removeSubscription(s.url, true) } }
+                }
             }
         }
 
@@ -1370,8 +1445,10 @@ Item {
                 Repeater {
                     model: page.infoRows(page.infoSub())
                     delegate: RowLayout {
+                        id: infoRow
                         width: parent ? parent.width : 0
                         spacing: 12
+                        readonly property bool isUrlRow: String(modelData[0]).toLowerCase() === "url"
                         Text {
                             text: modelData[0]
                             color: Theme.textMuted
@@ -1380,12 +1457,43 @@ Item {
                             Layout.preferredWidth: 140
                         }
                         Text {
+                            visible: !infoRow.isUrlRow
                             text: modelData[1]
                             color: Theme.text
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
                             wrapMode: Text.WrapAnywhere
                             Layout.fillWidth: true
+                        }
+                        TextEdit {
+                            visible: infoRow.isUrlRow
+                            text: modelData[1]
+                            color: urlMouse.containsMouse ? Theme.accent : Theme.text
+                            selectedTextColor: Theme.text
+                            selectionColor: Theme.accentSoft
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                            wrapMode: TextEdit.WrapAnywhere
+                            readOnly: true
+                            selectByMouse: true
+                            textFormat: TextEdit.PlainText
+                            Layout.fillWidth: true
+
+                            MouseArea {
+                                id: urlMouse
+                                anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                cursorShape: Qt.PointingHandCursor
+                                hoverEnabled: true
+                                onClicked: function(mouse) {
+                                    if (mouse.button === Qt.RightButton) {
+                                        subUrlMenu.url = modelData[1];
+                                        subUrlMenu.popup();
+                                    } else {
+                                        App.openUrl(modelData[1]);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1407,6 +1515,15 @@ Item {
                 Item { Layout.fillWidth: true }
                 AccentButton { kind: "accent"; text: I18n.t("Закрыть"); onClicked: infoDialog.close() }
             }
+        }
+    }
+
+    Menu {
+        id: subUrlMenu
+        property string url: ""
+        MenuItem {
+            text: I18n.t("Копировать ссылку")
+            onTriggered: App.copyText(subUrlMenu.url)
         }
     }
 

@@ -2591,6 +2591,16 @@ class AppBridge(QObject):
             return
         QDesktopServices.openUrl(QUrl(target))
 
+    @pyqtSlot(str)
+    def copyText(self, text: str) -> None:
+        payload = (text or "").strip()
+        if not payload:
+            return
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(payload)
+            self.toast.emit("success", "Скопировано в буфер обмена")
+
     def _copy_or_warn(self, payload: str | None) -> None:
         if not payload:
             self.toast.emit("warning", "Выберите сервер для экспорта")

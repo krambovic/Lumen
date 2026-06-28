@@ -13,6 +13,35 @@ SECURITY = ("none", "tls", "reality")
 FLOWS = ("", "xtls-rprx-vision", "xtls-rprx-vision-udp443")
 RAW_HEADERS = ("none", "http")
 
+XRAY_ADVANCED_PROTOCOLS = {"vless", "vmess"}
+ENDPOINT_EDITABLE_PROTOCOLS = {
+    "vless",
+    "vmess",
+    "trojan",
+    "shadowsocks",
+    "ss",
+    "socks",
+    "http",
+    "hysteria",
+    "hysteria2",
+    "tuic",
+    "mieru",
+    "wireguard",
+    "awg",
+    "warp",
+}
+NATIVE_PROTOCOLS = {
+    "wireguard",
+    "awg",
+    "warp",
+    "hysteria",
+    "hysteria2",
+    "tuic",
+    "mieru",
+    "masque",
+    "singbox_config",
+}
+
 
 def _first_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, list) and value and isinstance(value[0], dict):
@@ -49,6 +78,55 @@ def _set_param(params: dict[str, str], key: str, value: Any) -> None:
     value = str(value or "")
     if value:
         params[key] = value
+
+
+def _protocol_from_node(node) -> str:
+    outbound = node.outbound if isinstance(getattr(node, "outbound", None), dict) else {}
+    return str(outbound.get("protocol") or node.scheme or "").strip().lower()
+
+
+def _field_capabilities(protocol: str) -> dict[str, bool | str]:
+    protocol = (protocol or "").strip().lower()
+    xray_advanced = protocol in XRAY_ADVANCED_PROTOCOLS
+    endpoint = protocol in ENDPOINT_EDITABLE_PROTOCOLS
+    fixed_endpoint = protocol in {"masque", "singbox_config"}
+    return {
+        "protocol": protocol,
+        "xrayAdvanced": xray_advanced,
+        "nativeSingbox": protocol in NATIVE_PROTOCOLS,
+        "endpoint": endpoint and not fixed_endpoint,
+        "identity": xray_advanced,
+        "flow": protocol == "vless",
+        "encryption": xray_advanced,
+        "transport": xray_advanced,
+        "rawHeader": xray_advanced,
+        "tls": xray_advanced,
+        "reality": xray_advanced,
+        "finalmask": xray_advanced,
+        "basicOnly": not xray_advanced,
+        "readOnlyConfig": protocol == "singbox_config",
+    }
+
+
+def _update_native_endpoint(outbound: dict[str, Any], server: str, port: int) -> None:
+    native = outbound.get("singbox") if isinstance(outbound.get("singbox"), dict) else {}
+    if not native:
+        return
+    protocol = str(native.get("type") or outbound.get("protocol") or "").strip().lower()
+    if protocol in {"wireguard", "warp"}:
+        peers = native.get("peers")
+        peer = _first_dict(peers)
+        if peer:
+            if server:
+                peer["server"] = server
+            if port > 0:
+                peer["server_port"] = port
+        return
+    if protocol in {"hysteria", "hysteria2", "tuic", "mieru"}:
+        if server:
+            native["server"] = server
+        if port > 0:
+            native["server_port"] = port
 
 
 def _build_vless_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
@@ -100,7 +178,8 @@ def load_node_edit_fields(node) -> dict:
     """Flatten a node's editable fields for the QML form (mirrors
     ``NodeEditDialog._load_outbound_fields`` + the simple LineEdit fields)."""
     outbound = deepcopy(node.outbound) if isinstance(node.outbound, dict) else {}
-    protocol = str(outbound.get("protocol") or node.scheme or "").lower()
+    protocol = _protocol_from_node(node)
+    capabilities = _field_capabilities(protocol)
     fields: dict[str, Any] = {
         "name": node.name or "",
         "group": node.group or "",
@@ -121,6 +200,8 @@ def load_node_edit_fields(node) -> dict:
         "spiderX": "",
         "pqv": "",
         "finalmask": "",
+        "capabilities": capabilities,
+        "editHint": _edit_hint(protocol, capabilities),
     }
     settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
     if protocol in {"vless", "vmess"}:
@@ -156,6 +237,10 @@ def load_node_edit_fields(node) -> dict:
     return fields
 
 
+def _edit_hint(protocol: str, capabilities: dict[str, bool | str]) -> str:
+    return ""
+
+
 def build_node_updates(node, fields: dict) -> dict:
     """Rebuild the outbound + scalar fields from the QML form values and return
     the ``updates`` dict for ``AppController.update_node`` (mirrors
@@ -166,9 +251,29 @@ def build_node_updates(node, fields: dict) -> dict:
     raw_tags = g("tags")
     tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()] if raw_tags else []
     outbound = deepcopy(node.outbound) if isinstance(node.outbound, dict) else {}
-    protocol = str(outbound.get("protocol") or node.scheme or "").lower()
+    protocol = _protocol_from_node(node)
+    capabilities = _field_capabilities(protocol)
     server = g("server")
     port = _safe_port(fields.get("port", ""), node.port)
+
+    name = g("name")
+    updates: dict[str, Any] = {
+        "name": name,
+        "group": g("group") or "Default",
+        "tags": tags,
+    }
+
+    if not capabilities.get("endpoint"):
+        updates["outbound"] = outbound
+        return updates
+
+    updates["server"] = server
+    updates["port"] = port
+
+    if not capabilities.get("xrayAdvanced"):
+        _update_native_endpoint(outbound, server, port)
+        updates["outbound"] = outbound
+        return updates
 
     settings = outbound.setdefault("settings", {})
     if isinstance(settings, dict) and protocol in {"vless", "vmess"}:
@@ -226,14 +331,7 @@ def build_node_updates(node, fields: dict) -> dict:
         else:
             stream.pop("finalmask", None)
 
-    name = g("name")
     link = _build_vless_link(name, server, port, outbound) if protocol == "vless" else node.link
-    return {
-        "name": name,
-        "group": g("group") or "Default",
-        "tags": tags,
-        "server": server,
-        "port": port,
-        "outbound": outbound,
-        "link": link,
-    }
+    updates["outbound"] = outbound
+    updates["link"] = link
+    return updates
