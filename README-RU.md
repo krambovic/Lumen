@@ -5,13 +5,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/krambovic/Lumen-KVN/releases">
-    <img src="https://img.shields.io/github/v/release/krambovic/Lumen-KVN?color=8000FF&style=for-the-badge" alt="Версия">
-  </a>
-  <a href="https://github.com/krambovic/Lumen-KVN/releases">
-    <img src="https://img.shields.io/github/downloads/krambovic/Lumen-KVN/total?color=8000FF&style=for-the-badge" alt="Скачивания">
-  </a>
-  <img src="https://img.shields.io/badge/Platform-Windows%2011%20%7C%2010-0078d4?style=for-the-badge&logo=windows" alt="Платформа">
+  <a href="https://github.com/krambovic/Lumen-KVN/releases"><img src="https://img.shields.io/github/v/release/krambovic/Lumen-KVN?style=for-the-badge&label=Release&labelColor=3A3A3A&color=8A2BE2" alt="Релиз"></a>
+  <a href="https://github.com/krambovic/Lumen-KVN/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen-KVN/total?style=for-the-badge&label=Downloads&labelColor=3A3A3A&color=17A673" alt="Скачивания"></a>
+  <img src="https://img.shields.io/badge/Platform-Windows%2011%20%7C%2010-3A3A3A?style=for-the-badge&labelColor=3A3A3A" alt="Платформа">
 </p>
 
 <p align="center">
@@ -29,6 +25,10 @@ Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, 
 
 ## Скриншоты
 
+<details>
+<summary>Панель управления и темы оформления</summary>
+<br>
+
 <table>
   <tr>
     <td width="33%">
@@ -45,6 +45,8 @@ Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, 
     </td>
   </tr>
 </table>
+
+</details>
 
 ---
 
