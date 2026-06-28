@@ -84,6 +84,7 @@ Item {
 
     FluentScroll {
         anchors.fill: parent
+        roundedClip: false
 
         ColumnLayout {
             width: parent.width

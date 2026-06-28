@@ -91,6 +91,7 @@ ApplicationWindow {
         Theme.cornerRadius = Qt.binding(function() { return App.uiCornerRadius; });
         Theme.animations = Qt.binding(function() { return App.uiAnimations; });
         Theme.backdrop = Qt.binding(function() { return App.uiBackdrop; });
+        Theme.wallpaperActive = Qt.binding(function() { return App.uiWallpaper !== ""; });
         Theme.fontScale = Qt.binding(function() { return App.uiFontScale / 100; });
         Theme.preset = Qt.binding(function() { return App.uiThemePreset; });
         Theme.baseTint = Qt.binding(function() { return App.uiBaseTint; });
@@ -287,8 +288,8 @@ ApplicationWindow {
                 radius: Theme.radius
                 color: App.uiWallpaper !== ""
                        ? (Theme.backdrop === "acrylic"
-                           ? (Theme.dark ? Qt.rgba(0, 0, 0, 0.32) : Qt.rgba(1, 1, 1, 0.62))
-                           : (Theme.dark ? Qt.rgba(1, 1, 1, 0.045) : Qt.rgba(1, 1, 1, 0.45)))
+                           ? (Theme.dark ? Qt.rgba(0, 0, 0, 0.32) : Qt.rgba(1, 1, 1, 0.28))
+                           : (Theme.dark ? Qt.rgba(1, 1, 1, 0.045) : Qt.rgba(1, 1, 1, 0.18)))
                        : Theme.contentPanel
                 border.width: 1
                 border.color: Theme.divider

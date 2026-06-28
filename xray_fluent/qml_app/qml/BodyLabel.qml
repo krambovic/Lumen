@@ -8,7 +8,8 @@ Text {
     font.family: Theme.fontFamily
     font.pixelSize: Theme.fontNormal
     font.weight: strong ? Font.DemiBold : Font.Normal
-    renderType: Text.NativeRendering
+    renderType: Text.QtRendering
+    font.hintingPreference: Font.PreferVerticalHinting
     wrapMode: Text.WordWrap
     Behavior on color { ColorAnimation { duration: Theme.animFast } }
 }

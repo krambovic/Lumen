@@ -96,8 +96,8 @@ Item {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 2
-            Text { text: sr.title; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Text { text: sr.subtitle; visible: sr.subtitle.length > 0; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { text: sr.title; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.hintingPreference: Font.PreferVerticalHinting; renderType: Text.QtRendering; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { text: sr.subtitle; visible: sr.subtitle.length > 0; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.hintingPreference: Font.PreferVerticalHinting; renderType: Text.QtRendering; Layout.fillWidth: true; wrapMode: Text.WordWrap }
         }
         RowLayout { id: rc; spacing: 8; Layout.alignment: Qt.AlignVCenter }
     }
@@ -277,24 +277,8 @@ Item {
             Binding { target: tabStack.contentItem; property: "highlightMoveDuration"; value: Theme.animations ? 250 : 0 }
             Binding { target: tabStack.contentItem; property: "highlightMoveVelocity"; value: Theme.animations ? -1 : -1 }
 
-            layer.enabled: true
-            layer.smooth: true
-            layer.effect: MultiEffect {
-                maskEnabled: true
-                maskThresholdMin: 0.5
-                maskSpreadAtMin: 1.0
-                maskSource: ShaderEffectSource {
-                    hideSource: true
-                    sourceItem: Rectangle {
-                        width: tabStack.width
-                        height: tabStack.height
-                        radius: Theme.radius
-                        color: "black"
-                    }
-                }
-            }
-
         FluentScroll {
+            roundedClip: false
             ColumnLayout {
                 width: parent.width
                 spacing: Theme.spacingLarge
@@ -416,6 +400,7 @@ Item {
         }
 
         FluentScroll {
+            roundedClip: false
             ColumnLayout {
                 width: parent.width
                 spacing: Theme.spacingLarge
@@ -479,6 +464,7 @@ Item {
         }
 
         FluentScroll {
+            roundedClip: false
             ColumnLayout {
                 width: parent.width
                 spacing: Theme.spacingLarge
@@ -514,6 +500,7 @@ Item {
         }
 
         FluentScroll {
+            roundedClip: false
             ColumnLayout {
                 width: parent.width
                 spacing: Theme.spacingLarge
@@ -669,6 +656,7 @@ Item {
         }
 
         FluentScroll {
+            roundedClip: false
             ColumnLayout {
                 width: parent.width
                 spacing: Theme.spacingLarge
@@ -712,6 +700,7 @@ Item {
         }
 
         FluentScroll {
+            roundedClip: false
             ColumnLayout {
                 width: parent.width
                 spacing: Theme.spacingLarge

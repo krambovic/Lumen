@@ -12,6 +12,7 @@ import "."
 //   • Процессы     — only when the backend reports per-process stats (TUN).
 FluentScroll {
     id: page
+    roundedClip: false
     readonly property bool twoColumns: width >= 960
 
     // ---- formatting helpers (match dashboard_page.py) ----------------

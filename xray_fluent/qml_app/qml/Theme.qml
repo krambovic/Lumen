@@ -22,6 +22,7 @@ QtObject {
     property string baseTint: ""               // "" = выкл; иначе #RRGGBB — свой базовый тон окна (приоритет над пресетом)
     property string backdrop: "mica"           // mica | acrylic | solid
     property bool backdropAvailable: true       // false на Win10 (нет Mica) → непрозрачный фон
+    property bool wallpaperActive: false
 
     readonly property bool isTranslucent: backdropAvailable && backdrop !== "solid"
     readonly property bool amoled: preset === "midnight"
@@ -208,15 +209,17 @@ QtObject {
     readonly property color micaBase: "transparent"
     readonly property color contentPanel: dark
         ? _palLayer("card", Qt.rgba(1, 1, 1, 0.048), 0.44)
-        : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.18), lightPalettePanelAlpha)
-    readonly property color railPanel: dark ? _palLayer("control", Qt.rgba(1, 1, 1, 0.065), 0.72) : _lightLayer("press", Qt.rgba(1, 1, 1, 0.34), 0.70)
+        : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.18) : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.18), lightPalettePanelAlpha))
+    readonly property color railPanel: dark
+        ? _palLayer("control", Qt.rgba(1, 1, 1, 0.065), 0.72)
+        : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.24) : _lightLayer("press", Qt.rgba(1, 1, 1, 0.34), 0.70))
     readonly property color chromePanel: dark
         ? _palLayer("control", Qt.rgba(1, 1, 1, 0.030), 0.26)
-        : Qt.rgba(1, 1, 1, 0.22)
-    readonly property color bgElevated: dark ? Qt.rgba(1, 1, 1, 0.016) : Qt.rgba(1, 1, 1, 0.55)
-    readonly property color card: dark ? Qt.rgba(1, 1, 1, 0.040) : Qt.rgba(1, 1, 1, 0.70)
-    readonly property color cardHover: dark ? Qt.rgba(1, 1, 1, 0.0837) : Qt.rgba(0, 0, 0, 0.024)
-    readonly property color cardPressed: dark ? Qt.rgba(1, 1, 1, 0.0326) : Qt.rgba(0, 0, 0, 0.040)
+        : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.22))
+    readonly property color bgElevated: dark ? Qt.rgba(1, 1, 1, 0.016) : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.55))
+    readonly property color card: dark ? Qt.rgba(1, 1, 1, 0.040) : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.22) : Qt.rgba(1, 1, 1, 0.38))
+    readonly property color cardHover: dark ? Qt.rgba(1, 1, 1, 0.0837) : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.32) : Qt.rgba(1, 1, 1, 0.48))
+    readonly property color cardPressed: dark ? Qt.rgba(1, 1, 1, 0.0326) : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.40) : Qt.rgba(1, 1, 1, 0.56))
     readonly property color navHover: dark ? cardHover : Qt.rgba(accent.r, accent.g, accent.b, 0.11)
     readonly property color flyout: dark ? _pal.d1 : "#FBFBFB"
     readonly property color flyoutBorder: dark ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(0, 0, 0, 0.13)
@@ -227,9 +230,15 @@ QtObject {
     readonly property color borderBottom: dark ? Qt.rgba(0, 0, 0, 0.20) : Qt.rgba(0, 0, 0, 0.10)
 
     // ---- Text (Fluent TextFillColor ramp) ------------------------------
-    readonly property color text: dark ? _palColor("text", Qt.rgba(1, 1, 1, 1.0)) : _lightColor("text", Qt.rgba(0, 0, 0, 0.89))
-    readonly property color textMuted: dark ? _palColor("muted", Qt.rgba(1, 1, 1, 0.79)) : _lightColor("muted", Qt.rgba(0, 0, 0, 0.61))
-    readonly property color textFaint: dark ? _palColor("faint", Qt.rgba(1, 1, 1, 0.55)) : _lightColor("faint", Qt.rgba(0, 0, 0, 0.45))
+    readonly property color text: dark
+        ? _palColor("text", Qt.rgba(1, 1, 1, 1.0))
+        : (wallpaperActive ? Qt.darker(_lightColor("text", Qt.rgba(0, 0, 0, 0.89)), 1.18) : _lightColor("text", Qt.rgba(0, 0, 0, 0.89)))
+    readonly property color textMuted: dark
+        ? _palColor("muted", Qt.rgba(1, 1, 1, 0.79))
+        : (wallpaperActive ? Qt.darker(_lightColor("muted", Qt.rgba(0, 0, 0, 0.61)), 1.30) : _lightColor("muted", Qt.rgba(0, 0, 0, 0.61)))
+    readonly property color textFaint: dark
+        ? _palColor("faint", Qt.rgba(1, 1, 1, 0.55))
+        : (wallpaperActive ? Qt.darker(_lightColor("faint", Qt.rgba(0, 0, 0, 0.45)), 1.42) : _lightColor("faint", Qt.rgba(0, 0, 0, 0.45)))
 
     // ---- Semantic colours ----------------------------------------------
     readonly property color success: dark ? "#6CCB5F" : "#3BAE45"

@@ -6,6 +6,7 @@ import "."
 
 FluentScroll {
     id: page
+    roundedClip: false
     ColumnLayout {
         width: page.width
         spacing: 16
