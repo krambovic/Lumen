@@ -10,8 +10,13 @@ Item {
     property Component pageComponent
     property int slide: 6
 
-    anchors.fill: parent
-    visible: opacity > 0
+    readonly property bool laidOut: current || opacity > 0
+
+    x: 0
+    y: 0
+    width: laidOut && parent ? parent.width : 0
+    height: laidOut && parent ? parent.height : 0
+    visible: laidOut
     opacity: current ? 1 : 0
 
     onCurrentChanged: {
