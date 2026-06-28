@@ -285,7 +285,11 @@ ApplicationWindow {
                 anchors.bottomMargin: -Theme.radius
                 clip: true
                 radius: Theme.radius
-                color: Theme.contentPanel
+                color: App.uiWallpaper !== ""
+                       ? (Theme.backdrop === "acrylic"
+                           ? (Theme.dark ? Qt.rgba(0, 0, 0, 0.32) : Qt.rgba(1, 1, 1, 0.62))
+                           : (Theme.dark ? Qt.rgba(1, 1, 1, 0.045) : Qt.rgba(1, 1, 1, 0.45)))
+                       : Theme.contentPanel
                 border.width: 1
                 border.color: Theme.divider
 
