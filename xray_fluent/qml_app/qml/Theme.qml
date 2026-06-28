@@ -206,9 +206,13 @@ QtObject {
             ? (dark ? (_pal.win !== "" ? _pal.win : _pal.d0) : _pal.lt)
             : (backdropAvailable ? "transparent" : (dark ? _pal.d0 : _lightPal.bg)))
     readonly property color micaBase: "transparent"
-    readonly property color contentPanel: dark ? _palLayer("elevated", Qt.rgba(1, 1, 1, 0.035), darkPalettePanelAlpha) : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.18), lightPalettePanelAlpha)
+    readonly property color contentPanel: dark
+        ? _palLayer("card", Qt.rgba(1, 1, 1, 0.048), 0.44)
+        : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.18), lightPalettePanelAlpha)
     readonly property color railPanel: dark ? _palLayer("control", Qt.rgba(1, 1, 1, 0.065), 0.72) : _lightLayer("press", Qt.rgba(1, 1, 1, 0.34), 0.70)
-    readonly property color chromePanel: dark ? Qt.rgba(1, 1, 1, 0.030) : Qt.rgba(1, 1, 1, 0.22)
+    readonly property color chromePanel: dark
+        ? _palLayer("control", Qt.rgba(1, 1, 1, 0.030), 0.26)
+        : Qt.rgba(1, 1, 1, 0.22)
     readonly property color bgElevated: dark ? Qt.rgba(1, 1, 1, 0.016) : Qt.rgba(1, 1, 1, 0.55)
     readonly property color card: dark ? Qt.rgba(1, 1, 1, 0.040) : Qt.rgba(1, 1, 1, 0.70)
     readonly property color cardHover: dark ? Qt.rgba(1, 1, 1, 0.0837) : Qt.rgba(0, 0, 0, 0.024)
