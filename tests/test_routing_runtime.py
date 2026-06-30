@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from xray_fluent.models import RoutingSettings
 from xray_fluent.routing_runtime import (
+    apply_singbox_gui_routing,
     build_singbox_gui_dns_rules,
     build_singbox_gui_route_rules,
     build_xray_gui_routing_rules,
+    routing_with_ip_preference,
 )
 
 
@@ -74,3 +76,89 @@ def test_service_off_does_not_generate_proxy_override() -> None:
         "telegram.org" in [str(item) for item in rule.get("domain_suffix") or []]
         for rule in rules
     )
+
+
+def test_fake_dns_ranges_do_not_fall_through_to_lan_bypass() -> None:
+    routing = RoutingSettings(
+        mode="global",
+        dns_fake_enabled=True,
+        bypass_lan=True,
+        tun_default_outbound="proxy",
+    )
+
+    rules, _ = build_singbox_gui_route_rules(routing)
+
+    fake_index = next(
+        index
+        for index, rule in enumerate(rules)
+        if rule.get("ip_cidr") == ["198.18.0.0/15", "fc00::/18"]
+    )
+    private_index = next(index for index, rule in enumerate(rules) if rule.get("ip_is_private") is True)
+    assert fake_index < private_index
+    assert rules[fake_index]["outbound"] == "proxy"
+
+
+def test_domain_rules_stay_ahead_of_fake_dns_fallback() -> None:
+    routing = RoutingSettings(
+        mode="rule",
+        dns_fake_enabled=True,
+        proxy_domains=["chatgpt.com"],
+        tun_default_outbound="direct",
+    )
+
+    rules, _ = build_singbox_gui_route_rules(routing)
+
+    domain_index = next(
+        index
+        for index, rule in enumerate(rules)
+        if rule.get("outbound") == "proxy" and "chatgpt.com" in rule.get("domain_suffix", [])
+    )
+    fake_index = next(
+        index
+        for index, rule in enumerate(rules)
+        if rule.get("ip_cidr") == ["198.18.0.0/15", "fc00::/18"]
+    )
+    assert domain_index < fake_index
+    assert rules[fake_index]["outbound"] == "direct"
+
+
+def test_apply_singbox_gui_routing_keeps_browser_doh_reject_before_fake_dns() -> None:
+    payload = {
+        "route": {"rules": [], "final": "proxy"},
+        "dns": {
+            "servers": [
+                {"tag": "bootstrap-dns", "type": "udp", "server": "1.1.1.1"},
+                {"tag": "proxy-dns", "type": "https", "server": "dns.google"},
+                {"tag": "fake-dns", "type": "fakeip", "inet4_range": "198.18.0.0/15"},
+            ],
+            "rules": [],
+        },
+    }
+
+    apply_singbox_gui_routing(payload, RoutingSettings(mode="global", tun_default_outbound="proxy"))
+
+    dns_rules = payload["dns"]["rules"]
+    https_index = next(index for index, rule in enumerate(dns_rules) if rule.get("query_type") == ["HTTPS", "SVCB"])
+    doh_index = next(
+        index
+        for index, rule in enumerate(dns_rules)
+        if rule.get("action") == "reject"
+        and "dns.google" in [str(item) for item in rule.get("domain_suffix") or []]
+    )
+    fake_index = next(index for index, rule in enumerate(dns_rules) if rule.get("server") == "fake-dns")
+
+    assert https_index < doh_index < fake_index
+
+
+def test_runtime_ip_preference_does_not_force_strict_strategies() -> None:
+    routing = RoutingSettings(
+        dns_bootstrap_strategy="ipv4_only",
+        dns_proxy_strategy="prefer_ipv4",
+    )
+
+    effective = routing_with_ip_preference(routing, prefer_ipv6=True)
+
+    assert effective is not routing
+    assert routing.dns_proxy_strategy == "prefer_ipv4"
+    assert effective.dns_bootstrap_strategy == "ipv4_only"
+    assert effective.dns_proxy_strategy == "prefer_ipv6"

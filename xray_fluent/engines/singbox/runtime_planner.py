@@ -11,9 +11,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ...application.runtime_security import generate_local_proxy_credentials, strip_singbox_proxy_inbounds
+from ...application.runtime_security import (
+    clamp_singbox_local_inbounds,
+    generate_local_proxy_credentials,
+    strip_singbox_proxy_inbounds,
+)
 from ...constants import (
+    DATA_DIR,
     DEFAULT_DISCORD_SOCKS_PORT,
+    DEFAULT_HTTP_PORT,
+    DEFAULT_SOCKS_PORT,
     PROXY_HOST,
     SINGBOX_CLASH_API_PORT,
     SINGBOX_XRAY_RELAY_PORT,
@@ -32,7 +39,37 @@ _APP_SINGBOX_HYBRID_PROTECT_INBOUND_TAG = "__app_hybrid_protect_in"
 _APP_XRAY_SIDECAR_RELAY_INBOUND_TAG = "__app_hybrid_relay_in"
 _APP_XRAY_SIDECAR_PROTECT_OUTBOUND_TAG = "__app_hybrid_protect_out"
 _APP_DISCORD_PROXY_INBOUND_TAG = "discord-socks-in"
+_APP_TUN_MIXED_INBOUND_TAG = "socks-in"
+_APP_TUN_HTTP_INBOUND_TAG = "http-in"
 _ENDPOINT_DNS_CACHE_TTL_SECONDS = 300.0
+_DEFAULT_DIRECT_DNS_SERVER = "8.8.8.8"
+_DEFAULT_DIRECT_DNS_TYPE = "udp"
+_DEFAULT_PROXY_DNS_SERVER = "8.8.8.8"
+_DEFAULT_PROXY_DNS_TYPE = "https"
+_SINGBOX_DHCP_AUTO_DNS = "dhcp://auto"
+_KNOWN_DOH_IP_HOSTS = {
+    "1.0.0.1": "cloudflare-dns.com",
+    "1.1.1.1": "cloudflare-dns.com",
+    "8.8.4.4": "dns.google",
+    "8.8.8.8": "dns.google",
+    "9.9.9.9": "dns.quad9.net",
+    "149.112.112.112": "dns.quad9.net",
+}
+_BROWSER_DOH_DOMAIN_SUFFIXES = [
+    "cloudflare-dns.com",
+    "dns.adguard.com",
+    "dns.alidns.com",
+    "dns.cloudflare.com",
+    "dns.google",
+    "dns.nextdns.io",
+    "dns.quad9.net",
+    "doh.dns.sb",
+    "doh.opendns.com",
+    "doh.pub",
+    "doh.sb",
+    "mozilla.cloudflare-dns.com",
+    "one.one.one.one",
+]
 _endpoint_dns_cache: dict[tuple[str, int], tuple[float, tuple[str, ...]]] = {}
 _endpoint_dns_cache_lock = threading.Lock()
 
@@ -163,6 +200,7 @@ def plan_singbox_runtime(
         if routing is not None:
             apply_singbox_gui_routing(runtime_config, routing)
         _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
+        clamp_singbox_local_inbounds(runtime_config)
         _validate_runtime_dns_contract(runtime_config)
         return SingboxRuntimePlan(
             outcome="native_singbox",
@@ -190,6 +228,7 @@ def plan_singbox_runtime(
         if routing is not None:
             apply_singbox_gui_routing(runtime_config, routing)
         _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
+        clamp_singbox_local_inbounds(runtime_config)
         _validate_runtime_dns_contract(runtime_config)
         return SingboxRuntimePlan(
             outcome="native_singbox",
@@ -235,6 +274,7 @@ def plan_singbox_runtime(
         if routing is not None:
             apply_singbox_gui_routing(plan.singbox_config, routing)
         _ensure_singbox_discord_proxy_contract(plan.singbox_config, enabled=discord_proxy_enabled)
+        clamp_singbox_local_inbounds(plan.singbox_config)
         _validate_runtime_dns_contract(plan.singbox_config)
         return plan
 
@@ -252,6 +292,7 @@ def plan_singbox_runtime(
     else:
         _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
     _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
+    clamp_singbox_local_inbounds(runtime_config)
     _validate_runtime_dns_contract(runtime_config)
     return SingboxRuntimePlan(
         outcome="native_singbox",
@@ -319,6 +360,7 @@ def _plan_hybrid_runtime(
     )
     _ensure_hybrid_protect_route(runtime_config)
     _remove_singbox_tls_fragment_rule(runtime_config)
+    clamp_singbox_local_inbounds(runtime_config)
     _validate_runtime_dns_contract(runtime_config)
 
     sidecar = SingboxXraySidecarPlan(
@@ -535,11 +577,17 @@ def _is_domain_name(value: str) -> bool:
     host = str(value or "").strip()
     if not host:
         return False
+    if _is_dhcp_auto_dns(host):
+        return False
     try:
         ip_address(host)
     except ValueError:
         return True
     return False
+
+
+def _is_dhcp_auto_dns(value: str) -> bool:
+    return str(value or "").strip().lower() == _SINGBOX_DHCP_AUTO_DNS
 
 
 def _ensure_proxy_server_bootstrap_contract(
@@ -822,6 +870,83 @@ def _ensure_singbox_discord_proxy_contract(payload: dict[str, Any], *, enabled: 
     )
 
 
+def _ensure_singbox_tun_local_proxy_contract(payload: dict[str, Any]) -> None:
+    """Keep v2rayN-style local proxy ports alive while TUN is running.
+
+    Some browsers, Necko profiles, extensions and helper apps keep using
+    127.0.0.1:10808/10809 even after the Windows system proxy is disabled for
+    TUN. v2rayN keeps local proxy inbounds available in TUN mode, so do the same
+    here instead of letting those requests time out outside sing-box.
+    """
+    inbounds = _ensure_list(payload, "inbounds")
+    route = _ensure_dict(payload, "route")
+    rules = _ensure_list(route, "rules")
+
+    managed_tags = {_APP_TUN_MIXED_INBOUND_TAG, _APP_TUN_HTTP_INBOUND_TAG}
+    inbounds[:] = [
+        inbound
+        for inbound in inbounds
+        if not (isinstance(inbound, dict) and str(inbound.get("tag") or "").strip() in managed_tags)
+    ]
+    rules[:] = [rule for rule in rules if not _is_singbox_tun_local_proxy_rule(rule)]
+
+    inbounds.extend(
+        [
+            {
+                "type": "mixed",
+                "tag": _APP_TUN_MIXED_INBOUND_TAG,
+                "listen": PROXY_HOST,
+                "listen_port": int(DEFAULT_SOCKS_PORT),
+            },
+            {
+                "type": "http",
+                "tag": _APP_TUN_HTTP_INBOUND_TAG,
+                "listen": PROXY_HOST,
+                "listen_port": int(DEFAULT_HTTP_PORT),
+            },
+        ]
+    )
+    rules.insert(
+        _singbox_local_proxy_rule_insert_index(rules),
+        {
+            "inbound": [_APP_TUN_MIXED_INBOUND_TAG, _APP_TUN_HTTP_INBOUND_TAG],
+            "action": "route",
+            "outbound": "proxy",
+        },
+    )
+
+
+def _is_singbox_tun_local_proxy_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    inbound = rule.get("inbound")
+    tags: set[str]
+    if isinstance(inbound, str):
+        tags = {inbound}
+    elif isinstance(inbound, list):
+        tags = {str(item) for item in inbound}
+    else:
+        return False
+    return bool(tags & {_APP_TUN_MIXED_INBOUND_TAG, _APP_TUN_HTTP_INBOUND_TAG}) and str(rule.get("outbound") or "") == "proxy"
+
+
+def _singbox_local_proxy_rule_insert_index(rules: list[Any]) -> int:
+    index = 0
+    while index < len(rules):
+        rule = rules[index]
+        if not isinstance(rule, dict):
+            break
+        inbound = rule.get("inbound")
+        if inbound:
+            index += 1
+            continue
+        if rule.get("action") == "sniff":
+            index += 1
+            continue
+        break
+    return index
+
+
 def _is_singbox_discord_proxy_rule(rule: Any) -> bool:
     if not isinstance(rule, dict):
         return False
@@ -838,9 +963,32 @@ def _dns_strategy(value: str) -> str:
     return strategy if strategy in {"prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"} else "prefer_ipv4"
 
 
+def _is_default_direct_dns(routing: RoutingSettings | None) -> bool:
+    if routing is None:
+        return True
+    return (
+        str(routing.dns_bootstrap_server or "").strip().lower() == _DEFAULT_DIRECT_DNS_SERVER
+        and str(routing.dns_bootstrap_type or "").strip().lower() == _DEFAULT_DIRECT_DNS_TYPE
+    )
+
+
+def _is_default_proxy_dns(routing: RoutingSettings | None) -> bool:
+    if routing is None:
+        return True
+    return (
+        str(routing.dns_proxy_server or "").strip().lower() == _DEFAULT_PROXY_DNS_SERVER
+        and str(routing.dns_proxy_type or "").strip().lower() == _DEFAULT_PROXY_DNS_TYPE
+    )
+
+
 def _build_dns_server(tag: str, server: str, server_type: str, strategy: str) -> dict[str, Any]:
     dns_type = str(server_type or "").strip().lower()
     address = str(server or "").strip() or ("8.8.8.8" if tag == "proxy-dns" else "1.1.1.1")
+    if _is_dhcp_auto_dns(address):
+        return {
+            "tag": tag,
+            "type": "dhcp",
+        }
     if dns_type not in {"udp", "tcp", "tls", "https"}:
         dns_type = "https" if tag == "proxy-dns" else "udp"
     payload: dict[str, Any] = {
@@ -860,7 +1008,8 @@ def _build_dns_server(tag: str, server: str, server_type: str, strategy: str) ->
 
 def _set_dns_server_dial_contract(server: dict[str, Any], *, detour: str, resolver: str = "") -> None:
     server["detour"] = detour
-    if _is_domain_name(str(server.get("server") or "")):
+    address = str(server.get("server") or "")
+    if _is_domain_name(address):
         server["domain_resolver"] = resolver or "system-dns"
     else:
         server.pop("domain_resolver", None)
@@ -906,6 +1055,15 @@ def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> None:
         log["level"] = "info"
     log.setdefault("timestamp", True)
     experimental = _ensure_dict(payload, "experimental")
+    cache_file = _ensure_dict(experimental, "cache_file")
+    cache_path = DATA_DIR / "runtime" / "sing-box-cache.db"
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    cache_file["enabled"] = True
+    cache_file["path"] = str(cache_path)
+    cache_file["store_fakeip"] = True
     clash_api = _ensure_dict(experimental, "clash_api")
     clash_api["external_controller"] = f"127.0.0.1:{SINGBOX_CLASH_API_PORT}"
 
@@ -932,9 +1090,10 @@ def _ensure_singbox_tun_runtime_contract(
                 continue
             has_tun = True
             inbound["interface_name"] = "singbox_tun"
-            inbound["address"] = ["172.18.0.1/30"]
+            inbound["address"] = ["172.18.0.1/30", "fdfe:dcba:9876::1/126"]
             inbound["mtu"] = 1280
             inbound["auto_route"] = True
+            inbound.pop("route_address", None)
             inbound["strict_route"] = False
             inbound["stack"] = "gvisor"
             excludes = _normalize_route_exclude_addresses(
@@ -965,6 +1124,7 @@ def _ensure_singbox_tun_runtime_contract(
         builtin_dns=use_builtin_dns,
         dns_hijack_all=(routing.dns_hijack_enabled if routing is not None else True),
     )
+    _ensure_singbox_tun_local_proxy_contract(payload)
 
 
 def _ensure_singbox_dns_runtime_contract(
@@ -978,46 +1138,60 @@ def _ensure_singbox_dns_runtime_contract(
         dns = {}
         payload["dns"] = dns
     dns["independent_cache"] = True
-    direct_server = routing.dns_bootstrap_server if routing is not None else "8.8.8.8"
-    direct_type = routing.dns_bootstrap_type if routing is not None else "udp"
+    direct_server = routing.dns_bootstrap_server if routing is not None else _DEFAULT_DIRECT_DNS_SERVER
+    direct_type = routing.dns_bootstrap_type if routing is not None else _DEFAULT_DIRECT_DNS_TYPE
     direct_strategy = _dns_strategy(routing.dns_bootstrap_strategy if routing is not None else "")
-    proxy_server = routing.dns_proxy_server if routing is not None else "8.8.8.8"
-    proxy_type = routing.dns_proxy_type if routing is not None else "https"
+    proxy_server = routing.dns_proxy_server if routing is not None else _DEFAULT_PROXY_DNS_SERVER
+    proxy_type = routing.dns_proxy_type if routing is not None else _DEFAULT_PROXY_DNS_TYPE
     proxy_strategy = _dns_strategy(routing.dns_proxy_strategy if routing is not None else "")
     use_builtin_dns = _singbox_uses_builtin_dns(routing)
-    fake_enabled = use_builtin_dns and (bool(routing.dns_fake_enabled) if routing is not None else False)
+    # TUN needs FakeIP as part of the runtime contract, not as an optional
+    # cosmetic DNS mode. Without it, ECH-enabled sites can hide the hostname
+    # from sniffing and fall into IP-only routing, which is exactly where
+    # OpenAI/Anthropic/Gemini become hard to diagnose.
+    fake_enabled = True
+    direct_is_default = _is_default_direct_dns(routing)
+    proxy_is_default = _is_default_proxy_dns(routing)
+    runtime_direct_server = str(direct_server or "").strip()
+    runtime_direct_type = str(direct_type or "").strip()
+    runtime_proxy_server = str(proxy_server or "").strip()
+    runtime_proxy_type = str(proxy_type or "").strip()
+    if proxy_is_default:
+        runtime_proxy_server = _DEFAULT_PROXY_DNS_SERVER
+        runtime_proxy_type = _DEFAULT_PROXY_DNS_TYPE
 
     dns["strategy"] = direct_strategy
+    dns["reverse_mapping"] = True
     servers = dns.setdefault("servers", [])
     if not isinstance(servers, list):
         servers = []
         dns["servers"] = servers
     system_server = next((str(item).strip() for item in system_dns_servers if str(item).strip()), "")
     if not system_server:
-        system_server = direct_server if not _is_domain_name(str(direct_server)) else "8.8.8.8"
-    system_type = "udp" if system_dns_servers or _is_domain_name(str(direct_server)) else direct_type
+        system_server = runtime_direct_server if not _is_domain_name(str(runtime_direct_server)) else _DEFAULT_DIRECT_DNS_SERVER
+    system_type = "udp" if system_dns_servers or _is_domain_name(str(runtime_direct_server)) else runtime_direct_type
     if use_builtin_dns:
         system_dns = _build_dns_server("system-dns", system_server, system_type, direct_strategy)
         _set_dns_server_dial_contract(system_dns, detour="direct")
         _replace_or_append_tagged(servers, "system-dns", system_dns)
-        bootstrap_dns = _build_dns_server("bootstrap-dns", direct_server, direct_type, direct_strategy)
+        bootstrap_dns = _build_dns_server("bootstrap-dns", runtime_direct_server, runtime_direct_type, direct_strategy)
         _set_dns_server_dial_contract(bootstrap_dns, detour="direct")
-        direct_dns = _build_dns_server("direct-dns", direct_server, direct_type, direct_strategy)
+        direct_dns = _build_dns_server("direct-dns", runtime_direct_server, runtime_direct_type, direct_strategy)
         _set_dns_server_dial_contract(direct_dns, detour="direct")
         _replace_or_append_tagged(servers, "bootstrap-dns", bootstrap_dns)
         _replace_or_append_tagged(servers, "direct-dns", direct_dns)
-        proxy_dns = _build_dns_server("proxy-dns", proxy_server, proxy_type, proxy_strategy)
+        proxy_dns = _build_dns_server("proxy-dns", runtime_proxy_server, runtime_proxy_type, proxy_strategy)
         _set_dns_server_dial_contract(proxy_dns, detour="proxy", resolver="bootstrap-dns")
     else:
-        # A local resolver can recurse into the TUN adapter after Windows makes
-        # its virtual DNS peer primary. Pin system mode to the physical
-        # adapter's IPv4 DNS server captured before planning the runtime.
+        # In system mode keep direct/bootstrap DNS pinned to the physical
+        # adapter snapshot captured before TUN starts. dhcp://auto can pick the
+        # just-created virtual adapter on Windows and recurse into the tunnel.
         bootstrap_dns = _build_dns_server("bootstrap-dns", system_server, system_type, direct_strategy)
         direct_dns = _build_dns_server("direct-dns", system_server, system_type, direct_strategy)
-        proxy_dns = _build_dns_server("proxy-dns", system_server, system_type, direct_strategy)
+        proxy_dns = _build_dns_server("proxy-dns", runtime_proxy_server, runtime_proxy_type, proxy_strategy)
         _set_dns_server_dial_contract(bootstrap_dns, detour="direct")
         _set_dns_server_dial_contract(direct_dns, detour="direct")
-        _set_dns_server_dial_contract(proxy_dns, detour="direct")
+        _set_dns_server_dial_contract(proxy_dns, detour="proxy", resolver="bootstrap-dns")
         _replace_or_append_tagged(servers, "bootstrap-dns", bootstrap_dns)
         _replace_or_append_tagged(servers, "direct-dns", direct_dns)
     _replace_or_append_tagged(servers, "proxy-dns", proxy_dns)
@@ -1045,24 +1219,77 @@ def _ensure_singbox_dns_runtime_contract(
         tag = str(server.get("tag") or "")
         server_type = str(server.get("type") or "").strip().lower()
         address = str(server.get("server") or "").strip().lower()
-        if tag == "proxy-dns" and server_type == "tcp" and address in {"8.8.8.8", "8.8.4.4"}:
-            # TCP/53 through some proxy nodes times out and spams sing-box logs.
-            # v2rayN defaults remote DNS to encrypted DNS; migrate old runtime
-            # templates to DoH while keeping the same tag used by routing rules.
+        if tag == "proxy-dns" and server_type in {"tls", "https"} and address in _KNOWN_DOH_IP_HOSTS:
+            # Remote/proxied DNS must use a hostname with a valid TLS identity.
+            # DoH/DoT to a bare IP can silently break domains because the TLS
+            # handshake has no provider hostname/SNI to present.
             server.clear()
             server.update(
                 {
                     "tag": "proxy-dns",
-                    "type": "https",
-                    "server": "dns.google",
-                    "server_port": 443,
-                    "path": "/dns-query",
+                    "type": server_type,
+                    "server": _KNOWN_DOH_IP_HOSTS[address],
+                    "server_port": 443 if server_type == "https" else 853,
                     "domain_resolver": "bootstrap-dns",
                     "detour": "proxy",
                 }
             )
+            if server_type == "https":
+                server["path"] = "/dns-query"
             continue
 
+    _ensure_singbox_https_dns_reject_rule(dns)
+
+
+# DNS query types 64 (SVCB) and 65 (HTTPS) carry ECH config and HTTP/3 hints.
+# Answering them lets browsers encrypt the SNI (breaking sniff) and prefer QUIC.
+# Rejecting them forces a clean fallback to A/AAAA (FakeIP) and TCP, which is how
+# v2rayN-style TUN profiles keep ECH-enabled sites (OpenAI/Anthropic/Google)
+# reachable.
+_HTTPS_DNS_REJECT_RULE = {"query_type": ["HTTPS", "SVCB"], "action": "reject"}
+
+
+def _is_https_dns_reject_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    if str(rule.get("action") or "") != "reject":
+        return False
+    query_type = rule.get("query_type")
+    if not isinstance(query_type, list):
+        return False
+    return {str(item).strip().upper() for item in query_type} == {"HTTPS", "SVCB"}
+
+
+def _is_browser_doh_dns_reject_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    if str(rule.get("action") or "") != "reject":
+        return False
+    suffixes = rule.get("domain_suffix")
+    if not isinstance(suffixes, list):
+        return False
+    return [str(item) for item in suffixes] == list(_BROWSER_DOH_DOMAIN_SUFFIXES)
+
+
+def _ensure_singbox_https_dns_reject_rule(dns: dict[str, Any]) -> None:
+    rules = dns.get("rules")
+    if not isinstance(rules, list):
+        rules = []
+        dns["rules"] = rules
+    rules[:] = [
+        rule
+        for rule in rules
+        if not _is_https_dns_reject_rule(rule)
+        and not _is_browser_doh_dns_reject_rule(rule)
+    ]
+    rules.insert(
+        0,
+        {
+            "domain_suffix": list(_BROWSER_DOH_DOMAIN_SUFFIXES),
+            "action": "reject",
+        },
+    )
+    rules.insert(0, deepcopy(_HTTPS_DNS_REJECT_RULE))
 
 def _singbox_uses_builtin_dns(routing: RoutingSettings | None) -> bool:
     return str(routing.dns_mode if routing is not None else "builtin").strip().lower() == "builtin"
@@ -1075,45 +1302,52 @@ def _ensure_singbox_tun_base_rules(
     builtin_dns: bool = True,
     dns_hijack_all: bool = True,
 ) -> None:
-    base_rules = [{"action": "sniff"}]
-    # sing-box registers virtual DNS peers on the Windows TUN adapter. Port 53
-    # must always be intercepted, as in v2rayN, or uncached lookups wait for the
-    # unreachable peer before Windows falls back to another interface.
-    if builtin_dns and dns_hijack_all:
-        base_rules.append(
-            {
-                "type": "logical",
-                "mode": "or",
-                "action": "hijack-dns",
-                "rules": [
-                    {"port": 53},
-                    {"protocol": "dns"},
-                ],
-            }
-        )
-    else:
-        base_rules.append({"port": 53, "action": "hijack-dns"})
+    noisy_local_dns_rejects = [
+        {
+            "network": "udp",
+            "port": [135, 137, 138, 139, 5353, 5355],
+            "action": "reject",
+        },
+        {
+            "ip_cidr": ["224.0.0.0/3", "ff00::/8"],
+            "action": "reject",
+        },
+    ]
+    # DNS hijack must be early and broad: some Windows/Chromium paths are
+    # detected by sing-box as protocol=dns before a plain port rule matches.
+    dns_hijack_rule = {
+        "type": "logical",
+        "mode": "or",
+        "rules": [{"port": 53}, {"protocol": "dns"}],
+        "action": "hijack-dns",
+    }
+    sniff_rule = {
+        "action": "sniff",
+        "timeout": "1s",
+    }
+    # Drop QUIC/HTTP3 coming from the local TUN so browsers fall back to TCP
+    # HTTP/2. Scoped to tun-in only, so proxy UDP endpoints (WARP/AWG/Hysteria2)
+    # that dial out from the outbound side are untouched.
+    quic_reject_rule = {
+        "inbound": ["tun-in"],
+        "protocol": "quic",
+        "action": "reject",
+    }
+    browser_doh_reject_rule = {
+        "inbound": ["tun-in"],
+        "domain_suffix": _BROWSER_DOH_DOMAIN_SUFFIXES,
+        "action": "reject",
+    }
+    base_rules = [sniff_rule, quic_reject_rule, browser_doh_reject_rule, dns_hijack_rule, *noisy_local_dns_rejects]
     if enable_final_fragment:
         base_rules.append(
             {
                 "protocol": ["tls"],
                 "action": "route-options",
-                "tls_record_fragment": True,
+                "tls_fragment": True,
+                "tls_fragment_fallback_delay": "500ms",
             }
         )
-    base_rules.extend(
-        [
-            {
-                "network": "udp",
-                "port": [135, 137, 138, 139, 5353],
-                "action": "reject",
-            },
-            {
-                "ip_cidr": ["224.0.0.0/3", "ff00::/8"],
-                "action": "reject",
-            },
-        ]
-    )
     rules[:] = [rule for rule in rules if not _is_singbox_tun_base_rule(rule)]
     rules[0:0] = base_rules
 
@@ -1140,7 +1374,19 @@ def _is_singbox_tun_base_rule(rule: Any) -> bool:
         return True
     if action == "hijack-dns":
         return True
+    if (
+        action == "reject"
+        and rule.get("inbound") == ["tun-in"]
+        and rule.get("protocol") == "quic"
+    ):
+        return True
     if _is_app_singbox_tls_fragment_rule(rule):
+        return True
+    if (
+        action == "reject"
+        and rule.get("inbound") == ["tun-in"]
+        and rule.get("domain_suffix") == _BROWSER_DOH_DOMAIN_SUFFIXES
+    ):
         return True
     if rule.get("protocol") in ("dns", ["dns"]):
         return True
@@ -1148,7 +1394,10 @@ def _is_singbox_tun_base_rule(rule: Any) -> bool:
         return True
     if action == "reject" and rule.get("network") == "udp" and rule.get("port") == 443:
         return True
-    if action == "reject" and rule.get("network") == "udp" and rule.get("port") == [135, 137, 138, 139, 5353]:
+    if action == "reject" and rule.get("network") == "udp" and rule.get("port") in (
+        [135, 137, 138, 139, 5353],
+        [135, 137, 138, 139, 5353, 5355],
+    ):
         return True
     return action == "reject" and rule.get("ip_cidr") == ["224.0.0.0/3", "ff00::/8"]
 
@@ -1159,8 +1408,9 @@ def _is_app_singbox_tls_fragment_rule(rule: Any) -> bool:
     return (
         str(rule.get("action") or "") == "route-options"
         and rule.get("protocol") == ["tls"]
-        and rule.get("tls_record_fragment") is True
-        and set(rule) <= {"protocol", "action", "tls_record_fragment"}
+        and (rule.get("tls_record_fragment") is True or rule.get("tls_fragment") is True)
+        and set(rule)
+        <= {"protocol", "action", "tls_record_fragment", "tls_fragment", "tls_fragment_fallback_delay"}
     )
 
 

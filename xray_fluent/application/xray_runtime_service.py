@@ -14,7 +14,7 @@ from ..xray_fragments import apply_xray_final_fragment, apply_xray_outbound_frag
 from .connection_service import find_free_api_port
 from .node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
 from .runtime_introspection import extract_xray_runtime_ports
-from .runtime_security import strip_xray_proxy_inbounds
+from .runtime_security import clamp_xray_local_inbounds, strip_xray_proxy_inbounds
 from .session_state import XrayRuntimeConfig
 
 if TYPE_CHECKING:
@@ -203,6 +203,10 @@ def ensure_xray_metrics_contract(
         if not replaced:
             rules.insert(1 if rules and rules[0] == metrics_rule else 0, discord_proxy_rule)
 
+    changed_local_listens = clamp_xray_local_inbounds(payload)
+    if changed_local_listens:
+        controller._log(f"[xray] local inbounds locked to loopback ({changed_local_listens} change(s))")
+
     return api_port, tuple(user_inbound_tags)
 
 
@@ -307,7 +311,7 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
             used_selected_node = True
             break
 
-    apply_xray_gui_routing(payload, controller.state.routing, controller.state.settings)
+    apply_xray_gui_routing(payload, controller._runtime_routing(), controller.state.settings)
     if controller.state.settings.enable_xray_fragment:
         patched = apply_xray_outbound_fragment(
             payload,

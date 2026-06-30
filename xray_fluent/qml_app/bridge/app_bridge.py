@@ -157,6 +157,7 @@ class AppBridge(QObject):
         self._log_source_model = LogModel(parent=self)
         self._log_model = LogFilterModel(self._log_source_model, parent=self)
         self._process_model = ProcessModel(self)
+        self._missing_wallpaper_clear_pending = ""
 
         # Reuse the existing backend untouched.
         self.controller = AppController(self)
@@ -1052,9 +1053,32 @@ class AppBridge(QObject):
     @pyqtProperty(str, notify=settingsChanged)
     def uiWallpaper(self) -> str:
         try:
-            return str(self.controller.state.settings.ui_wallpaper or "")
+            value = str(self.controller.state.settings.ui_wallpaper or "").strip()
+            if value and not Path(value).is_file():
+                self._schedule_missing_wallpaper_clear(value)
+                return ""
+            return value
         except Exception:
             return ""
+
+    def _schedule_missing_wallpaper_clear(self, value: str) -> None:
+        if self._missing_wallpaper_clear_pending == value:
+            return
+        self._missing_wallpaper_clear_pending = value
+        QTimer.singleShot(0, lambda path=value: self._clear_missing_wallpaper(path))
+
+    def _clear_missing_wallpaper(self, value: str) -> None:
+        try:
+            current = str(self.controller.state.settings.ui_wallpaper or "").strip()
+            if current != value or Path(value).is_file():
+                return
+            settings = deepcopy(self.controller.state.settings)
+            settings.ui_wallpaper = ""
+            self.controller.update_settings(settings)
+            logging.getLogger("xray_fluent.app").warning("[ui] Cleared missing wallpaper: %s", value)
+        finally:
+            if self._missing_wallpaper_clear_pending == value:
+                self._missing_wallpaper_clear_pending = ""
 
     @pyqtSlot(str)
     def setUiWallpaper(self, value: str) -> None:
@@ -1285,6 +1309,12 @@ class AppBridge(QObject):
     def setReconnectOnNetworkChange(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.reconnect_on_network_change = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setPreferIpv6(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.prefer_ipv6 = bool(enabled)
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
@@ -2749,6 +2779,13 @@ class AppBridge(QObject):
             return bool(self.controller.state.settings.reconnect_on_network_change)
         except Exception:
             return True
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def preferIpv6(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.prefer_ipv6)
+        except Exception:
+            return False
 
     @pyqtProperty(bool, notify=settingsChanged)
     def killSwitch(self) -> bool:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import ntpath
+from copy import deepcopy
 from ipaddress import ip_network
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,21 @@ _SINGBOX_RULE_SET_SOURCES = {
     },
 }
 _SINGBOX_MANAGED_RULE_SET_TAGS = {key.replace(":", "-") for key in _SINGBOX_RULE_SET_SOURCES}
+_BROWSER_DOH_DOMAIN_SUFFIXES = [
+    "cloudflare-dns.com",
+    "dns.adguard.com",
+    "dns.alidns.com",
+    "dns.cloudflare.com",
+    "dns.google",
+    "dns.nextdns.io",
+    "dns.quad9.net",
+    "doh.dns.sb",
+    "doh.opendns.com",
+    "doh.pub",
+    "doh.sb",
+    "mozilla.cloudflare-dns.com",
+    "one.one.one.one",
+]
 
 _XRAY_UNSUPPORTED_GEOIP_CODES = {
     "geoip:lumen-exclude",
@@ -366,7 +382,7 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         existing_dns_rules[:] = [
             rule for rule in existing_dns_rules if not _is_lumen_singbox_dns_rule(rule)
         ]
-        if routing.dns_fake_enabled and "fake-dns" in dns_tags:
+        if "fake-dns" in dns_tags:
             existing_dns_rules.insert(
                 0,
                 {
@@ -377,14 +393,24 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
             )
         if dns_rules:
             existing_dns_rules[0:0] = dns_rules
+        # Keep the HTTPS/SVCB (type 64/65) reject ahead of every domain rule so
+        # ECH config and HTTP/3 hints are never answered for routed domains.
+        existing_dns_rules[:] = [
+            rule for rule in existing_dns_rules if not _is_https_dns_reject_rule(rule)
+        ]
+        existing_dns_rules.insert(0, {"query_type": ["HTTPS", "SVCB"], "action": "reject"})
+        existing_dns_rules.insert(
+            1,
+            {
+                "domain_suffix": list(_BROWSER_DOH_DOMAIN_SUFFIXES),
+                "action": "reject",
+            },
+        )
 
 
 def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[str, Any]], set[str]]:
     rules: list[dict[str, Any]] = []
     rule_sets: set[str] = set()
-
-    if routing.bypass_lan:
-        rules.append({"ip_is_private": True, "action": "route", "outbound": "direct"})
 
     preset_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
     for preset_id, action in routing.process_preset_routes.items():
@@ -433,6 +459,17 @@ def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[s
         if rule:
             rules.append(rule)
             rule_sets.update(used_sets)
+
+    rules.append(
+        {
+            "ip_cidr": ["198.18.0.0/15", "fc00::/18"],
+            "action": "route",
+            "outbound": _routing_final_outbound(routing),
+        }
+    )
+
+    if routing.bypass_lan:
+        rules.append({"ip_is_private": True, "action": "route", "outbound": "direct"})
     return rules, rule_sets
 
 
@@ -503,6 +540,10 @@ def _is_legacy_lumen_singbox_route_rule(rule: Any) -> bool:
 def _is_lumen_singbox_dns_rule(rule: Any) -> bool:
     if not isinstance(rule, dict):
         return False
+    if _is_https_dns_reject_rule(rule):
+        return True
+    if _is_browser_doh_dns_reject_rule(rule):
+        return True
     if (
         str(rule.get("server") or "") == "fake-dns"
         and set(str(item) for item in rule.get("query_type") or []) == {"A", "AAAA"}
@@ -531,9 +572,41 @@ def _is_lumen_singbox_dns_rule(rule: Any) -> bool:
     return bool(generated_keys & set(rule)) and set(rule).issubset(allowed_keys)
 
 
+def _is_browser_doh_dns_reject_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    if str(rule.get("action") or "") != "reject":
+        return False
+    suffixes = rule.get("domain_suffix")
+    if not isinstance(suffixes, list):
+        return False
+    return [str(item) for item in suffixes] == list(_BROWSER_DOH_DOMAIN_SUFFIXES)
+
+
+def _is_https_dns_reject_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    if str(rule.get("action") or "") != "reject":
+        return False
+    query_type = rule.get("query_type")
+    if not isinstance(query_type, list):
+        return False
+    return {str(item).strip().upper() for item in query_type} == {"HTTPS", "SVCB"}
+
+
 def _singbox_dns_strategy(value: str) -> str:
     strategy = str(value or "").strip().lower().replace("-", "_")
     return strategy if strategy in {"prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"} else "prefer_ipv4"
+
+
+def routing_with_ip_preference(routing: RoutingSettings, *, prefer_ipv6: bool = False) -> RoutingSettings:
+    effective = deepcopy(routing)
+    preferred_strategy = "prefer_ipv6" if prefer_ipv6 else "prefer_ipv4"
+    for attr in ("dns_bootstrap_strategy", "dns_proxy_strategy"):
+        current = _singbox_dns_strategy(str(getattr(effective, attr, "")))
+        if current in {"prefer_ipv4", "prefer_ipv6"}:
+            setattr(effective, attr, preferred_strategy)
+    return effective
 
 
 def _append_singbox_process_rule(

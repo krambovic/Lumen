@@ -421,6 +421,10 @@ Item {
                     Switch { checked: App.reconnectOnNetworkChange; onToggled: App.setReconnectOnNetworkChange(checked) }
                 }
                 SettingRow {
+                    glyph: "\uE968"; title: I18n.t("Предпочитать IPv6"); subtitle: I18n.t("Использовать IPv6-адреса раньше IPv4, если сервер и сеть это поддерживают")
+                    Switch { checked: App.preferIpv6; onToggled: App.setPreferIpv6(checked) }
+                }
+                SettingRow {
                     glyph: "\uE72E"; title: I18n.t("Kill-switch"); subtitle: I18n.t("При обрыве VPN блокировать трафик вместо выхода напрямую")
                     Switch { checked: App.killSwitch; onToggled: App.setKillSwitch(checked) }
                 }

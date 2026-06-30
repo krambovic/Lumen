@@ -410,6 +410,8 @@
   "Сессии": "Sessions",
   "Сессий": "Sessions",
   "Сеть": "Network",
+  "Предпочитать IPv6": "Prefer IPv6",
+  "Использовать IPv6-адреса раньше IPv4, если сервер и сеть это поддерживают": "Use IPv6 addresses before IPv4 when the server and network support it",
   "Сист. прокси": "System proxy",
   "Системный": "System",
   "Системный прокси Windows": "Windows system proxy",

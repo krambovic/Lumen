@@ -426,7 +426,7 @@ Item {
                 verticalAlignment: Text.AlignVCenter
             }
             AccentButton {
-                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.supportUrl; }
+                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.supportUrl); }
                 kind: "ghost"
                 iconOnly: true
                 glyph: "\uE8F2"
@@ -437,7 +437,7 @@ Item {
                 }
             }
             AccentButton {
-                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.profileUrl; }
+                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.profileUrl); }
                 kind: "ghost"
                 iconOnly: true
                 glyph: "\uE774"
@@ -516,7 +516,7 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                     }
                     AccentButton {
-                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.supportUrl; }
+                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.supportUrl); }
                         kind: "ghost"
                         iconOnly: true
                         glyph: "\uE8F2"
@@ -527,7 +527,7 @@ Item {
                         }
                     }
                     AccentButton {
-                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.telegramUrl; }
+                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.telegramUrl); }
                         kind: "ghost"
                         iconOnly: true
                         glyph: "\uE8BD"
@@ -538,7 +538,7 @@ Item {
                         }
                     }
                     AccentButton {
-                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return meta && meta.profileUrl; }
+                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.profileUrl); }
                         kind: "ghost"
                         iconOnly: true
                         glyph: "\uE774"
@@ -686,6 +686,7 @@ Item {
                             required property int ping
                             required property real speed
                             required property bool isAlive
+                            required property bool tested
                             required property bool selected
                             required property bool runtimeSupported
                             required property int speedProgress
@@ -952,8 +953,8 @@ Item {
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         leftPadding: 4
-                                        text: nodeRow.isAlive ? "OK" : ((nodeRow.ping >= 0 || nodeRow.speed >= 0) ? "✕" : "—")
-                                        color: nodeRow.isAlive ? Theme.success : ((nodeRow.ping >= 0 || nodeRow.speed >= 0) ? Theme.danger : Theme.textFaint)
+                                        text: nodeRow.isAlive ? "OK" : (nodeRow.tested ? "✕" : "—")
+                                        color: nodeRow.isAlive ? Theme.success : (nodeRow.tested ? Theme.danger : Theme.textFaint)
                                         font.family: Theme.fontFamily
                                         font.pixelSize: page.cellFont
                                         font.bold: true

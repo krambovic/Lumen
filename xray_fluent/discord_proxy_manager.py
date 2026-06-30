@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 import zipfile
+import ctypes
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request
@@ -133,6 +134,9 @@ def _run_powershell(script: str, *, timeout: float = 20.0) -> subprocess.Complet
 
 
 def _discord_processes() -> list[dict[str, object]]:
+    native = _discord_processes_win32()
+    if native is not None:
+        return native
     names = ",".join(f"'{exe}'" for _, exe in _DISCORD_BRANCHES.values())
     script = (
         f"$names = @({names}); "
@@ -155,6 +159,87 @@ def _discord_processes() -> list[dict[str, object]]:
     if isinstance(data, list):
         return [item for item in data if isinstance(item, dict)]
     return []
+
+
+def _discord_processes_win32() -> list[dict[str, object]] | None:
+    if os.name != "nt":
+        return None
+    wanted = {exe.lower() for _, exe in _DISCORD_BRANCHES.values()}
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", ctypes.c_ulong),
+            ("cntUsage", ctypes.c_ulong),
+            ("th32ProcessID", ctypes.c_ulong),
+            ("th32DefaultHeapID", ctypes.c_void_p),
+            ("th32ModuleID", ctypes.c_ulong),
+            ("cntThreads", ctypes.c_ulong),
+            ("th32ParentProcessID", ctypes.c_ulong),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", ctypes.c_ulong),
+            ("szExeFile", ctypes.c_wchar * 260),
+        ]
+
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateToolhelp32Snapshot.argtypes = (ctypes.c_ulong, ctypes.c_ulong)
+        kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+        kernel32.Process32FirstW.argtypes = (ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W))
+        kernel32.Process32FirstW.restype = ctypes.c_bool
+        kernel32.Process32NextW.argtypes = (ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W))
+        kernel32.Process32NextW.restype = ctypes.c_bool
+        kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_bool, ctypes.c_uint32)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.QueryFullProcessImageNameW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_wchar_p,
+            ctypes.POINTER(ctypes.c_uint32),
+        )
+        kernel32.QueryFullProcessImageNameW.restype = ctypes.c_bool
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if not snapshot or snapshot == ctypes.c_void_p(-1).value:
+            return None
+        try:
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+                return []
+            result: list[dict[str, object]] = []
+            while True:
+                name = str(entry.szExeFile)
+                if name.lower() in wanted:
+                    pid = int(entry.th32ProcessID)
+                    result.append(
+                        {
+                            "ProcessId": pid,
+                            "Name": name,
+                            "ExecutablePath": _query_process_path_win32(kernel32, pid),
+                        }
+                    )
+                if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                    break
+            return result
+        finally:
+            kernel32.CloseHandle(snapshot)
+    except Exception:
+        return None
+
+
+def _query_process_path_win32(kernel32, pid: int) -> str:
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not handle:
+        return ""
+    try:
+        size = ctypes.c_uint32(32768)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+            return ""
+        return str(buffer.value)
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _terminate_discord(install: DiscordInstall) -> None:

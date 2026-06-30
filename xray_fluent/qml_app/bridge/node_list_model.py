@@ -40,6 +40,7 @@ class NodeListModel(QAbstractListModel):
     FlagEmojiRole = Qt.ItemDataRole.UserRole + 18
     FlagSourceRole = Qt.ItemDataRole.UserRole + 19
     TransportRole = Qt.ItemDataRole.UserRole + 20
+    TestedRole = Qt.ItemDataRole.UserRole + 21
 
     _ROLE_NAMES = {
         IdRole: b"nodeId",
@@ -62,6 +63,7 @@ class NodeListModel(QAbstractListModel):
         FlagEmojiRole: b"flagEmoji",
         FlagSourceRole: b"flagSource",
         TransportRole: b"transport",
+        TestedRole: b"tested",
     }
 
     def __init__(self, parent=None) -> None:
@@ -108,6 +110,8 @@ class NodeListModel(QAbstractListModel):
             return -1.0 if node.speed_mbps is None else float(node.speed_mbps)
         if role == self.AliveRole:
             return bool(node.is_alive)
+        if role == self.TestedRole:
+            return bool(node.is_alive is not None or node.ping_history or node.speed_history)
         if role == self.CountryRole:
             return self._country_for(node).lower()
         if role == self.FlagEmojiRole:
@@ -190,7 +194,8 @@ class NodeListModel(QAbstractListModel):
         if row is None:
             return
         self._nodes[row].ping_ms = ping_ms
-        self._emit_row_changed(node_id, [self.PingRole])
+        self._nodes[row].is_alive = ping_ms is not None
+        self._emit_row_changed(node_id, [self.PingRole, self.AliveRole, self.TestedRole])
 
     def update_speed(self, node_id: str, speed_mbps: float | None) -> None:
         row = self._index_by_id.get(node_id)
@@ -198,14 +203,14 @@ class NodeListModel(QAbstractListModel):
             return
         self._nodes[row].speed_mbps = speed_mbps
         self._speed_progress.pop(node_id, None)
-        self._emit_row_changed(node_id, [self.SpeedRole, self.SpeedProgressRole])
+        self._emit_row_changed(node_id, [self.SpeedRole, self.SpeedProgressRole, self.TestedRole])
 
     def update_alive(self, node_id: str, is_alive: bool) -> None:
         row = self._index_by_id.get(node_id)
         if row is None:
             return
         self._nodes[row].is_alive = is_alive
-        self._emit_row_changed(node_id, [self.AliveRole])
+        self._emit_row_changed(node_id, [self.AliveRole, self.TestedRole])
 
     def update_speed_progress(self, node_id: str, percent: int) -> None:
         if node_id not in self._index_by_id:

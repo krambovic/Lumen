@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 import json
 import os
+import re
 import socket
 import subprocess
 import threading
@@ -55,6 +56,7 @@ class SingBoxManager(QObject):
         self._last_noisy_summary_at = 0.0
         self._last_exit_code: int | None = None
         self._exe_path: Path | None = None
+        self._access_traces: dict[str, dict[str, str]] = {}
 
     @property
     def is_running(self) -> bool:
@@ -103,6 +105,7 @@ class SingBoxManager(QObject):
 
         # A freshly killed sing-box can still hold the clash-api port; wait for it.
         self._wait_clash_api_port_released()
+        self._flush_windows_dns_cache("before TUN start")
 
         # Set working directory to core/ so sing-box can find wintun.dll
         core_dir = exe.parent
@@ -151,12 +154,7 @@ class SingBoxManager(QObject):
             if self._wait_until_tun_ready(proc, tun_interface_name):
                 adapter_ms = int((time.monotonic() - attempt_started) * 1000)
                 self.log_received.emit(f"[tun] adapter and routes ready in {adapter_ms} ms")
-                threading.Thread(
-                    target=self._warm_windows_dns,
-                    args=(proc,),
-                    name="tun-dns-warmup",
-                    daemon=True,
-                ).start()
+                self._flush_windows_dns_cache("after TUN ready")
                 self._starting = False
                 total_ms = int((time.monotonic() - attempt_started) * 1000)
                 self.log_received.emit(
@@ -169,6 +167,12 @@ class SingBoxManager(QObject):
             retryable = exited and self._startup_error_is_retryable()
             if not exited:
                 self.stop(expected=True)
+                if attempt < 2:
+                    self.cleanup_orphaned_tun_adapters()
+                    self._wait_tun_released()
+                    self._wait_clash_api_port_released()
+                    self._starting = True
+                    continue
 
             if retryable and attempt < 2:
                 self._kill_orphaned(exe)
@@ -254,6 +258,7 @@ class SingBoxManager(QObject):
         # reconnect and delays the first real connections.
         self._starting = False
         self._wait_tun_released(max_wait=release_timeout)
+        self._flush_windows_dns_cache("after TUN stop")
         return True
 
     def _wait_proc(self, proc: subprocess.Popen[bytes], timeout_sec: float) -> bool:
@@ -316,6 +321,24 @@ class SingBoxManager(QObject):
             sleep_with_events(step)
             waited += step
 
+    def _flush_windows_dns_cache(self, reason: str) -> None:
+        if os.name != "nt":
+            return
+        try:
+            result = run_text_pumped(
+                ["ipconfig", "/flushdns"],
+                timeout=4,
+                check=False,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            if result.returncode == 0:
+                self.log_received.emit(f"[tun] DNS cache flushed ({reason})")
+            else:
+                text = result_output_text(result).strip()
+                self.log_received.emit(f"[tun] DNS cache flush failed ({reason}): {text or result.returncode}")
+        except Exception as exc:
+            self.log_received.emit(f"[tun] DNS cache flush failed ({reason}): {exc}")
+
     @staticmethod
     def cleanup_orphaned_tun_adapters(max_wait: float = 5.0) -> None:
         """Remove routes from app-owned sing-box TUN adapters and disable them."""
@@ -350,6 +373,11 @@ class SingBoxManager(QObject):
                     for line in text.splitlines():
                         clean = line.rstrip()
                         if clean:
+                            access_line = self._format_access_log_line(clean)
+                            if access_line:
+                                self._last_output_lines.append(access_line)
+                                self.log_received.emit(access_line)
+                                continue
                             if self._is_noisy_runtime_line(clean):
                                 self._suppressed_noisy_lines += 1
                                 now = time.monotonic()
@@ -417,7 +445,7 @@ class SingBoxManager(QObject):
         self,
         proc: subprocess.Popen[bytes],
         tun_interface_name: str,
-        max_wait: float = 8.0,
+        max_wait: float = 14.0,
     ) -> bool:
         # Treat the runtime as ready only after Windows sees both the adapter
         # address and a broad route through it. One persistent PowerShell probe
@@ -571,9 +599,99 @@ class SingBoxManager(QObject):
             return True
         if "wsarecv" in text or "wsasend" in text:
             return True
-        if any(marker in text for marker in ("error", "failed", "timeout", "deadline", "fatal", "panic")):
+        # Routine sing-box-extended info chatter that v2rayN never surfaces:
+        # process matching and successful DNS exchanges. Keep this above the
+        # error guard so genuine failures (handled below) are still shown.
+        has_error_token = any(
+            marker in text for marker in ("error", "failed", "timeout", "deadline", "fatal", "panic")
+        )
+        if not has_error_token and any(
+            marker in text
+            for marker in (
+                "found process",
+                "process_name=",
+                "process_path=",
+                "dns: exchanged",
+                "exchanged for",
+                "dns: lookup",
+                "dns: cached",
+                "dns: resolve",
+                "dns: domain",
+                "router: match[",
+                "router: found",
+                "sniffed ",
+                "decided to ",
+            )
+        ):
+            return True
+        if has_error_token:
             return False
         return False
+
+    _TRACE_RE = re.compile(r"\[(?P<trace>\d+)\s+[^\]]+\]\s+(?P<body>.+)$")
+    _INBOUND_RE = re.compile(
+        r"inbound/(?P<type>[^\[]+)\[(?P<tag>[^\]]+)\]: inbound (?P<packet>packet )?connection to (?P<dest>\S+)"
+    )
+    _OUTBOUND_RE = re.compile(
+        r"outbound/[^\[]+\[(?P<tag>[^\]]+)\]: outbound (?P<packet>packet )?connection to (?P<dest>\S+)"
+    )
+
+    def _format_access_log_line(self, line: str) -> str:
+        match = self._TRACE_RE.search(line)
+        if not match:
+            return ""
+        trace = match.group("trace")
+        body = match.group("body")
+        inbound = self._INBOUND_RE.search(body)
+        if inbound:
+            tag = inbound.group("tag")
+            source = self._access_source_for_inbound(tag, inbound.group("type"))
+            network = "udp" if inbound.group("packet") else "tcp"
+            self._access_traces[trace] = {
+                "source": source,
+                "network": network,
+                "dest": inbound.group("dest"),
+                "at": str(time.monotonic()),
+            }
+            self._trim_access_traces()
+            return ""
+        outbound = self._OUTBOUND_RE.search(body)
+        if not outbound:
+            return ""
+        info = self._access_traces.pop(trace, {})
+        source = info.get("source") or "tun"
+        network = info.get("network") or ("udp" if outbound.group("packet") else "tcp")
+        dest = info.get("dest") or outbound.group("dest")
+        target = outbound.group("tag") or "proxy"
+        return f"[singbox-access] accepted {network}:{dest} [{source} -> {target}]"
+
+    @staticmethod
+    def _access_source_for_inbound(tag: str, inbound_type: str) -> str:
+        tag = str(tag or "").strip()
+        inbound_type = str(inbound_type or "").strip().lower()
+        if tag == "tun-in" or inbound_type == "tun":
+            return "tun"
+        if tag == "http-in" or inbound_type == "http":
+            return "http"
+        if tag in {"socks-in", "mixed-in"} or inbound_type in {"socks", "mixed"}:
+            return "socks"
+        if tag == "discord-socks-in":
+            return "discord"
+        return tag or inbound_type or "inbound"
+
+    def _trim_access_traces(self) -> None:
+        if len(self._access_traces) <= 512:
+            return
+        now = time.monotonic()
+        stale = [
+            trace
+            for trace, info in self._access_traces.items()
+            if now - float(info.get("at") or 0.0) > 30.0
+        ]
+        for trace in stale:
+            self._access_traces.pop(trace, None)
+        while len(self._access_traces) > 512:
+            self._access_traces.pop(next(iter(self._access_traces)), None)
 
 
 def get_singbox_version(singbox_path: str) -> str | None:

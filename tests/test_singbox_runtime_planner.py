@@ -142,16 +142,66 @@ def _tun_inbound(config: dict) -> dict:
     return next(inbound for inbound in config["inbounds"] if inbound.get("type") == "tun")
 
 
+def _tun_dns_hijack_rule() -> dict:
+    return {
+        "type": "logical",
+        "mode": "or",
+        "rules": [{"port": 53}, {"protocol": "dns"}],
+        "action": "hijack-dns",
+    }
+
+
+def _tun_sniff_rule() -> dict:
+    return {
+        "action": "sniff",
+        "timeout": "1s",
+    }
+
+
 def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults() -> None:
     config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
     inbound = _tun_inbound(config)
 
     assert inbound["interface_name"] == "singbox_tun"
-    assert inbound["address"] == ["172.18.0.1/30"]
+    assert inbound["address"] == ["172.18.0.1/30", "fdfe:dcba:9876::1/126"]
     assert inbound["mtu"] == 1280
     assert inbound["stack"] == "gvisor"
     assert inbound["auto_route"] is True
+    assert "route_address" not in inbound
     assert inbound["strict_route"] is False
+    assert config["route"]["rules"][0] == _tun_sniff_rule()
+    assert any(
+        rule.get("inbound") == ["tun-in"]
+        and rule.get("protocol") == "quic"
+        and rule.get("action") == "reject"
+        for rule in config["route"]["rules"]
+    )
+
+
+def test_tun_runtime_keeps_v2rayn_style_local_proxy_inbounds() -> None:
+    config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
+
+    inbounds = {inbound.get("tag"): inbound for inbound in config["inbounds"]}
+    rules = config["route"]["rules"]
+
+    assert inbounds["socks-in"] == {
+        "type": "mixed",
+        "tag": "socks-in",
+        "listen": "127.0.0.1",
+        "listen_port": 10808,
+    }
+    assert inbounds["http-in"] == {
+        "type": "http",
+        "tag": "http-in",
+        "listen": "127.0.0.1",
+        "listen_port": 10809,
+    }
+    assert any(
+        rule.get("inbound") == ["socks-in", "http-in"]
+        and rule.get("outbound") == "proxy"
+        and rule.get("action") == "route"
+        for rule in rules
+    )
 
 
 def test_disabled_tls_fragment_is_not_added_to_tun_rules() -> None:
@@ -164,7 +214,58 @@ def test_disabled_tls_fragment_is_not_added_to_tun_rules() -> None:
         enable_final_fragment=False,
     ).singbox_config
 
-    assert not any(rule.get("tls_record_fragment") for rule in config["route"]["rules"])
+    assert not any(rule.get("tls_record_fragment") or rule.get("tls_fragment") for rule in config["route"]["rules"])
+
+
+def test_tun_runtime_uses_extended_tls_fragment_rule() -> None:
+    config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
+
+    fragment_rules = [
+        rule
+        for rule in config["route"]["rules"]
+        if rule.get("action") == "route-options" and rule.get("protocol") == ["tls"]
+    ]
+
+    assert fragment_rules == [
+        {
+            "protocol": ["tls"],
+            "action": "route-options",
+            "tls_fragment": True,
+            "tls_fragment_fallback_delay": "500ms",
+        }
+    ]
+
+
+def test_tun_runtime_rejects_browser_doh_before_dns_hijack() -> None:
+    config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
+    rules = config["route"]["rules"]
+
+    doh_rule = next(
+        rule
+        for rule in rules
+        if rule.get("action") == "reject"
+        and rule.get("inbound") == ["tun-in"]
+        and "cloudflare-dns.com" in rule.get("domain_suffix", [])
+        and "dns.google" in rule.get("domain_suffix", [])
+    )
+
+    assert rules.index(_tun_sniff_rule()) < rules.index(doh_rule) < rules.index(_tun_dns_hijack_rule())
+
+
+def test_tun_runtime_rejects_browser_doh_dns_before_fakeip() -> None:
+    config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
+    dns_rules = config["dns"]["rules"]
+
+    https_index = next(index for index, rule in enumerate(dns_rules) if rule.get("query_type") == ["HTTPS", "SVCB"])
+    doh_index = next(
+        index
+        for index, rule in enumerate(dns_rules)
+        if rule.get("action") == "reject"
+        and "dns.google" in [str(item) for item in rule.get("domain_suffix") or []]
+    )
+    fake_index = next(index for index, rule in enumerate(dns_rules) if rule.get("server") == "fake-dns")
+
+    assert https_index < doh_index < fake_index
 
 
 def test_vmess_xhttp_uses_xray_sidecar_but_vless_xhttp_stays_native() -> None:
@@ -210,14 +311,91 @@ def test_system_dns_mode_uses_physical_adapter_dns_without_local_recursion() -> 
     rules = config["route"]["rules"]
     servers = _dns_servers(config)
 
-    assert [rule for rule in rules if rule.get("action") == "hijack-dns"] == [
-        {"port": 53, "action": "hijack-dns"}
-    ]
-    for tag in ("bootstrap-dns", "direct-dns", "proxy-dns"):
+    assert [rule for rule in rules if rule.get("action") == "hijack-dns"] == [_tun_dns_hijack_rule()]
+    for tag in ("bootstrap-dns", "direct-dns"):
         assert servers[tag]["type"] == "udp"
         assert servers[tag]["server"] == "192.0.2.53"
         assert servers[tag]["detour"] == "direct"
-    assert "fake-dns" not in servers
+        assert "domain_resolver" not in servers[tag]
+    assert servers["proxy-dns"]["type"] == "https"
+    assert servers["proxy-dns"]["server"] == "dns.google"
+    assert servers["proxy-dns"]["detour"] == "proxy"
+    assert servers["proxy-dns"]["domain_resolver"] == "bootstrap-dns"
+    assert config["dns"]["final"] == "proxy-dns"
+    assert config["dns"]["strategy"] == "prefer_ipv4"
+    assert config["dns"]["reverse_mapping"] is True
+    assert config["route"]["default_domain_resolver"]["server"] == "proxy-dns"
+    assert config["route"]["default_domain_resolver"]["strategy"] == "prefer_ipv4"
+    # FakeIP is now enabled regardless of system/built-in DNS mode so ECH sites
+    # stay reachable; it adds no upstream recursion.
+    assert servers["fake-dns"]["type"] == "fakeip"
+    assert servers["fake-dns"]["inet4_range"] == "198.18.0.0/15"
+
+
+def test_tun_runtime_forces_fake_dns_even_for_old_saved_settings() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="system",
+            dns_fake_enabled=False,
+            tun_default_outbound="proxy",
+        )
+    )
+
+    servers = _dns_servers(config)
+    dns_rules = config["dns"]["rules"]
+    route_rules = config["route"]["rules"]
+
+    assert servers["fake-dns"]["type"] == "fakeip"
+    assert any(rule.get("server") == "fake-dns" for rule in dns_rules)
+    fake_route = next(
+        rule for rule in route_rules if rule.get("ip_cidr") == ["198.18.0.0/15", "fc00::/18"]
+    )
+    assert fake_route["outbound"] == "proxy"
+
+
+def test_default_system_dns_keeps_proxied_domain_dns_on_proxy_resolver() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="rule",
+            dns_mode="system",
+            proxy_domains=["chatgpt.com"],
+            tun_default_outbound="direct",
+        )
+    )
+
+    servers = _dns_servers(config)
+    dns_rules = config["dns"]["rules"]
+
+    assert servers["bootstrap-dns"]["type"] == "udp"
+    assert servers["bootstrap-dns"]["server"] == "8.8.8.8"
+    assert servers["direct-dns"]["type"] == "udp"
+    assert servers["direct-dns"]["server"] == "8.8.8.8"
+    assert servers["proxy-dns"]["type"] == "https"
+    assert servers["proxy-dns"]["server"] == "dns.google"
+    assert servers["proxy-dns"]["detour"] == "proxy"
+    assert config["dns"]["strategy"] == "prefer_ipv4"
+    assert config["dns"]["reverse_mapping"] is True
+    assert any(
+        rule.get("server") == "proxy-dns"
+        and "chatgpt.com" in rule.get("domain_suffix", [])
+        for rule in dns_rules
+    )
+
+
+def test_tun_dns_can_prefer_ipv6_without_disabling_ipv4() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="system",
+            dns_bootstrap_strategy="prefer_ipv6",
+            dns_proxy_strategy="prefer_ipv6",
+            tun_default_outbound="proxy",
+        )
+    )
+
+    assert config["dns"]["strategy"] == "prefer_ipv6"
+    assert config["route"]["default_domain_resolver"]["strategy"] == "prefer_ipv6"
 
 
 def test_system_dns_mode_falls_back_to_explicit_bootstrap_server() -> None:
@@ -233,9 +411,13 @@ def test_system_dns_mode_falls_back_to_explicit_bootstrap_server() -> None:
 
     servers = _dns_servers(config)
 
-    assert servers["proxy-dns"]["type"] == "udp"
-    assert servers["proxy-dns"]["server"] == "1.1.1.1"
-    assert servers["proxy-dns"]["detour"] == "direct"
+    assert servers["bootstrap-dns"]["type"] == "udp"
+    assert servers["bootstrap-dns"]["server"] == "1.1.1.1"
+    assert servers["bootstrap-dns"]["detour"] == "direct"
+    assert servers["proxy-dns"]["type"] == "https"
+    assert servers["proxy-dns"]["server"] == "dns.google"
+    assert servers["proxy-dns"]["detour"] == "proxy"
+    assert servers["proxy-dns"]["domain_resolver"] == "bootstrap-dns"
 
 
 def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
@@ -253,7 +435,13 @@ def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
     servers = _dns_servers(config)
 
     assert any(rule.get("action") == "hijack-dns" for rule in rules)
+    assert rules.index(_tun_dns_hijack_rule()) < next(
+        index
+        for index, rule in enumerate(rules)
+        if rule.get("action") == "reject" and rule.get("port") == [135, 137, 138, 139, 5353, 5355]
+    )
     assert servers["bootstrap-dns"]["type"] == "udp"
+    assert servers["bootstrap-dns"]["server"] == "8.8.8.8"
     assert servers["bootstrap-dns"]["detour"] == "direct"
     assert servers["direct-dns"]["detour"] == "direct"
     assert servers["proxy-dns"]["detour"] == "proxy"
@@ -265,6 +453,23 @@ def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
         for rule in config["dns"]["rules"]
     )
     assert config["log"]["level"] == "info"
+
+
+def test_fake_dns_runtime_persists_fakeip_cache() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="builtin",
+            dns_fake_enabled=True,
+            tun_default_outbound="proxy",
+        )
+    )
+
+    cache_file = config["experimental"]["cache_file"]
+
+    assert cache_file["enabled"] is True
+    assert cache_file["store_fakeip"] is True
+    assert str(cache_file["path"]).endswith("sing-box-cache.db")
 
 
 def test_builtin_dns_always_hijacks_the_tun_dns_peer() -> None:
@@ -279,7 +484,7 @@ def test_builtin_dns_always_hijacks_the_tun_dns_peer() -> None:
 
     hijack_rules = [rule for rule in config["route"]["rules"] if rule.get("action") == "hijack-dns"]
 
-    assert hijack_rules == [{"port": 53, "action": "hijack-dns"}]
+    assert hijack_rules == [_tun_dns_hijack_rule()]
 
 
 def test_builtin_fake_dns_keeps_real_dns_final_for_direct_default() -> None:
@@ -374,10 +579,12 @@ def test_builtin_dns_does_not_add_resolver_for_ip_dns_servers(dns_type: str) -> 
     assert servers["direct-dns"]["detour"] == "direct"
     assert "domain_resolver" not in servers["direct-dns"]
     assert servers["proxy-dns"]["detour"] == "proxy"
-    if dns_type == "tcp":
+    if dns_type in {"tls", "https"}:
         assert servers["proxy-dns"]["server"] == "dns.google"
+        assert servers["proxy-dns"]["type"] == dns_type
         assert servers["proxy-dns"]["domain_resolver"] == "bootstrap-dns"
     else:
+        assert servers["proxy-dns"]["server"] == "8.8.8.8"
         assert "domain_resolver" not in servers["proxy-dns"]
 
 
@@ -467,6 +674,43 @@ def test_endpoint_resolution_is_reused_within_cache_ttl(monkeypatch: pytest.Monk
     assert planner._resolve_endpoint_addresses("cache.example.com") == ["203.0.113.25"]
     assert planner._resolve_endpoint_addresses("cache.example.com") == ["203.0.113.25"]
     assert calls == 1
+
+
+def test_tun_runtime_rejects_https_svcb_dns_in_system_mode() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="system",
+            dns_fake_enabled=True,
+            tun_default_outbound="proxy",
+        )
+    )
+
+    dns_rules = config["dns"]["rules"]
+    https_rejects = [
+        rule
+        for rule in dns_rules
+        if rule.get("action") == "reject"
+        and {str(item).upper() for item in rule.get("query_type", [])} == {"HTTPS", "SVCB"}
+    ]
+    assert len(https_rejects) == 1
+    # The reject must sit ahead of the A/AAAA -> fake-dns rule so ECH/h3 hints
+    # are never answered for routed domains.
+    fake_index = next(
+        index
+        for index, rule in enumerate(dns_rules)
+        if rule.get("server") == "fake-dns"
+    )
+    reject_index = next(
+        index
+        for index, rule in enumerate(dns_rules)
+        if rule.get("action") == "reject"
+        and {str(item).upper() for item in rule.get("query_type", [])} == {"HTTPS", "SVCB"}
+    )
+    assert reject_index < fake_index
+
+    servers = _dns_servers(config)
+    assert servers["fake-dns"]["type"] == "fakeip"
 
 
 def test_tun_runtime_does_not_reject_quic_globally() -> None:

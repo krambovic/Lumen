@@ -142,6 +142,7 @@ from .engines.singbox import (
     SingboxDocumentState,
     SingboxRuntimePlan,
 )
+from .routing_runtime import routing_with_ip_preference
 from .constants import (
     APP_NAME,
     DEFAULT_DISCORD_SOCKS_PORT,
@@ -842,10 +843,11 @@ class AppController(QObject):
             preferred_relay_port = session.sidecar_relay_port
             preferred_protect_port = session.protect_ss_port
             preferred_protect_password = session.protect_ss_password
+        runtime_routing = self._runtime_routing()
         return plan_singbox_runtime(
             document,
             node,
-            routing=self.state.routing,
+            routing=runtime_routing,
             enable_final_fragment=self.state.settings.enable_final_fragment,
             fragment_packets=self.state.settings.fragment_packets,
             fragment_length=self.state.settings.fragment_length,
@@ -876,6 +878,9 @@ class AppController(QObject):
         else:
             self._protect_ss_port = 0
             self._protect_ss_password = ""
+            if self.xray.is_running and not self.xray.stop():
+                self._log("[tun] failed to stop xray before starting sing-box local proxy inbounds")
+                return False
 
         sb_ok = self.singbox.start(self.state.settings.singbox_path, plan.singbox_config)
         self._log(f"[tun] sing-box start result: {sb_ok}")
@@ -890,6 +895,18 @@ class AppController(QObject):
 
     def _build_runtime_xray_config(self, node: Node | None = None, *, tun_mode: bool = False) -> XrayRuntimeConfig:
         return build_runtime_xray_config_operation(self, node, tun_mode=tun_mode)
+
+    def _runtime_routing(
+        self,
+        routing: RoutingSettings | None = None,
+        settings: AppSettings | None = None,
+    ) -> RoutingSettings:
+        settings = settings or self.state.settings
+        routing = routing or self.state.routing
+        return routing_with_ip_preference(
+            routing,
+            prefer_ipv6=bool(getattr(settings, "prefer_ipv6", False)),
+        )
 
     def _transition_signature(
         self,
@@ -1289,7 +1306,7 @@ class AppController(QObject):
                 return None
             cfg = build_xray_config(
                 node,
-                self.state.routing,
+                self._runtime_routing(),
                 self.state.settings,
                 socks_port=DEFAULT_SOCKS_PORT,
                 http_port=DEFAULT_HTTP_PORT,
@@ -1433,7 +1450,15 @@ class AppController(QObject):
     def set_discord_proxy_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
         if enabled:
-            snapshot = scan_network_conflicts({DEFAULT_SOCKS_PORT, DEFAULT_HTTP_PORT, DEFAULT_DISCORD_SOCKS_PORT})
+            ignored_pids = {
+                int(proc.pid)
+                for manager in (self.xray, self.singbox)
+                if (proc := getattr(manager, "_proc", None)) is not None and getattr(proc, "pid", 0)
+            }
+            snapshot = scan_network_conflicts(
+                {DEFAULT_SOCKS_PORT, DEFAULT_HTTP_PORT, DEFAULT_DISCORD_SOCKS_PORT},
+                ignored_pids=ignored_pids,
+            )
             conflicts = list(snapshot.get("apps") or [])
             if conflicts or snapshot.get("unknown_client"):
                 name = ", ".join(conflicts[:4]) if conflicts else "другой VPN/прокси-клиент"
@@ -1727,6 +1752,11 @@ class AppController(QObject):
         self.log_line.emit(line)
 
     def _on_xray_log(self, line: str) -> None:
+        if self._is_noisy_local_proxy_log(line):
+            self._routine_log_count = getattr(self, "_routine_log_count", 0) + 1
+            if self._routine_log_count % 50 == 0:
+                self._core_logger.info("[core] %d routine local proxy logs suppressed", self._routine_log_count)
+            return
         if self.state.settings.tun_mode and self._is_noisy_tun_log(line):
             self._tun_log_count = getattr(self, "_tun_log_count", 0) + 1
             if self._tun_log_count % 50 == 0:
@@ -1743,6 +1773,22 @@ class AppController(QObject):
             self._on_xray_log(clean)
         else:
             self._on_xray_log(f"[{source}] {clean}")
+
+    @staticmethod
+    def _is_noisy_local_proxy_log(line: str) -> bool:
+        text = line.lower()
+        if "proxy/http: failed to write response" in text and (
+            "wsasend" in text
+            or "wsarecv" in text
+            or "connection was aborted by the software in your host machine" in text
+        ):
+            return True
+        if (
+            "127.0.0.1" in text
+            and "an established connection was aborted by the software in your host machine" in text
+        ):
+            return True
+        return False
 
     @staticmethod
     def _is_noisy_tun_log(line: str) -> bool:

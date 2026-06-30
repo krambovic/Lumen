@@ -46,9 +46,14 @@ def _install_message_filter() -> None:
 
     def _handler(msg_type, context, message) -> None:
         text = message or ""
-        if "Retrying to obtain clipboard" in text or (
+        if (
+            "Retrying to obtain clipboard" in text
+            or "Unable to obtain clipboard" in text
+        ) or (
             "qt.qpa.mime" in text and "clipboard" in text
         ):
+            return
+        if text.startswith("QWindowsWindow::setGeometry: Unable to set geometry"):
             return
         try:
             import logging

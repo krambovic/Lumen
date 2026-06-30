@@ -14,6 +14,33 @@ if TYPE_CHECKING:
     from ..models import Node
 
 
+def _clear_ping_measurements(controller: AppController, nodes: list[Node]) -> None:
+    changed = False
+    for node in nodes:
+        if node.ping_ms is None and node.is_alive is None:
+            continue
+        node.ping_ms = None
+        node.is_alive = None
+        controller.ping_updated.emit(node.id, None)
+        changed = True
+    if changed:
+        controller.schedule_save()
+
+
+def _clear_speed_measurements(controller: AppController, nodes: list[Node]) -> None:
+    changed = False
+    for node in nodes:
+        if node.speed_mbps is None and node.is_alive is None:
+            continue
+        node.speed_mbps = None
+        node.is_alive = None
+        controller.speed_updated.emit(node.id, None, False)
+        controller.speed_progress_updated.emit(node.id, 0)
+        changed = True
+    if changed:
+        controller.schedule_save()
+
+
 def ping_nodes(
     controller: AppController,
     node_ids: set[str] | None = None,
@@ -36,6 +63,7 @@ def ping_nodes(
     controller._ping_total = len(nodes)
     controller._ping_completed = 0
     controller._ping_node_map = {node.id: node for node in nodes}
+    _clear_ping_measurements(controller, nodes)
     controller.bulk_task_progress.emit("ping", 0, controller._ping_total, False)
 
     if resolved_method == "real":
@@ -95,6 +123,7 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
     controller._speed_total = len(nodes)
     controller._speed_completed = 0
     controller._speed_node_map = {node.id: node for node in nodes}
+    _clear_speed_measurements(controller, nodes)
     controller.bulk_task_progress.emit("speed", 0, controller._speed_total, False)
     controller._speed_worker = SpeedTestWorker(
         nodes,
@@ -172,8 +201,7 @@ def on_speed_result(controller: AppController, node_id: str, speed_mbps: float |
     node = getattr(controller, "_speed_node_map", {}).get(node_id)
     if node is not None:
         node.speed_mbps = speed_mbps
-        if is_alive or node.is_alive is None:
-            node.is_alive = is_alive
+        node.is_alive = is_alive
         ts = datetime.now(timezone.utc).isoformat()
         node.speed_history.append((ts, speed_mbps))
         if len(node.speed_history) > 50:

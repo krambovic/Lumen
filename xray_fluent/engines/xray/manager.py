@@ -105,39 +105,67 @@ class XrayManager(QObject):
         self._last_exit_code = None
         self._last_output_lines.clear()
 
-        try:
-            proc = subprocess.Popen(
-                [str(exe), "run", "-c", str(XRAY_CONFIG_FILE)],
-                cwd=str(exe.parent),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                bufsize=0,
-                creationflags=_CREATE_NO_WINDOW,
+        for attempt in range(2):
+            self._last_output_lines.clear()
+            self._stop_requested = False
+            self._last_exit_expected = False
+            self._last_exit_code = None
+            if attempt:
+                self.log_received.emit("[xray] ports were not ready; restarting core once")
+                port_error = self._ensure_ports_available(required_ports)
+                if port_error:
+                    self._starting = False
+                    self._report_startup_failure(port_error)
+                    return False
+
+            try:
+                proc = subprocess.Popen(
+                    [str(exe), "run", "-c", str(XRAY_CONFIG_FILE)],
+                    cwd=str(exe.parent),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    bufsize=0,
+                    creationflags=_CREATE_NO_WINDOW,
+                )
+            except Exception as exc:
+                self._starting = False
+                self._report_startup_failure(f"Не удалось запустить Xray: {exc}")
+                return False
+
+            with self._lock:
+                self._proc = proc
+            self._reader = threading.Thread(
+                target=self._read_output,
+                args=(proc,),
+                name="xray-output-reader",
+                daemon=True,
             )
-        except Exception as exc:
+            self._reader.start()
+
+            if self._wait_until_ready(required_ports, report_on_failure=False):
+                self._starting = False
+                self._on_started(proc)
+                return True
+
+            if not self._proc_alive():
+                self._starting = False
+                self._report_startup_failure(self._unexpected_exit_message(self._last_exit_code, startup=True))
+                return False
+
+            self.stop(expected=True, fast=attempt == 0)
+            if attempt == 0:
+                sleep_with_events(0.5)
+                self._starting = True
+                continue
+
             self._starting = False
-            self._report_startup_failure(f"Не удалось запустить Xray: {exc}")
-            return False
-
-        with self._lock:
-            self._proc = proc
-        self._reader = threading.Thread(
-            target=self._read_output,
-            args=(proc,),
-            name="xray-output-reader",
-            daemon=True,
-        )
-        self._reader.start()
-
-        self._on_started(proc)
-
-        if not self._wait_until_ready(required_ports):
-            self._starting = False
+            details = self._not_ready_ports_detail(required_ports)
+            self._report_startup_failure(f"Xray запустился, но не открыл нужные порты: {details}")
             return False
 
         self._starting = False
-        return True
+        return False
 
     def stop(self, expected: bool = True, *, fast: bool = False) -> bool:
         with self._lock:
@@ -423,28 +451,44 @@ class XrayManager(QObject):
             hint = " Перезапустите приложение или завершите зависший Xray, который держит API порт."
         return f"{prefix} уже занят {owner}.{hint}"
 
-    def _wait_until_ready(self, port_roles: dict[int, str], timeout_sec: float = 5.0) -> bool:
+    def _wait_until_ready(
+        self,
+        port_roles: dict[int, str],
+        timeout_sec: float = 15.0,
+        *,
+        report_on_failure: bool = True,
+    ) -> bool:
         if not port_roles:
             return True
         deadline = time.monotonic() + timeout_sec
         while time.monotonic() < deadline:
             pump_qt_events()
             if not self._proc_alive():
-                self._report_startup_failure(self._unexpected_exit_message(self._last_exit_code, startup=True))
+                if report_on_failure:
+                    self._report_startup_failure(self._unexpected_exit_message(self._last_exit_code, startup=True))
                 return False
             if all(self._is_port_ready(port) for port in port_roles):
                 return True
             sleep_with_events(0.1)
-        not_ready = [f"{role} {port}" if role else str(port) for port, role in port_roles.items() if not self._is_port_ready(port)]
-        self.stop(expected=True)
-        details = ", ".join(not_ready) if not_ready else "нужные порты"
-        self._report_startup_failure(f"Xray запустился, но не открыл нужные порты: {details}")
+        if report_on_failure:
+            self.stop(expected=True)
+            self._report_startup_failure(
+                f"Xray запустился, но не открыл нужные порты: {self._not_ready_ports_detail(port_roles)}"
+            )
         return False
+
+    def _not_ready_ports_detail(self, port_roles: dict[int, str]) -> str:
+        not_ready = [
+            f"{role} {port}" if role else str(port)
+            for port, role in port_roles.items()
+            if not self._is_port_ready(port)
+        ]
+        return ", ".join(not_ready) if not_ready else "нужные порты"
 
     @staticmethod
     def _is_port_ready(port: int) -> bool:
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
                 return True
         except OSError:
             return False

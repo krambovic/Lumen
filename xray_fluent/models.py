@@ -95,7 +95,7 @@ class RoutingSettings:
     dns_proxy_server: str = "8.8.8.8"     # DNS for proxy traffic
     dns_proxy_type: str = "https"          # tcp | tls | https
     dns_proxy_strategy: str = "prefer_ipv4"
-    dns_fake_enabled: bool = False
+    dns_fake_enabled: bool = True
     dns_hijack_enabled: bool = True
     tun_route_exclude_address: list[str] = field(default_factory=list)
     process_rules: list[dict[str, str]] = field(default_factory=list)  # [{"process": "chrome.exe", "action": "direct|proxy|block"}]
@@ -160,7 +160,7 @@ class RoutingSettings:
             dns_proxy_server=str(data.get("dns_proxy_server") or "8.8.8.8"),
             dns_proxy_type=str(data.get("dns_proxy_type") or "https"),
             dns_proxy_strategy=str(data.get("dns_proxy_strategy") or "prefer_ipv4"),
-            dns_fake_enabled=bool(data.get("dns_fake_enabled", False)),
+            dns_fake_enabled=bool(data.get("dns_fake_enabled", True)),
             dns_hijack_enabled=bool(data.get("dns_hijack_enabled", True)),
             tun_route_exclude_address=[
                 str(item).strip()
@@ -212,6 +212,7 @@ class AppSettings:
     launch_on_startup: bool = False
     always_run_as_admin: bool = False
     reconnect_on_network_change: bool = True
+    prefer_ipv6: bool = False
     # Kill-switch: при неожиданном обрыве VPN не выпускать трафик напрямую (fail-closed).
     kill_switch: bool = False
     # Проверять обновления ядер и geoip/geosite при запуске и уведомлять.
@@ -294,6 +295,7 @@ class AppSettings:
             "launch_on_startup": self.launch_on_startup,
             "always_run_as_admin": self.always_run_as_admin,
             "reconnect_on_network_change": self.reconnect_on_network_change,
+            "prefer_ipv6": self.prefer_ipv6,
             "kill_switch": self.kill_switch,
             "resource_update_check": self.resource_update_check,
             "xray_path": self.xray_path,
@@ -370,6 +372,7 @@ class AppSettings:
             launch_on_startup=bool(data.get("launch_on_startup", False)),
             always_run_as_admin=bool(data.get("always_run_as_admin", False)),
             reconnect_on_network_change=bool(data.get("reconnect_on_network_change", True)),
+            prefer_ipv6=bool(data.get("prefer_ipv6", False)),
             kill_switch=bool(data.get("kill_switch", False)),
             resource_update_check=bool(data.get("resource_update_check", False)),
             xray_path=str(data.get("xray_path") or ""),

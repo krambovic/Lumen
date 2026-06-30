@@ -37,6 +37,7 @@ PRESETS_DIR = ZAPRET_DIR / "presets"
 PROGRAM_DATA_DIR = Path(os.environ.get("ProgramData") or r"C:\ProgramData")
 AT_CONFIG_DIR = PROGRAM_DATA_DIR / "LumenKVN" / "zapret" / "winws2_at_config"
 _INLINE_ARG_SPLIT_RE = re.compile(r"(?<=\S)\s+(?=--)")
+_LIST_FILE_ARG_RE = re.compile(r"^--(?:ipset|ipset-exclude|hostlist|hostlist-exclude)=(.+)$")
 _ELEVATION_ERROR_MARKERS = (
     "elevation",
     "requires elevation",
@@ -102,6 +103,7 @@ class ZapretManager(QObject):
         self._start_retry_count = 0
         self._current_at_config: Path | None = None
         self._launch_mode = "direct"
+        self._output_tail: list[str] = []
         self._health_timer = QTimer(self)
         self._health_timer.setInterval(3000)
         self._health_timer.timeout.connect(self._check_health)
@@ -381,6 +383,43 @@ class ZapretManager(QObject):
             return f"Не найдены файлы Zapret: {', '.join(missing)}"
         return ""
 
+    @staticmethod
+    def _referenced_zapret_files(args: list[str]) -> list[Path]:
+        paths: list[Path] = []
+        for arg in args:
+            match = _LIST_FILE_ARG_RE.match(str(arg or "").strip())
+            if not match:
+                continue
+            value = match.group(1).strip().strip('"')
+            if not value or "," in value or "://" in value:
+                continue
+            path = Path(value)
+            if path.is_absolute():
+                continue
+            paths.append(ZAPRET_DIR / path)
+        return paths
+
+    @staticmethod
+    def _ensure_compatibility_lists() -> None:
+        lists_dir = ZAPRET_DIR / "lists"
+        ipset_base = lists_dir / "ipset-base.txt"
+        ipset_all = lists_dir / "ipset-all.txt"
+        if ipset_base.exists() or not ipset_all.is_file():
+            return
+        try:
+            shutil.copy2(ipset_all, ipset_base)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _missing_referenced_files(args: list[str]) -> list[Path]:
+        ZapretManager._ensure_compatibility_lists()
+        missing: list[Path] = []
+        for path in ZapretManager._referenced_zapret_files(args):
+            if not path.is_file():
+                missing.append(path)
+        return missing
+
     def start(
         self,
         preset_name: str,
@@ -400,6 +439,20 @@ class ZapretManager(QObject):
         args = self._parse_preset_args(preset)
         if not args:
             self.error.emit(f"Пресет пустой: {preset_name}")
+            return
+
+        missing_files = self._missing_referenced_files(args)
+        if missing_files:
+            preview_items: list[str] = []
+            for path in missing_files[:6]:
+                try:
+                    preview_items.append(str(path.relative_to(ZAPRET_DIR)))
+                except ValueError:
+                    preview_items.append(str(path))
+            preview = ", ".join(preview_items)
+            if len(missing_files) > 6:
+                preview += f" ... (+{len(missing_files) - 6})"
+            self.error.emit(f"Не найдены файлы списков Zapret: {preview}")
             return
 
         was_running = self.running
@@ -439,6 +492,7 @@ class ZapretManager(QObject):
         self._start_retry_count = int(_retry_count)
         self._current_at_config = at_config
         self._launch_mode = launch_mode
+        self._output_tail = []
 
         self._process = QProcess(self)
         self._process.setProgram(str(exe))
@@ -509,6 +563,7 @@ class ZapretManager(QObject):
         self._start_retry_count = 0
         self._current_at_config = None
         self._launch_mode = "direct"
+        self._output_tail = []
         killed = self._kill_orphaned(
             timeout=1 if fast else 5,
             taskkill_timeout=1 if fast else 3,
@@ -656,7 +711,9 @@ class ZapretManager(QObject):
         data = self._process.readAllStandardOutput().data()
         for line in decode_output(bytes(data)).splitlines():
             if line.strip():
-                self.log_line.emit(f"[zapret] {line.strip()}")
+                stripped = line.strip()
+                self._remember_output(stripped)
+                self.log_line.emit(f"[zapret] {stripped}")
 
     def _on_stderr(self) -> None:
         if self._process is None:
@@ -664,7 +721,14 @@ class ZapretManager(QObject):
         data = self._process.readAllStandardError().data()
         for line in decode_output(bytes(data)).splitlines():
             if line.strip():
-                self.log_line.emit(f"[zapret] {line.strip()}")
+                stripped = line.strip()
+                self._remember_output(stripped)
+                self.log_line.emit(f"[zapret] {stripped}")
+
+    def _remember_output(self, line: str) -> None:
+        self._output_tail.append(line)
+        if len(self._output_tail) > 80:
+            del self._output_tail[:-80]
 
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self._health_timer.stop()
@@ -672,7 +736,9 @@ class ZapretManager(QObject):
         # Drain any buffered output before dropping the process reference
         remaining = self._drain_output()
         for line in remaining:
+            self._remember_output(line)
             self.log_line.emit(f"[zapret] {line}")
+        output_for_diagnostics = list(self._output_tail)
 
         preset = self._current_preset or "?"
         launch_mode = self._launch_mode
@@ -699,7 +765,7 @@ class ZapretManager(QObject):
             if (
                 self._start_retry_count < 1
                 and self._current_preset
-                and self._looks_like_windivert_conflict(exit_code, remaining)
+                and self._looks_like_windivert_conflict(exit_code, output_for_diagnostics)
             ):
                 preset_name = self._current_preset
                 self.log_line.emit("[zapret] winws2 завершился с кодом 1, пробую повторный запуск после очистки WinDivert")
@@ -739,7 +805,7 @@ class ZapretManager(QObject):
                 if len(self._start_args) > 6:
                     preview += f" ... (+{len(self._start_args) - 6} аргументов)"
                 self.log_line.emit(f"[zapret] Команда: winws2.exe {preview}")
-            if not remaining:
+            if not output_for_diagnostics:
                 self.log_line.emit("[zapret] Процесс не вывел ничего в stdout/stderr")
 
             # Краткое сообщение для InfoBar и status_label
@@ -754,6 +820,7 @@ class ZapretManager(QObject):
         self._start_retry_count = 0
         self._current_at_config = None
         self._launch_mode = "direct"
+        self._output_tail = []
         self.stopped.emit()
 
     def _check_health(self) -> None:

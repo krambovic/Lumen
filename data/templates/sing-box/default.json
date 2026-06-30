@@ -9,7 +9,8 @@
       "tag": "tun-in",
       "interface_name": "singbox_tun",
       "address": [
-        "172.18.0.1/30"
+        "172.18.0.1/30",
+        "fdfe:dcba:9876::1/126"
       ],
       "mtu": 1280,
       "auto_route": true,
@@ -103,7 +104,8 @@
   },
   "experimental": {
     "cache_file": {
-      "enabled": true
+      "enabled": true,
+      "store_fakeip": true
     }
   }
 }
