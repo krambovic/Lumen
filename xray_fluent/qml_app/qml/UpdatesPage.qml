@@ -279,10 +279,25 @@ Item {
                         border.width: 1; border.color: Theme.borderSolid
                         clip: true
                         Flickable {
+                            id: notesFlickable
                             anchors.fill: parent; anchors.margins: 10
                             contentHeight: notesText.implicitHeight
                             clip: true
                             boundsBehavior: Flickable.StopAtBounds
+                            WheelHandler {
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                onWheel: (ev) => {
+                                    var maxNotesY = Math.max(0, notesFlickable.contentHeight - notesFlickable.height)
+                                    if (maxNotesY > 0) {
+                                        if (ev.pixelDelta.y !== 0) {
+                                            notesFlickable.contentY = Math.max(0, Math.min(maxNotesY, notesFlickable.contentY - ev.pixelDelta.y))
+                                        } else {
+                                            notesFlickable.contentY = Math.max(0, Math.min(maxNotesY, notesFlickable.contentY - (ev.angleDelta.y / 120) * 40))
+                                        }
+                                    }
+                                    ev.accepted = true
+                                }
+                            }
                             Text {
                                 id: notesText
                                 width: parent.width
