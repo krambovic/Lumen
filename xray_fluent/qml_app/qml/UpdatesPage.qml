@@ -282,6 +282,7 @@ Item {
                             anchors.fill: parent; anchors.margins: 10
                             contentHeight: notesText.implicitHeight
                             clip: true
+                            boundsBehavior: Flickable.StopAtBounds
                             Text {
                                 id: notesText
                                 width: parent.width

@@ -1272,6 +1272,43 @@ class AppBridge(QObject):
         except Exception:
             return False
 
+    @pyqtProperty(int, notify=settingsChanged)
+    def windowWidth(self) -> int:
+        try:
+            return int(self.controller.state.settings.window_width or 1280)
+        except Exception:
+            return 1280
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def windowHeight(self) -> int:
+        try:
+            return int(self.controller.state.settings.window_height or 720)
+        except Exception:
+            return 720
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def windowX(self) -> int:
+        try:
+            return int(self.controller.state.settings.window_x)
+        except Exception:
+            return -1
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def windowY(self) -> int:
+        try:
+            return int(self.controller.state.settings.window_y)
+        except Exception:
+            return -1
+
+    @pyqtSlot(int, int, int, int)
+    def saveWindowGeometry(self, width: int, height: int, x: int, y: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.window_width = int(width)
+        settings.window_height = int(height)
+        settings.window_x = int(x)
+        settings.window_y = int(y)
+        self.controller.update_settings(settings)
+
     # ── «Обновления» settings persistence ───────────────────────
     @pyqtSlot(str)
     def setReleaseChannel(self, channel: str) -> None:

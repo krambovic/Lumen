@@ -9,8 +9,8 @@ import "."
 ApplicationWindow {
     id: win
     visible: false
-    width: 1280
-    height: 720
+    width: App.windowWidth > 0 ? App.windowWidth : 1280
+    height: App.windowHeight > 0 ? App.windowHeight : 720
     minimumWidth: 640
     minimumHeight: 360
     title: App.appName
@@ -85,6 +85,8 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        if (App.windowX >= 0) win.x = App.windowX
+        if (App.windowY >= 0) win.y = App.windowY
         Theme.accent = Qt.binding(function() { return App.accentColor; });
         Theme.dark = Qt.binding(function() { return win.resolveDark(); });
         Theme.density = Qt.binding(function() { return App.uiDensity; });
@@ -97,8 +99,23 @@ ApplicationWindow {
         Theme.preset = Qt.binding(function() { return App.uiThemePreset; });
         Theme.baseTint = Qt.binding(function() { return App.uiBaseTint; });
         Theme.backdropAvailable = Qt.binding(function() { return App.uiBackdropAvailable; });
-
     }
+
+    Timer {
+        id: saveGeometryTimer
+        interval: 500
+        repeat: false
+        onTriggered: {
+            if (win.visibility === Window.Windowed) {
+                App.saveWindowGeometry(win.width, win.height, win.x, win.y)
+            }
+        }
+    }
+
+    onWidthChanged: if (win.visibility === Window.Windowed) saveGeometryTimer.restart()
+    onHeightChanged: if (win.visibility === Window.Windowed) saveGeometryTimer.restart()
+    onXChanged: if (win.visibility === Window.Windowed) saveGeometryTimer.restart()
+    onYChanged: if (win.visibility === Window.Windowed) saveGeometryTimer.restart()
 
     Universal.theme: Theme.dark ? Universal.Dark : Universal.Light
     Universal.accent: Theme.accent
