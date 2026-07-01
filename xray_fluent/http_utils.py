@@ -39,3 +39,20 @@ def build_opener(*handlers: urllib.request.BaseHandler) -> urllib.request.Opener
     """Build opener that uses the patched SSL context."""
     https_handler = urllib.request.HTTPSHandler(context=_ssl_ctx)
     return urllib.request.build_opener(https_handler, *handlers)
+
+
+def build_proxy_opener(proxy_url: str | None = None) -> urllib.request.OpenerDirector:
+    """Build opener with the app proxy when one is available."""
+    if proxy_url:
+        return build_opener(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
+    return build_opener()
+
+
+def urlopen_proxy_first(request: Request | str, *, timeout: float = 15, proxy_url: str | None = None):
+    """Open through the local app proxy first, then fall back to direct."""
+    if proxy_url:
+        try:
+            return build_proxy_opener(proxy_url).open(request, timeout=timeout)
+        except Exception:
+            pass
+    return urlopen(request, timeout=timeout)

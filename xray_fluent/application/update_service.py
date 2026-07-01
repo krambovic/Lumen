@@ -2,10 +2,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ..constants import DEFAULT_HTTP_PORT, PROXY_HOST
 from ..engines.xray import XrayCoreUpdateResult, XrayCoreUpdateWorker
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
+
+
+def _controller_proxy_url(controller: AppController) -> str | None:
+    if not controller.connected:
+        return None
+    try:
+        port = int(controller.get_effective_http_proxy_port() or DEFAULT_HTTP_PORT)
+    except Exception:
+        port = DEFAULT_HTTP_PORT
+    return f"http://{PROXY_HOST}:{port}"
 
 
 def run_xray_core_update(controller: AppController, apply_update: bool, silent: bool = False) -> None:
@@ -33,11 +44,13 @@ def run_xray_core_update(controller: AppController, apply_update: bool, silent: 
         worker_apply = apply_update
 
     controller._xray_update_silent = silent
+    controller._xray_update_proxy_url = _controller_proxy_url(controller)
     controller._xray_update_worker = XrayCoreUpdateWorker(
         controller.state.settings.xray_path,
         controller.state.settings.xray_release_channel,
         controller.state.settings.xray_update_feed_url,
         apply_update=worker_apply,
+        proxy_url=controller._xray_update_proxy_url,
     )
     controller._xray_update_worker.progress.connect(controller.xray_update_progress.emit)
     controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)
@@ -75,6 +88,7 @@ def on_xray_update_worker_done(controller: AppController, result: XrayCoreUpdate
                 controller.state.settings.xray_release_channel,
                 controller.state.settings.xray_update_feed_url,
                 apply_update=True,
+                proxy_url=controller._xray_update_proxy_url,
             )
             controller._xray_update_worker.progress.connect(controller.xray_update_progress.emit)
             controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)

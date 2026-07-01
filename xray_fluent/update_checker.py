@@ -5,7 +5,7 @@ import json
 from urllib.request import Request
 
 from .constants import APP_VERSION
-from .http_utils import urlopen
+from .http_utils import urlopen_proxy_first
 
 
 @dataclass(slots=True)
@@ -17,12 +17,12 @@ class UpdateInfo:
     digest_sha256: str = ""
 
 
-def check_update(feed_url: str, channel: str = "stable", timeout: float = 5.0) -> UpdateInfo | None:
+def check_update(feed_url: str, channel: str = "stable", timeout: float = 5.0, proxy_url: str | None = None) -> UpdateInfo | None:
     if not feed_url:
         return None
 
     request = Request(feed_url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-    with urlopen(request, timeout=timeout) as response:
+    with urlopen_proxy_first(request, timeout=timeout, proxy_url=proxy_url) as response:
         payload = json.loads(response.read().decode("utf-8"))
 
     if isinstance(payload, dict) and "channels" in payload:

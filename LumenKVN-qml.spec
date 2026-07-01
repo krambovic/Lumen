@@ -94,6 +94,7 @@ exe = EXE(
     entitlements_file=None,
     uac_admin=True,
     icon=[str(root / "assets" / "LumenKVN.ico")],
+    version=str(root / "build" / "LumenKVN-version-info.txt"),
     manifest=str(root / "uac_admin.manifest"),
 )
 coll = COLLECT(

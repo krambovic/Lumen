@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from urllib.request import Request
 
-from ...http_utils import urlopen
+from ...http_utils import urlopen_proxy_first
 import zipfile
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -119,9 +119,9 @@ def _normalize_channel(value: str) -> str:
     return "stable"
 
 
-def _request_json(url: str) -> object:
+def _request_json(url: str, *, proxy_url: str | None = None) -> object:
     request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-    with urlopen(request, timeout=12) as response:
+    with urlopen_proxy_first(request, timeout=12, proxy_url=proxy_url) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -168,18 +168,18 @@ def _extract_digest(value: str) -> str:
     return match.group(1) if match else ""
 
 
-def _fetch_dgst_hash(url: str) -> str:
+def _fetch_dgst_hash(url: str, *, proxy_url: str | None = None) -> str:
     request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-    with urlopen(request, timeout=12) as response:
+    with urlopen_proxy_first(request, timeout=12, proxy_url=proxy_url) as response:
         body = response.read().decode("utf-8", errors="replace")
     return _extract_digest(body)
 
 
-def resolve_xray_release(channel: str, feed_url: str = "") -> XrayCoreRelease | None:
+def resolve_xray_release(channel: str, feed_url: str = "", *, proxy_url: str | None = None) -> XrayCoreRelease | None:
     normalized_channel = _normalize_channel(channel)
 
     if feed_url.strip():
-        info = check_update(feed_url.strip(), normalized_channel)
+        info = check_update(feed_url.strip(), normalized_channel, proxy_url=proxy_url)
         if not info:
             return None
         return XrayCoreRelease(
@@ -190,7 +190,7 @@ def resolve_xray_release(channel: str, feed_url: str = "") -> XrayCoreRelease | 
             notes=info.notes,
         )
 
-    payload = _request_json(XRAY_GITHUB_RELEASES_API)
+    payload = _request_json(XRAY_GITHUB_RELEASES_API, proxy_url=proxy_url)
     if not isinstance(payload, list):
         return None
     release = _pick_release_from_github([item for item in payload if isinstance(item, dict)], normalized_channel)
@@ -205,7 +205,7 @@ def resolve_xray_release(channel: str, feed_url: str = "") -> XrayCoreRelease | 
     if not digest:
         dgst_asset = _find_github_asset(release, "Xray-windows-64.zip.dgst")
         if dgst_asset:
-            digest = _fetch_dgst_hash(str(dgst_asset.get("browser_download_url") or ""))
+            digest = _fetch_dgst_hash(str(dgst_asset.get("browser_download_url") or ""), proxy_url=proxy_url)
 
     version = str(release.get("tag_name") or release.get("name") or "")
     return XrayCoreRelease(
@@ -217,11 +217,11 @@ def resolve_xray_release(channel: str, feed_url: str = "") -> XrayCoreRelease | 
     )
 
 
-def _download_file(url: str, destination: Path, on_progress=None) -> None:
+def _download_file(url: str, destination: Path, on_progress=None, *, proxy_url: str | None = None) -> None:
     """Download file with optional progress callback(downloaded, total)."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-    with urlopen(request, timeout=120) as response:
+    with urlopen_proxy_first(request, timeout=120, proxy_url=proxy_url) as response:
         total = int(response.headers.get("Content-Length", 0))
         downloaded = 0
         with open(destination, "wb") as file:
@@ -316,6 +316,7 @@ def check_and_update_xray_core(
     feed_url: str = "",
     apply_update: bool = False,
     on_progress=None,
+    proxy_url: str | None = None,
 ) -> XrayCoreUpdateResult:
     exe = resolve_configured_path(
         xray_path,
@@ -339,7 +340,7 @@ def check_and_update_xray_core(
     current_version = _extract_version(current_text)
 
     try:
-        release = resolve_xray_release(channel, feed_url)
+        release = resolve_xray_release(channel, feed_url, proxy_url=proxy_url)
     except Exception as exc:
         return XrayCoreUpdateResult(
             status="error",
@@ -385,7 +386,7 @@ def check_and_update_xray_core(
         temp_dir = Path(temp_dir_str)
         archive_path = temp_dir / "Xray-windows-64.zip"
         try:
-            _download_file(release.url, archive_path, on_progress=on_progress)
+            _download_file(release.url, archive_path, on_progress=on_progress, proxy_url=proxy_url)
         except Exception as exc:
             return XrayCoreUpdateResult(
                 status="error",
@@ -451,12 +452,14 @@ class XrayCoreUpdateWorker(QThread):
         channel: str,
         feed_url: str,
         apply_update: bool,
+        proxy_url: str | None = None,
     ):
         super().__init__()
         self._xray_path = xray_path
         self._channel = channel
         self._feed_url = feed_url
         self._apply_update = apply_update
+        self._proxy_url = proxy_url
 
     def run(self) -> None:
         result = check_and_update_xray_core(
@@ -465,5 +468,6 @@ class XrayCoreUpdateWorker(QThread):
             self._feed_url,
             apply_update=self._apply_update,
             on_progress=lambda d, t: self.progress.emit(int(d * 100 / t)),
+            proxy_url=self._proxy_url,
         )
         self.done.emit(result)

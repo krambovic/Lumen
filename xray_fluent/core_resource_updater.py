@@ -19,7 +19,7 @@ from .geodata_resources import (
     SINGBOX_RULES_ARCHIVE_URL,
 )
 from .engines.xray.core_updater import _download_file, _extract_version, _is_newer, _request_json
-from .http_utils import urlopen
+from .http_utils import urlopen_proxy_first
 from .path_utils import resolve_configured_path
 from .zip_utils import safe_extract_zip
 
@@ -41,10 +41,10 @@ def _core_dir() -> Path:
     return XRAY_PATH_DEFAULT.parent
 
 
-def _download_direct(url: str, destination: Path, on_progress=None) -> None:
+def _download_direct(url: str, destination: Path, on_progress=None, *, proxy_url: str | None = None) -> None:
     request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with urlopen(request, timeout=120) as response:
+    with urlopen_proxy_first(request, timeout=120, proxy_url=proxy_url) as response:
         total = int(response.headers.get("Content-Length", 0))
         downloaded = 0
         with open(destination, "wb") as file:
@@ -96,7 +96,13 @@ def _pick_singbox_asset(release: dict) -> tuple[str, str]:
     return "", ""
 
 
-def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=None) -> ResourceUpdateResult:
+def _ensure_zip_file(path: Path, label: str) -> None:
+    if not zipfile.is_zipfile(path):
+        size = path.stat().st_size if path.exists() else 0
+        raise RuntimeError(f"{label}: скачанный файл не является zip-архивом ({size} байт)")
+
+
+def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=None, *, proxy_url: str | None = None) -> ResourceUpdateResult:
     exe = resolve_configured_path(
         singbox_path,
         default_path=SINGBOX_PATH_DEFAULT,
@@ -106,7 +112,7 @@ def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=N
     current_text = get_singbox_version(str(exe)) or ""
     current = _extract_singbox_version(current_text)
     try:
-        release = _request_json(SINGBOX_EXTENDED_LATEST_API)
+        release = _request_json(SINGBOX_EXTENDED_LATEST_API, proxy_url=proxy_url)
         if not isinstance(release, dict):
             raise RuntimeError("GitHub вернул неожиданный ответ")
         asset_name, url = _pick_singbox_asset(release)
@@ -125,7 +131,8 @@ def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=N
         with tempfile.TemporaryDirectory(prefix="singbox_update_") as temp_dir_str:
             temp_dir = Path(temp_dir_str)
             archive = temp_dir / asset_name
-            _download_file(url, archive, on_progress=on_progress)
+            _download_file(url, archive, on_progress=on_progress, proxy_url=proxy_url)
+            _ensure_zip_file(archive, "sing-box")
             extract_dir = temp_dir / "extract"
             extract_dir.mkdir()
             with zipfile.ZipFile(archive, "r") as zip_file:
@@ -152,7 +159,7 @@ def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=N
     return ResourceUpdateResult("singbox", "updated", f"sing-box обновлен до {refreshed}", current, refreshed)
 
 
-def update_geodata(on_progress=None) -> ResourceUpdateResult:
+def update_geodata(on_progress=None, *, proxy_url: str | None = None) -> ResourceUpdateResult:
     target_dir = _core_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
     def _scaled_progress(offset: int, span: int):
@@ -168,15 +175,17 @@ def update_geodata(on_progress=None) -> ResourceUpdateResult:
             geoip = temp_dir / "geoip.dat"
             geosite = temp_dir / "geosite.dat"
             singbox_rules = temp_dir / "sing-box.zip"
-            _download_direct(GEOIP_DAT_URL, geoip, on_progress=_scaled_progress(0, 30))
-            _download_direct(GEOSITE_DAT_URL, geosite, on_progress=_scaled_progress(30, 30))
+            _download_direct(GEOIP_DAT_URL, geoip, on_progress=_scaled_progress(0, 30), proxy_url=proxy_url)
+            _download_direct(GEOSITE_DAT_URL, geosite, on_progress=_scaled_progress(30, 30), proxy_url=proxy_url)
             _download_direct(
                 SINGBOX_RULES_ARCHIVE_URL,
                 singbox_rules,
                 on_progress=_scaled_progress(60, 40),
+                proxy_url=proxy_url,
             )
             if geoip.stat().st_size < 1024 or geosite.stat().st_size < 1024:
                 raise RuntimeError("скачанные geodata файлы выглядят поврежденными")
+            _ensure_zip_file(singbox_rules, "sing-box rules")
             _install_singbox_rule_sets(singbox_rules)
             for src, name in ((geoip, "geoip.dat"), (geosite, "geosite.dat")):
                 dest = target_dir / name
@@ -188,14 +197,14 @@ def update_geodata(on_progress=None) -> ResourceUpdateResult:
     return ResourceUpdateResult("geodata", "updated", "geoip.dat и geosite.dat обновлены")
 
 
-def check_geodata_update() -> ResourceUpdateResult:
+def check_geodata_update(*, proxy_url: str | None = None) -> ResourceUpdateResult:
     """Лёгкая проверка обновления geoip/geosite по размеру файлов (без скачивания)."""
     target_dir = _core_dir()
     try:
         changed = False
         for url, name in ((GEOIP_DAT_URL, "geoip.dat"), (GEOSITE_DAT_URL, "geosite.dat")):
             request = Request(url, method="HEAD", headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-            with urlopen(request, timeout=20) as response:
+            with urlopen_proxy_first(request, timeout=20, proxy_url=proxy_url) as response:
                 remote_size = int(response.headers.get("Content-Length", 0) or 0)
             dest = target_dir / name
             local_size = dest.stat().st_size if dest.exists() else -1
@@ -215,18 +224,19 @@ class StartupResourceCheckWorker(QThread):
 
     done = pyqtSignal(object)  # list[ResourceUpdateResult]
 
-    def __init__(self, *, singbox_path: str = "") -> None:
+    def __init__(self, *, singbox_path: str = "", proxy_url: str | None = None) -> None:
         super().__init__()
         self._singbox_path = singbox_path
+        self._proxy_url = proxy_url
 
     def run(self) -> None:
         results: list[ResourceUpdateResult] = []
         try:
-            results.append(check_or_update_singbox(self._singbox_path, apply_update=False))
+            results.append(check_or_update_singbox(self._singbox_path, apply_update=False, proxy_url=self._proxy_url))
         except Exception as exc:
             results.append(ResourceUpdateResult("singbox", "error", str(exc)))
         try:
-            results.append(check_geodata_update())
+            results.append(check_geodata_update(proxy_url=self._proxy_url))
         except Exception as exc:
             results.append(ResourceUpdateResult("geodata", "error", str(exc)))
         self.done.emit(results)
@@ -236,11 +246,12 @@ class ResourceUpdateWorker(QThread):
     done = pyqtSignal(object)
     progress = pyqtSignal(int)
 
-    def __init__(self, kind: str, *, singbox_path: str = "", apply_update: bool = True) -> None:
+    def __init__(self, kind: str, *, singbox_path: str = "", apply_update: bool = True, proxy_url: str | None = None) -> None:
         super().__init__()
         self._kind = kind
         self._singbox_path = singbox_path
         self._apply_update = apply_update
+        self._proxy_url = proxy_url
 
     def run(self) -> None:
         if self._kind == "singbox":
@@ -248,10 +259,12 @@ class ResourceUpdateWorker(QThread):
                 self._singbox_path,
                 self._apply_update,
                 on_progress=lambda done, total: self.progress.emit(int(done * 100 / total)),
+                proxy_url=self._proxy_url,
             )
         elif self._kind == "geodata":
             result = update_geodata(
                 on_progress=lambda done, total: self.progress.emit(int(done * 100 / total)),
+                proxy_url=self._proxy_url,
             )
         else:
             result = ResourceUpdateResult(self._kind, "error", f"Неизвестный тип обновления: {self._kind}")

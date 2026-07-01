@@ -193,11 +193,14 @@ ApplicationWindow {
                 boundsBehavior: Flickable.StopAtBounds
                 contentWidth: Theme.railWidth
                 contentHeight: Math.max(height, railColumn.implicitHeight)
-                ScrollBar.vertical: FluentScrollBar {
-                    parent: railClip
-                    anchors.top: navFlick.top
-                    anchors.bottom: navFlick.bottom
-                    anchors.left: railClip.left
+                ScrollBar.vertical: navScroll
+
+                FluentScrollBar {
+                    id: navScroll
+                    parent: navFlick
+                    x: 0
+                    y: 0
+                    height: navFlick.height
                     policy: railColumn.implicitHeight > railClip.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
                     thicknessNormal: 2
                     thicknessHover: 4

@@ -27,12 +27,12 @@ from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from ...app_controller import AppController
 from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
 from ...application.node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
-from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, DATA_DIR
+from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, DATA_DIR, DEFAULT_HTTP_PORT, PROXY_HOST
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
-from ...startup import is_process_elevated, relaunch_as_admin
+from ...startup import STARTUP_STATE_DISABLED, get_startup_state, is_process_elevated, relaunch_as_admin
 from .log_model import LogFilterModel, LogModel
 from .node_list_model import NodeListModel
 from .process_model import ProcessModel
@@ -1886,8 +1886,15 @@ class AppBridge(QObject):
         from ...core_resource_updater import StartupResourceCheckWorker
         if getattr(self, "_startup_resource_worker", None) is not None:
             return
+        proxy_url = None
+        if self.controller.connected:
+            try:
+                proxy_url = f"http://{PROXY_HOST}:{int(self.controller.get_effective_http_proxy_port() or DEFAULT_HTTP_PORT)}"
+            except Exception:
+                proxy_url = f"http://{PROXY_HOST}:{DEFAULT_HTTP_PORT}"
         worker = StartupResourceCheckWorker(
             singbox_path=self.controller.state.settings.singbox_path,
+            proxy_url=proxy_url,
         )
         self._startup_resource_worker = worker
         worker.done.connect(self._on_startup_resource_check_done)
@@ -2991,6 +2998,8 @@ class AppBridge(QObject):
     @pyqtProperty(bool, notify=settingsChanged)
     def launchOnStartup(self) -> bool:
         try:
+            if bool(self.controller.state.settings.launch_on_startup) and get_startup_state(APP_NAME) == STARTUP_STATE_DISABLED:
+                return False
             return bool(self.controller.state.settings.launch_on_startup)
         except Exception:
             return False

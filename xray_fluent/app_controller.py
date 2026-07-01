@@ -172,7 +172,15 @@ from .process_conflicts import scan_network_conflicts
 from .routing_presets import build_routing_preset
 from .security import create_password_hash, get_idle_seconds, verify_password
 from .storage import PassphraseRequired, StateStorage
-from .startup import build_startup_command, is_process_elevated, set_always_run_as_admin, set_startup_enabled
+from .startup import (
+    STARTUP_STATE_ABSENT,
+    STARTUP_STATE_DISABLED,
+    build_startup_command,
+    get_startup_state,
+    is_process_elevated,
+    set_always_run_as_admin,
+    set_startup_enabled,
+)
 from .subprocess_utils import result_output_text, run_text
 from .traffic_history import TrafficHistoryStorage
 from .zapret_manager import ZapretManager
@@ -318,6 +326,7 @@ class AppController(QObject):
         self._speed_total = 0
         self._speed_completed = 0
         self._xray_update_silent = False
+        self._xray_update_proxy_url: str | None = None
         self._reconnect_after_xray_update = False
         self._xray_update_apply_requested = False
         self._reconnecting = False
@@ -378,6 +387,9 @@ class AppController(QObject):
         self._transition_timer = QTimer(self)
         self._transition_timer.setSingleShot(True)
         self._transition_timer.timeout.connect(self._drain_transition_queue)
+        self._startup_sync_timer = QTimer(self)
+        self._startup_sync_timer.setInterval(5_000)
+        self._startup_sync_timer.timeout.connect(self._sync_startup_state_from_windows)
 
     def load(self) -> bool:
         try:
@@ -431,11 +443,47 @@ class AppController(QObject):
                 set_always_run_as_admin(True)
             except Exception as exc:
                 self.status.emit("error", f"Ошибка настройки запуска от администратора: {exc}")
+        self._reconcile_startup_registration()
+        self._startup_sync_timer.start()
         if not is_process_elevated():
             self.status.emit(
                 "warning",
                 "Lumen KVN запущен без прав администратора. TUN, Zapret и WinDivert могут работать нестабильно.",
             )
+
+    def _reconcile_startup_registration(self) -> None:
+        try:
+            if self._sync_startup_state_from_windows():
+                return
+            set_startup_enabled(
+                APP_NAME,
+                bool(self.state.settings.launch_on_startup),
+                build_startup_command(
+                    in_tray=bool(getattr(self.state.settings, "launch_in_tray_on_startup", True))
+                ),
+            )
+        except Exception as exc:
+            self._logger.warning("Failed to reconcile startup registration: %s", exc)
+
+    def _sync_startup_state_from_windows(self) -> bool:
+        try:
+            command = build_startup_command(
+                in_tray=bool(getattr(self.state.settings, "launch_in_tray_on_startup", True))
+            )
+            if not bool(self.state.settings.launch_on_startup):
+                if get_startup_state(APP_NAME) != STARTUP_STATE_ABSENT:
+                    set_startup_enabled(APP_NAME, False, command)
+                return False
+            if get_startup_state(APP_NAME) != STARTUP_STATE_DISABLED:
+                return False
+            self.state.settings.launch_on_startup = False
+            self.settings_changed.emit(self.state.settings)
+            self.schedule_save()
+            set_startup_enabled(APP_NAME, False, command)
+            return True
+        except Exception as exc:
+            self._logger.warning("Failed to sync startup state from Windows: %s", exc)
+            return False
 
     def _probe_core_versions(self) -> None:
         version = get_xray_version(self.state.settings.xray_path)
@@ -1633,10 +1681,17 @@ class AppController(QObject):
         if self._resource_update_worker and self._resource_update_worker.isRunning():
             self.status.emit("info", "Обновление уже выполняется")
             return
+        proxy_url = None
+        if self.connected:
+            try:
+                proxy_url = f"http://{PROXY_HOST}:{int(self.get_effective_http_proxy_port() or DEFAULT_HTTP_PORT)}"
+            except Exception:
+                proxy_url = f"http://{PROXY_HOST}:{DEFAULT_HTTP_PORT}"
         self._resource_update_worker = ResourceUpdateWorker(
             kind,
             singbox_path=self.state.settings.singbox_path,
             apply_update=apply_update,
+            proxy_url=proxy_url,
         )
         self._resource_update_worker.progress.connect(
             lambda percent, update_kind=kind: self.resource_update_progress.emit(update_kind, int(percent))

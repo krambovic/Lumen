@@ -30,7 +30,7 @@
 AppId={#AppId}
 AppName={#AppNameValue}
 AppVersion={#AppVersion}
-AppPublisher=Lumen KVN
+AppPublisher=krambovic
 AppCopyright=Copyright (c) youtubediscord/zapret-kvn contributors and krambovic/lumen-kvn contributors
 AppPublisherURL=https://github.com/krambovic/lumen-kvn
 AppSupportURL=https://github.com/krambovic/lumen-kvn/issues
@@ -51,7 +51,7 @@ PrivilegesRequired=admin
 CloseApplications=yes
 RestartApplications=no
 UninstallDisplayIcon={app}\LumenKVN.exe
-VersionInfoCompany=Lumen KVN
+VersionInfoCompany=krambovic
 VersionInfoDescription={#AppNameValue} installer
 VersionInfoProductName={#AppNameValue}
 VersionInfoProductVersion={#VersionInfo}
@@ -78,6 +78,8 @@ Filename: "{app}\LumenKVN.exe"; Description: "Запустить Lumen KVN"; Fla
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN ""Lumen KVN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupTask"
+Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v ""Lumen KVN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupRun"
+Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run /v ""Lumen KVN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupApproved"
 
 [Code]
 procedure StopZapretDrivers;

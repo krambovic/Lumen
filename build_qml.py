@@ -31,6 +31,7 @@ SPEC_FILE = ROOT / "LumenKVN-qml.spec"
 
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
+PYINSTALLER_VERSION_FILE = BUILD_DIR / "LumenKVN-version-info.txt"
 APP_DIR = DIST_DIR / "LumenKVN"
 PORTABLE_ZIP_PATH = DIST_DIR / f"{APP_NAME}-portable-windows-x64.zip"
 INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-Setup-windows-x64.exe"
@@ -82,6 +83,54 @@ def _numeric_version(version: str) -> str:
         parts.append("0")
     build = "".join(ch for ch in suffix if ch.isdigit()) or "0"
     return ".".join(parts) + "." + build
+
+
+def _version_tuple(version_info: str) -> tuple[int, int, int, int]:
+    parts = [int(part) for part in version_info.split(".")]
+    while len(parts) < 4:
+        parts.append(0)
+    return tuple(parts[:4])
+
+
+def _write_pyinstaller_version_file(version: str) -> None:
+    version_info = _numeric_version(version)
+    major, minor, patch, build = _version_tuple(version_info)
+    PYINSTALLER_VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PYINSTALLER_VERSION_FILE.write_text(
+        f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=({major}, {minor}, {patch}, {build}),
+    prodvers=({major}, {minor}, {patch}, {build}),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [
+          StringStruct('CompanyName', 'krambovic'),
+          StringStruct('FileDescription', 'Lumen KVN'),
+          StringStruct('FileVersion', '{version}'),
+          StringStruct('InternalName', 'LumenKVN'),
+          StringStruct('LegalCopyright', 'Copyright (c) krambovic/lumen-kvn contributors'),
+          StringStruct('OriginalFilename', 'LumenKVN.exe'),
+          StringStruct('ProductName', 'Lumen KVN'),
+          StringStruct('ProductVersion', '{version}')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+""",
+        encoding="utf-8",
+    )
 
 
 def _find_iscc() -> Path | None:
@@ -168,6 +217,8 @@ def build_exe() -> None:
 
     if not SPEC_FILE.is_file():
         raise SystemExit(f"Spec file not found: {SPEC_FILE}")
+
+    _write_pyinstaller_version_file(_read_app_version())
 
     temp_dist = DIST_DIR / "_build_tmp"
     if temp_dist.exists():
