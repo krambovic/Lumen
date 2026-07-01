@@ -20,6 +20,9 @@ Item {
         { glyph: "\uE895", label: I18n.t("Обновления"),         pageIndex: 4, compactHidden: false },
         { glyph: "\uE74E", label: I18n.t("Данные"),             pageIndex: 5, compactHidden: true  }
     ]
+    readonly property bool narrowTabs: width < 760
+    readonly property bool showTabLabels: width >= 720
+    readonly property real tabScale: width < 760 ? 0.82 : 1.0
     readonly property var visibleTabs: tabModel.filter(function(t) { return !(t.compactHidden && App.compactMode); })
     readonly property int activeVisibleIndex: {
         for (var i = 0; i < visibleTabs.length; i++)
@@ -224,15 +227,16 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: modelData.glyph
                                 font.family: "Segoe Fluent Icons"
-                                font.pixelSize: Theme.fontNormal
+                                font.pixelSize: Math.round(Theme.fontNormal * page.tabScale)
                                 color: current ? Theme.accent : Theme.textMuted
                                 Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0 } }
                             }
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
+                                visible: page.showTabLabels
                                 text: modelData.label
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontNormal
+                                font.pixelSize: Math.round(Theme.fontNormal * page.tabScale)
                                 font.weight: current ? Font.DemiBold : Font.Normal
                                 color: current ? Theme.text : Theme.textMuted
                                 Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0 } }
@@ -391,6 +395,36 @@ Item {
                 }
 
                 SettingRow {
+                    glyph: "\uE790"; title: I18n.t("Прозрачность"); subtitle: I18n.t("Использовать системные эффекты фона Windows 11")
+                    Switch {
+                        checked: App.uiBackdrop !== "solid"
+                        onToggled: App.setUiBackdrop(checked ? "mica" : "solid")
+                    }
+                }
+
+                SettingRow {
+                    enabled: App.uiBackdrop !== "solid"
+                    opacity: enabled ? 1.0 : 0.55
+                    glyph: "\uE9E9"; title: I18n.t("Сила прозрачности"); subtitle: I18n.t("0: Mica почти выключена, 100: максимум Mica")
+                    Slider {
+                        Layout.preferredWidth: 170
+                        from: 0
+                        to: 100
+                        stepSize: 5
+                        value: App.uiTransparencyStrength
+                        onMoved: App.setUiTransparencyStrength(Math.round(value))
+                    }
+                    Text {
+                        text: App.uiTransparencyStrength + "%"
+                        color: Theme.textMuted
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSmall
+                        Layout.preferredWidth: 42
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
+
+                SettingRow {
                     glyph: "\uE890"; title: I18n.t("Компактный режим"); subtitle: I18n.t("Скрыть продвинутые настройки и второстепенные разделы")
                     Switch { checked: App.compactMode; onToggled: App.setInterfaceMode(checked ? "compact" : "full") }
                 }
@@ -519,6 +553,12 @@ Item {
                 SettingRow {
                     glyph: "\uE7E8"; title: I18n.t("Запускать при входе"); subtitle: I18n.t("Автозапуск вместе с Windows")
                     Switch { checked: App.launchOnStartup; onToggled: App.setLaunchOnStartup(checked) }
+                }
+                SettingRow {
+                    enabled: App.launchOnStartup
+                    opacity: enabled ? 1.0 : 0.55
+                    glyph: "\uE7E8"; title: I18n.t("Запускать автозапуск в трей"); subtitle: I18n.t("При входе в Windows не показывать окно, только иконку в трее")
+                    Switch { checked: App.launchInTrayOnStartup; onToggled: App.setLaunchInTrayOnStartup(checked) }
                 }
                 SettingRow {
                     glyph: "\uE768"; title: I18n.t("Автоподключение после запуска"); subtitle: I18n.t("Подключаться к последнему использованному серверу при старте")

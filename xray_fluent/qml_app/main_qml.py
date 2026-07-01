@@ -94,8 +94,8 @@ def _resolve_dark(app, theme_name: str) -> bool:
         return False
 
 
-def _apply_mica(window, dark: bool) -> None:
-    """Enable the Windows 11 Mica backdrop + dark/light title-bar colour."""
+def _apply_mica(window, dark: bool, backdrop_name: str = "mica") -> None:
+    """Enable the selected Windows 11 backdrop + dark/light title-bar colour."""
     if sys.platform != "win32":
         return
     try:
@@ -111,6 +111,16 @@ def _apply_mica(window, dark: bool) -> None:
         DWMSBT_NONE = 1                         # solid (no backdrop)
         DWMSBT_MAINWINDOW = 2                   # Mica
         DWMSBT_ACRYLIC = 3                      # Acrylic (transient)
+        DWMWA_BORDER_COLOR = 34
+        DWMWA_CAPTION_COLOR = 35
+        DWMWA_TEXT_COLOR = 36
+        DWMWA_COLOR_NONE = 0xFFFFFFFE
+
+        backdrop_name = (backdrop_name or "mica").strip().lower()
+        if backdrop_name == "acrylic":
+            backdrop_name = "mica"
+        if backdrop_name not in {"mica", "solid"}:
+            backdrop_name = "mica"
 
         dark_flag = ctypes.c_int(1 if dark else 0)
         for attr in (DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -130,26 +140,41 @@ def _apply_mica(window, dark: bool) -> None:
                     ("cyBottomHeight", ctypes.c_int),
                 ]
 
-            margins = _Margins(-1, -1, -1, -1)
+            margins = _Margins(0, 0, 0, 0)
             dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
 
-            # Customize window border color to prevent accent-colored border glitches during scroll
-            DWMWA_BORDER_COLOR = 34
-            border_color = ctypes.c_int(0x003A3A3A if dark else 0x00D6D6D6)
+            # Prevent Windows from drawing the user's accent colour as a 1px
+            # active-window line above our custom title bar.
+            border_color = ctypes.c_int(DWMWA_COLOR_NONE)
             dwm.DwmSetWindowAttribute(
                 hwnd, DWMWA_BORDER_COLOR,
                 ctypes.byref(border_color), ctypes.sizeof(border_color),
             )
+            caption_color = ctypes.c_int(0x002C2631 if dark else 0x00F3F3F3)
+            text_color = ctypes.c_int(0x00F3F3F3 if dark else 0x00202020)
+            for attr, color in (
+                (DWMWA_CAPTION_COLOR, caption_color),
+                (DWMWA_TEXT_COLOR, text_color),
+            ):
+                dwm.DwmSetWindowAttribute(
+                    hwnd, attr,
+                    ctypes.byref(color), ctypes.sizeof(color),
+                )
 
             if build >= 22621:
-                backdrop = ctypes.c_int(DWMSBT_MAINWINDOW)
+                backdrop_map = {
+                    "mica": DWMSBT_MAINWINDOW,
+                    "acrylic": DWMSBT_ACRYLIC,
+                    "solid": DWMSBT_NONE,
+                }
+                backdrop = ctypes.c_int(backdrop_map[backdrop_name])
                 dwm.DwmSetWindowAttribute(
                     hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
                     ctypes.byref(backdrop), ctypes.sizeof(backdrop),
                 )
             else:
                 # Older Win11 only exposes Mica on/off.
-                enable = ctypes.c_int(1)
+                enable = ctypes.c_int(1 if backdrop_name != "solid" else 0)
                 dwm.DwmSetWindowAttribute(
                     hwnd, DWMWA_MICA_EFFECT,
                     ctypes.byref(enable), ctypes.sizeof(enable),
@@ -596,7 +621,7 @@ def main(argv: list[str] | None = None) -> int:
 
     window = engine.rootObjects()[0]
     _attach_qwindowkit(window)
-    window.setVisible(True)
+    start_in_tray = "--tray" in (argv if argv is not None else sys.argv)[1:]
 
     if single_server is not None:
         def _on_second_instance() -> None:
@@ -615,9 +640,13 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     def _refresh_backdrop() -> None:
-        _apply_mica(window, _resolve_dark(app, _theme_name(bridge)))
+        _apply_mica(window, _resolve_dark(app, _theme_name(bridge)), bridge.uiBackdrop)
 
     from PyQt6.QtCore import QMetaObject, QTimer
+
+    def _schedule_backdrop_refresh(*_args) -> None:
+        QTimer.singleShot(0, _refresh_backdrop)
+        QTimer.singleShot(150, _refresh_backdrop)
 
     _recomposited = {"done": False}
 
@@ -661,6 +690,13 @@ def main(argv: list[str] | None = None) -> int:
         bridge.settingsChanged.connect(_refresh_backdrop)
     except Exception:
         pass
+    for signal_name in ("visibilityChanged", "windowStateChanged"):
+        signal = getattr(window, signal_name, None)
+        if signal is not None:
+            try:
+                signal.connect(_schedule_backdrop_refresh)
+            except Exception:
+                pass
 
     from PyQt6.QtWidgets import QSystemTrayIcon
     from .tray import QmlTray
@@ -669,6 +705,7 @@ def main(argv: list[str] | None = None) -> int:
     bridge.set_tray_available(tray_available)
     app.setQuitOnLastWindowClosed(not tray_available)
     tray = QmlTray(app, window, bridge) if tray_available else None
+    window.setVisible(not (start_in_tray and tray_available))
     app.aboutToQuit.connect(bridge.shutdown)
 
     return app.exec()

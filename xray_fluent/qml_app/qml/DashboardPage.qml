@@ -4,10 +4,8 @@ import QtQuick.Layouts
 import App 1.0
 import "."
 
-//   • Подключение   — state, engine line, VPN/proxy switches (Вкл/Выкл),
-//                     ▶/⏸ start/stop button, «Маршрут» quick row, status + target.
-//   • Маршрутизация — mode controls and status caption,
-//                     Discord Voice switch (ON/OFF) + hint, dns/rules/bypass info.
+//   • Подключение   — state, VPN/proxy switches (Вкл/Выкл), start/stop button.
+//   • Маршрутизация — default and custom routing presets.
 //   • Трафик       — Загрузка/Выгрузка/RTT stacked, sparkline, peak.
 //   • Процессы     — only when the backend reports per-process stats (TUN).
 FluentScroll {
@@ -40,10 +38,19 @@ FluentScroll {
             return App.transitionTargetConnected ? I18n.t("Подключение…") : I18n.t("Отключение…");
         return App.connected ? I18n.t("Подключено") : I18n.t("Ожидание");
     }
-    function engineText() {
-        if (App.tunMode)
-            return "VPN (TUN) → sing-box";
-        return App.proxyEnabled ? I18n.t("Системный прокси Windows") : I18n.t("Прямое подключение");
+    function routingPresetIndex() {
+        var items = App.routingPresetOptions;
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].id === App.activeRoutingPresetId)
+                return i;
+        }
+        return Math.max(0, Math.min(1, items.length - 1));
+    }
+    function connectionPrefix() {
+        return App.connected ? I18n.t("Подключено: ") : I18n.t("Выбрано: ");
+    }
+    function connectionServerName() {
+        return App.selectedNodeName.length > 0 ? App.selectedNodeName : I18n.t("Сервер не выбран");
     }
     readonly property bool singbox: App.tunMode && App.tunEngine === "singbox"
 
@@ -61,14 +68,6 @@ FluentScroll {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontTitle
                 font.weight: Font.DemiBold
-            }
-            Text {
-                text: App.selectedNodeName.length > 0
-                      ? (I18n.t("Готов к запуску: ") + App.selectedNodeName)
-                      : I18n.t("Сервер не выбран")
-                color: Theme.textMuted
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSmall
             }
         }
 
@@ -114,12 +113,6 @@ FluentScroll {
                                 font.pixelSize: Theme.fontTitle
                             }
                         }
-                    }
-                    Text {
-                        text: page.engineText()
-                        color: Theme.textMuted; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontNormal
-                        Layout.fillWidth: true; Layout.preferredWidth: 0; wrapMode: Text.WordWrap
                     }
                     // switches row
                     RowLayout {
@@ -223,64 +216,57 @@ FluentScroll {
                             }
                         }
                     }
-                    // start / stop
-                    AccentButton {
-                        Layout.topMargin: 2
-                        kind: App.connected ? "danger" : "accent"
-                        enabled: !App.transitionBusy
-                        glyph: App.connected ? "\uE769" : "\uE768"  // Pause / Play
-                        text: (App.connected ? I18n.t("Остановить ") : I18n.t("Запустить ")) + (App.tunMode ? "VPN" : I18n.t("прокси"))
-                        onClicked: App.toggleConnection()
-                    }
-                    // quick route presets
                     RowLayout {
-                        Layout.topMargin: 2
-                        spacing: 8
-                        Text { text: I18n.t("Маршрут:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                        AccentButton { kind: "ghost"; text: I18n.t("Всё"); onClicked: App.applyRoutingPreset("global") }
-                        AccentButton { kind: "ghost"; text: I18n.t("Блок"); onClicked: App.applyRoutingPreset("blocked") }
-                        AccentButton { kind: "ghost"; text: I18n.t("Кроме РФ"); onClicked: App.applyRoutingPreset("except_ru") }
-                        Item { Layout.fillWidth: true }
-                    }
-                    // Discord Voice (moved here from the old Routing card)
-                    Rectangle { Layout.fillWidth: true; Layout.topMargin: 4; height: 1; color: Theme.divider }
-                    RowLayout {
-                        Layout.topMargin: 2
-                        spacing: 8
+                        Layout.topMargin: 4
+                        Layout.fillWidth: true
+                        spacing: 6
                         Text {
-                            text: "\uE767"
-                            font.family: "Segoe Fluent Icons"
-                            color: App.discordProxy ? Theme.accent : Theme.textMuted
-                            font.pixelSize: Theme.fontNormal
+                            text: page.connectionPrefix()
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
                         }
-                        Text { text: "Discord Voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                        Switch {
-                            checked: App.discordProxy
-                            onToggled: App.setDiscordProxy(checked)
+                        Image {
+                            visible: App.selectedNodeFlagSource.length > 0
+                            source: App.selectedNodeFlagSource
+                            Layout.preferredWidth: visible ? 20 : 0
+                            Layout.preferredHeight: 14
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
                         }
-                        Text { text: App.discordProxy ? I18n.t("Вкл") : I18n.t("Выкл"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                        Item { Layout.fillWidth: true }
+                        Text {
+                            Layout.fillWidth: true
+                            text: page.connectionServerName()
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                            elide: Text.ElideRight
+                        }
                     }
-                    Text {
-                        text: I18n.t("Голос и стримы Discord через SOCKS5 без TUN")
-                        color: Theme.textFaint; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 2
+                        spacing: 12
+                        AccentButton {
+                            kind: App.connected ? "danger" : "accent"
+                            enabled: !App.transitionBusy
+                            glyph: App.connected ? "\uE769" : "\uE768"  // Pause / Play
+                            text: (App.connected ? I18n.t("Остановить ") : I18n.t("Запустить ")) + (App.tunMode ? "VPN" : I18n.t("прокси"))
+                            onClicked: App.toggleConnection()
+                        }
+                        FluentCombo {
+                            Layout.preferredWidth: Math.min(230, Math.max(170, page.width - 330))
+                            textRole: "name"
+                            model: App.routingPresetOptions
+                            currentIndex: page.routingPresetIndex()
+                            onActivated: {
+                                var item = App.routingPresetOptions[currentIndex];
+                                if (item) App.applyRoutingPresetOption(item.id);
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
                     }
                     Item { Layout.fillHeight: true; Layout.preferredHeight: 2 }
-                    // status + target
-                    Text {
-                        text: App.runtimeMessage.length > 0 ? I18n.t(App.runtimeMessage) : (App.connected ? I18n.t("Подключено") : I18n.t("Отключено"))
-                        color: Theme.textMuted; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    }
-                    Text {
-                        text: App.selectedNodeName.length > 0 ? App.selectedNodeName : I18n.t("Сервер не выбран")
-                        color: Theme.textFaint; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
-                        Layout.fillWidth: true; elide: Text.ElideRight
-                    }
                 }
             }
 

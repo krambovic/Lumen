@@ -149,6 +149,7 @@ def _create_startup_task(command: str) -> None:
         check=True,
         capture_output=True,
         text=True,
+        errors="replace",
         creationflags=CREATE_NO_WINDOW,
     )
 
@@ -158,6 +159,7 @@ def _delete_startup_task() -> None:
         ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
         capture_output=True,
         text=True,
+        errors="replace",
         creationflags=CREATE_NO_WINDOW,
     )
 
@@ -170,13 +172,14 @@ def _current_task_user() -> str:
     return user or os.getlogin()
 
 
-def build_startup_command() -> str:
+def build_startup_command(*, in_tray: bool = True) -> str:
+    tray_args = ["--tray"] if in_tray else []
     if getattr(sys, "frozen", False):
         exe = Path(sys.executable).resolve()
-        return f'"{exe}" --tray'
+        return subprocess.list2cmdline([str(exe), *tray_args])
 
     base_dir = Path(__file__).resolve().parents[1]
     script = base_dir / "run_qml.py"
     venv_pythonw = base_dir / ".venv" / "Scripts" / "pythonw.exe"
     python_exe = venv_pythonw if venv_pythonw.exists() else Path(sys.executable).resolve()
-    return f'"{python_exe}" "{script}" --tray'
+    return subprocess.list2cmdline([str(python_exe), str(script), *tray_args])

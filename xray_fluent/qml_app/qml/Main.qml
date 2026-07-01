@@ -27,7 +27,7 @@ ApplicationWindow {
 
     Rectangle {
         anchors.fill: parent
-        color: ((win.visibility === Window.Maximized || win.visibility === Window.FullScreen) && Theme.windowBase.a === 0) ? Theme.bg : Theme.windowBase
+        color: Theme.windowBase
         z: -1
     }
     Image {
@@ -91,6 +91,7 @@ ApplicationWindow {
         Theme.cornerRadius = Qt.binding(function() { return App.uiCornerRadius; });
         Theme.animations = Qt.binding(function() { return App.uiAnimations; });
         Theme.backdrop = Qt.binding(function() { return App.uiBackdrop; });
+        Theme.transparencyStrength = Qt.binding(function() { return App.uiTransparencyStrength; });
         Theme.wallpaperActive = Qt.binding(function() { return App.uiWallpaper !== ""; });
         Theme.fontScale = Qt.binding(function() { return App.uiFontScale / 100; });
         Theme.preset = Qt.binding(function() { return App.uiThemePreset; });
@@ -183,76 +184,91 @@ ApplicationWindow {
             color: Theme.chromePanel
             z: 2
 
-            ColumnLayout {
-                width: Theme.railWidth
-                height: parent.height
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
+            Flickable {
+                id: navFlick
+                anchors.fill: parent
                 anchors.topMargin: 8
                 anchors.bottomMargin: 14
-                spacing: 2
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                contentWidth: Theme.railWidth
+                contentHeight: Math.max(height, railColumn.implicitHeight)
+                ScrollBar.vertical: FluentScrollBar {
+                    parent: railClip
+                    anchors.top: navFlick.top
+                    anchors.bottom: navFlick.bottom
+                    anchors.left: railClip.left
+                    policy: railColumn.implicitHeight > railClip.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                    thicknessNormal: 2
+                    thicknessHover: 4
+                }
 
-                Item {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.round(40 * Theme.fontScale)
-                    Rectangle {
-                        x: 6
-                        y: 0
-                        width: win.railCollapsed ? Math.round(38 * Theme.fontScale) : Math.max(Math.round(38 * Theme.fontScale), parent.width - 12)
-                        height: parent.height
-                        radius: Theme.radiusSmall
-                        color: burgerHover.hovered ? Theme.cardHover : "transparent"
-                        Behavior on color { ColorAnimation { duration: Theme.animations ? 130 : 0; easing.type: Theme.easeStandard } }
-                        Behavior on width { NumberAnimation { duration: Theme.animations ? 170 : 0; easing.type: Theme.easeEmphasized } }
-                        Text {
-                            text: "\uE700"  // GlobalNavButton
-                            font.family: win.iconFont
-                            font.pixelSize: Math.round(16 * Theme.fontScale)
-                            color: Theme.textMuted
-                            anchors.left: parent.left
-                            anchors.leftMargin: 11
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 18
-                            horizontalAlignment: Text.AlignLeft
-                            Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0; easing.type: Theme.easeStandard } }
+                ColumnLayout {
+                    id: railColumn
+                    width: Theme.railWidth
+                    height: Math.max(navFlick.height, implicitHeight)
+                    spacing: 2
+
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.round(40 * Theme.fontScale)
+                        Rectangle {
+                            x: 6
+                            y: 0
+                            width: win.railCollapsed ? Math.round(38 * Theme.fontScale) : Math.max(Math.round(38 * Theme.fontScale), parent.width - 12)
+                            height: parent.height
+                            radius: Theme.radiusSmall
+                            color: burgerHover.hovered ? Theme.cardHover : "transparent"
+                            Behavior on color { ColorAnimation { duration: Theme.animations ? 130 : 0; easing.type: Theme.easeStandard } }
+                            Behavior on width { NumberAnimation { duration: Theme.animations ? 170 : 0; easing.type: Theme.easeEmphasized } }
+                            Text {
+                                text: "\uE700"  // GlobalNavButton
+                                font.family: win.iconFont
+                                font.pixelSize: Math.round(16 * Theme.fontScale)
+                                color: Theme.textMuted
+                                anchors.left: parent.left
+                                anchors.leftMargin: 11
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 18
+                                horizontalAlignment: Text.AlignLeft
+                                Behavior on color { ColorAnimation { duration: Theme.animations ? 140 : 0; easing.type: Theme.easeStandard } }
+                            }
+                            HoverHandler { id: burgerHover }
+                            TapHandler { onTapped: win.navExpanded = !win.navExpanded }
                         }
-                        HoverHandler { id: burgerHover }
-                        TapHandler { onTapped: win.navExpanded = !win.navExpanded }
                     }
-                }
 
-                Item { Layout.fillWidth: true; Layout.preferredHeight: 4 }
+                    Item { Layout.fillWidth: true; Layout.preferredHeight: 4 }
 
-                // top section
-                Repeater {
-                    model: win.nav
-                    delegate: NavButton {
-                        Layout.fillWidth: true
-                        visible: modelData.section === "top" && !(App.compactMode && modelData.hideOnCompact === true)
-                        label: modelData.label
-                        glyph: modelData.glyph
-                        iconFont: win.iconFont
-                        compact: win.railCollapsed
-                        selected: win.currentIndex === modelData.index
-                        onClicked: win.currentIndex = modelData.index
+                    Repeater {
+                        model: win.nav
+                        delegate: NavButton {
+                            Layout.fillWidth: true
+                            visible: modelData.section === "top" && !(App.compactMode && modelData.hideOnCompact === true)
+                            label: modelData.label
+                            glyph: modelData.glyph
+                            iconFont: win.iconFont
+                            compact: win.railCollapsed
+                            selected: win.currentIndex === modelData.index
+                            onClicked: win.currentIndex = modelData.index
+                        }
                     }
-                }
 
-                Item { Layout.fillHeight: true }
+                    Item { Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 14 }
 
-                // bottom section
-                Repeater {
-                    model: win.nav
-                    delegate: NavButton {
-                        Layout.fillWidth: true
-                        visible: modelData.section === "bottom" && !(App.compactMode && modelData.hideOnCompact === true)
-                        label: modelData.label
-                        glyph: modelData.glyph
-                        iconFont: win.iconFont
-                        compact: win.railCollapsed
-                        selected: win.currentIndex === modelData.index
-                        badge: modelData.index === 7 && App.updatesAvailable
-                        onClicked: { win.currentIndex = modelData.index; if (modelData.index === 7) App.markUpdatesSeen() }
+                    Repeater {
+                        model: win.nav
+                        delegate: NavButton {
+                            Layout.fillWidth: true
+                            visible: modelData.section === "bottom" && !(App.compactMode && modelData.hideOnCompact === true)
+                            label: modelData.label
+                            glyph: modelData.glyph
+                            iconFont: win.iconFont
+                            compact: win.railCollapsed
+                            selected: win.currentIndex === modelData.index
+                            badge: modelData.index === 7 && App.updatesAvailable
+                            onClicked: { win.currentIndex = modelData.index; if (modelData.index === 7) App.markUpdatesSeen() }
+                        }
                     }
                 }
             }

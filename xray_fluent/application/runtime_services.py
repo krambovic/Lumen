@@ -2,11 +2,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from PyQt6.QtCore import QMetaObject, QThread, Qt
+
 from ..constants import SINGBOX_CLASH_API_PORT
 from ..live_metrics_worker import LiveMetricsWorker
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
+
+
+def _call_in_qobject_thread(obj: object, method_name: str) -> None:
+    thread = getattr(obj, "thread", lambda: None)()
+    if thread is None or thread == QThread.currentThread():
+        getattr(obj, method_name)()
+        return
+    QMetaObject.invokeMethod(
+        obj,
+        method_name,
+        Qt.ConnectionType.BlockingQueuedConnection,
+    )
 
 
 def start_metrics_worker(controller: AppController) -> None:
@@ -218,6 +232,6 @@ def shutdown(controller: AppController) -> None:
     if controller.proxy.is_enabled():
         controller.proxy.disable(restore_previous=True)
     controller._cleanup_tun_adapter(max_wait=1.0)
-    controller.network_monitor.stop()
-    controller._lock_timer.stop()
+    _call_in_qobject_thread(controller.network_monitor, "stop")
+    _call_in_qobject_thread(controller._lock_timer, "stop")
     controller.save()

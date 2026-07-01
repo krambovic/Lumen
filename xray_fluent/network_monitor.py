@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import socket
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal, pyqtSlot
 
 
 class NetworkMonitor(QObject):
@@ -19,6 +19,7 @@ class NetworkMonitor(QObject):
         self._last_fingerprint = self._fingerprint()
         self._timer.start()
 
+    @pyqtSlot()
     def stop(self) -> None:
         self._timer.stop()
 

@@ -16,6 +16,7 @@ from copy import deepcopy
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 import socket
@@ -27,6 +28,7 @@ from ...app_controller import AppController
 from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
 from ...application.node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
 from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, DATA_DIR
+from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
@@ -36,6 +38,24 @@ from .node_list_model import NodeListModel
 from .process_model import ProcessModel
 from ...i18n import active_map, available_languages, language_name, set_language, tr
 from ...log_utils import parse_log_line
+
+
+def _server_display_name_without_country_prefix(name: str, country: str) -> str:
+    original = str(name or "").strip()
+    cleaned = original
+    emoji = get_flag_emoji(country)
+    if emoji and cleaned.startswith(emoji):
+        cleaned = cleaned[len(emoji):].strip()
+    country = str(country or "").strip().upper()
+    if len(country) == 2:
+        cleaned = re.sub(
+            r"^\s*[\[\(\{]?" + re.escape(country) + r"[\]\)\}]?(?:\s*[-_.|#:]\s*|\s+)",
+            "",
+            cleaned,
+            count=1,
+            flags=re.IGNORECASE,
+        ).strip()
+    return cleaned or original
 
 
 class _ApplicationLogEmitter(QObject):
@@ -187,6 +207,8 @@ class AppBridge(QObject):
         self._latency_ms = -1
         self._selected_id = ""
         self._selected_name = ""
+        self._selected_flag = ""
+        self._selected_flag_source = ""
         self._selected_latency = -1
         self._routing_mode = "rule"
         self._tun_mode = False
@@ -657,8 +679,11 @@ class AppBridge(QObject):
         # Уведомление о смене сервера во время активного подключения.
         if self._connected and prev_id and new_id and new_id != prev_id:
             self.trayNotify.emit(tr("Сервер изменён"), new_name)
+        country = (node.country_code or "").upper() or detect_country(node.name or "", node.server or "") if node else ""
         self._selected_id = new_id
-        self._selected_name = new_name
+        self._selected_name = _server_display_name_without_country_prefix(new_name, country)
+        self._selected_flag = get_flag_emoji(country)
+        self._selected_flag_source = get_flag_svg_data_uri(country)
         self._selected_latency = (
             -1 if (node is None or node.ping_ms is None) else int(node.ping_ms)
         )
@@ -801,6 +826,14 @@ class AppBridge(QObject):
         self.controller.apply_routing_preset(preset_id)
 
     @pyqtSlot(str)
+    def applyRoutingPresetOption(self, preset_id: str) -> None:
+        preset_id = (preset_id or "").strip()
+        if preset_id in {"global", "blocked", "except_ru"}:
+            self.applyRoutingPreset(preset_id)
+        else:
+            self.applyCustomRoutingPreset(preset_id)
+
+    @pyqtSlot(str)
     def saveRoutingPreset(self, name: str) -> None:
         from uuid import uuid4
         title = (name or "").strip() or tr("Пресет")
@@ -824,6 +857,7 @@ class AppBridge(QObject):
             self.toast.emit("warning", tr("Пресет не найден"))
             return
         routing = RoutingSettings.from_dict(dict(preset.get("routing") or {}))
+        routing.preset_id = str(preset_id)
         self.controller.update_routing(routing)
         self.toast.emit("success", tr("Применён пресет: {name}", name=preset.get("name", "")))
 
@@ -1008,10 +1042,18 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def setUiBackdrop(self, value: str) -> None:
         v = (value or "mica").strip().lower()
-        if v not in ("mica", "acrylic", "solid"):
+        if v == "acrylic":
+            v = "mica"
+        if v not in ("mica", "solid"):
             v = "mica"
         settings = deepcopy(self.controller.state.settings)
         settings.ui_backdrop = v
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(int)
+    def setUiTransparencyStrength(self, value: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.ui_transparency_strength = max(0, min(100, int(value)))
         self.controller.update_settings(settings)
 
     @pyqtSlot(str)
@@ -1175,6 +1217,13 @@ class AppBridge(QObject):
             return str(self.controller.state.settings.ui_backdrop or "mica")
         except Exception:
             return "mica"
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def uiTransparencyStrength(self) -> int:
+        try:
+            return int(getattr(self.controller.state.settings, "ui_transparency_strength", 50))
+        except Exception:
+            return 50
 
     @pyqtProperty(str, notify=settingsChanged)
     def uiThemePreset(self) -> str:
@@ -1487,6 +1536,12 @@ class AppBridge(QObject):
     def setLaunchOnStartup(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.launch_on_startup = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setLaunchInTrayOnStartup(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.launch_in_tray_on_startup = bool(enabled)
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
@@ -2706,6 +2761,14 @@ class AppBridge(QObject):
     def selectedNodeName(self) -> str:
         return self._selected_name
 
+    @pyqtProperty(str, notify=selectionChanged)
+    def selectedNodeFlag(self) -> str:
+        return self._selected_flag
+
+    @pyqtProperty(str, notify=selectionChanged)
+    def selectedNodeFlagSource(self) -> str:
+        return self._selected_flag_source
+
     @pyqtProperty(int, notify=selectionChanged)
     def selectedLatency(self) -> int:
         return self._selected_latency
@@ -2713,6 +2776,13 @@ class AppBridge(QObject):
     @pyqtProperty(str, notify=routingChanged)
     def routingMode(self) -> str:
         return self._routing_mode
+
+    @pyqtProperty(str, notify=routingChanged)
+    def activeRoutingPresetId(self) -> str:
+        try:
+            return str(self.controller.state.routing.preset_id or "custom")
+        except Exception:
+            return "custom"
 
     @pyqtProperty(bool, notify=settingsChanged)
     def tunMode(self) -> bool:
@@ -2924,6 +2994,13 @@ class AppBridge(QObject):
             return bool(self.controller.state.settings.launch_on_startup)
         except Exception:
             return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def launchInTrayOnStartup(self) -> bool:
+        try:
+            return bool(getattr(self.controller.state.settings, "launch_in_tray_on_startup", True))
+        except Exception:
+            return True
 
     @pyqtProperty(bool, notify=settingsChanged)
     def zapretAutostart(self) -> bool:
@@ -3211,6 +3288,20 @@ class AppBridge(QObject):
             {"id": p.get("id", ""), "name": p.get("name", "")}
             for p in self.controller.state.routing_presets
         ]
+
+    @pyqtProperty('QVariantList', notify=routingChanged)
+    def routingPresetOptions(self):
+        items = [
+            {"id": "global", "name": tr("Всё через VPN")},
+            {"id": "blocked", "name": tr("Только заблокированное")},
+            {"id": "except_ru", "name": tr("Всё кроме РФ")},
+        ]
+        items.extend(
+            {"id": p.get("id", ""), "name": p.get("name", "")}
+            for p in self.controller.state.routing_presets
+            if p.get("id")
+        )
+        return items
 
     def _mutate_routing(self, fn) -> None:
         routing = deepcopy(self.controller.state.routing)

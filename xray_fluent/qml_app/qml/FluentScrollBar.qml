@@ -12,7 +12,9 @@ ScrollBar {
     readonly property bool isVertical: orientation === Qt.Vertical
     readonly property bool big: bar.hovered || bar.pressed
     property bool forcedVisible: false
-    readonly property int thickness: big ? 8 : 4
+    property int thicknessNormal: 4
+    property int thicknessHover: 8
+    readonly property int thickness: big ? thicknessHover : thicknessNormal
 
     function flash() {
         forcedVisible = true

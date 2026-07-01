@@ -210,6 +210,7 @@ class AppSettings:
     enable_system_proxy: bool = True
     system_proxy_bypass_lan: bool = True
     launch_on_startup: bool = False
+    launch_in_tray_on_startup: bool = True
     always_run_as_admin: bool = False
     reconnect_on_network_change: bool = True
     prefer_ipv6: bool = False
@@ -269,6 +270,7 @@ class AppSettings:
     ui_font_family: str = ""             # "" = системный шрифт по умолчанию
     ui_font_scale: int = 100             # масштаб шрифта, %
     ui_backdrop: str = "mica"            # mica | acrylic | solid
+    ui_transparency_strength: int = 50   # 0..100, higher = more transparent
     ui_theme_preset: str = "default"     # пресет палитры
     ui_animations: bool = True           # глобальный тумблер анимаций
     ui_base_tint: str = ""               # "" = выкл; иначе #RRGGBB — свой базовый тон окна (финальный, приглушённый)
@@ -293,6 +295,7 @@ class AppSettings:
             "enable_system_proxy": self.enable_system_proxy,
             "system_proxy_bypass_lan": self.system_proxy_bypass_lan,
             "launch_on_startup": self.launch_on_startup,
+            "launch_in_tray_on_startup": self.launch_in_tray_on_startup,
             "always_run_as_admin": self.always_run_as_admin,
             "reconnect_on_network_change": self.reconnect_on_network_change,
             "prefer_ipv6": self.prefer_ipv6,
@@ -344,6 +347,7 @@ class AppSettings:
             "ui_font_family": self.ui_font_family,
             "ui_font_scale": self.ui_font_scale,
             "ui_backdrop": self.ui_backdrop,
+            "ui_transparency_strength": self.ui_transparency_strength,
             "ui_theme_preset": self.ui_theme_preset,
             "ui_animations": self.ui_animations,
             "ui_base_tint": self.ui_base_tint,
@@ -370,6 +374,7 @@ class AppSettings:
             enable_system_proxy=bool(data.get("enable_system_proxy", True)),
             system_proxy_bypass_lan=bool(data.get("system_proxy_bypass_lan", True)),
             launch_on_startup=bool(data.get("launch_on_startup", False)),
+            launch_in_tray_on_startup=bool(data.get("launch_in_tray_on_startup", True)),
             always_run_as_admin=bool(data.get("always_run_as_admin", False)),
             reconnect_on_network_change=bool(data.get("reconnect_on_network_change", True)),
             prefer_ipv6=bool(data.get("prefer_ipv6", False)),
@@ -421,6 +426,7 @@ class AppSettings:
             ui_font_family=str(data.get("ui_font_family") or ""),
             ui_font_scale=int(data.get("ui_font_scale") or 100),
             ui_backdrop=str(data.get("ui_backdrop") or "mica"),
+            ui_transparency_strength=int(data.get("ui_transparency_strength") if data.get("ui_transparency_strength") is not None else 50),
             ui_theme_preset=str(data.get("ui_theme_preset") or "default"),
             ui_animations=bool(data.get("ui_animations", True)),
             ui_base_tint=str(data.get("ui_base_tint") or ""),

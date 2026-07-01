@@ -21,10 +21,12 @@ QtObject {
     property string preset: "default"          // default | midnight | nord | ...
     property string baseTint: ""               // "" = выкл; иначе #RRGGBB — свой базовый тон окна (приоритет над пресетом)
     property string backdrop: "mica"           // mica | acrylic | solid
+    property int transparencyStrength: 50      // 0..100, higher = more transparent
     property bool backdropAvailable: true       // false на Win10 (нет Mica) → непрозрачный фон
     property bool wallpaperActive: false
 
     readonly property bool isTranslucent: backdropAvailable && backdrop !== "solid"
+    readonly property bool translucentStyle: backdropAvailable
     readonly property bool amoled: preset === "midnight"
 
     // ---- Theme presets (surface palettes) ------------------------------
@@ -146,7 +148,7 @@ QtObject {
         var value = _pal[name]
         if (value === undefined || value === "")
             return fallback
-        return isTranslucent ? _hexWithAlpha(value, alpha) : value
+        return translucentStyle ? _hexWithAlpha(value, alpha) : value
     }
 
     function _lightColor(name, fallback) {
@@ -160,7 +162,7 @@ QtObject {
         var value = _lightPal[name]
         if (value === undefined || value === "")
             return fallback
-        return isTranslucent ? _hexWithAlpha(value, alpha) : value
+        return translucentStyle ? _hexWithAlpha(value, alpha) : value
     }
 
     function _lightBackground(alpha) {
@@ -188,11 +190,15 @@ QtObject {
                        (g * 0.30 + base * 0.70) / 255,
                        (b * 0.30 + base * 0.70) / 255, 1)
     }
-    readonly property real darkPaletteWindowAlpha: 0.50
+    readonly property real transparencyAmount: Math.max(0, Math.min(100, transparencyStrength)) / 100.0
+    readonly property real transparencyAlphaFactor: 1.45 - transparencyAmount * 1.05
+    readonly property real darkMicaVeilAlpha: 0.82 - transparencyAmount * 0.60
+    readonly property real lightMicaVeilAlpha: 0.70 - transparencyAmount * 0.54
+    readonly property real darkPaletteWindowAlpha: Math.min(0.88, 0.56 * transparencyAlphaFactor)
     readonly property real darkPalettePanelAlpha: 0.46
     readonly property real lightGlassWindowAlpha: 0.22
     readonly property real lightGlassPanelAlpha: 0.18
-    readonly property real lightPaletteWindowAlpha: 0.30
+    readonly property real lightPaletteWindowAlpha: Math.min(0.72, 0.34 * transparencyAlphaFactor)
     readonly property real lightPalettePanelAlpha: 0.32
     readonly property real lightGlassCardAlpha: 0.50
     readonly property real lightGlassCardHoverAlpha: 0.62
@@ -200,26 +206,33 @@ QtObject {
     readonly property real lightGlassControlAlpha: 0.44
     readonly property real lightGlassControlHoverAlpha: 0.58
     readonly property real lightGlassControlPressedAlpha: 0.68
+    readonly property color solidBackdropBase: dark ? (_pal.win !== "" ? _pal.win : _pal.d0) : _lightColor("bg", _lightPal.bg)
 
     readonly property color windowBase: baseTint !== ""
         ? (dark ? _darkTint(baseTint) : _lightTint(baseTint))
         : (presetColored
-            ? (dark ? (_pal.win !== "" ? _pal.win : _pal.d0) : _pal.lt)
-            : (backdropAvailable ? "transparent" : (dark ? _pal.d0 : _lightPal.bg)))
+            ? (dark
+                ? (isTranslucent
+                    ? _hexWithAlpha((_pal.win !== "" ? _pal.win : _pal.d0), darkPaletteWindowAlpha)
+                    : solidBackdropBase)
+                : (isTranslucent ? _hexWithAlpha(_pal.lt, lightPaletteWindowAlpha) : solidBackdropBase))
+            : (isTranslucent
+                ? (dark ? _hexWithAlpha(_pal.d0, darkMicaVeilAlpha) : _hexWithAlpha(_lightPal.bg, lightMicaVeilAlpha))
+                : solidBackdropBase))
     readonly property color micaBase: "transparent"
     readonly property color contentPanel: dark
-        ? _palLayer("card", Qt.rgba(1, 1, 1, 0.048), 0.44)
-        : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.18) : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.18), lightPalettePanelAlpha))
+        ? (translucentStyle ? _palLayer("card", Qt.rgba(1, 1, 1, 0.048), 0.44 * transparencyAlphaFactor) : _palColor("card", _pal.d1))
+        : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.18) : _lightLayer("bg", Qt.rgba(1, 1, 1, 0.18), lightPalettePanelAlpha * transparencyAlphaFactor)) : _lightColor("layer", "#FFFFFF"))
     readonly property color railPanel: dark
-        ? _palLayer("control", Qt.rgba(1, 1, 1, 0.065), 0.72)
-        : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.24) : _lightLayer("press", Qt.rgba(1, 1, 1, 0.34), 0.70))
+        ? (translucentStyle ? _palLayer("control", Qt.rgba(1, 1, 1, 0.065), 0.72 * transparencyAlphaFactor) : _palColor("control", _pal.d1))
+        : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.24) : _lightLayer("press", Qt.rgba(1, 1, 1, 0.34), 0.70 * transparencyAlphaFactor)) : _lightColor("layer", "#FFFFFF"))
     readonly property color chromePanel: dark
-        ? _palLayer("control", Qt.rgba(1, 1, 1, 0.030), 0.26)
-        : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.22))
-    readonly property color bgElevated: dark ? Qt.rgba(1, 1, 1, 0.016) : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.55))
-    readonly property color card: dark ? Qt.rgba(1, 1, 1, 0.040) : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.22) : Qt.rgba(1, 1, 1, 0.38))
-    readonly property color cardHover: dark ? Qt.rgba(1, 1, 1, 0.0837) : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.32) : Qt.rgba(1, 1, 1, 0.48))
-    readonly property color cardPressed: dark ? Qt.rgba(1, 1, 1, 0.0326) : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.40) : Qt.rgba(1, 1, 1, 0.56))
+        ? (translucentStyle ? _palLayer("control", Qt.rgba(1, 1, 1, 0.030), 0.26 * transparencyAlphaFactor) : _palColor("control", _pal.d1))
+        : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.22 * transparencyAlphaFactor)) : _lightColor("layer", "#FFFFFF"))
+    readonly property color bgElevated: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.016) : _palColor("elevated", _pal.d1)) : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.55)) : _lightColor("layer", "#FFFFFF"))
+    readonly property color card: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.040) : _palColor("card", _pal.d1)) : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.22) : Qt.rgba(1, 1, 1, 0.38)) : _lightColor("layer", "#FFFFFF"))
+    readonly property color cardHover: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.0837) : _palColor("cardHover", Qt.lighter(_pal.d1, 1.12))) : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.32) : Qt.rgba(1, 1, 1, 0.48)) : _lightColor("hover", "#F4F4F4"))
+    readonly property color cardPressed: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.0326) : _palColor("cardPressed", _pal.d0)) : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.40) : Qt.rgba(1, 1, 1, 0.56)) : _lightColor("press", "#ECECEC"))
     readonly property color navHover: dark ? cardHover : Qt.rgba(accent.r, accent.g, accent.b, 0.11)
     readonly property color flyout: dark ? _pal.d1 : "#FBFBFB"
     readonly property color flyoutBorder: dark ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(0, 0, 0, 0.13)
@@ -248,9 +261,9 @@ QtObject {
     readonly property color info: accent
 
     // ---- Standard (non-accent) button fill -----------------------------
-    readonly property color controlFill: dark ? Qt.rgba(1, 1, 1, 0.06) : Qt.rgba(1, 1, 1, 0.70)
-    readonly property color controlFillHover: dark ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.5)
-    readonly property color controlFillPressed: dark ? Qt.rgba(1, 1, 1, 0.03) : Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.3)
+    readonly property color controlFill: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.06) : _palColor("control", _pal.d1)) : (translucentStyle ? Qt.rgba(1, 1, 1, 0.70) : "#FFFFFF")
+    readonly property color controlFillHover: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.08) : _palColor("controlHover", Qt.lighter(_pal.d1, 1.12))) : (translucentStyle ? Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.5) : "#F4F4F4")
+    readonly property color controlFillPressed: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.03) : _palColor("controlPressed", _pal.d0)) : (translucentStyle ? Qt.rgba(249 / 255, 249 / 255, 249 / 255, 0.3) : "#ECECEC")
 
     // ---- Elevation (drop shadows via MultiEffect) ----------------------
     readonly property color shadowColor: "#000000"

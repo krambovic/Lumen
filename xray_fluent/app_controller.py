@@ -15,7 +15,7 @@ from .logging_setup import configure_diagnostics_upload, configure_logging, get_
 from .diagnostics_uploader import upload_bundle
 from typing import TYPE_CHECKING, Any
 
-from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QMetaObject, QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
 
 from .application.config import (
     SingboxDocumentCache,
@@ -466,13 +466,21 @@ class AppController(QObject):
     def is_data_encrypted(self) -> bool:
         return self.storage.is_encrypted()
 
+    @pyqtSlot()
     def save(self) -> None:
+        if self.thread() != QThread.currentThread():
+            QMetaObject.invokeMethod(self, "save", Qt.ConnectionType.BlockingQueuedConnection)
+            return
         if self._save_timer.isActive():
             self._save_timer.stop()
         self._save_pending = False
         self.storage.save(self.state)
 
+    @pyqtSlot()
     def schedule_save(self) -> None:
+        if self.thread() != QThread.currentThread():
+            QMetaObject.invokeMethod(self, "schedule_save", Qt.ConnectionType.QueuedConnection)
+            return
         self._save_pending = True
         self._save_timer.start()
 
@@ -1548,6 +1556,7 @@ class AppController(QObject):
     def update_settings(self, settings: AppSettings) -> None:
         old_settings = self.state.settings
         old_launch = old_settings.launch_on_startup
+        old_launch_in_tray = getattr(old_settings, "launch_in_tray_on_startup", True)
         old_admin = old_settings.always_run_as_admin
         old_tun = old_settings.tun_mode
         old_tun_engine = old_settings.tun_engine
@@ -1562,9 +1571,21 @@ class AppController(QObject):
         if old_proxy and not settings.enable_system_proxy:
             self.proxy.disable_necko_overrides()
 
-        if old_launch != settings.launch_on_startup:
+        if (
+            old_launch != settings.launch_on_startup
+            or (
+                settings.launch_on_startup
+                and old_launch_in_tray != getattr(settings, "launch_in_tray_on_startup", True)
+            )
+        ):
             try:
-                set_startup_enabled(APP_NAME, settings.launch_on_startup, build_startup_command())
+                set_startup_enabled(
+                    APP_NAME,
+                    settings.launch_on_startup,
+                    build_startup_command(
+                        in_tray=bool(getattr(settings, "launch_in_tray_on_startup", True))
+                    ),
+                )
             except Exception as exc:
                 self.status.emit("error", f"Ошибка настройки автозапуска: {exc}")
 
