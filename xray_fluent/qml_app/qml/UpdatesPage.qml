@@ -360,6 +360,7 @@ Item {
                         }
                         AccentButton {
                             kind: "ghost"; glyph: "\uE896"; text: I18n.t("Обновить Xray core")
+                            visible: page.xrayPhase === "available" || page.xrayPhase === "updating"
                             enabled: !page.xrayBusy && page.xrayPhase !== "uptodate" && page.xrayPhase !== "updated"
                             onClicked: App.updateXrayCore()
                         }
@@ -404,6 +405,7 @@ Item {
                         }
                         AccentButton {
                             kind: "ghost"; glyph: "\uE896"; text: I18n.t("Обновить sing-box")
+                            visible: page.singboxPhase === "available" || page.singboxPhase === "updating"
                             enabled: !page.singboxBusy && page.singboxPhase !== "uptodate" && page.singboxPhase !== "updated"
                             onClicked: App.updateSingboxCore()
                         }

@@ -317,6 +317,7 @@ def check_and_update_xray_core(
     apply_update: bool = False,
     on_progress=None,
     proxy_url: str | None = None,
+    on_install_start=None,
 ) -> XrayCoreUpdateResult:
     exe = resolve_configured_path(
         xray_path,
@@ -419,6 +420,19 @@ def check_and_update_xray_core(
                     updated=False,
                 )
 
+        if on_install_start:
+            try:
+                on_install_start()
+            except Exception as exc:
+                return XrayCoreUpdateResult(
+                    status="error",
+                    message=f"Ошибка остановки служб: {exc}",
+                    channel=release.channel,
+                    current_version=current_version,
+                    latest_version=latest_version,
+                    updated=False,
+                )
+
         try:
             _install_zip_archive(archive_path, exe)
         except Exception as exc:
@@ -445,6 +459,7 @@ def check_and_update_xray_core(
 class XrayCoreUpdateWorker(QThread):
     done = pyqtSignal(object)
     progress = pyqtSignal(int)  # percent 0-100
+    request_disconnect = pyqtSignal()
 
     def __init__(
         self,
@@ -469,5 +484,9 @@ class XrayCoreUpdateWorker(QThread):
             apply_update=self._apply_update,
             on_progress=lambda d, t: self.progress.emit(int(d * 100 / t)),
             proxy_url=self._proxy_url,
+            on_install_start=self._trigger_disconnect_request,
         )
         self.done.emit(result)
+
+    def _trigger_disconnect_request(self) -> None:
+        self.request_disconnect.emit()

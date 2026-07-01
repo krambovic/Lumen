@@ -54,6 +54,11 @@ def run_xray_core_update(controller: AppController, apply_update: bool, silent: 
     )
     controller._xray_update_worker.progress.connect(controller.xray_update_progress.emit)
     controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)
+    from PyQt6.QtCore import Qt
+    controller._xray_update_worker.request_disconnect.connect(
+        controller._on_update_disconnect_request,
+        Qt.ConnectionType.BlockingQueuedConnection
+    )
     controller._xray_update_worker.start()
 
     if not silent:
@@ -72,16 +77,7 @@ def on_xray_update_worker_done(controller: AppController, result: XrayCoreUpdate
         controller._xray_update_apply_requested = False
         if result.status == "available":
             controller.status.emit("info", "Обновление Xray...")
-            if controller.connected:
-                stopped = controller.disconnect_current()
-                if not stopped:
-                    controller._reconnect_after_xray_update = False
-                    controller.status.emit("error", "Не удалось остановить активное подключение перед обновлением Xray")
-                    controller._xray_update_silent = False
-                    return
-                controller._reconnect_after_xray_update = True
-            else:
-                controller._reconnect_after_xray_update = False
+            controller._reconnect_after_xray_update = False
             controller._xray_update_silent = False
             controller._xray_update_worker = XrayCoreUpdateWorker(
                 controller.state.settings.xray_path,
@@ -92,6 +88,11 @@ def on_xray_update_worker_done(controller: AppController, result: XrayCoreUpdate
             )
             controller._xray_update_worker.progress.connect(controller.xray_update_progress.emit)
             controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)
+            from PyQt6.QtCore import Qt
+            controller._xray_update_worker.request_disconnect.connect(
+                controller._on_update_disconnect_request,
+                Qt.ConnectionType.BlockingQueuedConnection
+            )
             controller._xray_update_worker.start()
             return
         if result.status == "error":

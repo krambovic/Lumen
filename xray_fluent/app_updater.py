@@ -31,6 +31,16 @@ USER_AGENT = f"LumenKVN/{APP_VERSION}"
 APP_ID = "{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1"
 
 
+def is_portable() -> bool:
+    for name in ("portable.txt", "portable"):
+        try:
+            if (BASE_DIR / name).is_file():
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def _powershell_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -81,6 +91,8 @@ def _registered_install_dir() -> Path | None:
 
 
 def _target_app_dir(current_app_dir: Path) -> Path:
+    if is_portable():
+        return current_app_dir
     if _is_root_program_dir(current_app_dir):
         return _program_files_app_dir()
     registered = _registered_install_dir()
@@ -248,21 +260,27 @@ def _is_nightly_asset(asset: dict) -> bool:
     return "nightly" in name or "qml" in name
 
 
-def _asset_score(asset: dict, prefer_qml: bool = False) -> tuple[int, str]:
+def _asset_score(asset: dict, prefer_qml: bool = False, portable: bool = False) -> tuple[int, str]:
     name = str(asset.get("name") or "").lower()
-    if not name.endswith(".exe"):
+    target_ext = ".zip" if portable else ".exe"
+    if not name.endswith(target_ext):
         return (0, name)
     score = 1
     if "lumenkvn" in name:
         score += 2
-    if "setup" in name:
-        score += 4
+    if portable:
+        if "portable" in name:
+            score += 4
+    else:
+        if "setup" in name:
+            score += 4
+        if "portable" in name:
+            score -= 4
+
     if "windows" in name:
         score += 2
     if "x64" in name or "win64" in name or "amd64" in name:
         score += 2
-    if "portable" in name:
-        score -= 4
 
     if _is_nightly_asset(asset):
         score -= 1
@@ -364,19 +382,23 @@ class UpdateChecker(QThread):
 
     def _build_update(self, data: dict):
         tag = data.get("tag_name", "")
-        setup_assets = [
+        portable = is_portable()
+        target_ext = ".zip" if portable else ".exe"
+        
+        filtered_assets = [
             a for a in data.get("assets", [])
-            if str(a.get("name") or "").lower().endswith(".exe")
-            and "setup" in str(a.get("name") or "").lower()
+            if str(a.get("name") or "").lower().endswith(target_ext)
+            and (not portable or "portable" in str(a.get("name") or "").lower() or "windows" in str(a.get("name") or "").lower())
         ]
         asset = max(
-            setup_assets,
-            key=lambda a: _asset_score(a, self._prefer_qml),
+            filtered_assets,
+            key=lambda a: _asset_score(a, self._prefer_qml, portable),
             default=None,
         )
         if not asset:
+            label = "zip-архив" if portable else "setup-установщик"
             self.error.emit(
-                f"Релиз {tag} найден, но отсутствует setup-установщик"
+                f"Релиз {tag} найден, но отсутствует {label}"
             )
             return None
 
@@ -400,9 +422,11 @@ class UpdateChecker(QThread):
                     _fetch_text(str(sidecar.get("browser_download_url") or ""))
                 )
         if not digest:
-            self.error.emit(f"Релиз {tag} найден, но установщик не содержит SHA-256")
+            label = "zip-архив" if portable else "установщик"
+            self.error.emit(f"Релиз {tag} найден, но {label} не содержит SHA-256")
             return None
 
+        default_asset_name = "LumenKVN-portable-windows-x64.zip" if portable else "LumenKVN-Setup-windows-x64.exe"
         return AppUpdate(
             version=tag.lstrip("v"),
             tag=tag,
@@ -410,7 +434,7 @@ class UpdateChecker(QThread):
             size=asset.get("size", 0),
             notes=data.get("body", ""),
             digest_sha256=digest,
-            asset_name=str(asset.get("name") or "LumenKVN-Setup-windows-x64.exe"),
+            asset_name=str(asset.get("name") or default_asset_name),
         )
 
 
@@ -588,7 +612,8 @@ class UpdateDownloader(QThread):
         tmp_dir: Path | None = None
         try:
             tmp_dir = Path(tempfile.mkdtemp(prefix="lumenkvn_update_"))
-            setup_name = self._update.asset_name or "LumenKVN-Setup-windows-x64.exe"
+            default_setup = "LumenKVN-portable-windows-x64.zip" if is_portable() else "LumenKVN-Setup-windows-x64.exe"
+            setup_name = self._update.asset_name or default_setup
             setup_path = tmp_dir / setup_name
 
             downloaded_ok = False
@@ -633,16 +658,17 @@ class UpdateDownloader(QThread):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
 
-            self.status.emit("Проверка установщика...")
+            label = "архива" if is_portable() else "установщика"
+            self.status.emit(f"Проверка {label}...")
             expected_hash = _extract_digest(self._update.digest_sha256)
             if not expected_hash:
-                self.error.emit("У релизного установщика отсутствует SHA-256")
+                self.error.emit(f"У релизного {label} отсутствует SHA-256")
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
 
             real_hash = _sha256_file(setup_path)
             if real_hash.lower() != expected_hash.lower():
-                self.error.emit("Контрольная сумма установщика не совпадает")
+                self.error.emit(f"Контрольная сумма {label} не совпадает")
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
 
@@ -656,119 +682,179 @@ class UpdateDownloader(QThread):
             current_app_dir = BASE_DIR.resolve(strict=False)
             app_dir = _target_app_dir(current_app_dir)
             script = tmp_dir / "_update.ps1"
-            script_text = "\r\n".join([
-                "$ErrorActionPreference = 'Stop'",
-                f"$pidToWait = {current_pid}",
-                f"$setupPath = {_powershell_literal(str(setup_path))}",
-                f"$currentAppDir = {_powershell_literal(str(current_app_dir))}",
-                f"$appDir = {_powershell_literal(str(app_dir))}",
-                f"$exePath = {_powershell_literal(str(app_dir / exe_name))}",
-                "$fallbackExe = Join-Path $currentAppDir 'LumenKVN.exe'",
-                f"$tempDir = {_powershell_literal(str(tmp_dir))}",
-                f"$expectedVersion = {_powershell_literal(self._update.version)}",
-                "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
-                "$runtimeDir = Join-Path (Join-Path $appDir 'data') 'runtime'",
-                "$errorLog = Join-Path $logDir 'update_error.log'",
-                "$setupLog = Join-Path $logDir 'setup_update.log'",
-                "if ((Split-Path -Leaf $appDir) -ieq 'Program') { throw 'Install directory resolved to C:\\Program; aborting update.' }",
-                "New-Item -ItemType Directory -Path $appDir -Force | Out-Null",
-                "New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
-                "New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null",
-                "$adminIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()",
-                "$adminPrincipal = New-Object Security.Principal.WindowsPrincipal($adminIdentity)",
-                "if (-not $adminPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Lumen KVN updater must run as administrator to replace zapret drivers.' }",
-                "for ($i = 0; $i -lt 120; $i++) {",
-                "    if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break }",
-                "    Start-Sleep -Milliseconds 500",
-                "}",
-                "$proc = Get-Process -Id $pidToWait -ErrorAction SilentlyContinue",
-                "if ($proc) { Stop-Process -Id $pidToWait -Force }",
-                "Get-Process -Name 'LumenKVN' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
-                "foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
-                "foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
-                "    & sc.exe stop $driverName *> $null",
-                "    & sc.exe delete $driverName *> $null",
-                "}",
-                "$zapretExeDir = Join-Path (Join-Path $appDir 'zapret') 'exe'",
-                "foreach ($driverFile in @('Monkey64.sys','WinDivert32.sys','WinDivert64.sys')) {",
-                "    Remove-Item -LiteralPath (Join-Path $zapretExeDir $driverFile) -Force -ErrorAction SilentlyContinue",
-                "}",
-                "Start-Sleep -Milliseconds 1200",
-                "try {",
-                "    $installDirArg = '/DIR=\"' + $appDir + '\"'",
-                "    $logArg = '/LOG=\"' + $setupLog + '\"'",
-                "    $installerArgs = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/FORCECLOSEAPPLICATIONS','/RESTARTEXITCODE=3010',$installDirArg,$logArg)",
-                "    $install = $null",
-                "    for ($attempt = 1; $attempt -le 3; $attempt++) {",
-                "        $install = Start-Process -FilePath $setupPath -ArgumentList $installerArgs -Wait -PassThru -ErrorAction Stop",
-                "        if ($install.ExitCode -eq 0 -or $install.ExitCode -eq 3010) { break }",
-                "        Get-Process -Name 'LumenKVN' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
-                "        foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
-                "        foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
-                "            & sc.exe stop $driverName *> $null",
-                "            & sc.exe delete $driverName *> $null",
-                "        }",
-                "        foreach ($driverFile in @('Monkey64.sys','WinDivert32.sys','WinDivert64.sys')) {",
-                "            Remove-Item -LiteralPath (Join-Path $zapretExeDir $driverFile) -Force -ErrorAction SilentlyContinue",
-                "        }",
-                "        Start-Sleep -Seconds 2",
-                "    }",
-                "    if ($install.ExitCode -ne 0 -and $install.ExitCode -ne 3010) {",
-                "        $setupTail = ''",
-                "        if (Test-Path -LiteralPath $setupLog) { $setupTail = (Get-Content -LiteralPath $setupLog -Tail 30 -ErrorAction SilentlyContinue) -join [Environment]::NewLine }",
-                "        throw ('Installer exited with code ' + $install.ExitCode + [Environment]::NewLine + 'Setup log tail:' + [Environment]::NewLine + $setupTail) }",
-                "    $uninstallKeys = @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1')",
-                "    foreach ($uk in $uninstallKeys) { try { $loc = (Get-ItemProperty -LiteralPath $uk -ErrorAction Stop).InstallLocation; if ($loc -and (Test-Path -LiteralPath (Join-Path $loc 'LumenKVN.exe'))) { $appDir = $loc.TrimEnd('\\'); $exePath = Join-Path $appDir 'LumenKVN.exe'; break } } catch {} }",
-                "    $currentDataDir = Join-Path $currentAppDir 'data'",
-                "    if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir)) {",
-                "        Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force",
-                "    }",
-                "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated LumenKVN.exe was not installed' }",
-                "    $versionFile = Join-Path $runtimeDir 'update_version.txt'",
-                "    Remove-Item -LiteralPath $versionFile -Force -ErrorAction SilentlyContinue",
-                "    $versionProbe = Start-Process -FilePath $exePath -ArgumentList '--version-file',$versionFile -WorkingDirectory $appDir -PassThru -Wait -ErrorAction Stop",
-                "    $versionLine = Get-Content -LiteralPath $versionFile -ErrorAction SilentlyContinue | Select-Object -First 1",
-                "    if ($null -eq $versionLine -or [string]::IsNullOrWhiteSpace([string]$versionLine)) {",
-                "        Write-Log 'Updated executable did not write version probe file; continuing because installer finished successfully'",
-                "    } else {",
-                "        $installedVersion = ([string]$versionLine).Trim().TrimStart('v')",
-                "        if ($expectedVersion -and $installedVersion -and $installedVersion -ne $expectedVersion.TrimStart('v')) { throw ('Updated executable reports v' + $installedVersion + ', expected v' + $expectedVersion) }",
-                "    }",
-                "    $oldExePath = Join-Path $currentAppDir 'LumenKVN.exe'",
-                "    $currentRoot = [System.IO.Path]::GetPathRoot($currentAppDir)",
-                "    $currentParent = Split-Path -Parent $currentAppDir",
-                "    $isRootProgramDir = ((Split-Path -Leaf $currentAppDir) -ieq 'Program' -and $currentParent.TrimEnd('\\') -ieq $currentRoot.TrimEnd('\\'))",
-                "    if ($currentAppDir -ine $appDir -and $isRootProgramDir -and (Test-Path -LiteralPath $oldExePath)) {",
-                "        Remove-Item -LiteralPath $currentAppDir -Recurse -Force -ErrorAction SilentlyContinue",
-                "    }",
-                "    $legacyRootProgram = 'C:\\Program'",
-                "    $legacyRootExe = Join-Path $legacyRootProgram 'LumenKVN.exe'",
-                "    if ($legacyRootProgram -ine $appDir -and (Test-Path -LiteralPath $legacyRootExe)) {",
-                "        Remove-Item -LiteralPath $legacyRootProgram -Recurse -Force -ErrorAction SilentlyContinue",
-                "    }",
-                (
-                    "    $started = Start-Process -FilePath $exePath -ArgumentList '--tray' -WorkingDirectory $appDir -PassThru -ErrorAction Stop"
-                    if self._restart_in_tray
-                    else "    $started = Start-Process -FilePath $exePath -WorkingDirectory $appDir -PassThru -ErrorAction Stop"
-                ),
-                "    Start-Sleep -Seconds 5",
-                "    if ($started.HasExited) {",
-                "        throw ('Updated application exited immediately with code ' + $started.ExitCode)",
-                "    }",
-                "}",
-                "catch {",
-                (
-                    "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--tray','--relaunched' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--tray','--relaunched' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
-                    if self._restart_in_tray
-                    else "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--relaunched' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--relaunched' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
-                ),
-                "    New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
-                "    ($_ | Out-String) | Set-Content -LiteralPath $errorLog -Encoding UTF8",
-                "    throw",
-                "}",
-                "Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue",
-                "",
-            ])
+            if is_portable():
+                script_text = "\r\n".join([
+                    "$ErrorActionPreference = 'Stop'",
+                    f"$pidToWait = {current_pid}",
+                    f"$setupPath = {_powershell_literal(str(setup_path))}",
+                    f"$currentAppDir = {_powershell_literal(str(current_app_dir))}",
+                    f"$appDir = {_powershell_literal(str(app_dir))}",
+                    f"$exePath = {_powershell_literal(str(app_dir / exe_name))}",
+                    "$fallbackExe = Join-Path $currentAppDir 'LumenKVN.exe'",
+                    f"$tempDir = {_powershell_literal(str(tmp_dir))}",
+                    f"$expectedVersion = {_powershell_literal(self._update.version)}",
+                    "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
+                    "$runtimeDir = Join-Path (Join-Path $appDir 'data') 'runtime'",
+                    "$errorLog = Join-Path $logDir 'update_error.log'",
+                    "for ($i = 0; $i -lt 120; $i++) {",
+                    "    if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break }",
+                    "    Start-Sleep -Milliseconds 500",
+                    "}",
+                    "$proc = Get-Process -Id $pidToWait -ErrorAction SilentlyContinue",
+                    "if ($proc) { Stop-Process -Id $pidToWait -Force }",
+                    "Get-Process -Name 'LumenKVN' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+                    "foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
+                    "foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
+                    "    & sc.exe stop $driverName *> $null",
+                    "    & sc.exe delete $driverName *> $null",
+                    "}",
+                    "Start-Sleep -Milliseconds 1200",
+                    "try {",
+                    "    Get-ChildItem -Path $appDir -Force | ForEach-Object {",
+                    "        $name = $_.Name.ToLower()",
+                    "        if ($name -ne 'data' -and $name -ne 'portable.txt' -and $name -ne 'portable' -and $_.FullName -ne $tempDir) {",
+                    "            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue",
+                    "        }",
+                    "    }",
+                    "    Expand-Archive -LiteralPath $setupPath -DestinationPath $appDir -Force",
+                    "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated LumenKVN.exe was not found' }",
+                    (
+                        "    $started = Start-Process -FilePath $exePath -ArgumentList '--tray' -WorkingDirectory $appDir -PassThru -ErrorAction Stop"
+                        if self._restart_in_tray
+                        else "    $started = Start-Process -FilePath $exePath -WorkingDirectory $appDir -PassThru -ErrorAction Stop"
+                    ),
+                    "    Start-Sleep -Seconds 5",
+                    "    if ($started.HasExited) {",
+                    "        throw ('Updated application exited immediately with code ' + $started.ExitCode)",
+                    "    }",
+                    "}",
+                    "catch {",
+                    (
+                        "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--tray','--relaunched' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--tray','--relaunched' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
+                        if self._restart_in_tray
+                        else "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--relaunched' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--relaunched' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
+                    ),
+                    "    New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
+                    "    ($_ | Out-String) | Set-Content -LiteralPath $errorLog -Encoding UTF8",
+                    "    throw",
+                    "}",
+                    "Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue",
+                    "",
+                ])
+            else:
+                script_text = "\r\n".join([
+                    "$ErrorActionPreference = 'Stop'",
+                    f"$pidToWait = {current_pid}",
+                    f"$setupPath = {_powershell_literal(str(setup_path))}",
+                    f"$currentAppDir = {_powershell_literal(str(current_app_dir))}",
+                    f"$appDir = {_powershell_literal(str(app_dir))}",
+                    f"$exePath = {_powershell_literal(str(app_dir / exe_name))}",
+                    "$fallbackExe = Join-Path $currentAppDir 'LumenKVN.exe'",
+                    f"$tempDir = {_powershell_literal(str(tmp_dir))}",
+                    f"$expectedVersion = {_powershell_literal(self._update.version)}",
+                    "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
+                    "$runtimeDir = Join-Path (Join-Path $appDir 'data') 'runtime'",
+                    "$errorLog = Join-Path $logDir 'update_error.log'",
+                    "$setupLog = Join-Path $logDir 'setup_update.log'",
+                    "if ((Split-Path -Leaf $appDir) -ieq 'Program') { throw 'Install directory resolved to C:\\Program; aborting update.' }",
+                    "New-Item -ItemType Directory -Path $appDir -Force | Out-Null",
+                    "New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
+                    "New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null",
+                    "$adminIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()",
+                    "$adminPrincipal = New-Object Security.Principal.WindowsPrincipal($adminIdentity)",
+                    "if (-not $adminPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Lumen KVN updater must run as administrator to replace zapret drivers.' }",
+                    "for ($i = 0; $i -lt 120; $i++) {",
+                    "    if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break }",
+                    "    Start-Sleep -Milliseconds 500",
+                    "}",
+                    "$proc = Get-Process -Id $pidToWait -ErrorAction SilentlyContinue",
+                    "if ($proc) { Stop-Process -Id $pidToWait -Force }",
+                    "Get-Process -Name 'LumenKVN' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+                    "foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
+                    "foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
+                    "    & sc.exe stop $driverName *> $null",
+                    "    & sc.exe delete $driverName *> $null",
+                    "}",
+                    "$zapretExeDir = Join-Path (Join-Path $appDir 'zapret') 'exe'",
+                    "foreach ($driverFile in @('Monkey64.sys','WinDivert32.sys','WinDivert64.sys')) {",
+                    "    Remove-Item -LiteralPath (Join-Path $zapretExeDir $driverFile) -Force -ErrorAction SilentlyContinue",
+                    "}",
+                    "Start-Sleep -Milliseconds 1200",
+                    "try {",
+                    "    $installDirArg = '/DIR=\"' + $appDir + '\"'",
+                    "    $logArg = '/LOG=\"' + $setupLog + '\"'",
+                    "    $installerArgs = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/FORCECLOSEAPPLICATIONS','/RESTARTEXITCODE=3010',$installDirArg,$logArg)",
+                    "    $install = $null",
+                    "    for ($attempt = 1; $attempt -le 3; $attempt++) {",
+                    "        $install = Start-Process -FilePath $setupPath -ArgumentList $installerArgs -Wait -PassThru -ErrorAction Stop",
+                    "        if ($install.ExitCode -eq 0 -or $install.ExitCode -eq 3010) { break }",
+                    "        Get-Process -Name 'LumenKVN' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+                    "        foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
+                    "        foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
+                    "            & sc.exe stop $driverName *> $null",
+                    "            & sc.exe delete $driverName *> $null",
+                    "        }",
+                    "        foreach ($driverFile in @('Monkey64.sys','WinDivert32.sys','WinDivert64.sys')) {",
+                    "            Remove-Item -LiteralPath (Join-Path $zapretExeDir $driverFile) -Force -ErrorAction SilentlyContinue",
+                    "        }",
+                    "        Start-Sleep -Seconds 2",
+                    "    }",
+                    "    if ($install.ExitCode -ne 0 -and $install.ExitCode -ne 3010) {",
+                    "        $setupTail = ''",
+                    "        if (Test-Path -LiteralPath $setupLog) { $setupTail = (Get-Content -LiteralPath $setupLog -Tail 30 -ErrorAction SilentlyContinue) -join [Environment]::NewLine }",
+                    "        throw ('Installer exited with code ' + $install.ExitCode + [Environment]::NewLine + 'Setup log tail:' + [Environment]::NewLine + $setupTail) }",
+                    "    $uninstallKeys = @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1')",
+                    "    foreach ($uk in $uninstallKeys) { try { $loc = (Get-ItemProperty -LiteralPath $uk -ErrorAction Stop).InstallLocation; if ($loc -and (Test-Path -LiteralPath (Join-Path $loc 'LumenKVN.exe'))) { $appDir = $loc.TrimEnd('\\'); $exePath = Join-Path $appDir 'LumenKVN.exe'; break } } catch {} }",
+                    "    $currentDataDir = Join-Path $currentAppDir 'data'",
+                    "    if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir)) {",
+                    "        Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force",
+                    "    }",
+                    "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated LumenKVN.exe was not installed' }",
+                    "    $versionFile = Join-Path $runtimeDir 'update_version.txt'",
+                    "    Remove-Item -LiteralPath $versionFile -Force -ErrorAction SilentlyContinue",
+                    "    $versionProbe = Start-Process -FilePath $exePath -ArgumentList '--version-file',$versionFile -WorkingDirectory $appDir -PassThru -Wait -ErrorAction Stop",
+                    "    $versionLine = Get-Content -LiteralPath $versionFile -ErrorAction SilentlyContinue | Select-Object -First 1",
+                    "    if ($null -eq $versionLine -or [string]::IsNullOrWhiteSpace([string]$versionLine)) {",
+                    "        Write-Log 'Updated executable did not write version probe file; continuing because installer finished successfully'",
+                    "    } else {",
+                    "        $installedVersion = ([string]$versionLine).Trim().TrimStart('v')",
+                    "        if ($expectedVersion -and $installedVersion -and $installedVersion -ne $expectedVersion.TrimStart('v')) { throw ('Updated executable reports v' + $installedVersion + ', expected v' + $expectedVersion) }",
+                    "    }",
+                    "    $oldExePath = Join-Path $currentAppDir 'LumenKVN.exe'",
+                    "    $currentRoot = [System.IO.Path]::GetPathRoot($currentAppDir)",
+                    "    $currentParent = Split-Path -Parent $currentAppDir",
+                    "    $isRootProgramDir = ((Split-Path -Leaf $currentAppDir) -ieq 'Program' -and $currentParent.TrimEnd('\\') -ieq $currentRoot.TrimEnd('\\'))",
+                    "    if ($currentAppDir -ine $appDir -and $isRootProgramDir -and (Test-Path -LiteralPath $oldExePath)) {",
+                    "        Remove-Item -LiteralPath $currentAppDir -Recurse -Force -ErrorAction SilentlyContinue",
+                    "    }",
+                    "    $legacyRootProgram = 'C:\\Program'",
+                    "    $legacyRootExe = Join-Path $legacyRootProgram 'LumenKVN.exe'",
+                    "    if ($legacyRootProgram -ine $appDir -and (Test-Path -LiteralPath $legacyRootExe)) {",
+                    "        Remove-Item -LiteralPath $legacyRootProgram -Recurse -Force -ErrorAction SilentlyContinue",
+                    "    }",
+                    (
+                        "    $started = Start-Process -FilePath $exePath -ArgumentList '--tray' -WorkingDirectory $appDir -PassThru -ErrorAction Stop"
+                        if self._restart_in_tray
+                        else "    $started = Start-Process -FilePath $exePath -WorkingDirectory $appDir -PassThru -ErrorAction Stop"
+                    ),
+                    "    Start-Sleep -Seconds 5",
+                    "    if ($started.HasExited) {",
+                    "        throw ('Updated application exited immediately with code ' + $started.ExitCode)",
+                    "    }",
+                    "}",
+                    "catch {",
+                    (
+                        "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--tray','--relaunched' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--tray','--relaunched' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
+                        if self._restart_in_tray
+                        else "    if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath -ArgumentList '--relaunched' -WorkingDirectory $appDir -ErrorAction SilentlyContinue | Out-Null } elseif (Test-Path -LiteralPath $fallbackExe) { Start-Process -FilePath $fallbackExe -ArgumentList '--relaunched' -WorkingDirectory $currentAppDir -ErrorAction SilentlyContinue | Out-Null }"
+                    ),
+                    "    New-Item -ItemType Directory -Path $logDir -Force | Out-Null",
+                    "    ($_ | Out-String) | Set-Content -LiteralPath $errorLog -Encoding UTF8",
+                    "    throw",
+                    "}",
+                    "Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue",
+                    "",
+                ])
             _write_utf8_bom_text(script, script_text)
 
             # The installer requires elevation and owns Windows registration.

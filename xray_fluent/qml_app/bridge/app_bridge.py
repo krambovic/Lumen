@@ -465,7 +465,12 @@ class AppBridge(QObject):
 
     def _on_admin_relaunch(self) -> None:
         """Relaunch elevated when the controller asks for admin rights"""
+        import logging
+        logger = logging.getLogger("xray_fluent.app")
+        logger.info("[app] Relaunch as admin requested")
+        
         if is_process_elevated():
+            logger.info("[app] Process is already elevated, ignoring relaunch request")
             return
         try:
             self.controller.save()
@@ -478,7 +483,14 @@ class AppBridge(QObject):
             except Exception:
                 pass
         if not relaunch_as_admin():
-            self.toast.emit("error", "Не удалось перезапустить Lumen KVN от имени администратора")
+            msg = "Не удалось перезапустить Lumen KVN от имени администратора"
+            logger.error("[app] relaunch_as_admin returned False")
+            self.toast.emit("error", msg)
+            try:
+                from ..toast import show_toast
+                show_toast(APP_NAME, msg)
+            except Exception as exc:
+                logger.error("[app] Failed to show system toast", exc_info=exc)
             if server is not None:
                 try:
                     from PyQt6.QtNetwork import QLocalServer
@@ -487,6 +499,7 @@ class AppBridge(QObject):
                 except Exception:
                     pass
             return
+        logger.info("[app] relaunch_as_admin triggered successfully, quitting current instance")
         app = QGuiApplication.instance()
         if app is not None:
             app.quit()

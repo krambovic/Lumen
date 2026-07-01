@@ -102,7 +102,7 @@ def _ensure_zip_file(path: Path, label: str) -> None:
         raise RuntimeError(f"{label}: скачанный файл не является zip-архивом ({size} байт)")
 
 
-def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=None, *, proxy_url: str | None = None) -> ResourceUpdateResult:
+def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=None, *, proxy_url: str | None = None, on_install_start=None) -> ResourceUpdateResult:
     exe = resolve_configured_path(
         singbox_path,
         default_path=SINGBOX_PATH_DEFAULT,
@@ -142,6 +142,11 @@ def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=N
                 raise RuntimeError("sing-box.exe не найден в архиве")
             exe.parent.mkdir(parents=True, exist_ok=True)
             backup = exe.with_suffix(".exe.bak")
+            if on_install_start:
+                try:
+                    on_install_start()
+                except Exception as exc:
+                    return ResourceUpdateResult("singbox", "error", f"Не удалось остановить службы перед обновлением: {exc}", current, latest)
             if exe.exists():
                 shutil.copy2(exe, backup)
             with tempfile.NamedTemporaryFile(prefix=".sing-box.", suffix=".exe", dir=exe.parent, delete=False) as tmp:
@@ -159,7 +164,7 @@ def check_or_update_singbox(singbox_path: str, apply_update: bool, on_progress=N
     return ResourceUpdateResult("singbox", "updated", f"sing-box обновлен до {refreshed}", current, refreshed)
 
 
-def update_geodata(on_progress=None, *, proxy_url: str | None = None) -> ResourceUpdateResult:
+def update_geodata(on_progress=None, *, proxy_url: str | None = None, on_install_start=None) -> ResourceUpdateResult:
     target_dir = _core_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
     def _scaled_progress(offset: int, span: int):
@@ -185,6 +190,11 @@ def update_geodata(on_progress=None, *, proxy_url: str | None = None) -> Resourc
             )
             if geoip.stat().st_size < 1024 or geosite.stat().st_size < 1024:
                 raise RuntimeError("скачанные geodata файлы выглядят поврежденными")
+            if on_install_start:
+                try:
+                    on_install_start()
+                except Exception as exc:
+                    raise RuntimeError(f"Не удалось остановить службы перед обновлением geoip/geosite: {exc}")
             _ensure_zip_file(singbox_rules, "sing-box rules")
             _install_singbox_rule_sets(singbox_rules)
             for src, name in ((geoip, "geoip.dat"), (geosite, "geosite.dat")):
@@ -245,6 +255,7 @@ class StartupResourceCheckWorker(QThread):
 class ResourceUpdateWorker(QThread):
     done = pyqtSignal(object)
     progress = pyqtSignal(int)
+    request_disconnect = pyqtSignal()
 
     def __init__(self, kind: str, *, singbox_path: str = "", apply_update: bool = True, proxy_url: str | None = None) -> None:
         super().__init__()
@@ -260,12 +271,17 @@ class ResourceUpdateWorker(QThread):
                 self._apply_update,
                 on_progress=lambda done, total: self.progress.emit(int(done * 100 / total)),
                 proxy_url=self._proxy_url,
+                on_install_start=self._trigger_disconnect_request,
             )
         elif self._kind == "geodata":
             result = update_geodata(
                 on_progress=lambda done, total: self.progress.emit(int(done * 100 / total)),
                 proxy_url=self._proxy_url,
+                on_install_start=self._trigger_disconnect_request,
             )
         else:
             result = ResourceUpdateResult(self._kind, "error", f"Неизвестный тип обновления: {self._kind}")
         self.done.emit(result)
+
+    def _trigger_disconnect_request(self) -> None:
+        self.request_disconnect.emit()

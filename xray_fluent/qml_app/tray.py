@@ -168,8 +168,9 @@ class QmlTray(QObject):
     def _restart_admin(self) -> None:
         try:
             self._bridge._on_admin_relaunch()
-        except Exception:
-            pass
+        except Exception as exc:
+            import logging
+            logging.getLogger("xray_fluent.app").error("[tray] Exception in _restart_admin", exc_info=exc)
 
     def _quit(self) -> None:
         try:
@@ -194,7 +195,15 @@ class QmlTray(QObject):
             self._action_show.setText(tr("Показать") if not self._window_visible() else tr("Скрыть"))
             self._action_connect.setText(tr("Отключить") if self._connected() else tr("Подключить"))
             self._action_next.setText(tr("Следующий сервер"))
-            self._action_admin.setText(tr("Перезапустить от администратора"))
+            
+            from ..startup import is_process_elevated
+            if is_process_elevated():
+                self._action_admin.setText(tr("Запущено от администратора"))
+                self._action_admin.setEnabled(False)
+            else:
+                self._action_admin.setText(tr("Перезапустить от администратора"))
+                self._action_admin.setEnabled(True)
+                
             self._action_quit.setText(tr("Выход"))
             self._action_routing.setText(tr("Маршрутизация") + "  ›")
         except Exception:

@@ -328,6 +328,7 @@ class AppController(QObject):
         self._xray_update_silent = False
         self._xray_update_proxy_url: str | None = None
         self._reconnect_after_xray_update = False
+        self._reconnect_after_resource_update = False
         self._xray_update_apply_requested = False
         self._reconnecting = False
         self._connecting = False
@@ -1697,7 +1698,29 @@ class AppController(QObject):
             lambda percent, update_kind=kind: self.resource_update_progress.emit(update_kind, int(percent))
         )
         self._resource_update_worker.done.connect(self._on_resource_update_done)
+        self._resource_update_worker.request_disconnect.connect(
+            self._on_update_disconnect_request,
+            Qt.ConnectionType.BlockingQueuedConnection
+        )
         self._resource_update_worker.start()
+
+    def _on_update_disconnect_request(self) -> None:
+        """Callback from background update thread before files are replaced.
+        Stops the running connection so files are not locked.
+        """
+        if self.connected:
+            self._logger.info("[updater] Connection active. Disconnecting before replacing files...")
+            self.status.emit("info", "Остановка ядра для установки обновлений...")
+            stopped = self.disconnect_current()
+            if stopped:
+                self._reconnect_after_resource_update = True
+                self._reconnect_after_xray_update = True
+                self._logger.info("[updater] Disconnected successfully.")
+            else:
+                self._logger.warning("[updater] Failed to disconnect.")
+        else:
+            self._reconnect_after_resource_update = False
+            self._reconnect_after_xray_update = False
 
     def _on_resource_update_done(self, result) -> None:
         self._resource_update_worker = None
@@ -1714,6 +1737,11 @@ class AppController(QObject):
         else:
             self.status.emit("warning", message)
             self._logger.warning(f"[updater] Resource update ({kind}) warning: status={status}, message={message}")
+
+        if self._reconnect_after_resource_update:
+            self._reconnect_after_resource_update = False
+            self._desired_connected = True
+            self._request_transition("resource update reconnect")
 
     def _start_metrics_worker(self) -> None:
         start_metrics_worker_operation(self)
