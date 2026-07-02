@@ -33,6 +33,7 @@ from .constants import (
 )
 from .http_utils import build_opener
 from .models import Node, RoutingSettings
+from .ping_worker import _WindowsPingBypass
 from .xray_fragments import apply_xray_final_fragment
 
 
@@ -61,6 +62,7 @@ class SpeedTestWorker(QThread):
         mode: str = "speed",
         test_url: str = "",
         concurrency: int = 0,
+        bypass_tun: bool = False,
     ):
         super().__init__()
         self._nodes = list(nodes)
@@ -70,6 +72,7 @@ class SpeedTestWorker(QThread):
         self._mode = mode if mode in ("speed", "ping") else "speed"
         self._test_url = (test_url or "").strip() or SPEED_TEST_DEFAULT_URL
         self._concurrency = int(concurrency or 0)
+        self._bypass_tun = bool(bypass_tun)
         self._cancelled = False
         self._completed_nodes = 0
         self._processes: set[subprocess.Popen] = set()
@@ -117,7 +120,10 @@ class SpeedTestWorker(QThread):
                 SPEED_TEST_PROCESS_CONCURRENCY_CAP,
                 max(1, len(self._nodes)),
             )
-            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speed-test") as executor:
+            with _WindowsPingBypass(self._nodes, self._bypass_tun) as bypass, ThreadPoolExecutor(
+                max_workers=max_workers, thread_name_prefix="speed-test"
+            ) as executor:
+                self._bypass = bypass
                 pending: set[Future[tuple[Node, float | None, bool]]] = set()
                 iterator = iter(self._nodes)
                 exhausted = False
@@ -229,11 +235,35 @@ class SpeedTestWorker(QThread):
                 except Exception:
                     pass
 
+    def _apply_direct_ip_to_outbound(self, outbound: dict, host: str) -> None:
+        # While TUN is up, point the temp xray outbound at the server's real
+        # IP (resolved directly, bypassing fake-ip) so its connection follows
+        # the temporary direct host route instead of being tunneled. TLS SNI /
+        # host live in streamSettings and are left untouched.
+        bypass = getattr(self, "_bypass", None)
+        if bypass is None:
+            return
+        host = str(host or "").strip()
+        ip = bypass.direct_ip(host)
+        if not ip or ip == host:
+            return
+        settings = outbound.get("settings")
+        if not isinstance(settings, dict):
+            return
+        for key in ("vnext", "servers"):
+            entries = settings.get(key)
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if isinstance(entry, dict) and entry.get("address"):
+                    entry["address"] = ip
+
     def _build_config(self, target: _SpeedTestTarget) -> dict:
         inbound_tag = "speed-http"
         outbound_tag = "speed-proxy"
         proxy_outbound = deepcopy(target.node.outbound)
         proxy_outbound["tag"] = outbound_tag
+        self._apply_direct_ip_to_outbound(proxy_outbound, target.node.server)
 
         config = {
             "log": {"loglevel": "none"},

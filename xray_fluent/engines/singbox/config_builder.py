@@ -21,6 +21,27 @@ _SUPPORTED_NATIVE_PROTOCOLS = {
     "masque",
 }
 
+_DEFAULT_HYSTERIA_UP_MBPS = 50
+_DEFAULT_HYSTERIA_DOWN_MBPS = 200
+
+
+def _ensure_hysteria_speeds(sb: dict[str, Any]) -> None:
+    # sing-box Hysteria v1 refuses to initialize without non-zero up/down
+    # speeds; supply defaults when the source link omitted them.
+    if str(sb.get("type") or "").lower() != "hysteria":
+        return
+
+    def _missing(mbps_key: str, str_key: str) -> bool:
+        value = sb.get(mbps_key)
+        if isinstance(value, (int, float)) and value > 0:
+            return False
+        return not str(sb.get(str_key) or "").strip()
+
+    if _missing("up_mbps", "up"):
+        sb["up_mbps"] = _DEFAULT_HYSTERIA_UP_MBPS
+    if _missing("down_mbps", "down"):
+        sb["down_mbps"] = _DEFAULT_HYSTERIA_DOWN_MBPS
+
 
 def build_singbox_outbound(
     node,

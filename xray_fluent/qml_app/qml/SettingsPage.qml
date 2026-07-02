@@ -726,10 +726,7 @@ Item {
                     glyph: "\uE777"; title: I18n.t("Проверять обновления"); subtitle: I18n.t("Автоматически проверять наличие обновлений")
                     Switch { checked: App.checkUpdates; onToggled: App.setCheckUpdates(checked) }
                 }
-                SettingRow {
-                    glyph: "\uE896"; title: I18n.t("Разрешить установку"); subtitle: I18n.t("Скачивать и устанавливать обновления")
-                    Switch { checked: App.allowUpdates; onToggled: App.setAllowUpdates(checked) }
-                }
+
                 SettingRow {
                     glyph: "\uE895"; title: I18n.t("Автообновление приложения"); subtitle: I18n.t("Автоматически скачивать и устанавливать новые версии")
                     Switch { checked: App.appAutoUpdate; onToggled: App.setAppAutoUpdate(checked) }

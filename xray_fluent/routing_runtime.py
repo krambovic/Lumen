@@ -460,13 +460,14 @@ def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[s
             rules.append(rule)
             rule_sets.update(used_sets)
 
-    rules.append(
-        {
-            "ip_cidr": ["198.18.0.0/15", "fc00::/18"],
-            "action": "route",
-            "outbound": _routing_final_outbound(routing),
-        }
-    )
+    if routing.dns_fake_enabled:
+        rules.append(
+            {
+                "ip_cidr": ["198.18.0.0/15", "fc00::/18"],
+                "action": "route",
+                "outbound": _routing_final_outbound(routing),
+            }
+        )
 
     if routing.bypass_lan:
         rules.append({"ip_is_private": True, "action": "route", "outbound": "direct"})

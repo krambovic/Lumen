@@ -95,7 +95,7 @@ class RoutingSettings:
     dns_proxy_server: str = "8.8.8.8"     # DNS for proxy traffic
     dns_proxy_type: str = "https"          # tcp | tls | https
     dns_proxy_strategy: str = "prefer_ipv4"
-    dns_fake_enabled: bool = True
+    dns_fake_enabled: bool = False
     dns_hijack_enabled: bool = True
     tun_route_exclude_address: list[str] = field(default_factory=list)
     process_rules: list[dict[str, str]] = field(default_factory=list)  # [{"process": "chrome.exe", "action": "direct|proxy|block"}]
@@ -160,7 +160,7 @@ class RoutingSettings:
             dns_proxy_server=str(data.get("dns_proxy_server") or "8.8.8.8"),
             dns_proxy_type=str(data.get("dns_proxy_type") or "https"),
             dns_proxy_strategy=str(data.get("dns_proxy_strategy") or "prefer_ipv4"),
-            dns_fake_enabled=bool(data.get("dns_fake_enabled", True)),
+            dns_fake_enabled=bool(data.get("dns_fake_enabled", False)),
             dns_hijack_enabled=bool(data.get("dns_hijack_enabled", True)),
             tun_route_exclude_address=[
                 str(item).strip()
@@ -244,7 +244,7 @@ class AppSettings:
     singbox_path: str = ""
     singbox_config_file: str = ""
     singbox_template_file: str = ""
-    window_width: int = 1000
+    window_width: int = 1280
     window_height: int = 720
     window_x: int = -1
     window_y: int = -1
@@ -406,7 +406,7 @@ class AppSettings:
             singbox_path=str(data.get("singbox_path") or ""),
             singbox_config_file=str(data.get("singbox_config_file") or ""),
             singbox_template_file=str(data.get("singbox_template_file") or ""),
-            window_width=int(data.get("window_width") or 1000),
+            window_width=int(data.get("window_width") or 1280),
             window_height=int(data.get("window_height") or 720),
             window_x=int(data.get("window_x", -1)),
             window_y=int(data.get("window_y", -1)),

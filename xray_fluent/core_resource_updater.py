@@ -201,7 +201,7 @@ def update_geodata(on_progress=None, *, proxy_url: str | None = None, on_install
                 dest = target_dir / name
                 if dest.exists():
                     shutil.copy2(dest, dest.with_suffix(dest.suffix + ".bak"))
-                src.replace(dest)
+                shutil.move(src, dest)
     except Exception as exc:
         return ResourceUpdateResult("geodata", "error", f"Не удалось обновить geoip/geosite: {exc}")
     return ResourceUpdateResult("geodata", "updated", "geoip.dat и geosite.dat обновлены")

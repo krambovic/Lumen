@@ -200,26 +200,39 @@ def on_live_metrics(controller: AppController, payload: dict[str, object]) -> No
 
 
 def shutdown(controller: AppController) -> None:
-    if controller._country_resolver and controller._country_resolver.isRunning():
-        controller._country_resolver.quit()
-        controller._country_resolver.wait(500)
-    if controller._ping_worker and controller._ping_worker.isRunning():
-        controller._ping_worker.cancel()
-        controller._ping_worker.wait(500)
-    if controller._connectivity_worker and controller._connectivity_worker.isRunning():
-        controller._connectivity_worker.wait(300)
+    def _join_thread(worker, *, use_cancel: bool = False, use_quit: bool = False, grace_ms: int = 3000) -> None:
+        # Never let a still-running QThread be destroyed/garbage-collected: that
+        # triggers Qt's fatal "QThread: Destroyed while thread is still running"
+        # abort (the crash seen right after a speed test / ping-all). Ask it to
+        # stop, block until it actually finishes, and force-terminate only as an
+        # absolute last resort so shutdown can never hang forever either.
+        if worker is None or not worker.isRunning():
+            return
+        try:
+            if use_cancel and hasattr(worker, "cancel"):
+                worker.cancel()
+            if use_quit:
+                worker.quit()
+        except Exception:
+            pass
+        if worker.wait(grace_ms):
+            return
+        try:
+            worker.terminate()
+        except Exception:
+            pass
+        worker.wait(2000)
+
+    _join_thread(controller._country_resolver, use_quit=True)
+    _join_thread(controller._ping_worker, use_cancel=True, grace_ms=6000)
+    _join_thread(controller._connectivity_worker, grace_ms=9000)
     stop_metrics_worker(controller)
     for retired_worker in list(controller._retired_metrics_workers):
-        if retired_worker.isRunning():
-            retired_worker.wait(300)
+        _join_thread(retired_worker, use_quit=True)
     controller._retired_metrics_workers.clear()
-    if controller._speed_worker and controller._speed_worker.isRunning():
-        controller._speed_worker.cancel()
-        controller._speed_worker.wait(800)
-    if controller._xray_update_worker and controller._xray_update_worker.isRunning():
-        controller._xray_update_worker.wait(300)
-    if controller._resource_update_worker and controller._resource_update_worker.isRunning():
-        controller._resource_update_worker.wait(300)
+    _join_thread(controller._speed_worker, use_cancel=True, grace_ms=6000)
+    _join_thread(controller._xray_update_worker, grace_ms=4000)
+    _join_thread(controller._resource_update_worker, grace_ms=4000)
 
     controller.disconnect_current(fast=True)
     if controller.singbox.is_running:

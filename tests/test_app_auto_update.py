@@ -36,7 +36,6 @@ def test_fragmentation_defaults_to_disabled() -> None:
 
 
 def test_auto_install_requires_permission_and_never_downgrades() -> None:
-    assert should_auto_install(_update(), enabled=True, allow_updates=True)
-    assert not should_auto_install(_update(), enabled=False, allow_updates=True)
-    assert not should_auto_install(_update(), enabled=True, allow_updates=False)
-    assert not should_auto_install(_update(downgrade=True), enabled=True, allow_updates=True)
+    assert should_auto_install(_update(), enabled=True)
+    assert not should_auto_install(_update(), enabled=False)
+    assert not should_auto_install(_update(downgrade=True), enabled=True)

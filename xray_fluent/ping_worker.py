@@ -115,7 +115,7 @@ def _detect_direct_gateway() -> str:
 
 
 def _looks_like_tun_gateway(gateway: str) -> bool:
-    return gateway.startswith(("172.19.", "198.18.", "198.19."))
+    return gateway.startswith(("172.18.", "172.19.", "198.18.", "198.19."))
 
 
 def _has_direct_host_route(ip: str, gateway: str) -> bool:
@@ -137,14 +137,112 @@ def _has_direct_host_route(ip: str, gateway: str) -> bool:
     return result.returncode == 0
 
 
+_DIRECT_DNS_SERVERS = ("8.8.8.8", "1.1.1.1", "9.9.9.9")
+
+
+def _looks_like_fake_ip(ip: str) -> bool:
+    # sing-box fake-ip pool (198.18.0.0/15) and the TUN subnet must never be
+    # used as a real ping target or host route destination.
+    return ip.startswith(("198.18.", "198.19.", "172.18.", "172.19."))
+
+
+def _skip_dns_name(data: bytes, idx: int) -> int:
+    while True:
+        length = data[idx]
+        if length == 0:
+            return idx + 1
+        if length & 0xC0 == 0xC0:
+            return idx + 2
+        idx += length + 1
+
+
+def _direct_dns_resolve_a(domain: str, dns_server: str, timeout: float = 3.0) -> str:
+    """Resolve an A record by querying dns_server directly over UDP.
+
+    While the TUN is up, this is paired with a temporary host route to
+    dns_server via the physical gateway, so the query bypasses sing-box DNS
+    hijacking / fake-ip and returns the real public IP.
+    """
+    import struct
+
+    try:
+        header = struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
+        qname = b"".join(
+            bytes([len(label)]) + label.encode("ascii")
+            for label in domain.rstrip(".").split(".")
+            if label
+        ) + b"\x00"
+        packet = header + qname + struct.pack(">HH", 1, 1)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(timeout)
+            sock.sendto(packet, (dns_server, 53))
+            data, _ = sock.recvfrom(2048)
+    except Exception:
+        return ""
+    try:
+        ancount = struct.unpack(">H", data[6:8])[0]
+        if ancount <= 0:
+            return ""
+        idx = _skip_dns_name(data, 12) + 4  # question name + qtype/qclass
+        for _ in range(ancount):
+            idx = _skip_dns_name(data, idx)
+            rtype, _rclass, _ttl, rdlen = struct.unpack(">HHIH", data[idx:idx + 10])
+            idx += 10
+            if rtype == 1 and rdlen == 4:
+                return ".".join(str(b) for b in data[idx:idx + 4])
+            idx += rdlen
+    except Exception:
+        return ""
+    return ""
+
+
 class _WindowsPingBypass:
     def __init__(self, nodes: list[Node], enabled: bool):
         self._nodes = nodes
         self._enabled = bool(enabled and os.name == "nt")
         self._gateway = ""
         self._added_ips: set[str] = set()
+        self._dns_routes: set[str] = set()
         self._covered_ips: set[str] = set()
         self._host_ips: dict[str, str] = {}
+
+    def _route_add(self, ip: str) -> bool:
+        try:
+            result = run_text_pumped(
+                ["route", "add", ip, "mask", "255.255.255.255", self._gateway, "metric", "1"],
+                timeout=4,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        except Exception:
+            return False
+        if result.returncode == 0:
+            return True
+        return _has_direct_host_route(ip, self._gateway)
+
+    def _route_delete(self, ip: str) -> None:
+        try:
+            run_text_pumped(
+                ["route", "delete", ip, "mask", "255.255.255.255", self._gateway],
+                timeout=4,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        except Exception:
+            pass
+
+    def _resolve_real_ip(self, host: str) -> str:
+        if _is_ipv4_address(host):
+            return host
+        for dns_server in _DIRECT_DNS_SERVERS:
+            if dns_server not in self._dns_routes:
+                continue
+            ip = _direct_dns_resolve_a(host, dns_server)
+            if ip and _is_ipv4_address(ip) and not _looks_like_fake_ip(ip):
+                return ip
+        # Fallback: system resolver (may be hijacked to a fake-ip while TUN is up).
+        ip = _resolve_ipv4(host)
+        if ip and not _looks_like_fake_ip(ip):
+            return ip
+        return ""
 
     def __enter__(self):
         if not self._enabled:
@@ -153,29 +251,37 @@ class _WindowsPingBypass:
         if not self._gateway or _looks_like_tun_gateway(self._gateway):
             return self
 
+        # Route the public resolvers directly so DNS lookups bypass the TUN
+        # (and sing-box fake-ip) while we resolve the real server addresses.
+        for dns_server in _DIRECT_DNS_SERVERS:
+            if self._route_add(dns_server):
+                self._added_ips.add(dns_server)
+                self._dns_routes.add(dns_server)
+
         ips: set[str] = set()
         for node in self._nodes:
             host = str(node.server or "").strip()
-            ip = _resolve_ipv4(host)
+            if not host or host in self._host_ips:
+                continue
+            ip = self._resolve_real_ip(host)
             if ip and not ip.startswith(("127.", "0.", "169.254.")):
                 self._host_ips[host] = ip
                 ips.add(ip)
 
         for ip in ips:
-            try:
-                result = run_text_pumped(
-                    ["route", "add", ip, "mask", "255.255.255.255", self._gateway, "metric", "1"],
-                    timeout=4,
-                    creationflags=CREATE_NO_WINDOW,
-                )
-            except Exception:
+            if ip in self._added_ips or ip in self._covered_ips:
+                self._covered_ips.add(ip)
                 continue
-            if result.returncode == 0:
+            if self._route_add(ip):
                 self._added_ips.add(ip)
                 self._covered_ips.add(ip)
-            elif _has_direct_host_route(ip, self._gateway):
-                self._covered_ips.add(ip)
         return self
+
+    def direct_ip(self, host: str) -> str:
+        host = str(host or "").strip()
+        if not self._enabled:
+            return host
+        return self._host_ips.get(host, "")
 
     def can_ping_direct(self, host: str) -> bool:
         if not self._enabled:
@@ -185,15 +291,9 @@ class _WindowsPingBypass:
 
     def __exit__(self, *_exc) -> None:
         for ip in self._added_ips:
-            try:
-                run_text_pumped(
-                    ["route", "delete", ip, "mask", "255.255.255.255", self._gateway],
-                    timeout=4,
-                    creationflags=CREATE_NO_WINDOW,
-                )
-            except Exception:
-                pass
+            self._route_delete(ip)
         self._added_ips.clear()
+        self._dns_routes.clear()
         self._covered_ips.clear()
         self._host_ips.clear()
 
@@ -219,9 +319,15 @@ class PingWorker(QThread):
         self._cancelled = False
 
     def _measure(self, node: Node) -> int | None:
+        target = node.server
+        bypass = getattr(self, "_bypass", None)
+        if bypass is not None:
+            direct = bypass.direct_ip(node.server)
+            if direct:
+                target = direct
         if self._method == "icmp":
-            return icmp_ping(node.server, int(self._timeout * 1000))
-        return tcp_ping(node.server, node.port, self._timeout)
+            return icmp_ping(target, int(self._timeout * 1000))
+        return tcp_ping(target, node.port, self._timeout)
 
     def cancel(self) -> None:
         self._cancelled = True
@@ -240,6 +346,7 @@ class PingWorker(QThread):
         completed = 0
 
         bypass = _WindowsPingBypass(self._nodes, self._bypass_tun)
+        self._bypass = bypass
 
         def submit_node(node: Node) -> None:
             nonlocal completed

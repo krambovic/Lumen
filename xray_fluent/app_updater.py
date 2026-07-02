@@ -166,13 +166,11 @@ def should_auto_install(
     update: AppUpdate | None,
     *,
     enabled: bool,
-    allow_updates: bool,
 ) -> bool:
     """Automatic updates may upgrade the app, but must never downgrade it."""
     return bool(
         update is not None
         and enabled
-        and allow_updates
         and not update.is_downgrade
     )
 

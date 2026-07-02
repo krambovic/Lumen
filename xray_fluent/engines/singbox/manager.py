@@ -105,7 +105,6 @@ class SingBoxManager(QObject):
 
         # A freshly killed sing-box can still hold the clash-api port; wait for it.
         self._wait_clash_api_port_released()
-        self._flush_windows_dns_cache("before TUN start")
 
         # Set working directory to core/ so sing-box can find wintun.dll
         core_dir = exe.parent
@@ -154,7 +153,6 @@ class SingBoxManager(QObject):
             if self._wait_until_tun_ready(proc, tun_interface_name):
                 adapter_ms = int((time.monotonic() - attempt_started) * 1000)
                 self.log_received.emit(f"[tun] adapter and routes ready in {adapter_ms} ms")
-                self._flush_windows_dns_cache("after TUN ready")
                 self._starting = False
                 total_ms = int((time.monotonic() - attempt_started) * 1000)
                 self.log_received.emit(
@@ -189,9 +187,7 @@ class SingBoxManager(QObject):
                     self._unexpected_exit_message(self._last_exit_code, startup=True)
                 )
             else:
-                self._report_startup_failure(
-                    f"sing-box started but TUN interface '{tun_interface_name}' did not become ready in time"
-                )
+                self._report_startup_failure(self._tun_not_ready_message(tun_interface_name))
             return False
 
         self._starting = False
@@ -258,7 +254,6 @@ class SingBoxManager(QObject):
         # reconnect and delays the first real connections.
         self._starting = False
         self._wait_tun_released(max_wait=release_timeout)
-        self._flush_windows_dns_cache("after TUN stop")
         return True
 
     def _wait_proc(self, proc: subprocess.Popen[bytes], timeout_sec: float) -> bool:
@@ -321,24 +316,6 @@ class SingBoxManager(QObject):
             sleep_with_events(step)
             waited += step
 
-    def _flush_windows_dns_cache(self, reason: str) -> None:
-        if os.name != "nt":
-            return
-        try:
-            result = run_text_pumped(
-                ["ipconfig", "/flushdns"],
-                timeout=4,
-                check=False,
-                creationflags=_CREATE_NO_WINDOW,
-            )
-            if result.returncode == 0:
-                self.log_received.emit(f"[tun] DNS cache flushed ({reason})")
-            else:
-                text = result_output_text(result).strip()
-                self.log_received.emit(f"[tun] DNS cache flush failed ({reason}): {text or result.returncode}")
-        except Exception as exc:
-            self.log_received.emit(f"[tun] DNS cache flush failed ({reason}): {exc}")
-
     @staticmethod
     def cleanup_orphaned_tun_adapters(max_wait: float = 5.0) -> None:
         """Remove routes from app-owned sing-box TUN adapters and disable them."""
@@ -373,20 +350,10 @@ class SingBoxManager(QObject):
                     for line in text.splitlines():
                         clean = line.rstrip()
                         if clean:
-                            access_line = self._format_access_log_line(clean)
-                            if access_line:
-                                self._last_output_lines.append(access_line)
-                                self.log_received.emit(access_line)
-                                continue
-                            if self._is_noisy_runtime_line(clean):
-                                self._suppressed_noisy_lines += 1
-                                now = time.monotonic()
-                                if now - self._last_noisy_summary_at >= 30.0:
-                                    self._last_noisy_summary_at = now
-                                    self.log_received.emit(
-                                        f"[tun] {self._suppressed_noisy_lines} routine connection logs suppressed..."
-                                    )
-                                continue
+                            # Surface sing-box's native log lines verbatim, the
+                            # same way v2rayN does with the sing-box core: no
+                            # per-connection suppression and no custom
+                            # access-log reformatting.
                             self._last_output_lines.append(clean)
                             self.log_received.emit(clean)
         except Exception:
@@ -445,7 +412,7 @@ class SingBoxManager(QObject):
         self,
         proc: subprocess.Popen[bytes],
         tun_interface_name: str,
-        max_wait: float = 14.0,
+        max_wait: float = 20.0,
     ) -> bool:
         # Treat the runtime as ready only after Windows sees both the adapter
         # address and a broad route through it. One persistent PowerShell probe
@@ -556,6 +523,28 @@ class SingBoxManager(QObject):
             if any(needle in text for needle in needles):
                 return True
         return False
+
+    def _tun_not_ready_message(self, tun_interface_name: str) -> str:
+        markers = (
+            "open interface take too much time",
+            "configure tun interface",
+            "wintun",
+            "create adapter",
+        )
+        for line in self._last_output_lines:
+            text = str(line).lower()
+            if any(marker in text for marker in markers):
+                return (
+                    f"sing-box did not open the Wintun TUN adapter '{tun_interface_name}': "
+                    "opening the interface stalls. Common Windows-side causes: TUN address/subnet "
+                    "172.18.0.1/30 collides with an existing adapter (Docker/WSL/Hyper-V 172.18.0.0/16), "
+                    "a stale hidden TUN adapter, a stopped Base Filtering Engine service, "
+                    "or another VPN's network filter driver."
+                )
+        return (
+            f"sing-box started but TUN interface '{tun_interface_name}' "
+            "did not get an address and route in time."
+        )
 
     def _unexpected_exit_message(
         self,

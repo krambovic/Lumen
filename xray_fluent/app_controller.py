@@ -1863,9 +1863,8 @@ class AppController(QObject):
             return
         if self.state.settings.tun_mode and self._is_noisy_tun_log(line):
             self._tun_log_count = getattr(self, "_tun_log_count", 0) + 1
-            if self._tun_log_count % 50 == 0:
-                self._core_logger.info("[tun] %d noisy connection logs suppressed", self._tun_log_count)
-                self.log_line.emit(f"[tun] {self._tun_log_count} connections routed...")
+            if self._tun_log_count % 200 == 0:
+                self._core_logger.info("[tun] %d internal/noisy logs hidden", self._tun_log_count)
             return
         self._log(line)
 
@@ -1897,23 +1896,10 @@ class AppController(QObject):
     @staticmethod
     def _is_noisy_tun_log(line: str) -> bool:
         text = line.lower()
-        if "accepted" in text:
-            return True
-        if any(
-            marker in text
-            for marker in (
-                "inbound connection from",
-                "inbound connection to",
-                "inbound packet connection from",
-                "inbound packet connection to",
-                "outbound connection to",
-                "outbound packet connection",
-            )
-        ):
-            return True
-        if "connection upload closed" in text or "connection download closed" in text:
-            return True
-        if "an existing connection was forcibly closed by the remote host" in text:
+        # Show real sing-box connection logs (like v2rayN with the sing-box
+        # core). Only hide the app's own internal polling (metrics/clash API on
+        # loopback) and low-level Windows socket spam.
+        if "__app_" in text:
             return True
         if "wsarecv" in text or "wsasend" in text:
             return True

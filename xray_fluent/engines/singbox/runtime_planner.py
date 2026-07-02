@@ -1068,6 +1068,70 @@ def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> None:
     clash_api["external_controller"] = f"127.0.0.1:{SINGBOX_CLASH_API_PORT}"
 
 
+_SINGBOX_TUN_IPV6_ADDRESS = "fdfe:dcba:9876::1/126"
+_SINGBOX_TUN_IPV4_CANDIDATES = (
+    "172.18.0.1/30",
+    "172.19.0.1/30",
+    "198.18.0.1/30",
+    "198.19.0.1/30",
+    "100.64.0.1/30",
+    "10.201.7.1/30",
+    "192.0.2.1/30",
+)
+
+
+def _local_ipv4_addresses() -> set[str]:
+    found: set[str] = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            addr = info[4][0]
+            if addr:
+                found.add(addr)
+    except OSError:
+        pass
+    return found
+
+
+def _ipv4_gateway_in_use(gateway_ip: str) -> bool:
+    # A gateway address already assigned to a local adapter can be bound;
+    # a free one raises EADDRNOTAVAIL. This detects Docker/WSL/Hyper-V clashes.
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind((gateway_ip, 0))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def _pick_singbox_tun_ipv4() -> str:
+    known = _local_ipv4_addresses()
+    for candidate in _SINGBOX_TUN_IPV4_CANDIDATES:
+        gateway = candidate.split("/", 1)[0]
+        try:
+            network = ip_network(candidate, strict=False)
+        except ValueError:
+            continue
+        if _ipv4_gateway_in_use(gateway):
+            continue
+        collides = False
+        for addr in known:
+            try:
+                if ip_address(addr) in network:
+                    collides = True
+                    break
+            except ValueError:
+                continue
+        if not collides:
+            return candidate
+    return _SINGBOX_TUN_IPV4_CANDIDATES[0]
+
+
+def _singbox_tun_addresses() -> list[str]:
+    return [_pick_singbox_tun_ipv4(), _SINGBOX_TUN_IPV6_ADDRESS]
+
+
 def _ensure_singbox_tun_runtime_contract(
     payload: dict[str, Any],
     *,
@@ -1090,7 +1154,7 @@ def _ensure_singbox_tun_runtime_contract(
                 continue
             has_tun = True
             inbound["interface_name"] = "singbox_tun"
-            inbound["address"] = ["172.18.0.1/30", "fdfe:dcba:9876::1/126"]
+            inbound["address"] = _singbox_tun_addresses()
             inbound["mtu"] = 1280
             inbound["auto_route"] = True
             inbound.pop("route_address", None)
@@ -1145,11 +1209,10 @@ def _ensure_singbox_dns_runtime_contract(
     proxy_type = routing.dns_proxy_type if routing is not None else _DEFAULT_PROXY_DNS_TYPE
     proxy_strategy = _dns_strategy(routing.dns_proxy_strategy if routing is not None else "")
     use_builtin_dns = _singbox_uses_builtin_dns(routing)
-    # TUN needs FakeIP as part of the runtime contract, not as an optional
-    # cosmetic DNS mode. Without it, ECH-enabled sites can hide the hostname
-    # from sniffing and fall into IP-only routing, which is exactly where
-    # OpenAI/Anthropic/Gemini become hard to diagnose.
-    fake_enabled = True
+    # FakeIP follows the user setting (off by default, matching v2rayN). When
+    # enabled it keeps ECH sites reachable; when disabled the browser resolves
+    # real IPs, avoiding Chrome Local Network Access prompts under TUN.
+    fake_enabled = bool(routing.dns_fake_enabled) if routing is not None else False
     direct_is_default = _is_default_direct_dns(routing)
     proxy_is_default = _is_default_proxy_dns(routing)
     runtime_direct_server = str(direct_server or "").strip()

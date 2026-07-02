@@ -75,25 +75,6 @@ def test_repeated_dns_runtime_errors_stay_visible() -> None:
     assert not any(SingBoxManager._is_noisy_runtime_line(line) for line in lines)
 
 
-def test_flush_windows_dns_cache_uses_ipconfig(monkeypatch) -> None:
-    calls = []
-
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return SimpleNamespace(returncode=0)
-
-    manager = SingBoxManager()
-    emitted = []
-    manager.log_received.connect(emitted.append)
-    monkeypatch.setattr(manager_module, "run_text_pumped", fake_run)
-
-    manager._flush_windows_dns_cache("test")
-
-    assert calls
-    assert calls[0][0] == ["ipconfig", "/flushdns"]
-    assert any("DNS cache flushed" in line for line in emitted)
-
-
 def test_windows_tun_readiness_uses_single_persistent_probe(monkeypatch) -> None:
     calls = []
 

@@ -1253,6 +1253,30 @@ class AppBridge(QObject):
             return True
 
     @pyqtSlot(bool)
+    def setAppAutoUpdate(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.app_auto_update = bool(enabled)
+        if settings.app_auto_update:
+            settings.check_updates = True
+        self.controller.update_settings(settings)
+        self._reconfigure_app_update_timer()
+        if settings.app_auto_update:
+            QTimer.singleShot(0, lambda: self._start_app_update_check(silent=True))
+
+    @pyqtSlot(bool)
+    def setAllowUpdates(self, enabled: bool) -> None:
+        pass
+
+    @pyqtSlot(bool)
+    def setCheckUpdates(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.check_updates = bool(enabled)
+        if not settings.check_updates:
+            settings.app_auto_update = False
+        self.controller.update_settings(settings)
+        self._reconfigure_app_update_timer()
+
+    @pyqtSlot(bool)
     def setAlwaysRunAsAdmin(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.always_run_as_admin = bool(enabled)
@@ -1321,35 +1345,7 @@ class AppBridge(QObject):
         # Перепроверяем обновления под новый канал, чтобы виджет сразу обновил состояние.
         self._start_app_update_check(silent=False)
 
-    @pyqtSlot(bool)
-    def setCheckUpdates(self, enabled: bool) -> None:
-        settings = deepcopy(self.controller.state.settings)
-        settings.check_updates = bool(enabled)
-        if not settings.check_updates:
-            settings.app_auto_update = False
-        self.controller.update_settings(settings)
-        self._reconfigure_app_update_timer()
 
-    @pyqtSlot(bool)
-    def setAllowUpdates(self, enabled: bool) -> None:
-        settings = deepcopy(self.controller.state.settings)
-        settings.allow_updates = bool(enabled)
-        if not settings.allow_updates:
-            settings.app_auto_update = False
-        self.controller.update_settings(settings)
-        self._reconfigure_app_update_timer()
-
-    @pyqtSlot(bool)
-    def setAppAutoUpdate(self, enabled: bool) -> None:
-        settings = deepcopy(self.controller.state.settings)
-        settings.app_auto_update = bool(enabled)
-        if settings.app_auto_update:
-            settings.check_updates = True
-            settings.allow_updates = True
-        self.controller.update_settings(settings)
-        self._reconfigure_app_update_timer()
-        if settings.app_auto_update:
-            QTimer.singleShot(0, lambda: self._start_app_update_check(silent=True))
 
     @pyqtSlot(bool)
     def setXrayAutoUpdate(self, enabled: bool) -> None:
@@ -1997,7 +1993,6 @@ class AppBridge(QObject):
         if should_auto_install(
             update,
             enabled=bool(getattr(settings, "app_auto_update", False)),
-            allow_updates=bool(getattr(settings, "allow_updates", True)),
         ):
             self._app_update_auto_installing = True
             QTimer.singleShot(0, self.downloadAppUpdate)
@@ -2012,9 +2007,6 @@ class AppBridge(QObject):
         update = getattr(self, "_pending_app_update", None)
         if update is None:
             self.appUpdateState.emit({"phase": "error", "message": "Сначала проверьте обновления"})
-            return
-        if not getattr(self.controller.state.settings, "allow_updates", True):
-            self.appUpdateState.emit({"phase": "error", "message": "Установка обновлений отключена в настройках"})
             return
         if getattr(self, "_app_update_downloader", None) is not None:
             return

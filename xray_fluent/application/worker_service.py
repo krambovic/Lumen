@@ -54,7 +54,11 @@ def ping_nodes(
 
     if controller._ping_worker and controller._ping_worker.isRunning():
         controller._ping_worker.cancel()
-        controller._ping_worker.wait(500)
+        # Fully join before the reference is overwritten below. Dropping a still-
+        # running QThread crashes with "Destroyed while thread is still running".
+        if not controller._ping_worker.wait(6000):
+            controller._ping_worker.terminate()
+            controller._ping_worker.wait(2000)
 
     resolved_method = (method or controller.state.settings.ping_method or "tcping").strip().lower()
     if resolved_method not in ("tcping", "icmp", "real"):
@@ -76,12 +80,19 @@ def ping_nodes(
         )
         xray_path = str(resolved) if resolved else controller.state.settings.xray_path
         controller._log("[ping] Измеряю реальную задержку через временные прокси")
+        real_active_session = controller._active_session
+        real_bypass_tun = bool(
+            controller.connected
+            and real_active_session is not None
+            and real_active_session.tun_mode
+        )
         worker = SpeedTestWorker(
             nodes,
             xray_path=xray_path,
             routing=controller.state.routing,
             mode="ping",
             concurrency=controller.state.settings.speed_test_concurrency,
+            bypass_tun=real_bypass_tun,
         )
         controller._ping_worker = worker
         worker.ping_result.connect(controller._on_ping_result)
@@ -125,12 +136,17 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
     controller._speed_node_map = {node.id: node for node in nodes}
     _clear_speed_measurements(controller, nodes)
     controller.bulk_task_progress.emit("speed", 0, controller._speed_total, False)
+    active_session = controller._active_session
+    bypass_tun = bool(controller.connected and active_session is not None and active_session.tun_mode)
+    if bypass_tun:
+        controller._log("[speed] TUN включен: тестирую через временные прямые маршруты")
     controller._speed_worker = SpeedTestWorker(
         nodes,
         xray_path=xray_path,
         routing=controller.state.routing,
         test_url=controller.state.settings.speed_test_url,
         concurrency=controller.state.settings.speed_test_concurrency,
+        bypass_tun=bypass_tun,
     )
     controller._speed_worker.result.connect(controller._on_speed_result)
     controller._speed_worker.progress.connect(controller._on_speed_progress)

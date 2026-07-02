@@ -158,7 +158,11 @@ def _tun_sniff_rule() -> dict:
     }
 
 
-def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults() -> None:
+def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    import xray_fluent.engines.singbox.runtime_planner as planner
+
+    monkeypatch.setattr(planner, "_local_ipv4_addresses", lambda: set())
+    monkeypatch.setattr(planner, "_ipv4_gateway_in_use", lambda _gateway: False)
     config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
     inbound = _tun_inbound(config)
 
@@ -253,7 +257,9 @@ def test_tun_runtime_rejects_browser_doh_before_dns_hijack() -> None:
 
 
 def test_tun_runtime_rejects_browser_doh_dns_before_fakeip() -> None:
-    config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
+    config = _plan(
+        RoutingSettings(mode="global", dns_fake_enabled=True, tun_default_outbound="proxy")
+    )
     dns_rules = config["dns"]["rules"]
 
     https_index = next(index for index, rule in enumerate(dns_rules) if rule.get("query_type") == ["HTTPS", "SVCB"])
@@ -332,7 +338,7 @@ def test_system_dns_mode_uses_physical_adapter_dns_without_local_recursion() -> 
     assert servers["fake-dns"]["inet4_range"] == "198.18.0.0/15"
 
 
-def test_tun_runtime_forces_fake_dns_even_for_old_saved_settings() -> None:
+def test_tun_runtime_disables_fake_dns_when_setting_off() -> None:
     config = _plan(
         RoutingSettings(
             mode="global",
@@ -346,12 +352,11 @@ def test_tun_runtime_forces_fake_dns_even_for_old_saved_settings() -> None:
     dns_rules = config["dns"]["rules"]
     route_rules = config["route"]["rules"]
 
-    assert servers["fake-dns"]["type"] == "fakeip"
-    assert any(rule.get("server") == "fake-dns" for rule in dns_rules)
-    fake_route = next(
-        rule for rule in route_rules if rule.get("ip_cidr") == ["198.18.0.0/15", "fc00::/18"]
+    assert "fake-dns" not in servers
+    assert not any(rule.get("server") == "fake-dns" for rule in dns_rules)
+    assert not any(
+        rule.get("ip_cidr") == ["198.18.0.0/15", "fc00::/18"] for rule in route_rules
     )
-    assert fake_route["outbound"] == "proxy"
 
 
 def test_default_system_dns_keeps_proxied_domain_dns_on_proxy_resolver() -> None:
@@ -627,7 +632,8 @@ def test_native_tun_preserves_user_route_excludes_when_adding_endpoint_exclude()
 
 def test_native_tun_excludes_resolved_domain_proxy_endpoint_from_tun_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_getaddrinfo(host: str, *_args, **_kwargs):
-        assert host == "vpn.example.com"
+        if host != "vpn.example.com":
+            return []
         return [
             (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("203.0.113.10", 0)),
             (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("2001:db8::10", 0, 0, 0)),
@@ -761,10 +767,13 @@ def test_native_tun_keeps_domain_proxy_endpoint_route_when_resolution_fails(monk
 
 
 def test_native_tun_does_not_block_startup_on_slow_endpoint_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    import xray_fluent.engines.singbox.runtime_planner as planner
+
     def slow_getaddrinfo(*_args, **_kwargs):
         time.sleep(5)
         return []
 
+    monkeypatch.setattr(planner, "_local_ipv4_addresses", lambda: set())
     monkeypatch.setattr(socket, "getaddrinfo", slow_getaddrinfo)
     started = time.monotonic()
 
@@ -798,7 +807,8 @@ def test_endpoint_tun_excludes_ip_peer_from_tun_routes() -> None:
 
 def test_endpoint_tun_excludes_resolved_domain_peer_from_tun_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_getaddrinfo(host: str, *_args, **_kwargs):
-        assert host == "wg.example.com"
+        if host != "wg.example.com":
+            return []
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("198.51.100.20", 0))]
 
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
