@@ -610,7 +610,7 @@ def _ensure_proxy_server_bootstrap_contract(
     endpoint_addresses = _resolve_endpoint_addresses(server)
     endpoint_cidrs = [_endpoint_ip_cidr(address) for address in endpoint_addresses]
     if endpoint_cidrs:
-        _pin_proxy_outbound_to_endpoint_ip(proxy_outbound, server, endpoint_addresses[0])
+        # v2rayN parity: keep the domain in the outbound so sing-box re-resolves it on every redial
         _ensure_tun_route_exclude_addresses(payload, endpoint_cidrs)
         for cidr in endpoint_cidrs:
             _ensure_direct_ip_route(payload, cidr)
@@ -1155,11 +1155,11 @@ def _ensure_singbox_tun_runtime_contract(
             has_tun = True
             inbound["interface_name"] = "singbox_tun"
             inbound["address"] = _singbox_tun_addresses()
-            inbound["mtu"] = 1280
+            inbound["mtu"] = 9000
             inbound["auto_route"] = True
             inbound.pop("route_address", None)
-            inbound["strict_route"] = False
-            inbound["stack"] = "gvisor"
+            inbound["strict_route"] = False  # strict_route WFP rules break Discord voice ICE fallback and WinDivert tools
+            inbound["stack"] = "mixed"
             excludes = _normalize_route_exclude_addresses(
                 routing.tun_route_exclude_address if routing is not None else []
             )

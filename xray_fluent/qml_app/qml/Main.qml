@@ -208,6 +208,7 @@ ApplicationWindow {
                 anchors.bottomMargin: 14
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.VerticalFlick // rail content must not be draggable sideways
                 contentWidth: Theme.railWidth
                 contentHeight: Math.max(height, railColumn.implicitHeight)
                 ScrollBar.vertical: navScroll
