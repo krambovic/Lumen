@@ -175,7 +175,7 @@ def test_connectivity(controller: AppController, url: str | None = None) -> None
         controller.status.emit("info", "Тест подключения уже выполняется")
         return
 
-    http_port = controller.get_effective_http_proxy_port() or DEFAULT_HTTP_PORT
+    http_port = controller.get_effective_http_proxy_port() or int(controller.state.settings.local_http_port)
     controller._connectivity_worker = ConnectivityTestWorker(http_port, target, tun_mode=controller.state.settings.tun_mode)
     controller._connectivity_worker.result.connect(controller._on_connectivity_result)
     controller._connectivity_worker.start()

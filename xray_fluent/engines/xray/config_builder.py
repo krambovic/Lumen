@@ -63,11 +63,12 @@ def build_xray_config(
 
     routing_rules.extend(build_xray_gui_routing_rules(routing, settings))
 
+    route_only = bool(getattr(settings, "sniff_route_only", False))
     inbounds: list[dict[str, Any]] = [
-        build_xray_mixed_inbound(socks_port),
+        build_xray_mixed_inbound(socks_port, route_only=route_only),
     ]
     if int(http_port) != int(socks_port):
-        inbounds.append(build_xray_http_compat_inbound(http_port))
+        inbounds.append(build_xray_http_compat_inbound(http_port, route_only=route_only))
     if settings.discord_proxy_enabled:
         inbounds.append(
             {
@@ -97,6 +98,11 @@ def build_xray_config(
             },
         }
     )
+
+    if getattr(settings, "proxy_allow_lan", False):
+        for inbound in inbounds:
+            if str(inbound.get("tag") or "") != "api":
+                inbound["listen"] = "0.0.0.0"  # v2rayN-style Allow LAN for local proxy ports
 
     config: dict[str, Any] = {
         "log": {

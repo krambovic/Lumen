@@ -290,6 +290,15 @@ def _wait_for_discord_start(install: DiscordInstall, timeout_sec: float = 10.0) 
     return False
 
 
+def _wait_for_discord_exit(install: DiscordInstall, timeout_sec: float = 8.0) -> bool:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if not _process_pids_for_install(install):
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def _write_droute_registry(socks_port: int) -> None:
     script = (
         "$path = 'HKCU:\\Software\\droute'; "
@@ -330,6 +339,16 @@ def _droute_payload_installed(install: DiscordInstall) -> bool:
     )
 
 
+def _droute_payload_present(install: DiscordInstall) -> bool:
+    # any leftover droute file counts, partial installs must be cleaned too
+    if (install.root / "Droute.UpdaterHook.dll").is_file() or (install.root / "Update.exe.config").is_file():
+        return True
+    for app_dir in install.root.glob("app-*"):
+        if app_dir.is_dir() and any((app_dir / name).is_file() for name in ("version.dll", "droute.dll")):
+            return True
+    return False
+
+
 def _install_droute_payload(exe: Path, install: DiscordInstall) -> None:
     app_dir = install.app_dir
     branch_root = install.root
@@ -361,17 +380,24 @@ def _install_droute_payload(exe: Path, install: DiscordInstall) -> None:
         raise RuntimeError(result_output_text(result) or f"failed to install droute for {install.process_name}")
 
 
-def _remove_droute_payload(install: DiscordInstall) -> None:
-    for path in (install.root / "Droute.UpdaterHook.dll", install.root / "Update.exe.config"):
-        path.unlink(missing_ok=True)
+def _remove_droute_payload(install: DiscordInstall) -> list[str]:
+    targets = [install.root / "Droute.UpdaterHook.dll", install.root / "Update.exe.config"]
     for app_dir in install.root.glob("app-*"):
-        if not app_dir.is_dir():
-            continue
-        for name in ("version.dll", "droute.dll"):
+        if app_dir.is_dir():
+            targets.extend(app_dir / name for name in ("version.dll", "droute.dll"))
+    leftovers: list[str] = []
+    for path in targets:
+        removed = False
+        for _attempt in range(12):  # loader dll handle can outlive taskkill for a moment
             try:
-                (app_dir / name).unlink(missing_ok=True)
+                path.unlink(missing_ok=True)
+                removed = True
+                break
             except PermissionError:
-                pass
+                time.sleep(0.25)
+        if not removed and path.is_file():
+            leftovers.append(path.name)
+    return sorted(set(leftovers))
 
 
 class DiscordProxyManager:
@@ -432,15 +458,24 @@ class DiscordProxyManager:
         errors: list[str] = []
         for install in installs:
             try:
+                if not _droute_payload_present(install):
+                    continue  # nothing to remove, skip the needless Discord restart
                 was_running = bool(_process_pids_for_install(install))
                 _terminate_discord(install)
-                _remove_droute_payload(install)
+                if was_running:
+                    _wait_for_discord_exit(install)  # version.dll stays locked until the process really exits
+                leftovers = _remove_droute_payload(install)
                 if was_running:
                     _launch_discord(install)
                     _wait_for_discord_start(install)
-                affected += 1
+                if leftovers:
+                    errors.append(f"{install.process_name}: droute files still locked: {', '.join(leftovers)}")
+                else:
+                    affected += 1
             except Exception as exc:
                 errors.append(f"{install.process_name}: {exc}")
+        if errors:
+            return DiscordProxyResult(False, "; ".join(errors))
         if affected:
             return DiscordProxyResult(True, "droute removed from Discord", affected)
-        return DiscordProxyResult(False, "; ".join(errors) or "Failed to disable Discord proxy")
+        return DiscordProxyResult(True, "droute is not installed in Discord", 0)

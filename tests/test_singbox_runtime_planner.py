@@ -124,10 +124,10 @@ def _xhttp_node(protocol: str) -> Node:
     )
 
 
-def _plan(routing: RoutingSettings, node: Node | None = None) -> dict:
+def _plan(routing: RoutingSettings, node: Node | None = None, **kwargs) -> dict:
     text = json.dumps(_base_config())
     document = parse_singbox_document(Path("test.json"), text)
-    return plan_singbox_runtime(document, node or _node(), routing=routing).singbox_config
+    return plan_singbox_runtime(document, node or _node(), routing=routing, **kwargs).singbox_config
 
 
 def _dns_servers(config: dict) -> dict[str, dict]:
@@ -163,7 +163,11 @@ def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(planner, "_local_ipv4_addresses", lambda: set())
     monkeypatch.setattr(planner, "_ipv4_gateway_in_use", lambda _gateway: False)
-    config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
+    config = _plan(
+        RoutingSettings(mode="global", tun_default_outbound="proxy"),
+        tun_mtu=1280,
+        tun_stack="gvisor",
+    )
     inbound = _tun_inbound(config)
 
     assert inbound["interface_name"] == "singbox_tun"
@@ -652,8 +656,8 @@ def test_native_tun_excludes_resolved_domain_proxy_endpoint_from_tun_routes(monk
 
     assert "203.0.113.10/32" in inbound["route_exclude_address"]
     assert "2001:db8::10/128" in inbound["route_exclude_address"]
-    assert proxy["server"] == "203.0.113.10"
-    assert "domain_resolver" not in proxy
+    assert proxy["server"] == "vpn.example.com"
+    assert proxy.get("domain_resolver") == "bootstrap-dns"
     assert proxy["tls"]["server_name"] == "vpn.example.com"
     assert any(rule.get("outbound") == "direct" and "203.0.113.10/32" in rule.get("ip_cidr", []) for rule in rules)
     assert any(

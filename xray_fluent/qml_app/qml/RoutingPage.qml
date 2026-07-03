@@ -162,6 +162,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 8
+                        opacity: App.tunMode ? 0.45 : 1.0 // droute is incompatible with TUN mode
                         Text {
                             text: "\uE767"
                             font.family: "Segoe Fluent Icons"
@@ -172,9 +173,10 @@ Item {
                             spacing: 2
                             Layout.fillWidth: true
                             Text { text: "Discord Voice"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                            Text { text: I18n.t("Голос и стримы Discord через SOCKS5 без TUN"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Text { text: App.tunMode ? I18n.t("Недоступно при включенном TUN — трафик Discord уже идет через VPN") : I18n.t("Голос и стримы Discord через SOCKS5 без TUN"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         }
                         Switch {
+                            enabled: !App.tunMode // droute must never run alongside TUN
                             checked: App.discordProxy
                             onToggled: App.setDiscordProxy(checked)
                         }
@@ -213,6 +215,16 @@ Item {
                                 onActivated: App.setBootstrapDns("", currentText)
                             }
                         }
+                        ColumnLayout {
+                            spacing: 4
+                            Text { text: I18n.t("Стратегия"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            StyledCombo {
+                                width: 130
+                                model: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]
+                                currentIndex: Math.max(0, ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"].indexOf(App.dnsBootstrapStrategy))
+                                onActivated: App.setDnsBootstrapStrategy(["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"][currentIndex])
+                            }
+                        }
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -234,6 +246,16 @@ Item {
                                 model: page.dnsTypes
                                 currentIndex: page.idxIn(page.dnsTypes, App.dnsProxyType)
                                 onActivated: App.setProxyDns("", currentText)
+                            }
+                        }
+                        ColumnLayout {
+                            spacing: 4
+                            Text { text: I18n.t("Стратегия"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            StyledCombo {
+                                width: 130
+                                model: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]
+                                currentIndex: Math.max(0, ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"].indexOf(App.dnsProxyStrategy))
+                                onActivated: App.setDnsProxyStrategy(["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"][currentIndex])
                             }
                         }
                     }

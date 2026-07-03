@@ -174,6 +174,8 @@ class SingBoxManager(QObject):
 
             if retryable and attempt < 2:
                 self._kill_orphaned(exe)
+                if self._startup_error_is_stale_adapter():
+                    self._purge_stale_wintun_devices()  # ghost Wintun device is invisible to Get-NetAdapter cleanup
                 self.cleanup_orphaned_tun_adapters()
                 self._wait_tun_released()
                 self._wait_clash_api_port_released()
@@ -182,6 +184,8 @@ class SingBoxManager(QObject):
 
             self._starting = False
             self.cleanup_orphaned_tun_adapters()
+            if exited and self._startup_error_is_stale_adapter():
+                self._purge_stale_wintun_devices()  # clear the ghost so the next connect attempt can succeed
             if exited:
                 self._report_startup_failure(
                     self._unexpected_exit_message(self._last_exit_code, startup=True)
@@ -338,6 +342,30 @@ class SingBoxManager(QObject):
                 check=False,
                 creationflags=_CREATE_NO_WINDOW,
             )
+        except Exception:
+            pass
+
+    def _purge_stale_wintun_devices(self, max_wait: float = 20.0) -> None:
+        """Remove ghost Wintun device instances that block 'create adapter'."""
+        if os.name != "nt":
+            return
+        script = (
+            "$ErrorActionPreference = 'SilentlyContinue'; "
+            "$ghosts = @(Get-PnpDevice -Class Net -ErrorAction SilentlyContinue "
+            "| Where-Object { ($_.InstanceId -like 'SWD\\WINTUN*') -and ($_.Status -ne 'OK') }); "
+            "foreach ($dev in $ghosts) { pnputil /remove-device \"$($dev.InstanceId)\" | Out-Null }; "
+            "Write-Output $ghosts.Count"
+        )
+        try:
+            result = run_text_pumped(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                timeout=max_wait,
+                check=False,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            lines = result_output_text(result).strip().splitlines()
+            count = lines[-1].strip() if lines else "0"
+            self.log_received.emit(f"[tun] purged {count} stale Wintun device(s)")
         except Exception:
             pass
 
@@ -517,6 +545,18 @@ class SingBoxManager(QObject):
             "external controller listen error",
             "address already in use",
             "bind:",
+        )
+        for line in self._last_output_lines:
+            text = line.lower()
+            if any(needle in text for needle in needles):
+                return True
+        return False
+
+    def _startup_error_is_stale_adapter(self) -> bool:
+        needles = (
+            "create adapter",
+            "open existing adapter",
+            "element not found",
         )
         for line in self._last_output_lines:
             text = line.lower()

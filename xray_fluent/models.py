@@ -280,9 +280,24 @@ class AppSettings:
     ui_wallpaper_blur: int = 10          # размытие обоев, 0..100
     ui_wallpaper_brightness: int = 50    # яркость обоев, 0..100 (100 = оригинал)
     diagnostics_upload_enabled: bool = True
+    proxy_allow_lan: bool = False
+    tun_strict_route: bool = False
+    tun_stack: str = "mixed"
+    tun_mtu: int = 9000
+    tun_endpoint_independent_nat: bool = False
+    tun_block_quic: bool = True
+    local_socks_port: int = 10808
+    local_http_port: int = 10809
+    sniff_route_only: bool = False
 
     def __post_init__(self) -> None:
         self.tun_engine = _normalize_tun_engine(self.tun_engine)
+        self.tun_stack = _normalize_tun_stack(self.tun_stack)
+        self.local_socks_port = _normalize_local_port(self.local_socks_port, 10808)
+        self.local_http_port = _normalize_local_port(self.local_http_port, 10809)
+        if self.local_http_port == self.local_socks_port:
+            self.local_http_port = _normalize_local_port(self.local_socks_port + 1, 10809)
+        self.tun_mtu = _clamp_tun_mtu(self.tun_mtu)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -322,6 +337,15 @@ class AppSettings:
             "discord_proxy_enabled": self.discord_proxy_enabled,
             "tun_mode": self.tun_mode,
             "tun_engine": self.tun_engine,
+            "proxy_allow_lan": self.proxy_allow_lan,
+            "tun_strict_route": self.tun_strict_route,
+            "tun_stack": self.tun_stack,
+            "tun_mtu": self.tun_mtu,
+            "tun_endpoint_independent_nat": self.tun_endpoint_independent_nat,
+            "tun_block_quic": self.tun_block_quic,
+            "local_socks_port": self.local_socks_port,
+            "local_http_port": self.local_http_port,
+            "sniff_route_only": self.sniff_route_only,
             "xray_config_file": self.xray_config_file,
             "xray_template_file": self.xray_template_file,
             "singbox_path": self.singbox_path,
@@ -401,6 +425,15 @@ class AppSettings:
             discord_proxy_enabled=bool(data.get("discord_proxy_enabled", False)),
             tun_mode=bool(data.get("tun_mode", False)),
             tun_engine=_normalize_tun_engine(data.get("tun_engine")),
+            proxy_allow_lan=bool(data.get("proxy_allow_lan", False)),
+            tun_strict_route=bool(data.get("tun_strict_route", False)),
+            tun_stack=_normalize_tun_stack(data.get("tun_stack")),
+            tun_mtu=_clamp_tun_mtu(data.get("tun_mtu")),
+            tun_endpoint_independent_nat=bool(data.get("tun_endpoint_independent_nat", False)),
+            tun_block_quic=bool(data.get("tun_block_quic", True)),
+            local_socks_port=_normalize_local_port(data.get("local_socks_port", 10808), 10808),
+            local_http_port=_normalize_local_port(data.get("local_http_port", 10809), 10809),
+            sniff_route_only=bool(data.get("sniff_route_only", False)),
             xray_config_file=str(data.get("xray_config_file") or ""),
             xray_template_file=str(data.get("xray_template_file") or ""),
             singbox_path=str(data.get("singbox_path") or ""),
@@ -486,6 +519,29 @@ class AppState:
             ],
             routing_presets=[dict(item) for item in (data.get("routing_presets") or []) if isinstance(item, dict)],
         )
+
+
+def _normalize_tun_stack(value: Any) -> str:
+    stack = str(value or "").strip().lower()
+    return stack if stack in {"system", "gvisor", "mixed"} else "mixed"
+
+
+def _clamp_tun_mtu(value: Any) -> int:
+    try:
+        mtu = int(value)
+    except (TypeError, ValueError):
+        return 9000
+    return max(1280, min(mtu, 65535))
+
+
+def _normalize_local_port(value: Any, default: int) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return default
+    if port < 1025 or port > 65535 or port == 10818:  # 10818 is reserved for droute Discord Voice
+        return default
+    return port
 
 
 def _normalize_tun_engine(value: Any) -> str:

@@ -5,15 +5,20 @@ from typing import Any
 from .constants import DEFAULT_HTTP_PORT, DEFAULT_SOCKS_PORT, PROXY_HOST
 
 
-def build_xray_sniffing() -> dict[str, Any]:
+def build_xray_sniffing(*, route_only: bool = False) -> dict[str, Any]:
     return {
         "enabled": True,
         "destOverride": ["http", "tls"],
-        "routeOnly": False,
+        "routeOnly": bool(route_only),
     }
 
 
-def build_xray_mixed_inbound(port: int = DEFAULT_SOCKS_PORT, *, tag: str = "socks-in") -> dict[str, Any]:
+def build_xray_mixed_inbound(
+    port: int = DEFAULT_SOCKS_PORT,
+    *,
+    tag: str = "socks-in",
+    route_only: bool = False,
+) -> dict[str, Any]:
     return {
         "tag": tag,
         "listen": PROXY_HOST,
@@ -24,23 +29,29 @@ def build_xray_mixed_inbound(port: int = DEFAULT_SOCKS_PORT, *, tag: str = "sock
             "udp": True,
             "allowTransparent": False,
         },
-        "sniffing": build_xray_sniffing(),
+        "sniffing": build_xray_sniffing(route_only=route_only),
     }
 
 
-def build_xray_http_compat_inbound(port: int = DEFAULT_HTTP_PORT, *, tag: str = "http-in") -> dict[str, Any]:
+def build_xray_http_compat_inbound(
+    port: int = DEFAULT_HTTP_PORT,
+    *,
+    tag: str = "http-in",
+    route_only: bool = False,
+) -> dict[str, Any]:
     return {
         "tag": tag,
         "listen": PROXY_HOST,
         "port": int(port),
         "protocol": "http",
         "settings": {},
-        "sniffing": build_xray_sniffing(),
+        "sniffing": build_xray_sniffing(route_only=route_only),
     }
 
 
-def normalize_xray_sniffing(payload: dict[str, Any]) -> int:
+def normalize_xray_sniffing(payload: dict[str, Any], *, route_only: bool = False) -> int:
     changed = 0
+    want_route_only = bool(route_only)
     inbounds = payload.get("inbounds")
     if not isinstance(inbounds, list):
         return 0
@@ -52,7 +63,7 @@ def normalize_xray_sniffing(payload: dict[str, Any]) -> int:
             continue
         sniffing = inbound.get("sniffing")
         if not isinstance(sniffing, dict):
-            inbound["sniffing"] = build_xray_sniffing()
+            inbound["sniffing"] = build_xray_sniffing(route_only=want_route_only)
             changed += 1
             continue
         if sniffing.get("enabled") is not True:
@@ -61,8 +72,8 @@ def normalize_xray_sniffing(payload: dict[str, Any]) -> int:
         if sniffing.get("destOverride") != ["http", "tls"]:
             sniffing["destOverride"] = ["http", "tls"]
             changed += 1
-        if sniffing.get("routeOnly") is not False:
-            sniffing["routeOnly"] = False
+        if sniffing.get("routeOnly") is not want_route_only:
+            sniffing["routeOnly"] = want_route_only
             changed += 1
     return changed
 
@@ -72,13 +83,14 @@ def ensure_xray_mixed_proxy_inbound(
     *,
     socks_port: int = DEFAULT_SOCKS_PORT,
     http_port: int = DEFAULT_HTTP_PORT,
+    route_only: bool = False,
 ) -> int:
     inbounds = payload.setdefault("inbounds", [])
     if not isinstance(inbounds, list):
         inbounds = []
         payload["inbounds"] = inbounds
 
-    changed = normalize_xray_sniffing(payload)
+    changed = normalize_xray_sniffing(payload, route_only=route_only)
     main_index = -1
     http_index = -1
 
@@ -96,7 +108,7 @@ def ensure_xray_mixed_proxy_inbound(
         elif tag == "http-in" or (port == int(http_port) and protocol == "http"):
             http_index = index
 
-    main_inbound = build_xray_mixed_inbound(socks_port)
+    main_inbound = build_xray_mixed_inbound(socks_port, route_only=route_only)
     if main_index >= 0 and isinstance(inbounds[main_index], dict):
         current = inbounds[main_index]
         for key, value in main_inbound.items():
@@ -108,7 +120,7 @@ def ensure_xray_mixed_proxy_inbound(
         changed += 1
 
     if int(http_port) != int(socks_port):
-        http_inbound = build_xray_http_compat_inbound(http_port)
+        http_inbound = build_xray_http_compat_inbound(http_port, route_only=route_only)
         if http_index >= 0 and isinstance(inbounds[http_index], dict):
             current = inbounds[http_index]
             for key, value in http_inbound.items():

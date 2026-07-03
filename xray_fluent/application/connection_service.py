@@ -60,8 +60,13 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
             for manager in (controller.xray, controller.singbox)
             if (proc := getattr(manager, "_proc", None)) is not None and getattr(proc, "pid", 0)
         }
+        settings = getattr(getattr(controller, "state", None), "settings", None)
         conflicts = scan_network_conflicts(
-            {DEFAULT_SOCKS_PORT, DEFAULT_HTTP_PORT, 10818},
+            {
+                int(getattr(settings, "local_socks_port", 10808) or 10808),
+                int(getattr(settings, "local_http_port", 10809) or 10809),
+                10818,
+            },
             ignored_pids=ignored_pids,
         )
         conflicting_apps = list(conflicts.get("apps") or [])

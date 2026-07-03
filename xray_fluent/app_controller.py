@@ -721,7 +721,7 @@ class AppController(QObject):
             http_port = 0
         if socks_port > 0 and http_port > 0:
             return socks_port, http_port
-        return DEFAULT_SOCKS_PORT, DEFAULT_HTTP_PORT
+        return int(self.state.settings.local_socks_port), int(self.state.settings.local_http_port)
 
     def get_effective_http_proxy_port(self) -> int | None:
         session = self._active_session
@@ -913,6 +913,13 @@ class AppController(QObject):
             multiplex_enabled=self.state.settings.multiplex_enabled,
             multiplex_concurrency=self.state.settings.multiplex_concurrency,
             discord_proxy_enabled=self.state.settings.discord_proxy_enabled,
+            tun_strict_route=self.state.settings.tun_strict_route,
+            tun_stack=self.state.settings.tun_stack,
+            tun_mtu=self.state.settings.tun_mtu,
+            tun_endpoint_independent_nat=self.state.settings.tun_endpoint_independent_nat,
+            tun_block_quic=self.state.settings.tun_block_quic,
+            local_socks_port=self.state.settings.local_socks_port,
+            local_http_port=self.state.settings.local_http_port,
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
@@ -1009,9 +1016,9 @@ class AppController(QObject):
         settings = self.state.settings
         routing = self.state.routing
         if socks_port is None:
-            socks_port = int(DEFAULT_SOCKS_PORT)
+            socks_port = int(settings.local_socks_port)
         if http_port is None:
-            http_port = int(DEFAULT_HTTP_PORT)
+            http_port = int(settings.local_http_port)
         if xray_inbound_tags is None:
             xray_inbound_tags = ()
         if not ping_host and node is not None:
@@ -1365,8 +1372,8 @@ class AppController(QObject):
                 node,
                 self._runtime_routing(),
                 self.state.settings,
-                socks_port=DEFAULT_SOCKS_PORT,
-                http_port=DEFAULT_HTTP_PORT,
+                socks_port=int(self.state.settings.local_socks_port),
+                http_port=int(self.state.settings.local_http_port),
             )
             return json.dumps(cfg, ensure_ascii=True, indent=2)
         except ValueError:
@@ -1506,6 +1513,9 @@ class AppController(QObject):
 
     def set_discord_proxy_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
+        if enabled and (self.state.settings.tun_mode or (self._active_session is not None and self._active_session.tun_mode)):
+            self.status.emit("warning", "Discord Voice недоступен при включенном TUN: трафик Discord уже идет через VPN.")
+            return
         if enabled:
             ignored_pids = {
                 int(proc.pid)
@@ -1513,7 +1523,11 @@ class AppController(QObject):
                 if (proc := getattr(manager, "_proc", None)) is not None and getattr(proc, "pid", 0)
             }
             snapshot = scan_network_conflicts(
-                {DEFAULT_SOCKS_PORT, DEFAULT_HTTP_PORT, DEFAULT_DISCORD_SOCKS_PORT},
+                {
+                    int(self.state.settings.local_socks_port),
+                    int(self.state.settings.local_http_port),
+                    DEFAULT_DISCORD_SOCKS_PORT,
+                },
                 ignored_pids=ignored_pids,
             )
             conflicts = list(snapshot.get("apps") or [])
@@ -1616,6 +1630,9 @@ class AppController(QObject):
             self._configure_diagnostics_upload()
         self.settings_changed.emit(self.state.settings)
         self.schedule_save()
+
+        if settings.tun_mode and not old_tun and settings.discord_proxy_enabled:
+            QTimer.singleShot(0, self.apply_discord_proxy)  # strip droute from Discord as soon as TUN takes over
 
         if old_proxy and not settings.enable_system_proxy:
             self.proxy.disable_necko_overrides()

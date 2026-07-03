@@ -180,6 +180,13 @@ def plan_singbox_runtime(
     multiplex_enabled: bool = False,
     multiplex_concurrency: int = 8,
     discord_proxy_enabled: bool = False,
+    tun_strict_route: bool = False,
+    tun_stack: str = "mixed",
+    tun_mtu: int = 9000,
+    tun_endpoint_independent_nat: bool = False,
+    tun_block_quic: bool = True,
+    local_socks_port: int = DEFAULT_SOCKS_PORT,
+    local_http_port: int = DEFAULT_HTTP_PORT,
     preferred_relay_port: int = 0,
     preferred_protect_port: int = 0,
     preferred_protect_password: str = "",
@@ -195,6 +202,9 @@ def plan_singbox_runtime(
             routing=routing,
             enable_final_fragment=enable_final_fragment,
             system_dns_servers=system_dns_servers,
+            tun_strict_route=tun_strict_route,
+            tun_stack=tun_stack,
+            tun_mtu=tun_mtu,
         )
         _ensure_full_config_proxy_alias(runtime_config)
         if routing is not None:
@@ -220,6 +230,13 @@ def plan_singbox_runtime(
         routing=routing,
         enable_final_fragment=enable_final_fragment,
         system_dns_servers=system_dns_servers,
+        tun_strict_route=tun_strict_route,
+        tun_stack=tun_stack,
+        tun_mtu=tun_mtu,
+        tun_endpoint_independent_nat=tun_endpoint_independent_nat,
+        tun_block_quic=tun_block_quic,
+        local_socks_port=local_socks_port,
+        local_http_port=local_http_port,
     )
 
     outbounds = runtime_config.get("outbounds")
@@ -870,7 +887,12 @@ def _ensure_singbox_discord_proxy_contract(payload: dict[str, Any], *, enabled: 
     )
 
 
-def _ensure_singbox_tun_local_proxy_contract(payload: dict[str, Any]) -> None:
+def _ensure_singbox_tun_local_proxy_contract(
+    payload: dict[str, Any],
+    *,
+    socks_port: int = DEFAULT_SOCKS_PORT,
+    http_port: int = DEFAULT_HTTP_PORT,
+) -> None:
     """Keep v2rayN-style local proxy ports alive while TUN is running.
 
     Some browsers, Necko profiles, extensions and helper apps keep using
@@ -878,6 +900,20 @@ def _ensure_singbox_tun_local_proxy_contract(payload: dict[str, Any]) -> None:
     TUN. v2rayN keeps local proxy inbounds available in TUN mode, so do the same
     here instead of letting those requests time out outside sing-box.
     """
+
+    def _safe_port(value: Any, default: int) -> int:
+        try:
+            port = int(value)
+        except (TypeError, ValueError):
+            return default
+        if port <= 0 or port > 65535 or port == int(DEFAULT_DISCORD_SOCKS_PORT):  # keep droute port free
+            return default
+        return port
+
+    socks_value = _safe_port(socks_port, int(DEFAULT_SOCKS_PORT))
+    http_value = _safe_port(http_port, int(DEFAULT_HTTP_PORT))
+    if http_value == socks_value:
+        http_value = int(DEFAULT_HTTP_PORT) if socks_value != int(DEFAULT_HTTP_PORT) else int(DEFAULT_HTTP_PORT) + 1
     inbounds = _ensure_list(payload, "inbounds")
     route = _ensure_dict(payload, "route")
     rules = _ensure_list(route, "rules")
@@ -896,13 +932,13 @@ def _ensure_singbox_tun_local_proxy_contract(payload: dict[str, Any]) -> None:
                 "type": "mixed",
                 "tag": _APP_TUN_MIXED_INBOUND_TAG,
                 "listen": PROXY_HOST,
-                "listen_port": int(DEFAULT_SOCKS_PORT),
+                "listen_port": socks_value,
             },
             {
                 "type": "http",
                 "tag": _APP_TUN_HTTP_INBOUND_TAG,
                 "listen": PROXY_HOST,
-                "listen_port": int(DEFAULT_HTTP_PORT),
+                "listen_port": http_value,
             },
         ]
     )
@@ -1138,12 +1174,28 @@ def _ensure_singbox_tun_runtime_contract(
     routing: RoutingSettings | None = None,
     enable_final_fragment: bool = True,
     system_dns_servers: tuple[str, ...] = (),
+    tun_strict_route: bool = False,
+    tun_stack: str = "mixed",
+    tun_mtu: int = 9000,
+    tun_endpoint_independent_nat: bool = False,
+    tun_block_quic: bool = True,
+    local_socks_port: int = DEFAULT_SOCKS_PORT,
+    local_http_port: int = DEFAULT_HTTP_PORT,
 ) -> None:
     """Patch app-owned runtime fields for raw sing-box configs.
 
     Keep the Windows adapter identity stable so route and DNS registration can
-    be reused across reconnects. MTU and stack match v2rayN's current defaults.
+    be reused across reconnects. MTU, stack and strict_route follow user
+    settings (v2rayN parity) with safe defaults.
     """
+    try:
+        mtu_value = int(tun_mtu)
+    except (TypeError, ValueError):
+        mtu_value = 9000
+    mtu_value = max(1280, min(mtu_value, 65535))
+    stack_value = str(tun_stack or "").strip().lower()
+    if stack_value not in {"system", "gvisor", "mixed"}:
+        stack_value = "mixed"
     inbounds = payload.get("inbounds")
     has_tun = False
     if isinstance(inbounds, list):
@@ -1155,11 +1207,15 @@ def _ensure_singbox_tun_runtime_contract(
             has_tun = True
             inbound["interface_name"] = "singbox_tun"
             inbound["address"] = _singbox_tun_addresses()
-            inbound["mtu"] = 9000
+            inbound["mtu"] = mtu_value
             inbound["auto_route"] = True
             inbound.pop("route_address", None)
-            inbound["strict_route"] = False  # strict_route WFP rules break Discord voice ICE fallback and WinDivert tools
-            inbound["stack"] = "mixed"
+            inbound["strict_route"] = bool(tun_strict_route)  # True breaks Discord voice ICE fallback and WinDivert tools
+            inbound["stack"] = stack_value
+            if tun_endpoint_independent_nat and stack_value != "system":
+                inbound["endpoint_independent_nat"] = True  # full-cone NAT, needs gvisor/mixed UDP stack
+            else:
+                inbound.pop("endpoint_independent_nat", None)
             excludes = _normalize_route_exclude_addresses(
                 routing.tun_route_exclude_address if routing is not None else []
             )
@@ -1187,8 +1243,13 @@ def _ensure_singbox_tun_runtime_contract(
         enable_final_fragment=enable_final_fragment,
         builtin_dns=use_builtin_dns,
         dns_hijack_all=(routing.dns_hijack_enabled if routing is not None else True),
+        block_quic=tun_block_quic,
     )
-    _ensure_singbox_tun_local_proxy_contract(payload)
+    _ensure_singbox_tun_local_proxy_contract(
+        payload,
+        socks_port=local_socks_port,
+        http_port=local_http_port,
+    )
 
 
 def _ensure_singbox_dns_runtime_contract(
@@ -1364,6 +1425,7 @@ def _ensure_singbox_tun_base_rules(
     enable_final_fragment: bool = True,
     builtin_dns: bool = True,
     dns_hijack_all: bool = True,
+    block_quic: bool = True,
 ) -> None:
     noisy_local_dns_rejects = [
         {
@@ -1401,7 +1463,10 @@ def _ensure_singbox_tun_base_rules(
         "domain_suffix": _BROWSER_DOH_DOMAIN_SUFFIXES,
         "action": "reject",
     }
-    base_rules = [sniff_rule, quic_reject_rule, browser_doh_reject_rule, dns_hijack_rule, *noisy_local_dns_rejects]
+    base_rules = [sniff_rule]
+    if block_quic:
+        base_rules.append(quic_reject_rule)
+    base_rules.extend([browser_doh_reject_rule, dns_hijack_rule, *noisy_local_dns_rejects])
     if enable_final_fragment:
         base_rules.append(
             {

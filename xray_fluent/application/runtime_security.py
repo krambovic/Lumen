@@ -77,11 +77,12 @@ def _is_loopback_listen(value: Any) -> bool:
     return str(value or "").strip().lower() in _LOCAL_LISTEN_HOSTS
 
 
-def clamp_xray_local_inbounds(payload: dict[str, Any]) -> int:
+def clamp_xray_local_inbounds(payload: dict[str, Any], *, allow_lan: bool = False) -> int:
     """Keep local proxy/control inbounds on loopback only.
 
     The public system proxy must remain no-auth for WinINET/Necko compatibility,
     so the meaningful safety boundary is never exposing those inbounds to LAN.
+    With allow_lan the user explicitly opts in to LAN clients (v2rayN-style).
     """
     inbounds = payload.get("inbounds")
     if not isinstance(inbounds, list):
@@ -93,6 +94,8 @@ def clamp_xray_local_inbounds(payload: dict[str, Any]) -> int:
             continue
         tag = str(inbound.get("tag") or "").strip()
         protocol = str(inbound.get("protocol") or "").strip().lower()
+        if allow_lan and protocol in _PROXY_INBOUND_TYPES and tag != "api":
+            continue
         should_clamp = protocol in _PROXY_INBOUND_TYPES or tag in _XRAY_LOCAL_INBOUND_TAGS
         if not should_clamp:
             continue

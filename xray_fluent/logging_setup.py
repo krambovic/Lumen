@@ -30,6 +30,7 @@ _DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 _configured = False
 _upload_handler: logging.Handler | None = None
+_heartbeat_sender = None  # HeartbeatSender | None
 
 
 def _domain_for(name: str) -> str:
@@ -178,7 +179,7 @@ def configure_logging(log_dir: Path, *, upload_url: str = "", app_version: str =
 
 def configure_diagnostics_upload(*, upload_url: str = "", app_version: str = "") -> None:
     """Enable or disable the background diagnostics upload handler."""
-    global _upload_handler
+    global _upload_handler, _heartbeat_sender
     root = logging.getLogger(ROOT_LOGGER_NAME)
     if _upload_handler is not None:
         try:
@@ -187,11 +188,18 @@ def configure_diagnostics_upload(*, upload_url: str = "", app_version: str = "")
         except Exception:
             pass
         _upload_handler = None
+    if _heartbeat_sender is not None:
+        try:
+            _heartbeat_sender.stop()
+        except Exception:
+            pass
+        _heartbeat_sender = None
 
     if upload_url:
         try:
-            from .diagnostics_uploader import HttpDiagnosticsHandler
+            from .diagnostics_uploader import HeartbeatSender, HttpDiagnosticsHandler
 
+            _heartbeat_sender = HeartbeatSender(upload_url, app_version=app_version)
             uploader = HttpDiagnosticsHandler(upload_url, app_version=app_version)
             uploader.setLevel(logging.WARNING)
             uploader.addFilter(_DomainFilter(None))

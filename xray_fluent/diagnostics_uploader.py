@@ -139,3 +139,41 @@ def upload_bundle(url: str, zip_path: Path, *, app_version: str = "") -> None:
         )
 
     threading.Thread(target=_worker, name="diag-bundle-upload", daemon=True).start()
+
+
+
+_HEARTBEAT_INTERVAL = 15 * 60.0
+
+
+class HeartbeatSender:
+    """Anonymous periodic active-user ping; enabled/disabled together with telemetry."""
+
+    def __init__(self, url: str, *, app_version: str = "",
+                 interval: float = _HEARTBEAT_INTERVAL) -> None:
+        self._url = url
+        self._app_version = app_version
+        self._interval = interval
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="diag-heartbeat", daemon=True
+        )
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._ping()
+            self._stop.wait(self._interval)
+
+    def _ping(self) -> None:
+        try:
+            body = json.dumps(
+                {"kind": "heartbeat", "app_version": self._app_version,
+                 "install_id": get_install_id(), "ts": int(time.time())},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            _send(self._url, body, "application/json", _EVENT_TIMEOUT)
+        except Exception:
+            pass
+
+    def stop(self) -> None:
+        self._stop.set()

@@ -203,7 +203,8 @@ def ensure_xray_metrics_contract(
         if not replaced:
             rules.insert(1 if rules and rules[0] == metrics_rule else 0, discord_proxy_rule)
 
-    changed_local_listens = clamp_xray_local_inbounds(payload)
+    allow_lan = bool(getattr(controller.state.settings, "proxy_allow_lan", False))
+    changed_local_listens = clamp_xray_local_inbounds(payload, allow_lan=allow_lan)
     if changed_local_listens:
         controller._log(f"[xray] local inbounds locked to loopback ({changed_local_listens} change(s))")
 
@@ -274,12 +275,19 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
         raise ValueError("Корень xray config должен быть JSON-объектом.")
 
     tun_interface_name = ""
+    settings = controller.state.settings
+    route_only = bool(getattr(settings, "sniff_route_only", False))
     if tun_mode:
         tun_interface_name = controller._ensure_xray_tun_contract(payload)
         strip_xray_proxy_inbounds(payload)
-        normalize_xray_sniffing(payload)
+        normalize_xray_sniffing(payload, route_only=route_only)
     else:
-        patched_inbounds = ensure_xray_mixed_proxy_inbound(payload)
+        patched_inbounds = ensure_xray_mixed_proxy_inbound(
+            payload,
+            socks_port=int(getattr(settings, "local_socks_port", 10808)),
+            http_port=int(getattr(settings, "local_http_port", 10809)),
+            route_only=route_only,
+        )
         if patched_inbounds:
             controller._log(f"[xray] local proxy inbound normalized for mixed mode ({patched_inbounds} change(s))")
 

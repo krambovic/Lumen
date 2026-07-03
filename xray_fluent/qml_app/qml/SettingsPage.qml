@@ -498,6 +498,72 @@ Item {
                 }
             }
         }
+        Card {
+            Layout.fillWidth: true
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 14
+                Text { text: I18n.t("Прокси"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+
+                SettingRow {
+                    glyph: "\uE8A6"; title: I18n.t("SOCKS-порт"); subtitle: I18n.t("Локальный порт SOCKS/mixed прокси (рекомендуется 10808)")
+                    InfoIcon { tip: I18n.t("Локальный порт для SOCKS и mixed прокси. Порт 10818 зарезервирован под Discord Voice и будет сброшен на рекомендованный. Применяется с переподключением.") }
+                    FluentSpin { from: 1025; to: 65535; value: App.localSocksPort; onValueModified: App.setLocalSocksPort(value) }
+                }
+                SettingRow {
+                    glyph: "\uE8A6"; title: I18n.t("HTTP-порт"); subtitle: I18n.t("Локальный порт HTTP прокси (рекомендуется 10809)")
+                    InfoIcon { tip: I18n.t("Локальный порт для HTTP прокси. Должен отличаться от SOCKS-порта; порт 10818 зарезервирован под Discord Voice. Применяется с переподключением.") }
+                    FluentSpin { from: 1025; to: 65535; value: App.localHttpPort; onValueModified: App.setLocalHttpPort(value) }
+                }
+                SettingRow {
+                    glyph: "\uE774"; title: I18n.t("Разрешить подключения из локальной сети"); subtitle: I18n.t("Открыть SOCKS/HTTP порты для других устройств вашей сети")
+                    InfoIcon { tip: I18n.t("Другие устройства вашей сети смогут использовать этот ПК как прокси (адрес — IP этого ПК и указанные выше порты). Работает в режиме прокси. Windows может запросить разрешение брандмауэра.") }
+                    Switch { checked: App.proxyAllowLan; onToggled: App.setProxyAllowLan(checked) }
+                }
+                SettingRow {
+                    glyph: "\uE895"; title: I18n.t("Sniffing только для маршрутизации"); subtitle: I18n.t("Не подменять адрес назначения доменом из sniffing (рекомендуется: выключено)")
+                    InfoIcon { tip: I18n.t("Домен из sniffing используется только для правил маршрутизации, а соединение идёт на исходный IP. Может помочь, если отдельные приложения некорректно работают с подменой адреса.") }
+                    Switch { checked: App.sniffRouteOnly; onToggled: App.setSniffRouteOnly(checked) }
+                }
+            }
+        }
+        Card {
+            Layout.fillWidth: true
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 14
+                Text { text: I18n.t("TUN"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+
+                SettingRow {
+                    glyph: "\uE72E"; title: I18n.t("Strict Route"); subtitle: I18n.t("Жёсткая маршрутизация: блокировать любой трафик мимо TUN (рекомендуется: выключено)")
+                    InfoIcon { tip: I18n.t("Защищает от утечек, но ломает голосовые звонки Discord (ICE fallback) и инструменты на WinDivert. Применяется при следующем включении TUN.") }
+                    Switch { checked: App.tunStrictRoute; onToggled: App.setTunStrictRoute(checked) }
+                }
+                SettingRow {
+                    glyph: "\uE968"; title: I18n.t("Сетевой стек TUN"); subtitle: I18n.t("mixed — рекомендуется")
+                    InfoIcon { tip: I18n.t("system — быстрее, gvisor — совместимее, mixed — system для TCP и gVisor для UDP.") }
+                    StyledCombo {
+                        model: ["mixed", "system", "gvisor"]
+                        currentIndex: Math.max(0, ["mixed", "system", "gvisor"].indexOf(App.tunStack))
+                        onActivated: App.setTunStack(["mixed", "system", "gvisor"][currentIndex])
+                    }
+                }
+                SettingRow {
+                    glyph: "\uE9D9"; title: I18n.t("MTU"); subtitle: I18n.t("Размер пакета TUN-адаптера (рекомендуется 9000)")
+                    FluentSpin { from: 1280; to: 65535; value: App.tunMtu; onValueModified: App.setTunMtu(value) }
+                }
+                SettingRow {
+                    glyph: "\uE72C"; title: I18n.t("Блокировать QUIC/HTTP3 в TUN"); subtitle: I18n.t("Браузеры переходят на HTTP/2 через прокси (рекомендуется: включено)")
+                    InfoIcon { tip: I18n.t("QUIC/HTTP3 из TUN отклоняется, чтобы браузеры использовали TCP HTTP/2 — так стабильнее через прокси. Отключайте, только если нужен HTTP/3. Применяется при следующем включении TUN.") }
+                    Switch { checked: App.tunBlockQuic; onToggled: App.setTunBlockQuic(checked) }
+                }
+                SettingRow {
+                    glyph: "\uE774"; title: I18n.t("Endpoint-Independent NAT"); subtitle: I18n.t("Full-cone NAT для игр и P2P (рекомендуется: выключено)")
+                    InfoIcon { tip: I18n.t("Улучшает совместимость с играми и P2P-приложениями, но потребляет больше памяти. Работает со стеками gvisor и mixed. Применяется при следующем включении TUN.") }
+                    Switch { checked: App.tunEndpointIndependentNat; onToggled: App.setTunEndpointIndependentNat(checked) }
+                }
+            }
+        }
                 Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
             }
         }

@@ -1431,6 +1431,62 @@ class AppBridge(QObject):
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
+    def setProxyAllowLan(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.proxy_allow_lan = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setTunStrictRoute(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.tun_strict_route = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(str)
+    def setTunStack(self, stack: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.tun_stack = str(stack or "").strip().lower()
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(int)
+    def setTunMtu(self, mtu: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.tun_mtu = int(mtu)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(int)
+    def setLocalSocksPort(self, port: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.local_socks_port = int(port)
+        settings.__post_init__()  # re-run normalization: range, droute port 10818, socks/http collision
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(int)
+    def setLocalHttpPort(self, port: int) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.local_http_port = int(port)
+        settings.__post_init__()  # re-run normalization: range, droute port 10818, socks/http collision
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setTunEndpointIndependentNat(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.tun_endpoint_independent_nat = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setTunBlockQuic(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.tun_block_quic = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
+    def setSniffRouteOnly(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.sniff_route_only = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
     def setXrayFragment(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.enable_xray_fragment = bool(enabled)
@@ -2914,6 +2970,69 @@ class AppBridge(QObject):
             return False
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def proxyAllowLan(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.proxy_allow_lan)
+        except Exception:
+            return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def tunStrictRoute(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.tun_strict_route)
+        except Exception:
+            return False
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def tunStack(self) -> str:
+        try:
+            return str(self.controller.state.settings.tun_stack)
+        except Exception:
+            return "mixed"
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def tunMtu(self) -> int:
+        try:
+            return int(self.controller.state.settings.tun_mtu)
+        except Exception:
+            return 9000
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def localSocksPort(self) -> int:
+        try:
+            return int(self.controller.state.settings.local_socks_port)
+        except Exception:
+            return 10808
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def localHttpPort(self) -> int:
+        try:
+            return int(self.controller.state.settings.local_http_port)
+        except Exception:
+            return 10809
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def tunBlockQuic(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.tun_block_quic)
+        except Exception:
+            return True
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def tunEndpointIndependentNat(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.tun_endpoint_independent_nat)
+        except Exception:
+            return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def sniffRouteOnly(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.sniff_route_only)
+        except Exception:
+            return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def resourceUpdateCheck(self) -> bool:
         try:
             return bool(self.controller.state.settings.resource_update_check)
@@ -3262,6 +3381,14 @@ class AppBridge(QObject):
     def dnsProxyType(self) -> str:
         return self.controller.state.routing.dns_proxy_type
 
+    @pyqtProperty(str, notify=routingChanged)
+    def dnsBootstrapStrategy(self) -> str:
+        return str(self.controller.state.routing.dns_bootstrap_strategy or "prefer_ipv4")
+
+    @pyqtProperty(str, notify=routingChanged)
+    def dnsProxyStrategy(self) -> str:
+        return str(self.controller.state.routing.dns_proxy_strategy or "prefer_ipv4")
+
     @pyqtProperty(bool, notify=routingChanged)
     def dnsFakeEnabled(self) -> bool:
         return bool(self.controller.state.routing.dns_fake_enabled)
@@ -3387,6 +3514,18 @@ class AppBridge(QObject):
                 r.dns_proxy_server = server.strip()
             if dns_type:
                 r.dns_proxy_type = dns_type
+        self._mutate_routing(apply)
+
+    @pyqtSlot(str)
+    def setDnsBootstrapStrategy(self, value: str) -> None:
+        def apply(r: RoutingSettings) -> None:
+            r.dns_bootstrap_strategy = str(value or "prefer_ipv4")
+        self._mutate_routing(apply)
+
+    @pyqtSlot(str)
+    def setDnsProxyStrategy(self, value: str) -> None:
+        def apply(r: RoutingSettings) -> None:
+            r.dns_proxy_strategy = str(value or "prefer_ipv4")
         self._mutate_routing(apply)
 
     @pyqtSlot(bool)
