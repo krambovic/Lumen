@@ -26,7 +26,6 @@ class NodeListModel(QAbstractListModel):
     ServerRole = Qt.ItemDataRole.UserRole + 4
     PortRole = Qt.ItemDataRole.UserRole + 5
     GroupRole = Qt.ItemDataRole.UserRole + 6
-    TagsRole = Qt.ItemDataRole.UserRole + 7
     PingRole = Qt.ItemDataRole.UserRole + 8
     SpeedRole = Qt.ItemDataRole.UserRole + 9
     AliveRole = Qt.ItemDataRole.UserRole + 10
@@ -49,7 +48,6 @@ class NodeListModel(QAbstractListModel):
         ServerRole: b"server",
         PortRole: b"port",
         GroupRole: b"group",
-        TagsRole: b"tags",
         PingRole: b"ping",
         SpeedRole: b"speed",
         AliveRole: b"isAlive",
@@ -102,8 +100,6 @@ class NodeListModel(QAbstractListModel):
             return int(node.port or 0)
         if role == self.GroupRole:
             return node.group or ""
-        if role == self.TagsRole:
-            return list(node.tags or [])
         if role == self.PingRole:
             return -1 if node.ping_ms is None else int(node.ping_ms)
         if role == self.SpeedRole:
@@ -235,7 +231,6 @@ class NodeListModel(QAbstractListModel):
                 "name": node.name or node.server or "(\u0431\u0435\u0437 \u0438\u043c\u0435\u043d\u0438)",
                 "server": node.server or "",
                 "group": node.group or "",
-                "tags": list(node.tags or []),
                 "transport": node_transport(node),
             }
         return None

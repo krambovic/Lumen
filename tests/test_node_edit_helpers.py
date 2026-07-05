@@ -32,7 +32,6 @@ def test_awg_editor_hides_xray_fields_and_updates_native_endpoint() -> None:
         {
             "name": "WARP new",
             "group": "Native",
-            "tags": "warp, test",
             "server": "162.159.192.1",
             "port": "2408",
             "uuid": "must-not-be-used",
@@ -60,14 +59,14 @@ def test_singbox_config_editor_is_metadata_only() -> None:
     )
 
     fields = load_node_edit_fields(node)
-    updates = build_node_updates(node, {"name": "Renamed", "group": "Configs", "tags": "full", "server": "bad", "port": "443"})
+    updates = build_node_updates(node, {"name": "Renamed", "group": "Configs", "server": "bad", "port": "443"})
 
     assert fields["capabilities"]["readOnlyConfig"] is True
     assert fields["capabilities"]["endpoint"] is False
+    assert "tags" not in fields
     assert updates == {
         "name": "Renamed",
         "group": "Configs",
-        "tags": ["full"],
         "outbound": {"protocol": "singbox_config", "singbox": {"outbounds": []}},
     }
 
@@ -95,7 +94,6 @@ def test_vless_editor_keeps_advanced_fields() -> None:
         {
             "name": "VLESS new",
             "group": "Default",
-            "tags": "",
             "server": "new.example",
             "port": "8443",
             "uuid": "new-id",

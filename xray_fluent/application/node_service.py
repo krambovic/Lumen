@@ -110,8 +110,6 @@ def update_node(controller: AppController, node_id: str, updates: dict) -> bool:
         node.name = updates["name"]
     if "group" in updates:
         node.group = updates["group"]
-    if "tags" in updates:
-        node.tags = list(updates["tags"])
     if "server" in updates:
         node.server = str(updates["server"])
     if "port" in updates:
@@ -129,21 +127,12 @@ def update_node(controller: AppController, node_id: str, updates: dict) -> bool:
 
 def bulk_update_nodes(controller: AppController, node_ids: set[str], operations: dict) -> int:
     group = operations.get("group", "")
-    add_tags = operations.get("add_tags", [])
-    remove_tags = set(operations.get("remove_tags", []))
     updated = 0
     for node in controller.state.nodes:
         if node.id not in node_ids:
             continue
         if group:
             node.group = group
-        if add_tags:
-            existing = set(node.tags)
-            for tag in add_tags:
-                if tag not in existing:
-                    node.tags.append(tag)
-        if remove_tags:
-            node.tags = [tag for tag in node.tags if tag not in remove_tags]
         updated += 1
     if updated:
         controller.nodes_changed.emit(controller.state.nodes)
@@ -159,13 +148,6 @@ def get_all_groups(controller: AppController) -> list[str]:
         if str(group).strip()
     )
     return sorted(groups)
-
-
-def get_all_tags(controller: AppController) -> list[str]:
-    tags: set[str] = set()
-    for node in controller.state.nodes:
-        tags.update(node.tags)
-    return sorted(tags)
 
 
 def reorder_nodes(controller: AppController, node_id: str, direction: str) -> None:

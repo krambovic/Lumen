@@ -17,16 +17,18 @@ Item {
     property int anchorRow: -1
     property int menuRow: -1
     property bool compact: App.compactMode
+    property bool selectionDragging: false
+    property real selectionPointerX: -1
+    property real selectionPointerY: -1
+    property int hoverRow: -1
 
     // ── filtering / sorting state ───────────────────
     property string filterText: ""
     property string filterGroup: ""   // "" = all groups
-    property string filterTag: ""     // "" = all tags
     property string sortKey: "manual"
     property bool sortAsc: true
 
     readonly property var groupModel: [I18n.t("Все группы")].concat(App.groupOptions)
-    readonly property var tagModel: [I18n.t("Все теги")].concat(App.tagOptions)
     readonly property var sortLabels: [I18n.t("Вручную"), I18n.t("Имя"), I18n.t("Группа"), I18n.t("Тип"), I18n.t("Транспорт"), I18n.t("Пинг"), I18n.t("Скорость"), I18n.t("Последнее использование")]
     readonly property var sortKeys: ["manual", "name", "group", "scheme", "transport", "ping", "speed", "last"]
 
@@ -40,7 +42,6 @@ Item {
     readonly property int colTransport: 92
     readonly property int colPort: 60
     readonly property int colGroup: 120
-    readonly property int colTags: 150
     readonly property int colPing: 80
     readonly property int colSpeed: 108
     readonly property int colStatus: 72
@@ -52,7 +53,7 @@ Item {
     readonly property int colNameMin: 160
     readonly property int colAddrMin: 150
 
-    readonly property int fixedCols: colType + colTransport + colPort + colGroup + colTags
+    readonly property int fixedCols: colType + colTransport + colPort + colGroup
         + colPing + colSpeed + colStatus + colLast
     readonly property int minTableWidth: fixedCols + colNameMin + colAddrMin + leftPad + trailPad
 
@@ -178,6 +179,37 @@ Item {
         _commit(o, Object.keys(o).length);
     }
     function clearSel() { anchorRow = -1; _commit({}, 0); }
+    function rowAtSelectionPoint(x, y) {
+        if (!listSelectionArea || !list || list.count <= 0) return -1;
+        var px = Math.max(0, Math.min(list.width - 1, x));
+        var py = Math.max(0, Math.min(list.height - 1, y));
+        var pt = listSelectionArea.mapToItem(list.contentItem, px, py);
+        return list.indexAt(pt.x, pt.y);
+    }
+    function updateDragSelection() {
+        if (!selectionDragging) return;
+        var r = rowAtSelectionPoint(selectionPointerX, selectionPointerY);
+        if (r >= 0) selectRange(anchorRow, r);
+    }
+    function scrollDragSelection() {
+        if (!selectionDragging || !listVbarTrack.scrollable) return;
+        var edge = Math.max(28, rowH);
+        var delta = 0;
+        if (selectionPointerY < edge) {
+            delta = -Math.ceil(((edge - selectionPointerY) / edge) * rowH);
+        } else if (selectionPointerY > list.height - edge) {
+            delta = Math.ceil(((selectionPointerY - (list.height - edge)) / edge) * rowH);
+        }
+        if (delta === 0) return;
+        listScrollAnim.stop();
+        list.contentY = Math.max(0, Math.min(listVbarTrack.maxY, list.contentY + delta));
+        listVbarTrack.flash();
+        updateDragSelection();
+    }
+    function stopSelectionDrag() {
+        selectionDragging = false;
+        hoverRow = -1;
+    }
     function selectAll() {
         var o = {};
         for (var i = 0; i < list.count; i++) {
@@ -189,20 +221,22 @@ Item {
     }
 
     function applyFilters() {
-        App.setNodeFilter(page.filterGroup, page.filterTag, page.filterText);
+        App.setNodeFilter(page.filterGroup, page.filterText);
     }
 
     function revealImportedNode(nodeId) {
         if (!nodeId) return;
         page.filterText = "";
-        page.filterGroup = "";
-        page.filterTag = "";
         searchInput.text = "";
-        groupCombo.currentIndex = 0;
-        tagCombo.currentIndex = 0;
         page.applyFilters();
         Qt.callLater(function() {
             var row = App.nodeIndexById(nodeId);
+            if (row < 0) {
+                page.filterGroup = "";
+                groupCombo.currentIndex = 0;
+                page.applyFilters();
+                row = App.nodeIndexById(nodeId);
+            }
             if (row < 0) return;
             page.selectOnly(row);
             list.positionViewAtIndex(row, ListView.Center);
@@ -359,7 +393,7 @@ Item {
             }
         }
 
-        // ── filters: group / tags / sort / direction ───────────
+        // ── filters: group / sort / direction ───────────
         Flow {
             Layout.fillWidth: true
             spacing: 8
@@ -370,13 +404,6 @@ Item {
                 width: 160
                 model: page.groupModel
                 onActivated: { page.filterGroup = (currentIndex <= 0 ? "" : currentText); page.applyFilters() }
-            }
-            FilterCombo {
-                id: tagCombo
-                Layout.preferredWidth: 160
-                width: 160
-                model: page.tagModel
-                onActivated: { page.filterTag = (currentIndex <= 0 ? "" : currentText); page.applyFilters() }
             }
             FilterCombo {
                 id: sortCombo
@@ -618,7 +645,6 @@ Item {
                             HeaderLabel { w: page.colAddr; text: I18n.t("Адрес") }
                             HeaderLabel { w: page.colPort; text: I18n.t("Порт") }
                             HeaderLabel { w: page.colGroup; text: I18n.t("Группа"); sortKey: "group" }
-                            HeaderLabel { w: page.colTags; text: I18n.t("Теги") }
                             HeaderLabel { w: page.colPing; text: I18n.t("Пинг"); sortKey: "ping" }
                             HeaderLabel { w: page.colSpeed; text: I18n.t("Скорость"); sortKey: "speed" }
                             HeaderLabel { w: page.colStatus; text: I18n.t("Статус") }
@@ -649,6 +675,7 @@ Item {
                         clip: true
                         interactive: false  // wheel/scrollbar only; no drag-to-scroll list movement
                         boundsBehavior: Flickable.StopAtBounds
+                        onContentYChanged: page.updateDragSelection()
 
                         NumberAnimation {
                             id: listScrollAnim
@@ -682,7 +709,6 @@ Item {
                             required property string server
                             required property int port
                             required property string group
-                            required property var tags
                             required property int ping
                             required property real speed
                             required property bool isAlive
@@ -701,9 +727,7 @@ Item {
                             width: page.tableWidth
                             height: page.rowH
                             opacity: runtimeSupported ? 1.0 : 0.45
-                            color: picked ? Theme.accentSoft : (hover.hovered && runtimeSupported ? Theme.cardHover : "transparent")
-
-                            HoverHandler { id: hover }
+                            color: picked ? Theme.accentSoft : (page.hoverRow === nodeRow.index && runtimeSupported ? Theme.cardHover : "transparent")
 
                             // active-node accent bar
                             Rectangle {
@@ -719,38 +743,6 @@ Item {
                                 height: 1
                                 color: Theme.divider
                                 opacity: 0.5
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                property bool dragging: false
-                                onPressed: (mouse) => {
-                                    if (mouse.button === Qt.RightButton) {
-                                        if (!nodeRow.picked) page.selectOnly(nodeRow.index);
-                                        page.menuRow = nodeRow.index;
-                                        ctxMenu.popup();
-                                        return;
-                                    }
-                                    if (mouse.modifiers & Qt.ControlModifier) {
-                                        page.toggle(nodeRow.index);
-                                    } else if (mouse.modifiers & Qt.ShiftModifier) {
-                                        page.selectRange(page.anchorRow < 0 ? nodeRow.index : page.anchorRow, nodeRow.index);
-                                    } else {
-                                        page.selectOnly(nodeRow.index);
-                                        dragging = true;
-                                    }
-                                }
-                                onPositionChanged: (mouse) => {
-                                    if (!dragging) return;
-                                    var pt = mapToItem(list.contentItem, mouse.x, mouse.y);
-                                    var r = list.indexAt(pt.x, pt.y);
-                                    if (r >= 0) page.selectRange(page.anchorRow, r);
-                                }
-                                onReleased: dragging = false
-                                onCanceled: dragging = false
-                                onDoubleClicked: App.selectNode(nodeRow.nodeId)
                             }
 
                             Row {
@@ -914,7 +906,6 @@ Item {
                                 CellText { w: page.colAddr; text: nodeRow.server; color: Theme.text }
                                 CellText { w: page.colPort; text: nodeRow.port > 0 ? ("" + nodeRow.port) : "—" }
                                 CellText { w: page.colGroup; text: nodeRow.group || "—" }
-                                CellText { w: page.colTags; text: (nodeRow.tags && nodeRow.tags.length) ? nodeRow.tags.join(", ") : "—" }
 
                                 // ping
                                 Item {
@@ -962,6 +953,70 @@ Item {
                                 }
                                 CellText { w: page.colLast; text: nodeRow.lastUsed }
                             }
+                        }
+
+                        MouseArea {
+                            id: listSelectionArea
+                            anchors.fill: parent
+                            z: 100
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            hoverEnabled: true
+                            preventStealing: true
+                            propagateComposedEvents: false
+
+                            onPositionChanged: (mouse) => {
+                                page.selectionPointerX = mouse.x;
+                                page.selectionPointerY = mouse.y;
+                                page.hoverRow = page.rowAtSelectionPoint(mouse.x, mouse.y);
+                                page.updateDragSelection();
+                            }
+                            onExited: {
+                                if (!page.selectionDragging)
+                                    page.hoverRow = -1;
+                            }
+                            onPressed: (mouse) => {
+                                list.forceActiveFocus();
+                                page.selectionPointerX = mouse.x;
+                                page.selectionPointerY = mouse.y;
+                                var row = page.rowAtSelectionPoint(mouse.x, mouse.y);
+                                if (row < 0)
+                                    return;
+                                page.hoverRow = row;
+                                if (mouse.button === Qt.RightButton) {
+                                    if (!page.isSelected(App.nodeIdAt(row)))
+                                        page.selectOnly(row);
+                                    page.menuRow = row;
+                                    ctxMenu.popup();
+                                    return;
+                                }
+                                if (mouse.modifiers & Qt.ControlModifier) {
+                                    page.toggle(row);
+                                    return;
+                                }
+                                if (mouse.modifiers & Qt.ShiftModifier) {
+                                    page.selectRange(page.anchorRow < 0 ? row : page.anchorRow, row);
+                                    return;
+                                }
+                                page.selectOnly(row);
+                                page.selectionDragging = true;
+                                selectionDragScroll.restart();
+                            }
+                            onDoubleClicked: (mouse) => {
+                                var row = page.rowAtSelectionPoint(mouse.x, mouse.y);
+                                var id = App.nodeIdAt(row);
+                                if (id)
+                                    App.selectNode(id);
+                            }
+                            onReleased: page.stopSelectionDrag()
+                            onCanceled: page.stopSelectionDrag()
+                        }
+
+                        Timer {
+                            id: selectionDragScroll
+                            interval: 30
+                            repeat: true
+                            running: page.selectionDragging
+                            onTriggered: page.scrollDragSelection()
                         }
                     }
 

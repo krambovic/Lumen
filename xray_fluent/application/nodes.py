@@ -14,7 +14,6 @@ from .node_service import (
     bulk_update_nodes,
     fetch_subscription_payload,
     get_all_groups,
-    get_all_tags,
     import_nodes_from_text,
     import_subscription,
     remove_nodes,

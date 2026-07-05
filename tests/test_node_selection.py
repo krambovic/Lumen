@@ -79,6 +79,26 @@ def _restore_import_patches(original) -> None:
     ) = original
 
 
+def test_direct_import_can_target_selected_group() -> None:
+    fresh = _node("fresh", "Default")
+    controller = _Controller([], None)
+
+    original = _patch_imported_nodes([fresh])
+    try:
+        added, errors = node_service.import_nodes_from_text(
+            controller,
+            "fresh payload",
+            group="Manual",
+        )
+    finally:
+        _restore_import_patches(original)
+
+    assert added == 1
+    assert errors == []
+    assert controller.state.nodes[0].group == "Manual"
+    assert controller.state.selected_node_id == "fresh"
+
+
 def test_subscription_update_preserves_selection_from_other_group() -> None:
     active = _node("active", "Main")
     old_sub = _node("old-sub", "Sub")

@@ -158,7 +158,7 @@ class AppBridge(QObject):
     routingChanged = pyqtSignal()
     settingsChanged = pyqtSignal()
     subscriptionsChanged = pyqtSignal()    # subscription list changed
-    nodeFiltersChanged = pyqtSignal()      # distinct group/tag option lists changed
+    nodeFiltersChanged = pyqtSignal()      # distinct group option list changed
     lockedChanged = pyqtSignal()           # app lock/unlock state changed
     trayAvailableChanged = pyqtSignal()    # system tray availability resolved
     trayMessageRequested = pyqtSignal()    # ask the tray to show its balloon
@@ -220,9 +220,8 @@ class AppBridge(QObject):
         set_language(self._language)
         self._accent = "#0078D4"
 
-        # Активные фильтры списка серверов (группа/тег/текст)
+        # Активные фильтры списка серверов (группа/текст)
         self._filter_group = ""
-        self._filter_tag = ""
         self._filter_text = ""
 
         self._tray_available = False
@@ -638,23 +637,19 @@ class AppBridge(QObject):
         )
 
     def _filtered_nodes(self, nodes: list[Node]) -> list[Node]:
-        """Apply the active group/tag/text filter (mirrors the old QML rowVisible)."""
+        """Apply the active group/text filter (mirrors the old QML rowVisible)."""
         group = self._filter_group
-        tag = self._filter_tag
         text = (self._filter_text or "").strip().lower()
-        if not group and not tag and not text:
+        if not group and not text:
             return list(nodes)
         result: list[Node] = []
         for n in nodes:
             if group and (n.group or "Default") != group:
                 continue
-            if tag and tag not in (n.tags or []):
-                continue
             if text and not (
                 text in (n.name or "").lower()
                 or text in (n.server or "").lower()
                 or text in (n.group or "").lower()
-                or text in " ".join(n.tags or []).lower()
                 or text in node_transport(n).lower()
             ):
                 continue
@@ -1809,7 +1804,7 @@ class AppBridge(QObject):
 
     @pyqtSlot("QVariantList", "QVariantMap")
     def bulkEditNodes(self, ids: list, operations) -> None:
-        """Apply bulk group move / tag add+remove to the selected nodes."""
+        """Apply a bulk group move to the selected nodes."""
         node_ids = {str(i) for i in (ids or []) if i}
         if not node_ids:
             self.toast.emit("warning", "Не выбрано ни одного сервера")
@@ -1817,8 +1812,6 @@ class AppBridge(QObject):
         ops = dict(operations or {})
         payload = {
             "group": str(ops.get("group", "") or "").strip(),
-            "add_tags": [str(t).strip() for t in (ops.get("add_tags") or []) if str(t).strip()],
-            "remove_tags": [str(t).strip() for t in (ops.get("remove_tags") or []) if str(t).strip()],
         }
         self.controller.bulk_update_nodes(node_ids, payload)
         self.toast.emit("success", tr("Обновлено серверов: {count}", count=len(node_ids)))
@@ -2503,7 +2496,8 @@ class AppBridge(QObject):
         if not text:
             self.toast.emit("warning", "Буфер обмена пуст")
             return
-        added, errors = self.controller.import_nodes_from_text(text)
+        target_group = (self._filter_group or "").strip() or None
+        added, errors = self.controller.import_nodes_from_text(text, group=target_group)
         if added:
             self.nodeImported.emit(self.controller.state.selected_node_id or "")
             self.toast.emit("success", tr("Импортировано серверов: {count}", count=added))
@@ -2530,7 +2524,8 @@ class AppBridge(QObject):
         except Exception as exc:
             self.toast.emit("error", tr("Не удалось прочитать файл: {error}", error=exc))
             return
-        added, errors = self.controller.import_nodes_from_text(text)
+        target_group = (self._filter_group or "").strip() or None
+        added, errors = self.controller.import_nodes_from_text(text, group=target_group)
         if added:
             self.nodeImported.emit(self.controller.state.selected_node_id or "")
             self.toast.emit("success", tr("Импортировано серверов: {count}", count=added))
@@ -2597,12 +2592,11 @@ class AppBridge(QObject):
         self._sort_asc = bool(ascending)
         self._apply_node_model()
 
-    @pyqtSlot(str, str, str)
-    def setNodeFilter(self, group: str, tag: str, text: str) -> None:
-        """Set the active group/tag/text filter and re-push the node list so the
+    @pyqtSlot(str, str)
+    def setNodeFilter(self, group: str, text: str) -> None:
+        """Set the active group/text filter and re-push the node list so the
         model holds only visible rows (keeps ListView count/contentHeight correct)."""
         self._filter_group = group or ""
-        self._filter_tag = tag or ""
         self._filter_text = text or ""
         self._apply_node_model()
 
@@ -2635,17 +2629,6 @@ class AppBridge(QObject):
             grp = node.group or "Default"
             if grp not in seen:
                 seen.append(grp)
-        seen.sort(key=str.lower)
-        return seen
-
-    @pyqtProperty("QVariantList", notify=nodeFiltersChanged)
-    def tagOptions(self) -> list:
-        """Distinct tags across all nodes (for the Теги filter combo)."""
-        seen: list[str] = []
-        for node in self.controller.state.nodes:
-            for tag in (node.tags or []):
-                if tag and tag not in seen:
-                    seen.append(tag)
         seen.sort(key=str.lower)
         return seen
 
@@ -2698,10 +2681,10 @@ class AppBridge(QObject):
 
     @pyqtSlot(int, result="QVariant")
     def nodeRowAt(self, row: int):
-        """Return a row's filterable fields {id,name,server,group,tags} by index.
+        """Return a row's filterable fields by index.
 
         Used by Ctrl+A so it can select only the rows that pass the current
-        group/tag/text filter instead of every node in the model.
+        group/text filter instead of every node in the model.
         """
         return self._node_model.node_row_at(row)
 

@@ -7,7 +7,7 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen KVN"
-APP_VERSION = "1.7.6"
+APP_VERSION = "1.7.7"
 STATE_SCHEMA_VERSION = 1
 
 DIAGNOSTICS_UPLOAD_URL = "https://diagnostics.lumen-kvn.eu.cc/api/ingest"
@@ -64,7 +64,6 @@ SPEED_TEST_DEFAULT_URL = "https://cachefly.cachefly.net/50mb.test"
 SPEED_TEST_PING_URL = "https://www.google.com/generate_204"
 SPEED_TEST_TIMEOUT = 10
 SPEED_TEST_MIXED_CONCURRENCY = 10
-SPEED_TEST_PROCESS_CONCURRENCY_CAP = 6
 SPEED_TEST_STARTUP_TIMEOUT = 5.0
 SPEED_TEST_PING_TIMEOUT = 3.0
 SPEED_TEST_MAX_PING_MS = 3500

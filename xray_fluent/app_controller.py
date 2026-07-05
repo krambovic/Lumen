@@ -60,7 +60,6 @@ from .application.nodes import (
     check_auto_switch as check_auto_switch_operation,
     detect_countries_sync as detect_countries_sync_operation,
     get_all_groups as get_all_groups_operation,
-    get_all_tags as get_all_tags_operation,
     get_fastest_alive_node as get_fastest_alive_node_operation,
     get_next_node_for_auto_switch as get_next_node_for_auto_switch_operation,
     get_node_by_id as get_node_by_id_operation,
@@ -1379,8 +1378,21 @@ class AppController(QObject):
         except ValueError:
             return None
 
-    def import_nodes_from_text(self, text: str) -> tuple[int, list[str]]:
-        return import_nodes_from_text_operation(self, text)
+    def import_nodes_from_text(
+        self,
+        text: str,
+        *,
+        group: str | None = None,
+        auto_connect: bool | None = None,
+        select_imported: bool = True,
+    ) -> tuple[int, list[str]]:
+        return import_nodes_from_text_operation(
+            self,
+            text,
+            group=group,
+            auto_connect=auto_connect,
+            select_imported=select_imported,
+        )
 
     def import_subscription(self, url: str, name: str | None = None) -> tuple[int, list[str]]:
         return import_subscription_operation(self, url, name)
@@ -1400,7 +1412,6 @@ class AppController(QObject):
         userinfo: dict | None,
         errors: list[str] | None,
     ) -> tuple[int, list[str]]:
-        # Применяет подписку, загруженную в фоновом потоке (вызывать в GUI-потоке).
         return apply_fetched_subscription_operation(
             self, url, name, kind, text, userinfo, errors
         )
@@ -1419,9 +1430,6 @@ class AppController(QObject):
 
     def get_all_groups(self) -> list[str]:
         return get_all_groups_operation(self)
-
-    def get_all_tags(self) -> list[str]:
-        return get_all_tags_operation(self)
 
     def _migrate_sort_order(self) -> None:
         if self.state.nodes and all(n.sort_order == 0 for n in self.state.nodes):

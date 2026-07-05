@@ -6,8 +6,8 @@ import "."
 
 // «Массовое редактирование» — QML twin of ui/bulk_edit_dialog.py.
 //
-// Collects an optional target group plus tag add/remove lists and applies them
-// to the selected node ids via App.bulkEditNodes. Empty fields are skipped
+// Collects an optional target group and applies it to the selected node ids
+// via App.bulkEditNodes. Empty fields are skipped
 // (same semantics as the classic dialog).
 Popup {
     id: dlg
@@ -37,26 +37,12 @@ Popup {
         ids = nodeIds || []
         count = ids.length
         groupField.text = ""
-        addField.text = ""
-        removeField.text = ""
         open()
-    }
-
-    function _split(s) {
-        var out = []
-        var parts = (s || "").split(",")
-        for (var i = 0; i < parts.length; i++) {
-            var t = parts[i].trim()
-            if (t) out.push(t)
-        }
-        return out
     }
 
     function _apply() {
         App.bulkEditNodes(ids, {
-            "group": groupField.text,
-            "add_tags": _split(addField.text),
-            "remove_tags": _split(removeField.text)
+            "group": groupField.text
         })
         close()
     }
@@ -119,12 +105,6 @@ Popup {
 
             FLabel { text: I18n.t("Переместить в группу (пусто = пропустить)") }
             FField { id: groupField }
-
-            FLabel { text: I18n.t("Добавить теги (через запятую, пусто = пропустить)") }
-            FField { id: addField; placeholderText: I18n.t("тег1, тег2") }
-
-            FLabel { text: I18n.t("Удалить теги (через запятую, пусто = пропустить)") }
-            FField { id: removeField; placeholderText: I18n.t("тег1, тег2") }
         }
 
         RowLayout {

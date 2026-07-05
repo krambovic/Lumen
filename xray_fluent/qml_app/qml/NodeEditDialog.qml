@@ -62,7 +62,6 @@ Popup {
         caps = f.capabilities || {}
         nameField.text = f.name || ""
         groupField.text = f.group || ""
-        tagsField.text = f.tags || ""
         addressField.text = f.server || ""
         portField.text = f.port || ""
         protoLabel.text = f.protocol || "?"
@@ -87,7 +86,6 @@ Popup {
         App.saveNodeEdit(nodeId, {
             "name": nameField.text,
             "group": groupField.text,
-            "tags": tagsField.text,
             "server": addressField.text,
             "port": portField.text,
             "uuid": uuidField.text,
@@ -169,9 +167,6 @@ Popup {
 
                 FLabel { text: I18n.t("Группа") }
                 FField { id: groupField }
-
-                FLabel { text: I18n.t("Теги") }
-                FField { id: tagsField; placeholderText: I18n.t("тег1, тег2") }
 
                 FLabel { text: I18n.t("Адрес"); visible: dlg.canEditEndpoint }
                 FField { id: addressField; visible: dlg.canEditEndpoint; enabled: dlg.canEditEndpoint }

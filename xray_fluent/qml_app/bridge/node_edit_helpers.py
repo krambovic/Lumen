@@ -183,7 +183,6 @@ def load_node_edit_fields(node) -> dict:
     fields: dict[str, Any] = {
         "name": node.name or "",
         "group": node.group or "",
-        "tags": ", ".join(node.tags or []),
         "server": node.server or "",
         "port": str(node.port or ""),
         "protocol": protocol.upper() or "?",
@@ -248,8 +247,6 @@ def build_node_updates(node, fields: dict) -> dict:
     def g(key: str, default: str = "") -> str:
         return str(fields.get(key, default) or "").strip()
 
-    raw_tags = g("tags")
-    tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()] if raw_tags else []
     outbound = deepcopy(node.outbound) if isinstance(node.outbound, dict) else {}
     protocol = _protocol_from_node(node)
     capabilities = _field_capabilities(protocol)
@@ -260,7 +257,6 @@ def build_node_updates(node, fields: dict) -> dict:
     updates: dict[str, Any] = {
         "name": name,
         "group": g("group") or "Default",
-        "tags": tags,
     }
 
     if not capabilities.get("endpoint"):

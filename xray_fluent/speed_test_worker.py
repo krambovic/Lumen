@@ -26,7 +26,6 @@ from .constants import (
     SPEED_TEST_MIXED_CONCURRENCY,
     SPEED_TEST_PING_URL,
     SPEED_TEST_PING_TIMEOUT,
-    SPEED_TEST_PROCESS_CONCURRENCY_CAP,
     SPEED_TEST_SLOW_GRACE_SECONDS,
     SPEED_TEST_STARTUP_TIMEOUT,
     SPEED_TEST_TIMEOUT,
@@ -41,6 +40,14 @@ from .xray_fragments import apply_xray_final_fragment
 class _SpeedTestTarget:
     node: Node
     http_port: int
+
+
+def _resolve_speed_test_concurrency(node_count: int, configured: int) -> int:
+    total = max(1, int(node_count or 0))
+    requested = int(configured or 0)
+    if requested > 0:
+        return min(requested, total)
+    return min(max(1, SPEED_TEST_MIXED_CONCURRENCY), total)
 
 
 class SpeedTestWorker(QThread):
@@ -114,12 +121,7 @@ class SpeedTestWorker(QThread):
             for node in self._nodes:
                 self.node_progress.emit(node.id, 0)
 
-            base_concurrency = self._concurrency if self._concurrency > 0 else SPEED_TEST_MIXED_CONCURRENCY
-            max_workers = min(
-                max(1, base_concurrency),
-                SPEED_TEST_PROCESS_CONCURRENCY_CAP,
-                max(1, len(self._nodes)),
-            )
+            max_workers = _resolve_speed_test_concurrency(len(self._nodes), self._concurrency)
             with _WindowsPingBypass(self._nodes, self._bypass_tun) as bypass, ThreadPoolExecutor(
                 max_workers=max_workers, thread_name_prefix="speed-test"
             ) as executor:
