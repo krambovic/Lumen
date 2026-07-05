@@ -35,6 +35,26 @@ def test_fragmentation_defaults_to_disabled() -> None:
     assert settings.enable_final_fragment is False
 
 
+def test_window_size_defaults_to_widescreen() -> None:
+    settings = AppSettings.from_dict({})
+    assert (settings.window_width, settings.window_height) == (1280, 720)
+
+
+def test_legacy_square_window_default_migrates_to_widescreen() -> None:
+    settings = AppSettings.from_dict({"window_width": 1024, "window_height": 768})
+    assert (settings.window_width, settings.window_height) == (1280, 720)
+
+
+def test_saved_window_size_is_preserved() -> None:
+    settings = AppSettings.from_dict({"window_width": 1440, "window_height": 900})
+    assert (settings.window_width, settings.window_height) == (1440, 900)
+
+
+def test_negative_window_position_is_preserved_for_left_monitor() -> None:
+    settings = AppSettings.from_dict({"window_x": -1920, "window_y": 80})
+    assert (settings.window_x, settings.window_y) == (-1920, 80)
+
+
 def test_auto_install_requires_permission_and_never_downgrades() -> None:
     assert should_auto_install(_update(), enabled=True)
     assert not should_auto_install(_update(), enabled=False)

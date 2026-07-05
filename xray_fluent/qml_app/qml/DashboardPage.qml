@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Universal
+import QtQuick.Effects
 import QtQuick.Layouts
 import App 1.0
 import "."
@@ -53,6 +54,76 @@ FluentScroll {
         return App.selectedNodeName.length > 0 ? App.selectedNodeName : I18n.t("Сервер не выбран");
     }
     readonly property bool singbox: App.tunMode && App.tunEngine === "singbox"
+
+    component DashboardFlag: Item {
+        id: flagBox
+        readonly property bool hasSource: App.selectedNodeFlagSource.length > 0
+        readonly property bool hasEmoji: App.selectedNodeFlag.length > 0
+        implicitWidth: (hasSource || hasEmoji) ? 24 : 0
+        implicitHeight: 18
+        visible: implicitWidth > 0
+        clip: true
+
+        Image {
+            id: flagImg
+            anchors.fill: parent
+            visible: false
+            source: App.selectedNodeFlagSource
+            fillMode: Image.PreserveAspectFit
+            sourceSize.width: 72
+            sourceSize.height: 54
+            smooth: true
+            mipmap: true
+            asynchronous: true
+            cache: true
+        }
+
+        Rectangle {
+            id: flagMask
+            anchors.fill: parent
+            radius: 3
+            visible: false
+            antialiasing: true
+            layer.enabled: true
+            layer.smooth: true
+            layer.samples: 4
+            layer.textureSize: Qt.size(72, 54)
+        }
+
+        MultiEffect {
+            anchors.fill: parent
+            visible: flagBox.hasSource
+            source: flagImg
+            maskEnabled: true
+            maskSource: flagMask
+            maskThresholdMin: 0.5
+            maskSpreadAtMin: 0.5
+            antialiasing: true
+            layer.enabled: true
+            layer.smooth: true
+            layer.samples: 4
+            layer.textureSize: Qt.size(72, 54)
+        }
+
+        Text {
+            anchors.centerIn: parent
+            visible: !flagBox.hasSource && flagBox.hasEmoji
+            text: App.selectedNodeFlag
+            font.pixelSize: 18
+            font.family: "Segoe UI Emoji"
+            renderType: Text.NativeRendering
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            visible: flagBox.hasSource || flagBox.hasEmoji
+            color: "transparent"
+            radius: 3
+            antialiasing: true
+            border.width: 1
+            border.color: Qt.rgba(0, 0, 0, 0.2)
+        }
+    }
 
     ColumnLayout {
         width: page.width
@@ -226,13 +297,9 @@ FluentScroll {
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
                         }
-                        Image {
-                            visible: App.selectedNodeFlagSource.length > 0
-                            source: App.selectedNodeFlagSource
-                            Layout.preferredWidth: visible ? 20 : 0
-                            Layout.preferredHeight: 14
-                            fillMode: Image.PreserveAspectFit
-                            smooth: true
+                        DashboardFlag {
+                            Layout.preferredWidth: visible ? 24 : 0
+                            Layout.preferredHeight: 18
                         }
                         Text {
                             Layout.fillWidth: true

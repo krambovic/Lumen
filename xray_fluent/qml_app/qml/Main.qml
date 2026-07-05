@@ -84,9 +84,38 @@ ApplicationWindow {
         return Application.styleHints.colorScheme === Qt.Dark; // "system"
     }
 
+    function hasSavedWindowPosition() {
+        return App.windowX !== -1 && App.windowY !== -1;
+    }
+
+    function clampToVirtualDesktop() {
+        var vx = Number(Screen.virtualX);
+        var vy = Number(Screen.virtualY);
+        var vw = Number(Screen.virtualWidth);
+        var vh = Number(Screen.virtualHeight);
+        if (!isFinite(vx) || !isFinite(vy) || !isFinite(vw) || !isFinite(vh) || vw <= 0 || vh <= 0)
+            return;
+
+        var minVisibleX = Math.min(96, Math.max(32, win.width / 4));
+        var minVisibleY = Math.min(96, Math.max(32, win.height / 4));
+        var minX = vx - win.width + minVisibleX;
+        var maxX = vx + vw - minVisibleX;
+        var minY = vy;
+        var maxY = vy + vh - minVisibleY;
+        win.x = Math.round(Math.max(minX, Math.min(maxX, win.x)));
+        win.y = Math.round(Math.max(minY, Math.min(maxY, win.y)));
+    }
+
+    function restoreSavedWindowPosition() {
+        if (!hasSavedWindowPosition())
+            return;
+        win.x = App.windowX;
+        win.y = App.windowY;
+        clampToVirtualDesktop();
+    }
+
     Component.onCompleted: {
-        if (App.windowX >= 0) win.x = App.windowX
-        if (App.windowY >= 0) win.y = App.windowY
+        restoreSavedWindowPosition();
         Theme.accent = Qt.binding(function() { return App.accentColor; });
         Theme.dark = Qt.binding(function() { return win.resolveDark(); });
         Theme.density = Qt.binding(function() { return App.uiDensity; });

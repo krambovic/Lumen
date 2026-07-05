@@ -105,6 +105,29 @@ Item {
         RowLayout { id: rc; spacing: 8; Layout.alignment: Qt.AlignVCenter }
     }
 
+    component PercentSlider: RowLayout {
+        id: ps
+        property int value: 0
+        signal valueEdited(int value)
+        spacing: 8
+        Slider {
+            Layout.preferredWidth: 170
+            from: 0
+            to: 100
+            stepSize: 5
+            value: ps.value
+            onMoved: ps.valueEdited(Math.round(value))
+        }
+        Text {
+            text: ps.value + "%"
+            color: Theme.textMuted
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSmall
+            Layout.preferredWidth: 42
+            horizontalAlignment: Text.AlignRight
+        }
+    }
+
     // ---- accent colour picker ----
     component AccentPicker: Item {
         id: ap
@@ -292,7 +315,7 @@ Item {
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
-                Text { text: I18n.t("Внешний вид"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                Text { text: I18n.t("Тема"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
                     glyph: "\uE790"; title: I18n.t("Тема"); subtitle: I18n.t("Выберите светлую, тёмную или системную тему")
@@ -336,6 +359,15 @@ Item {
                     }
                     BaseTintPicker {}
                 }
+            }
+        }
+
+        Card {
+            Layout.fillWidth: true
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 14
+                Text { text: I18n.t("Обои"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
                     glyph: "\uEB9F"; title: I18n.t("Обои окна"); subtitle: I18n.t("Фоновое изображение под интерфейсом")
@@ -354,20 +386,29 @@ Item {
                 SettingRow {
                     visible: App.uiWallpaper !== ""
                     glyph: "\uE890"; title: I18n.t("Непрозрачность обоев"); subtitle: I18n.t("Насколько ярко видно изображение, %")
-                    FluentSpin { from: 0; to: 100; stepSize: 5; value: App.uiWallpaperOpacity; onValueModified: App.setUiWallpaperOpacity(value) }
+                    PercentSlider { value: App.uiWallpaperOpacity; onValueEdited: (v) => App.setUiWallpaperOpacity(v) }
                 }
 
                 SettingRow {
                     visible: App.uiWallpaper !== ""
                     glyph: "\uE7B3"; title: I18n.t("Размытие обоев"); subtitle: I18n.t("Сила размытия фона, 0–100")
-                    FluentSpin { from: 0; to: 100; stepSize: 5; value: App.uiWallpaperBlur; onValueModified: App.setUiWallpaperBlur(value) }
+                    PercentSlider { value: App.uiWallpaperBlur; onValueEdited: (v) => App.setUiWallpaperBlur(v) }
                 }
 
                 SettingRow {
                     visible: App.uiWallpaper !== ""
                     glyph: "\uE706"; title: I18n.t("Яркость обоев"); subtitle: I18n.t("100 = оригинал, меньше = темнее")
-                    FluentSpin { from: 0; to: 100; stepSize: 5; value: App.uiWallpaperBrightness; onValueModified: App.setUiWallpaperBrightness(value) }
+                    PercentSlider { value: App.uiWallpaperBrightness; onValueEdited: (v) => App.setUiWallpaperBrightness(v) }
                 }
+            }
+        }
+
+        Card {
+            Layout.fillWidth: true
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 14
+                Text { text: I18n.t("Интерфейс"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
                     glyph: "\uE799"; title: I18n.t("Плотность"); subtitle: I18n.t("Насколько компактно расположены элементы")
@@ -395,6 +436,20 @@ Item {
                 }
 
                 SettingRow {
+                    glyph: "\uE890"; title: I18n.t("Компактный режим"); subtitle: I18n.t("Скрыть продвинутые настройки и второстепенные разделы")
+                    Switch { checked: App.compactMode; onToggled: App.setInterfaceMode(checked ? "compact" : "full") }
+                }
+            }
+        }
+
+        Card {
+            Layout.fillWidth: true
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 14
+                Text { text: I18n.t("Прозрачность"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+
+                SettingRow {
                     glyph: "\uE790"; title: I18n.t("Прозрачность"); subtitle: I18n.t("Использовать системные эффекты фона Windows 11")
                     Switch {
                         checked: App.uiBackdrop !== "solid"
@@ -406,27 +461,7 @@ Item {
                     enabled: App.uiBackdrop !== "solid"
                     opacity: enabled ? 1.0 : 0.55
                     glyph: "\uE9E9"; title: I18n.t("Сила прозрачности"); subtitle: I18n.t("0: Mica почти выключена, 100: максимум Mica")
-                    Slider {
-                        Layout.preferredWidth: 170
-                        from: 0
-                        to: 100
-                        stepSize: 5
-                        value: App.uiTransparencyStrength
-                        onMoved: App.setUiTransparencyStrength(Math.round(value))
-                    }
-                    Text {
-                        text: App.uiTransparencyStrength + "%"
-                        color: Theme.textMuted
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
-                        Layout.preferredWidth: 42
-                        horizontalAlignment: Text.AlignRight
-                    }
-                }
-
-                SettingRow {
-                    glyph: "\uE890"; title: I18n.t("Компактный режим"); subtitle: I18n.t("Скрыть продвинутые настройки и второстепенные разделы")
-                    Switch { checked: App.compactMode; onToggled: App.setInterfaceMode(checked ? "compact" : "full") }
+                    PercentSlider { value: App.uiTransparencyStrength; onValueEdited: (v) => App.setUiTransparencyStrength(v) }
                 }
             }
         }

@@ -9,6 +9,25 @@ import uuid
 from .constants import ROUTING_RULE, STATE_SCHEMA_VERSION
 
 
+DEFAULT_WINDOW_WIDTH = 1280
+DEFAULT_WINDOW_HEIGHT = 720
+_LEGACY_WINDOW_DEFAULT = (1024, 768)
+
+
+def _normalize_window_size(width: Any, height: Any) -> tuple[int, int]:
+    try:
+        w = int(width or DEFAULT_WINDOW_WIDTH)
+    except (TypeError, ValueError):
+        w = DEFAULT_WINDOW_WIDTH
+    try:
+        h = int(height or DEFAULT_WINDOW_HEIGHT)
+    except (TypeError, ValueError):
+        h = DEFAULT_WINDOW_HEIGHT
+    if (w, h) == _LEGACY_WINDOW_DEFAULT or w < 640 or h < 360:
+        return DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT
+    return w, h
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -244,8 +263,8 @@ class AppSettings:
     singbox_path: str = ""
     singbox_config_file: str = ""
     singbox_template_file: str = ""
-    window_width: int = 1280
-    window_height: int = 720
+    window_width: int = DEFAULT_WINDOW_WIDTH
+    window_height: int = DEFAULT_WINDOW_HEIGHT
     window_x: int = -1
     window_y: int = -1
     zapret_preset: str = ""
@@ -388,6 +407,10 @@ class AppSettings:
         xray_release_channel = str(data.get("xray_release_channel") or "beta")
         if xray_release_channel == "stable":
             xray_release_channel = "beta"
+        window_width, window_height = _normalize_window_size(
+            data.get("window_width"),
+            data.get("window_height"),
+        )
         return AppSettings(
             theme=str(data.get("theme") or "system"),
             language=_normalize_language(data.get("language")),
@@ -439,8 +462,8 @@ class AppSettings:
             singbox_path=str(data.get("singbox_path") or ""),
             singbox_config_file=str(data.get("singbox_config_file") or ""),
             singbox_template_file=str(data.get("singbox_template_file") or ""),
-            window_width=int(data.get("window_width") or 1280),
-            window_height=int(data.get("window_height") or 720),
+            window_width=window_width,
+            window_height=window_height,
             window_x=int(data.get("window_x", -1)),
             window_y=int(data.get("window_y", -1)),
             zapret_preset=str(data.get("zapret_preset") or ""),
