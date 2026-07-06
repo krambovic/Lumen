@@ -12,6 +12,8 @@ from urllib.request import ProxyHandler, Request
 from PyQt6.QtCore import QTimer
 
 from ..country_flags import detect_country
+from ..device_id import get_device_hwid
+from ..happ_crypto import HappDecryptError, decrypt_happ_link, is_happ_crypt_link
 from ..http_utils import build_opener, urlopen
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
 
@@ -254,70 +256,79 @@ def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
     return text, info
 
 
-_SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
-    (
-        "Happ Windows",
-        {
-            "User-Agent": "Happ/2.18.3/Windows/2606241603601",
-            "Accept": "*/*",
-            "Accept-Language": "ru-RU,en,*",
-            "Profile-Update-Interval": "24",
-            "X-App-Version": "2.18.3",
-            "X-Device-Locale": "RU",
-            "X-Device-Model": "Windows_x86_64",
-            "X-Device-Os": "Windows",
-            "X-Hwid": "00000000-0000-4000-8000-000000000000",
-            "X-Ver-Os": "11_10.0.26200",
-        },
-    ),
-    (
-        "SFA",
-        {
-            "User-Agent": "SFA/1.11.0",
-            "Accept": "application/json,*/*",
-            "Profile-Update-Interval": "24",
-        },
-    ),
-    (
-        "Clash Verge",
-        {
-            "User-Agent": "ClashVerge/2.0.0",
-            "Accept": "text/yaml,application/yaml,*/*",
-            "Profile-Update-Interval": "24",
-        },
-    ),
-    (
-        "Clash Meta",
-        {
-            "User-Agent": "clash.meta",
-            "Accept": "text/yaml,application/yaml,*/*",
-            "Profile-Update-Interval": "24",
-        },
-    ),
-    (
-        "FlClashX",
-        {
-            "User-Agent": "FlClashX/1.0",
-            "Accept": "text/yaml,application/yaml,*/*",
-            "Profile-Update-Interval": "24",
-        },
-    ),
-    (
-        "Happ",
-        {
-            "User-Agent": "Happ/1.0",
-            "Accept": "*/*",
-            "Profile-Update-Interval": "24",
-        },
-    ),
-    (
-        "Lumen",
-        {
-            "User-Agent": "LumenKVN-Subscription/1.0",
-            "Accept": "*/*",
-        },
-    ),
-)
+def _subscription_client_profiles() -> tuple[tuple[str, dict[str, str]], ...]:
+    """Client profiles tried when fetching a subscription, in priority order.
+
+    The HAPP profiles carry this installation's stable HWID (``X-Hwid``) so that
+    HWID-bound and device-limited HAPP subscriptions accept the request and
+    count Lumen as a single, consistent device across refreshes.
+    """
+    hwid = get_device_hwid()
+    return (
+        (
+            "Happ Windows",
+            {
+                "User-Agent": "Happ/2.18.3/Windows/2606241603601",
+                "Accept": "*/*",
+                "Accept-Language": "ru-RU,en,*",
+                "Profile-Update-Interval": "24",
+                "X-App-Version": "2.18.3",
+                "X-Device-Locale": "RU",
+                "X-Device-Model": "Windows_x86_64",
+                "X-Device-Os": "Windows",
+                "X-Hwid": hwid,
+                "X-Ver-Os": "11_10.0.26200",
+            },
+        ),
+        (
+            "SFA",
+            {
+                "User-Agent": "SFA/1.11.0",
+                "Accept": "application/json,*/*",
+                "Profile-Update-Interval": "24",
+            },
+        ),
+        (
+            "Clash Verge",
+            {
+                "User-Agent": "ClashVerge/2.0.0",
+                "Accept": "text/yaml,application/yaml,*/*",
+                "Profile-Update-Interval": "24",
+            },
+        ),
+        (
+            "Clash Meta",
+            {
+                "User-Agent": "clash.meta",
+                "Accept": "text/yaml,application/yaml,*/*",
+                "Profile-Update-Interval": "24",
+            },
+        ),
+        (
+            "FlClashX",
+            {
+                "User-Agent": "FlClashX/1.0",
+                "Accept": "text/yaml,application/yaml,*/*",
+                "Profile-Update-Interval": "24",
+            },
+        ),
+        (
+            "Happ",
+            {
+                "User-Agent": "Happ/1.0",
+                "Accept": "*/*",
+                "Profile-Update-Interval": "24",
+                "X-Hwid": hwid,
+            },
+        ),
+        (
+            "Lumen",
+            {
+                "User-Agent": "LumenKVN-Subscription/1.0",
+                "Accept": "*/*",
+            },
+        ),
+    )
 
 
 def _decode_profile_header(value: str) -> str:
@@ -401,7 +412,35 @@ def _fetch_subscription_with_headers(
         # Данные из тела приоритетнее заголовка.
         userinfo = {**userinfo, **body_info}
     decoded = _maybe_base64_decode(text)
-    return (decoded or text), userinfo
+    return _maybe_expand_happ_body(decoded or text), userinfo
+
+
+def _maybe_expand_happ_body(text: str) -> str:
+    """Decrypt a subscription body that is itself an encrypted HAPP link.
+
+    Some panels serve ``happ://crypt*`` as the response body when the request
+    uses a Happ user-agent. When the decrypted payload is an inline config list
+    we return it directly; when it is another subscription URL we leave the
+    original text untouched (resolving that needs a follow-up network fetch,
+    handled by :func:`fetch_subscription_payload`).
+    """
+    body = (text or "").strip()
+    if not is_happ_crypt_link(body):
+        return text
+    try:
+        decrypted = decrypt_happ_link(body).strip()
+    except HappDecryptError:
+        return text
+    if _looks_like_subscription_url(decrypted):
+        return text
+    return _maybe_base64_decode(decrypted) or decrypted
+
+
+def _looks_like_subscription_url(text: str) -> bool:
+    candidate = (text or "").strip()
+    if not candidate or "\n" in candidate or any(ch.isspace() for ch in candidate):
+        return False
+    return candidate.lower().startswith(("http://", "https://"))
 
 
 def _fetch_subscription(url: str, *, user_agent: str = "LumenKVN-Subscription/1.0") -> tuple[str, dict]:
@@ -409,7 +448,9 @@ def _fetch_subscription(url: str, *, user_agent: str = "LumenKVN-Subscription/1.
 
 
 def _fetch_subscription_happ(url: str) -> tuple[str, dict]:
-    return _fetch_subscription_with_headers(url, "Happ", {"User-Agent": "Happ/1.0", "Accept": "*/*"})
+    return _fetch_subscription_with_headers(
+        url, "Happ", {"User-Agent": "Happ/1.0", "Accept": "*/*", "X-Hwid": get_device_hwid()}
+    )
 
 
 def _is_tls_eof_error(exc: BaseException) -> bool:
@@ -457,6 +498,31 @@ def _find_subscription(controller: AppController, url: str) -> dict | None:
     return None
 
 
+def _resolve_happ_crypt_source(
+    url: str, *, _depth: int = 0
+) -> tuple[str, str | None, list[str]]:
+    """Расшифровывает happ://crypt* и определяет, что делать дальше.
+
+    Возвращает кортеж ``(resolved_url, inline_text, errors)``:
+    * ``inline_text`` не None — расшифровка дала готовый список конфигов;
+    * иначе ``resolved_url`` — реальный http(s) URL подписки для загрузки.
+    Вложенные ссылки (happ → happ) разворачиваются с ограничением по глубине.
+    """
+    try:
+        decrypted = decrypt_happ_link(url).strip()
+    except HappDecryptError as exc:
+        return url, None, [f"Не удалось расшифровать ссылку HAPP: {exc}"]
+    if not decrypted:
+        return url, None, ["Пустой результат расшифровки HAPP"]
+    if is_happ_crypt_link(decrypted):
+        if _depth >= 3:
+            return url, None, ["Слишком много вложенных ссылок HAPP"]
+        return _resolve_happ_crypt_source(decrypted, _depth=_depth + 1)
+    if _looks_like_subscription_url(decrypted):
+        return decrypted, None, []
+    return url, _maybe_base64_decode(decrypted) or decrypted, []
+
+
 def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
     """Загружает подписку по сети и возвращает (текст_ссылок, userinfo, errors).
 
@@ -466,9 +532,25 @@ def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
     url = (url or "").strip()
     if not url:
         return "", {}, ["Пустой URL подписки"]
+
+    # Зашифрованные ссылки HAPP (happ://crypt*) расшифровываем локально: получаем
+    # либо реальный URL подписки (грузим ниже с заголовками HAPP + HWID), либо
+    # готовый список конфигов (возвращаем сразу, без сети).
+    if is_happ_crypt_link(url):
+        resolved_url, inline_text, happ_errors = _resolve_happ_crypt_source(url)
+        if inline_text is not None:
+            nodes, errors = parse_links_text(inline_text)
+            if nodes and _parsed_nodes_are_usable(nodes):
+                return inline_text, {"clientProfile": "Happ (decrypted)"}, errors
+            detail = "; ".join((_node_validation_errors(nodes) or errors)[:2]) or "нет подходящих серверов"
+            return "", {}, [*happ_errors, f"HAPP crypt: {detail}"]
+        if happ_errors:
+            return "", {}, happ_errors
+        url = resolved_url
+
     attempts: list[str] = []
     first_userinfo: dict = {}
-    for profile_name, headers in _SUBSCRIPTION_CLIENT_PROFILES:
+    for profile_name, headers in _subscription_client_profiles():
         try:
             text, userinfo = _fetch_subscription_with_headers(url, profile_name, headers)
             if userinfo and not first_userinfo:

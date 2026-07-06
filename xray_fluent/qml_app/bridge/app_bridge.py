@@ -29,6 +29,7 @@ from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
 from ...application.node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
 from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, DATA_DIR, DEFAULT_HTTP_PORT, PROXY_HOST
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri
+from ...happ_crypto import is_happ_crypt_link
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
@@ -2495,6 +2496,11 @@ class AppBridge(QObject):
         text = clipboard.text().strip() if clipboard is not None else ""
         if not text:
             self.toast.emit("warning", "Буфер обмена пуст")
+            return
+        # Зашифрованная ссылка HAPP (happ://crypt*) — это подписка: расшифровка и
+        # возможная загрузка идут в фоновом потоке через пайплайн подписок.
+        if is_happ_crypt_link(text):
+            self.importSubscription(text)
             return
         target_group = (self._filter_group or "").strip() or None
         added, errors = self.controller.import_nodes_from_text(text, group=target_group)

@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import url2pathname
 
+from .happ_crypto import HappDecryptError, decrypt_happ_link, is_happ_crypt_link
 from .models import Node
 
 try:  # Optional at runtime, listed in requirements for bundled builds.
@@ -50,12 +51,61 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
 
     for idx, line in enumerate(lines, start=1):
         try:
+            if is_happ_crypt_link(line):
+                sub_nodes, sub_errors = _parse_happ_crypt_line(line)
+                nodes.extend(sub_nodes)
+                errors.extend(f"Line {idx}: {err}" for err in sub_errors)
+                continue
             node = parse_single(line)
             nodes.append(node)
         except Exception as exc:
             errors.append(f"Line {idx}: {exc}")
 
     return nodes, errors
+
+
+def _parse_happ_crypt_line(line: str) -> tuple[list[Node], list[str]]:
+    """Decrypt an inline ``happ://crypt*`` link and parse its config list.
+
+    Encrypted HAPP links usually wrap a subscription URL; those need a network
+    fetch and cannot be resolved by this offline parser, so we return a clear
+    hint to import them as a subscription instead. Links that wrap an inline
+    config list are decrypted and parsed directly.
+    """
+    try:
+        decrypted = decrypt_happ_link(line).strip()
+    except HappDecryptError as exc:
+        return [], [f"HAPP: {exc}"]
+    depth = 0
+    while is_happ_crypt_link(decrypted) and depth < 3:
+        try:
+            decrypted = decrypt_happ_link(decrypted).strip()
+        except HappDecryptError as exc:
+            return [], [f"HAPP: {exc}"]
+        depth += 1
+    if not decrypted:
+        return [], ["HAPP: пустой результат расшифровки"]
+    if "://" not in decrypted:
+        # Some providers wrap a base64 blob of configs instead of plain links.
+        try:
+            maybe = _decode_b64(decrypted)
+        except Exception:
+            maybe = ""
+        if "://" in maybe:
+            decrypted = maybe
+    if "://" not in decrypted or _looks_like_single_url(decrypted):
+        return [], [
+            "Это зашифрованная ссылка-подписка HAPP — добавьте её как подписку, "
+            "а не как отдельный сервер."
+        ]
+    return parse_links_text(decrypted)
+
+
+def _looks_like_single_url(text: str) -> bool:
+    candidate = (text or "").strip()
+    if not candidate or any(ch.isspace() for ch in candidate):
+        return False
+    return candidate.lower().startswith(("http://", "https://"))
 
 
 def _read_import_file_reference(text: str) -> str | None:
