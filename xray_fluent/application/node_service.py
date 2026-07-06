@@ -12,6 +12,7 @@ from urllib.request import ProxyHandler, Request
 from PyQt6.QtCore import QTimer
 
 from ..country_flags import detect_country
+from ..happ_crypt import HappDecryptError, decrypt_happ_link, is_happ_crypt_link, is_happ_link
 from ..http_utils import build_opener, urlopen
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
 
@@ -443,11 +444,24 @@ def _node_validation_errors(nodes: list) -> list[str]:
 
 
 def _derive_subscription_name(url: str) -> str:
+    if is_happ_link(url):
+        return "Подписка Happ"
     host = urlparse(url).hostname or ""
     host = host.strip()
     if host:
         return f"Подписка {host}"
     return "Подписка"
+
+
+def _happ_direct_payload(decrypted: str) -> tuple[str, dict, list[str]]:
+    """Оформляет расшифрованное тело happ-подписки (список ссылок / base64 / JSON)."""
+    text, body_info = _extract_userinfo_from_body(decrypted)
+    text = _maybe_base64_decode(text) or text
+    nodes, errors = parse_links_text(text)
+    if nodes and _parsed_nodes_are_usable(nodes):
+        return text, {"clientProfile": "Happ", **body_info}, errors
+    detail = "; ".join((_node_validation_errors(nodes) or errors)[:2]) or "нет подходящих серверов"
+    return "", body_info, [f"Happ: {detail}"]
 
 
 def _find_subscription(controller: AppController, url: str) -> dict | None:
@@ -466,6 +480,19 @@ def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
     url = (url or "").strip()
     if not url:
         return "", {}, ["Пустой URL подписки"]
+    # Закрытые ссылки Happ (happ://crypt*): сначала расшифровываем. Результат —
+    # либо реальный URL подписки (грузим ниже штатно), либо готовый текст ссылок.
+    if is_happ_crypt_link(url):
+        try:
+            decrypted = decrypt_happ_link(url).strip()
+        except HappDecryptError as exc:
+            return "", {}, [f"Happ: {exc}"]
+        if not decrypted:
+            return "", {}, ["Happ: пустой результат расшифровки"]
+        if decrypted.lower().startswith(("http://", "https://")):
+            url = decrypted
+        else:
+            return _happ_direct_payload(decrypted)
     attempts: list[str] = []
     first_userinfo: dict = {}
     for profile_name, headers in _SUBSCRIPTION_CLIENT_PROFILES:
