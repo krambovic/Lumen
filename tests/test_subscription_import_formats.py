@@ -181,3 +181,45 @@ def test_subscription_metadata_accepts_common_button_headers() -> None:
     assert info["supportUrl"] == "https://support.example"
     assert info["profileUrl"] == "https://panel.example"
     assert info["telegramUrl"] == "https://t.me/example"
+
+
+def test_happ_crypt5_1_link_reports_friendly_error() -> None:
+    # Ссылка из задачи — формат crypt5.1, ключ отсутствует в публичном наборе.
+    # Расшифровка происходит до сети, поэтому результат детерминированный.
+    link = (
+        "happ://crypt5/fzvd4oXqWHPd9ZJzbmZcpU3I20FsDc8WfLpIJg8yO6G9p/GbNqkmpD1avm2fTYWs"
+        "JmVeKxs/zdzR8yugTK73iSH6DXZ+Z/U6KivYcEeNBtYcSrziaK5+PDLsBMsCL1qwyDpXGn3esHXxj9t"
+        "XNE/t0mmHiJycS6n6B3TnrpXNsBcpEUgji9oORF46JK0i5xwpAXrDNqY/4hLaGJhK0X4hoFkyuqx8M1"
+        "VKXabyVq9q0geu84PwTPH2FOeOh1rKmFNWTMMcOSPG2YjFg6phIgEpoks8fwystrTVWV3138pqmeMRw"
+        "zYthQcatqxRRMsrcwGnhq4mymB813vPboFGHflMcyYT/hpWAz9WfPPWjldEfgMhLHiS0+mznmZsHY9n"
+        "9ZFU8gMHDtbIJTirbukv6V2taTh6wan4a6FWKovf85mIO6iUYbpQE3Uz3czKldiBx/MEFfTA5/k9N3W"
+        "C1MQG2LddZ6Vod6thWpwaN7/ZhgqoHflA1hoV0SDaQ0q+EWI+egMoFrsRs55E91r1yObG5uYw9OZ399"
+        "Qtv3ecveX98YOF4k8cn0DLrYhm7iCrbpWwLeg4bCFIY9KTq+u1TAqNIKxMlm29Tb2tSMFu7zoypz+Ga"
+        "cEl00y4lTHpm/FTQtbqHxSSz7GCVYepZXfJkxQkjMf9V53YyrYtsbGhw8mhUnHOtEg0L/kHldlqpRqG"
+        "ctgvA1aA7OzpviIoyYv6BvqxblSBQrYIRZEj1WPE8P+rNodlI+6jMC16QFW/b2NWUtzuz7U8+slkCHd"
+        "TV20hv+GZ6nIap41RKp41OPi5Un+PTkfGailpGazGInwecp8DXYuvudSxZqIeopf8YODcle1iWnSUJk"
+        "urlnNP55jlmwCffr9c70mf7B+Q6OtMfb/f7rL8p3DjQLmzW/Cv+q0l2nCpqAxYM1+Nfos=ff"
+    )
+
+    text, _info, errors = node_service.fetch_subscription_payload(link)
+
+    assert text == ""
+    assert errors and errors[0].startswith("Happ:")
+    assert "crypt5.1" in errors[0]
+
+
+def test_happ_crypt_direct_config_payload(monkeypatch) -> None:
+    # Если happ-ссылка расшифровывается не в URL, а в список конфигов —
+    # он парсится напрямую, без сетевого запроса.
+    vless = (
+        "vless://00000000-0000-0000-0000-000000000001@one.example:443"
+        "?encryption=none&type=tcp&security=none#one"
+    )
+    monkeypatch.setattr(node_service, "is_happ_crypt_link", lambda url: True)
+    monkeypatch.setattr(node_service, "decrypt_happ_link", lambda url: vless)
+
+    text, info, errors = node_service.fetch_subscription_payload("happ://crypt5/whatever")
+
+    assert "one.example" in text
+    assert errors == []
+    assert info.get("clientProfile") == "Happ"
