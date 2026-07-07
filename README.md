@@ -100,9 +100,9 @@ The build output will be located in the `dist/` directory.
 
 <a href="https://www.star-history.com/?repos=krambovic%2FLumen-KVN&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=krambovic/Lumen-KVN&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=krambovic/Lumen-KVN&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=krambovic/Lumen-KVN&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=krambovic/Lumen-KVN&type=date&theme=dark&legend=top-left&sealed_token=fW_XUyA3Qay011mKD7tuewBXpt8nzW6MbbuhvhOy-y-fr9jxvjrRZ_K88QIDpCds5soFksO_3iAvFQ9bkLGkB9My96Lkis7F7wxOS5LzxAb8FXS2yXAbrLbB-oBrdliut-myHmPUuPT8QPARlDbYrE7_dL2-sMUq6luZ_bOH15ALx_8XEKtC6iMCsI9f" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=krambovic/Lumen-KVN&type=date&legend=top-left&sealed_token=fW_XUyA3Qay011mKD7tuewBXpt8nzW6MbbuhvhOy-y-fr9jxvjrRZ_K88QIDpCds5soFksO_3iAvFQ9bkLGkB9My96Lkis7F7wxOS5LzxAb8FXS2yXAbrLbB-oBrdliut-myHmPUuPT8QPARlDbYrE7_dL2-sMUq6luZ_bOH15ALx_8XEKtC6iMCsI9f" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=krambovic/Lumen-KVN&type=date&legend=top-left&sealed_token=fW_XUyA3Qay011mKD7tuewBXpt8nzW6MbbuhvhOy-y-fr9jxvjrRZ_K88QIDpCds5soFksO_3iAvFQ9bkLGkB9My96Lkis7F7wxOS5LzxAb8FXS2yXAbrLbB-oBrdliut-myHmPUuPT8QPARlDbYrE7_dL2-sMUq6luZ_bOH15ALx_8XEKtC6iMCsI9f" />
  </picture>
 </a>
 
