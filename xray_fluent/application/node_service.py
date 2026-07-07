@@ -540,6 +540,17 @@ def _apply_subscription_payload(
     if not chosen_text:
         return 0, list(chosen_errors), chosen_userinfo
 
+    old_selected_link = None
+    old_selected_name = None
+    old_selected_server = None
+    if replace_existing_group and controller.state.selected_node_id:
+        for node in controller.state.nodes:
+            if node.id == controller.state.selected_node_id:
+                old_selected_link = node.link
+                old_selected_name = node.name
+                old_selected_server = node.server
+                break
+
     if replace_existing_group:
         keep: list = []
         removed_ids: set[str] = set()
@@ -560,7 +571,26 @@ def _apply_subscription_payload(
         auto_connect=False,
         select_imported=selected_was_removed,
     )
-    if selected_was_removed and added and (controller.connected or controller._desired_connected):
+
+    reconnect_needed = selected_was_removed
+    if selected_was_removed and added:
+        matching_node_id = None
+        for n in controller.state.nodes:
+            if (n.group or "Default") == group:
+                if old_selected_link and n.link == old_selected_link:
+                    matching_node_id = n.id
+                    reconnect_needed = False
+                    break
+                if old_selected_name and old_selected_server and n.name == old_selected_name and n.server == old_selected_server:
+                    matching_node_id = n.id
+                    reconnect_needed = False
+                    break
+        if matching_node_id:
+            controller.state.selected_node_id = matching_node_id
+            controller.selection_changed.emit(controller.selected_node)
+            controller.save()
+
+    if reconnect_needed and added and (controller.connected or controller._desired_connected):
         controller._desired_connected = True
         controller._request_transition("active subscription updated")
     return added, [*chosen_errors, *errors], chosen_userinfo
@@ -716,6 +746,8 @@ def apply_fetched_subscription(
     added, errs, info = _apply_subscription_payload(
         controller, url, group, fetched, replace_existing_group=replace
     )
+    if kind == "import" and (not text or (added == 0 and errs)):
+        return added, errs
     _record_subscription(controller, url, group, added, info)
     return added, errs
 

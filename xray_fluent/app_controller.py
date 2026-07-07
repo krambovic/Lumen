@@ -248,6 +248,7 @@ class AppController(QObject):
     status = pyqtSignal(str, str)
     admin_relaunch_requested = pyqtSignal()
     bulk_task_progress = pyqtSignal(str, int, int, bool)  # task, current, total, completed
+    request_transition_signal = pyqtSignal(str)
     ping_updated = pyqtSignal(str, object)
     speed_updated = pyqtSignal(str, object, bool)  # node_id, speed_mbps, is_alive
     speed_progress_updated = pyqtSignal(str, int)  # node_id, percent
@@ -387,6 +388,7 @@ class AppController(QObject):
         self._transition_timer = QTimer(self)
         self._transition_timer.setSingleShot(True)
         self._transition_timer.timeout.connect(self._drain_transition_queue)
+        self.request_transition_signal.connect(self._request_transition, Qt.ConnectionType.QueuedConnection)
         self._startup_sync_timer = QTimer(self)
         self._startup_sync_timer.setInterval(5_000)
         self._startup_sync_timer.timeout.connect(self._sync_startup_state_from_windows)
@@ -1186,7 +1188,13 @@ class AppController(QObject):
                 level="warning",
             )
 
+    @pyqtSlot(str)
     def _request_transition(self, reason: str) -> None:
+        if self.thread() != QThread.currentThread():
+            self._logger.debug(f"[app] Enqueueing transition from worker thread: {reason}")
+            self.request_transition_signal.emit(reason)
+            return
+        self._logger.info(f"[app] Requesting transition on GUI thread: {reason}")
         self._blocked_transition_signature = ""
         self._transition_pending = True
         self._transition_reason = reason
@@ -1299,14 +1307,20 @@ class AppController(QObject):
         on_countries_resolved_operation(self, results)
 
     def shutdown(self) -> None:
+        self._logger.info("[app] AppController shutting down...")
         shutdown_operation(self)
         thread = getattr(self, "_transition_thread", None)
         if thread is not None:
+            self._logger.info("[app] Stopping transition thread...")
             try:
-                thread.quit()
-                thread.wait(2000)
-            except Exception:
-                pass
+                if thread.isRunning():
+                    thread.quit()
+                    if not thread.wait(2000):
+                        self._logger.warning("[app] Transition thread failed to quit in time, terminating...")
+                        thread.terminate()
+                        thread.wait(1000)
+            except Exception as exc:
+                self._logger.error(f"[app] Error stopping transition thread: {exc}")
 
     @staticmethod
     def _cleanup_tun_adapter(max_wait: float = 3.0) -> None:

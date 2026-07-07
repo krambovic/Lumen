@@ -1280,6 +1280,7 @@ Item {
         dim: true
         parent: Overlay.overlay
         anchors.centerIn: parent
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
         width: 420
         padding: 18
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -1361,6 +1362,7 @@ Item {
         dim: true
         parent: Overlay.overlay
         anchors.centerIn: parent
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
         width: 480
         padding: 18
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -1452,6 +1454,7 @@ Item {
         dim: true
         parent: Overlay.overlay
         anchors.centerIn: parent
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
         width: 520
         padding: 18
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -1590,6 +1593,7 @@ Item {
         property string qrName: ""
         anchors.centerIn: Overlay.overlay
         modal: true
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
         title: qrName.length ? I18n.t("QR-код: ") + qrName : I18n.t("QR-код сервера")
         standardButtons: Dialog.Close
         width: 360
@@ -1607,6 +1611,53 @@ Item {
                 text: I18n.t("Отсканируйте код в клиенте, чтобы импортировать сервер.")
                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                 wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true
+            }
+        }
+    }
+
+    // ── диалог прогресса импорта подписки ──────────────────────────
+    Dialog {
+        id: importProgressDialog
+        modal: true
+        dim: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
+        width: 320
+        padding: 20
+        closePolicy: Popup.NoAutoClose
+        visible: App.subscriptionImporting
+
+        background: Rectangle {
+            color: Theme.flyout
+            radius: 10
+            border.width: 1
+            border.color: Theme.flyoutBorder
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 16
+            Text {
+                text: I18n.t("Импорт подписки")
+                color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontStrong
+                font.bold: true
+                Layout.alignment: Qt.AlignHCenter
+            }
+            ProgressBar {
+                indeterminate: true
+                Layout.fillWidth: true
+            }
+            Text {
+                text: App.subscriptionImportStatus || I18n.t("Загрузка подписки...")
+                color: Theme.textMuted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontNormal
+                Layout.alignment: Qt.AlignHCenter
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                Layout.fillWidth: true
             }
         }
     }

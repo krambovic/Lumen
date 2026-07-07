@@ -358,6 +358,31 @@ def _decrypt_crypt51(payload: str) -> str:
                     return _b64decode(_swap_pairs(intermediate)).decode("utf-8")
                 except Exception:
                     continue
+
+    # Fallback to Node.js emulation decryptor
+    from pathlib import Path
+    import shutil
+    
+    node_bin = shutil.which("node")
+    if node_bin:
+        emu_dir = Path(__file__).parent / "happ_emulator"
+        cli_js = emu_dir / "decrypt_cli.js"
+        if cli_js.exists():
+            from .subprocess_utils import run_text_pumped, CREATE_NO_WINDOW, decode_output
+            try:
+                link = f"happ://crypt5/{payload}"
+                result = run_text_pumped(
+                    [node_bin, str(cli_js), link],
+                    timeout=10.0,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                if result.returncode == 0:
+                    decrypted = decode_output(result.stdout).strip()
+                    if decrypted:
+                        return decrypted
+            except Exception:
+                pass
+
     raise HappKeyUnavailableError(
         "не удалось расшифровать happ://crypt5-ссылку: подходящий приватный ключ "
         f"отсутствует в наборе (формат crypt5.1, маркер «{selector}»)"

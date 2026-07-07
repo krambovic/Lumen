@@ -20,6 +20,7 @@ datas = [
     (str(qml_dir), "xray_fluent/qml_app/qml"),
     (str(locales_dir), "xray_fluent/locales"),
     (str(fonts_dir), "xray_fluent/qml_app/assets/fonts"),
+    (str(root / "xray_fluent" / "happ_emulator"), "xray_fluent/happ_emulator"),
 ]
 datas += collect_data_files(
     "PyQt6",

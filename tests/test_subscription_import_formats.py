@@ -183,9 +183,13 @@ def test_subscription_metadata_accepts_common_button_headers() -> None:
     assert info["telegramUrl"] == "https://t.me/example"
 
 
-def test_happ_crypt5_1_link_reports_friendly_error() -> None:
-    # Ссылка из задачи — формат crypt5.1, ключ отсутствует в публичном наборе.
-    # Расшифровка происходит до сети, поэтому результат детерминированный.
+def test_happ_crypt5_1_link_reports_friendly_error(monkeypatch) -> None:
+    import shutil
+    from xray_fluent import happ_crypt_keys
+    # Remove key and mock node to ensure it falls back and raises HappKeyUnavailableError
+    monkeypatch.delitem(happ_crypt_keys.CRYPT5_KEYS_B64, "vdfzfoff", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda cmd: None)
+
     link = (
         "happ://crypt5/fzvd4oXqWHPd9ZJzbmZcpU3I20FsDc8WfLpIJg8yO6G9p/GbNqkmpD1avm2fTYWs"
         "JmVeKxs/zdzR8yugTK73iSH6DXZ+Z/U6KivYcEeNBtYcSrziaK5+PDLsBMsCL1qwyDpXGn3esHXxj9t"

@@ -167,6 +167,8 @@ class AppBridge(QObject):
     nodeImported = pyqtSignal(str)         # first newly imported node id
     quittingChanged = pyqtSignal()         # real-exit flag flipped on quit
     languageChanged = pyqtSignal()         # active UI language changed
+    subscriptionImportingChanged = pyqtSignal()
+    subscriptionImportStatusChanged = pyqtSignal()
 
     # Внутренний: запуск фоновой загрузки подписок (jobs, batch_id)
     _sub_fetch_run = pyqtSignal(object, int)
@@ -228,6 +230,8 @@ class AppBridge(QObject):
         self._quitting = False
         self._updates_available = False
         self._deferred_started = False
+        self._sub_importing = False
+        self._sub_import_status = ""
 
         # Таймер авто-обновления подписок (интервал берётся из настроек).
         self._sub_timer = QTimer(self)
@@ -276,7 +280,12 @@ class AppBridge(QObject):
             pass
         try:
             if self.controller.state.subscriptions:
-                QTimer.singleShot(3000, self._on_sub_auto_update)
+                try:
+                    minutes = int(self.controller.state.settings.subscription_auto_update_minutes)
+                except Exception:
+                    minutes = 240
+                if minutes > 0:
+                    QTimer.singleShot(3000, self._on_sub_auto_update)
         except Exception:
             pass
     @pyqtSlot()
@@ -288,6 +297,8 @@ class AppBridge(QObject):
         QTimer.singleShot(150, self.controller.auto_connect_if_needed)
 
     def shutdown(self) -> None:
+        logger = logging.getLogger("xray_fluent.app")
+        logger.info("[app] AppBridge shutting down...")
         try:
             self._sub_timer.stop()
             self._app_update_timer.stop()
@@ -295,11 +306,16 @@ class AppBridge(QObject):
             pass
         thread = self._sub_thread
         if thread is not None:
+            logger.info("[app] Stopping subscription thread...")
             try:
-                thread.quit()
-                thread.wait(2000)
-            except Exception:
-                pass
+                if thread.isRunning():
+                    thread.quit()
+                    if not thread.wait(2000):
+                        logger.warning("[app] Subscription thread failed to quit in time, terminating...")
+                        thread.terminate()
+                        thread.wait(1000)
+            except Exception as exc:
+                logger.error(f"[app] Error stopping subscription thread: {exc}")
             self._sub_thread = None
             self._sub_worker = None
         try:
@@ -353,6 +369,8 @@ class AppBridge(QObject):
         """Лениво поднимает поток+воркер для загрузки подписок (GUI-поток)."""
         if self._sub_thread is not None:
             return
+        logger = logging.getLogger("xray_fluent.app")
+        logger.info("[app] Starting subscription fetch thread...")
         thread = QThread()
         thread.setObjectName("lumen-subscriptions")
         worker = SubscriptionFetchWorker()
@@ -398,6 +416,11 @@ class AppBridge(QObject):
         kind = batch["kind"]
         added = batch["added"]
         errors = batch["errors"]
+        if kind == "import":
+            self._sub_importing = False
+            self._sub_import_status = ""
+            self.subscriptionImportingChanged.emit()
+            self.subscriptionImportStatusChanged.emit()
         if kind == "auto":
             if added:
                 self.toast.emit("info", tr("Авто-обновление подписок: +{count} серверов", count=added))
@@ -3255,14 +3278,26 @@ class AppBridge(QObject):
         except Exception:
             return 240
 
+    @pyqtProperty(bool, notify=subscriptionImportingChanged)
+    def subscriptionImporting(self) -> bool:
+        return self._sub_importing
+
+    @pyqtProperty(str, notify=subscriptionImportStatusChanged)
+    def subscriptionImportStatus(self) -> str:
+        return self._sub_import_status
+
     # ── Subscriptions ────────────────────────────────────────────
     @pyqtSlot(str)
     @pyqtSlot(str, str)
     def importSubscription(self, url: str, name: str = "") -> None:
         target = (url or "").strip()
         if not target:
-            self.toast.emit("warning", "Введите ссылку на подписку")
+            self.toast.emit("warning", tr("Введите ссылку на подписку"))
             return
+        self._sub_importing = True
+        self._sub_import_status = tr("Загрузка подписки...")
+        self.subscriptionImportingChanged.emit()
+        self.subscriptionImportStatusChanged.emit()
         # Сеть в фоне: UI не блокируется, итог придёт через _on_sub_batch_completed.
         job = SubscriptionJob(url=target, kind="import", name=(name or "").strip())
         self._dispatch_sub_jobs([job], "import")

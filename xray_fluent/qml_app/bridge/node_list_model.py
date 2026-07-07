@@ -89,7 +89,10 @@ class NodeListModel(QAbstractListModel):
         if role == self.IdRole:
             return node.id
         if role == self.NameRole:
-            return node.name or node.server or "(\u0431\u0435\u0437 \u0438\u043c\u0435\u043d\u0438)"
+            raw_name = node.name or node.server or "(\u0431\u0435\u0437 \u0438\u043c\u0435\u043d\u0438)"
+            country = self._country_for(node)
+            from .app_bridge import _server_display_name_without_country_prefix
+            return _server_display_name_without_country_prefix(raw_name, country)
         if role == self.SchemeRole:
             return (node.scheme or "").upper()
         if role == self.TransportRole:

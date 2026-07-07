@@ -38,7 +38,7 @@ FluentScroll {
             color: Theme.text
             font.family: Theme.fontFamily
             font.pixelSize: 15
-            text: I18n.t("Lumen KVN — уникальный туннель до любой страны мира, созданный передовыми мировыми инженерами (не является тем чем вы думаете).")
+            text: I18n.t("Lumen KVN — самостоятельный Windows-клиент для VPN/TUN, системного прокси, маршрутизации, управления серверами и обхода DPI (DPI bypass) через zapret.")
         }
         Text {
             Layout.fillWidth: true
@@ -46,15 +46,7 @@ FluentScroll {
             color: Theme.textMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontNormal
-            text: I18n.t("Позволяет ускорить замедленные сервера Ютуба и Дискорда в случае если те перестали работать и начали деградировать.")
-        }
-        Text {
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            color: Theme.textMuted
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontNormal
-            text: I18n.t("Также подходит для ускорения игровых серверов.")
+            text: I18n.t("Проект предлагает графический интерфейс на базе QML с эффектами Mica/Acrylic и аппаратным ускорением рендеринга.")
         }
 
         // ── Separator ──
@@ -79,20 +71,11 @@ FluentScroll {
             }
             AccentButton {
                 kind: "ghost"
-                glyph: "\uE7BF"  // Shopping cart
-                text: I18n.t("Купить подписку")
+                glyph: "\uE734"  // Shield
+                text: I18n.t("Рекомендуемый VPN")
                 onClicked: App.openUrl("https://t.me/zapretvpns_bot")
             }
             Item { Layout.fillWidth: true }
-        }
-
-        // ── Footer ──
-        Text {
-            Layout.topMargin: 4
-            text: I18n.t("Подробнее здесь @zapretvpns_bot")
-            color: Theme.textFaint
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSmall
         }
 
         Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }

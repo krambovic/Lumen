@@ -476,7 +476,7 @@ class AppSettings:
             ping_method=str(data.get("ping_method") or "tcping"),
             speed_test_url=str(data.get("speed_test_url") or ""),
             speed_test_concurrency=int(data.get("speed_test_concurrency") or 0),
-            subscription_auto_update_minutes=int(data.get("subscription_auto_update_minutes") or 240),
+            subscription_auto_update_minutes=int(data.get("subscription_auto_update_minutes") if data.get("subscription_auto_update_minutes") is not None else 240),
             ui_density=str(data.get("ui_density") or "comfortable"),
             ui_corner_radius=int(data.get("ui_corner_radius") if data.get("ui_corner_radius") is not None else 8),
             ui_font_family=str(data.get("ui_font_family") or ""),
