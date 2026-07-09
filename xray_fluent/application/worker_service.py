@@ -59,6 +59,8 @@ def ping_nodes(
         if not controller._ping_worker.wait(6000):
             controller._ping_worker.terminate()
             controller._ping_worker.wait(2000)
+        if controller._ping_worker.isRunning():
+            controller._retired_metrics_workers.add(controller._ping_worker)
 
     resolved_method = (method or controller.state.settings.ping_method or "tcping").strip().lower()
     if resolved_method not in ("tcping", "icmp", "real"):
@@ -162,6 +164,12 @@ def cancel_speed_test(controller: AppController) -> bool:
         controller.status.emit("info", "Тест скорости сейчас не выполняется")
         return False
     worker.cancel()
+    if not worker.wait(2500):
+        try:
+            worker.terminate()
+        except Exception:
+            pass
+        worker.wait(1500)
     controller.status.emit("info", "Останавливаю тест скорости...")
     return True
 

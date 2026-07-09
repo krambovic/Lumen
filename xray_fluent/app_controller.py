@@ -498,6 +498,11 @@ class AppController(QObject):
             self._log(f"[core] sing-box: {sb_version}")
 
     def _prewarm_connection_context(self) -> None:
+        from .application.connection_service import _cleanup_orphaned_lumen_engines
+        try:
+            _cleanup_orphaned_lumen_engines(self)
+        except Exception:
+            pass
         get_windows_default_route_context()
         node = self.selected_node
         if node is not None:

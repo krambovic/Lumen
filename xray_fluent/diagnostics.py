@@ -9,6 +9,7 @@ import zipfile
 from .constants import APP_VERSION, LOG_DIR
 from .data_paths import get_install_id
 from .models import AppState
+from .subprocess_utils import decode_output
 
 
 REDACT_KEYS = {
@@ -197,15 +198,7 @@ def collect_network_context() -> dict[str, any]:
                 creationflags=creation_flags
             )
             if res.returncode == 0:
-                stdout_str = ""
-                for enc in ("cp866", "utf-8", "cp1251"):
-                    try:
-                        stdout_str = res.stdout.decode(enc)
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                if not stdout_str:
-                    stdout_str = res.stdout.decode("utf-8", errors="replace")
+                stdout_str = decode_output(res.stdout)
 
                 for line in stdout_str.splitlines():
                     parts = line.split()

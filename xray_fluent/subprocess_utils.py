@@ -145,11 +145,14 @@ def is_same_path(left: str | Path | None, right: str | Path | None) -> bool:
 def kill_processes_by_path(process_name: str, executable_path: str | Path, *, timeout: float = 5.0) -> bool:
     if os.name != "nt":
         return False
-    target = Path(executable_path)
-    target_text = str(target).replace("'", "''")
+    try:
+        target = Path(executable_path).resolve()
+    except Exception:
+        target = Path(executable_path)
+    target_text = str(target).replace("/", "\\").replace("'", "''")
     script = (
         "$matches = @(Get-CimInstance Win32_Process | "
-        f"Where-Object {{ $_.Name -eq '{process_name}' -and $_.ExecutablePath -eq '{target_text}' }}); "
+        f"Where-Object {{ $_.Name -eq '{process_name}' -and ($_.ExecutablePath -replace '/', '\\') -eq '{target_text}' }}); "
         "$matches | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; "
         "Write-Output $matches.Count"
     )

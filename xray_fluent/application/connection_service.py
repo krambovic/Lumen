@@ -7,18 +7,48 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QTimer
 
-from ..constants import DEFAULT_HTTP_PORT, DEFAULT_SOCKS_PORT, DEFAULT_XRAY_STATS_API_PORT
+from ..constants import (
+    DEFAULT_HTTP_PORT,
+    DEFAULT_SOCKS_PORT,
+    DEFAULT_XRAY_STATS_API_PORT,
+    SINGBOX_PATH_DEFAULT,
+    XRAY_PATH_DEFAULT,
+)
 from ..engines.singbox import SingboxRuntimePlan, start_tun as start_singbox_tun
 from ..engines.xray import (
     restart_proxy_core as restart_xray_proxy_core,
     start_proxy as start_xray_proxy,
 )
+from ..path_utils import resolve_configured_path
 from ..process_conflicts import scan_network_conflicts
+from ..subprocess_utils import kill_processes_by_path
 from .server_preflight import validate_server_preflight
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
     from ..application.session_state import XrayRuntimeConfig
+
+
+def _cleanup_orphaned_lumen_engines(controller: AppController) -> None:
+    settings = getattr(getattr(controller, "state", None), "settings", None)
+    for manager, cfg_path, def_path in (
+        (getattr(controller, "xray", None), getattr(settings, "xray_path", None), XRAY_PATH_DEFAULT),
+        (getattr(controller, "singbox", None), getattr(settings, "singbox_path", None), SINGBOX_PATH_DEFAULT),
+    ):
+        if manager is not None and getattr(manager, "_proc", None) is None:
+            exe = getattr(manager, "_exe_path", None)
+            if exe is None:
+                exe = resolve_configured_path(
+                    cfg_path,
+                    default_path=def_path,
+                    use_default_if_empty=True,
+                    migrate_default_location=True,
+                )
+            if exe is not None:
+                try:
+                    kill_processes_by_path(exe.name, exe, timeout=1.5)
+                except Exception:
+                    pass
 
 
 def find_free_api_port(preferred: int | None = None, excluded: set[int] | None = None) -> int:
@@ -54,6 +84,8 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
                 level="warning",
             )
             return False
+
+        _cleanup_orphaned_lumen_engines(controller)
 
         ignored_pids = {
             int(proc.pid)

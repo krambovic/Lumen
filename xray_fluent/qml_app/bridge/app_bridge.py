@@ -313,9 +313,13 @@ class AppBridge(QObject):
                     if not thread.wait(2000):
                         logger.warning("[app] Subscription thread failed to quit in time, terminating...")
                         thread.terminate()
-                        thread.wait(1000)
+                        thread.wait(1500)
             except Exception as exc:
                 logger.error(f"[app] Error stopping subscription thread: {exc}")
+            if thread.isRunning():
+                if not hasattr(self, "_retired_sub_threads"):
+                    self._retired_sub_threads = []
+                self._retired_sub_threads.append(thread)
             self._sub_thread = None
             self._sub_worker = None
         try:

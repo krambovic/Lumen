@@ -206,6 +206,7 @@ def _create_startup_task(command: str) -> None:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         errors="replace",
         creationflags=CREATE_NO_WINDOW,
     )
@@ -216,6 +217,7 @@ def _delete_startup_task() -> None:
         ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         errors="replace",
         creationflags=CREATE_NO_WINDOW,
     )

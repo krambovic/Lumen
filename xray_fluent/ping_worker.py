@@ -312,6 +312,7 @@ class PingWorker(QThread):
         method: str = "tcping",
     ):
         super().__init__()
+        self.setObjectName("lumen-ping-worker")
         self._nodes = nodes
         self._timeout = timeout
         self._bypass_tun = bypass_tun

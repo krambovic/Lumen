@@ -8,6 +8,8 @@ import subprocess
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from .subprocess_utils import decode_output
+
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 _KNOWN_CONFLICTS = {
@@ -56,7 +58,7 @@ def _running_processes() -> dict[int, str]:
             check=False,
             creationflags=_CREATE_NO_WINDOW,
         )
-        text = result.stdout.decode("utf-8", errors="replace")
+        text = decode_output(result.stdout)
     except Exception:
         return {}
     processes: dict[int, str] = {}
@@ -152,7 +154,7 @@ def find_listening_port_conflicts(
             check=False,
             creationflags=_CREATE_NO_WINDOW,
         )
-        text = result.stdout.decode("utf-8", errors="replace")
+        text = decode_output(result.stdout)
     except Exception:
         return []
     found: dict[int, PortConflict] = {}

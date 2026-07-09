@@ -72,6 +72,7 @@ class SpeedTestWorker(QThread):
         bypass_tun: bool = False,
     ):
         super().__init__()
+        self.setObjectName("lumen-speed-test" if mode == "speed" else "lumen-real-ping")
         self._nodes = list(nodes)
         self._xray_path = xray_path
         self._routing = routing or RoutingSettings()
