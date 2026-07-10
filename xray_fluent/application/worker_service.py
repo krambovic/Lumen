@@ -7,6 +7,7 @@ from ..connectivity_test import ConnectivityTestWorker
 from ..constants import DEFAULT_HTTP_PORT, XRAY_PATH_DEFAULT
 from ..path_utils import resolve_configured_path
 from ..ping_worker import PingWorker
+from ..qthread_utils import bind_thread_reference, retain_thread_until_finished
 from ..speed_test_worker import SpeedTestWorker
 
 if TYPE_CHECKING:
@@ -53,14 +54,15 @@ def ping_nodes(
         return
 
     if controller._ping_worker and controller._ping_worker.isRunning():
-        controller._ping_worker.cancel()
-        # Fully join before the reference is overwritten below. Dropping a still-
-        # running QThread crashes with "Destroyed while thread is still running".
-        if not controller._ping_worker.wait(6000):
-            controller._ping_worker.terminate()
-            controller._ping_worker.wait(2000)
-        if controller._ping_worker.isRunning():
-            controller._retired_metrics_workers.add(controller._ping_worker)
+        previous = controller._ping_worker
+        previous.cancel()
+        retain_thread_until_finished(
+            controller,
+            controller._retired_workers,
+            previous,
+            delete_worker=False,
+        )
+        controller._ping_worker = None
 
     resolved_method = (method or controller.state.settings.ping_method or "tcping").strip().lower()
     if resolved_method not in ("tcping", "icmp", "real"):
@@ -97,6 +99,7 @@ def ping_nodes(
             bypass_tun=real_bypass_tun,
         )
         controller._ping_worker = worker
+        bind_thread_reference(controller, "_ping_worker", worker)
         worker.ping_result.connect(controller._on_ping_result)
         worker.progress.connect(controller._on_ping_progress)
         worker.completed.connect(controller._on_ping_complete)
@@ -108,6 +111,7 @@ def ping_nodes(
     if bypass_tun:
         controller._log("[ping] TUN включен: проверяю серверы через временные прямые маршруты")
     controller._ping_worker = PingWorker(nodes, bypass_tun=bypass_tun, method=resolved_method)
+    bind_thread_reference(controller, "_ping_worker", controller._ping_worker)
     controller._ping_worker.result.connect(controller._on_ping_result)
     controller._ping_worker.progress.connect(controller._on_ping_progress)
     controller._ping_worker.completed.connect(controller._on_ping_complete)
@@ -150,6 +154,7 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
         concurrency=controller.state.settings.speed_test_concurrency,
         bypass_tun=bypass_tun,
     )
+    bind_thread_reference(controller, "_speed_worker", controller._speed_worker)
     controller._speed_worker.result.connect(controller._on_speed_result)
     controller._speed_worker.progress.connect(controller._on_speed_progress)
     controller._speed_worker.node_progress.connect(controller._on_speed_node_progress)
@@ -164,12 +169,6 @@ def cancel_speed_test(controller: AppController) -> bool:
         controller.status.emit("info", "Тест скорости сейчас не выполняется")
         return False
     worker.cancel()
-    if not worker.wait(2500):
-        try:
-            worker.terminate()
-        except Exception:
-            pass
-        worker.wait(1500)
     controller.status.emit("info", "Останавливаю тест скорости...")
     return True
 
@@ -185,6 +184,7 @@ def test_connectivity(controller: AppController, url: str | None = None) -> None
 
     http_port = controller.get_effective_http_proxy_port() or int(controller.state.settings.local_http_port)
     controller._connectivity_worker = ConnectivityTestWorker(http_port, target, tun_mode=controller.state.settings.tun_mode)
+    bind_thread_reference(controller, "_connectivity_worker", controller._connectivity_worker)
     controller._connectivity_worker.result.connect(controller._on_connectivity_result)
     controller._connectivity_worker.start()
 
@@ -214,7 +214,6 @@ def on_ping_complete(controller: AppController) -> None:
     if controller.sender() is not controller._ping_worker:
         return
     controller.bulk_task_progress.emit("ping", controller._ping_completed, controller._ping_total, True)
-    controller._ping_worker = None
     controller._ping_node_map = {}
     controller.save()
 
@@ -257,7 +256,6 @@ def on_speed_complete(controller: AppController) -> None:
     if cancelled:
         controller.speed_test_cancelled.emit(completed, controller._speed_total)
     controller.bulk_task_progress.emit("speed", completed, controller._speed_total, True)
-    controller._speed_worker = None
     controller._speed_node_map = {}
     controller.save()
     if cancelled:
@@ -269,7 +267,6 @@ def on_speed_complete(controller: AppController) -> None:
 def on_connectivity_result(controller: AppController, ok: bool, message: str, elapsed_ms: int | None) -> None:
     if controller.sender() is not controller._connectivity_worker:
         return
-    controller._connectivity_worker = None
     if ok and elapsed_ms is not None:
         text = f"Подключение в порядке: {elapsed_ms} мс"
         controller.status.emit("success", text)

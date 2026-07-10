@@ -99,7 +99,7 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
         controller._log(f"[tun-hot-swap] routing final={route_final or '--'} dns_final={dns_final or '--'}")
         for line in _runtime_summary_lines(plan.singbox_config):
             controller._log(f"[tun-hot-swap] {line}")
-        controller._stop_metrics_worker()
+        controller._metrics_request.emit(False)
 
         if controller.singbox.is_running and not controller.singbox.stop():
             controller._set_connection_status("error", "Не удалось остановить предыдущий процесс sing-box", level="error")
@@ -153,10 +153,7 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
         controller._switching = False
         _, controller.connected = controller._refresh_connected_state()
         controller.connection_changed.emit(controller.connected)
-        if controller.connected:
-            controller._start_metrics_worker()
-        else:
-            controller._stop_metrics_worker()
+        controller._metrics_request.emit(controller.connected)
 
 
 def _runtime_summary_lines(config: dict[str, Any]) -> list[str]:

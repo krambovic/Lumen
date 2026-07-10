@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import pytest
 
 from xray_fluent.application import node_service
-from xray_fluent.link_parser import parse_links_text, validate_node_outbound
+from xray_fluent.link_parser import MAX_IMPORT_BYTES, parse_links_text, validate_node_outbound
 
 
 def test_unsupported_app_placeholder_is_rejected() -> None:
@@ -164,6 +165,41 @@ def test_subscription_tls_eof_retries_same_profile_direct(monkeypatch) -> None:
     assert info["clientProfile"] == "Happ Windows"
     assert info["networkPath"] == "direct"
     assert calls[:2] == [("Happ Windows", False), ("Happ Windows", True)]
+
+
+def test_subscription_rejects_declared_oversized_body(monkeypatch) -> None:
+    class _Response:
+        headers = {"Content-Length": str(node_service.MAX_SUBSCRIPTION_BYTES + 1)}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size=-1):
+            raise AssertionError("oversized response body must not be read")
+
+    monkeypatch.setattr(node_service, "urlopen", lambda *_args, **_kwargs: _Response())
+
+    with pytest.raises(RuntimeError, match="слишком большая"):
+        node_service._fetch_subscription_with_headers(
+            "https://sub.example/large",
+            "Lumen",
+            {"User-Agent": "test"},
+        )
+
+
+def test_import_file_size_limit_is_checked_before_read(tmp_path) -> None:
+    path = tmp_path / "large.txt"
+    with path.open("wb") as stream:
+        stream.seek(MAX_IMPORT_BYTES)
+        stream.write(b"x")
+
+    nodes, errors = parse_links_text(str(path))
+
+    assert nodes == []
+    assert errors and "exceeds" in errors[0]
 
 
 def test_subscription_metadata_accepts_common_button_headers() -> None:

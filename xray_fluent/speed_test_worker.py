@@ -85,9 +85,18 @@ class SpeedTestWorker(QThread):
         self._completed_nodes = 0
         self._processes: set[subprocess.Popen] = set()
         self._process_lock = threading.Lock()
+        self._responses: list[object] = []
+        self._response_lock = threading.Lock()
 
     def cancel(self) -> None:
         self._cancelled = True
+        with self._response_lock:
+            responses = list(self._responses)
+        for response in responses:
+            try:
+                response.close()
+            except Exception:
+                pass
         self._terminate_all_processes()
 
     def _terminate_all_processes(self) -> None:
@@ -97,6 +106,15 @@ class SpeedTestWorker(QThread):
             if proc.poll() is None:
                 try:
                     proc.terminate()
+                except Exception:
+                    pass
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and any(proc.poll() is None for proc in processes):
+            time.sleep(0.05)
+        for proc in processes:
+            if proc.poll() is None:
+                try:
+                    proc.kill()
                 except Exception:
                     pass
 
@@ -123,10 +141,9 @@ class SpeedTestWorker(QThread):
                 self.node_progress.emit(node.id, 0)
 
             max_workers = _resolve_speed_test_concurrency(len(self._nodes), self._concurrency)
-            with _WindowsPingBypass(self._nodes, self._bypass_tun) as bypass, ThreadPoolExecutor(
-                max_workers=max_workers, thread_name_prefix="speed-test"
-            ) as executor:
+            with _WindowsPingBypass(self._nodes, self._bypass_tun) as bypass:
                 self._bypass = bypass
+                executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speed-test")
                 pending: set[Future[tuple[Node, float | None, bool]]] = set()
                 iterator = iter(self._nodes)
                 exhausted = False
@@ -140,30 +157,31 @@ class SpeedTestWorker(QThread):
                             break
                         pending.add(executor.submit(self._test_node, node))
 
-                fill_pending_slots()
-                while (pending or not exhausted) and not self._cancelled:
-                    if not pending:
-                        fill_pending_slots()
+                try:
+                    fill_pending_slots()
+                    while (pending or not exhausted) and not self._cancelled:
                         if not pending:
-                            break
-                    done, _ = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
-                    if not done:
-                        continue
-                    for future in done:
-                        pending.discard(future)
-                        if self._cancelled:
-                            break
-                        try:
-                            node, speed, alive = future.result()
-                        except Exception:
+                            fill_pending_slots()
+                            if not pending:
+                                break
+                        done, _ = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
+                        if not done:
                             continue
-                        self._emit_node_result(node, speed, alive, total)
-                        fill_pending_slots()
-
-                if self._cancelled:
-                    for future in pending:
-                        future.cancel()
-                    executor.shutdown(wait=False, cancel_futures=True)
+                        for future in done:
+                            pending.discard(future)
+                            if self._cancelled:
+                                break
+                            try:
+                                node, speed, alive = future.result()
+                            except Exception:
+                                continue
+                            self._emit_node_result(node, speed, alive, total)
+                            fill_pending_slots()
+                finally:
+                    if self._cancelled:
+                        for future in pending:
+                            future.cancel()
+                    executor.shutdown(wait=True, cancel_futures=True)
         finally:
             self._terminate_all_processes()
             self.completed.emit()
@@ -304,13 +322,19 @@ class SpeedTestWorker(QThread):
         return config
 
     def _real_ping(self, target: _SpeedTestTarget) -> int:
+        if self._cancelled:
+            return -1
         opener = self._build_proxy_opener(target.http_port)
         req = Request(SPEED_TEST_PING_URL, headers={"User-Agent": "LumenKVN/SpeedTest"})
         self.node_progress.emit(target.node.id, 20)
         started = time.perf_counter()
         try:
             with opener.open(req, timeout=min(self._timeout, SPEED_TEST_PING_TIMEOUT)) as resp:
-                resp.read(16)
+                self._register_response(resp)
+                try:
+                    resp.read(16)
+                finally:
+                    self._unregister_response(resp)
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             if elapsed_ms > SPEED_TEST_MAX_PING_MS:
                 return -1
@@ -332,36 +356,40 @@ class SpeedTestWorker(QThread):
 
             idle_timeout = min(self._timeout, SPEED_TEST_DOWNLOAD_IDLE_TIMEOUT)
             with opener.open(req, timeout=idle_timeout) as resp:
-                while not self._cancelled:
-                    chunk = resp.read(64 * 1024)
-                    now = time.perf_counter()
-                    if not chunk:
-                        break
+                self._register_response(resp)
+                try:
+                    while not self._cancelled:
+                        chunk = resp.read(64 * 1024)
+                        now = time.perf_counter()
+                        if not chunk:
+                            break
 
-                    total_bytes += len(chunk)
-                    window_bytes += len(chunk)
-                    elapsed = now - started
-                    if elapsed >= self._timeout:
-                        break
-                    if (
-                        elapsed >= SPEED_TEST_SLOW_GRACE_SECONDS
-                        and total_bytes < SPEED_TEST_MIN_BYTES_AFTER_GRACE
-                    ):
-                        return None
-
-                    window_elapsed = now - last_update
-                    if window_elapsed >= 1.0:
-                        speed = (window_bytes / (1000 * 1000)) / max(window_elapsed, 0.001)
-                        max_speed = max(max_speed, speed)
+                        total_bytes += len(chunk)
+                        window_bytes += len(chunk)
+                        elapsed = now - started
+                        if elapsed >= self._timeout:
+                            break
                         if (
                             elapsed >= SPEED_TEST_SLOW_GRACE_SECONDS
-                            and max_speed < SPEED_TEST_MIN_MBPS_AFTER_GRACE
+                            and total_bytes < SPEED_TEST_MIN_BYTES_AFTER_GRACE
                         ):
                             return None
-                        window_bytes = 0
-                        last_update = now
-                        percent = 35 + int(60 * min(1.0, elapsed / max(self._timeout, 0.1)))
-                        self.node_progress.emit(target.node.id, max(35, min(95, percent)))
+
+                        window_elapsed = now - last_update
+                        if window_elapsed >= 1.0:
+                            speed = (window_bytes / (1000 * 1000)) / max(window_elapsed, 0.001)
+                            max_speed = max(max_speed, speed)
+                            if (
+                                elapsed >= SPEED_TEST_SLOW_GRACE_SECONDS
+                                and max_speed < SPEED_TEST_MIN_MBPS_AFTER_GRACE
+                            ):
+                                return None
+                            window_bytes = 0
+                            last_update = now
+                            percent = 35 + int(60 * min(1.0, elapsed / max(self._timeout, 0.1)))
+                            self.node_progress.emit(target.node.id, max(35, min(95, percent)))
+                finally:
+                    self._unregister_response(resp)
 
             elapsed_total = time.perf_counter() - started
             if window_bytes > 0:
@@ -406,6 +434,14 @@ class SpeedTestWorker(QThread):
         with self._process_lock:
             self._processes.discard(proc)
 
+    def _register_response(self, response: object) -> None:
+        with self._response_lock:
+            self._responses.append(response)
+
+    def _unregister_response(self, response: object) -> None:
+        with self._response_lock:
+            self._responses = [item for item in self._responses if item is not response]
+
     @staticmethod
     def _stop_process(proc: subprocess.Popen) -> None:
         if proc.poll() is not None:
@@ -415,6 +451,10 @@ class SpeedTestWorker(QThread):
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             proc.kill()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
 
     def _reserve_port(self) -> tuple[int, socket.socket]:
         sockets: list[socket.socket] = []

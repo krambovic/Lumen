@@ -131,7 +131,7 @@ def restart_proxy_core(controller: AppController, reason: str) -> bool:
         if runtime.used_selected_node and node is not None:
             session_label = f"{runtime.source_path.name} / {node.name}"
         controller._set_connection_status("starting", f"Переключение на {session_label}...", level="info")
-        controller._stop_metrics_worker()
+        controller._metrics_request.emit(False)
         if controller.xray.is_running and not controller.xray.stop():
             controller._set_connection_status("error", "Не удалось остановить предыдущий процесс Xray", level="error")
             return False
@@ -191,7 +191,4 @@ def restart_proxy_core(controller: AppController, reason: str) -> bool:
         controller._switching = False
         _, controller.connected = controller._refresh_connected_state()
         controller.connection_changed.emit(controller.connected)
-        if controller.connected:
-            controller._start_metrics_worker()
-        else:
-            controller._stop_metrics_worker()
+        controller._metrics_request.emit(controller.connected)

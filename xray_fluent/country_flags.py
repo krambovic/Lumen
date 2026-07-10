@@ -7,7 +7,7 @@ import copy
 import json
 from pathlib import Path
 import re
-import socket
+import threading
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -493,30 +493,42 @@ class CountryResolver(QThread):
     def __init__(self, nodes: list[tuple[str, str]], parent=None):
         super().__init__(parent)
         self._nodes = nodes  # [(node_id, server_address), ...]
+        self._cancelled = threading.Event()
+        self._response = None
+        self._response_lock = threading.Lock()
+        self.setObjectName("lumen-country-resolver")
 
-    def run(self) -> None:
-        results: dict[str, str] = {}
-        ip_map: dict[str, list[str]] = {}  # ip → [node_ids]
-
-        for node_id, server in self._nodes:
+    def cancel(self) -> None:
+        self._cancelled.set()
+        with self._response_lock:
+            response = self._response
+        if response is not None:
             try:
-                infos = socket.getaddrinfo(server, None, socket.AF_INET, socket.SOCK_STREAM)
-                if infos:
-                    ip = infos[0][4][0]
-                    ip_map.setdefault(ip, []).append(node_id)
+                response.close()
             except Exception:
                 pass
 
-        if not ip_map:
+    def run(self) -> None:
+        results: dict[str, str] = {}
+        host_map: dict[str, list[str]] = {}
+
+        for node_id, server in self._nodes:
+            host = str(server or "").strip()
+            if host:
+                host_map.setdefault(host, []).append(node_id)
+
+        if not host_map or self._cancelled.is_set():
             self.resolved.emit(results)
             return
 
-        ips = list(ip_map.keys())
-        for i in range(0, len(ips), 100):
-            batch = ips[i : i + 100]
+        hosts = list(host_map)
+        for i in range(0, len(hosts), 100):
+            if self._cancelled.is_set():
+                return
+            batch = hosts[i : i + 100]
             try:
                 payload = json.dumps(
-                    [{"query": ip, "fields": "countryCode,query"} for ip in batch]
+                    [{"query": host, "fields": "status,countryCode,query"} for host in batch]
                 ).encode()
                 req = urllib.request.Request(
                     "http://ip-api.com/batch",
@@ -524,14 +536,25 @@ class CountryResolver(QThread):
                     headers={"Content-Type": "application/json"},
                 )
                 with _urlopen(req, timeout=10) as resp:
-                    data = json.loads(resp.read())
-                for item in data:
+                    with self._response_lock:
+                        self._response = resp
+                    try:
+                        data = json.loads(resp.read())
+                    finally:
+                        with self._response_lock:
+                            self._response = None
+                if self._cancelled.is_set() or not isinstance(data, list):
+                    return
+                for host, item in zip(batch, data):
+                    if not isinstance(item, dict) or item.get("status") == "fail":
+                        continue
                     cc = item.get("countryCode", "")
-                    ip = item.get("query", "")
-                    if cc and ip in ip_map:
-                        for nid in ip_map[ip]:
+                    if cc:
+                        for nid in host_map[host]:
                             results[nid] = cc
             except Exception:
-                pass
+                if self._cancelled.is_set():
+                    return
 
-        self.resolved.emit(results)
+        if not self._cancelled.is_set():
+            self.resolved.emit(results)

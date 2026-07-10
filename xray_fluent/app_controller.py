@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from copy import deepcopy
 import hashlib
 import logging
@@ -170,7 +171,7 @@ from .proxy_manager import ProxyManager
 from .process_conflicts import scan_network_conflicts
 from .routing_presets import build_routing_preset
 from .security import create_password_hash, get_idle_seconds, verify_password
-from .storage import PassphraseRequired, StateStorage
+from .storage import PassphraseRequired, StateLoadError, StateStorage
 from .startup import (
     STARTUP_STATE_ABSENT,
     STARTUP_STATE_DISABLED,
@@ -213,29 +214,6 @@ _XRAY_METRICS_API_INBOUND_TAG = "__app_metrics_api_in"
 _XRAY_TUN_INBOUND_TAG = "__app_tun_in"
 
 
-class _TransitionWorker(QObject):
-    """Runs blocking connect/disconnect transitions off the GUI thread"""
-
-    completed = pyqtSignal(bool, str, str, int)  # ok, action, reason, generation
-
-    def __init__(self, controller: "AppController") -> None:
-        super().__init__()
-        self._controller = controller
-
-    def execute(self, action: str, reason: str, generation: int) -> None:
-        ok = False
-        try:
-            ok = self._controller._run_transition_action(action, reason)
-        except Exception as exc:  # never let the worker thread die silently
-            try:
-                self._controller._log(f"[transition] worker error: {exc}")
-            except Exception:
-                pass
-            ok = False
-        finally:
-            self.completed.emit(ok, action, reason, generation)
-
-
 class AppController(QObject):
     nodes_changed = pyqtSignal(object)
     selection_changed = pyqtSignal(object)
@@ -263,8 +241,8 @@ class AppController(QObject):
     passphrase_required = pyqtSignal()
     auto_switch_triggered = pyqtSignal(str)  # node name we're switching to
     transition_state_changed = pyqtSignal(bool, str)
-    _transition_run = pyqtSignal(str, str, int)  # action, reason, generation (GUI -> worker thread)
-    _metrics_request = pyqtSignal(bool)  # start(True)/stop(False) metrics worker (any thread -> GUI)
+    _transition_completed = pyqtSignal(bool, str, str, int)
+    _metrics_request = pyqtSignal(bool)
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -317,6 +295,7 @@ class AppController(QObject):
         self._connectivity_worker: ConnectivityTestWorker | None = None
         self._metrics_worker: LiveMetricsWorker | None = None
         self._retired_metrics_workers: list[LiveMetricsWorker] = []
+        self._retired_workers: list[QThread] = []
         self._xray_update_worker: XrayCoreUpdateWorker | None = None
         self._resource_update_worker = None
         self._singbox_documents = SingboxDocumentCache()
@@ -360,7 +339,16 @@ class AppController(QObject):
         self._transition_reason = ""
         self._transition_generation = 0
         self._blocked_transition_signature = ""
+        self._transition_worker_thread: threading.Thread | None = None
+        self._transition_worker_lock = threading.Lock()
         self._deferred_services_started = False
+        self._shutting_down = False
+        self._background_threads: set[threading.Thread] = set()
+        self._background_threads_lock = threading.Lock()
+        self._save_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="state-save")
+        self._save_futures: set[Future] = set()
+        self._save_futures_lock = threading.Lock()
+        self._save_executor_shutdown = False
 
         self.xray.log_received.connect(lambda line: self._on_core_log("xray", line))
         self.xray.error.connect(self._on_xray_error)
@@ -389,6 +377,11 @@ class AppController(QObject):
         self._transition_timer.setSingleShot(True)
         self._transition_timer.timeout.connect(self._drain_transition_queue)
         self.request_transition_signal.connect(self._request_transition, Qt.ConnectionType.QueuedConnection)
+        self._transition_completed.connect(
+            self._on_transition_action_complete,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._metrics_request.connect(self._on_metrics_request, Qt.ConnectionType.QueuedConnection)
         self._startup_sync_timer = QTimer(self)
         self._startup_sync_timer.setInterval(5_000)
         self._startup_sync_timer.timeout.connect(self._sync_startup_state_from_windows)
@@ -398,6 +391,10 @@ class AppController(QObject):
             self.state = self.storage.load()
         except PassphraseRequired:
             self.passphrase_required.emit()
+            return False
+        except StateLoadError as exc:
+            self.status.emit("error", str(exc))
+            self.state = self.storage._default_state()
             return False
 
         self._migrate_sort_order()
@@ -429,16 +426,8 @@ class AppController(QObject):
             self.nodes_changed.emit(self.state.nodes)
         QTimer.singleShot(500, self._start_country_ip_resolution)
 
-        threading.Thread(
-            target=self._probe_core_versions,
-            name="core-version-probe",
-            daemon=True,
-        ).start()
-        threading.Thread(
-            target=self._prewarm_connection_context,
-            name="connection-context-prewarm",
-            daemon=True,
-        ).start()
+        self._start_background_task(self._probe_core_versions, "core-version-probe")
+        self._start_background_task(self._prewarm_connection_context, "connection-context-prewarm")
 
         if self.state.settings.always_run_as_admin:
             try:
@@ -498,15 +487,32 @@ class AppController(QObject):
             self._log(f"[core] sing-box: {sb_version}")
 
     def _prewarm_connection_context(self) -> None:
-        from .application.connection_service import _cleanup_orphaned_lumen_engines
-        try:
-            _cleanup_orphaned_lumen_engines(self)
-        except Exception:
-            pass
         get_windows_default_route_context()
         node = self.selected_node
         if node is not None:
             prime_endpoint_resolution(node.server)
+
+    def _start_background_task(self, target, name: str) -> None:
+        def _run() -> None:
+            try:
+                target()
+            except Exception:
+                self._logger.exception("[app] Background task %s failed", name)
+            finally:
+                with self._background_threads_lock:
+                    self._background_threads.discard(threading.current_thread())
+
+        thread = threading.Thread(target=_run, name=name)
+        with self._background_threads_lock:
+            self._background_threads.add(thread)
+        thread.start()
+
+    def _join_background_tasks(self) -> None:
+        with self._background_threads_lock:
+            threads = list(self._background_threads)
+        for thread in threads:
+            if thread is not threading.current_thread():
+                thread.join()
 
     def set_data_passphrase(self, passphrase: str) -> None:
         self.storage.passphrase = passphrase
@@ -524,12 +530,12 @@ class AppController(QObject):
     @pyqtSlot()
     def save(self) -> None:
         if self.thread() != QThread.currentThread():
-            QMetaObject.invokeMethod(self, "save", Qt.ConnectionType.BlockingQueuedConnection)
+            self._enqueue_state_save()
             return
         if self._save_timer.isActive():
             self._save_timer.stop()
         self._save_pending = False
-        self.storage.save(self.state)
+        self._enqueue_state_save()
 
     @pyqtSlot()
     def schedule_save(self) -> None:
@@ -543,7 +549,55 @@ class AppController(QObject):
         if not self._save_pending:
             return
         self._save_pending = False
-        self.storage.save(self.state)
+        self._enqueue_state_save()
+
+    def _enqueue_state_save(self) -> Future | None:
+        if self._save_executor_shutdown:
+            return None
+        try:
+            snapshot = deepcopy(self.state)
+        except Exception as exc:
+            self._logger.error(f"[state] Failed to snapshot state for saving: {exc}")
+            return None
+        future = self._save_executor.submit(self.storage.save, snapshot)
+        with self._save_futures_lock:
+            self._save_futures.add(future)
+
+        def _cleanup(done: Future) -> None:
+            with self._save_futures_lock:
+                self._save_futures.discard(done)
+            try:
+                done.result()
+            except Exception as exc:
+                self._logger.error(f"[state] Failed to save state: {exc}")
+
+        future.add_done_callback(_cleanup)
+        return future
+
+    def _flush_state_saves(self, timeout: float = 5.0) -> None:
+        if self.thread() == QThread.currentThread():
+            if self._save_timer.isActive():
+                self._save_timer.stop()
+            if self._save_pending:
+                self._save_pending = False
+                self._enqueue_state_save()
+        deadline = datetime.now(timezone.utc).timestamp() + max(0.0, timeout)
+        while True:
+            with self._save_futures_lock:
+                futures = list(self._save_futures)
+            if not futures:
+                return
+            remaining = deadline - datetime.now(timezone.utc).timestamp()
+            if remaining <= 0:
+                self._logger.warning("[state] Timed out waiting for pending state saves")
+                return
+            for future in futures:
+                try:
+                    future.result(timeout=min(remaining, 0.25))
+                except FutureTimeoutError:
+                    pass
+                except Exception:
+                    pass
 
     @staticmethod
     def _signature(payload: object) -> str:
@@ -1195,6 +1249,8 @@ class AppController(QObject):
 
     @pyqtSlot(str)
     def _request_transition(self, reason: str) -> None:
+        if self._shutting_down:
+            return
         if self.thread() != QThread.currentThread():
             self._logger.debug(f"[app] Enqueueing transition from worker thread: {reason}")
             self.request_transition_signal.emit(reason)
@@ -1210,6 +1266,10 @@ class AppController(QObject):
         self._transition_timer.start(120)
 
     def _drain_transition_queue(self) -> None:
+        if self._shutting_down:
+            self._transition_scheduled = False
+            self._transition_pending = False
+            return
         self._transition_scheduled = False
         if self._transition_active:
             return
@@ -1232,32 +1292,54 @@ class AppController(QObject):
         generation = self._transition_generation
         QTimer.singleShot(16, lambda: self._execute_transition_action(action, reason, generation))
 
-    def _ensure_transition_worker(self) -> None:
-        """Lazily spin up the dedicated transition thread + worker (GUI thread)."""
-        if getattr(self, "_transition_thread", None) is not None:
-            return
-        thread = QThread()
-        thread.setObjectName("lumen-transition")
-        worker = _TransitionWorker(self)
-        worker.moveToThread(thread)
-        self._transition_run.connect(worker.execute)
-        worker.completed.connect(self._on_transition_action_complete)
-        self._metrics_request.connect(self._on_metrics_request)
-        thread.start()
-        self._transition_thread = thread
-        self._transition_worker = worker
-
     def _execute_transition_action(self, action: str, reason: str, generation: int) -> None:
         if not self._transition_active:
             return
-        self._ensure_transition_worker()
-        self._transition_run.emit(action, reason, generation)
+
+        def _run() -> None:
+            ok = False
+            try:
+                ok = self._run_transition_action(action, reason)
+            except Exception as exc:
+                self._log(f"[transition] worker error: {exc}")
+            finally:
+                self._transition_completed.emit(ok, action, reason, generation)
+                with self._transition_worker_lock:
+                    if self._transition_worker_thread is threading.current_thread():
+                        self._transition_worker_thread = None
+
+        worker = threading.Thread(
+            target=_run,
+            name="lumen-transition",
+            daemon=True,
+        )
+        with self._transition_worker_lock:
+            active_worker = self._transition_worker_thread
+            if active_worker is not None and active_worker.is_alive():
+                self._logger.warning("[transition] Refusing to start a second transition worker")
+                self._transition_completed.emit(False, action, reason, generation)
+                return
+            self._transition_worker_thread = worker
+        worker.start()
+
+    def _join_transition_worker(self) -> None:
+        with self._transition_worker_lock:
+            worker = self._transition_worker_thread
+        if worker is None or worker is threading.current_thread():
+            return
+        worker.join()
+        with self._transition_worker_lock:
+            if self._transition_worker_thread is worker:
+                self._transition_worker_thread = None
 
     def _on_transition_action_complete(self, ok: bool, action: str, reason: str, generation: int) -> None:
+        if self._shutting_down:
+            self._transition_active = False
+            return
         was_connected, is_connected = self._refresh_connected_state()
         if was_connected != is_connected:
             self.connection_changed.emit(is_connected)
-            self._metrics_request.emit(is_connected)
+            self._on_metrics_request(is_connected)
         if (
             ok
             and action in ("proxy_hot_swap", "connect", "reconnect")
@@ -1312,20 +1394,24 @@ class AppController(QObject):
         on_countries_resolved_operation(self, results)
 
     def shutdown(self) -> None:
+        if self._shutting_down:
+            return
+        self._shutting_down = True
         self._logger.info("[app] AppController shutting down...")
-        shutdown_operation(self)
-        thread = getattr(self, "_transition_thread", None)
-        if thread is not None:
-            self._logger.info("[app] Stopping transition thread...")
-            try:
-                if thread.isRunning():
-                    thread.quit()
-                    if not thread.wait(2000):
-                        self._logger.warning("[app] Transition thread failed to quit in time, terminating...")
-                        thread.terminate()
-                        thread.wait(1000)
-            except Exception as exc:
-                self._logger.error(f"[app] Error stopping transition thread: {exc}")
+        self._transition_timer.stop()
+        self._transition_pending = False
+        self._transition_scheduled = False
+        self._desired_connected = False
+        self._join_background_tasks()
+        self._join_transition_worker()
+        try:
+            self._flush_state_saves(timeout=5.0)
+            shutdown_operation(self)
+        finally:
+            self._flush_state_saves(timeout=5.0)
+            self._save_executor_shutdown = True
+            self._save_executor.shutdown(wait=True, cancel_futures=False)
+            configure_diagnostics_upload(upload_url="", app_version=APP_VERSION)
 
     @staticmethod
     def _cleanup_tun_adapter(max_wait: float = 3.0) -> None:
@@ -1723,6 +1809,8 @@ class AppController(QObject):
 
     def run_resource_update(self, kind: str, *, apply_update: bool = True) -> None:
         from .core_resource_updater import ResourceUpdateWorker
+        if self._shutting_down:
+            return
         if self._resource_update_worker and self._resource_update_worker.isRunning():
             self.status.emit("info", "Обновление уже выполняется")
             return
@@ -1732,27 +1820,33 @@ class AppController(QObject):
                 proxy_url = f"http://{PROXY_HOST}:{int(self.get_effective_http_proxy_port() or DEFAULT_HTTP_PORT)}"
             except Exception:
                 proxy_url = f"http://{PROXY_HOST}:{DEFAULT_HTTP_PORT}"
-        self._resource_update_worker = ResourceUpdateWorker(
+        worker = ResourceUpdateWorker(
             kind,
             singbox_path=self.state.settings.singbox_path,
             apply_update=apply_update,
             proxy_url=proxy_url,
         )
-        self._resource_update_worker.progress.connect(
+        self._resource_update_worker = worker
+        from .qthread_utils import bind_thread_reference
+        bind_thread_reference(self, "_resource_update_worker", worker)
+        worker.progress.connect(
             lambda percent, update_kind=kind: self.resource_update_progress.emit(update_kind, int(percent))
         )
-        self._resource_update_worker.done.connect(self._on_resource_update_done)
-        self._resource_update_worker.request_disconnect.connect(
-            self._on_update_disconnect_request,
-            Qt.ConnectionType.BlockingQueuedConnection
-        )
-        self._resource_update_worker.start()
+        worker.done.connect(self._on_resource_update_done)
+        worker.request_disconnect.connect(self._on_update_disconnect_request)
+        worker.start()
 
     def _on_update_disconnect_request(self) -> None:
         """Callback from background update thread before files are replaced.
         Stops the running connection so files are not locked.
         """
-        if self.connected:
+        worker = self.sender()
+        success = True
+        if self._shutting_down:
+            success = False
+            self._reconnect_after_resource_update = False
+            self._reconnect_after_xray_update = False
+        elif self.connected:
             self._logger.info("[updater] Connection active. Disconnecting before replacing files...")
             self.status.emit("info", "Остановка ядра для установки обновлений...")
             stopped = self.disconnect_current()
@@ -1761,13 +1855,15 @@ class AppController(QObject):
                 self._reconnect_after_xray_update = True
                 self._logger.info("[updater] Disconnected successfully.")
             else:
+                success = False
                 self._logger.warning("[updater] Failed to disconnect.")
         else:
             self._reconnect_after_resource_update = False
             self._reconnect_after_xray_update = False
+        if hasattr(worker, "confirm_disconnect"):
+            worker.confirm_disconnect(success)
 
     def _on_resource_update_done(self, result) -> None:
-        self._resource_update_worker = None
         self.resource_update_result.emit(result)
         status = getattr(result, "status", "")
         message = getattr(result, "message", "") or ""
@@ -1782,7 +1878,7 @@ class AppController(QObject):
             self.status.emit("warning", message)
             self._logger.warning(f"[updater] Resource update ({kind}) warning: status={status}, message={message}")
 
-        if self._reconnect_after_resource_update:
+        if self._reconnect_after_resource_update and not self._shutting_down:
             self._reconnect_after_resource_update = False
             self._desired_connected = True
             self._request_transition("resource update reconnect")

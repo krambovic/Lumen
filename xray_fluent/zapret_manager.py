@@ -135,6 +135,15 @@ class ZapretManager(QObject):
     def running(self) -> bool:
         return self._process is not None and self._process.state() == QProcess.ProcessState.Running
 
+    def _release_process(self, process: QProcess | None = None) -> None:
+        if process is None:
+            process = self._process
+        if process is None:
+            return
+        if self._process is process:
+            self._process = None
+        process.deleteLater()
+
     @staticmethod
     def list_presets() -> list[str]:
         """Return sorted list of available preset names (without .txt)."""
@@ -515,13 +524,13 @@ class ZapretManager(QObject):
             if _is_elevation_launch_error(launch_error):
                 self.log_line.emit(f"[zapret] Запуск winws2.exe отклонён Windows: {launch_error}")
                 self.error.emit("Для запуска Zapret нужны права администратора. Перезапустите Lumen KVN от имени администратора.")
-                self._process = None
+                self._release_process()
                 self._launch_mode = "direct"
                 return
             if launch_mode == "direct":
                 preset_name = self._current_preset
                 self.log_line.emit("[zapret] Прямой запуск не стартовал, пробую fallback через @config из ProgramData")
-                self._process = None
+                self._release_process()
                 QTimer.singleShot(150, lambda name=preset_name: self.start(
                     name,
                     _retry_count=2,
@@ -530,7 +539,7 @@ class ZapretManager(QObject):
                 ))
                 return
             self.error.emit(f"Не удалось запустить winws2.exe: {launch_error}")
-            self._process = None
+            self._release_process()
             self._launch_mode = "direct"
             return
 
@@ -557,7 +566,7 @@ class ZapretManager(QObject):
                 process.kill()
                 wait_for_qprocess_finished(process, kill_timeout)
 
-        self._process = None
+        self._release_process(process)
         self._current_preset = ""
         self._start_args = []
         self._start_retry_count = 0
@@ -753,7 +762,7 @@ class ZapretManager(QObject):
             ):
                 preset_name = self._current_preset
                 self.log_line.emit("[zapret] Ошибка аргументов, пробую fallback через @config из ProgramData")
-                self._process = None
+                self._release_process()
                 QTimer.singleShot(150, lambda name=preset_name: self.start(
                     name,
                     _retry_count=2,
@@ -769,7 +778,7 @@ class ZapretManager(QObject):
             ):
                 preset_name = self._current_preset
                 self.log_line.emit("[zapret] winws2 завершился с кодом 1, пробую повторный запуск после очистки WinDivert")
-                self._process = None
+                self._release_process()
                 QTimer.singleShot(150, lambda name=preset_name: self.start(
                     name,
                     _retry_count=1,
@@ -786,7 +795,7 @@ class ZapretManager(QObject):
             ):
                 preset_name = self._current_preset
                 self.log_line.emit("[zapret] Прямой запуск не прошёл, пробую fallback через @config из ProgramData")
-                self._process = None
+                self._release_process()
                 QTimer.singleShot(150, lambda name=preset_name: self.start(
                     name,
                     _retry_count=2,
@@ -814,7 +823,7 @@ class ZapretManager(QObject):
                 short += f" — {hint}"
             self.error.emit(short)
 
-        self._process = None
+        self._release_process()
         self._current_preset = ""
         self._start_args = []
         self._start_retry_count = 0

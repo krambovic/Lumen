@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from ..constants import DEFAULT_HTTP_PORT, PROXY_HOST
 from ..engines.xray import XrayCoreUpdateResult, XrayCoreUpdateWorker
+from ..qthread_utils import bind_thread_reference
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -19,7 +20,25 @@ def _controller_proxy_url(controller: AppController) -> str | None:
     return f"http://{PROXY_HOST}:{port}"
 
 
+def _start_xray_worker(controller: AppController, *, apply_update: bool) -> None:
+    worker = XrayCoreUpdateWorker(
+        controller.state.settings.xray_path,
+        controller.state.settings.xray_release_channel,
+        controller.state.settings.xray_update_feed_url,
+        apply_update=apply_update,
+        proxy_url=controller._xray_update_proxy_url,
+    )
+    controller._xray_update_worker = worker
+    bind_thread_reference(controller, "_xray_update_worker", worker)
+    worker.progress.connect(controller.xray_update_progress.emit)
+    worker.done.connect(controller._on_xray_update_worker_done)
+    worker.request_disconnect.connect(controller._on_update_disconnect_request)
+    worker.start()
+
+
 def run_xray_core_update(controller: AppController, apply_update: bool, silent: bool = False) -> None:
+    if controller._shutting_down:
+        return
     if controller._xray_update_worker and controller._xray_update_worker.isRunning():
         if not silent:
             controller.status.emit("info", "Обновление Xray уже выполняется")
@@ -45,21 +64,7 @@ def run_xray_core_update(controller: AppController, apply_update: bool, silent: 
 
     controller._xray_update_silent = silent
     controller._xray_update_proxy_url = _controller_proxy_url(controller)
-    controller._xray_update_worker = XrayCoreUpdateWorker(
-        controller.state.settings.xray_path,
-        controller.state.settings.xray_release_channel,
-        controller.state.settings.xray_update_feed_url,
-        apply_update=worker_apply,
-        proxy_url=controller._xray_update_proxy_url,
-    )
-    controller._xray_update_worker.progress.connect(controller.xray_update_progress.emit)
-    controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)
-    from PyQt6.QtCore import Qt
-    controller._xray_update_worker.request_disconnect.connect(
-        controller._on_update_disconnect_request,
-        Qt.ConnectionType.BlockingQueuedConnection
-    )
-    controller._xray_update_worker.start()
+    _start_xray_worker(controller, apply_update=worker_apply)
 
     if not silent:
         message = "Обновление Xray..." if apply_update else "Проверка обновлений Xray..."
@@ -67,8 +72,13 @@ def run_xray_core_update(controller: AppController, apply_update: bool, silent: 
 
 
 def on_xray_update_worker_done(controller: AppController, result: XrayCoreUpdateResult) -> None:
-    controller._xray_update_worker = None
     controller.xray_update_result.emit(result)
+
+    if controller._shutting_down:
+        controller._xray_update_apply_requested = False
+        controller._reconnect_after_xray_update = False
+        controller._xray_update_silent = False
+        return
 
     # First pass of a user-requested apply was check-only. Now that we know the
     # real state, either install (dropping the connection only at this point) or
@@ -79,21 +89,7 @@ def on_xray_update_worker_done(controller: AppController, result: XrayCoreUpdate
             controller.status.emit("info", "Обновление Xray...")
             controller._reconnect_after_xray_update = False
             controller._xray_update_silent = False
-            controller._xray_update_worker = XrayCoreUpdateWorker(
-                controller.state.settings.xray_path,
-                controller.state.settings.xray_release_channel,
-                controller.state.settings.xray_update_feed_url,
-                apply_update=True,
-                proxy_url=controller._xray_update_proxy_url,
-            )
-            controller._xray_update_worker.progress.connect(controller.xray_update_progress.emit)
-            controller._xray_update_worker.done.connect(controller._on_xray_update_worker_done)
-            from PyQt6.QtCore import Qt
-            controller._xray_update_worker.request_disconnect.connect(
-                controller._on_update_disconnect_request,
-                Qt.ConnectionType.BlockingQueuedConnection
-            )
-            controller._xray_update_worker.start()
+            _start_xray_worker(controller, apply_update=True)
             return
         if result.status == "error":
             controller.status.emit("error", result.message)

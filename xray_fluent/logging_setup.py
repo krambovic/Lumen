@@ -195,6 +195,14 @@ def configure_diagnostics_upload(*, upload_url: str = "", app_version: str = "")
             pass
         _heartbeat_sender = None
 
+    if not upload_url:
+        try:
+            from .diagnostics_uploader import wait_for_bundle_uploads
+
+            wait_for_bundle_uploads()
+        except Exception:
+            pass
+
     if upload_url:
         try:
             from .diagnostics_uploader import HeartbeatSender, HttpDiagnosticsHandler

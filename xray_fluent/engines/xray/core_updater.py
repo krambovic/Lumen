@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import threading
+import time
 from urllib.request import Request
 
 from ...http_utils import urlopen_proxy_first
@@ -39,6 +41,15 @@ class XrayCoreUpdateResult:
     current_version: str
     latest_version: str
     updated: bool = False
+
+
+class UpdateCancelled(RuntimeError):
+    pass
+
+
+def _raise_if_cancelled(cancelled=None) -> None:
+    if cancelled is not None and cancelled():
+        raise UpdateCancelled("update cancelled")
 
 
 _SEMVER_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?")
@@ -119,10 +130,13 @@ def _normalize_channel(value: str) -> str:
     return "stable"
 
 
-def _request_json(url: str, *, proxy_url: str | None = None) -> object:
+def _request_json(url: str, *, proxy_url: str | None = None, cancelled=None) -> object:
+    _raise_if_cancelled(cancelled)
     request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     with urlopen_proxy_first(request, timeout=12, proxy_url=proxy_url) as response:
-        return json.loads(response.read().decode("utf-8"))
+        payload = response.read()
+    _raise_if_cancelled(cancelled)
+    return json.loads(payload.decode("utf-8"))
 
 
 def _pick_release_from_github(releases: list[dict], channel: str) -> dict | None:
@@ -168,14 +182,22 @@ def _extract_digest(value: str) -> str:
     return match.group(1) if match else ""
 
 
-def _fetch_dgst_hash(url: str, *, proxy_url: str | None = None) -> str:
+def _fetch_dgst_hash(url: str, *, proxy_url: str | None = None, cancelled=None) -> str:
+    _raise_if_cancelled(cancelled)
     request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     with urlopen_proxy_first(request, timeout=12, proxy_url=proxy_url) as response:
         body = response.read().decode("utf-8", errors="replace")
+    _raise_if_cancelled(cancelled)
     return _extract_digest(body)
 
 
-def resolve_xray_release(channel: str, feed_url: str = "", *, proxy_url: str | None = None) -> XrayCoreRelease | None:
+def resolve_xray_release(
+    channel: str,
+    feed_url: str = "",
+    *,
+    proxy_url: str | None = None,
+    cancelled=None,
+) -> XrayCoreRelease | None:
     normalized_channel = _normalize_channel(channel)
 
     if feed_url.strip():
@@ -190,7 +212,7 @@ def resolve_xray_release(channel: str, feed_url: str = "", *, proxy_url: str | N
             notes=info.notes,
         )
 
-    payload = _request_json(XRAY_GITHUB_RELEASES_API, proxy_url=proxy_url)
+    payload = _request_json(XRAY_GITHUB_RELEASES_API, proxy_url=proxy_url, cancelled=cancelled)
     if not isinstance(payload, list):
         return None
     release = _pick_release_from_github([item for item in payload if isinstance(item, dict)], normalized_channel)
@@ -205,7 +227,11 @@ def resolve_xray_release(channel: str, feed_url: str = "", *, proxy_url: str | N
     if not digest:
         dgst_asset = _find_github_asset(release, "Xray-windows-64.zip.dgst")
         if dgst_asset:
-            digest = _fetch_dgst_hash(str(dgst_asset.get("browser_download_url") or ""), proxy_url=proxy_url)
+            digest = _fetch_dgst_hash(
+                str(dgst_asset.get("browser_download_url") or ""),
+                proxy_url=proxy_url,
+                cancelled=cancelled,
+            )
 
     version = str(release.get("tag_name") or release.get("name") or "")
     return XrayCoreRelease(
@@ -217,22 +243,39 @@ def resolve_xray_release(channel: str, feed_url: str = "", *, proxy_url: str | N
     )
 
 
-def _download_file(url: str, destination: Path, on_progress=None, *, proxy_url: str | None = None) -> None:
+def _download_file(
+    url: str,
+    destination: Path,
+    on_progress=None,
+    *,
+    proxy_url: str | None = None,
+    cancelled=None,
+    response_opened=None,
+    response_closed=None,
+) -> None:
     """Download file with optional progress callback(downloaded, total)."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     with urlopen_proxy_first(request, timeout=120, proxy_url=proxy_url) as response:
-        total = int(response.headers.get("Content-Length", 0))
-        downloaded = 0
-        with open(destination, "wb") as file:
-            while True:
-                chunk = response.read(1024 * 1024)  # 1 MB
-                if not chunk:
-                    break
-                file.write(chunk)
-                downloaded += len(chunk)
-                if on_progress and total > 0:
-                    on_progress(downloaded, total)
+        if response_opened is not None:
+            response_opened(response)
+        try:
+            total = int(response.headers.get("Content-Length", 0))
+            downloaded = 0
+            with open(destination, "wb") as file:
+                while True:
+                    _raise_if_cancelled(cancelled)
+                    chunk = response.read(1024 * 1024)  # 1 MB
+                    if not chunk:
+                        break
+                    file.write(chunk)
+                    downloaded += len(chunk)
+                    if on_progress and total > 0:
+                        on_progress(downloaded, total)
+        finally:
+            if response_closed is not None:
+                response_closed(response)
+    _raise_if_cancelled(cancelled)
 
 
 def _sha256_file(file_path: Path) -> str:
@@ -318,7 +361,11 @@ def check_and_update_xray_core(
     on_progress=None,
     proxy_url: str | None = None,
     on_install_start=None,
+    cancelled=None,
+    response_opened=None,
+    response_closed=None,
 ) -> XrayCoreUpdateResult:
+    _raise_if_cancelled(cancelled)
     exe = resolve_configured_path(
         xray_path,
         default_path=XRAY_PATH_DEFAULT,
@@ -341,7 +388,14 @@ def check_and_update_xray_core(
     current_version = _extract_version(current_text)
 
     try:
-        release = resolve_xray_release(channel, feed_url, proxy_url=proxy_url)
+        release = resolve_xray_release(
+            channel,
+            feed_url,
+            proxy_url=proxy_url,
+            cancelled=cancelled,
+        )
+    except UpdateCancelled:
+        raise
     except Exception as exc:
         return XrayCoreUpdateResult(
             status="error",
@@ -387,7 +441,17 @@ def check_and_update_xray_core(
         temp_dir = Path(temp_dir_str)
         archive_path = temp_dir / "Xray-windows-64.zip"
         try:
-            _download_file(release.url, archive_path, on_progress=on_progress, proxy_url=proxy_url)
+            _download_file(
+                release.url,
+                archive_path,
+                on_progress=on_progress,
+                proxy_url=proxy_url,
+                cancelled=cancelled,
+                response_opened=response_opened,
+                response_closed=response_closed,
+            )
+        except UpdateCancelled:
+            raise
         except Exception as exc:
             return XrayCoreUpdateResult(
                 status="error",
@@ -423,6 +487,8 @@ def check_and_update_xray_core(
         if on_install_start:
             try:
                 on_install_start()
+            except UpdateCancelled:
+                raise
             except Exception as exc:
                 return XrayCoreUpdateResult(
                     status="error",
@@ -475,18 +541,64 @@ class XrayCoreUpdateWorker(QThread):
         self._feed_url = feed_url
         self._apply_update = apply_update
         self._proxy_url = proxy_url
+        self._cancelled = threading.Event()
+        self._disconnect_ack = threading.Event()
+        self._disconnect_success = False
+        self._responses: list[object] = []
+        self._response_lock = threading.Lock()
+        self.setObjectName("lumen-xray-updater")
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        self._disconnect_ack.set()
+        with self._response_lock:
+            responses = list(self._responses)
+        for response in responses:
+            try:
+                response.close()
+            except Exception:
+                pass
+
+    def _register_response(self, response: object) -> None:
+        with self._response_lock:
+            self._responses.append(response)
+
+    def _unregister_response(self, response: object) -> None:
+        with self._response_lock:
+            self._responses = [item for item in self._responses if item is not response]
+
+    def confirm_disconnect(self, success: bool) -> None:
+        self._disconnect_success = bool(success)
+        self._disconnect_ack.set()
 
     def run(self) -> None:
-        result = check_and_update_xray_core(
-            self._xray_path,
-            self._channel,
-            self._feed_url,
-            apply_update=self._apply_update,
-            on_progress=lambda d, t: self.progress.emit(int(d * 100 / t)),
-            proxy_url=self._proxy_url,
-            on_install_start=self._trigger_disconnect_request,
-        )
-        self.done.emit(result)
+        try:
+            result = check_and_update_xray_core(
+                self._xray_path,
+                self._channel,
+                self._feed_url,
+                apply_update=self._apply_update,
+                on_progress=lambda d, t: self.progress.emit(int(d * 100 / t)),
+                proxy_url=self._proxy_url,
+                on_install_start=self._trigger_disconnect_request,
+                cancelled=self._cancelled.is_set,
+                response_opened=self._register_response,
+                response_closed=self._unregister_response,
+            )
+        except UpdateCancelled:
+            return
+        if not self._cancelled.is_set():
+            self.done.emit(result)
 
     def _trigger_disconnect_request(self) -> None:
+        self._disconnect_success = False
+        self._disconnect_ack.clear()
         self.request_disconnect.emit()
+        deadline = time.monotonic() + 60.0
+        while not self._disconnect_ack.wait(0.1):
+            _raise_if_cancelled(self._cancelled.is_set)
+            if time.monotonic() >= deadline:
+                raise RuntimeError("timed out waiting for the active core to stop")
+        _raise_if_cancelled(self._cancelled.is_set)
+        if not self._disconnect_success:
+            raise RuntimeError("failed to stop the active core before update")

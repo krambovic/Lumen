@@ -31,6 +31,10 @@ USER_AGENT = f"LumenKVN/{APP_VERSION}"
 APP_ID = "{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1"
 
 
+class UpdateOperationCancelled(RuntimeError):
+    pass
+
+
 def is_portable() -> bool:
     for name in ("portable.txt", "portable"):
         try:
@@ -247,12 +251,6 @@ def _sha256_file(file_path: Path) -> str:
     return digest.hexdigest()
 
 
-def _fetch_text(url: str) -> str:
-    request = Request(url, headers={"User-Agent": USER_AGENT})
-    with urlopen(request, timeout=15) as response:
-        return response.read().decode("utf-8", errors="replace")
-
-
 def _is_nightly_asset(asset: dict) -> bool:
     name = str(asset.get("name") or "").lower()
     return "nightly" in name or "qml" in name
@@ -295,9 +293,36 @@ class UpdateChecker(QThread):
         super().__init__(parent)
         self._channel = (channel or "stable").strip().lower()
         self._prefer_qml = bool(prefer_qml) or self._channel == "nightly"
+        self._cancelled = threading.Event()
+        self._responses: list[object] = []
+        self._response_lock = threading.Lock()
+        self.setObjectName("lumen-app-update-checker")
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        with self._response_lock:
+            responses = list(self._responses)
+        for response in responses:
+            try:
+                response.close()
+            except Exception:
+                pass
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancelled.is_set():
+            raise UpdateOperationCancelled("update check cancelled")
+
+    def _register_response(self, response: object) -> None:
+        with self._response_lock:
+            self._responses.append(response)
+
+    def _unregister_response(self, response: object) -> None:
+        with self._response_lock:
+            self._responses = [item for item in self._responses if item is not response]
 
     def run(self) -> None:
         try:
+            self._raise_if_cancelled()
             target = self._pick_target()
             if target is None:
                 self.result.emit(None)
@@ -320,24 +345,49 @@ class UpdateChecker(QThread):
                     return
                 update.channel = self._channel
                 update.is_downgrade = not is_newer
-                self.result.emit(update)
+                if not self._cancelled.is_set():
+                    self.result.emit(update)
+        except UpdateOperationCancelled:
+            return
         except Exception as exc:
-            self.error.emit(str(exc))
+            if not self._cancelled.is_set():
+                self.error.emit(str(exc))
             return
 
     def _is_prerelease_channel(self) -> bool:
         return self._channel in ("beta", "nightly", "prerelease", "pre-release", "pre")
 
     def _fetch_json(self, url: str):
+        self._raise_if_cancelled()
         req = Request(url, headers={"User-Agent": USER_AGENT})
         with urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read())
+            self._register_response(resp)
+            try:
+                payload = resp.read()
+            finally:
+                self._unregister_response(resp)
+        self._raise_if_cancelled()
+        return json.loads(payload)
+
+    def _fetch_text(self, url: str) -> str:
+        self._raise_if_cancelled()
+        request = Request(url, headers={"User-Agent": USER_AGENT})
+        with urlopen(request, timeout=15) as response:
+            self._register_response(response)
+            try:
+                payload = response.read()
+            finally:
+                self._unregister_response(response)
+        self._raise_if_cancelled()
+        return payload.decode("utf-8", errors="replace")
 
     def _latest_stable(self) -> dict | None:
         # /releases/latest всегда отдаёт новейший НЕ-pre-release независимо от
         # количества промежуточных пререлизов (404 — если стабильных нет).
         try:
             data = self._fetch_json(GITHUB_API)
+        except UpdateOperationCancelled:
+            raise
         except Exception:
             return None
         if isinstance(data, dict) and data.get("tag_name") and not data.get("draft"):
@@ -349,6 +399,8 @@ class UpdateChecker(QThread):
         # Pick the newest pre-release by semver instead of trusting API order.
         try:
             releases = self._fetch_json(RELEASES_API)
+        except UpdateOperationCancelled:
+            raise
         except Exception:
             return None
         if not isinstance(releases, list):
@@ -417,7 +469,7 @@ class UpdateChecker(QThread):
                     break
             if sidecar:
                 digest = _extract_digest(
-                    _fetch_text(str(sidecar.get("browser_download_url") or ""))
+                    self._fetch_text(str(sidecar.get("browser_download_url") or ""))
                 )
         if not digest:
             label = "zip-архив" if portable else "установщик"
@@ -462,6 +514,32 @@ class UpdateDownloader(QThread):
         self._update = update
         self._proxy_url = proxy_url
         self._restart_in_tray = restart_in_tray
+        self._cancelled = threading.Event()
+        self._responses: list[object] = []
+        self._response_lock = threading.Lock()
+        self.setObjectName("lumen-app-update-downloader")
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        with self._response_lock:
+            responses = list(self._responses)
+        for response in responses:
+            try:
+                response.close()
+            except Exception:
+                pass
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancelled.is_set():
+            raise UpdateOperationCancelled("update download cancelled")
+
+    def _register_response(self, response: object) -> None:
+        with self._response_lock:
+            self._responses.append(response)
+
+    def _unregister_response(self, response: object) -> None:
+        with self._response_lock:
+            self._responses = [item for item in self._responses if item is not response]
 
     # ── download helpers ────────────────────────────────────────
 
@@ -473,11 +551,16 @@ class UpdateDownloader(QThread):
 
     def _supports_range(self, url: str, opener: urllib.request.OpenerDirector) -> tuple[bool, int]:
         """HEAD request to check Range support and get Content-Length."""
+        self._raise_if_cancelled()
         req = Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
         with opener.open(req, timeout=_DOWNLOAD_TIMEOUT) as resp:
-            accepts = resp.headers.get("Accept-Ranges", "").lower()
-            length = int(resp.headers.get("Content-Length", 0))
-            return accepts == "bytes" and length > 0, length
+            self._register_response(resp)
+            try:
+                accepts = resp.headers.get("Accept-Ranges", "").lower()
+                length = int(resp.headers.get("Content-Length", 0))
+                return accepts == "bytes" and length > 0, length
+            finally:
+                self._unregister_response(resp)
 
     def _download_segment(
         self,
@@ -499,43 +582,54 @@ class UpdateDownloader(QThread):
             "Range": f"bytes={start}-{end}",
         })
         with opener.open(req, timeout=_DOWNLOAD_TIMEOUT) as resp:
-            status_code = getattr(resp, "status", None)
-            content_range = resp.headers.get("Content-Range", "")
-            if status_code != 206 or not content_range.startswith(f"bytes {start}-{end}/"):
-                raise RuntimeError("Сервер некорректно ответил на Range-запрос")
+            self._register_response(resp)
+            try:
+                self._raise_if_cancelled()
+                status_code = getattr(resp, "status", None)
+                content_range = resp.headers.get("Content-Range", "")
+                if status_code != 206 or not content_range.startswith(f"bytes {start}-{end}/"):
+                    raise RuntimeError("Сервер некорректно ответил на Range-запрос")
 
-            downloaded = 0
-            with open(seg_path, "wb") as f:
-                while True:
-                    chunk = resp.read(_CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    with lock:
-                        progress_arr[seg_index] += len(chunk)
-                        done = sum(progress_arr)
-                        self.progress.emit(int(done * 100 / total))
-            if downloaded != expected_length:
-                raise RuntimeError("Сервер вернул неполный фрагмент установщика")
+                downloaded = 0
+                with open(seg_path, "wb") as f:
+                    while True:
+                        self._raise_if_cancelled()
+                        chunk = resp.read(_CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        with lock:
+                            progress_arr[seg_index] += len(chunk)
+                            done = sum(progress_arr)
+                            self.progress.emit(int(done * 100 / total))
+                if downloaded != expected_length:
+                    raise RuntimeError("Сервер вернул неполный фрагмент установщика")
+            finally:
+                self._unregister_response(resp)
 
     def _download_single(self, url: str, opener: urllib.request.OpenerDirector, target_path: Path) -> None:
         """Single-connection fallback download."""
         req = Request(url, headers={"User-Agent": USER_AGENT})
         with opener.open(req, timeout=_DOWNLOAD_TIMEOUT) as resp:
-            total = int(resp.headers.get("Content-Length", 0))
-            downloaded = 0
-            with open(target_path, "wb") as f:
-                while True:
-                    chunk = resp.read(_CHUNK_SIZE)
-                    if not chunk:
-                        if downloaded == 0:
-                            raise TimeoutError("Сервер не отдаёт данные")
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total > 0:
-                        self.progress.emit(int(downloaded * 100 / total))
+            self._register_response(resp)
+            try:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                with open(target_path, "wb") as f:
+                    while True:
+                        self._raise_if_cancelled()
+                        chunk = resp.read(_CHUNK_SIZE)
+                        if not chunk:
+                            if downloaded == 0:
+                                raise TimeoutError("Сервер не отдаёт данные")
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0:
+                            self.progress.emit(int(downloaded * 100 / total))
+            finally:
+                self._unregister_response(resp)
 
     def _download(self, target_path: Path, proxy_url: str | None) -> None:
         """Download update installer with multi-segment acceleration.
@@ -549,6 +643,8 @@ class UpdateDownloader(QThread):
         # Check if server supports Range requests
         try:
             supports_range, total = self._supports_range(url, opener)
+        except UpdateOperationCancelled:
+            raise
         except Exception:
             supports_range, total = False, 0
 
@@ -595,6 +691,8 @@ class UpdateDownloader(QThread):
                     with open(sp, "rb") as seg_f:
                         shutil.copyfileobj(seg_f, out)
         except Exception as exc:
+            if self._cancelled.is_set():
+                raise UpdateOperationCancelled("update download cancelled") from exc
             _log.warning("Segmented download failed, falling back to single download: %s", exc)
             if target_path.exists():
                 target_path.unlink()
@@ -609,6 +707,7 @@ class UpdateDownloader(QThread):
     def run(self) -> None:
         tmp_dir: Path | None = None
         try:
+            self._raise_if_cancelled()
             tmp_dir = Path(tempfile.mkdtemp(prefix="lumenkvn_update_"))
             default_setup = "LumenKVN-portable-windows-x64.zip" if is_portable() else "LumenKVN-Setup-windows-x64.exe"
             setup_name = self._update.asset_name or default_setup
@@ -622,6 +721,8 @@ class UpdateDownloader(QThread):
                 try:
                     self._download(setup_path, self._proxy_url)
                     downloaded_ok = True
+                except UpdateOperationCancelled:
+                    raise
                 except Exception as exc:
                     _log.warning("Proxy download failed: %s", exc)
                     self.status.emit(
@@ -638,6 +739,8 @@ class UpdateDownloader(QThread):
                 try:
                     self._download(setup_path, None)
                     downloaded_ok = True
+                except UpdateOperationCancelled:
+                    raise
                 except Exception as exc:
                     _log.warning("Direct download failed: %s", exc)
 
@@ -655,6 +758,8 @@ class UpdateDownloader(QThread):
                 # cleanup
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return
+
+            self._raise_if_cancelled()
 
             label = "архива" if is_portable() else "установщика"
             self.status.emit(f"Проверка {label}...")
@@ -874,6 +979,9 @@ class UpdateDownloader(QThread):
 
             self.finished_ok.emit()
 
+        except UpdateOperationCancelled:
+            if tmp_dir is not None:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
         except Exception as exc:
             if tmp_dir is not None:
                 shutil.rmtree(tmp_dir, ignore_errors=True)

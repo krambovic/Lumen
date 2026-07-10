@@ -32,6 +32,7 @@ from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_u
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
+from ...qthread_utils import stop_and_wait_for_thread
 from ...startup import STARTUP_STATE_DISABLED, get_startup_state, is_process_elevated, relaunch_as_admin
 from .log_model import LogFilterModel, LogModel
 from .node_list_model import NodeListModel
@@ -194,6 +195,9 @@ class AppBridge(QObject):
         # Фоновая загрузка подписок (ленивая инициализация потока).
         self._sub_thread: QThread | None = None
         self._sub_worker: SubscriptionFetchWorker | None = None
+        self._app_update_checker: QThread | None = None
+        self._app_update_downloader: QThread | None = None
+        self._startup_resource_worker: QThread | None = None
         self._sub_batches: dict[int, dict] = {}
         self._sub_batch_seq = 0
 
@@ -299,6 +303,7 @@ class AppBridge(QObject):
     def shutdown(self) -> None:
         logger = logging.getLogger("xray_fluent.app")
         logger.info("[app] AppBridge shutting down...")
+        self.prepareQuit()
         try:
             self._sub_timer.stop()
             self._app_update_timer.stop()
@@ -308,20 +313,34 @@ class AppBridge(QObject):
         if thread is not None:
             logger.info("[app] Stopping subscription thread...")
             try:
-                if thread.isRunning():
-                    thread.quit()
-                    if not thread.wait(2000):
-                        logger.warning("[app] Subscription thread failed to quit in time, terminating...")
-                        thread.terminate()
-                        thread.wait(1500)
+                worker = self._sub_worker
+                if worker is not None:
+                    worker.stop()
+                thread.quit()
+                stop_and_wait_for_thread(
+                    thread,
+                    label="subscription thread",
+                    logger=logger,
+                )
             except Exception as exc:
                 logger.error(f"[app] Error stopping subscription thread: {exc}")
-            if thread.isRunning():
-                if not hasattr(self, "_retired_sub_threads"):
-                    self._retired_sub_threads = []
-                self._retired_sub_threads.append(thread)
             self._sub_thread = None
             self._sub_worker = None
+            thread.deleteLater()
+
+        for attribute, label in (
+            ("_app_update_checker", "application update checker"),
+            ("_startup_resource_worker", "startup resource checker"),
+            ("_app_update_downloader", "application update downloader"),
+        ):
+            worker = getattr(self, attribute, None)
+            if worker is None:
+                continue
+            stop = worker.cancel if hasattr(worker, "cancel") else None
+            stop_and_wait_for_thread(worker, stop=stop, label=label, logger=logger)
+            if getattr(self, attribute, None) is worker:
+                setattr(self, attribute, None)
+            worker.deleteLater()
         try:
             self.controller.shutdown()
         except Exception:
@@ -371,7 +390,7 @@ class AppBridge(QObject):
     # ── Фоновая загрузка подписок (сеть вне UI-потока) ──
     def _ensure_sub_worker(self) -> None:
         """Лениво поднимает поток+воркер для загрузки подписок (GUI-поток)."""
-        if self._sub_thread is not None:
+        if self._quitting or self._sub_thread is not None:
             return
         logger = logging.getLogger("xray_fluent.app")
         logger.info("[app] Starting subscription fetch thread...")
@@ -382,12 +401,15 @@ class AppBridge(QObject):
         self._sub_fetch_run.connect(worker.run_batch)
         worker.fetched.connect(self._on_sub_fetched)
         worker.completed.connect(self._on_sub_batch_completed)
+        thread.finished.connect(worker.deleteLater)
         thread.start()
         self._sub_thread = thread
         self._sub_worker = worker
 
     def _dispatch_sub_jobs(self, jobs: list, kind: str) -> None:
         """Передаёт задачи в фоновый поток; тосты покажем по завершению батча."""
+        if self._quitting:
+            return
         if not jobs:
             if kind in ("update", "update_all"):
                 self.toast.emit("info", self._localized_backend_message("Подписок нет"))
@@ -401,16 +423,17 @@ class AppBridge(QObject):
     def _on_sub_fetched(self, batch_id: int, job: object, text: str, userinfo: object, errors: object) -> None:
         """Применяет результат одной подписки. Всегда GUI-поток (queued)."""
         batch = self._sub_batches.get(batch_id)
+        if batch is None:
+            return
         try:
             added, errs = self.controller.apply_fetched_subscription(
                 job.url, job.name, job.kind, text, userinfo, list(errors or [])
             )
         except Exception as exc:  # noqa: BLE001
             added, errs = 0, [str(exc)]
-        if batch is not None:
-            batch["added"] += int(added or 0)
-            if errs:
-                batch["errors"].extend(errs)
+        batch["added"] += int(added or 0)
+        if errs:
+            batch["errors"].extend(errs)
 
     def _on_sub_batch_completed(self, batch_id: int, total: int) -> None:
         """Показывает итоговый тост после завершения всех задач батча."""
@@ -2002,11 +2025,15 @@ class AppBridge(QObject):
         checker.start()
 
     def _clear_app_update_checker(self) -> None:
-        self._app_update_checker = None
+        checker = self.sender()
+        if self._app_update_checker is checker:
+            self._app_update_checker = None
+        if checker is not None:
+            checker.deleteLater()
 
     def _start_resource_update_check(self) -> None:
         from ...core_resource_updater import StartupResourceCheckWorker
-        if getattr(self, "_startup_resource_worker", None) is not None:
+        if self._quitting or self._startup_resource_worker is not None:
             return
         proxy_url = None
         if self.controller.connected:
@@ -2024,9 +2051,15 @@ class AppBridge(QObject):
         worker.start()
 
     def _clear_startup_resource_worker(self) -> None:
-        self._startup_resource_worker = None
+        worker = self.sender()
+        if self._startup_resource_worker is worker:
+            self._startup_resource_worker = None
+        if worker is not None:
+            worker.deleteLater()
 
     def _on_startup_resource_check_done(self, results) -> None:
+        if self._quitting:
+            return
         labels = {"singbox": "sing-box", "geodata": "geoip/geosite"}
         available = [
             labels.get(getattr(r, "kind", ""), getattr(r, "kind", ""))
@@ -2039,6 +2072,8 @@ class AppBridge(QObject):
         self.trayMessageRequested.emit()
 
     def _on_app_update_result(self, update) -> None:
+        if self._quitting:
+            return
         self._pending_app_update = update
         silent = getattr(self, "_app_update_silent", False)
         if update is None:
@@ -2074,12 +2109,16 @@ class AppBridge(QObject):
             QTimer.singleShot(0, self.downloadAppUpdate)
 
     def _on_app_update_error(self, message: str) -> None:
+        if self._quitting:
+            return
         if getattr(self, "_app_update_silent", False):
             return
         self.appUpdateState.emit({"phase": "error", "message": message})
 
     @pyqtSlot()
     def downloadAppUpdate(self) -> None:
+        if self._quitting:
+            return
         update = getattr(self, "_pending_app_update", None)
         if update is None:
             self.appUpdateState.emit({"phase": "error", "message": "Сначала проверьте обновления"})
@@ -2107,7 +2146,11 @@ class AppBridge(QObject):
         downloader.start()
 
     def _clear_app_update_downloader(self) -> None:
-        self._app_update_downloader = None
+        downloader = self.sender()
+        if self._app_update_downloader is downloader:
+            self._app_update_downloader = None
+        if downloader is not None:
+            downloader.deleteLater()
 
     def _on_app_download_progress(self, percent: int) -> None:
         self.appUpdateState.emit({"phase": "downloading", "percent": int(percent)})
@@ -3291,6 +3334,45 @@ class AppBridge(QObject):
         return self._sub_import_status
 
     # ── Subscriptions ────────────────────────────────────────────
+    @pyqtSlot()
+    def cancelSubscriptionImport(self) -> None:
+        if not self._sub_importing:
+            return
+        self._sub_importing = False
+        self._sub_import_status = ""
+        self.subscriptionImportingChanged.emit()
+        self.subscriptionImportStatusChanged.emit()
+        for batch_id in list(self._sub_batches.keys()):
+            self._sub_batches.pop(batch_id, None)
+        worker = self._sub_worker
+        thread = self._sub_thread
+        if worker is not None:
+            try:
+                worker.stop()
+            except Exception:
+                pass
+        if thread is not None:
+            logger = logging.getLogger("xray_fluent.app")
+            try:
+                if worker is not None:
+                    try:
+                        self._sub_fetch_run.disconnect(worker.run_batch)
+                    except Exception:
+                        pass
+                thread.quit()
+                stop_and_wait_for_thread(
+                    thread,
+                    label="subscription import cancellation",
+                    logger=logger,
+                )
+            finally:
+                if self._sub_thread is thread:
+                    self._sub_thread = None
+                if self._sub_worker is worker:
+                    self._sub_worker = None
+                thread.deleteLater()
+        self.toast.emit("info", tr("Импорт подписки отменён"))
+
     @pyqtSlot(str)
     @pyqtSlot(str, str)
     def importSubscription(self, url: str, name: str = "") -> None:

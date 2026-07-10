@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 
@@ -27,6 +28,10 @@ from .security import (
 
 
 class PassphraseRequired(Exception):
+    pass
+
+
+class StateLoadError(Exception):
     pass
 
 
@@ -94,6 +99,17 @@ class StateStorage:
         payload["settings"] = settings_payload
         return json.dumps(payload, ensure_ascii=True, indent=2)
 
+    def _quarantine_unreadable_state(self) -> Path | None:
+        if not self.state_file.exists():
+            return None
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        quarantine = self.state_file.with_name(f"{self.state_file.name}.corrupt-{stamp}")
+        try:
+            self.state_file.replace(quarantine)
+            return quarantine
+        except Exception:
+            return None
+
     def is_encrypted(self) -> bool:
         if not self.state_file.exists():
             return False
@@ -107,7 +123,9 @@ class StateStorage:
 
         raw_text = self.state_file.read_text(encoding="utf-8").strip()
         if not raw_text:
-            return self._default_state()
+            quarantine = self._quarantine_unreadable_state()
+            suffix = f" Файл сохранён как {quarantine}" if quarantine else ""
+            raise StateLoadError(f"{self.state_file.name} пустой.{suffix}")
 
         payload: dict
 
@@ -120,20 +138,34 @@ class StateStorage:
 
         # Plain JSON
         elif raw_text.startswith("{"):
-            payload = json.loads(raw_text)
+            try:
+                payload = json.loads(raw_text)
+            except json.JSONDecodeError as exc:
+                quarantine = self._quarantine_unreadable_state()
+                suffix = f" Файл сохранён как {quarantine}" if quarantine else ""
+                raise StateLoadError(f"Не удалось прочитать {self.state_file.name}: {exc}.{suffix}") from exc
 
         # Legacy DPAPI format — try migration
         else:
             try:
                 decoded = decode_encrypted(raw_text).decode("utf-8")
                 payload = json.loads(decoded)
-            except Exception:
+            except Exception as first_exc:
                 try:
                     payload = json.loads(raw_text)
-                except json.JSONDecodeError:
-                    return self._default_state()
+                except json.JSONDecodeError as exc:
+                    quarantine = self._quarantine_unreadable_state()
+                    suffix = f" Файл сохранён как {quarantine}" if quarantine else ""
+                    raise StateLoadError(
+                        f"Не удалось прочитать legacy {self.state_file.name}: {first_exc}; {exc}.{suffix}"
+                    ) from exc
 
-        state = AppState.from_dict(payload)
+        try:
+            state = AppState.from_dict(payload)
+        except Exception as exc:
+            quarantine = self._quarantine_unreadable_state()
+            suffix = f" Файл сохранён как {quarantine}" if quarantine else ""
+            raise StateLoadError(f"{self.state_file.name} повреждён: {exc}.{suffix}") from exc
         return self._normalize_state_paths(state)
 
     def save(self, state: AppState) -> None:

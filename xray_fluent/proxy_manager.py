@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import sys
-import threading
 from ctypes import wintypes
 
 if sys.platform == "win32":
@@ -136,15 +135,12 @@ class ProxyManager:
         if not self.is_supported:
             return
 
-        def _notify() -> None:
-            try:
-                wininet = ctypes.windll.Wininet
-                wininet.InternetSetOptionW(0, INTERNET_OPTION_SETTINGS_CHANGED, 0, 0)
-                wininet.InternetSetOptionW(0, INTERNET_OPTION_REFRESH, 0, 0)
-            except Exception:
-                pass
-
-        threading.Thread(target=_notify, name="proxy-refresh", daemon=True).start()
+        try:
+            wininet = ctypes.windll.Wininet
+            wininet.InternetSetOptionW(0, INTERNET_OPTION_SETTINGS_CHANGED, 0, 0)
+            wininet.InternetSetOptionW(0, INTERNET_OPTION_REFRESH, 0, 0)
+        except Exception:
+            pass
 
     def _set_wininet_connection_proxy(self, proxy_server: str, override: str, enabled: bool) -> bool:
         if not self.is_supported:

@@ -241,6 +241,7 @@
   "Импорт из буфера": "Import from clipboard",
   "Импорт из файла": "Import from file",
   "Импорт подписки": "Import subscription",
+  "Импорт подписки отменён": "Subscription import cancelled",
   "Импорт правил": "Import rules",
   "Импорт шаблона": "Import template",
   "Импортировать": "Import",

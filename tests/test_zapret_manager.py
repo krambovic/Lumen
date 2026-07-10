@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import sys
+
+from PyQt6.QtCore import QCoreApplication
 
 from xray_fluent import zapret_manager
 
@@ -54,3 +57,23 @@ def test_ipset_registration_error_is_not_windivert_conflict() -> None:
         1,
         ["failed to register ipset 'lists/ipset-base.txt'"],
     )
+
+
+def test_released_qprocess_is_scheduled_for_deletion() -> None:
+    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
+
+    class _Process:
+        deleted = False
+
+        def deleteLater(self) -> None:
+            self.deleted = True
+
+    manager = zapret_manager.ZapretManager()
+    process = _Process()
+    manager._process = process
+
+    manager._release_process(process)
+
+    assert manager._process is None
+    assert process.deleted is True
+    assert app is QCoreApplication.instance()

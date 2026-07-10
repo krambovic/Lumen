@@ -20,6 +20,18 @@ if TYPE_CHECKING:
     from ..app_controller import AppController
 
 
+MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
+
+
+class SubscriptionFetchCancelled(RuntimeError):
+    pass
+
+
+def _raise_if_subscription_cancelled(cancelled=None) -> None:
+    if cancelled is not None and cancelled():
+        raise SubscriptionFetchCancelled("загрузка подписки отменена")
+
+
 def import_nodes_from_text(
     controller: AppController,
     text: str,
@@ -378,6 +390,9 @@ def _fetch_subscription_with_headers(
     headers: dict[str, str],
     *,
     direct: bool = False,
+    cancelled=None,
+    response_opened=None,
+    response_closed=None,
 ) -> tuple[str, dict]:
     """Загружает подписку и возвращает (текст_со_ссылками, userinfo).
 
@@ -386,13 +401,39 @@ def _fetch_subscription_with_headers(
     request = Request(url, headers=dict(headers))
     opener = build_opener(ProxyHandler({})) if direct else None
     open_fn = opener.open if opener is not None else urlopen
+    _raise_if_subscription_cancelled(cancelled)
     with open_fn(request, timeout=20) as response:
-        raw = response.read()
+        if response_opened is not None:
+            response_opened(response)
         try:
-            header_value = response.headers.get("subscription-userinfo", "")
-        except Exception:  # noqa: BLE001 - защита от нестандартных ответов
-            header_value = ""
-        metadata = _extract_subscription_metadata(response.headers, profile_name)
+            try:
+                declared_size = int(response.headers.get("Content-Length", 0) or 0)
+            except (TypeError, ValueError):
+                declared_size = 0
+            if declared_size > MAX_SUBSCRIPTION_BYTES:
+                raise RuntimeError(
+                    f"подписка слишком большая: {declared_size} байт, максимум {MAX_SUBSCRIPTION_BYTES}"
+                )
+            payload = bytearray()
+            while True:
+                _raise_if_subscription_cancelled(cancelled)
+                chunk = response.read(min(64 * 1024, MAX_SUBSCRIPTION_BYTES + 1 - len(payload)))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+                if len(payload) > MAX_SUBSCRIPTION_BYTES:
+                    raise RuntimeError(
+                        f"подписка превышает допустимый размер {MAX_SUBSCRIPTION_BYTES} байт"
+                    )
+            raw = bytes(payload)
+            try:
+                header_value = response.headers.get("subscription-userinfo", "")
+            except Exception:  # noqa: BLE001 - защита от нестандартных ответов
+                header_value = ""
+            metadata = _extract_subscription_metadata(response.headers, profile_name)
+        finally:
+            if response_closed is not None:
+                response_closed(response)
     userinfo = _parse_userinfo_header(header_value)
     userinfo = {**userinfo, **metadata}
     text = raw.decode("utf-8", errors="replace").strip()
@@ -471,13 +512,20 @@ def _find_subscription(controller: AppController, url: str) -> dict | None:
     return None
 
 
-def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
+def fetch_subscription_payload(
+    url: str,
+    *,
+    cancelled=None,
+    response_opened=None,
+    response_closed=None,
+) -> tuple[str, dict, list[str]]:
     """Загружает подписку по сети и возвращает (текст_ссылок, userinfo, errors).
 
     Только сеть, не трогает controller/state — безопасно вызывать в фоновом потоке.
     При неудаче текст пустой, а ошибки лежат в errors.
     """
     url = (url or "").strip()
+    _raise_if_subscription_cancelled(cancelled)
     if not url:
         return "", {}, ["Пустой URL подписки"]
     # Закрытые ссылки Happ (happ://crypt*): сначала расшифровываем. Результат —
@@ -495,9 +543,22 @@ def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
             return _happ_direct_payload(decrypted)
     attempts: list[str] = []
     first_userinfo: dict = {}
+    fetch_options = {}
+    if cancelled is not None:
+        fetch_options["cancelled"] = cancelled
+    if response_opened is not None:
+        fetch_options["response_opened"] = response_opened
+    if response_closed is not None:
+        fetch_options["response_closed"] = response_closed
     for profile_name, headers in _SUBSCRIPTION_CLIENT_PROFILES:
+        _raise_if_subscription_cancelled(cancelled)
         try:
-            text, userinfo = _fetch_subscription_with_headers(url, profile_name, headers)
+            text, userinfo = _fetch_subscription_with_headers(
+                url,
+                profile_name,
+                headers,
+                **fetch_options,
+            )
             if userinfo and not first_userinfo:
                 first_userinfo = dict(userinfo)
             nodes, errors = parse_links_text(text)
@@ -506,10 +567,18 @@ def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
             validation_errors = _node_validation_errors(nodes)
             detail = "; ".join((validation_errors or errors or [])[:2]) or "нет подходящих серверов"
             attempts.append(f"{profile_name}: {detail}")
+        except SubscriptionFetchCancelled:
+            raise
         except Exception as exc:  # noqa: BLE001 - пробуем следующий профиль клиента
             if _is_tls_eof_error(exc):
                 try:
-                    text, userinfo = _fetch_subscription_with_headers(url, profile_name, headers, direct=True)
+                    text, userinfo = _fetch_subscription_with_headers(
+                        url,
+                        profile_name,
+                        headers,
+                        direct=True,
+                        **fetch_options,
+                    )
                     if userinfo and not first_userinfo:
                         first_userinfo = dict(userinfo)
                     nodes, errors = parse_links_text(text)
@@ -519,6 +588,8 @@ def fetch_subscription_payload(url: str) -> tuple[str, dict, list[str]]:
                     detail = "; ".join((validation_errors or errors or [])[:2]) or "нет подходящих серверов"
                     attempts.append(f"{profile_name} direct: {detail}")
                     continue
+                except SubscriptionFetchCancelled:
+                    raise
                 except Exception as direct_exc:
                     attempts.append(f"{profile_name} direct: {direct_exc}")
                     continue

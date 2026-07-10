@@ -336,28 +336,43 @@ def _candidate_keys(selector: str) -> list[str]:
 def _decrypt_crypt51(payload: str) -> str:
     selector = _c51_selector(payload)
     keys = _candidate_keys(selector)
-    for nonce_str, url_b64, enc_str, split in _c51_candidates(payload):
-        try:
-            nonce = nonce_str.encode("ascii")
-            cipher_b64 = _c51_make_cipher_b64(enc_str, split)
-        except Exception:
-            continue
-        for key_b64 in keys:
+    candidates = _c51_candidates(payload)
+    preferred_values = {
+        value
+        for marker, value in CRYPT5_KEYS_B64.items()
+        if marker == selector or (selector[:4] and marker.startswith(selector[:4]))
+    }
+    preferred_keys = [key for key in keys if key in preferred_values]
+    fallback_keys = [key for key in keys if key not in preferred_values]
+
+    def decrypt_with_keys(key_candidates: list[str]) -> str | None:
+        for nonce_str, url_b64, enc_str, split in candidates:
             try:
-                rsa_plain = _rsa_decrypt(key_b64, _b64decode(cipher_b64)).decode("latin-1")
+                nonce = nonce_str.encode("ascii")
+                cipher_b64 = _c51_make_cipher_b64(enc_str, split)
             except Exception:
                 continue
-            for shaped in (_swap_pairs(rsa_plain), rsa_plain):
+            for key_b64 in key_candidates:
                 try:
-                    chacha_key = _b64decode(shaped)
-                    if len(chacha_key) != 32:
-                        continue
-                    intermediate = _chacha_decrypt(
-                        chacha_key, nonce, _b64decode(url_b64)
-                    ).decode("utf-8")
-                    return _b64decode(_swap_pairs(intermediate)).decode("utf-8")
+                    rsa_plain = _rsa_decrypt(key_b64, _b64decode(cipher_b64)).decode("latin-1")
                 except Exception:
                     continue
+                for shaped in (_swap_pairs(rsa_plain), rsa_plain):
+                    try:
+                        chacha_key = _b64decode(shaped)
+                        if len(chacha_key) != 32:
+                            continue
+                        intermediate = _chacha_decrypt(
+                            chacha_key, nonce, _b64decode(url_b64)
+                        ).decode("utf-8")
+                        return _b64decode(_swap_pairs(intermediate)).decode("utf-8")
+                    except Exception:
+                        continue
+        return None
+
+    decrypted = decrypt_with_keys(preferred_keys)
+    if decrypted is not None:
+        return decrypted
 
     # Fallback to Node.js emulation decryptor
     from pathlib import Path
@@ -373,7 +388,7 @@ def _decrypt_crypt51(payload: str) -> str:
                 link = f"happ://crypt5/{payload}"
                 result = run_text_pumped(
                     [node_bin, str(cli_js), link],
-                    timeout=10.0,
+                    timeout=20.0,
                     creationflags=CREATE_NO_WINDOW,
                 )
                 if result.returncode == 0:
@@ -382,6 +397,10 @@ def _decrypt_crypt51(payload: str) -> str:
                         return decrypted
             except Exception:
                 pass
+
+    decrypted = decrypt_with_keys(fallback_keys)
+    if decrypted is not None:
+        return decrypted
 
     raise HappKeyUnavailableError(
         "не удалось расшифровать happ://crypt5-ссылку: подходящий приватный ключ "

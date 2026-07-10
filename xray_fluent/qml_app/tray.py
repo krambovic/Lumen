@@ -181,7 +181,7 @@ class QmlTray(QObject):
             self._tray.hide()
         except Exception:
             pass
-        self._app.quit()
+        QTimer.singleShot(0, self._app.quit)
 
     def _connected(self) -> bool:
         try:

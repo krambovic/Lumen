@@ -211,6 +211,7 @@ class SingBoxManager(QObject):
             pass
 
     def stop(self, expected: bool = True, *, fast: bool = False) -> bool:
+        already_stopped = False
         with self._lock:
             proc = self._proc
             if proc is None or proc.poll() is not None:
@@ -219,8 +220,12 @@ class SingBoxManager(QObject):
                 if self._running:
                     self._running = False
                     self.state_changed.emit(False)
-                return True
-            self._stop_requested = expected
+                already_stopped = True
+            else:
+                self._stop_requested = expected
+        if already_stopped:
+            self._join_reader()
+            return True
 
         try:
             proc.terminate()
@@ -258,7 +263,16 @@ class SingBoxManager(QObject):
         # reconnect and delays the first real connections.
         self._starting = False
         self._wait_tun_released(max_wait=release_timeout)
+        self._join_reader()
         return True
+
+    def _join_reader(self, timeout: float = 2.0) -> None:
+        reader = self._reader
+        if reader is None or reader is threading.current_thread():
+            return
+        reader.join(timeout)
+        if not reader.is_alive() and self._reader is reader:
+            self._reader = None
 
     def _wait_proc(self, proc: subprocess.Popen[bytes], timeout_sec: float) -> bool:
         deadline = time.monotonic() + max(0.0, timeout_sec)

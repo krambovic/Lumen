@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from ..country_flags import CountryResolver, detect_country
 from ..link_parser import normalize_node_outbound, repair_node_outbound_from_link, validate_node_outbound
+from ..qthread_utils import bind_thread_reference
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -27,9 +28,14 @@ def start_country_ip_resolution(controller: AppController) -> None:
     needs = [(node.id, node.server) for node in controller.state.nodes if not node.country_code]
     if not needs:
         return
-    controller._country_resolver = CountryResolver(needs, parent=controller)
-    controller._country_resolver.resolved.connect(controller._on_countries_resolved)
-    controller._country_resolver.start()
+    current = controller._country_resolver
+    if current is not None and current.isRunning():
+        return
+    worker = CountryResolver(needs)
+    controller._country_resolver = worker
+    bind_thread_reference(controller, "_country_resolver", worker)
+    worker.resolved.connect(controller._on_countries_resolved)
+    worker.start()
 
 
 def on_countries_resolved(controller: AppController, results: dict[str, str]) -> None:

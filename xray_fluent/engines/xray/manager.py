@@ -168,6 +168,7 @@ class XrayManager(QObject):
         return False
 
     def stop(self, expected: bool = True, *, fast: bool = False) -> bool:
+        already_stopped = False
         with self._lock:
             proc = self._proc
             if proc is None or proc.poll() is not None:
@@ -175,8 +176,12 @@ class XrayManager(QObject):
                 if self._running:
                     self._running = False
                     self.state_changed.emit(False)
-                return True
-            self._stop_requested = expected
+                already_stopped = True
+            else:
+                self._stop_requested = expected
+        if already_stopped:
+            self._join_reader()
+            return True
 
         try:
             proc.terminate()
@@ -188,6 +193,7 @@ class XrayManager(QObject):
         final_timeout = 0.3 if fast else 1.0
 
         if self._wait_proc(proc, terminate_timeout):
+            self._join_reader()
             return True
 
         try:
@@ -195,6 +201,7 @@ class XrayManager(QObject):
         except Exception:
             pass
         if self._wait_proc(proc, kill_timeout):
+            self._join_reader()
             return True
 
         exe = self._exe_path
@@ -202,16 +209,26 @@ class XrayManager(QObject):
             try:
                 if kill_processes_by_path(exe.name, exe, timeout=orphan_timeout):
                     if self._wait_proc(proc, final_timeout):
+                        self._join_reader()
                         return True
             except Exception:
                 pass
 
         if proc.poll() is not None:
+            self._join_reader()
             return True
 
         self._stop_requested = False
         self.error.emit("Не удалось вовремя остановить процесс Xray")
         return False
+
+    def _join_reader(self, timeout: float = 2.0) -> None:
+        reader = self._reader
+        if reader is None or reader is threading.current_thread():
+            return
+        reader.join(timeout)
+        if not reader.is_alive() and self._reader is reader:
+            self._reader = None
 
     def _wait_proc(self, proc: subprocess.Popen[bytes], timeout_sec: float) -> bool:
         deadline = time.monotonic() + max(0.0, timeout_sec)

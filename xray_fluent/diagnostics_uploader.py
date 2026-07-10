@@ -30,6 +30,8 @@ _BUNDLE_TIMEOUT = 30
 _BATCH_MAX = 50
 _FLUSH_INTERVAL = 30.0
 _QUEUE_MAX = 1000
+_bundle_threads: set[threading.Thread] = set()
+_bundle_threads_lock = threading.Lock()
 
 
 class HttpDiagnosticsHandler(logging.Handler):
@@ -63,7 +65,10 @@ class HttpDiagnosticsHandler(logging.Handler):
         while not self._stop.is_set():
             timeout = max(0.5, self._flush_interval - (time.monotonic() - last))
             try:
-                batch.append(self._queue.get(timeout=timeout))
+                item = self._queue.get(timeout=timeout)
+                if item is None:
+                    break
+                batch.append(item)
             except queue.Empty:
                 pass
             due = (time.monotonic() - last) >= self._flush_interval
@@ -86,6 +91,12 @@ class HttpDiagnosticsHandler(logging.Handler):
 
     def close(self) -> None:
         self._stop.set()
+        try:
+            self._queue.put_nowait(None)
+        except queue.Full:
+            pass
+        if self._thread is not threading.current_thread():
+            self._thread.join(_EVENT_TIMEOUT + 1)
         super().close()
 
 
@@ -130,15 +141,34 @@ def upload_bundle(url: str, zip_path: Path, *, app_version: str = "") -> None:
 
     def _worker() -> None:
         try:
-            data = Path(zip_path).read_bytes()
-        except Exception:
-            return
-        _send(
-            url, data, "application/zip", _BUNDLE_TIMEOUT,
-            {"X-App-Version": app_version, "X-Filename": Path(zip_path).name},
-        )
+            try:
+                data = Path(zip_path).read_bytes()
+            except Exception:
+                return
+            _send(
+                url, data, "application/zip", _BUNDLE_TIMEOUT,
+                {"X-App-Version": app_version, "X-Filename": Path(zip_path).name},
+            )
+        finally:
+            with _bundle_threads_lock:
+                _bundle_threads.discard(threading.current_thread())
 
-    threading.Thread(target=_worker, name="diag-bundle-upload", daemon=True).start()
+    thread = threading.Thread(target=_worker, name="diag-bundle-upload", daemon=True)
+    with _bundle_threads_lock:
+        _bundle_threads.add(thread)
+    thread.start()
+
+
+def wait_for_bundle_uploads(timeout: float = _BUNDLE_TIMEOUT + 1) -> None:
+    deadline = time.monotonic() + max(0.0, timeout)
+    with _bundle_threads_lock:
+        threads = list(_bundle_threads)
+    for thread in threads:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if thread is not threading.current_thread():
+            thread.join(remaining)
 
 
 
@@ -177,3 +207,5 @@ class HeartbeatSender:
 
     def stop(self) -> None:
         self._stop.set()
+        if self._thread is not threading.current_thread():
+            self._thread.join(_EVENT_TIMEOUT + 1)

@@ -1659,6 +1659,16 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 Layout.fillWidth: true
             }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                AccentButton {
+                    kind: "ghost"
+                    text: I18n.t("Отмена")
+                    onClicked: App.cancelSubscriptionImport()
+                }
+                Item { Layout.fillWidth: true }
+            }
         }
     }
 

@@ -20,9 +20,19 @@ class LinkParseError(ValueError):
     pass
 
 
+MAX_IMPORT_BYTES = 8 * 1024 * 1024
+MAX_IMPORT_LINES = 20_000
+MAX_IMPORT_NODES = 20_000
+
+
 def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
+    if len(text.encode("utf-8", errors="replace")) > MAX_IMPORT_BYTES:
+        return [], [f"Import data exceeds the {MAX_IMPORT_BYTES}-byte limit"]
     stripped = text.strip()
-    file_text = _read_import_file_reference(stripped)
+    try:
+        file_text = _read_import_file_reference(stripped)
+    except LinkParseError as exc:
+        return [], [str(exc)]
     if file_text is not None:
         stripped = file_text.strip()
         text = file_text
@@ -45,6 +55,8 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
             return [], [f"Config: {exc}"]
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) > MAX_IMPORT_LINES:
+        return [], [f"Import contains more than {MAX_IMPORT_LINES} non-empty lines"]
     nodes: list[Node] = []
     errors: list[str] = []
 
@@ -80,6 +92,14 @@ def _read_import_file_reference(text: str) -> str | None:
     path = Path(path_text)
     if not path.is_file():
         return None
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise LinkParseError(f"Cannot inspect import file: {exc}") from exc
+    if size > MAX_IMPORT_BYTES:
+        raise LinkParseError(
+            f"Import file exceeds the {MAX_IMPORT_BYTES}-byte limit"
+        )
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -828,6 +848,9 @@ def _parse_json_nodes_payload(payload: Any) -> tuple[list[Node], list[str]]:
     else:
         raise LinkParseError("JSON subscription must be an object or an array")
 
+    if len(items) > MAX_IMPORT_NODES:
+        raise LinkParseError(f"JSON contains more than {MAX_IMPORT_NODES} nodes")
+
     for idx, item in enumerate(items, start=1):
         try:
             if isinstance(item, str):
@@ -934,6 +957,8 @@ def _parse_clash_yaml_nodes_text(text: str) -> tuple[list[Node], list[str]]:
     proxies = payload.get("proxies")
     if not isinstance(proxies, list):
         raise LinkParseError("YAML must contain a proxies list")
+    if len(proxies) > MAX_IMPORT_NODES:
+        raise LinkParseError(f"YAML contains more than {MAX_IMPORT_NODES} proxies")
     nodes: list[Node] = []
     errors: list[str] = []
     for idx, item in enumerate(proxies, start=1):

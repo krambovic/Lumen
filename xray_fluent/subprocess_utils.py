@@ -49,16 +49,26 @@ def run_text(
     return subprocess.run(command, **kwargs)
 
 
-def pump_qt_events() -> None:
+def _qt_app_on_current_thread() -> Any | None:
     try:
-        from PyQt6.QtCore import QEventLoop, QThread
+        from PyQt6.QtCore import QThread
         from PyQt6.QtWidgets import QApplication
     except Exception:
-        return
+        return None
 
     app = QApplication.instance()
-    if app is not None and QThread.currentThread() == app.thread():
-        app.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+    if app is None or QThread.currentThread() != app.thread():
+        return None
+    return app
+
+
+def pump_qt_events() -> None:
+    app = _qt_app_on_current_thread()
+    if app is None:
+        return
+    from PyQt6.QtCore import QEventLoop
+
+    app.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
 
 def sleep_with_events(duration_sec: float, *, step_sec: float = 0.05) -> None:
@@ -123,6 +133,13 @@ def run_text_pumped(
     check: bool = False,
     creationflags: int | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
+    if _qt_app_on_current_thread() is None:
+        return run_text(
+            command,
+            timeout=timeout,
+            check=check,
+            creationflags=creationflags,
+        )
     future = _SUBPROCESS_EXECUTOR.submit(
         run_text,
         command,
