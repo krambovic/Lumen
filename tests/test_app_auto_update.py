@@ -3,7 +3,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from xray_fluent.app_updater import AppUpdate, UpdateDownloader, should_auto_install
-from xray_fluent.models import AppSettings
+from xray_fluent.models import AppSettings, AppState, RoutingSettings
 
 
 def _update(*, downgrade: bool = False) -> AppUpdate:
@@ -31,6 +31,18 @@ def test_diagnostics_upload_defaults_to_enabled() -> None:
     assert AppSettings.from_dict({}).diagnostics_upload_enabled is True
     restored = AppSettings.from_dict(AppSettings(diagnostics_upload_enabled=False).to_dict())
     assert restored.diagnostics_upload_enabled is False
+
+
+def test_fake_dns_defaults_to_enabled() -> None:
+    assert RoutingSettings().dns_fake_enabled is True
+    assert RoutingSettings.from_dict({}).dns_fake_enabled is True
+
+
+def test_applied_migrations_round_trip() -> None:
+    state = AppState()
+    state.applied_migrations["enable_fake_dns_by_default"] = True
+    restored = AppState.from_dict(state.to_dict())
+    assert restored.applied_migrations["enable_fake_dns_by_default"] is True
 
 
 def test_fragmentation_defaults_to_disabled() -> None:

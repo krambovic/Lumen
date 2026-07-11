@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import subprocess
 import sys
 
 AUMID = "Lumen.LumenKVN"
+SM_SHUTTINGDOWN = 0x2000
+
+_toasts_enabled = True
 
 
 def _xml_escape(text: str) -> str:
@@ -16,9 +20,23 @@ def _ps_quote(text: str) -> str:
     return text.replace("'", "''")
 
 
+def set_toasts_enabled(enabled: bool) -> None:
+    global _toasts_enabled
+    _toasts_enabled = bool(enabled)
+
+
+def _is_windows_shutting_down() -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        return bool(ctypes.windll.user32.GetSystemMetrics(SM_SHUTTINGDOWN))
+    except Exception:
+        return False
+
+
 def show_toast(title: str, message: str, aumid: str = AUMID) -> bool:
     """Raise a modern Windows toast. Returns True if the launch was dispatched"""
-    if sys.platform != "win32":
+    if sys.platform != "win32" or not _toasts_enabled or _is_windows_shutting_down():
         return False
     try:
         xml = (
@@ -41,6 +59,11 @@ def show_toast(title: str, message: str, aumid: str = AUMID) -> bool:
             ]
         )
         encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        startupinfo = None
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
         subprocess.Popen(
             [
                 "powershell",
@@ -55,6 +78,7 @@ def show_toast(title: str, message: str, aumid: str = AUMID) -> bool:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            startupinfo=startupinfo,
         )
         return True
     except Exception:

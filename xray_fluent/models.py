@@ -114,7 +114,7 @@ class RoutingSettings:
     dns_proxy_server: str = "8.8.8.8"     # DNS for proxy traffic
     dns_proxy_type: str = "https"          # tcp | tls | https
     dns_proxy_strategy: str = "prefer_ipv4"
-    dns_fake_enabled: bool = False
+    dns_fake_enabled: bool = True
     dns_hijack_enabled: bool = True
     tun_route_exclude_address: list[str] = field(default_factory=list)
     process_rules: list[dict[str, str]] = field(default_factory=list)  # [{"process": "chrome.exe", "action": "direct|proxy|block"}]
@@ -179,7 +179,7 @@ class RoutingSettings:
             dns_proxy_server=str(data.get("dns_proxy_server") or "8.8.8.8"),
             dns_proxy_type=str(data.get("dns_proxy_type") or "https"),
             dns_proxy_strategy=str(data.get("dns_proxy_strategy") or "prefer_ipv4"),
-            dns_fake_enabled=bool(data.get("dns_fake_enabled", False)),
+            dns_fake_enabled=bool(data.get("dns_fake_enabled", True)),
             dns_hijack_enabled=bool(data.get("dns_hijack_enabled", True)),
             tun_route_exclude_address=[
                 str(item).strip()
@@ -509,6 +509,7 @@ class AppState:
     manual_groups: list[str] = field(default_factory=list)
     # Кастомные пресеты маршрутизации: [{"id", "name", "routing": {...}}].
     routing_presets: list[dict[str, Any]] = field(default_factory=list)
+    applied_migrations: dict[str, bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -521,6 +522,7 @@ class AppState:
             "subscriptions": [dict(item) for item in self.subscriptions],
             "manual_groups": list(self.manual_groups),
             "routing_presets": [dict(item) for item in self.routing_presets],
+            "applied_migrations": dict(self.applied_migrations),
         }
 
     @staticmethod
@@ -541,6 +543,10 @@ class AppState:
                 if str(item).strip()
             ],
             routing_presets=[dict(item) for item in (data.get("routing_presets") or []) if isinstance(item, dict)],
+            applied_migrations={
+                str(key): bool(value)
+                for key, value in dict(data.get("applied_migrations") or {}).items()
+            },
         )
 
 

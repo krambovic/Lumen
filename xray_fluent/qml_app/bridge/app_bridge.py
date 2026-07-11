@@ -37,6 +37,7 @@ from ...startup import STARTUP_STATE_DISABLED, get_startup_state, is_process_ele
 from .log_model import LogFilterModel, LogModel
 from .node_list_model import NodeListModel
 from .process_model import ProcessModel
+from ..toast import set_toasts_enabled, show_toast
 from ...i18n import active_map, available_languages, language_name, set_language, tr
 from ...log_utils import parse_log_line
 
@@ -506,10 +507,13 @@ class AppBridge(QObject):
     def prepareQuit(self) -> None:
         if not self._quitting:
             self._quitting = True
+            set_toasts_enabled(False)
             self.quittingChanged.emit()
 
     @pyqtSlot()
     def notifyHiddenToTray(self) -> None:
+        if self._quitting:
+            return
         self.trayMessageRequested.emit()
 
     def _on_admin_relaunch(self) -> None:
@@ -2106,6 +2110,9 @@ class AppBridge(QObject):
             enabled=bool(getattr(settings, "app_auto_update", False)),
         ):
             self._app_update_auto_installing = True
+            message = tr("Найдено обновление v{version}. Lumen KVN сейчас автоматически обновится.", version=update.version)
+            self.toast.emit("info", message)
+            show_toast("Lumen KVN", message)
             QTimer.singleShot(0, self.downloadAppUpdate)
 
     def _on_app_update_error(self, message: str) -> None:

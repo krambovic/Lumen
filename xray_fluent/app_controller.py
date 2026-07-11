@@ -398,6 +398,7 @@ class AppController(QObject):
             return False
 
         self._migrate_sort_order()
+        self._migrate_fake_dns_default_enabled()
         self.nodes_changed.emit(self.state.nodes)
         self.selection_changed.emit(self.selected_node)
         self.routing_changed.emit(self.state.routing)
@@ -1541,6 +1542,18 @@ class AppController(QObject):
             for i, node in enumerate(self.state.nodes):
                 node.sort_order = i + 1
             self.save()
+
+    def _migrate_fake_dns_default_enabled(self) -> None:
+        key = "enable_fake_dns_by_default"
+        migrations = getattr(self.state, "applied_migrations", None)
+        if not isinstance(migrations, dict):
+            migrations = {}
+            self.state.applied_migrations = migrations
+        if migrations.get(key):
+            return
+        self.state.routing.dns_fake_enabled = True
+        migrations[key] = True
+        self.save()
 
     def reorder_nodes(self, node_id: str, direction: str) -> None:
         reorder_nodes_operation(self, node_id, direction)
