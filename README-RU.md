@@ -57,6 +57,14 @@ Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, 
 
 ---
 
+## Поддерживаемые протоколы
+
+Lumen KVN поддерживает импорт и запуск таких типов серверов:
+
+- **Xray / системный прокси:** VLESS, VMess, Trojan, Shadowsocks, SOCKS, HTTP.
+- **sing-box / TUN:** Hysteria, Hysteria2, TUIC, Mieru, MASQUE, WireGuard, AmneziaWG (AWG), WARP.
+- **Кастомные конфиги:** raw Xray и sing-box JSON-конфиги, включая импорт полных sing-box конфигов.
+
 ## Установка и запуск
 
 Перейдите на страницу **[Releases](https://github.com/krambovic/Lumen-KVN/releases)** и скачайте актуальную версию:
@@ -73,7 +81,7 @@ Lumen KVN - самостоятельный Windows-клиент для VPN/TUN, 
 3. Выберите режим подключения: системный прокси, VPN/TUN или обход DPI через zapret.
 4. Выберите пресет маршрутизации и подключитесь.
 
-WARP, WireGuard и AmneziaWG конфиги работают через TUN на `sing-box-extended`; обычные VLESS, Trojan, Shadowsocks и VMess ссылки можно использовать через режим системного прокси.
+WARP, WireGuard, AmneziaWG, Hysteria, Hysteria2, TUIC, Mieru и MASQUE конфиги работают через TUN на `sing-box-extended`; VLESS, VMess, Trojan, Shadowsocks, SOCKS и HTTP ссылки можно использовать через режим системного прокси.
 
 ---
 
