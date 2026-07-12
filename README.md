@@ -72,6 +72,9 @@ Go to the **[Releases](https://github.com/krambovic/Lumen-KVN/releases)** page a
 * **Installer (`LumenKVN-Setup-windows-x64.exe`):** Recommended for most users.
 * **Portable version (`LumenKVN-portable-windows-x64.zip`):** Standalone archive that runs without installation.
 
+> [!CAUTION]
+> **Windows Defender or another antivirus may report a false positive for Lumen KVN or its bundled components.** Lumen includes network tools such as Xray, sing-box and zapret, can create a TUN interface, and changes system proxy and routing settings. These capabilities, combined with the unsigned PyInstaller-packaged application, may trigger heuristic antivirus rules even when no malware is present. Download Lumen only from the official [GitHub Releases](https://github.com/krambovic/Lumen-KVN/releases) page. Do not disable antivirus protection globally; if a file is blocked, inspect the detection and submit it to the antivirus vendor as a false positive or add a local exception only after verifying the download source.
+
 ---
 
 ## Quick Start
