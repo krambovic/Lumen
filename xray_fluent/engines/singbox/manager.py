@@ -56,6 +56,7 @@ class SingBoxManager(QObject):
         self._last_noisy_summary_at = 0.0
         self._last_exit_code: int | None = None
         self._exe_path: Path | None = None
+        self._tun_mode = True
         self._access_traces: dict[str, dict[str, str]] = {}
 
     @property
@@ -82,8 +83,10 @@ class SingBoxManager(QObject):
         self._exe_path = exe
 
         tun_interface_name = self._extract_tun_interface_name(config)
-        if not tun_interface_name:
-            self.error.emit("sing-box config does not contain a TUN inbound interface_name")
+        proxy_ports = self._extract_local_proxy_ports(config)
+        self._tun_mode = bool(tun_interface_name)
+        if not self._tun_mode and not proxy_ports:
+            self.error.emit("sing-box config does not contain a TUN or local proxy inbound")
             return False
 
         RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -118,7 +121,8 @@ class SingBoxManager(QObject):
         # Try up to 3 times — wintun adapter may need time to be released
         for attempt in range(3):
             attempt_started = time.monotonic()
-            self.log_received.emit(f"[tun] startup attempt {attempt + 1}/3, interface={tun_interface_name}")
+            runtime_label = f"TUN interface={tun_interface_name}" if self._tun_mode else f"proxy ports={proxy_ports}"
+            self.log_received.emit(f"[sing-box] startup attempt {attempt + 1}/3, {runtime_label}")
             self._last_output_lines.clear()
             self._stop_requested = False
             self._last_exit_code = None
@@ -148,31 +152,43 @@ class SingBoxManager(QObject):
             )
             self._reader.start()
 
-            # sing-box is only considered "connected" once the TUN interface has
-            # a usable IPv4 address — not merely when the process spawns.
-            if self._wait_until_tun_ready(proc, tun_interface_name):
-                adapter_ms = int((time.monotonic() - attempt_started) * 1000)
-                self.log_received.emit(f"[tun] adapter and routes ready in {adapter_ms} ms")
-                self._starting = False
-                total_ms = int((time.monotonic() - attempt_started) * 1000)
-                self.log_received.emit(
-                    f"[tun] sing-box runtime ready in {total_ms} ms, interface={tun_interface_name}"
-                )
-                self._mark_running()
-                return True
+            ready = (
+                self._wait_until_tun_ready(proc, tun_interface_name)
+                if self._tun_mode
+                else self._wait_until_proxy_ready(proc, proxy_ports)
+            )
+            if ready:
+                ready_ms = int((time.monotonic() - attempt_started) * 1000)
+                ready_label = "adapter and routes" if self._tun_mode else "local proxy inbounds"
+                self.log_received.emit(f"[sing-box] {ready_label} ready in {ready_ms} ms")
+                if self._tun_mode:
+                    sleep_with_events(0.25)
+                    if not self._tun_interface_has_ipv4(tun_interface_name):
+                        ready = False
+                    else:
+                        self._warm_windows_dns(proc)
+                if ready:
+                    self._starting = False
+                    total_ms = int((time.monotonic() - attempt_started) * 1000)
+                    self.log_received.emit(
+                        f"[sing-box] runtime ready in {total_ms} ms, {runtime_label}"
+                    )
+                    self._mark_running()
+                    return True
+                self.log_received.emit("[sing-box] TUN route changed during readiness settle; retrying")
 
             exited = not self._proc_alive()
             retryable = exited and self._startup_error_is_retryable()
             if not exited:
                 self.stop(expected=True)
-                if attempt < 2:
+                if self._tun_mode and attempt < 2:
                     self.cleanup_orphaned_tun_adapters()
                     self._wait_tun_released()
                     self._wait_clash_api_port_released()
                     self._starting = True
                     continue
 
-            if retryable and attempt < 2:
+            if self._tun_mode and retryable and attempt < 2:
                 self._kill_orphaned(exe)
                 if self._startup_error_is_stale_adapter():
                     self._purge_stale_wintun_devices()  # ghost Wintun device is invisible to Get-NetAdapter cleanup
@@ -183,15 +199,18 @@ class SingBoxManager(QObject):
                 continue
 
             self._starting = False
-            self.cleanup_orphaned_tun_adapters()
-            if exited and self._startup_error_is_stale_adapter():
+            if self._tun_mode:
+                self.cleanup_orphaned_tun_adapters()
+            if self._tun_mode and exited and self._startup_error_is_stale_adapter():
                 self._purge_stale_wintun_devices()  # clear the ghost so the next connect attempt can succeed
             if exited:
                 self._report_startup_failure(
                     self._unexpected_exit_message(self._last_exit_code, startup=True)
                 )
-            else:
+            elif self._tun_mode:
                 self._report_startup_failure(self._tun_not_ready_message(tun_interface_name))
+            else:
+                self._report_startup_failure(f"sing-box local proxy ports did not become ready: {proxy_ports}")
             return False
 
         self._starting = False
@@ -235,7 +254,7 @@ class SingBoxManager(QObject):
         kill_timeout = 0.5 if fast else 2.0
         orphan_timeout = 2 if fast else 5
         final_timeout = 0.3 if fast else 1.0
-        release_timeout = 0.5 if fast else 1.0
+        release_timeout = 0.5 if fast else 4.0
 
         if not self._wait_proc(proc, terminate_timeout):
             try:
@@ -262,7 +281,8 @@ class SingBoxManager(QObject):
         # healthy adapter here makes Windows rebuild its network state on every
         # reconnect and delays the first real connections.
         self._starting = False
-        self._wait_tun_released(max_wait=release_timeout)
+        if self._tun_mode:
+            self._wait_tun_released(max_wait=release_timeout)
         self._join_reader()
         return True
 
@@ -422,10 +442,12 @@ class SingBoxManager(QObject):
             self._proc = None
 
         if was_starting and not expected:
-            self.cleanup_orphaned_tun_adapters()
+            if self._tun_mode:
+                self.cleanup_orphaned_tun_adapters()
             self._report_startup_failure(self._unexpected_exit_message(exit_code, startup=True))
         elif was_running and not expected and not self._runtime_error_reported:
-            self.cleanup_orphaned_tun_adapters()
+            if self._tun_mode:
+                self.cleanup_orphaned_tun_adapters()
             self._runtime_error_reported = True
             self.error.emit(self._unexpected_exit_message(exit_code, startup=False))
         self.stopped.emit(exit_code)
@@ -449,6 +471,45 @@ class SingBoxManager(QObject):
                 continue
             return str(inbound.get("interface_name") or "").strip()
         return ""
+
+    @staticmethod
+    def _extract_local_proxy_ports(config: dict[str, Any]) -> tuple[int, ...]:
+        ports: list[int] = []
+        for inbound in config.get("inbounds") or []:
+            if not isinstance(inbound, dict):
+                continue
+            inbound_type = str(inbound.get("type") or "").strip().lower()
+            if inbound_type not in {"mixed", "socks", "http"}:
+                continue
+            try:
+                port = int(inbound.get("listen_port") or inbound.get("port") or 0)
+            except (TypeError, ValueError):
+                continue
+            if 0 < port <= 65535 and port not in ports:
+                ports.append(port)
+        return tuple(ports)
+
+    @staticmethod
+    def _wait_until_proxy_ready(
+        proc: subprocess.Popen[bytes],
+        ports: tuple[int, ...],
+        max_wait: float = 10.0,
+    ) -> bool:
+        deadline = time.monotonic() + max_wait
+        while time.monotonic() < deadline and proc.poll() is None:
+            all_ready = True
+            for port in ports:
+                try:
+                    with socket.create_connection((PROXY_HOST, port), timeout=0.15):
+                        pass
+                except OSError:
+                    all_ready = False
+                    break
+            if all_ready:
+                return True
+            pump_qt_events()
+            time.sleep(0.05)
+        return False
 
     def _wait_until_tun_ready(
         self,
@@ -524,19 +585,15 @@ class SingBoxManager(QObject):
         started = time.monotonic()
         script = (
             "$ErrorActionPreference = 'Stop'; "
-            "$answers = @(); "
-            "foreach ($name in @('2ip.ru', 'chatgpt.com')) { "
-            "$answer = Resolve-DnsName -Name $name -Type A -DnsOnly -QuickTimeout "
+            "$answer = Resolve-DnsName -Name 'example.com' -Type A -DnsOnly -QuickTimeout "
             "| Where-Object { $_.IPAddress } | Select-Object -First 1; "
-            "if ($answer) { $answers += [string]$answer.IPAddress } "
-            "}; "
-            "if ($answers.Count -eq 2) { $answers -join ','; exit 0 } else { exit 1 }"
+            "if ($answer) { [string]$answer.IPAddress; exit 0 } else { exit 1 }"
         )
         self.log_received.emit("[tun] warming direct and proxy DNS paths...")
         try:
             result = run_text_pumped(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                timeout=5,
+                timeout=4,
                 check=False,
                 creationflags=_CREATE_NO_WINDOW,
             )

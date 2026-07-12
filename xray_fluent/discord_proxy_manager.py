@@ -16,12 +16,15 @@ from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pum
 from .zip_utils import safe_extract_zip
 
 
-DROUTE_VERSION = "1.1.2"
+DROUTE_LEGACY_VERSION = "1.1.2"
+DROUTE_VERSION = "1.2.0"
 DROUTE_ZIP_URL = f"https://github.com/snowluwu/droute/releases/download/{DROUTE_VERSION}/droute-{DROUTE_VERSION}.zip"
 DROUTE_SOURCE_URL = "https://github.com/snowluwu/droute"
 DROUTE_DIR = DATA_DIR / "external" / "droute"
 DROUTE_EXE = DROUTE_DIR / "droute.exe"
 DROUTE_NOTICE = DROUTE_DIR / "README.droute.txt"
+DROUTE_VERSION_FILE = DROUTE_DIR / "version.txt"
+DROUTE_INSTALL_VERSION_FILE = "LumenKVN.droute.version"
 
 _DISCORD_BRANCHES = {
     "stable": ("Discord", "Discord.exe"),
@@ -99,6 +102,16 @@ def _write_droute_notice() -> None:
     )
 
 
+def get_droute_bundle_version() -> str:
+    if not DROUTE_EXE.is_file():
+        return ""
+    try:
+        version = DROUTE_VERSION_FILE.read_text(encoding="utf-8").strip().lstrip("v")
+    except OSError:
+        version = ""
+    return version or DROUTE_LEGACY_VERSION
+
+
 def ensure_droute_bundle() -> Path:
     DROUTE_DIR.mkdir(parents=True, exist_ok=True)
     if DROUTE_EXE.is_file() and DROUTE_EXE.stat().st_size > 0:
@@ -117,6 +130,7 @@ def ensure_droute_bundle() -> Path:
     tmp_zip.unlink(missing_ok=True)
     if not DROUTE_EXE.is_file():
         raise RuntimeError("droute.exe was not found in the downloaded archive")
+    DROUTE_VERSION_FILE.write_text(DROUTE_VERSION + "\n", encoding="utf-8")
     _write_droute_notice()
     return DROUTE_EXE
 
@@ -331,17 +345,33 @@ def _read_droute_registry_port() -> int:
 
 
 def _droute_payload_installed(install: DiscordInstall) -> bool:
-    return (
+    files_installed = (
         (install.app_dir / "version.dll").is_file()
         and (install.app_dir / "droute.dll").is_file()
         and (install.root / "Droute.UpdaterHook.dll").is_file()
         and (install.root / "Update.exe.config").is_file()
     )
+    if not files_installed:
+        return False
+    current_version = get_droute_bundle_version()
+    if not current_version:
+        return False
+    try:
+        installed_version = (install.root / DROUTE_INSTALL_VERSION_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        # Existing droute installations predate version markers. Keep them as-is
+        # until the user explicitly downloads an update, which creates version.txt.
+        return not DROUTE_VERSION_FILE.is_file()
+    return installed_version == current_version
 
 
 def _droute_payload_present(install: DiscordInstall) -> bool:
     # any leftover droute file counts, partial installs must be cleaned too
-    if (install.root / "Droute.UpdaterHook.dll").is_file() or (install.root / "Update.exe.config").is_file():
+    if (
+        (install.root / "Droute.UpdaterHook.dll").is_file()
+        or (install.root / "Update.exe.config").is_file()
+        or (install.root / DROUTE_INSTALL_VERSION_FILE).is_file()
+    ):
         return True
     for app_dir in install.root.glob("app-*"):
         if app_dir.is_dir() and any((app_dir / name).is_file() for name in ("version.dll", "droute.dll")):
@@ -378,10 +408,18 @@ def _install_droute_payload(exe: Path, install: DiscordInstall) -> None:
     result = _run_powershell(script, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(result_output_text(result) or f"failed to install droute for {install.process_name}")
+    version = get_droute_bundle_version()
+    if not version:
+        raise RuntimeError("droute bundle version is unknown")
+    (branch_root / DROUTE_INSTALL_VERSION_FILE).write_text(version + "\n", encoding="utf-8")
 
 
 def _remove_droute_payload(install: DiscordInstall) -> list[str]:
-    targets = [install.root / "Droute.UpdaterHook.dll", install.root / "Update.exe.config"]
+    targets = [
+        install.root / "Droute.UpdaterHook.dll",
+        install.root / "Update.exe.config",
+        install.root / DROUTE_INSTALL_VERSION_FILE,
+    ]
     for app_dir in install.root.glob("app-*"):
         if app_dir.is_dir():
             targets.extend(app_dir / name for name in ("version.dll", "droute.dll"))

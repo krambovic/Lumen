@@ -4,6 +4,7 @@ import base64
 import ipaddress
 import json
 from pathlib import Path
+import re
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import url2pathname
@@ -85,7 +86,7 @@ def _read_import_file_reference(text: str) -> str | None:
             path_text = f"\\\\{parsed.netloc}{path_text}"
     elif parsed.scheme == "":
         candidate = candidate_text
-        if candidate.lower().endswith((".conf", ".txt", ".json")):
+        if candidate.lower().endswith((".conf", ".txt", ".json", ".yaml", ".yml")):
             path_text = candidate
     if not path_text:
         return None
@@ -366,7 +367,9 @@ def _build_stream_settings(params: dict[str, str], default_network: str = "tcp",
             tls_settings["echForceQuery"] = "full"
         verify_names = _get_param(params, "vcn", "verifyPeerCertByName")
         if verify_names:
-            tls_settings["verifyPeerCertByName"] = [item.strip() for item in verify_names.split(",") if item.strip()]
+            tls_settings["verifyPeerCertByName"] = ",".join(
+                item.strip() for item in verify_names.split(",") if item.strip()
+            )
         stream["tlsSettings"] = tls_settings
     elif security == "reality":
         reality_settings: dict[str, Any] = {}
@@ -453,13 +456,30 @@ def repair_node_outbound_from_link(node: Node) -> bool:
     link = str(node.link or "").strip()
     if not link:
         return False
+    clash_payload: dict[str, Any] | None = None
     try:
-        reparsed = parse_single(link)
+        if link.startswith("{"):
+            decoded = json.loads(link)
+            if _is_clash_proxy_payload(decoded):
+                clash_payload = decoded
+        reparsed = _parse_clash_proxy_payload(clash_payload) if clash_payload is not None else parse_single(link)
     except Exception:
         return False
-    if reparsed.outbound == node.outbound:
-        return False
-    node.outbound = reparsed.outbound
+    if clash_payload is not None:
+        changed = (
+            reparsed.outbound != node.outbound
+            or reparsed.link != node.link
+            or reparsed.scheme != node.scheme
+        )
+        if not changed:
+            return False
+        node.outbound = reparsed.outbound
+        node.link = reparsed.link
+        node.scheme = reparsed.scheme
+    else:
+        if reparsed.outbound == node.outbound:
+            return False
+        node.outbound = reparsed.outbound
     if not node.scheme:
         node.scheme = reparsed.scheme
     if not node.server:
@@ -467,6 +487,23 @@ def repair_node_outbound_from_link(node: Node) -> bool:
     if node.port <= 0:
         node.port = reparsed.port
     return True
+
+
+def _is_clash_proxy_payload(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    kind = str(payload.get("type") or "").strip().lower()
+    if kind not in {
+        "vless", "vmess", "trojan", "ss", "shadowsocks",
+        "hy", "hysteria", "hy2", "hysteria2", "tuic", "wireguard",
+    }:
+        return False
+    return (
+        ("server" in payload and "port" in payload and "server_port" not in payload)
+        or "private-key" in payload
+        or "public-key" in payload
+        or "amnezia-wg-option" in payload
+    )
 
 
 def normalize_node_outbound(node: Node | None) -> bool:
@@ -940,12 +977,14 @@ def _resolve_auto_selector_payload(selector: dict[str, Any], tag_map: dict[str, 
 
 
 def _looks_like_clash_yaml(text: str) -> bool:
-    lowered = text[:4096].lower()
-    return (
-        "proxies:" in lowered
-        or "proxy-providers:" in lowered
-        or ("proxy-groups:" in lowered and "rules:" in lowered)
-    )
+    sections = {
+        match.group(1).lower()
+        for match in re.finditer(
+            r"(?mi)^\s*(proxies|proxy-providers|proxy-groups|rules)\s*:",
+            text,
+        )
+    }
+    return "proxies" in sections or "proxy-providers" in sections or {"proxy-groups", "rules"} <= sections
 
 
 def _parse_clash_yaml_nodes_text(text: str) -> tuple[list[Node], list[str]]:
@@ -979,7 +1018,7 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         kind = "hysteria"
     elif kind in {"hy2", "hysteria2"}:
         kind = "hysteria2"
-    if kind not in {"vless", "vmess", "trojan", "shadowsocks", "hysteria", "hysteria2", "tuic"}:
+    if kind not in {"vless", "vmess", "trojan", "shadowsocks", "wireguard", "hysteria", "hysteria2", "tuic"}:
         raise LinkParseError(f"unsupported Clash proxy type: {kind or 'unknown'}")
 
     server = str(payload.get("server") or "").strip()
@@ -989,6 +1028,8 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         raise LinkParseError("proxy must contain server and port")
 
     outbound: dict[str, Any]
+    if kind == "wireguard":
+        return _parse_clash_wireguard_payload(payload, name, server, port)
     if kind in {"hysteria", "hysteria2", "tuic"}:
         outbound = _native_singbox_outbound(_clash_to_singbox_outbound(payload, kind))
     else:
@@ -999,8 +1040,103 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         scheme=kind,
         server=server,
         port=port,
-        link=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        link=json.dumps(outbound, ensure_ascii=False, separators=(",", ":")),
         outbound=outbound,
+    )
+
+
+def _clash_list(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return _split_csv(str(value or ""))
+
+
+def _parse_clash_wireguard_payload(
+    payload: dict[str, Any],
+    name: str,
+    server: str,
+    port: int,
+) -> Node:
+    private_key = str(payload.get("private-key") or payload.get("private_key") or "").strip()
+    public_key = str(payload.get("public-key") or payload.get("public_key") or "").strip()
+    if not private_key or not public_key:
+        raise LinkParseError("wireguard proxy must contain private-key and public-key")
+
+    address = _clash_list(payload.get("ip") or payload.get("address"))
+    address.extend(item for item in _clash_list(payload.get("ipv6")) if item not in address)
+    allowed_ips = _clash_list(payload.get("allowed-ips") or payload.get("allowed_ips"))
+    amnezia_options = payload.get("amnezia-wg-option") or payload.get("amnezia")
+    amnezia = (
+        _amnezia_from_params({str(key): str(value) for key, value in amnezia_options.items()})
+        if isinstance(amnezia_options, dict)
+        else {}
+    )
+    reserved_bytes: list[int] = []
+    reserved = payload.get("reserved")
+    if isinstance(reserved, (list, tuple)):
+        reserved_bytes = [int(value) for value in reserved]
+        if len(reserved_bytes) != 3 or any(value < 0 or value > 255 for value in reserved_bytes):
+            raise LinkParseError("wireguard reserved must contain three bytes")
+    keepalive = payload.get("persistent-keepalive") or payload.get("persistent_keepalive_interval")
+
+    if _is_warp_endpoint(server) or reserved_bytes:
+        endpoint: dict[str, Any] = {
+            "type": "warp",
+            "tag": "proxy",
+            "listen_port": 10000,
+            "udp_timeout": "5m0s",
+            "profile": {"detour": "direct", "private_key": _clean_b64_key(private_key)},
+        }
+        if reserved_bytes:
+            endpoint["reserved"] = reserved_bytes
+        if keepalive not in (None, ""):
+            endpoint["persistent_keepalive_interval"] = int(keepalive)
+        if amnezia:
+            endpoint["amnezia"] = amnezia
+        scheme = "awg" if amnezia else "warp"
+        outbound = _native_singbox_outbound(endpoint)
+        return Node(
+            name=name,
+            scheme=scheme,
+            server=server,
+            port=port,
+            link=json.dumps(outbound, ensure_ascii=False, separators=(",", ":")),
+            outbound=outbound,
+            tags=["WARP"],
+        )
+
+    endpoint = _build_wireguard_endpoint(
+        server=server,
+        port=port,
+        private_key=private_key,
+        public_key=public_key,
+        address=address,
+        allowed_ips=allowed_ips,
+        pre_shared_key=str(
+            payload.get("pre-shared-key")
+            or payload.get("preshared-key")
+            or payload.get("pre_shared_key")
+            or ""
+        ),
+        mtu=int(payload.get("mtu") or 1408),
+        amnezia=amnezia,
+    )
+    peer = endpoint["peers"][0]
+    if reserved_bytes:
+        raise LinkParseError("reserved bytes are supported only for Cloudflare WARP profiles")
+    if keepalive not in (None, ""):
+        peer["persistent_keepalive_interval"] = int(keepalive)
+
+    scheme = "awg" if amnezia else "wireguard"
+    outbound = _native_singbox_outbound(endpoint)
+    return Node(
+        name=name,
+        scheme=scheme,
+        server=server,
+        port=port,
+        link=json.dumps(outbound, ensure_ascii=False, separators=(",", ":")),
+        outbound=outbound,
+        tags=["WARP"] if _is_warp_endpoint(server) else [],
     )
 
 

@@ -25,8 +25,8 @@ from PyQt6.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtProperty, pyqtS
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 
 from ...app_controller import AppController
+from ...application.node_runtime_service import proxy_core_for_node
 from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
-from ...application.node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
 from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, DATA_DIR, DEFAULT_HTTP_PORT, PROXY_HOST
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri
 from ...engines.singbox import get_singbox_version
@@ -627,6 +627,11 @@ class AppBridge(QObject):
             if message == ru:
                 return en
         prefix_replacements = (
+            ("Не удалось проверить droute: ", "Could not check droute: "),
+            ("Не удалось обновить droute: ", "Could not update droute: "),
+            ("Доступен droute ", "droute available: "),
+            ("droute обновлен до ", "droute updated to "),
+            ("droute актуален (", "droute is up to date ("),
             ("Запуск прокси: ", "Starting proxy: "),
             ("Подключено: ", "Connected: "),
             ("Запуск VPN: ", "Starting VPN: "),
@@ -682,9 +687,7 @@ class AppBridge(QObject):
         """Re-push the controller's nodes into the model honouring the active
         sort key/direction chosen in the Серверы toolbar"""
         state = self.controller.state
-        self._node_model.set_runtime_support(
-            bool(state.settings.tun_mode and state.settings.tun_engine == "singbox")
-        )
+        self._node_model.set_runtime_support(True)
         self._node_model.set_nodes(
             self._sorted_nodes(self._filtered_nodes(state.nodes)),
             state.selected_node_id,
@@ -818,7 +821,7 @@ class AppBridge(QObject):
         if _language_changed:
             self.languageChanged.emit()
         self._accent = settings.accent_color or "#0078D4"
-        self._node_model.set_runtime_support(bool(settings.tun_mode and settings.tun_engine == "singbox"))
+        self._node_model.set_runtime_support(True)
         self.settingsChanged.emit()
 
     def _on_subscriptions_changed(self, _subscriptions=None) -> None:
@@ -861,11 +864,6 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def selectNode(self, node_id: str) -> None:
         if node_id:
-            node = self.controller._get_node_by_id(node_id)
-            settings = self.controller.state.settings
-            if is_native_singbox_only_node(node) and not (settings.tun_mode and settings.tun_engine == "singbox"):
-                self.toast.emit("warning", native_singbox_only_message(node))
-                return
             self.controller.set_selected_node(node_id)
 
     @pyqtSlot()
@@ -933,37 +931,12 @@ class AppBridge(QObject):
             self.controller.save()
             self.routingChanged.emit()
 
-    def _switch_to_supported_proxy_node(self) -> None:
-        """Leaving TUN for system proxy: AWG/native-only nodes can't run there,
-        so fall back to the most recently used node that works without TUN."""
-        try:
-            cur = self.controller.selected_node
-        except Exception:
-            cur = None
-        if cur is None or not is_native_singbox_only_node(cur):
-            return
-        candidates = [
-            n for n in self.controller.state.nodes
-            if not is_native_singbox_only_node(n)
-        ]
-        if not candidates:
-            return
-        candidates.sort(key=lambda n: getattr(n, "last_used_at", "") or "", reverse=True)
-        target = candidates[0]
-        try:
-            self.controller.set_selected_node(target.id)
-            self.toast.emit("info", tr("Сервер «{name}» несовместим с системным прокси — переключаюсь на «{target}»", name=getattr(cur, "name", ""), target=getattr(target, "name", "")))
-        except Exception:
-            pass
-
     @pyqtSlot(bool)
     def setTun(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.tun_mode = enabled
         if enabled:
             settings.enable_system_proxy = False
-        else:
-            self._switch_to_supported_proxy_node()
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
@@ -972,7 +945,6 @@ class AppBridge(QObject):
         settings.enable_system_proxy = enabled
         if enabled and settings.tun_mode:
             settings.tun_mode = False
-            self._switch_to_supported_proxy_node()
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
@@ -1993,6 +1965,7 @@ class AppBridge(QObject):
     @pyqtSlot(result="QVariantMap")
     def updatesInitialState(self):
         """Snapshot shown when the Updates tab first appears."""
+        from ...discord_proxy_manager import get_droute_bundle_version
         from ...engines.xray import get_xray_version
         try:
             version = get_xray_version(self.controller.state.settings.xray_path) or ""
@@ -2002,7 +1975,12 @@ class AppBridge(QObject):
             singbox_version = get_singbox_version(self.controller.state.settings.singbox_path) or ""
         except Exception:
             singbox_version = ""
-        return {"appVersion": APP_VERSION, "xrayVersion": version, "singboxVersion": singbox_version}
+        return {
+            "appVersion": APP_VERSION,
+            "xrayVersion": version,
+            "singboxVersion": singbox_version,
+            "drouteVersion": get_droute_bundle_version(),
+        }
 
     # -- application updater --
     @pyqtSlot()
@@ -2228,10 +2206,21 @@ class AppBridge(QObject):
             "updated": "updated",
             "error": "error",
         }.get(getattr(result, "status", ""), "uptodate")
-        version = getattr(result, "latest_version", "") or getattr(result, "current_version", "") or ""
+        current_version = getattr(result, "current_version", "") or ""
+        latest_version = getattr(result, "latest_version", "") or ""
+        version = ""
+        if phase == "updated":
+            from ...engines.xray import get_xray_version
+
+            try:
+                version = get_xray_version(self.controller.state.settings.xray_path) or latest_version
+            except Exception:
+                version = latest_version
         self.xrayUpdateState.emit({
             "phase": phase,
             "version": version,
+            "currentVersion": current_version,
+            "latestVersion": latest_version,
             "message": self._localized_backend_message(getattr(result, "message", "") or ""),
             "percent": 100 if phase == "updated" else 0,
         })
@@ -2259,6 +2248,22 @@ class AppBridge(QObject):
             self.controller.run_resource_update("geodata", apply_update=True)
         except Exception as exc:  # noqa: BLE001
             self.resourceUpdateState.emit({"kind": "geodata", "phase": "error", "message": str(exc)})
+
+    @pyqtSlot()
+    def checkDrouteUpdate(self) -> None:
+        self.resourceUpdateState.emit({"kind": "droute", "phase": "checking", "percent": 0})
+        try:
+            self.controller.run_resource_update("droute", apply_update=False)
+        except Exception as exc:  # noqa: BLE001
+            self.resourceUpdateState.emit({"kind": "droute", "phase": "error", "message": str(exc)})
+
+    @pyqtSlot()
+    def updateDroute(self) -> None:
+        self.resourceUpdateState.emit({"kind": "droute", "phase": "updating", "percent": 0})
+        try:
+            self.controller.run_resource_update("droute", apply_update=True)
+        except Exception as exc:  # noqa: BLE001
+            self.resourceUpdateState.emit({"kind": "droute", "phase": "error", "message": str(exc)})
 
     def _on_resource_update_progress(self, kind: str, percent: int) -> None:
         self.resourceUpdateState.emit({"kind": kind, "phase": "updating", "percent": int(percent)})
@@ -2574,9 +2579,15 @@ class AppBridge(QObject):
             self.toast.emit("warning", "Буфер обмена пуст")
             return
         target_group = (self._filter_group or "").strip() or None
+        existing_ids = {node.id for node in self.controller.state.nodes}
         added, errors = self.controller.import_nodes_from_text(text, group=target_group)
         if added:
-            self.nodeImported.emit(self.controller.state.selected_node_id or "")
+            imported_id = next(
+                (node.id for node in self.controller.state.nodes if node.id not in existing_ids),
+                "",
+            )
+            if imported_id:
+                self.nodeImported.emit(imported_id)
             self.toast.emit("success", tr("Импортировано серверов: {count}", count=added))
         if errors:
             self.toast.emit("warning", "; ".join(errors[:2]))
@@ -2592,7 +2603,7 @@ class AppBridge(QObject):
             None,
             tr("Импортировать сервер"),
             "",
-            "VPN configs (*.conf *.txt *.json);;All files (*.*)",
+            "VPN configs (*.conf *.txt *.json *.yaml *.yml);;All files (*.*)",
         )
         if not file_path:
             return
@@ -2602,14 +2613,79 @@ class AppBridge(QObject):
             self.toast.emit("error", tr("Не удалось прочитать файл: {error}", error=exc))
             return
         target_group = (self._filter_group or "").strip() or None
+        existing_ids = {node.id for node in self.controller.state.nodes}
         added, errors = self.controller.import_nodes_from_text(text, group=target_group)
         if added:
-            self.nodeImported.emit(self.controller.state.selected_node_id or "")
+            imported_id = next(
+                (node.id for node in self.controller.state.nodes if node.id not in existing_ids),
+                "",
+            )
+            if imported_id:
+                self.nodeImported.emit(imported_id)
             self.toast.emit("success", tr("Импортировано серверов: {count}", count=added))
         if errors:
             self.toast.emit("warning", "; ".join(errors[:2]))
         if not added and not errors:
             self.toast.emit("warning", "Новых серверов не импортировано")
+
+    @staticmethod
+    def _dropped_config_path(value) -> Path | None:
+        if isinstance(value, QUrl):
+            local_path = value.toLocalFile()
+        else:
+            raw_value = str(value or "").strip().strip('"')
+            url = QUrl(raw_value)
+            local_path = url.toLocalFile() if url.isLocalFile() else raw_value
+        if not local_path:
+            return None
+        path = Path(local_path)
+        if path.suffix.lower() not in {".conf", ".txt", ".json", ".yaml", ".yml"}:
+            return None
+        return path if path.is_file() else None
+
+    @pyqtSlot("QVariantList")
+    def importNodeFiles(self, values) -> None:
+        paths: list[Path] = []
+        invalid_count = 0
+        for value in values or []:
+            path = self._dropped_config_path(value)
+            if path is None:
+                invalid_count += 1
+                continue
+            if path not in paths:
+                paths.append(path)
+        if not paths:
+            self.toast.emit("warning", tr("Перетащите поддерживаемый файл конфигурации"))
+            return
+
+        target_group = (self._filter_group or "").strip() or None
+        existing_ids = {node.id for node in self.controller.state.nodes}
+        total_added = 0
+        errors: list[str] = []
+        for path in paths:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                errors.append(f"{path.name}: {exc}")
+                continue
+            added, file_errors = self.controller.import_nodes_from_text(text, group=target_group)
+            total_added += added
+            errors.extend(f"{path.name}: {error}" for error in file_errors)
+
+        if total_added:
+            imported_id = next(
+                (node.id for node in self.controller.state.nodes if node.id not in existing_ids),
+                "",
+            )
+            if imported_id:
+                self.nodeImported.emit(imported_id)
+            self.toast.emit("success", tr("Импортировано серверов: {count}", count=total_added))
+        if invalid_count:
+            errors.append(tr("Пропущено неподдерживаемых файлов: {count}", count=invalid_count))
+        if errors:
+            self.toast.emit("warning", "; ".join(errors[:2]))
+        if not total_added and not errors:
+            self.toast.emit("warning", tr("Новых серверов не импортировано"))
 
     @pyqtSlot()
     @pyqtSlot(str)
@@ -2634,7 +2710,11 @@ class AppBridge(QObject):
     def saveRuntimeJson(self, node_id: str = "") -> None:
         payload = self.controller.export_runtime_config_json(node_id or None)
         try:
-            singbox = self.controller.is_singbox_editor_mode()
+            settings = self.controller.state.settings
+            node = self.controller._get_node_by_id(node_id) if node_id else self.controller.selected_node
+            singbox = self.controller.is_singbox_editor_mode(settings) or (
+                not settings.tun_mode and proxy_core_for_node(node) == "singbox"
+            )
         except Exception:  # noqa: BLE001 - defensive, default to xray name
             singbox = False
         suggested = "singbox_config.json" if singbox else "xray_config.json"

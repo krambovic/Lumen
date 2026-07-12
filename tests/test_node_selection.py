@@ -40,6 +40,9 @@ class _Controller:
     def _request_transition(self, reason: str) -> None:
         self.transition_reasons.append(reason)
 
+    def _reset_auto_switch_state(self, **_kwargs) -> None:
+        pass
+
 
 def _node(node_id: str, group: str, *, speed: float | None = None, alive: bool | None = None) -> Node:
     return Node(
@@ -96,7 +99,31 @@ def test_direct_import_can_target_selected_group() -> None:
     assert added == 1
     assert errors == []
     assert controller.state.nodes[0].group == "Manual"
+    assert controller.state.selected_node_id is None
+
+
+def test_direct_import_preserves_the_active_server_until_user_selects_new_one() -> None:
+    active = _node("active", "Default")
+    fresh = _node("fresh", "Default")
+    controller = _Controller([active], "active")
+    controller.connected = True
+    controller._desired_connected = True
+
+    original = _patch_imported_nodes([fresh])
+    try:
+        added, errors = node_service.import_nodes_from_text(controller, "fresh payload")
+    finally:
+        _restore_import_patches(original)
+
+    assert added == 1
+    assert errors == []
+    assert controller.state.selected_node_id == "active"
+    assert controller.transition_reasons == []
+
+    node_service.set_selected_node(controller, "fresh")
+
     assert controller.state.selected_node_id == "fresh"
+    assert controller.transition_reasons == ["node switched"]
 
 
 def test_subscription_update_preserves_selection_from_other_group() -> None:

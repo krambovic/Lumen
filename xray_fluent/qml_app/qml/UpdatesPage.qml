@@ -18,6 +18,7 @@ Item {
     property string appVersion: App.appVersion
     property string xrayVersion: ""
     property string singboxVersion: ""
+    property string drouteVersion: ""
 
     // application updater state
     property string appPhase: "idle"        // idle|checking|available|downloading|uptodate|ready|error
@@ -38,11 +39,15 @@ Item {
     property string geodataPhase: "idle"
     property string geodataMessage: ""
     property int geodataPercent: 0
+    property string droutePhase: "idle"
+    property string drouteMessage: ""
+    property int droutePercent: 0
 
     readonly property bool appBusy: appPhase === "checking" || appPhase === "downloading"
     readonly property bool xrayBusy: xrayPhase === "checking" || xrayPhase === "updating"
     readonly property bool singboxBusy: singboxPhase === "checking" || singboxPhase === "updating"
     readonly property bool geodataBusy: geodataPhase === "checking" || geodataPhase === "updating"
+    readonly property bool drouteBusy: droutePhase === "checking" || droutePhase === "updating"
 
     function appStatusText() {
         switch (appPhase) {
@@ -134,6 +139,7 @@ Item {
         appVersion = s.appVersion || App.appVersion
         xrayVersion = s.xrayVersion || ""
         singboxVersion = s.singboxVersion || ""
+        drouteVersion = s.drouteVersion || ""
         appChannel = App.releaseChannel
     }
     Component.onCompleted: init()
@@ -168,6 +174,12 @@ Item {
                 page.geodataPhase = s.phase || "idle"
                 page.geodataMessage = s.message !== undefined ? s.message : ""
                 if (s.percent !== undefined) page.geodataPercent = s.percent
+            } else if ((s.kind || "") === "droute") {
+                page.droutePhase = s.phase || "idle"
+                page.drouteMessage = s.message !== undefined ? s.message : ""
+                if (s.percent !== undefined) page.droutePercent = s.percent
+                if (s.phase === "checking") page.droutePercent = 0
+                if (s.version !== undefined && s.version !== "") page.drouteVersion = s.version
             }
         }
     }
@@ -457,6 +469,51 @@ Item {
                             kind: "accent"; glyph: "\uE895"; text: I18n.t("Обновить geoip/geosite")
                             enabled: !page.geodataBusy
                             onClicked: App.updateGeodataFiles()
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+            }
+
+            Card {
+                Layout.fillWidth: true
+                padding: 18
+                hoverable: false
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 10
+                    Text { text: I18n.t("droute для Discord Voice"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        Text { text: I18n.t("Версия:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Text { text: page.drouteVersion !== "" ? page.drouteVersion : I18n.t("не найдена"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
+                        Item { Layout.fillWidth: true }
+                    }
+                    Text {
+                        text: page.resourceStatusText(page.droutePhase, page.drouteMessage, I18n.t("Проверяет и обновляет компонент droute для проксирования Discord Voice."), page.droutePercent)
+                        color: page.resourceStatusColor(page.droutePhase)
+                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                        font.weight: (page.droutePhase === "updated" || page.droutePhase === "error") ? Font.DemiBold : Font.Normal
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
+                    ProgressBar {
+                        Layout.fillWidth: true
+                        visible: page.drouteBusy
+                        indeterminate: page.droutePhase === "checking" || page.droutePercent <= 0
+                        from: 0; to: 100; value: page.droutePercent
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        AccentButton {
+                            kind: "accent"; glyph: "\uE72C"; text: I18n.t("Проверить droute")
+                            enabled: !page.drouteBusy
+                            onClicked: App.checkDrouteUpdate()
+                        }
+                        AccentButton {
+                            kind: "ghost"; glyph: "\uE896"; text: I18n.t("Обновить droute")
+                            visible: page.droutePhase === "available" || page.droutePhase === "updating"
+                            enabled: !page.drouteBusy && page.droutePhase !== "uptodate" && page.droutePhase !== "updated"
+                            onClicked: App.updateDroute()
                         }
                         Item { Layout.fillWidth: true }
                     }

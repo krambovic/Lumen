@@ -7,7 +7,7 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen KVN"
-APP_VERSION = "1.8.3"
+APP_VERSION = "1.8.5"
 STATE_SCHEMA_VERSION = 1
 
 DIAGNOSTICS_UPLOAD_URL = "https://diagnostics.lumen-kvn.eu.cc/api/ingest"

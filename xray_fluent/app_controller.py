@@ -77,6 +77,7 @@ from .application.nodes import (
     update_node as update_node_operation,
     update_subscription as update_subscription_operation,
 )
+from .application.node_runtime_service import proxy_core_for_node
 from .application.runtime import (
     ActiveSessionSnapshot,
     TransitionContext,
@@ -945,7 +946,7 @@ class AppController(QObject):
     def _inspect_active_xray_config(self) -> tuple[Path, str, bool, int, int, int]:
         return inspect_active_xray_config_operation(self)
 
-    def _plan_runtime_singbox(self, node: Node | None = None) -> SingboxRuntimePlan:
+    def _plan_runtime_singbox(self, node: Node | None = None, *, tun_mode: bool = True) -> SingboxRuntimePlan:
         state = self._get_singbox_document_state()
         document = self._parsed_singbox_document
         if document is None or document.source_path != state.source_path or document.text_hash != state.text_hash:
@@ -985,6 +986,7 @@ class AppController(QObject):
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
             system_dns_servers=system_dns_servers,
+            tun_mode=tun_mode,
         )
 
     def _start_singbox_runtime_plan(self, plan: SingboxRuntimePlan) -> bool:
@@ -1186,6 +1188,8 @@ class AppController(QObject):
 
     def _can_proxy_hot_swap(self, session: ActiveSessionSnapshot) -> bool:
         settings = self.state.settings
+        if proxy_core_for_node(self.selected_node) != "xray":
+            return False
         _, _, _, socks_port, http_port, _ = self._inspect_active_xray_config()
         return can_proxy_hot_swap_rule(
             session=session,
@@ -1462,8 +1466,12 @@ class AppController(QObject):
     def export_runtime_config_json(self, node_id: str | None = None) -> str | None:
         node = self._get_node_by_id(node_id) if node_id else self.selected_node
         try:
-            if self.is_singbox_editor_mode():
-                plan = self._plan_runtime_singbox(node)
+            settings = self.state.settings
+            use_singbox = self.is_singbox_editor_mode(settings) or (
+                not settings.tun_mode and proxy_core_for_node(node) == "singbox"
+            )
+            if use_singbox:
+                plan = self._plan_runtime_singbox(node, tun_mode=bool(settings.tun_mode))
                 return json.dumps(plan.singbox_config, ensure_ascii=True, indent=2)
             if self.uses_xray_raw_config():
                 runtime = self._build_runtime_xray_config(node, tun_mode=self.is_xray_tun_mode())
@@ -1490,7 +1498,7 @@ class AppController(QObject):
         *,
         group: str | None = None,
         auto_connect: bool | None = None,
-        select_imported: bool = True,
+        select_imported: bool = False,
     ) -> tuple[int, list[str]]:
         return import_nodes_from_text_operation(
             self,

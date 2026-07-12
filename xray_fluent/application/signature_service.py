@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from ..constants import DEFAULT_HTTP_PORT, DEFAULT_SOCKS_PORT
 from ..engines.singbox import classify_node_for_singbox
+from .node_runtime_service import proxy_core_for_node
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -34,6 +35,26 @@ def transition_signature(
     settings = settings or controller.state.settings
     routing = routing or controller.state.routing
     node = node or controller.selected_node
+    if not settings.tun_mode and proxy_core_for_node(node) == "singbox":
+        source_path, config_hash, has_proxy_outbound = controller._inspect_active_singbox_config()
+        return signature(
+            {
+                "mode": "singbox-proxy",
+                "singbox_path": str(settings.singbox_path),
+                "config_file": str(source_path.name),
+                "config_hash": config_hash,
+                "has_proxy_outbound": has_proxy_outbound,
+                "node_id": node.id if node else None,
+                "node_outbound": node.outbound if node else None,
+                "proxy_enabled": bool(settings.enable_system_proxy),
+                "proxy_bypass_lan": system_proxy_bypass_lan(controller, settings),
+                "socks_port": int(getattr(settings, "local_socks_port", DEFAULT_SOCKS_PORT)),
+                "http_port": int(getattr(settings, "local_http_port", DEFAULT_HTTP_PORT)),
+                "routing": routing.to_dict(),
+                "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
+                "prefer_ipv6": bool(getattr(settings, "prefer_ipv6", False)),
+            }
+        )
     if controller.is_singbox_editor_mode(settings):
         source_path, config_hash, has_proxy_outbound = controller._inspect_active_singbox_config()
         planner_outcome = "native_singbox"
@@ -120,6 +141,8 @@ def xray_layer_signature(
     settings = settings or controller.state.settings
     routing = routing or controller.state.routing
     node = node or controller.selected_node
+    if not settings.tun_mode and proxy_core_for_node(node) == "singbox":
+        return ""
     if controller.uses_xray_raw_config(settings):
         source_path, config_hash, has_proxy_outbound, socks_port, http_port, api_port = controller._inspect_active_xray_config()
         signature_payload = {

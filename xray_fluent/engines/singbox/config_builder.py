@@ -17,6 +17,7 @@ _SUPPORTED_NATIVE_PROTOCOLS = {
     "awg",
     "hysteria",
     "hysteria2",
+    "tuic",
     "mieru",
     "masque",
 }

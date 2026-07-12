@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..engines.singbox.config_builder import build_singbox_outbound
-from .node_runtime_service import is_native_singbox_only_node
+from .node_runtime_service import proxy_core_for_node
 
 if TYPE_CHECKING:
     from ..models import AppSettings, Node
@@ -19,12 +19,6 @@ def validate_server_preflight(node: Node | None, settings: AppSettings) -> str |
     protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
     stream = outbound.get("streamSettings") if isinstance(outbound.get("streamSettings"), dict) else {}
     tun_singbox = bool(settings.tun_mode and settings.tun_engine == "singbox")
-
-    if is_native_singbox_only_node(node) and not tun_singbox:
-        return (
-            f"{node.name or node.server} работает только через VPN (TUN) на sing-box-extended. "
-            "Переключите режим на TUN или выберите сервер Xray/VLESS/VMess/Trojan/SS."
-        )
 
     network = str(stream.get("network") or "").strip().lower()
     if network == "xhttp":
@@ -68,7 +62,7 @@ def validate_server_preflight(node: Node | None, settings: AppSettings) -> str |
             return "sing-box-extended provider config РґРѕР»Р¶РµРЅ СЃРѕРґРµСЂР¶Р°С‚СЊ outbounds."
         return None
 
-    if tun_singbox:
+    if tun_singbox or proxy_core_for_node(node) == "singbox":
         try:
             build_singbox_outbound(node, tag="proxy")
         except ValueError as exc:

@@ -1,4 +1,11 @@
 {
+  "Отпустите файлы для импорта": "Drop files to import",
+  "Перетащите поддерживаемый файл конфигурации": "Drop a supported configuration file",
+  "Пропущено неподдерживаемых файлов: {count}": "Unsupported files skipped: {count}",
+  "droute для Discord Voice": "droute for Discord Voice",
+  "Обновить droute": "Update droute",
+  "Проверить droute": "Check droute",
+  "Проверяет и обновляет компонент droute для проксирования Discord Voice.": "Checks and updates the droute component used to proxy Discord Voice.",
   "__name__": "English",
   "Pre-release": "Pre-release",
   "Stable": "Stable",

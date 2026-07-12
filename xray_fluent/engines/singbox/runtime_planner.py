@@ -191,20 +191,31 @@ def plan_singbox_runtime(
     preferred_protect_port: int = 0,
     preferred_protect_password: str = "",
     system_dns_servers: tuple[str, ...] = (),
+    tun_mode: bool = True,
 ) -> SingboxRuntimePlan:
     if _node_is_full_singbox_config(node):
         runtime_config = deepcopy((node.outbound or {}).get("singbox_config") or {})
         strip_singbox_proxy_inbounds(runtime_config)
-        _ensure_tun_inbound(runtime_config)
-        _ensure_singbox_metrics_contract(runtime_config)
-        _ensure_singbox_tun_runtime_contract(
+        _configure_singbox_runtime_inbounds(
             runtime_config,
+            tun_mode=tun_mode,
+            local_socks_port=local_socks_port,
+            local_http_port=local_http_port,
+        )
+        _ensure_singbox_metrics_contract(runtime_config)
+        _ensure_singbox_runtime_contract(
+            runtime_config,
+            tun_mode=tun_mode,
             routing=routing,
             enable_final_fragment=enable_final_fragment,
             system_dns_servers=system_dns_servers,
             tun_strict_route=tun_strict_route,
             tun_stack=tun_stack,
             tun_mtu=tun_mtu,
+            tun_endpoint_independent_nat=tun_endpoint_independent_nat,
+            tun_block_quic=tun_block_quic,
+            local_socks_port=local_socks_port,
+            local_http_port=local_http_port,
         )
         _ensure_full_config_proxy_alias(runtime_config)
         if routing is not None:
@@ -224,9 +235,16 @@ def plan_singbox_runtime(
 
     runtime_config = deepcopy(document.payload)
     strip_singbox_proxy_inbounds(runtime_config)
-    _ensure_singbox_metrics_contract(runtime_config)
-    _ensure_singbox_tun_runtime_contract(
+    _configure_singbox_runtime_inbounds(
         runtime_config,
+        tun_mode=tun_mode,
+        local_socks_port=local_socks_port,
+        local_http_port=local_http_port,
+    )
+    _ensure_singbox_metrics_contract(runtime_config)
+    _ensure_singbox_runtime_contract(
+        runtime_config,
+        tun_mode=tun_mode,
         routing=routing,
         enable_final_fragment=enable_final_fragment,
         system_dns_servers=system_dns_servers,
@@ -491,6 +509,29 @@ def _ensure_tun_inbound(config: dict[str, Any]) -> None:
             "tag": "tun-in",
             "interface_name": "singbox_tun",
         },
+    )
+
+
+def _configure_singbox_runtime_inbounds(
+    config: dict[str, Any],
+    *,
+    tun_mode: bool,
+    local_socks_port: int,
+    local_http_port: int,
+) -> None:
+    inbounds = _ensure_list(config, "inbounds")
+    if tun_mode:
+        _ensure_tun_inbound(config)
+        return
+    inbounds[:] = [
+        inbound
+        for inbound in inbounds
+        if not (isinstance(inbound, dict) and str(inbound.get("type") or "").strip().lower() == "tun")
+    ]
+    _ensure_singbox_tun_local_proxy_contract(
+        config,
+        socks_port=local_socks_port,
+        http_port=local_http_port,
     )
 
 
@@ -1100,6 +1141,7 @@ def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> None:
     cache_file["enabled"] = True
     cache_file["path"] = str(cache_path)
     cache_file["store_fakeip"] = True
+    cache_file["store_warp_config"] = True
     clash_api = _ensure_dict(experimental, "clash_api")
     clash_api["external_controller"] = f"127.0.0.1:{SINGBOX_CLASH_API_PORT}"
 
@@ -1244,6 +1286,53 @@ def _ensure_singbox_tun_runtime_contract(
         builtin_dns=use_builtin_dns,
         dns_hijack_all=(routing.dns_hijack_enabled if routing is not None else True),
         block_quic=tun_block_quic,
+    )
+    _ensure_singbox_tun_local_proxy_contract(
+        payload,
+        socks_port=local_socks_port,
+        http_port=local_http_port,
+    )
+
+
+def _ensure_singbox_runtime_contract(
+    payload: dict[str, Any],
+    *,
+    tun_mode: bool,
+    routing: RoutingSettings | None,
+    enable_final_fragment: bool,
+    system_dns_servers: tuple[str, ...],
+    tun_strict_route: bool,
+    tun_stack: str,
+    tun_mtu: int,
+    tun_endpoint_independent_nat: bool,
+    tun_block_quic: bool,
+    local_socks_port: int,
+    local_http_port: int,
+) -> None:
+    if tun_mode:
+        _ensure_singbox_tun_runtime_contract(
+            payload,
+            routing=routing,
+            enable_final_fragment=enable_final_fragment,
+            system_dns_servers=system_dns_servers,
+            tun_strict_route=tun_strict_route,
+            tun_stack=tun_stack,
+            tun_mtu=tun_mtu,
+            tun_endpoint_independent_nat=tun_endpoint_independent_nat,
+            tun_block_quic=tun_block_quic,
+            local_socks_port=local_socks_port,
+            local_http_port=local_http_port,
+        )
+        return
+
+    route = _ensure_dict(payload, "route")
+    route["auto_detect_interface"] = True
+    direct_strategy = _dns_strategy(routing.dns_bootstrap_strategy if routing is not None else "")
+    route["default_domain_resolver"] = {"server": "bootstrap-dns", "strategy": direct_strategy}
+    _ensure_singbox_dns_runtime_contract(
+        payload,
+        routing=routing,
+        system_dns_servers=system_dns_servers,
     )
     _ensure_singbox_tun_local_proxy_contract(
         payload,

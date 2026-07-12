@@ -5,7 +5,7 @@ from pathlib import Path
 
 from xray_fluent.engines.singbox.config_builder import build_singbox_outbound
 from xray_fluent.engines.singbox.runtime_planner import parse_singbox_document, plan_singbox_runtime
-from xray_fluent.link_parser import parse_links_text
+from xray_fluent.link_parser import parse_links_text, repair_node_outbound_from_link
 from xray_fluent.models import RoutingSettings
 
 
@@ -73,6 +73,150 @@ def test_mierus_link_imports_as_mieru_extended_outbound() -> None:
     assert outbound["username"] == "user"
     assert outbound["password"] == "pass"
     assert outbound["multiplexing"] == "MULTIPLEXING_LOW"
+
+
+def test_clash_yaml_imports_wireguard_and_amnezia_warp(tmp_path) -> None:
+    config_path = tmp_path / "warp.yaml"
+    config_path.write_text(
+        ("# long generated header\n" * 300) + """
+warp-common: &warp-common
+  type: wireguard
+  ip: 172.16.0.2/32
+  ipv6: '2606:4700:110::2/128'
+  private-key: private-key=
+  public-key: public-key=
+  allowed-ips: [0.0.0.0/0, '::/0']
+  reserved: [14, 84, 156]
+  persistent-keepalive: 25
+  mtu: 1280
+
+proxies:
+  - name: WARP WG
+    <<: *warp-common
+    server: engage.cloudflareclient.com
+    port: 2408
+  - name: WARP AWG
+    <<: *warp-common
+    server: 162.159.192.1
+    port: 500
+    amnezia-wg-option:
+      jc: 4
+      jmin: 64
+      jmax: 256
+      h1: 1
+      h2: 2
+      h3: 3
+      h4: 4
+      i1: '<b 0x01020304>'
+""".strip(),
+        encoding="utf-8",
+    )
+
+    nodes, errors = parse_links_text(str(config_path))
+
+    assert errors == []
+    assert [node.scheme for node in nodes] == ["warp", "awg"]
+    assert all("WARP" in node.tags for node in nodes)
+    plain = build_singbox_outbound(nodes[0], tag="proxy")
+    assert plain["type"] == "warp"
+    assert plain["profile"]["private_key"] == "private-key="
+    assert plain["reserved"] == [14, 84, 156]
+    assert plain["persistent_keepalive_interval"] == 25
+    amnezia = build_singbox_outbound(nodes[1], tag="proxy")["amnezia"]
+    assert amnezia["jc"] == 4
+    assert amnezia["i1"] == "<b 0x01020304>"
+
+    document = parse_singbox_document(Path("default.json"), json.dumps(_base_config()))
+    runtime = plan_singbox_runtime(
+        document,
+        nodes[1],
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+    ).singbox_config
+    endpoint = runtime["endpoints"][0]
+    assert "ip" not in endpoint
+    assert "server" not in endpoint
+    assert endpoint["type"] == "warp"
+    assert runtime["experimental"]["cache_file"]["store_warp_config"] is True
+
+
+def test_legacy_clash_wireguard_link_is_migrated_before_runtime() -> None:
+    legacy_payload = {
+        "name": "Legacy WARP",
+        "type": "wireguard",
+        "server": "engage.cloudflareclient.com",
+        "port": 2408,
+        "ip": "172.16.0.2/32",
+        "private-key": "private-key=",
+        "public-key": "public-key=",
+        "allowed-ips": ["0.0.0.0/0", "::/0"],
+        "reserved": [14, 84, 156],
+    }
+    nodes, errors = parse_links_text("proxies:\n  - " + json.dumps(legacy_payload))
+    assert errors == []
+    node = nodes[0]
+    node.link = json.dumps(legacy_payload)
+    node.outbound = {"protocol": "wireguard", "singbox": dict(legacy_payload)}
+
+    assert repair_node_outbound_from_link(node) is True
+
+    outbound = build_singbox_outbound(node, tag="proxy")
+    assert node.scheme == "warp"
+    assert "ip" not in outbound
+    assert "server" not in outbound
+    assert outbound["type"] == "warp"
+    assert outbound["profile"]["private_key"] == "private-key="
+    assert outbound["reserved"] == [14, 84, 156]
+
+
+def test_tuic_builds_native_proxy_runtime_without_xray_sidecar() -> None:
+    nodes, errors = parse_links_text(
+        "tuic://00000000-0000-0000-0000-000000000000:password@example.com:443"
+        "?allow_insecure=1#tuic-proxy"
+    )
+    assert errors == []
+
+    document = parse_singbox_document(Path("default.json"), json.dumps(_base_config()))
+    plan = plan_singbox_runtime(
+        document,
+        nodes[0],
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+        tun_mode=False,
+    )
+
+    assert plan.xray_sidecar is None
+    assert not any(inbound.get("type") == "tun" for inbound in plan.singbox_config["inbounds"])
+    proxy = next(outbound for outbound in plan.singbox_config["outbounds"] if outbound.get("tag") == "proxy")
+    assert proxy["type"] == "tuic"
+
+
+def test_insecure_trojan_builds_native_proxy_runtime_without_xray_sidecar() -> None:
+    nodes, errors = parse_links_text(
+        "trojan://password@example.com:443?security=tls&sni=example.com&allowInsecure=1#trojan-proxy"
+    )
+    assert errors == []
+
+    document = parse_singbox_document(Path("default.json"), json.dumps(_base_config()))
+    plan = plan_singbox_runtime(
+        document,
+        nodes[0],
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+        tun_mode=False,
+    )
+
+    assert plan.xray_sidecar is None
+    proxy = next(outbound for outbound in plan.singbox_config["outbounds"] if outbound.get("tag") == "proxy")
+    assert proxy["type"] == "trojan"
+    assert proxy["tls"]["insecure"] is True
+
+
+def test_xray_verify_peer_names_remain_a_comma_separated_string() -> None:
+    nodes, errors = parse_links_text(
+        "trojan://password@example.com:443?security=tls&vcn=one.example.com,two.example.com#trojan-vcn"
+    )
+
+    assert errors == []
+    tls = nodes[0].outbound["streamSettings"]["tlsSettings"]
+    assert tls["verifyPeerCertByName"] == "one.example.com,two.example.com"
 
 
 def test_full_provider_config_is_preserved_for_tun_runtime() -> None:

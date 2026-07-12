@@ -2,7 +2,7 @@
 
 from .config_builder import build_singbox_outbound
 from .manager import SingBoxManager, get_singbox_version
-from .operations import restart_runtime, start_tun
+from .operations import restart_runtime, start_proxy, start_runtime, start_tun
 from .runtime_planner import (
     ParsedSingboxDocument,
     SingboxDocumentState,
@@ -21,6 +21,8 @@ __all__ = [
     "get_singbox_version",
     "restart_runtime",
     "start_tun",
+    "start_proxy",
+    "start_runtime",
     "ParsedSingboxDocument",
     "SingboxDocumentState",
     "SingboxRuntimePlan",

@@ -167,6 +167,28 @@ ApplicationWindow {
     property int currentIndex: 0
     property int preloadCursor: 0
     property var preloadOrder: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    property var pendingConfigDropUrls: []
+
+    function queueConfigDrop(urls) {
+        var queued = [];
+        for (var i = 0; urls && i < urls.length; ++i)
+            queued.push(urls[i]);
+        if (queued.length === 0)
+            return;
+        pendingConfigDropUrls = queued;
+        currentIndex = 1;
+        nodesLoader.preloadRequested = true;
+        if (nodesLoader.ready)
+            Qt.callLater(finishConfigDrop);
+    }
+
+    function finishConfigDrop() {
+        if (!nodesLoader.ready || pendingConfigDropUrls.length === 0)
+            return;
+        var urls = pendingConfigDropUrls;
+        pendingConfigDropUrls = [];
+        App.importNodeFiles(urls);
+    }
 
     function beginBackgroundPageWarmup() {
         if (!backgroundPreloadTimer.running)
@@ -379,6 +401,7 @@ ApplicationWindow {
                         id: nodesLoader
                         current: win.currentIndex === 1
                         pageComponent: Component { NodesPage { anchors.fill: parent } }
+                        onReadyChanged: if (ready) Qt.callLater(win.finishConfigDrop)
                     }
                     LazyPageLoader {
                         id: routingLoader
@@ -436,6 +459,71 @@ ApplicationWindow {
     }
 
     ToastHost {}
+
+    function hasSupportedConfigDrop(urls) {
+        if (!urls)
+            return false;
+        for (var i = 0; i < urls.length; ++i) {
+            var value = String(urls[i]).toLowerCase().split("?", 1)[0].split("#", 1)[0];
+            if (/\.(conf|txt|json|ya?ml)$/.test(value))
+                return true;
+        }
+        return false;
+    }
+
+    DropArea {
+        id: configDropArea
+        anchors.fill: parent
+        z: 9000
+        enabled: !App.locked
+
+        onEntered: function(drag) {
+            drag.accepted = win.hasSupportedConfigDrop(drag.urls);
+        }
+        onDropped: function(drop) {
+            if (!win.hasSupportedConfigDrop(drop.urls)) {
+                drop.accepted = false;
+                return;
+            }
+            win.queueConfigDrop(drop.urls);
+            drop.acceptProposedAction();
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            visible: configDropArea.containsDrag
+            color: Theme.dark ? Qt.rgba(0.04, 0.05, 0.07, 0.88) : Qt.rgba(0.96, 0.97, 0.99, 0.9)
+            border.width: 2
+            border.color: Theme.accent
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                spacing: 12
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "\uE8B7"
+                    color: Theme.accent
+                    font.family: win.iconFont
+                    font.pixelSize: 42
+                }
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: I18n.t("Отпустите файлы для импорта")
+                    color: Theme.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontStrong
+                    font.weight: Font.DemiBold
+                }
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: ".conf  .txt  .json  .yaml  .yml"
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSmall
+                }
+            }
+        }
+    }
 
     // ── lock overlay: blocks the whole UI until the master password is entered ──
     Rectangle {

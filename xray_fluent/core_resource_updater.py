@@ -13,6 +13,13 @@ import zipfile
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import APP_VERSION, SINGBOX_PATH_DEFAULT, XRAY_PATH_DEFAULT
+from .discord_proxy_manager import (
+    DROUTE_DIR,
+    DROUTE_EXE,
+    DROUTE_LEGACY_VERSION,
+    DROUTE_VERSION_FILE,
+    get_droute_bundle_version,
+)
 from .engines.singbox import get_singbox_version
 from .geodata_resources import (
     RUNETFREEDOM_RULES_BASE_URL,
@@ -36,6 +43,7 @@ from .path_utils import resolve_configured_path
 from .zip_utils import safe_extract_zip
 
 SINGBOX_EXTENDED_LATEST_API = "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest"
+DROUTE_LATEST_API = "https://api.github.com/repos/snowluwu/droute/releases/latest"
 GEOIP_DAT_URL = f"{RUNETFREEDOM_RULES_BASE_URL}/geoip.dat"
 GEOSITE_DAT_URL = f"{RUNETFREEDOM_RULES_BASE_URL}/geosite.dat"
 _MAX_RESOURCE_DOWNLOAD_BYTES = 512 * 1024 * 1024
@@ -101,6 +109,16 @@ def _extract_singbox_version(text: str) -> str:
     value = _extract_version(text or "")
     match = re.search(r"(\d+\.\d+\.\d+(?:-extended-\d+\.\d+\.\d+)?)", text or "")
     return match.group(1) if match else value
+
+
+def _pick_droute_asset(release: dict) -> tuple[str, str, str]:
+    for asset in release.get("assets") or []:
+        name = str(asset.get("name") or "")
+        url = str(asset.get("browser_download_url") or "")
+        if re.fullmatch(r"droute-[v\d][\w.-]*\.zip", name, flags=re.IGNORECASE) and url:
+            digest = str(asset.get("digest") or "")
+            return name, url, digest.removeprefix("sha256:").strip().lower()
+    raise RuntimeError("droute zip asset was not found in the latest release")
 
 
 def _atomic_replace_files(
@@ -271,6 +289,85 @@ def _ensure_zip_file(path: Path, label: str) -> None:
     if not zipfile.is_zipfile(path):
         size = path.stat().st_size if path.exists() else 0
         raise RuntimeError(f"{label}: скачанный файл не является zip-архивом ({size} байт)")
+
+
+def check_or_update_droute(
+    apply_update: bool,
+    *,
+    on_progress=None,
+    proxy_url: str | None = None,
+    cancelled=None,
+    response_opened=None,
+    response_closed=None,
+    bundle_dir: Path | None = None,
+) -> ResourceUpdateResult:
+    target_dir = bundle_dir or DROUTE_DIR
+    target_exe = target_dir / DROUTE_EXE.name
+    version_file = target_dir / DROUTE_VERSION_FILE.name
+    if bundle_dir is None:
+        current = get_droute_bundle_version()
+    elif target_exe.is_file():
+        try:
+            current = version_file.read_text(encoding="utf-8").strip().lstrip("v")
+        except OSError:
+            current = DROUTE_LEGACY_VERSION
+    else:
+        current = ""
+
+    try:
+        release = _request_json(DROUTE_LATEST_API, proxy_url=proxy_url, cancelled=cancelled)
+        if not isinstance(release, dict):
+            raise RuntimeError("invalid GitHub release response")
+        asset_name, asset_url, expected_hash = _pick_droute_asset(release)
+        latest = _extract_version(str(release.get("tag_name") or release.get("name") or ""))
+        if not latest:
+            latest = _extract_version(asset_name)
+        if not latest:
+            raise RuntimeError("droute release version was not found")
+    except UpdateCancelled:
+        raise
+    except Exception as exc:
+        return ResourceUpdateResult("droute", "error", f"Не удалось проверить droute: {exc}", current, "")
+
+    if current and not _is_newer(latest, current):
+        return ResourceUpdateResult("droute", "up_to_date", f"droute актуален ({current})", current, latest)
+    if not apply_update:
+        return ResourceUpdateResult("droute", "available", f"Доступен droute {latest}", current, latest)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="droute_update_") as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            archive_path = temp_dir / asset_name
+            extract_dir = temp_dir / "extracted"
+            _download_direct(
+                asset_url,
+                archive_path,
+                on_progress,
+                proxy_url=proxy_url,
+                cancelled=cancelled,
+                response_opened=response_opened,
+                response_closed=response_closed,
+            )
+            if expected_hash and _sha256_file(archive_path).lower() != expected_hash:
+                raise RuntimeError("droute archive checksum mismatch")
+            _ensure_zip_file(archive_path, "droute")
+            with zipfile.ZipFile(archive_path) as archive:
+                safe_extract_zip(archive, extract_dir)
+            staged_exe = extract_dir / DROUTE_EXE.name
+            if not staged_exe.is_file() or staged_exe.stat().st_size < 1024:
+                raise RuntimeError("droute.exe was not found in the downloaded archive")
+            (extract_dir / DROUTE_VERSION_FILE.name).write_text(latest + "\n", encoding="utf-8")
+            replacements = [
+                (path, target_dir / path.relative_to(extract_dir))
+                for path in extract_dir.rglob("*")
+                if path.is_file()
+            ]
+            _atomic_replace_files(replacements)
+    except UpdateCancelled:
+        raise
+    except Exception as exc:
+        return ResourceUpdateResult("droute", "error", f"Не удалось обновить droute: {exc}", current, latest)
+    return ResourceUpdateResult("droute", "updated", f"droute обновлен до {latest}", current, latest)
 
 
 def check_or_update_singbox(
@@ -640,6 +737,15 @@ class ResourceUpdateWorker(QThread):
                     on_progress=lambda done, total: self.progress.emit(int(done * 100 / total)),
                     proxy_url=self._proxy_url,
                     on_install_start=self._trigger_disconnect_request,
+                    cancelled=self._cancelled.is_set,
+                    response_opened=self._register_response,
+                    response_closed=self._unregister_response,
+                )
+            elif self._kind == "droute":
+                result = check_or_update_droute(
+                    self._apply_update,
+                    on_progress=lambda done, total: self.progress.emit(int(done * 100 / total)),
+                    proxy_url=self._proxy_url,
                     cancelled=self._cancelled.is_set,
                     response_opened=self._register_response,
                     response_closed=self._unregister_response,

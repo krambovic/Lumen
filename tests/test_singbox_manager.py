@@ -88,3 +88,32 @@ def test_windows_tun_readiness_uses_single_persistent_probe(monkeypatch) -> None
     assert SingBoxManager._wait_for_windows_tun_ready(proc, "singbox_tun", 8.0)
     assert len(calls) == 1
     assert "Get-NetIPAddress" in calls[0][0][-1]
+
+
+def test_proxy_runtime_ports_are_detected_without_tun() -> None:
+    config = {
+        "inbounds": [
+            {"type": "mixed", "listen": "127.0.0.1", "listen_port": 10808},
+            {"type": "http", "listen": "127.0.0.1", "listen_port": 10809},
+        ]
+    }
+
+    assert SingBoxManager._extract_tun_interface_name(config) == ""
+    assert SingBoxManager._extract_local_proxy_ports(config) == (10808, 10809)
+
+
+def test_dns_warmup_uses_neutral_single_host(monkeypatch) -> None:
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout="93.184.216.34\n", stderr="")
+
+    proc = SimpleNamespace(poll=lambda: None)
+    manager = SingBoxManager()
+    monkeypatch.setattr(manager_module, "run_text_pumped", fake_run)
+
+    manager._warm_windows_dns(proc)
+
+    assert len(calls) == 1
+    assert "example.com" in calls[0][0][-1]

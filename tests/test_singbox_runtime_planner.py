@@ -212,6 +212,26 @@ def test_tun_runtime_keeps_v2rayn_style_local_proxy_inbounds() -> None:
     )
 
 
+def test_proxy_runtime_removes_tun_and_keeps_local_proxy_inbounds() -> None:
+    config = _plan(
+        RoutingSettings(mode="global", tun_default_outbound="proxy"),
+        node=_wireguard_node("198.51.100.10"),
+        tun_mode=False,
+        local_socks_port=12080,
+        local_http_port=12081,
+    )
+
+    assert not any(inbound.get("type") == "tun" for inbound in config["inbounds"])
+    inbounds = {inbound.get("tag"): inbound for inbound in config["inbounds"]}
+    assert inbounds["socks-in"]["listen_port"] == 12080
+    assert inbounds["http-in"]["listen_port"] == 12081
+    assert any(
+        rule.get("inbound") == ["socks-in", "http-in"]
+        and rule.get("outbound") == "proxy"
+        for rule in config["route"]["rules"]
+    )
+
+
 def test_disabled_tls_fragment_is_not_added_to_tun_rules() -> None:
     text = json.dumps(_base_config())
     document = parse_singbox_document(Path("test.json"), text)

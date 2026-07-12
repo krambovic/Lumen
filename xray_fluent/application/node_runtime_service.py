@@ -74,6 +74,22 @@ def is_native_singbox_only_node(node: Node | None) -> bool:
     }
 
 
+def _requires_singbox_tls(node: Node | None) -> bool:
+    outbound = node.outbound if node is not None else None
+    if not isinstance(outbound, dict):
+        return False
+    stream = outbound.get("streamSettings")
+    if not isinstance(stream, dict):
+        return False
+    tls = stream.get("tlsSettings")
+    return isinstance(tls, dict) and tls.get("allowInsecure") is True
+
+
+def proxy_core_for_node(node: Node | None) -> str:
+    """Choose the protocol engine independently from the traffic capture mode."""
+    return "singbox" if is_native_singbox_only_node(node) or _requires_singbox_tls(node) else "xray"
+
+
 def native_singbox_only_message(node: Node | None = None) -> str:
     name = (node.name or node.server) if node is not None else "Этот сервер"
     return (

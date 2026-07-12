@@ -9,6 +9,7 @@ Item {
     property bool preloadRequested: false
     property Component pageComponent
     property int slide: 6
+    readonly property bool ready: pageLoader.status === Loader.Ready
 
     readonly property bool laidOut: current || opacity > 0
 
@@ -50,6 +51,7 @@ Item {
     }
 
     Loader {
+        id: pageLoader
         anchors.fill: parent
         active: root.loaded
         asynchronous: root.loadAsynchronously

@@ -21,6 +21,7 @@ Item {
     property real selectionPointerX: -1
     property real selectionPointerY: -1
     property int hoverRow: -1
+    property real savedListContentY: 0
 
     // ── filtering / sorting state ───────────────────
     property string filterText: ""
@@ -676,6 +677,19 @@ Item {
                         interactive: false  // wheel/scrollbar only; no drag-to-scroll list movement
                         boundsBehavior: Flickable.StopAtBounds
                         onContentYChanged: page.updateDragSelection()
+
+                        Connections {
+                            target: App.nodeModel
+                            function onModelAboutToBeReset() {
+                                page.savedListContentY = list.contentY;
+                            }
+                            function onModelReset() {
+                                Qt.callLater(function() {
+                                    var maxY = Math.max(0, list.contentHeight - list.height);
+                                    list.contentY = Math.max(0, Math.min(maxY, page.savedListContentY));
+                                });
+                            }
+                        }
 
                         NumberAnimation {
                             id: listScrollAnim

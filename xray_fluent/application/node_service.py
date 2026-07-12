@@ -38,12 +38,13 @@ def import_nodes_from_text(
     *,
     group: str | None = None,
     auto_connect: bool | None = None,
-    select_imported: bool = True,
+    select_imported: bool = False,
 ) -> tuple[int, list[str]]:
     nodes, errors = parse_links_text(text)
     if not nodes:
         return 0, errors
 
+    previous_selected_id = controller.state.selected_node_id
     existing_links = {node.link for node in controller.state.nodes}
     max_order = max((node.sort_order for node in controller.state.nodes), default=0)
     first_new_id: str | None = None
@@ -68,10 +69,12 @@ def import_nodes_from_text(
             first_new_id = node.id
         added += 1
 
-    if first_new_id and (select_imported or not controller.state.selected_node_id):
+    if first_new_id and select_imported:
         controller.state.selected_node_id = first_new_id
-    elif not controller.state.selected_node_id and controller.state.nodes:
-        controller.state.selected_node_id = controller.state.nodes[0].id
+
+    selection_changed = controller.state.selected_node_id != previous_selected_id
+    if selection_changed:
+        controller._reset_auto_switch_state(reset_cooldown=True, reset_cycle=True)
 
     controller.nodes_changed.emit(controller.state.nodes)
     controller.selection_changed.emit(controller.selected_node)
@@ -83,7 +86,10 @@ def import_nodes_from_text(
         if auto_connect is None
         else auto_connect
     )
-    if added and should_auto_connect:
+    should_reconcile_running = auto_connect is not False and selection_changed and (
+        controller.connected or controller._desired_connected
+    )
+    if added and (should_auto_connect or should_reconcile_running):
         controller._desired_connected = True
         controller._request_transition("new node imported")
 

@@ -14,7 +14,7 @@ from ..constants import (
     SINGBOX_PATH_DEFAULT,
     XRAY_PATH_DEFAULT,
 )
-from ..engines.singbox import SingboxRuntimePlan, start_tun as start_singbox_tun
+from ..engines.singbox import SingboxRuntimePlan, start_proxy as start_singbox_proxy, start_tun as start_singbox_tun
 from ..engines.xray import (
     restart_proxy_core as restart_xray_proxy_core,
     start_proxy as start_xray_proxy,
@@ -23,6 +23,7 @@ from ..path_utils import resolve_configured_path
 from ..process_conflicts import scan_network_conflicts
 from ..subprocess_utils import kill_processes_by_path
 from .server_preflight import validate_server_preflight
+from .node_runtime_service import proxy_core_for_node
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -150,7 +151,7 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         else:
             session_label = node.name if node else "unknown"
 
-        if node is not None and not singbox_editor_mode and not xray_raw_mode:
+        if node is not None:
             problem = controller._prepare_node_for_runtime(node)
             if problem:
                 controller._set_connection_status("error", problem, level="error")
@@ -189,11 +190,18 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
             singbox_plan = result.plan
             session_label = result.session_label
         else:
-            result = start_xray_proxy(controller, node, prev_active_core=prev_active_core)
-            if result is None:
-                return False
-            runtime_xray = result.runtime
-            session_label = result.session_label
+            if proxy_core_for_node(node) == "singbox":
+                result = start_singbox_proxy(controller, node, prev_active_core=prev_active_core)
+                if result is None:
+                    return False
+                singbox_plan = result.plan
+                session_label = result.session_label
+            else:
+                result = start_xray_proxy(controller, node, prev_active_core=prev_active_core)
+                if result is None:
+                    return False
+                runtime_xray = result.runtime
+                session_label = result.session_label
 
         session_node = node
         if singbox_editor_mode and singbox_plan is not None and not singbox_plan.used_selected_node:
@@ -210,7 +218,7 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
             + (
                 " (TUN, xray sidecar)"
                 if tun and singbox_plan is not None and singbox_plan.is_hybrid
-                else " (TUN)" if tun else ""
+                else " (TUN)" if tun else " (sing-box)" if singbox_plan is not None else ""
             ),
             level="success",
         )
@@ -222,7 +230,7 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
             hybrid=bool(singbox_plan is not None and singbox_plan.is_hybrid),
             socks_port=runtime_xray.socks_port if runtime_xray is not None else None,
             http_port=runtime_xray.http_port if runtime_xray is not None else None,
-            xray_inbound_tags=runtime_xray.inbound_tags if runtime_xray is not None else ("socks-in", "http-in"),
+            xray_inbound_tags=runtime_xray.inbound_tags if runtime_xray is not None else (),
             sidecar_relay_port=singbox_plan.xray_sidecar.relay_port if singbox_plan and singbox_plan.xray_sidecar else 0,
             protect_ss_port=controller._protect_ss_port,
             protect_ss_password=controller._protect_ss_password,

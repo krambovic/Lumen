@@ -17,15 +17,16 @@ class SingboxStartResult:
     session_label: str
 
 
-def start_tun(
+def start_runtime(
     controller: AppController,
     node: Node | None,
     *,
     prev_active_core: str,
+    tun_mode: bool,
 ) -> SingboxStartResult | None:
     controller._active_core = "singbox"
     try:
-        plan = controller._plan_runtime_singbox(node)
+        plan = controller._plan_runtime_singbox(node, tun_mode=tun_mode)
     except ValueError as exc:
         controller._active_core = prev_active_core
         controller._set_connection_status("error", str(exc), level="error")
@@ -37,24 +38,25 @@ def start_tun(
     start_message = (
         f"Запуск VPN: {session_label} (sing-box + xray sidecar)..."
         if plan.is_hybrid
-        else f"Запуск VPN: {session_label}..."
+        else f"Запуск {'VPN' if tun_mode else 'прокси'}: {session_label}..."
     )
     controller._set_connection_status("starting", start_message, level="info")
-    controller._log(f"[tun] sing-box planner outcome: {plan.outcome} from {plan.source_path}")
+    log_domain = "tun" if tun_mode else "proxy"
+    controller._log(f"[{log_domain}] sing-box planner outcome: {plan.outcome} from {plan.source_path}")
     route = plan.singbox_config.get("route") if isinstance(plan.singbox_config, dict) else {}
     dns = plan.singbox_config.get("dns") if isinstance(plan.singbox_config, dict) else {}
     route_final = route.get("final") if isinstance(route, dict) else ""
     dns_final = dns.get("final") if isinstance(dns, dict) else ""
-    controller._log(f"[tun] routing final={route_final or '--'} dns_final={dns_final or '--'}")
+    controller._log(f"[{log_domain}] routing final={route_final or '--'} dns_final={dns_final or '--'}")
     for line in _runtime_summary_lines(plan.singbox_config):
-        controller._log(f"[tun] {line}")
+        controller._log(f"[{log_domain}] {line}")
     if plan.used_selected_node and node is not None:
         if plan.is_hybrid:
             controller._log(
-                f"[tun] outbound tag 'proxy' replaced with local xray relay for unsupported node: {node.name}"
+                f"[{log_domain}] outbound tag 'proxy' replaced with local xray relay for unsupported node: {node.name}"
             )
         else:
-            controller._log(f"[tun] outbound tag 'proxy' replaced from selected node: {node.name}")
+            controller._log(f"[{log_domain}] outbound tag 'proxy' replaced from selected node: {node.name}")
 
     if not controller._start_singbox_runtime_plan(plan):
         controller._set_connection_status(
@@ -62,14 +64,59 @@ def start_tun(
             (
                 "Не удалось запустить sing-box hybrid runtime. Смотрите причину в последних строках лога sing-box."
                 if plan.is_hybrid
-                else "Не удалось запустить sing-box TUN runtime. Смотрите причину в последних строках лога sing-box."
+                else (
+                    "Не удалось запустить sing-box TUN runtime. Смотрите причину в последних строках лога sing-box."
+                    if tun_mode
+                    else "Не удалось запустить sing-box proxy runtime. Смотрите причину в последних строках лога sing-box."
+                )
             ),
             level="error",
         )
         controller._active_core = prev_active_core
         return None
 
+    if not tun_mode:
+        settings = controller.state.settings
+        try:
+            if settings.enable_system_proxy:
+                controller.proxy.enable(
+                    int(settings.local_http_port),
+                    int(settings.local_socks_port),
+                    bypass_lan=controller._system_proxy_bypass_lan(),
+                )
+            else:
+                controller.proxy.disable(restore_previous=True)
+        except Exception as exc:
+            controller.singbox.stop(expected=True)
+            if controller.xray.is_running:
+                controller.xray.stop()
+            controller._active_core = prev_active_core
+            controller._set_connection_status(
+                "error",
+                f"Не удалось применить системный прокси для sing-box: {exc}",
+                level="error",
+            )
+            return None
+
     return SingboxStartResult(plan=plan, session_label=session_label)
+
+
+def start_tun(
+    controller: AppController,
+    node: Node | None,
+    *,
+    prev_active_core: str,
+) -> SingboxStartResult | None:
+    return start_runtime(controller, node, prev_active_core=prev_active_core, tun_mode=True)
+
+
+def start_proxy(
+    controller: AppController,
+    node: Node | None,
+    *,
+    prev_active_core: str,
+) -> SingboxStartResult | None:
+    return start_runtime(controller, node, prev_active_core=prev_active_core, tun_mode=False)
 
 
 def restart_runtime(controller: AppController, reason: str) -> bool:
