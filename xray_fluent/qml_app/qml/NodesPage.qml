@@ -1601,15 +1601,13 @@ Item {
     }
 
     // ---- QR dialog ---------------------------------------------------
-    Dialog {
+    FluentDialog {
         id: qrDialog
         property string qrSource: ""
         property string qrName: ""
-        anchors.centerIn: Overlay.overlay
-        modal: true
-        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
         title: qrName.length ? I18n.t("QR-код: ") + qrName : I18n.t("QR-код сервера")
-        standardButtons: Dialog.Close
+        okText: I18n.t("Закрыть")
+        showCancelButton: false
         width: 360
         contentItem: ColumnLayout {
             spacing: 12

@@ -17,6 +17,25 @@ import "."
 ComboBox {
     id: control
 
+    // ComboBox resets currentIndex to the first item while a model is being
+    // populated.  That can overwrite a declarative selection before the
+    // bridge-backed model is ready.  Use boundIndex for selections which must
+    // follow application state; it is re-applied after both the model and the
+    // desired value settle.
+    property int boundIndex: -1
+
+    function syncBoundIndex() {
+        if (control.boundIndex < 0 || control.count <= 0)
+            return
+        var nextIndex = Math.min(control.boundIndex, control.count - 1)
+        if (control.currentIndex !== nextIndex)
+            control.currentIndex = nextIndex
+    }
+
+    onBoundIndexChanged: Qt.callLater(function() { control.syncBoundIndex() })
+    onCountChanged: Qt.callLater(function() { control.syncBoundIndex() })
+    Component.onCompleted: Qt.callLater(function() { control.syncBoundIndex() })
+
     font.family: Theme.fontFamily
     font.pixelSize: Theme.fontNormal
     implicitHeight: Theme.controlHeight

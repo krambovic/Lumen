@@ -45,36 +45,6 @@ Item {
         }
     }
 
-    // Fluent-стилизованный диалог (скруглённая карточка + кастомные кнопки) вместо дефолтного Metro-окна либы.
-    component FluentDialog: Dialog {
-        id: fdlg
-        property string okText: I18n.t("Добавить")
-        anchors.centerIn: Overlay.overlay
-        modal: true
-        padding: 20
-        topPadding: 12
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle {
-            radius: 10; color: Theme.flyout
-            border.width: 1; border.color: Theme.flyoutBorder
-        }
-        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.45) }
-        header: Text {
-            text: fdlg.title
-            visible: fdlg.title.length > 0
-            color: Theme.text; font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
-            wrapMode: Text.WordWrap
-            leftPadding: 20; rightPadding: 20; topPadding: 18; bottomPadding: 2
-        }
-        footer: RowLayout {
-            spacing: 10
-            Item { Layout.fillWidth: true }
-            AccentButton { kind: "ghost"; text: I18n.t("Отмена"); onClicked: fdlg.reject(); Layout.topMargin: 6; Layout.bottomMargin: 18 }
-            AccentButton { kind: "accent"; text: fdlg.okText; onClicked: fdlg.accept(); Layout.rightMargin: 20; Layout.topMargin: 6; Layout.bottomMargin: 18 }
-        }
-    }
-
     FluentScroll {
         anchors.fill: parent
         roundedClip: false
@@ -124,7 +94,7 @@ Item {
                                     { key: "blocked", label: I18n.t("Только заблокированное") },
                                     { key: "except_ru", label: I18n.t("Всё кроме РФ") }
                                 ]
-                                currentIndex: page.builtInPresetKeys.indexOf(App.activeRoutingPresetId)
+                                boundIndex: page.builtInPresetKeys.indexOf(App.activeRoutingPresetId)
                                 onActivated: App.applyRoutingPreset(page.builtInPresetKeys[currentIndex])
                             }
                         }
@@ -140,7 +110,7 @@ Item {
                                 textRole: "name"
                                 model: App.customRoutingPresets
                                 enabled: App.customRoutingPresets.length > 0
-                                currentIndex: {
+                                boundIndex: {
                                     for (var i = 0; i < App.customRoutingPresets.length; i++)
                                         if (App.customRoutingPresets[i].id === App.activeRoutingPresetId) return i;
                                     return -1;
@@ -239,7 +209,7 @@ Item {
                     width: 200
                     textRole: "label"
                     model: [ { key: "proxy", label: I18n.t("Через прокси") }, { key: "direct", label: I18n.t("Напрямую") } ]
-                    currentIndex: page.idxIn(page.tunOutKeys, App.tunDefaultOutbound)
+                    boundIndex: page.idxIn(page.tunOutKeys, App.tunDefaultOutbound)
                     onActivated: App.setTunDefaultOutbound(page.tunOutKeys[currentIndex])
                 }
                 Item { Layout.fillWidth: true }
@@ -297,7 +267,7 @@ Item {
                                 StyledCombo {
                                     Layout.preferredWidth: 150
                                     model: page.procActionLabels
-                                    currentIndex: page.idxIn(page.procActionKeys, modelData.action)
+                                    boundIndex: page.idxIn(page.procActionKeys, modelData.action)
                                     onActivated: App.addProcessRule(modelData.process, page.procActionKeys[currentIndex])
                                 }
                                 AccentButton { kind: "ghost"; glyph: "\uE74D"; text: ""; Layout.preferredWidth: 40; onClicked: App.removeProcessRule(modelData.process) }
@@ -353,7 +323,7 @@ Item {
                                 StyledCombo {
                                     Layout.preferredWidth: 150
                                     model: page.svcActionLabels
-                                    currentIndex: page.idxIn(page.svcActionKeys, modelData.action)
+                                    boundIndex: page.idxIn(page.svcActionKeys, modelData.action)
                                     onActivated: App.setServiceRoute(modelData.id, page.svcActionKeys[currentIndex])
                                 }
                             }
@@ -419,7 +389,7 @@ Item {
                                 StyledCombo {
                                     Layout.preferredWidth: 150
                                     model: page.procActionLabels
-                                    currentIndex: page.idxIn(page.procActionKeys, modelData.action)
+                                    boundIndex: page.idxIn(page.procActionKeys, modelData.action)
                                     onActivated: App.addDomainRule(modelData.addr, page.procActionKeys[currentIndex])
                                 }
                                 AccentButton { kind: "ghost"; glyph: "\uE74D"; text: ""; Layout.preferredWidth: 40; onClicked: App.removeDomainRule(modelData.addr) }
@@ -496,12 +466,11 @@ Item {
     }
 
     // ---- save routing preset dialog ----------------------------------
-    Dialog {
+    FluentDialog {
         id: savePresetDialog
-        anchors.centerIn: Overlay.overlay
-        modal: true
         title: I18n.t("Сохранить пресет маршрутизации")
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        okText: I18n.t("Сохранить")
+        okEnabled: savePresetInput.text.trim().length > 0
         width: 460
         onAccepted: { if (savePresetInput.text.trim().length) App.saveRoutingPreset(savePresetInput.text.trim()) }
         contentItem: ColumnLayout {
@@ -515,14 +484,13 @@ Item {
     }
 
     // ---- running apps picker -----------------------------------------
-    Dialog {
+    FluentDialog {
         id: runningProcDialog
         property var procList: []
         function reload() { runningProcDialog.procList = App.runningProcesses(); runProcCombo.currentIndex = 0 }
-        anchors.centerIn: Overlay.overlay
-        modal: true
         title: I18n.t("Запущенные приложения")
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        okText: I18n.t("Добавить")
+        okEnabled: runningProcDialog.procList.length > 0 && runProcCombo.currentIndex >= 0
         width: 480
         onAccepted: {
             var name = runningProcDialog.procList[runProcCombo.currentIndex];
@@ -546,7 +514,7 @@ Item {
                     id: runProcActionCombo
                     Layout.preferredWidth: 160
                     model: page.procActionLabels
-                    currentIndex: 1
+                    boundIndex: 1
                 }
             }
         }
@@ -582,7 +550,7 @@ Item {
                     id: procActionCombo
                     Layout.preferredWidth: 160
                     model: page.procActionLabels
-                    currentIndex: 1
+                    boundIndex: 1
                 }
             }
         }
@@ -612,7 +580,7 @@ Item {
                     id: domainActionCombo
                     Layout.preferredWidth: 160
                     model: page.procActionLabels
-                    currentIndex: 1
+                    boundIndex: 1
                 }
             }
         }

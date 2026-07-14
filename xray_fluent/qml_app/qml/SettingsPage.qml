@@ -230,13 +230,11 @@ Item {
         onAccepted: App.setUiWallpaper(selectedFile.toString())
     }
 
-    Dialog {
+    FluentDialog {
         id: resetSettingsDialog
-        anchors.centerIn: Overlay.overlay
-        modal: true
         width: 480
         title: I18n.t("Сбросить настройки?")
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        okText: I18n.t("Сбросить")
         onAccepted: App.resetSettingsToDefaults()
         contentItem: Text {
             text: I18n.t("Настройки приложения и маршрутизации вернутся к значениям по умолчанию. Серверы и подписки не будут удалены.")
@@ -611,7 +609,7 @@ Item {
                             StyledCombo {
                                 readonly property var values: ["system", "builtin"]
                                 model: [I18n.t("Системный"), I18n.t("Встроенный")]
-                                currentIndex: Math.max(0, values.indexOf(App.dnsMode))
+                                boundIndex: Math.max(0, values.indexOf(App.dnsMode))
                                 onActivated: App.setDnsMode(values[currentIndex])
                             }
                         }
@@ -654,11 +652,11 @@ Item {
                                 columnSpacing: 12
                                 SettingRow {
                                     Layout.fillWidth: true; glyph: "\uE8A5"; title: I18n.t("Тип прямого DNS")
-                                    StyledCombo { model: ["udp", "tcp", "tls", "https"]; currentIndex: Math.max(0, model.indexOf(App.dnsBootstrapType)); onActivated: App.setBootstrapDns("", currentText) }
+                                    StyledCombo { model: ["udp", "tcp", "tls", "https"]; boundIndex: Math.max(0, model.indexOf(App.dnsBootstrapType)); onActivated: App.setBootstrapDns("", currentText) }
                                 }
                                 SettingRow {
                                     Layout.fillWidth: true; glyph: "\uE8A5"; title: I18n.t("Тип proxy DNS")
-                                    StyledCombo { model: ["udp", "tcp", "tls", "https"]; currentIndex: Math.max(0, model.indexOf(App.dnsProxyType)); onActivated: App.setProxyDns("", currentText) }
+                                    StyledCombo { model: ["udp", "tcp", "tls", "https"]; boundIndex: Math.max(0, model.indexOf(App.dnsProxyType)); onActivated: App.setProxyDns("", currentText) }
                                 }
                             }
                             GridLayout {
@@ -668,11 +666,11 @@ Item {
                                 columnSpacing: 12
                                 SettingRow {
                                     Layout.fillWidth: true; glyph: "\uE8EF"; title: I18n.t("Стратегия прямого DNS")
-                                    StyledCombo { readonly property var values: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]; model: values; currentIndex: Math.max(0, values.indexOf(App.dnsBootstrapStrategy)); onActivated: App.setDnsBootstrapStrategy(values[currentIndex]) }
+                                    StyledCombo { readonly property var values: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]; model: values; boundIndex: Math.max(0, values.indexOf(App.dnsBootstrapStrategy)); onActivated: App.setDnsBootstrapStrategy(values[currentIndex]) }
                                 }
                                 SettingRow {
                                     Layout.fillWidth: true; glyph: "\uE8EF"; title: I18n.t("Стратегия proxy DNS")
-                                    StyledCombo { readonly property var values: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]; model: values; currentIndex: Math.max(0, values.indexOf(App.dnsProxyStrategy)); onActivated: App.setDnsProxyStrategy(values[currentIndex]) }
+                                    StyledCombo { readonly property var values: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]; model: values; boundIndex: Math.max(0, values.indexOf(App.dnsProxyStrategy)); onActivated: App.setDnsProxyStrategy(values[currentIndex]) }
                                 }
                             }
 
