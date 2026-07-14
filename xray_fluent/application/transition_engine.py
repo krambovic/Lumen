@@ -100,14 +100,9 @@ def can_tun_hot_swap(
     *,
     session: ActiveSessionSnapshot,
     settings_tun_mode: bool,
-    settings_tun_engine: str,
     has_selected_node: bool,
     current_tun_layer_signature: str,
 ) -> bool:
     if not settings_tun_mode or not session.tun_mode:
         return False
-    if session.tun_engine != settings_tun_engine:
-        return False
-    if session.active_core == "singbox":
-        return settings_tun_engine == "singbox"
-    return False
+    return session.active_core == "singbox"

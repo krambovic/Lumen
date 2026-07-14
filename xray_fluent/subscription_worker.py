@@ -19,6 +19,8 @@ class SubscriptionJob:
     url: str
     kind: str  # "import" | "update"
     name: str = ""
+    user_agent: str = ""
+    converter_url: str = ""
 
 
 class SubscriptionFetchWorker(QObject):
@@ -61,6 +63,8 @@ class SubscriptionFetchWorker(QObject):
             try:
                 text, userinfo, errors = fetch_subscription_payload(
                     job.url,
+                    user_agent=job.user_agent,
+                    converter_url=job.converter_url,
                     cancelled=self._stopped.is_set,
                     response_opened=self._register_response,
                     response_closed=self._unregister_response,

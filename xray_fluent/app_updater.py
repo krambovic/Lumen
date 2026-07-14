@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -18,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request
 
-from .http_utils import build_opener, urlopen
+from .http_utils import abort_http_response, build_opener, urlopen
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import APP_VERSION, BASE_DIR
@@ -303,10 +304,7 @@ class UpdateChecker(QThread):
         with self._response_lock:
             responses = list(self._responses)
         for response in responses:
-            try:
-                response.close()
-            except Exception:
-                pass
+            _abort_http_response(response)
 
     def _raise_if_cancelled(self) -> None:
         if self._cancelled.is_set():
@@ -495,6 +493,10 @@ _NUM_SEGMENTS = 4       # parallel download segments
 _CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
+def _abort_http_response(response: object) -> None:
+    abort_http_response(response)
+
+
 class UpdateDownloader(QThread):
     """Download the setup installer, then launch the restart/install script."""
 
@@ -524,10 +526,7 @@ class UpdateDownloader(QThread):
         with self._response_lock:
             responses = list(self._responses)
         for response in responses:
-            try:
-                response.close()
-            except Exception:
-                pass
+            _abort_http_response(response)
 
     def _raise_if_cancelled(self) -> None:
         if self._cancelled.is_set():
@@ -542,6 +541,28 @@ class UpdateDownloader(QThread):
             self._responses = [item for item in self._responses if item is not response]
 
     # ── download helpers ────────────────────────────────────────
+
+    def _read_chunk(self, response: object) -> bytes:
+        """Read without trapping cancellation behind a blocking buffered read."""
+        fp = getattr(response, "fp", None)
+        raw = getattr(fp, "raw", None)
+        sock = getattr(raw, "_sock", None)
+        if sock is None:
+            return response.read(_CHUNK_SIZE)
+
+        while True:
+            self._raise_if_cancelled()
+            try:
+                readable, _, _ = select.select([sock], [], [], 0.1)
+            except (OSError, ValueError) as exc:
+                self._raise_if_cancelled()
+                raise exc
+            if not readable:
+                continue
+            read1 = getattr(response, "read1", None)
+            if callable(read1):
+                return read1(_CHUNK_SIZE)
+            return response.read(_CHUNK_SIZE)
 
     def _build_opener(self, proxy_url: str | None) -> urllib.request.OpenerDirector:
         if proxy_url:
@@ -594,7 +615,7 @@ class UpdateDownloader(QThread):
                 with open(seg_path, "wb") as f:
                     while True:
                         self._raise_if_cancelled()
-                        chunk = resp.read(_CHUNK_SIZE)
+                        chunk = self._read_chunk(resp)
                         if not chunk:
                             break
                         f.write(chunk)
@@ -619,7 +640,7 @@ class UpdateDownloader(QThread):
                 with open(target_path, "wb") as f:
                     while True:
                         self._raise_if_cancelled()
-                        chunk = resp.read(_CHUNK_SIZE)
+                        chunk = self._read_chunk(resp)
                         if not chunk:
                             if downloaded == 0:
                                 raise TimeoutError("Сервер не отдаёт данные")

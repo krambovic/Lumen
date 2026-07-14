@@ -5,34 +5,27 @@ import App 1.0
 import "."
 
 // Faithful port of ui/routing_page.py, now fully wired to the bridge:
-//  - Поведение / DNS / Обход локальной сети
-//  - TUN-only DNS (bootstrap + proxy)
+//  - Поведение / пользовательские пресеты / Обход локальной сети
 //  - быстрые пресеты
 //  - Приложения (process_rules) / Сервисы (service_routes) / Домены и IP
-// Each control applies immediately through the App bridge (setRoutingMode,
-// setDnsMode, setBypassLan, setBootstrapDns/setProxyDns, setTunDefaultOutbound,
+// Each control applies immediately through the App bridge (applyRoutingPreset,
+// applyCustomRoutingPreset, setBypassLan, setTunDefaultOutbound,
 // addProcessRule/removeProcessRule, setServiceRoute, addDomainRule/
 // removeDomainRule, importDomainRules/exportDomainRules, applyRoutingPreset).
 Item {
     id: page
 
-    readonly property var modeKeys: ["global", "rule", "direct"]
-    function modeIndex(m) {
-        var i = page.modeKeys.indexOf(m);
-        return i < 0 ? 1 : i;
-    }
+    readonly property var builtInPresetKeys: ["global", "blocked", "except_ru"]
     function idxIn(arr, v) {
         var i = arr.indexOf(v);
         return i < 0 ? 0 : i;
     }
 
-    readonly property var dnsModeKeys: ["system", "builtin"]
-    readonly property var dnsTypes: ["udp", "tcp", "tls", "https"]
     readonly property var tunOutKeys: ["proxy", "direct"]
     readonly property var procActionKeys: ["direct", "proxy", "block"]
     readonly property var procActionLabels: [I18n.t("Прямой"), I18n.t("Прокси"), I18n.t("Блокировка")]
-    readonly property var svcActionKeys: ["off", "proxy", "direct"]
-    readonly property var svcActionLabels: [I18n.t("По пресету"), I18n.t("Прокси"), I18n.t("Прямой")]
+    readonly property var svcActionKeys: ["direct", "proxy"]
+    readonly property var svcActionLabels: [I18n.t("Прямой"), I18n.t("Прокси")]
 
     // ---- reusable styled combo (Windows 11 Fluent look) --------------
     component StyledCombo: FluentCombo {}
@@ -103,7 +96,7 @@ Item {
                 AccentButton { kind: "ghost"; glyph: "\uE946"; text: I18n.t("Справка"); onClicked: helpDialog.open() }
             }
 
-            // ---- behaviour / DNS / bypass ----------------------------
+            // ---- behaviour / custom presets / bypass -----------------
             Card {
                 Layout.fillWidth: true
                 padding: 16
@@ -111,36 +104,75 @@ Item {
                     width: parent.width
                     spacing: 12
 
-                    RowLayout {
+                    GridLayout {
                         Layout.fillWidth: true
-                        spacing: 16
+                        columns: page.width < 850 ? 1 : 3
+                        rowSpacing: 12
+                        columnSpacing: 16
                         ColumnLayout {
                             spacing: 4
                             Layout.fillWidth: true
-                            Text { text: I18n.t("Поведение"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            Layout.preferredWidth: 1
+                            Text { text: I18n.t("Быстрые пресеты маршрутизации"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                             StyledCombo {
-                                id: modeCombo
+                                id: builtInPresetCombo
                                 Layout.fillWidth: true
+                                Layout.preferredHeight: Theme.controlHeight
                                 textRole: "label"
                                 model: [
                                     { key: "global", label: I18n.t("Всё через VPN") },
-                                    { key: "rule",   label: I18n.t("По моим правилам") },
-                                    { key: "direct", label: I18n.t("Без VPN по умолчанию") }
+                                    { key: "blocked", label: I18n.t("Только заблокированное") },
+                                    { key: "except_ru", label: I18n.t("Всё кроме РФ") }
                                 ]
-                                currentIndex: page.modeIndex(App.routingMode)
-                                onActivated: App.setRoutingMode(page.modeKeys[currentIndex])
+                                currentIndex: page.builtInPresetKeys.indexOf(App.activeRoutingPresetId)
+                                onActivated: App.applyRoutingPreset(page.builtInPresetKeys[currentIndex])
                             }
                         }
                         ColumnLayout {
                             spacing: 4
                             Layout.fillWidth: true
-                            Text { text: "DNS"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                            Layout.preferredWidth: 1
+                            Text { text: I18n.t("Свои пресеты маршрутизации"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                             StyledCombo {
+                                id: customPresetCombo
                                 Layout.fillWidth: true
-                                textRole: "label"
-                                model: [ { key: "system", label: I18n.t("Системный") }, { key: "builtin", label: I18n.t("Встроенный") } ]
-                                currentIndex: page.idxIn(page.dnsModeKeys, App.dnsMode)
-                                onActivated: App.setDnsMode(page.dnsModeKeys[currentIndex])
+                                Layout.preferredHeight: Theme.controlHeight
+                                textRole: "name"
+                                model: App.customRoutingPresets
+                                enabled: App.customRoutingPresets.length > 0
+                                currentIndex: {
+                                    for (var i = 0; i < App.customRoutingPresets.length; i++)
+                                        if (App.customRoutingPresets[i].id === App.activeRoutingPresetId) return i;
+                                    return -1;
+                                }
+                                onActivated: {
+                                    var preset = App.customRoutingPresets[currentIndex]
+                                    if (preset) App.applyCustomRoutingPreset(preset.id)
+                                }
+                            }
+                        }
+                        RowLayout {
+                            spacing: 8
+                            Layout.alignment: Qt.AlignBottom
+                            AccentButton {
+                                kind: "ghost"
+                                glyph: "\uE74E"
+                                text: I18n.t("Сохранить текущий пресет")
+                                iconOnly: true
+                                tip: I18n.t("Сохранить текущие правила как пресет")
+                                onClicked: { savePresetInput.text = ""; savePresetDialog.open() }
+                            }
+                            AccentButton {
+                                kind: "ghost"
+                                glyph: "\uE74D"
+                                text: I18n.t("Удалить пресет")
+                                iconOnly: true
+                                tip: I18n.t("Удалить выбранный пользовательский пресет")
+                                enabled: App.customRoutingPresets.length > 0 && customPresetCombo.currentIndex >= 0
+                                onClicked: {
+                                    var preset = App.customRoutingPresets[customPresetCombo.currentIndex]
+                                    if (preset) App.deleteRoutingPreset(preset.id)
+                                }
                             }
                         }
                     }
@@ -153,6 +185,19 @@ Item {
                             id: bypassSwitch
                             checked: App.bypassLan
                             onToggled: App.setBypassLan(checked)
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        visible: App.tunMode
+                        spacing: 4
+                        Text { text: "route_exclude_address"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                        DnsField {
+                            Layout.fillWidth: true
+                            text: App.tunRouteExcludeAddress
+                            placeholderText: "192.168.0.0/16, 10.0.0.0/8"
+                            onEditingFinished: App.setTunRouteExcludeAddress(text)
                         }
                     }
 
@@ -182,143 +227,6 @@ Item {
                         }
                     }
                 }
-            }
-
-            // ---- TUN-only DNS block ----------------------------------
-            Card {
-                Layout.fillWidth: true
-                visible: App.tunMode && !App.compactMode
-                padding: 16
-                ColumnLayout {
-                    width: parent.width
-                    spacing: 10
-                    SectionLabel { text: I18n.t("DNS для TUN") }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
-                        ColumnLayout {
-                            Layout.fillWidth: true; spacing: 4
-                            Text { text: "Bootstrap DNS"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                            DnsField {
-                                text: App.dnsBootstrapServer
-                                placeholderText: "8.8.8.8"
-                                onEditingFinished: App.setBootstrapDns(text, "")
-                            }
-                        }
-                        ColumnLayout {
-                            spacing: 4
-                            Text { text: I18n.t("Тип"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                            StyledCombo {
-                                width: 130
-                                model: page.dnsTypes
-                                currentIndex: page.idxIn(page.dnsTypes, App.dnsBootstrapType)
-                                onActivated: App.setBootstrapDns("", currentText)
-                            }
-                        }
-                        ColumnLayout {
-                            spacing: 4
-                            Text { text: I18n.t("Стратегия"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                            StyledCombo {
-                                width: 130
-                                model: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]
-                                currentIndex: Math.max(0, ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"].indexOf(App.dnsBootstrapStrategy))
-                                onActivated: App.setDnsBootstrapStrategy(["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"][currentIndex])
-                            }
-                        }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
-                        ColumnLayout {
-                            Layout.fillWidth: true; spacing: 4
-                            Text { text: "Proxy DNS"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                            DnsField {
-                                text: App.dnsProxyServer
-                                placeholderText: "8.8.8.8"
-                                onEditingFinished: App.setProxyDns(text, "")
-                            }
-                        }
-                        ColumnLayout {
-                            spacing: 4
-                            Text { text: I18n.t("Тип"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                            StyledCombo {
-                                width: 130
-                                model: page.dnsTypes
-                                currentIndex: page.idxIn(page.dnsTypes, App.dnsProxyType)
-                                onActivated: App.setProxyDns("", currentText)
-                            }
-                        }
-                        ColumnLayout {
-                            spacing: 4
-                            Text { text: I18n.t("Стратегия"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                            StyledCombo {
-                                width: 130
-                                model: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]
-                                currentIndex: Math.max(0, ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"].indexOf(App.dnsProxyStrategy))
-                                onActivated: App.setDnsProxyStrategy(["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"][currentIndex])
-                            }
-                        }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
-                        Text { text: I18n.t("Перехватывать DNS"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.fillWidth: true }
-                        Switch { checked: App.dnsHijackEnabled; onToggled: App.setDnsHijackEnabled(checked) }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 12
-                        Text { text: I18n.t("Fake DNS"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; Layout.fillWidth: true }
-                        Switch { checked: App.dnsFakeEnabled; onToggled: App.setDnsFakeEnabled(checked) }
-                    }
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
-                        Text { text: "route_exclude_address"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                        DnsField {
-                            Layout.fillWidth: true
-                            text: App.tunRouteExcludeAddress
-                            placeholderText: "192.168.0.0/16, 10.0.0.0/8"
-                            onEditingFinished: App.setTunRouteExcludeAddress(text)
-                        }
-                    }
-                }
-            }
-
-            // ---- routing presets -------------------------------------
-            Text { text: I18n.t("Быстрые пресеты приоритета"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-            Flow {
-                Layout.fillWidth: true
-                spacing: 8
-                AccentButton { kind: "ghost"; glyph: "\uE774"; text: I18n.t("Всё через VPN"); onClicked: App.applyRoutingPreset("global") }
-                AccentButton { kind: "ghost"; glyph: "\uE71B"; text: I18n.t("Только заблокированное"); onClicked: App.applyRoutingPreset("blocked") }
-                AccentButton { kind: "ghost"; glyph: "\uE80F"; text: I18n.t("Всё кроме РФ"); onClicked: App.applyRoutingPreset("except_ru") }
-            }
-
-            // ---- custom routing presets ------------------------------
-            Text { text: I18n.t("Свои пресеты маршрутизации"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-                StyledCombo {
-                    id: customPresetCombo
-                    Layout.preferredWidth: 220
-                    textRole: "name"
-                    model: App.customRoutingPresets
-                    enabled: App.customRoutingPresets.length > 0
-                }
-                AccentButton {
-                    kind: "ghost"; glyph: "\uE768"; text: I18n.t("Применить")
-                    enabled: App.customRoutingPresets.length > 0
-                    onClicked: { var p = App.customRoutingPresets[customPresetCombo.currentIndex]; if (p) App.applyCustomRoutingPreset(p.id) }
-                }
-                AccentButton {
-                    kind: "ghost"; glyph: "\uE74D"; text: I18n.t("Удалить")
-                    enabled: App.customRoutingPresets.length > 0
-                    onClicked: { var p = App.customRoutingPresets[customPresetCombo.currentIndex]; if (p) App.deleteRoutingPreset(p.id) }
-                }
-                Item { Layout.fillWidth: true }
-                AccentButton { kind: "ghost"; glyph: "\uE74E"; text: I18n.t("Сохранить текущий"); onClicked: { savePresetInput.text = ""; savePresetDialog.open() } }
             }
 
             // ---- Приложения -------------------------------------------
@@ -423,7 +331,7 @@ Item {
                     width: parent.width
                     spacing: 0
                     Text {
-                        text: I18n.t("Быстрые переключатели для популярных сервисов (YouTube, Discord и др.). «По пресету» снимает ручное правило и возвращает сервис под текущий пресет.")
+                        text: I18n.t("Быстрые переключатели для популярных сервисов (YouTube, Discord и др.). Выберите прямое подключение или прокси.")
                         color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap; Layout.fillWidth: true; Layout.bottomMargin: 10
                     }
                     Repeater {
@@ -466,6 +374,7 @@ Item {
                 spacing: 8
                 AccentButton { kind: "ghost"; glyph: "\uE710"; text: I18n.t("Добавить"); onClicked: { domainInput.text = ""; domainDialog.open() } }
                 AccentButton { kind: "ghost"; glyph: "\uE896"; text: I18n.t("Импорт"); onClicked: { importInput.text = ""; importDialog.open() } }
+                AccentButton { kind: "ghost"; glyph: "\uE8E5"; text: I18n.t("Из файла"); onClicked: App.importDomainRulesFile() }
                 AccentButton { kind: "ghost"; glyph: "\uE72D"; text: I18n.t("Экспорт"); onClicked: App.exportDomainRules() }
             }
             Card {
@@ -562,18 +471,7 @@ Item {
             spacing: 10
             Text {
                 Layout.fillWidth: true
-                text: I18n.t("DNS:\nСистемный DNS — домены резолвит Windows или само приложение.\nВстроенный DNS — DNS проходит через Lumen/sing-box и подчиняется правилам direct/proxy/fake DNS.")
-                color: Theme.textMuted
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontNormal
-                wrapMode: Text.WordWrap
-                lineHeight: 1.25
-                leftPadding: 20; rightPadding: 20
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: I18n.t("Поведение:\n«Всё через VPN» отправляет весь трафик через сервер.\n«По моим правилам» использует ваши правила по приложениям, сервисам, доменам и IP.\n«Без VPN по умолчанию» пускает трафик напрямую, кроме явно указанных исключений.\n\nСервисы:\n«По пресету» — убрать ручное правило и снова доверить сервис текущему пресету.\n«Прокси» — всегда вести сервис через VPN/прокси, даже если общий режим прямой.\n«Прямой» — всегда вести сервис напрямую, даже если общий режим «Всё через VPN».\n\nПравила по приложениям работают только в режиме TUN.")
+                text: I18n.t("Быстрые пресеты:\n«Всё через VPN» отправляет весь трафик через сервер.\n«Только заблокированное» направляет через прокси известные заблокированные ресурсы.\n«Всё кроме РФ» пускает российские ресурсы напрямую, а остальной трафик — через прокси.\n\nСервисы:\n«Прокси» — всегда вести сервис через VPN/прокси.\n«Прямой» — всегда вести сервис напрямую.\n\nПравила по приложениям работают только в режиме TUN.")
                 color: Theme.textMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontNormal

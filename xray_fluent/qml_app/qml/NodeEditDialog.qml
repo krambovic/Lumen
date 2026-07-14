@@ -69,6 +69,7 @@ Popup {
         encField.text = f.encryption || ""
         sniField.text = f.sni || ""
         fpField.text = f.fingerprint || ""
+        pinField.text = f.pinnedPeerCertSha256 || ""
         pbkField.text = f.publicKey || ""
         sidField.text = f.shortId || ""
         spxField.text = f.spiderX || ""
@@ -96,6 +97,7 @@ Popup {
             "security": secCombo.currentText,
             "sni": sniField.text,
             "fingerprint": fpField.text,
+            "pinnedPeerCertSha256": pinField.text,
             "publicKey": pbkField.text,
             "shortId": sidField.text,
             "spiderX": spxField.text,
@@ -219,6 +221,14 @@ Popup {
 
                 FLabel { text: "Fingerprint"; visible: dlg.showTls }
                 FField { id: fpField; visible: dlg.showTls; enabled: dlg.isTls; placeholderText: "chrome, firefox, …" }
+
+                FLabel { text: "TLS SHA-256 pin"; visible: dlg.showTls && dlg.secVal === "tls" }
+                FField {
+                    id: pinField
+                    visible: dlg.showTls && dlg.secVal === "tls"
+                    enabled: visible
+                    placeholderText: "64 hex-символа"
+                }
 
                 FLabel { text: "Public key"; visible: dlg.showReality }
                 FField { id: pbkField; visible: dlg.showReality; enabled: dlg.isReality }

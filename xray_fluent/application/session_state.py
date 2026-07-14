@@ -11,7 +11,6 @@ class ActiveSessionSnapshot:
     node_server: str
     active_core: str
     tun_mode: bool
-    tun_engine: str
     proxy_enabled: bool
     proxy_bypass_lan: bool
     xray_path: str
@@ -41,9 +40,6 @@ class XrayRuntimeConfig:
     socks_port: int
     http_port: int
     api_port: int
-    tun_interface_name: str
-    loop_prevention_interface: str
-    loop_prevention_patched_outbounds: int
     inbound_tags: tuple[str, ...]
     ping_host: str
     ping_port: int
@@ -55,7 +51,6 @@ def build_active_session_snapshot(
     node_server: str,
     active_core: str,
     tun_mode: bool,
-    tun_engine: str,
     proxy_enabled: bool,
     proxy_bypass_lan: bool,
     xray_path: str,
@@ -80,7 +75,6 @@ def build_active_session_snapshot(
         node_server=node_server,
         active_core=active_core,
         tun_mode=tun_mode,
-        tun_engine=tun_engine,
         proxy_enabled=proxy_enabled,
         proxy_bypass_lan=proxy_bypass_lan,
         xray_path=xray_path,

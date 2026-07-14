@@ -53,8 +53,6 @@ FluentScroll {
     function connectionServerName() {
         return App.selectedNodeName.length > 0 ? App.selectedNodeName : I18n.t("Сервер не выбран");
     }
-    readonly property bool singbox: App.tunMode && App.tunEngine === "singbox"
-
     component DashboardFlag: Item {
         id: flagBox
         readonly property bool hasSource: App.selectedNodeFlagSource.length > 0

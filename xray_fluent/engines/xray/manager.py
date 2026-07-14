@@ -6,13 +6,12 @@ import json
 import os
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 from collections import deque
 from pathlib import Path
 from typing import Any
-
-_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -26,6 +25,8 @@ from ...subprocess_utils import (
     run_text_pumped,
     sleep_with_events,
 )
+
+_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 class XrayManager(QObject):
@@ -62,7 +63,55 @@ class XrayManager(QObject):
         proc = self._proc
         return proc is not None and proc.poll() is None
 
-    def start(self, xray_path: str, config: dict[str, Any]) -> bool:
+    def validate_config(self, xray_path: str, config: dict[str, Any]) -> tuple[bool, str]:
+        exe = resolve_configured_path(
+            xray_path,
+            default_path=XRAY_PATH_DEFAULT,
+            use_default_if_empty=True,
+            migrate_default_location=True,
+        )
+        if exe is None or not exe.is_file():
+            return False, f"xray.exe не найден: {exe or xray_path}"
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        config_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".json",
+                prefix="xray-check-",
+                dir=RUNTIME_DIR,
+                delete=False,
+            ) as handle:
+                json.dump(config, handle, ensure_ascii=True, indent=2)
+                config_path = Path(handle.name)
+            result = subprocess.run(
+                [str(exe), "run", "-test", "-c", str(config_path)],
+                cwd=str(exe.parent),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=20,
+                creationflags=_CREATE_NO_WINDOW,
+                check=False,
+            )
+            output = decode_output(result.stdout).strip()
+            return result.returncode == 0, output
+        except subprocess.TimeoutExpired:
+            return False, "Проверка конфигурации Xray превысила 20 секунд"
+        except Exception as exc:
+            return False, f"Не удалось проверить конфигурацию Xray: {exc}"
+        finally:
+            if config_path is not None:
+                config_path.unlink(missing_ok=True)
+
+    def start(
+        self,
+        xray_path: str,
+        config: dict[str, Any],
+        *,
+        prevalidated: bool = False,
+    ) -> bool:
         if not xray_path or not xray_path.strip():
             self.error.emit("Путь к Xray не настроен (укажите его в Настройки -> Пути к ядрам)")
             return False
@@ -79,6 +128,13 @@ class XrayManager(QObject):
             self.error.emit(f"xray.exe не найден: {exe}")
             return False
         self._exe_path = exe
+
+        if not prevalidated:
+            valid, validation_output = self.validate_config(str(exe), config)
+            if not valid:
+                detail = validation_output or "неизвестная ошибка проверки"
+                self.error.emit(f"Xray не принимает новый конфиг: {detail}")
+                return False
 
         if self._proc_alive():
             if not self.stop(expected=True):

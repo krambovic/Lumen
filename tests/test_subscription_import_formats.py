@@ -148,7 +148,7 @@ def test_subscription_tls_eof_retries_same_profile_direct(monkeypatch) -> None:
     calls = []
 
     def fake_fetch(url: str, profile: str, headers: dict, *, direct: bool = False):
-        calls.append((profile, direct))
+        calls.append((profile, headers["User-Agent"], direct))
         if not direct:
             raise OSError("<urlopen error TLS/SSL connection has been closed (EOF) (_ssl.c:1010)>")
         return (
@@ -164,7 +164,42 @@ def test_subscription_tls_eof_retries_same_profile_direct(monkeypatch) -> None:
     assert "one.example" in text
     assert info["clientProfile"] == "Happ Windows"
     assert info["networkPath"] == "direct"
-    assert calls[:2] == [("Happ Windows", False), ("Happ Windows", True)]
+    assert calls[:2] == [
+        ("Happ Windows", node_service.HAPP_WINDOWS_USER_AGENT, False),
+        ("Happ Windows", node_service.HAPP_WINDOWS_USER_AGENT, True),
+    ]
+
+
+def test_subscription_uses_custom_user_agent_and_converter_first(monkeypatch) -> None:
+    calls = []
+
+    def fake_fetch(url: str, profile: str, headers: dict, *, direct: bool = False):
+        calls.append((url, profile, headers["User-Agent"], direct))
+        return (
+            "vless://00000000-0000-0000-0000-000000000001@one.example:443"
+            "?encryption=none&type=tcp&security=none#one",
+            {"clientProfile": profile},
+        )
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
+
+    text, info, errors = node_service.fetch_subscription_payload(
+        "https://sub.example/path?id=1",
+        user_agent="CustomClient/2.0",
+        converter_url="https://converter.example/sub?url={url}",
+    )
+
+    assert errors == []
+    assert "one.example" in text
+    assert info["clientProfile"] == "Custom"
+    assert calls == [
+        (
+            "https://converter.example/sub?url=https%3A%2F%2Fsub.example%2Fpath%3Fid%3D1",
+            "Custom",
+            "CustomClient/2.0",
+            False,
+        )
+    ]
 
 
 def test_subscription_rejects_declared_oversized_body(monkeypatch) -> None:

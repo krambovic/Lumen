@@ -14,14 +14,15 @@ Item {
     property int currentTab: 0
     readonly property var tabModel: [
         { glyph: "\uE790", label: I18n.t("Внешний вид"),        pageIndex: 0, compactHidden: false },
-        { glyph: "\uE774", label: I18n.t("Сеть"),               pageIndex: 1, compactHidden: false },
-        { glyph: "\uE8AB", label: I18n.t("Авто-переключение"),  pageIndex: 2, compactHidden: true  },
-        { glyph: "\uE7E8", label: I18n.t("Запуск и тесты"),     pageIndex: 3, compactHidden: false },
-        { glyph: "\uE895", label: I18n.t("Обновления"),         pageIndex: 4, compactHidden: false },
-        { glyph: "\uE74E", label: I18n.t("Данные"),             pageIndex: 5, compactHidden: true  }
+        { glyph: "\uE774", label: I18n.t("Сеть"),               pageIndex: 3, compactHidden: false },
+        { glyph: "\uE7E8", label: I18n.t("Запуск и тесты"),     pageIndex: 4, compactHidden: false },
+        { glyph: "\uE8C8", label: I18n.t("Подписки"),           pageIndex: 1, compactHidden: false },
+        { glyph: "\uE774", label: I18n.t("DNS"),                pageIndex: 2, compactHidden: false },
+        { glyph: "\uE895", label: I18n.t("Обновления"),         pageIndex: 5, compactHidden: false },
+        { glyph: "\uE74E", label: I18n.t("Данные"),             pageIndex: 6, compactHidden: true  }
     ]
     readonly property bool narrowTabs: width < 760
-    readonly property bool showTabLabels: width >= 720
+    readonly property bool showTabLabels: width >= 1220
     readonly property real tabScale: width < 760 ? 0.82 : 1.0
     readonly property var visibleTabs: tabModel.filter(function(t) { return !(t.compactHidden && App.compactMode); })
     readonly property int activeVisibleIndex: {
@@ -34,6 +35,14 @@ Item {
         for (var i = 0; i < visibleTabs.length; i++)
             if (visibleTabs[i].pageIndex === currentTab) { ok = true; break; }
         if (!ok && visibleTabs.length > 0) currentTab = visibleTabs[0].pageIndex;
+    }
+
+    function saveSubscriptionSettings() {
+        App.setSubscriptionIncludeRegex(subscriptionIncludeRegex.text)
+        App.setSubscriptionExcludeRegex(subscriptionExcludeRegex.text)
+        App.setSubscriptionUserAgent(subscriptionUserAgent.text)
+        App.setSubscriptionConverterEnabled(subscriptionConverterEnabled.checked)
+        App.setSubscriptionConverterUrl(subscriptionConverterUrl.text)
     }
 
 
@@ -52,6 +61,24 @@ Item {
             radius: Theme.radiusSmall
             color: Theme.card
             border.width: 1; border.color: Theme.borderSolid
+        }
+    }
+
+    component StyledArea: TextArea {
+        Layout.fillWidth: true
+        Layout.preferredHeight: 86
+        color: Theme.text
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontNormal
+        opacity: enabled ? 1.0 : 0.5
+        selectByMouse: true
+        wrapMode: TextEdit.WrapAnywhere
+        leftPadding: 10; rightPadding: 10; topPadding: 8; bottomPadding: 8
+        background: Rectangle {
+            radius: Theme.radiusSmall
+            color: Theme.card
+            border.width: 1
+            border.color: parent.activeFocus ? Theme.accent : Theme.borderSolid
         }
     }
 
@@ -201,6 +228,23 @@ Item {
         title: I18n.t("Выберите изображение")
         nameFilters: [I18n.t("Изображения") + " (*.png *.jpg *.jpeg *.bmp *.webp)"]
         onAccepted: App.setUiWallpaper(selectedFile.toString())
+    }
+
+    Dialog {
+        id: resetSettingsDialog
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        width: 480
+        title: I18n.t("Сбросить настройки?")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: App.resetSettingsToDefaults()
+        contentItem: Text {
+            text: I18n.t("Настройки приложения и маршрутизации вернутся к значениям по умолчанию. Серверы и подписки не будут удалены.")
+            color: Theme.textMuted
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontNormal
+            wrapMode: Text.WordWrap
+        }
     }
 
     ColumnLayout {
@@ -474,6 +518,202 @@ Item {
             ColumnLayout {
                 width: parent.width
                 spacing: Theme.spacingLarge
+                Card {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 14
+                        Text { text: I18n.t("Подписки"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                        SettingRow {
+                            glyph: "\uE895"; title: I18n.t("Автообновление подписок"); subtitle: I18n.t("Как часто фоново обновлять подписки (прокси/VPN не отключается)")
+                            StyledCombo {
+                                Layout.preferredWidth: 200
+                                readonly property var values: [0, 30, 60, 240, 720, 1440]
+                                model: [I18n.t("Выкл"), I18n.t("30 мин"), I18n.t("1 час"), I18n.t("4 часа"), I18n.t("12 часов"), I18n.t("24 часа")]
+                                currentIndex: Math.max(0, values.indexOf(App.subscriptionAutoUpdateMinutes))
+                                onActivated: App.setSubscriptionAutoUpdateMinutes(values[currentIndex])
+                            }
+                        }
+                    }
+                }
+
+                Card {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 14
+                        Text { text: I18n.t("Фильтры regex"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
+                        Text { text: I18n.t("Каждая строка — отдельное выражение. Фильтр применяется к имени, адресу, протоколу и исходной ссылке сервера."); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: page.width < 1000 ? 1 : 2
+                            rowSpacing: 12
+                            columnSpacing: 12
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Text { text: I18n.t("Включать"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                                StyledArea { id: subscriptionIncludeRegex; text: App.subscriptionIncludeRegex; placeholderText: "NL|DE|Reality" }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Text { text: I18n.t("Исключать"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                                StyledArea { id: subscriptionExcludeRegex; text: App.subscriptionExcludeRegex; placeholderText: "expired|traffic limit" }
+                            }
+                        }
+                    }
+                }
+
+                Card {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 14
+                        Text { text: I18n.t("Параметры запроса"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
+                        SettingRow {
+                            glyph: "\uE8D4"; title: "User-Agent"; subtitle: I18n.t("Пустое поле использует полный профиль запросов Happ для Windows")
+                            StyledField { id: subscriptionUserAgent; Layout.preferredWidth: 360; text: App.subscriptionUserAgent; placeholderText: "Happ/2.18.3/Windows/2606241603601" }
+                        }
+                        SettingRow {
+                            glyph: "\uE8AB"; title: I18n.t("Конвертация подписки"); subtitle: I18n.t("Перед загрузкой передавать URL сервису-конвертеру")
+                            Switch { id: subscriptionConverterEnabled; checked: App.subscriptionConverterEnabled }
+                        }
+                        StyledField {
+                            id: subscriptionConverterUrl
+                            Layout.fillWidth: true
+                            enabled: subscriptionConverterEnabled.checked
+                            text: App.subscriptionConverterUrl
+                            placeholderText: "https://converter.example/sub?url={url}"
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Item { Layout.fillWidth: true }
+                            AccentButton { glyph: "\uE74E"; text: I18n.t("Сохранить настройки подписок"); onClicked: page.saveSubscriptionSettings() }
+                        }
+                    }
+                }
+                Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
+            }
+        }
+
+        FluentScroll {
+            roundedClip: false
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingLarge
+                Card {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 14
+                        Text { text: "DNS"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+                        SettingRow {
+                            glyph: "\uE774"; title: I18n.t("Режим DNS"); subtitle: I18n.t("Системный DNS или встроенный DNS выбранного ядра")
+                            StyledCombo {
+                                readonly property var values: ["system", "builtin"]
+                                model: [I18n.t("Системный"), I18n.t("Встроенный")]
+                                currentIndex: Math.max(0, values.indexOf(App.dnsMode))
+                                onActivated: App.setDnsMode(values[currentIndex])
+                            }
+                        }
+                    }
+                }
+
+                Card {
+                    Layout.fillWidth: true
+                    enabled: App.dnsMode === "builtin"
+                    opacity: enabled ? 1.0 : 0.5
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 14
+                        Text { text: I18n.t("DNS-серверы"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 14
+                            GridLayout {
+                                Layout.fillWidth: true
+                                columns: page.width < 1000 ? 1 : 2
+                                rowSpacing: 12
+                                columnSpacing: 12
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Text { text: I18n.t("Прямые DNS-серверы"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                                    Text { text: I18n.t("По одному адресу в строке"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                                    StyledArea { id: dnsBootstrapServers; text: App.dnsBootstrapServersText; placeholderText: "1.1.1.1\n8.8.8.8" }
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Text { text: I18n.t("DNS через прокси"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                                    Text { text: I18n.t("По одному адресу в строке"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                                    StyledArea { id: dnsProxyServers; text: App.dnsProxyServersText; placeholderText: "dns.google\ncloudflare-dns.com" }
+                                }
+                            }
+                            GridLayout {
+                                Layout.fillWidth: true
+                                columns: page.width < 1000 ? 1 : 2
+                                rowSpacing: 12
+                                columnSpacing: 12
+                                SettingRow {
+                                    Layout.fillWidth: true; glyph: "\uE8A5"; title: I18n.t("Тип прямого DNS")
+                                    StyledCombo { model: ["udp", "tcp", "tls", "https"]; currentIndex: Math.max(0, model.indexOf(App.dnsBootstrapType)); onActivated: App.setBootstrapDns("", currentText) }
+                                }
+                                SettingRow {
+                                    Layout.fillWidth: true; glyph: "\uE8A5"; title: I18n.t("Тип proxy DNS")
+                                    StyledCombo { model: ["udp", "tcp", "tls", "https"]; currentIndex: Math.max(0, model.indexOf(App.dnsProxyType)); onActivated: App.setProxyDns("", currentText) }
+                                }
+                            }
+                            GridLayout {
+                                Layout.fillWidth: true
+                                columns: page.width < 1000 ? 1 : 2
+                                rowSpacing: 12
+                                columnSpacing: 12
+                                SettingRow {
+                                    Layout.fillWidth: true; glyph: "\uE8EF"; title: I18n.t("Стратегия прямого DNS")
+                                    StyledCombo { readonly property var values: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]; model: values; currentIndex: Math.max(0, values.indexOf(App.dnsBootstrapStrategy)); onActivated: App.setDnsBootstrapStrategy(values[currentIndex]) }
+                                }
+                                SettingRow {
+                                    Layout.fillWidth: true; glyph: "\uE8EF"; title: I18n.t("Стратегия proxy DNS")
+                                    StyledCombo { readonly property var values: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]; model: values; currentIndex: Math.max(0, values.indexOf(App.dnsProxyStrategy)); onActivated: App.setDnsProxyStrategy(values[currentIndex]) }
+                                }
+                            }
+
+                            SettingRow { glyph: "\uE8C9"; title: I18n.t("Параллельные DNS-запросы"); subtitle: I18n.t("Запрашивать несколько DNS одновременно, когда ядро это поддерживает"); Switch { checked: App.dnsParallelQuery; onToggled: App.setDnsParallelQuery(checked) } }
+                            SettingRow { glyph: "\uE823"; title: I18n.t("Оптимистичный кэш"); subtitle: I18n.t("Отдавать устаревший ответ и обновлять его в фоне, когда ядро это поддерживает"); Switch { checked: App.dnsOptimisticCache; onToggled: App.setDnsOptimisticCache(checked) } }
+                            SettingRow { glyph: "\uE81E"; title: I18n.t("Geo-проверка DNS"); subtitle: I18n.t("Выбирать прямой или proxy DNS по правилам GeoSite пресета"); Switch { checked: App.dnsGeoCheck; onToggled: App.setDnsGeoCheck(checked) } }
+                            SettingRow { glyph: "\uE8D7"; title: I18n.t("Перехватывать DNS в TUN"); subtitle: I18n.t("Направлять DNS-запросы приложений во встроенный DNS"); Switch { checked: App.dnsHijackEnabled; onToggled: App.setDnsHijackEnabled(checked) } }
+                            SettingRow { glyph: "\uE8F1"; title: I18n.t("Fake DNS"); subtitle: I18n.t("Использовать FakeIP для DNS в TUN"); Switch { checked: App.dnsFakeEnabled; onToggled: App.setDnsFakeEnabled(checked) } }
+                        }
+                    }
+                }
+
+                Card {
+                    Layout.fillWidth: true
+                    enabled: App.dnsMode === "builtin"
+                    opacity: enabled ? 1.0 : 0.5
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 14
+                        Text { text: "Hosts"; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
+                        Text { text: I18n.t("Формат: domain=address. Несколько адресов разделяются запятыми."); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        StyledArea { id: dnsHosts; Layout.preferredHeight: 110; text: App.dnsHostsText; placeholderText: "example.com=1.1.1.1\nlocal.test=127.0.0.1,::1" }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Item { Layout.fillWidth: true }
+                            AccentButton {
+                                glyph: "\uE74E"; text: I18n.t("Применить DNS")
+                                onClicked: App.applyDnsSettings(dnsBootstrapServers.text, dnsProxyServers.text, dnsHosts.text)
+                            }
+                        }
+                    }
+                }
+                Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
+            }
+        }
+
+        FluentScroll {
+            roundedClip: false
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingLarge
         Card {
             Layout.fillWidth: true
             ColumnLayout {
@@ -530,6 +770,32 @@ Item {
                     glyph: "\uE9D9"; title: I18n.t("Настройки мультиплексирования"); subtitle: I18n.t("Multiplex Settings")
                     InfoIcon { tip: I18n.t("Потоки задают, сколько запросов можно вести внутри одного мультиплексированного соединения.") }
                     FluentSpin { from: 1; to: 32; value: App.multiplexConcurrency; onValueModified: App.setMultiplexConcurrency(value) }
+                }
+            }
+        }
+        Card {
+            Layout.fillWidth: true
+            visible: !App.compactMode
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 14
+                Text { text: I18n.t("Авто-переключение"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
+
+                SettingRow {
+                    glyph: "\uE895"; title: I18n.t("Включить авто-переключение"); subtitle: I18n.t("Переключать сервер при падении скорости")
+                    Switch { checked: App.autoSwitchEnabled; onToggled: App.setAutoSwitch(checked) }
+                }
+                SettingRow {
+                    glyph: "\uEC4A"; title: I18n.t("Порог скорости"); subtitle: I18n.t("КБ/с, ниже которого срабатывает переключение")
+                    FluentSpin { from: 1; to: 10000; value: App.autoSwitchThreshold; onValueModified: App.setAutoSwitchThreshold(value) }
+                }
+                SettingRow {
+                    glyph: "\uE916"; title: I18n.t("Задержка"); subtitle: I18n.t("Секунд низкой скорости перед переключением")
+                    FluentSpin { from: 5; to: 300; value: App.autoSwitchDelay; onValueModified: App.setAutoSwitchDelay(value) }
+                }
+                SettingRow {
+                    glyph: "\uE81C"; title: I18n.t("Пауза"); subtitle: I18n.t("Секунд между переключениями")
+                    FluentSpin { from: 10; to: 600; value: App.autoSwitchCooldown; onValueModified: App.setAutoSwitchCooldown(value) }
                 }
             }
         }
@@ -596,42 +862,6 @@ Item {
                     glyph: "\uE774"; title: I18n.t("Endpoint-Independent NAT"); subtitle: I18n.t("Full-cone NAT для игр и P2P (рекомендуется: выключено)")
                     InfoIcon { tip: I18n.t("Улучшает совместимость с играми и P2P-приложениями, но потребляет больше памяти. Работает со стеками gvisor и mixed. Применяется при следующем включении TUN.") }
                     Switch { checked: App.tunEndpointIndependentNat; onToggled: App.setTunEndpointIndependentNat(checked) }
-                }
-            }
-        }
-                Item { Layout.fillHeight: true; Layout.preferredHeight: 1 }
-            }
-        }
-
-        FluentScroll {
-            roundedClip: false
-            ColumnLayout {
-                width: parent.width
-                spacing: Theme.spacingLarge
-        Card {
-            Layout.fillWidth: true
-            visible: !App.compactMode
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 14
-                Text { text: I18n.t("Авто-переключение"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
-
-                SettingRow {
-                    glyph: "\uE895"; title: I18n.t("Включить авто-переключение"); subtitle: I18n.t("Переключать сервер при падении скорости")
-                    Switch { checked: App.autoSwitchEnabled; onToggled: App.setAutoSwitch(checked) }
-                }
-
-                SettingRow {
-                    glyph: "\uEC4A"; title: I18n.t("Порог скорости"); subtitle: I18n.t("КБ/с, ниже которого срабатывает переключение")
-                    FluentSpin { from: 1; to: 10000; value: App.autoSwitchThreshold; onValueModified: App.setAutoSwitchThreshold(value) }
-                }
-                SettingRow {
-                    glyph: "\uE916"; title: I18n.t("Задержка"); subtitle: I18n.t("Секунд низкой скорости перед переключением")
-                    FluentSpin { from: 5; to: 300; value: App.autoSwitchDelay; onValueModified: App.setAutoSwitchDelay(value) }
-                }
-                SettingRow {
-                    glyph: "\uE81C"; title: I18n.t("Пауза"); subtitle: I18n.t("Секунд между переключениями")
-                    FluentSpin { from: 10; to: 600; value: App.autoSwitchCooldown; onValueModified: App.setAutoSwitchCooldown(value) }
                 }
             }
         }
@@ -814,16 +1044,6 @@ Item {
                 Text { text: I18n.t("Обновления"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE895"; title: I18n.t("Автообновление подписок"); subtitle: I18n.t("Как часто фоново обновлять подписки (прокси/VPN не отключается)")
-                    StyledCombo {
-                        Layout.preferredWidth: 200
-                        readonly property var values: [0, 30, 60, 240, 720, 1440]
-                        model: [I18n.t("Выкл"), I18n.t("30 мин"), I18n.t("1 час"), I18n.t("4 часа"), I18n.t("12 часов"), I18n.t("24 часа")]
-                        currentIndex: Math.max(0, values.indexOf(App.subscriptionAutoUpdateMinutes))
-                        onActivated: App.setSubscriptionAutoUpdateMinutes(values[currentIndex])
-                    }
-                }
-                SettingRow {
                     glyph: "\uE777"; title: I18n.t("Проверять обновления"); subtitle: I18n.t("Автоматически проверять наличие обновлений")
                     Switch { checked: App.checkUpdates; onToggled: App.setCheckUpdates(checked) }
                 }
@@ -863,6 +1083,15 @@ Item {
                 SettingRow {
                     glyph: "\uE9D9"; title: I18n.t("Телеметрия"); subtitle: I18n.t("Отправлять диагностические ошибки на сервер Lumen KVN")
                     Switch { checked: App.diagnosticsUploadEnabled; onToggled: App.setDiagnosticsUpload(checked) }
+                }
+                SettingRow {
+                    glyph: "\uE777"; title: I18n.t("Сброс настроек"); subtitle: I18n.t("Вернуть настройки приложения и маршрутизации по умолчанию. Серверы и подписки останутся.")
+                    AccentButton {
+                        kind: "danger"
+                        glyph: "\uE777"
+                        text: I18n.t("Сбросить настройки")
+                        onClicked: resetSettingsDialog.open()
+                    }
                 }
             }
         }

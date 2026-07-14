@@ -21,7 +21,7 @@ Item {
     readonly property string singHint: I18n.t("Если в конфиге есть outbound tag `proxy`, он будет заменён на выбранный сервер перед запуском.")
     readonly property string singDetail: I18n.t("В режиме sing-box TUN правила процесса и пути применяются к перехваченному системному трафику. Если выбранный сервер нельзя запустить нативным sing-box outbound, приложение автоматически оставит этот же raw sing-box.json базой и поднимет local xray sidecar только для proxy path.")
     readonly property string xrayHint: I18n.t("Если в конфиге есть outbound tag `proxy`, он будет заменён на выбранный сервер перед запуском.")
-    readonly property string xrayDetail: I18n.t("Direct xray mode использует тот же raw xray.json только для трафика, который уже вошёл в xray через системный прокси Windows или ручную proxy-настройку приложения. xray TUN mode использует этот же raw xray.json как true TUN path, поэтому process/path rules из xray routing начинают работать на системный трафик.")
+    readonly property string xrayDetail: I18n.t("Xray использует raw xray.json для трафика системного прокси Windows или ручной proxy-настройки приложения. TUN всегда работает через sing-box extended.")
 
     // ---- live per-core editor state -------------------------------------
     property var cache: ({})          // core -> snapshot (preserves unsaved edits)

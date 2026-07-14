@@ -42,7 +42,7 @@ def _split_source(text: str) -> tuple[str, str]:
         return "Xray", body
     if tag in {"singbox", "sing-box", "singbox-error"}:
         return "sing-box", body
-    if tag in {"tun", "tun-host-swap", "xray-tun"}:
+    if tag in {"tun", "tun-host-swap"}:
         return "TUN", body
     if tag in {"proxy", "system-proxy"}:
         return "Прокси", body

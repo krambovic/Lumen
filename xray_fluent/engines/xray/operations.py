@@ -16,53 +16,6 @@ class XrayStartResult:
     session_label: str
 
 
-def start_tun(
-    controller: AppController,
-    node: Node | None,
-    *,
-    prev_active_core: str,
-) -> XrayStartResult | None:
-    controller._active_core = "xray"
-    try:
-        runtime = controller._build_runtime_xray_config(node, tun_mode=True)
-    except ValueError as exc:
-        controller._active_core = prev_active_core
-        controller._set_connection_status("error", str(exc), level="error")
-        return None
-
-    session_label = runtime.source_path.name
-    if runtime.used_selected_node and node is not None:
-        session_label = f"{runtime.source_path.name} / {node.name}"
-    controller._set_connection_status("starting", f"Запуск VPN: {session_label}...", level="info")
-    controller._log(f"[tun] starting xray TUN from {runtime.source_path}")
-    if runtime.used_selected_node and node is not None:
-        controller._log(f"[tun] outbound tag 'proxy' replaced from selected node: {node.name}")
-    if runtime.loop_prevention_patched_outbounds > 0:
-        controller._log(
-            "[tun] xray loop prevention bound "
-            f"{runtime.loop_prevention_patched_outbounds} outbound(s) to interface "
-            f"{runtime.loop_prevention_interface}"
-        )
-
-    controller._xray_api_port = runtime.api_port
-    if not controller.xray.start(controller.state.settings.xray_path, runtime.config):
-        controller._active_core = prev_active_core
-        return None
-    route_ok = controller._xray_tun_routes.setup(runtime.tun_interface_name)
-    if not route_ok:
-        controller.xray.stop()
-        controller._set_connection_status(
-            "error",
-            "Не удалось применить системный маршрут для Xray TUN. "
-            "Проверьте права Администратора и версию Xray-core с native TUN support.",
-            level="error",
-        )
-        controller._active_core = prev_active_core
-        return None
-
-    return XrayStartResult(runtime=runtime, session_label=session_label)
-
-
 def start_proxy(
     controller: AppController,
     node: Node | None,
@@ -71,7 +24,7 @@ def start_proxy(
 ) -> XrayStartResult | None:
     controller._active_core = "xray"
     try:
-        runtime = controller._build_runtime_xray_config(node, tun_mode=False)
+        runtime = controller._build_runtime_xray_config(node)
     except ValueError as exc:
         controller._active_core = prev_active_core
         controller._set_connection_status("error", str(exc), level="error")
@@ -122,9 +75,21 @@ def restart_proxy_core(controller: AppController, reason: str) -> bool:
     try:
         controller._log(f"[proxy-hot-swap] {reason}")
         try:
-            runtime = controller._build_runtime_xray_config(node, tun_mode=False)
+            runtime = controller._build_runtime_xray_config(node)
         except ValueError as exc:
             controller._set_connection_status("error", str(exc), level="error")
+            return False
+
+        valid, validation_output = controller.xray.validate_config(
+            controller.state.settings.xray_path,
+            runtime.config,
+        )
+        if not valid:
+            controller._set_connection_status(
+                "error",
+                f"Xray не принимает новый конфиг: {validation_output}",
+                level="error",
+            )
             return False
 
         session_label = runtime.source_path.name
@@ -137,7 +102,11 @@ def restart_proxy_core(controller: AppController, reason: str) -> bool:
             return False
 
         controller._xray_api_port = runtime.api_port
-        ok = controller.xray.start(controller.state.settings.xray_path, runtime.config)
+        ok = controller.xray.start(
+            controller.state.settings.xray_path,
+            runtime.config,
+            prevalidated=True,
+        )
         if not ok:
             controller._handle_unexpected_disconnect()
             return False

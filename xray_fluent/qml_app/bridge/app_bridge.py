@@ -15,7 +15,6 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import logging
-import os
 import re
 import sys
 from pathlib import Path
@@ -27,12 +26,13 @@ from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from ...app_controller import AppController
 from ...application.node_runtime_service import proxy_core_for_node
 from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
-from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, DATA_DIR, DEFAULT_HTTP_PORT, PROXY_HOST
+from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, PROXY_HOST
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
 from ...qthread_utils import stop_and_wait_for_thread
+from ...routing_rule_import import parse_routing_rules
 from ...startup import STARTUP_STATE_DISABLED, get_startup_state, is_process_elevated, relaunch_as_admin
 from .log_model import LogFilterModel, LogModel
 from .node_list_model import NodeListModel
@@ -219,7 +219,6 @@ class AppBridge(QObject):
         self._selected_latency = -1
         self._routing_mode = "rule"
         self._tun_mode = False
-        self._tun_engine = "singbox"
         self._proxy_enabled = False
         self._discord_proxy = False
         self._theme = "dark"
@@ -284,6 +283,20 @@ class AppBridge(QObject):
         except Exception:
             pass
         try:
+            settings = self.controller.state.settings
+            if getattr(settings, "xray_auto_update", False):
+                QTimer.singleShot(
+                    4500,
+                    lambda: self.controller.run_xray_core_update(True, silent=True),
+                )
+            elif getattr(settings, "resource_update_check", False):
+                QTimer.singleShot(
+                    4500,
+                    lambda: self.controller.run_xray_core_update(False, silent=True),
+                )
+        except Exception:
+            pass
+        try:
             if self.controller.state.subscriptions:
                 try:
                     minutes = int(self.controller.state.settings.subscription_auto_update_minutes)
@@ -313,21 +326,23 @@ class AppBridge(QObject):
         thread = self._sub_thread
         if thread is not None:
             logger.info("[app] Stopping subscription thread...")
+            stopped = False
             try:
                 worker = self._sub_worker
                 if worker is not None:
                     worker.stop()
                 thread.quit()
-                stop_and_wait_for_thread(
+                stopped = stop_and_wait_for_thread(
                     thread,
                     label="subscription thread",
                     logger=logger,
                 )
             except Exception as exc:
                 logger.error(f"[app] Error stopping subscription thread: {exc}")
-            self._sub_thread = None
-            self._sub_worker = None
-            thread.deleteLater()
+            if stopped:
+                self._sub_thread = None
+                self._sub_worker = None
+                thread.deleteLater()
 
         for attribute, label in (
             ("_app_update_checker", "application update checker"),
@@ -338,10 +353,11 @@ class AppBridge(QObject):
             if worker is None:
                 continue
             stop = worker.cancel if hasattr(worker, "cancel") else None
-            stop_and_wait_for_thread(worker, stop=stop, label=label, logger=logger)
-            if getattr(self, attribute, None) is worker:
-                setattr(self, attribute, None)
-            worker.deleteLater()
+            stopped = stop_and_wait_for_thread(worker, stop=stop, label=label, logger=logger)
+            if stopped:
+                if getattr(self, attribute, None) is worker:
+                    setattr(self, attribute, None)
+                worker.deleteLater()
         try:
             self.controller.shutdown()
         except Exception:
@@ -415,6 +431,14 @@ class AppBridge(QObject):
             if kind in ("update", "update_all"):
                 self.toast.emit("info", self._localized_backend_message("Подписок нет"))
             return
+        settings = self.controller.state.settings
+        user_agent = str(getattr(settings, "subscription_user_agent", "") or "").strip()
+        converter_url = ""
+        if bool(getattr(settings, "subscription_converter_enabled", False)):
+            converter_url = str(getattr(settings, "subscription_converter_url", "") or "").strip()
+        for job in jobs:
+            job.user_agent = user_agent
+            job.converter_url = converter_url
         self._sub_batch_seq += 1
         batch_id = self._sub_batch_seq
         self._sub_batches[batch_id] = {"kind": kind, "added": 0, "errors": []}
@@ -810,7 +834,6 @@ class AppBridge(QObject):
 
     def _on_settings_changed(self, settings) -> None:
         self._tun_mode = bool(settings.tun_mode)
-        self._tun_engine = settings.tun_engine
         self._proxy_enabled = bool(settings.enable_system_proxy)
         self._discord_proxy = bool(getattr(settings, "discord_proxy_enabled", False))
         self._theme = settings.theme
@@ -1374,6 +1397,26 @@ class AppBridge(QObject):
         settings.xray_auto_update = bool(enabled)
         self.controller.update_settings(settings)
 
+    @pyqtSlot(str)
+    def setXrayReleaseChannel(self, channel: str) -> None:
+        normalized = str(channel or "").strip().lower()
+        if normalized not in {"stable", "beta"}:
+            normalized = "beta"
+        settings = deepcopy(self.controller.state.settings)
+        if settings.xray_release_channel == normalized:
+            return
+        settings.xray_release_channel = normalized
+        self.controller.update_settings(settings)
+        self.checkXrayUpdate()
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def xrayReleaseChannel(self) -> str:
+        try:
+            value = str(self.controller.state.settings.xray_release_channel or "beta").strip().lower()
+        except Exception:
+            return "beta"
+        return value if value in {"stable", "beta"} else "beta"
+
     @pyqtProperty(str, notify=settingsChanged)
     def releaseChannel(self) -> str:
         try:
@@ -1648,12 +1691,6 @@ class AppBridge(QObject):
             self.setSingboxPath(path)
         return path or ""
 
-    @pyqtSlot(str)
-    def setTunEngine(self, engine: str) -> None:
-        settings = deepcopy(self.controller.state.settings)
-        settings.tun_engine = "singbox"
-        self.controller.update_settings(settings)
-
     # ── Startup ──────────────────────────────────────────────────
     @pyqtSlot(bool)
     def setLaunchOnStartup(self, enabled: bool) -> None:
@@ -1751,6 +1788,11 @@ class AppBridge(QObject):
             self.toast.emit("success", "Резервная копия импортирована")
         except Exception as exc:
             self.toast.emit("error", tr("Ошибка импорта: {error}", error=exc))
+
+    @pyqtSlot()
+    def resetSettingsToDefaults(self) -> None:
+        self.controller.reset_settings_to_defaults()
+        self.toast.emit("success", tr("Настройки сброшены по умолчанию. Серверы и подписки сохранены."))
 
     @pyqtSlot()
     @pyqtSlot('QVariantList')
@@ -2020,9 +2062,11 @@ class AppBridge(QObject):
         proxy_url = None
         if self.controller.connected:
             try:
-                proxy_url = f"http://{PROXY_HOST}:{int(self.controller.get_effective_http_proxy_port() or DEFAULT_HTTP_PORT)}"
+                proxy_port = self.controller.get_effective_http_proxy_port()
+                if proxy_port:
+                    proxy_url = f"http://{PROXY_HOST}:{int(proxy_port)}"
             except Exception:
-                proxy_url = f"http://{PROXY_HOST}:{DEFAULT_HTTP_PORT}"
+                proxy_url = None
         worker = StartupResourceCheckWorker(
             singbox_path=self.controller.state.settings.singbox_path,
             proxy_url=proxy_url,
@@ -2229,7 +2273,8 @@ class AppBridge(QObject):
     def checkSingboxUpdate(self) -> None:
         self.resourceUpdateState.emit({"kind": "singbox", "phase": "checking", "percent": 0})
         try:
-            self.controller.run_resource_update("singbox", apply_update=False)
+            if not self.controller.run_resource_update("singbox", apply_update=False):
+                self.resourceUpdateState.emit({"kind": "singbox", "phase": "idle", "percent": 0})
         except Exception as exc:  # noqa: BLE001
             self.resourceUpdateState.emit({"kind": "singbox", "phase": "error", "message": str(exc)})
 
@@ -2237,15 +2282,26 @@ class AppBridge(QObject):
     def updateSingboxCore(self) -> None:
         self.resourceUpdateState.emit({"kind": "singbox", "phase": "updating", "percent": 0})
         try:
-            self.controller.run_resource_update("singbox", apply_update=True)
+            if not self.controller.run_resource_update("singbox", apply_update=True):
+                self.resourceUpdateState.emit({"kind": "singbox", "phase": "idle", "percent": 0})
         except Exception as exc:  # noqa: BLE001
             self.resourceUpdateState.emit({"kind": "singbox", "phase": "error", "message": str(exc)})
+
+    @pyqtSlot()
+    def checkGeodataUpdate(self) -> None:
+        self.resourceUpdateState.emit({"kind": "geodata", "phase": "checking", "percent": 0})
+        try:
+            if not self.controller.run_resource_update("geodata", apply_update=False):
+                self.resourceUpdateState.emit({"kind": "geodata", "phase": "idle", "percent": 0})
+        except Exception as exc:  # noqa: BLE001
+            self.resourceUpdateState.emit({"kind": "geodata", "phase": "error", "message": str(exc)})
 
     @pyqtSlot()
     def updateGeodataFiles(self) -> None:
         self.resourceUpdateState.emit({"kind": "geodata", "phase": "updating", "percent": 0})
         try:
-            self.controller.run_resource_update("geodata", apply_update=True)
+            if not self.controller.run_resource_update("geodata", apply_update=True):
+                self.resourceUpdateState.emit({"kind": "geodata", "phase": "idle", "percent": 0})
         except Exception as exc:  # noqa: BLE001
             self.resourceUpdateState.emit({"kind": "geodata", "phase": "error", "message": str(exc)})
 
@@ -2253,7 +2309,8 @@ class AppBridge(QObject):
     def checkDrouteUpdate(self) -> None:
         self.resourceUpdateState.emit({"kind": "droute", "phase": "checking", "percent": 0})
         try:
-            self.controller.run_resource_update("droute", apply_update=False)
+            if not self.controller.run_resource_update("droute", apply_update=False):
+                self.resourceUpdateState.emit({"kind": "droute", "phase": "idle", "percent": 0})
         except Exception as exc:  # noqa: BLE001
             self.resourceUpdateState.emit({"kind": "droute", "phase": "error", "message": str(exc)})
 
@@ -2261,7 +2318,8 @@ class AppBridge(QObject):
     def updateDroute(self) -> None:
         self.resourceUpdateState.emit({"kind": "droute", "phase": "updating", "percent": 0})
         try:
-            self.controller.run_resource_update("droute", apply_update=True)
+            if not self.controller.run_resource_update("droute", apply_update=True):
+                self.resourceUpdateState.emit({"kind": "droute", "phase": "idle", "percent": 0})
         except Exception as exc:  # noqa: BLE001
             self.resourceUpdateState.emit({"kind": "droute", "phase": "error", "message": str(exc)})
 
@@ -2275,11 +2333,16 @@ class AppBridge(QObject):
             "updated": "updated",
             "error": "error",
         }.get(getattr(result, "status", ""), "uptodate")
+        current_version = getattr(result, "current_version", "") or ""
+        latest_version = getattr(result, "latest_version", "") or ""
+        displayed_version = latest_version if phase == "updated" else current_version
         payload = {
             "kind": getattr(result, "kind", ""),
             "phase": phase,
             "message": self._localized_backend_message(getattr(result, "message", "") or ""),
-            "version": getattr(result, "latest_version", "") or getattr(result, "current_version", "") or "",
+            "version": displayed_version,
+            "currentVersion": current_version,
+            "latestVersion": latest_version,
             "percent": 100 if phase == "updated" else 0,
         }
         self.resourceUpdateState.emit(payload)
@@ -3033,10 +3096,6 @@ class AppBridge(QObject):
     def tunMode(self) -> bool:
         return self._tun_mode
 
-    @pyqtProperty(str, notify=settingsChanged)
-    def tunEngine(self) -> str:
-        return self._tun_engine
-
     @pyqtProperty(bool, notify=settingsChanged)
     def proxyEnabled(self) -> bool:
         return self._proxy_enabled
@@ -3412,6 +3471,64 @@ class AppBridge(QObject):
         except Exception:
             return 240
 
+    @pyqtProperty(str, notify=subscriptionsChanged)
+    def subscriptionUrlsText(self) -> str:
+        return "\n".join(
+            str(item.get("url") or "").strip()
+            for item in self.controller.state.subscriptions
+            if str(item.get("url") or "").strip()
+        )
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def subscriptionIncludeRegex(self) -> str:
+        return str(self.controller.state.settings.subscription_include_regex or "")
+
+    @pyqtSlot(str)
+    def setSubscriptionIncludeRegex(self, value: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.subscription_include_regex = str(value or "").strip()
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def subscriptionExcludeRegex(self) -> str:
+        return str(self.controller.state.settings.subscription_exclude_regex or "")
+
+    @pyqtSlot(str)
+    def setSubscriptionExcludeRegex(self, value: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.subscription_exclude_regex = str(value or "").strip()
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def subscriptionUserAgent(self) -> str:
+        return str(self.controller.state.settings.subscription_user_agent or "")
+
+    @pyqtSlot(str)
+    def setSubscriptionUserAgent(self, value: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.subscription_user_agent = str(value or "").strip()
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def subscriptionConverterEnabled(self) -> bool:
+        return bool(self.controller.state.settings.subscription_converter_enabled)
+
+    @pyqtSlot(bool)
+    def setSubscriptionConverterEnabled(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.subscription_converter_enabled = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def subscriptionConverterUrl(self) -> str:
+        return str(self.controller.state.settings.subscription_converter_url or "")
+
+    @pyqtSlot(str)
+    def setSubscriptionConverterUrl(self, value: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.subscription_converter_url = str(value or "").strip()
+        self.controller.update_settings(settings)
+
     @pyqtProperty(bool, notify=subscriptionImportingChanged)
     def subscriptionImporting(self) -> bool:
         return self._sub_importing
@@ -3474,6 +3591,25 @@ class AppBridge(QObject):
         # Сеть в фоне: UI не блокируется, итог придёт через _on_sub_batch_completed.
         job = SubscriptionJob(url=target, kind="import", name=(name or "").strip())
         self._dispatch_sub_jobs([job], "import")
+
+    @pyqtSlot(str)
+    def importSubscriptions(self, text: str) -> None:
+        urls: list[str] = []
+        for raw in str(text or "").splitlines():
+            value = raw.strip()
+            if value and value not in urls:
+                urls.append(value)
+        if not urls:
+            self.toast.emit("warning", tr("Введите хотя бы один URL подписки"))
+            return
+        self._sub_importing = True
+        self._sub_import_status = tr("Загрузка подписок...")
+        self.subscriptionImportingChanged.emit()
+        self.subscriptionImportStatusChanged.emit()
+        self._dispatch_sub_jobs(
+            [SubscriptionJob(url=url, kind="import") for url in urls],
+            "import",
+        )
 
     @pyqtSlot(str)
     def updateSubscription(self, url: str) -> None:
@@ -3561,6 +3697,10 @@ class AppBridge(QObject):
         return self.controller.state.routing.dns_bootstrap_server
 
     @pyqtProperty(str, notify=routingChanged)
+    def dnsBootstrapServersText(self) -> str:
+        return "\n".join(self.controller.state.routing.dns_bootstrap_servers)
+
+    @pyqtProperty(str, notify=routingChanged)
     def dnsBootstrapType(self) -> str:
         return self.controller.state.routing.dns_bootstrap_type
 
@@ -3569,16 +3709,20 @@ class AppBridge(QObject):
         return self.controller.state.routing.dns_proxy_server
 
     @pyqtProperty(str, notify=routingChanged)
+    def dnsProxyServersText(self) -> str:
+        return "\n".join(self.controller.state.routing.dns_proxy_servers)
+
+    @pyqtProperty(str, notify=routingChanged)
     def dnsProxyType(self) -> str:
         return self.controller.state.routing.dns_proxy_type
 
     @pyqtProperty(str, notify=routingChanged)
     def dnsBootstrapStrategy(self) -> str:
-        return str(self.controller.state.routing.dns_bootstrap_strategy or "prefer_ipv4")
+        return str(self.controller.state.routing.dns_bootstrap_strategy or "ipv4_only")
 
     @pyqtProperty(str, notify=routingChanged)
     def dnsProxyStrategy(self) -> str:
-        return str(self.controller.state.routing.dns_proxy_strategy or "prefer_ipv4")
+        return str(self.controller.state.routing.dns_proxy_strategy or "ipv4_only")
 
     @pyqtProperty(bool, notify=routingChanged)
     def dnsFakeEnabled(self) -> bool:
@@ -3587,6 +3731,25 @@ class AppBridge(QObject):
     @pyqtProperty(bool, notify=routingChanged)
     def dnsHijackEnabled(self) -> bool:
         return bool(self.controller.state.routing.dns_hijack_enabled)
+
+    @pyqtProperty(bool, notify=routingChanged)
+    def dnsParallelQuery(self) -> bool:
+        return bool(self.controller.state.routing.dns_parallel_query)
+
+    @pyqtProperty(bool, notify=routingChanged)
+    def dnsOptimisticCache(self) -> bool:
+        return bool(self.controller.state.routing.dns_optimistic_cache)
+
+    @pyqtProperty(bool, notify=routingChanged)
+    def dnsGeoCheck(self) -> bool:
+        return bool(self.controller.state.routing.dns_geo_check)
+
+    @pyqtProperty(str, notify=routingChanged)
+    def dnsHostsText(self) -> str:
+        lines = []
+        for domain, addresses in self.controller.state.routing.dns_hosts.items():
+            lines.append(f"{domain}={','.join(addresses)}")
+        return "\n".join(lines)
 
     @pyqtProperty(str, notify=routingChanged)
     def tunRouteExcludeAddress(self) -> str:
@@ -3630,7 +3793,7 @@ class AppBridge(QObject):
                 "name": s.name,
                 "description": s.description,
                 "defaultAction": s.default_action,
-                "action": routes.get(s.id) if routes.get(s.id) in ("proxy", "direct") else "off",
+                "action": routes.get(s.id) if routes.get(s.id) in ("proxy", "direct") else s.default_action,
             }
             for s in SERVICE_PRESETS
         ]
@@ -3694,6 +3857,7 @@ class AppBridge(QObject):
         def apply(r: RoutingSettings) -> None:
             if server:
                 r.dns_bootstrap_server = server.strip()
+                r.dns_bootstrap_servers = [r.dns_bootstrap_server, *r.dns_bootstrap_servers[1:]]
             if dns_type:
                 r.dns_bootstrap_type = dns_type
         self._mutate_routing(apply)
@@ -3703,6 +3867,7 @@ class AppBridge(QObject):
         def apply(r: RoutingSettings) -> None:
             if server:
                 r.dns_proxy_server = server.strip()
+                r.dns_proxy_servers = [r.dns_proxy_server, *r.dns_proxy_servers[1:]]
             if dns_type:
                 r.dns_proxy_type = dns_type
         self._mutate_routing(apply)
@@ -3710,13 +3875,13 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def setDnsBootstrapStrategy(self, value: str) -> None:
         def apply(r: RoutingSettings) -> None:
-            r.dns_bootstrap_strategy = str(value or "prefer_ipv4")
+            r.dns_bootstrap_strategy = str(value or "ipv4_only")
         self._mutate_routing(apply)
 
     @pyqtSlot(str)
     def setDnsProxyStrategy(self, value: str) -> None:
         def apply(r: RoutingSettings) -> None:
-            r.dns_proxy_strategy = str(value or "prefer_ipv4")
+            r.dns_proxy_strategy = str(value or "ipv4_only")
         self._mutate_routing(apply)
 
     @pyqtSlot(bool)
@@ -3828,21 +3993,19 @@ class AppBridge(QObject):
 
     @pyqtSlot(str)
     def importDomainRules(self, text: str) -> None:
-        lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
-        if not lines:
+        try:
+            accepted_lines = parse_routing_rules(text)
+        except ValueError as exc:
+            self.toast.emit("error", str(exc))
+            return
+        if not accepted_lines:
             self.toast.emit("warning", "Нет строк для импорта")
             return
-        accepted_lines: list[tuple[str, str]] = []
-        for ln in lines:
-            if "|" in ln:
-                addr, _, act = ln.partition("|")
-                addr = addr.strip()
-                act = act.strip().lower()
-            else:
-                addr = ln.strip()
-                act = "proxy"
-            if addr and not self._is_internal_domain_rule(addr):
-                accepted_lines.append((addr, act))
+        accepted_lines = [
+            (addr, action)
+            for addr, action in accepted_lines
+            if not self._is_internal_domain_rule(addr)
+        ]
         if not accepted_lines:
             self.toast.emit("warning", tr("Добавляйте конкретный домен, IP или CIDR"))
             return
@@ -3867,6 +4030,115 @@ class AppBridge(QObject):
             r.block_domains = block
         self._mutate_routing(apply)
         self.toast.emit("success", tr("Импортировано правил: {count}", count=imported_count))
+
+    @staticmethod
+    def _dns_server_lines(text: str, fallback: str) -> list[str]:
+        values: list[str] = []
+        for raw in str(text or "").replace(";", "\n").splitlines():
+            value = raw.strip()
+            if value and value not in values:
+                values.append(value)
+        return values or [fallback]
+
+    @pyqtSlot(str)
+    def setDnsBootstrapServers(self, text: str) -> None:
+        def apply(r: RoutingSettings) -> None:
+            r.dns_bootstrap_servers = self._dns_server_lines(text, "1.1.1.1")
+            r.dns_bootstrap_server = r.dns_bootstrap_servers[0]
+        self._mutate_routing(apply)
+
+    @pyqtSlot(str)
+    def setDnsProxyServers(self, text: str) -> None:
+        def apply(r: RoutingSettings) -> None:
+            r.dns_proxy_servers = self._dns_server_lines(text, "cloudflare-dns.com")
+            r.dns_proxy_server = r.dns_proxy_servers[0]
+        self._mutate_routing(apply)
+
+    @pyqtSlot(bool)
+    def setDnsParallelQuery(self, enabled: bool) -> None:
+        self._mutate_routing(lambda r: setattr(r, "dns_parallel_query", bool(enabled)))
+
+    @pyqtSlot(bool)
+    def setDnsOptimisticCache(self, enabled: bool) -> None:
+        self._mutate_routing(lambda r: setattr(r, "dns_optimistic_cache", bool(enabled)))
+
+    @pyqtSlot(bool)
+    def setDnsGeoCheck(self, enabled: bool) -> None:
+        self._mutate_routing(lambda r: setattr(r, "dns_geo_check", bool(enabled)))
+
+    @staticmethod
+    def _parse_dns_hosts_text(text: str) -> dict[str, list[str]]:
+        hosts: dict[str, list[str]] = {}
+        for line_number, raw in enumerate(str(text or "").splitlines(), start=1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                raise ValueError(tr("Hosts, строка {line}: ожидается domain=address", line=line_number))
+            domain, raw_addresses = line.split("=", 1)
+            domain = domain.strip().lower().rstrip(".")
+            addresses = [
+                value.strip()
+                for value in raw_addresses.replace(";", ",").split(",")
+                if value.strip()
+            ]
+            if not domain or not addresses:
+                raise ValueError(tr("Hosts, строка {line}: пустой домен или адрес", line=line_number))
+            hosts[domain] = addresses
+        return hosts
+
+    @pyqtSlot(str, result=bool)
+    def setDnsHosts(self, text: str) -> bool:
+        try:
+            hosts = self._parse_dns_hosts_text(text)
+        except ValueError as exc:
+            self.toast.emit("warning", str(exc))
+            return False
+        self._mutate_routing(lambda r: setattr(r, "dns_hosts", hosts))
+        return True
+
+    @pyqtSlot(str, str, str, result=bool)
+    def applyDnsSettings(self, bootstrap_text: str, proxy_text: str, hosts_text: str) -> bool:
+        try:
+            hosts = self._parse_dns_hosts_text(hosts_text)
+        except ValueError as exc:
+            self.toast.emit("warning", str(exc))
+            return False
+
+        def apply(r: RoutingSettings) -> None:
+            r.dns_bootstrap_servers = self._dns_server_lines(bootstrap_text, "1.1.1.1")
+            r.dns_bootstrap_server = r.dns_bootstrap_servers[0]
+            r.dns_proxy_servers = self._dns_server_lines(proxy_text, "cloudflare-dns.com")
+            r.dns_proxy_server = r.dns_proxy_servers[0]
+            r.dns_hosts = hosts
+
+        self._mutate_routing(apply)
+        self.toast.emit("success", tr("Настройки DNS применены"))
+        return True
+
+    @pyqtSlot()
+    def importDomainRulesFile(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            None,
+            tr("Импорт правил маршрутизации"),
+            "",
+            tr("Правила (*.txt *.json *.yaml *.yml);;Все файлы (*)"),
+        )
+        if not file_path:
+            return
+        path = Path(file_path)
+        try:
+            payload = path.read_text(encoding="utf-8-sig")
+            accepted_lines = parse_routing_rules(payload, suffix=path.suffix)
+        except (OSError, UnicodeError, ValueError) as exc:
+            self.toast.emit("error", tr("Не удалось импортировать правила: {error}", error=exc))
+            return
+        if not accepted_lines:
+            self.toast.emit("warning", tr("Файл не содержит поддерживаемых правил"))
+            return
+        self.importDomainRules("\n".join(f"{address}|{action}" for address, action in accepted_lines))
 
     @pyqtSlot(result=str)
     def exportDomainRules(self) -> str:

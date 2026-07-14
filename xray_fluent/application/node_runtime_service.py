@@ -93,8 +93,9 @@ def proxy_core_for_node(node: Node | None) -> str:
 def native_singbox_only_message(node: Node | None = None) -> str:
     name = (node.name or node.server) if node is not None else "Этот сервер"
     return (
-        f"{name} работает только через VPN (TUN) на sing-box-extended. "
-        "В системном прокси/Xray такие WARP/WireGuard/AWG/Hysteria конфиги недоступны."
+        f"{name} не поддерживается ядром Xray. "
+        "Используйте автоматический выбор ядра: Lumen KVN запустит этот сервер через sing-box extended "
+        "как в системном прокси, так и в TUN."
     )
 
 

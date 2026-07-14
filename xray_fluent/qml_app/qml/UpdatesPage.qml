@@ -366,6 +366,65 @@ Item {
                         Text { text: I18n.t("Версия:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                         Text { text: page.xrayVersion !== "" ? page.xrayVersion : I18n.t("не найдена"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
                         Item { Layout.fillWidth: true }
+                        Text { text: I18n.t("Канал:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                        Rectangle {
+                            implicitHeight: 30
+                            implicitWidth: xrayChannelRow.implicitWidth + 4
+                            radius: height / 2
+                            color: Theme.controlFill
+                            border.width: 1
+                            border.color: Theme.borderSolid
+                            opacity: page.xrayBusy ? 0.5 : 1.0
+
+                            Row {
+                                id: xrayChannelRow
+                                anchors.centerIn: parent
+                                spacing: 0
+
+                                Item {
+                                    width: Math.max(xrayStableTxt.implicitWidth + 26, 76); height: 26
+                                    Rectangle {
+                                        anchors.fill: parent; radius: height / 2
+                                        color: App.xrayReleaseChannel === "stable" ? Theme.accent
+                                             : (xrayStableMouse.containsMouse ? Theme.controlFillHover : "transparent")
+                                        Behavior on color { ColorAnimation { duration: 120 } }
+                                    }
+                                    Text {
+                                        id: xrayStableTxt; anchors.centerIn: parent; text: I18n.t("Stable")
+                                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                                        font.weight: App.xrayReleaseChannel === "stable" ? Font.DemiBold : Font.Normal
+                                        color: App.xrayReleaseChannel === "stable" ? Theme.accentText : Theme.textMuted
+                                    }
+                                    MouseArea {
+                                        id: xrayStableMouse; anchors.fill: parent; hoverEnabled: true
+                                        enabled: !page.xrayBusy
+                                        cursorShape: page.xrayBusy ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                        onClicked: if (App.xrayReleaseChannel !== "stable") App.setXrayReleaseChannel("stable")
+                                    }
+                                }
+                                Item {
+                                    width: Math.max(xrayBetaTxt.implicitWidth + 26, 76); height: 26
+                                    Rectangle {
+                                        anchors.fill: parent; radius: height / 2
+                                        color: App.xrayReleaseChannel === "beta" ? Theme.accent
+                                             : (xrayBetaMouse.containsMouse ? Theme.controlFillHover : "transparent")
+                                        Behavior on color { ColorAnimation { duration: 120 } }
+                                    }
+                                    Text {
+                                        id: xrayBetaTxt; anchors.centerIn: parent; text: I18n.t("Beta")
+                                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                                        font.weight: App.xrayReleaseChannel === "beta" ? Font.DemiBold : Font.Normal
+                                        color: App.xrayReleaseChannel === "beta" ? Theme.accentText : Theme.textMuted
+                                    }
+                                    MouseArea {
+                                        id: xrayBetaMouse; anchors.fill: parent; hoverEnabled: true
+                                        enabled: !page.xrayBusy
+                                        cursorShape: page.xrayBusy ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                        onClicked: if (App.xrayReleaseChannel !== "beta") App.setXrayReleaseChannel("beta")
+                                    }
+                                }
+                            }
+                        }
                     }
                     Text {
                         text: page.xrayStatusText(); color: page.xrayStatusColor()
@@ -466,8 +525,14 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
                         AccentButton {
-                            kind: "accent"; glyph: "\uE895"; text: I18n.t("Обновить geoip/geosite")
+                            kind: "accent"; glyph: "\uE72C"; text: I18n.t("Проверить geoip/geosite")
                             enabled: !page.geodataBusy
+                            onClicked: App.checkGeodataUpdate()
+                        }
+                        AccentButton {
+                            kind: "ghost"; glyph: "\uE896"; text: I18n.t("Обновить geoip/geosite")
+                            visible: page.geodataPhase === "available" || page.geodataPhase === "updating"
+                            enabled: page.geodataPhase === "available"
                             onClicked: App.updateGeodataFiles()
                         }
                         Item { Layout.fillWidth: true }

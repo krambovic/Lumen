@@ -7,7 +7,7 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen KVN"
-APP_VERSION = "1.8.5"
+APP_VERSION = "1.8.6"
 STATE_SCHEMA_VERSION = 1
 
 DIAGNOSTICS_UPLOAD_URL = "https://diagnostics.lumen-kvn.eu.cc/api/ingest"
@@ -52,7 +52,6 @@ STATE_FILE = DATA_DIR / "state.enc"
 XRAY_CONFIG_FILE = RUNTIME_DIR / "xray_config.json"
 XRAY_DEFAULT_CONFIG_NAME = "default.json"
 XRAY_PATH_DEFAULT = BASE_DIR / "core" / "xray.exe"
-XRAY_TUN_DEFAULT_INTERFACE_NAME = "xray0"
 
 SINGBOX_CONFIG_FILE = RUNTIME_DIR / "singbox_config.json"
 SINGBOX_DEFAULT_CONFIG_NAME = "default.json"

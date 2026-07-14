@@ -42,9 +42,9 @@ _APP_DISCORD_PROXY_INBOUND_TAG = "discord-socks-in"
 _APP_TUN_MIXED_INBOUND_TAG = "socks-in"
 _APP_TUN_HTTP_INBOUND_TAG = "http-in"
 _ENDPOINT_DNS_CACHE_TTL_SECONDS = 300.0
-_DEFAULT_DIRECT_DNS_SERVER = "8.8.8.8"
+_DEFAULT_DIRECT_DNS_SERVER = "1.1.1.1"
 _DEFAULT_DIRECT_DNS_TYPE = "udp"
-_DEFAULT_PROXY_DNS_SERVER = "8.8.8.8"
+_DEFAULT_PROXY_DNS_SERVER = "cloudflare-dns.com"
 _DEFAULT_PROXY_DNS_TYPE = "https"
 _SINGBOX_DHCP_AUTO_DNS = "dhcp://auto"
 _KNOWN_DOH_IP_HOSTS = {
@@ -1358,12 +1358,15 @@ def _ensure_singbox_dns_runtime_contract(
     proxy_server = routing.dns_proxy_server if routing is not None else _DEFAULT_PROXY_DNS_SERVER
     proxy_type = routing.dns_proxy_type if routing is not None else _DEFAULT_PROXY_DNS_TYPE
     proxy_strategy = _dns_strategy(routing.dns_proxy_strategy if routing is not None else "")
+    direct_servers = list(routing.dns_bootstrap_servers) if routing is not None else [direct_server]
+    proxy_servers = list(routing.dns_proxy_servers) if routing is not None else [proxy_server]
+    direct_servers = [str(item).strip() for item in direct_servers if str(item).strip()] or [str(direct_server)]
+    proxy_servers = [str(item).strip() for item in proxy_servers if str(item).strip()] or [str(proxy_server)]
     use_builtin_dns = _singbox_uses_builtin_dns(routing)
     # FakeIP follows the user setting (off by default, matching v2rayN). When
     # enabled it keeps ECH sites reachable; when disabled the browser resolves
     # real IPs, avoiding Chrome Local Network Access prompts under TUN.
     fake_enabled = bool(routing.dns_fake_enabled) if routing is not None else False
-    direct_is_default = _is_default_direct_dns(routing)
     proxy_is_default = _is_default_proxy_dns(routing)
     runtime_direct_server = str(direct_server or "").strip()
     runtime_direct_type = str(direct_type or "").strip()
@@ -1379,6 +1382,18 @@ def _ensure_singbox_dns_runtime_contract(
     if not isinstance(servers, list):
         servers = []
         dns["servers"] = servers
+    servers[:] = [
+        server
+        for server in servers
+        if not (
+            isinstance(server, dict)
+            and (
+                str(server.get("tag") or "").startswith("direct-dns-")
+                or str(server.get("tag") or "").startswith("proxy-dns-")
+                or str(server.get("tag") or "") == "hosts-dns"
+            )
+        )
+    ]
     system_server = next((str(item).strip() for item in system_dns_servers if str(item).strip()), "")
     if not system_server:
         system_server = runtime_direct_server if not _is_domain_name(str(runtime_direct_server)) else _DEFAULT_DIRECT_DNS_SERVER
@@ -1408,6 +1423,27 @@ def _ensure_singbox_dns_runtime_contract(
         _replace_or_append_tagged(servers, "bootstrap-dns", bootstrap_dns)
         _replace_or_append_tagged(servers, "direct-dns", direct_dns)
     _replace_or_append_tagged(servers, "proxy-dns", proxy_dns)
+    if use_builtin_dns:
+        for index, address in enumerate(direct_servers[1:], start=2):
+            extra_direct = _build_dns_server(f"direct-dns-{index}", address, runtime_direct_type, direct_strategy)
+            _set_dns_server_dial_contract(extra_direct, detour="direct")
+            _replace_or_append_tagged(servers, f"direct-dns-{index}", extra_direct)
+    for index, address in enumerate(proxy_servers[1:], start=2):
+        extra_proxy = _build_dns_server(f"proxy-dns-{index}", address, runtime_proxy_type, proxy_strategy)
+        _set_dns_server_dial_contract(extra_proxy, detour="proxy", resolver="bootstrap-dns")
+        _replace_or_append_tagged(servers, f"proxy-dns-{index}", extra_proxy)
+
+    hosts = routing.dns_hosts if routing is not None else {}
+    if hosts:
+        _replace_or_append_tagged(
+            servers,
+            "hosts-dns",
+            {
+                "tag": "hosts-dns",
+                "type": "hosts",
+                "predefined": {domain: list(addresses) for domain, addresses in hosts.items()},
+            },
+        )
     if fake_enabled:
         _replace_or_append_tagged(
             servers,
@@ -1432,14 +1468,14 @@ def _ensure_singbox_dns_runtime_contract(
         tag = str(server.get("tag") or "")
         server_type = str(server.get("type") or "").strip().lower()
         address = str(server.get("server") or "").strip().lower()
-        if tag == "proxy-dns" and server_type in {"tls", "https"} and address in _KNOWN_DOH_IP_HOSTS:
+        if tag.startswith("proxy-dns") and server_type in {"tls", "https"} and address in _KNOWN_DOH_IP_HOSTS:
             # Remote/proxied DNS must use a hostname with a valid TLS identity.
             # DoH/DoT to a bare IP can silently break domains because the TLS
             # handshake has no provider hostname/SNI to present.
             server.clear()
             server.update(
                 {
-                    "tag": "proxy-dns",
+                    "tag": tag,
                     "type": server_type,
                     "server": _KNOWN_DOH_IP_HOSTS[address],
                     "server_port": 443 if server_type == "https" else 853,
@@ -1452,6 +1488,7 @@ def _ensure_singbox_dns_runtime_contract(
             continue
 
     _ensure_singbox_https_dns_reject_rule(dns)
+    _ensure_singbox_hosts_dns_rule(dns, enabled=bool(hosts))
 
 
 # DNS query types 64 (SVCB) and 65 (HTTPS) carry ECH config and HTTP/3 hints.
@@ -1503,6 +1540,24 @@ def _ensure_singbox_https_dns_reject_rule(dns: dict[str, Any]) -> None:
         },
     )
     rules.insert(0, deepcopy(_HTTPS_DNS_REJECT_RULE))
+
+
+def _is_singbox_hosts_dns_rule(rule: Any) -> bool:
+    return (
+        isinstance(rule, dict)
+        and rule.get("ip_accept_any") is True
+        and str(rule.get("server") or "") == "hosts-dns"
+    )
+
+
+def _ensure_singbox_hosts_dns_rule(dns: dict[str, Any], *, enabled: bool) -> None:
+    rules = dns.get("rules")
+    if not isinstance(rules, list):
+        rules = []
+        dns["rules"] = rules
+    rules[:] = [rule for rule in rules if not _is_singbox_hosts_dns_rule(rule)]
+    if enabled:
+        rules.insert(0, {"ip_accept_any": True, "server": "hosts-dns"})
 
 def _singbox_uses_builtin_dns(routing: RoutingSettings | None) -> bool:
     return str(routing.dns_mode if routing is not None else "builtin").strip().lower() == "builtin"

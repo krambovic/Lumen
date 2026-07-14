@@ -162,3 +162,24 @@ def test_runtime_ip_preference_does_not_force_strict_strategies() -> None:
     assert routing.dns_proxy_strategy == "prefer_ipv4"
     assert effective.dns_bootstrap_strategy == "ipv4_only"
     assert effective.dns_proxy_strategy == "prefer_ipv6"
+
+
+def test_dns_geo_check_controls_only_preset_dns_rules() -> None:
+    disabled = RoutingSettings(
+        preset_id="blocked",
+        dns_geo_check=False,
+        proxy_domains=["example.com"],
+    )
+    enabled = RoutingSettings(
+        preset_id="blocked",
+        dns_geo_check=True,
+        proxy_domains=["example.com"],
+    )
+
+    disabled_rules, disabled_sets = build_singbox_gui_dns_rules(disabled)
+    enabled_rules, enabled_sets = build_singbox_gui_dns_rules(enabled)
+
+    assert any("example.com" in rule.get("domain_suffix", []) for rule in disabled_rules)
+    assert not disabled_sets
+    assert "geosite-ru-blocked" in enabled_sets
+    assert len(enabled_rules) > len(disabled_rules)

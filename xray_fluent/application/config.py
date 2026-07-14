@@ -36,10 +36,7 @@ from .runtime_introspection import (
     replace_or_append_tagged,
 )
 from .xray_runtime_service import (
-    apply_xray_tun_loop_prevention,
     build_runtime_xray_config,
     ensure_xray_metrics_contract,
-    ensure_xray_tun_contract,
     inspect_active_xray_config,
-    xray_outbound_is_loop_protected,
 )

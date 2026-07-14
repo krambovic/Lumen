@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import json
 
 import pytest
 from PyQt6.QtCore import QCoreApplication
@@ -33,6 +34,36 @@ def test_invalid_state_is_quarantined_instead_of_reset(tmp_path) -> None:
 
     assert not state_file.exists()
     assert list(tmp_path.glob("state.json.corrupt-*"))
+
+
+def test_corrupt_primary_is_restored_from_rotating_backup(tmp_path) -> None:
+    state_file = tmp_path / "state.json"
+    storage = StateStorage(state_file)
+    storage.save(AppState(nodes=[Node(id="first", name="First")]))
+    storage.save(AppState(nodes=[Node(id="second", name="Second")]))
+    state_file.write_text('{"nodes": [', encoding="utf-8")
+
+    restored = storage.load()
+
+    assert [node.id for node in restored.nodes] == ["first"]
+    assert json.loads(state_file.read_text(encoding="utf-8"))["nodes"][0]["id"] == "first"
+    assert list(tmp_path.glob("state.json.corrupt-*"))
+
+
+def test_complete_temporary_state_recovers_interrupted_replace(tmp_path) -> None:
+    state_file = tmp_path / "state.json"
+    storage = StateStorage(state_file)
+    state_file.write_text("", encoding="utf-8")
+    temp_file = tmp_path / ".state.json.tmp"
+    temp_file.write_text(
+        json.dumps(AppState(nodes=[Node(id="temporary", name="Temporary")]).to_dict()),
+        encoding="utf-8",
+    )
+
+    restored = storage.load()
+
+    assert [node.id for node in restored.nodes] == ["temporary"]
+    assert state_file.is_file()
 
 
 class _SlowStorage:

@@ -6,12 +6,11 @@ import os
 import re
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import Any
-
-_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -32,6 +31,8 @@ from ...subprocess_utils import (
     run_text_pumped,
     sleep_with_events,
 )
+
+_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 class SingBoxManager(QObject):
@@ -67,7 +68,55 @@ class SingBoxManager(QObject):
         proc = self._proc
         return proc is not None and proc.poll() is None
 
-    def start(self, singbox_path: str, config: dict[str, Any]) -> bool:
+    def validate_config(self, singbox_path: str, config: dict[str, Any]) -> tuple[bool, str]:
+        exe = resolve_configured_path(
+            singbox_path,
+            default_path=SINGBOX_PATH_DEFAULT,
+            use_default_if_empty=True,
+            migrate_default_location=True,
+        )
+        if exe is None or not exe.is_file():
+            return False, f"sing-box.exe not found: {exe or singbox_path}"
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        config_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".json",
+                prefix="singbox-check-",
+                dir=RUNTIME_DIR,
+                delete=False,
+            ) as handle:
+                json.dump(config, handle, ensure_ascii=True, indent=2)
+                config_path = Path(handle.name)
+            result = subprocess.run(
+                [str(exe), "check", "-c", str(config_path), "-D", str(exe.parent)],
+                cwd=str(exe.parent),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=20,
+                creationflags=_CREATE_NO_WINDOW,
+                check=False,
+            )
+            output = decode_output(result.stdout).strip()
+            return result.returncode == 0, output
+        except subprocess.TimeoutExpired:
+            return False, "sing-box config check timed out after 20 seconds"
+        except Exception as exc:
+            return False, f"failed to check sing-box config: {exc}"
+        finally:
+            if config_path is not None:
+                config_path.unlink(missing_ok=True)
+
+    def start(
+        self,
+        singbox_path: str,
+        config: dict[str, Any],
+        *,
+        prevalidated: bool = False,
+    ) -> bool:
         exe = resolve_configured_path(
             singbox_path,
             default_path=SINGBOX_PATH_DEFAULT,
@@ -81,6 +130,13 @@ class SingBoxManager(QObject):
             self.error.emit(f"sing-box.exe not found: {exe}")
             return False
         self._exe_path = exe
+
+        if not prevalidated:
+            valid, validation_output = self.validate_config(str(exe), config)
+            if not valid:
+                detail = validation_output or "unknown config validation error"
+                self.error.emit(f"sing-box does not accept the new config: {detail}")
+                return False
 
         tun_interface_name = self._extract_tun_interface_name(config)
         proxy_ports = self._extract_local_proxy_ports(config)
@@ -818,4 +874,6 @@ def get_singbox_version(singbox_path: str) -> str | None:
     lines = result_output_text(result).splitlines()
     if not lines:
         return None
-    return lines[0].strip()
+    first_line = lines[0].strip()
+    match = re.search(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", first_line)
+    return match.group(0) if match else first_line

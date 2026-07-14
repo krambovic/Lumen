@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ssl
+import socket
 import urllib.request
 from urllib.request import Request
 
@@ -56,3 +57,19 @@ def urlopen_proxy_first(request: Request | str, *, timeout: float = 15, proxy_ur
         except Exception:
             pass
     return urlopen(request, timeout=timeout)
+
+
+def abort_http_response(response: object) -> None:
+    """Interrupt a blocking urllib read before closing its response object."""
+    try:
+        fp = getattr(response, "fp", None)
+        raw = getattr(fp, "raw", None)
+        sock = getattr(raw, "_sock", None)
+        if sock is not None:
+            sock.shutdown(socket.SHUT_RDWR)
+    except (AttributeError, OSError):
+        pass
+    try:
+        response.close()
+    except Exception:
+        pass

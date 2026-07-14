@@ -92,10 +92,11 @@ def stop_and_wait_for_thread(
     stop: Callable[[], Any] | None = None,
     label: str = "worker",
     logger: logging.Logger | None = None,
-) -> None:
+    timeout: float = 5.0,
+) -> bool:
     """Cooperatively stop and join a QThread without unsafe termination."""
     if worker is None:
-        return
+        return True
     if stop is not None:
         try:
             stop()
@@ -103,12 +104,17 @@ def stop_and_wait_for_thread(
             if logger is not None:
                 logger.warning("[app] Failed to request %s shutdown", label, exc_info=True)
     if not worker.isRunning():
-        return
+        return True
 
     started = time.monotonic()
-    next_warning = 5.0
+    deadline = started + max(0.1, timeout)
     while not worker.wait(250):
-        elapsed = time.monotonic() - started
-        if logger is not None and elapsed >= next_warning:
-            logger.warning("[app] Still waiting for %s to stop (%.1fs)", label, elapsed)
-            next_warning += 15.0
+        if time.monotonic() >= deadline:
+            if logger is not None:
+                logger.warning(
+                    "[app] Timed out waiting for %s to stop after %.1fs; shutdown continues",
+                    label,
+                    time.monotonic() - started,
+                )
+            return False
+    return True

@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import json
 import re
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from urllib.request import Request
 import zipfile
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import APP_VERSION, SINGBOX_PATH_DEFAULT, XRAY_PATH_DEFAULT
+from .component_compatibility import ensure_component_compatible, required_geodata_codes
 from .discord_proxy_manager import (
     DROUTE_DIR,
     DROUTE_EXE,
@@ -22,10 +26,8 @@ from .discord_proxy_manager import (
 )
 from .engines.singbox import get_singbox_version
 from .geodata_resources import (
-    RUNETFREEDOM_RULES_BASE_URL,
     SINGBOX_BINARY_RULE_SETS,
     SINGBOX_RULE_SET_DIR,
-    SINGBOX_RULES_ARCHIVE_URL,
 )
 from .engines.xray.core_updater import (
     UpdateCancelled,
@@ -38,14 +40,15 @@ from .engines.xray.core_updater import (
     _request_json,
     _sha256_file,
 )
-from .http_utils import urlopen_proxy_first
+from .http_utils import abort_http_response, urlopen_proxy_first
 from .path_utils import resolve_configured_path
+from .subprocess_utils import CREATE_NO_WINDOW, result_output_text
 from .zip_utils import safe_extract_zip
 
 SINGBOX_EXTENDED_LATEST_API = "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest"
 DROUTE_LATEST_API = "https://api.github.com/repos/snowluwu/droute/releases/latest"
-GEOIP_DAT_URL = f"{RUNETFREEDOM_RULES_BASE_URL}/geoip.dat"
-GEOSITE_DAT_URL = f"{RUNETFREEDOM_RULES_BASE_URL}/geosite.dat"
+RUNETFREEDOM_LATEST_API = "https://api.github.com/repos/runetfreedom/russia-v2ray-rules-dat/releases/latest"
+GEODATA_METADATA_NAME = "lumen-geodata.json"
 _MAX_RESOURCE_DOWNLOAD_BYTES = 512 * 1024 * 1024
 _MAX_RULE_SET_MEMBER_BYTES = 64 * 1024 * 1024
 _MAX_RULE_SET_TOTAL_BYTES = 256 * 1024 * 1024
@@ -119,6 +122,142 @@ def _pick_droute_asset(release: dict) -> tuple[str, str, str]:
             digest = str(asset.get("digest") or "")
             return name, url, digest.removeprefix("sha256:").strip().lower()
     raise RuntimeError("droute zip asset was not found in the latest release")
+
+
+def _release_asset_digest(
+    release: dict,
+    asset_name: str,
+    *,
+    proxy_url: str | None = None,
+    cancelled=None,
+) -> str:
+    assets = [asset for asset in (release.get("assets") or []) if isinstance(asset, dict)]
+    selected = next(
+        (asset for asset in assets if str(asset.get("name") or "").lower() == asset_name.lower()),
+        None,
+    )
+    digest = _extract_digest(str((selected or {}).get("digest") or ""))
+    if digest:
+        return digest
+    for suffix in (".sha256", ".dgst"):
+        sidecar = next(
+            (
+                asset
+                for asset in assets
+                if str(asset.get("name") or "").lower() == f"{asset_name}{suffix}".lower()
+            ),
+            None,
+        )
+        if sidecar:
+            return _fetch_dgst_hash(
+                str(sidecar.get("browser_download_url") or ""),
+                proxy_url=proxy_url,
+                cancelled=cancelled,
+            )
+    return ""
+
+
+def _resolve_geodata_release(
+    *,
+    proxy_url: str | None = None,
+    cancelled=None,
+) -> tuple[str, dict[str, tuple[str, str]]]:
+    release = _request_json(
+        RUNETFREEDOM_LATEST_API,
+        proxy_url=proxy_url,
+        cancelled=cancelled,
+    )
+    if not isinstance(release, dict):
+        raise RuntimeError("invalid RuNetFreedom release response")
+    version = str(release.get("tag_name") or release.get("name") or "").strip()
+    assets: dict[str, tuple[str, str]] = {}
+    for name in ("geoip.dat", "geosite.dat", "sing-box.zip"):
+        asset = next(
+            (
+                item
+                for item in (release.get("assets") or [])
+                if isinstance(item, dict)
+                and str(item.get("name") or "").lower() == name.lower()
+            ),
+            None,
+        )
+        if asset is None:
+            raise RuntimeError(f"RuNetFreedom release does not contain {name}")
+        url = str(asset.get("browser_download_url") or "").strip()
+        digest = _release_asset_digest(
+            release,
+            name,
+            proxy_url=proxy_url,
+            cancelled=cancelled,
+        )
+        if not url or not digest:
+            raise RuntimeError(f"RuNetFreedom release does not provide a published SHA-256 for {name}")
+        assets[name] = (url, digest)
+    return version, assets
+
+
+def _read_geodata_metadata(target_dir: Path) -> dict:
+    path = target_dir / GEODATA_METADATA_NAME
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _validate_geodata_with_xray(geoip: Path, geosite: Path) -> None:
+    exe = resolve_configured_path(
+        "",
+        default_path=XRAY_PATH_DEFAULT,
+        use_default_if_empty=True,
+        migrate_default_location=True,
+    )
+    if exe is None or not exe.is_file():
+        return
+    token = uuid.uuid4().hex
+    staged_geoip = exe.parent / f"lumen-geoip-check-{token}.dat"
+    staged_geosite = exe.parent / f"lumen-geosite-check-{token}.dat"
+    config_path = exe.parent / f"lumen-geodata-check-{token}.json"
+    try:
+        geosite_codes, geoip_codes = required_geodata_codes()
+        shutil.copy2(geoip, staged_geoip)
+        shutil.copy2(geosite, staged_geosite)
+        config = {
+            "log": {"loglevel": "none"},
+            "outbounds": [{"protocol": "freedom", "tag": "direct"}],
+            "routing": {
+                "rules": [
+                    {
+                        "type": "field",
+                        "domain": [f"ext:{staged_geosite.name}:{code}" for code in geosite_codes],
+                        "outboundTag": "direct",
+                    },
+                    {
+                        "type": "field",
+                        "ip": [f"ext:{staged_geoip.name}:{code}" for code in geoip_codes],
+                        "outboundTag": "direct",
+                    },
+                ]
+            },
+        }
+        config_path.write_text(json.dumps(config, ensure_ascii=True), encoding="utf-8")
+        result = subprocess.run(
+            [str(exe), "run", "-test", "-c", str(config_path)],
+            timeout=20,
+            cwd=str(exe.parent),
+            creationflags=CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = result_output_text(result).strip()
+            raise RuntimeError(f"Xray rejected downloaded geodata: {detail}")
+    finally:
+        staged_geoip.unlink(missing_ok=True)
+        staged_geosite.unlink(missing_ok=True)
+        config_path.unlink(missing_ok=True)
 
 
 def _atomic_replace_files(
@@ -319,6 +458,13 @@ def check_or_update_droute(
         if not isinstance(release, dict):
             raise RuntimeError("invalid GitHub release response")
         asset_name, asset_url, expected_hash = _pick_droute_asset(release)
+        if not expected_hash:
+            expected_hash = _release_asset_digest(
+                release,
+                asset_name,
+                proxy_url=proxy_url,
+                cancelled=cancelled,
+            )
         latest = _extract_version(str(release.get("tag_name") or release.get("name") or ""))
         if not latest:
             latest = _extract_version(asset_name)
@@ -334,6 +480,15 @@ def check_or_update_droute(
     if not apply_update:
         return ResourceUpdateResult("droute", "available", f"Доступен droute {latest}", current, latest)
 
+    if not expected_hash:
+        return ResourceUpdateResult(
+            "droute",
+            "error",
+            "Не удалось обновить droute: издатель не предоставил SHA-256 для архива",
+            current,
+            latest,
+        )
+
     try:
         with tempfile.TemporaryDirectory(prefix="droute_update_") as temp_dir_str:
             temp_dir = Path(temp_dir_str)
@@ -348,7 +503,7 @@ def check_or_update_droute(
                 response_opened=response_opened,
                 response_closed=response_closed,
             )
-            if expected_hash and _sha256_file(archive_path).lower() != expected_hash:
+            if _sha256_file(archive_path).lower() != expected_hash:
                 raise RuntimeError("droute archive checksum mismatch")
             _ensure_zip_file(archive_path, "droute")
             with zipfile.ZipFile(archive_path) as archive:
@@ -455,6 +610,14 @@ def check_or_update_singbox(
             new_exe = next((p for p in extract_dir.rglob("sing-box.exe") if p.is_file()), None)
             if new_exe is None:
                 raise RuntimeError("sing-box.exe не найден в архиве")
+            candidate_version = _extract_singbox_version(get_singbox_version(str(new_exe)) or "")
+            ensure_component_compatible("singbox", candidate_version)
+            latest_core = re.search(r"\d+\.\d+\.\d+", latest or "")
+            candidate_core = re.search(r"\d+\.\d+\.\d+", candidate_version)
+            if latest_core and candidate_core and latest_core.group(0) != candidate_core.group(0):
+                raise RuntimeError(
+                    f"архив содержит sing-box {candidate_version}, ожидалась версия {latest}"
+                )
             exe.parent.mkdir(parents=True, exist_ok=True)
             if on_install_start:
                 try:
@@ -469,6 +632,7 @@ def check_or_update_singbox(
                 refreshed = _extract_singbox_version(get_singbox_version(str(exe)) or "")
                 if not refreshed:
                     raise RuntimeError("установленный sing-box не запускается")
+                ensure_component_compatible("singbox", refreshed)
                 latest_core = re.search(r"\d+\.\d+\.\d+", latest or "")
                 refreshed_core = re.search(r"\d+\.\d+\.\d+", refreshed)
                 if latest_core and refreshed_core and latest_core.group(0) != refreshed_core.group(0):
@@ -503,6 +667,8 @@ def update_geodata(
     _raise_if_cancelled(cancelled)
     target_dir = _core_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
+    current_version = str(_read_geodata_metadata(target_dir).get("version") or "")
+    latest_version = ""
     def _scaled_progress(offset: int, span: int):
         def _emit(done: int, total: int) -> None:
             if on_progress and total > 0:
@@ -511,13 +677,25 @@ def update_geodata(
         return _emit
 
     try:
+        latest_version, release_assets = _resolve_geodata_release(
+            proxy_url=proxy_url,
+            cancelled=cancelled,
+        )
+        if _geodata_install_matches(target_dir, latest_version, release_assets):
+            return ResourceUpdateResult(
+                "geodata",
+                "up_to_date",
+                "geoip/geosite актуальны",
+                current_version,
+                latest_version,
+            )
         with tempfile.TemporaryDirectory(prefix="geodata_update_") as temp_dir_str:
             temp_dir = Path(temp_dir_str)
             geoip = temp_dir / "geoip.dat"
             geosite = temp_dir / "geosite.dat"
             singbox_rules = temp_dir / "sing-box.zip"
             _download_direct(
-                GEOIP_DAT_URL,
+                release_assets["geoip.dat"][0],
                 geoip,
                 on_progress=_scaled_progress(0, 30),
                 proxy_url=proxy_url,
@@ -526,7 +704,7 @@ def update_geodata(
                 response_closed=response_closed,
             )
             _download_direct(
-                GEOSITE_DAT_URL,
+                release_assets["geosite.dat"][0],
                 geosite,
                 on_progress=_scaled_progress(30, 30),
                 proxy_url=proxy_url,
@@ -535,7 +713,7 @@ def update_geodata(
                 response_closed=response_closed,
             )
             _download_direct(
-                SINGBOX_RULES_ARCHIVE_URL,
+                release_assets["sing-box.zip"][0],
                 singbox_rules,
                 on_progress=_scaled_progress(60, 40),
                 proxy_url=proxy_url,
@@ -543,6 +721,13 @@ def update_geodata(
                 response_opened=response_opened,
                 response_closed=response_closed,
             )
+            for name, path in (
+                ("geoip.dat", geoip),
+                ("geosite.dat", geosite),
+                ("sing-box.zip", singbox_rules),
+            ):
+                if _sha256_file(path).lower() != release_assets[name][1].lower():
+                    raise RuntimeError(f"SHA-256 mismatch for {name}")
             if geoip.stat().st_size < 1024 or geosite.stat().st_size < 1024:
                 raise RuntimeError("скачанные geodata файлы выглядят поврежденными")
             _ensure_zip_file(singbox_rules, "sing-box rules")
@@ -556,6 +741,24 @@ def update_geodata(
                 (geosite, target_dir / "geosite.dat"),
                 *rule_replacements,
             ]
+            _validate_geodata_with_xray(geoip, geosite)
+            metadata_path = temp_dir / GEODATA_METADATA_NAME
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "version": latest_version,
+                        "sha256": {
+                            name: digest
+                            for name, (_url, digest) in release_assets.items()
+                        },
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            replacements.append((metadata_path, target_dir / GEODATA_METADATA_NAME))
             if on_install_start:
                 try:
                     on_install_start()
@@ -571,8 +774,20 @@ def update_geodata(
     except UpdateCancelled:
         raise
     except Exception as exc:
-        return ResourceUpdateResult("geodata", "error", f"Не удалось обновить geoip/geosite: {exc}")
-    return ResourceUpdateResult("geodata", "updated", "geoip.dat и geosite.dat обновлены")
+        return ResourceUpdateResult(
+            "geodata",
+            "error",
+            f"Не удалось обновить geoip/geosite: {exc}",
+            current_version,
+            latest_version,
+        )
+    return ResourceUpdateResult(
+        "geodata",
+        "updated",
+        f"geoip.dat и geosite.dat обновлены до {latest_version}",
+        current_version,
+        latest_version,
+    )
 
 
 def check_geodata_update(
@@ -582,34 +797,80 @@ def check_geodata_update(
     response_opened=None,
     response_closed=None,
 ) -> ResourceUpdateResult:
-    """Лёгкая проверка обновления geoip/geosite по размеру файлов (без скачивания)."""
+    """Check the verified release identity without downloading payloads."""
     target_dir = _core_dir()
+    return _check_geodata_release_identity(
+        target_dir,
+        proxy_url=proxy_url,
+        cancelled=cancelled,
+    )
+
+
+def _check_geodata_release_identity(
+    target_dir: Path,
+    *,
+    proxy_url: str | None = None,
+    cancelled=None,
+) -> ResourceUpdateResult:
     try:
-        changed = False
-        for url, name in ((GEOIP_DAT_URL, "geoip.dat"), (GEOSITE_DAT_URL, "geosite.dat")):
-            _raise_if_cancelled(cancelled)
-            request = Request(url, method="HEAD", headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-            with urlopen_proxy_first(request, timeout=20, proxy_url=proxy_url) as response:
-                if response_opened is not None:
-                    response_opened(response)
-                try:
-                    remote_size = int(response.headers.get("Content-Length", 0) or 0)
-                finally:
-                    if response_closed is not None:
-                        response_closed(response)
-            dest = target_dir / name
-            local_size = dest.stat().st_size if dest.exists() else -1
-            if local_size < 0 or (remote_size > 0 and remote_size != local_size):
-                changed = True
-        if any(not (SINGBOX_RULE_SET_DIR / Path(member).name).is_file() for member in SINGBOX_BINARY_RULE_SETS.values()):
-            changed = True
+        latest_version, release_assets = _resolve_geodata_release(
+            proxy_url=proxy_url,
+            cancelled=cancelled,
+        )
+        metadata = _read_geodata_metadata(target_dir)
+        current_version = str(metadata.get("version") or "")
+        changed = not _geodata_install_matches(
+            target_dir,
+            latest_version,
+            release_assets,
+        )
     except UpdateCancelled:
         raise
     except Exception as exc:
-        return ResourceUpdateResult("geodata", "error", f"Не удалось проверить geoip/geosite: {exc}")
+        return ResourceUpdateResult(
+            "geodata",
+            "error",
+            f"Не удалось проверить geoip/geosite: {exc}",
+        )
     if changed:
-        return ResourceUpdateResult("geodata", "available", "Доступно обновление geoip/geosite")
-    return ResourceUpdateResult("geodata", "up_to_date", "geoip/geosite актуальны")
+        return ResourceUpdateResult(
+            "geodata",
+            "available",
+            "Доступно обновление geoip/geosite",
+            current_version,
+            latest_version,
+        )
+    return ResourceUpdateResult(
+        "geodata",
+        "up_to_date",
+        "geoip/geosite актуальны",
+        current_version,
+        latest_version,
+    )
+
+
+def _geodata_install_matches(
+    target_dir: Path,
+    latest_version: str,
+    release_assets: dict[str, tuple[str, str]],
+) -> bool:
+    metadata = _read_geodata_metadata(target_dir)
+    if str(metadata.get("version") or "") != str(latest_version or ""):
+        return False
+    recorded_hashes = metadata.get("sha256")
+    if not isinstance(recorded_hashes, dict):
+        return False
+    for name, (_url, expected_hash) in release_assets.items():
+        if str(recorded_hashes.get(name) or "").lower() != expected_hash.lower():
+            return False
+        if name in {"geoip.dat", "geosite.dat"}:
+            path = target_dir / name
+            if not path.is_file() or _sha256_file(path).lower() != expected_hash.lower():
+                return False
+    return all(
+        (SINGBOX_RULE_SET_DIR / Path(member).name).is_file()
+        for member in SINGBOX_BINARY_RULE_SETS.values()
+    )
 
 
 class StartupResourceCheckWorker(QThread):
@@ -631,10 +892,7 @@ class StartupResourceCheckWorker(QThread):
         with self._response_lock:
             responses = list(self._responses)
         for response in responses:
-            try:
-                response.close()
-            except Exception:
-                pass
+            abort_http_response(response)
 
     def _register_response(self, response: object) -> None:
         with self._response_lock:
@@ -702,10 +960,7 @@ class ResourceUpdateWorker(QThread):
         with self._response_lock:
             responses = list(self._responses)
         for response in responses:
-            try:
-                response.close()
-            except Exception:
-                pass
+            abort_http_response(response)
 
     def _register_response(self, response: object) -> None:
         with self._response_lock:
@@ -733,14 +988,22 @@ class ResourceUpdateWorker(QThread):
                     response_closed=self._unregister_response,
                 )
             elif self._kind == "geodata":
-                result = update_geodata(
-                    on_progress=lambda done, total: self.progress.emit(int(done * 100 / total)),
-                    proxy_url=self._proxy_url,
-                    on_install_start=self._trigger_disconnect_request,
-                    cancelled=self._cancelled.is_set,
-                    response_opened=self._register_response,
-                    response_closed=self._unregister_response,
-                )
+                if self._apply_update:
+                    result = update_geodata(
+                        on_progress=lambda done, total: self.progress.emit(int(done * 100 / total)),
+                        proxy_url=self._proxy_url,
+                        on_install_start=self._trigger_disconnect_request,
+                        cancelled=self._cancelled.is_set,
+                        response_opened=self._register_response,
+                        response_closed=self._unregister_response,
+                    )
+                else:
+                    result = check_geodata_update(
+                        proxy_url=self._proxy_url,
+                        cancelled=self._cancelled.is_set,
+                        response_opened=self._register_response,
+                        response_closed=self._unregister_response,
+                    )
             elif self._kind == "droute":
                 result = check_or_update_droute(
                     self._apply_update,

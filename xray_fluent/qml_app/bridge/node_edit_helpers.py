@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -88,6 +89,7 @@ def _protocol_from_node(node) -> str:
 def _field_capabilities(protocol: str) -> dict[str, bool | str]:
     protocol = (protocol or "").strip().lower()
     xray_advanced = protocol in XRAY_ADVANCED_PROTOCOLS
+    tls_editable = protocol in {"vless", "vmess", "trojan"}
     endpoint = protocol in ENDPOINT_EDITABLE_PROTOCOLS
     fixed_endpoint = protocol in {"masque", "singbox_config"}
     return {
@@ -100,7 +102,7 @@ def _field_capabilities(protocol: str) -> dict[str, bool | str]:
         "encryption": xray_advanced,
         "transport": xray_advanced,
         "rawHeader": xray_advanced,
-        "tls": xray_advanced,
+        "tls": tls_editable,
         "reality": xray_advanced,
         "finalmask": xray_advanced,
         "basicOnly": not xray_advanced,
@@ -147,6 +149,7 @@ def _build_vless_link(name: str, server: str, port: int, outbound: dict[str, Any
     payload = reality if security == "reality" else tls
     _set_param(params, "sni", str(payload.get("serverName") or ""))
     _set_param(params, "fp", str(payload.get("fingerprint") or ""))
+    _set_param(params, "pcs", str(tls.get("pinnedPeerCertSha256") or ""))
     network = str(stream.get("network") or "tcp").lower()
     if network == "xhttp":
         xhttp = stream.get("xhttpSettings") if isinstance(stream.get("xhttpSettings"), dict) else {}
@@ -194,6 +197,7 @@ def load_node_edit_fields(node) -> dict:
         "security": "none",
         "sni": "",
         "fingerprint": "",
+        "pinnedPeerCertSha256": "",
         "publicKey": "",
         "shortId": "",
         "spiderX": "",
@@ -223,6 +227,11 @@ def load_node_edit_fields(node) -> dict:
     security_payload = reality if active_security == "reality" else tls
     fields["sni"] = str(security_payload.get("serverName") or "")
     fields["fingerprint"] = str(security_payload.get("fingerprint") or "")
+    pinned = tls.get("pinnedPeerCertSha256")
+    if isinstance(pinned, list):
+        fields["pinnedPeerCertSha256"] = "~".join(str(item) for item in pinned if str(item))
+    else:
+        fields["pinnedPeerCertSha256"] = str(pinned or "")
     fields["publicKey"] = str(reality.get("publicKey") or "")
     fields["shortId"] = str(reality.get("shortId") or "")
     fields["spiderX"] = str(reality.get("spiderX") or "")
@@ -247,6 +256,10 @@ def build_node_updates(node, fields: dict) -> dict:
     def g(key: str, default: str = "") -> str:
         return str(fields.get(key, default) or "").strip()
 
+    certificate_pin = g("pinnedPeerCertSha256").lower()
+    if certificate_pin and not re.fullmatch(r"[0-9a-f]{64}", certificate_pin):
+        raise ValueError("TLS SHA-256 pin должен содержать ровно 64 hex-символа")
+
     outbound = deepcopy(node.outbound) if isinstance(node.outbound, dict) else {}
     protocol = _protocol_from_node(node)
     capabilities = _field_capabilities(protocol)
@@ -268,6 +281,23 @@ def build_node_updates(node, fields: dict) -> dict:
 
     if not capabilities.get("xrayAdvanced"):
         _update_native_endpoint(outbound, server, port)
+        if capabilities.get("tls"):
+            stream = outbound.setdefault("streamSettings", {})
+            if isinstance(stream, dict):
+                security = g("security").lower() or "none"
+                stream["security"] = security
+                if security == "tls":
+                    tls = stream.setdefault("tlsSettings", {})
+                    if isinstance(tls, dict):
+                        _set_or_remove(tls, "serverName", g("sni"))
+                        _set_or_remove(tls, "fingerprint", g("fingerprint"))
+                        _set_or_remove(
+                            tls,
+                            "pinnedPeerCertSha256",
+                            certificate_pin,
+                        )
+                else:
+                    stream.pop("tlsSettings", None)
         updates["outbound"] = outbound
         return updates
 
@@ -314,6 +344,11 @@ def build_node_updates(node, fields: dict) -> dict:
             if isinstance(tls, dict):
                 _set_or_remove(tls, "serverName", g("sni"))
                 _set_or_remove(tls, "fingerprint", g("fingerprint"))
+                _set_or_remove(
+                    tls,
+                    "pinnedPeerCertSha256",
+                    certificate_pin,
+                )
         else:
             stream.pop("tlsSettings", None)
             stream.pop("realitySettings", None)

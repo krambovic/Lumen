@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from xray_fluent.models import Node
 from xray_fluent.qml_app.bridge.node_edit_helpers import build_node_updates, load_node_edit_fields
 
@@ -113,3 +115,25 @@ def test_vless_editor_keeps_advanced_fields() -> None:
     assert user["id"] == "new-id"
     assert outbound["streamSettings"]["network"] == "xhttp"
     assert outbound["streamSettings"]["tlsSettings"]["serverName"] == "front.example"
+
+
+def test_vless_editor_validates_tls_certificate_pin() -> None:
+    node = Node(
+        name="VLESS",
+        scheme="vless",
+        server="example.com",
+        port=443,
+        outbound={
+            "protocol": "vless",
+            "settings": {"vnext": [{"address": "example.com", "port": 443, "users": [{"id": "id"}]}]},
+            "streamSettings": {"network": "tcp", "security": "tls"},
+        },
+    )
+
+    with pytest.raises(ValueError, match="64 hex"):
+        build_node_updates(node, {"pinnedPeerCertSha256": "not-a-digest"})
+
+    updates = build_node_updates(node, {"pinnedPeerCertSha256": "A" * 64, "security": "tls"})
+    assert updates["outbound"]["streamSettings"]["tlsSettings"][
+        "pinnedPeerCertSha256"
+    ] == "a" * 64

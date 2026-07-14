@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import xray_fluent.engines.xray.tun_route_manager as route_manager
+import xray_fluent.network_route_context as route_manager
 
 
 def test_default_route_context_is_cached(monkeypatch) -> None:

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from copy import deepcopy
-import hashlib
 import logging
 import socket
 import threading
+import time
 from datetime import datetime, timezone
 import json
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .constants import APP_VERSION, DIAGNOSTICS_UPLOAD_URL
@@ -22,7 +21,6 @@ from .application.config import (
     SingboxDocumentCache,
     apply_singbox_config_text as apply_singbox_config_text_operation,
     apply_xray_config_text as apply_xray_config_text_operation,
-    apply_xray_tun_loop_prevention as apply_xray_tun_loop_prevention_operation,
     build_runtime_xray_config as build_runtime_xray_config_operation,
     collect_xray_inbound_ports,
     config_has_proxy_outbound,
@@ -32,7 +30,6 @@ from .application.config import (
     ensure_dict,
     ensure_list,
     ensure_xray_metrics_contract as ensure_xray_metrics_contract_operation,
-    ensure_xray_tun_contract as ensure_xray_tun_contract_operation,
     extract_xray_runtime_ports,
     format_json_error_message,
     get_active_config_name as get_active_config_name_operation,
@@ -53,7 +50,6 @@ from .application.config import (
     resolve_profile_path,
     save_config_text as save_config_text_operation,
     validate_json_text,
-    xray_outbound_is_loop_protected as xray_outbound_is_loop_protected_operation,
 )
 from .application.nodes import (
     apply_fetched_subscription as apply_fetched_subscription_operation,
@@ -124,16 +120,16 @@ from .application.runtime import (
 from .country_flags import CountryResolver
 from .engines.xray import (
     XrayManager,
-    XrayTunRouteManager,
     build_xray_config,
-    get_windows_default_route_context,
     get_xray_version,
-    invalidate_windows_default_route_context,
     restart_proxy_core as restart_xray_proxy_core,
+)
+from .network_route_context import (
+    get_windows_default_route_context,
+    invalidate_windows_default_route_context,
 )
 from .engines.singbox import (
     SingBoxManager,
-    classify_node_for_singbox,
     get_singbox_version,
     ParsedSingboxDocument,
     parse_singbox_document,
@@ -153,13 +149,11 @@ from .constants import (
     LOG_DIR,
     PROXY_HOST,
     ROUTING_MODES,
-    SINGBOX_CLASH_API_PORT,
     SINGBOX_CONFIGS_DIR,
     SINGBOX_DEFAULT_CONFIG_NAME,
     SINGBOX_TEMPLATES_DIR,
     XRAY_CONFIGS_DIR,
     XRAY_DEFAULT_CONFIG_NAME,
-    XRAY_TUN_DEFAULT_INTERFACE_NAME,
     XRAY_TEMPLATES_DIR,
 )
 from .diagnostics import export_diagnostics
@@ -187,7 +181,6 @@ from .traffic_history import TrafficHistoryStorage
 from .zapret_manager import ZapretManager
 
 if TYPE_CHECKING:
-    from .country_flags import CountryResolver as CountryResolverType
     from .connectivity_test import ConnectivityTestWorker
     from .engines.xray import XrayCoreUpdateResult, XrayCoreUpdateWorker
     from .ping_worker import PingWorker
@@ -210,11 +203,41 @@ def _find_free_api_port(preferred: int | None = None, excluded: set[int] | None 
     raise RuntimeError(f"No free port in range {preferred}-{preferred + 100}")
 
 
+_DNS_DEFAULTS_MIGRATION_KEY = "recommended_dns_defaults_2026_07"
+_DNS_SETTING_FIELDS = (
+    "dns_mode",
+    "dns_bootstrap_server",
+    "dns_bootstrap_servers",
+    "dns_bootstrap_type",
+    "dns_bootstrap_strategy",
+    "dns_proxy_server",
+    "dns_proxy_servers",
+    "dns_proxy_type",
+    "dns_proxy_strategy",
+    "dns_fake_enabled",
+    "dns_hijack_enabled",
+    "dns_parallel_query",
+    "dns_optimistic_cache",
+    "dns_geo_check",
+    "dns_hosts",
+)
+
+
+def apply_dns_defaults_update_once(state: AppState) -> bool:
+    """Apply the new DNS profile once without touching nodes or other user data."""
+    migrations = state.applied_migrations
+    if migrations.get(_DNS_DEFAULTS_MIGRATION_KEY):
+        return False
+
+    defaults = RoutingSettings()
+    for field_name in _DNS_SETTING_FIELDS:
+        setattr(state.routing, field_name, deepcopy(getattr(defaults, field_name)))
+    migrations[_DNS_DEFAULTS_MIGRATION_KEY] = True
+    return True
+
+
 _XRAY_METRICS_API_TAG = "__app_metrics_api"
 _XRAY_METRICS_API_INBOUND_TAG = "__app_metrics_api_in"
-_XRAY_TUN_INBOUND_TAG = "__app_tun_in"
-
-
 class AppController(QObject):
     nodes_changed = pyqtSignal(object)
     selection_changed = pyqtSignal(object)
@@ -250,7 +273,6 @@ class AppController(QObject):
         self.storage = StateStorage()
         self.xray = XrayManager(self)
         self.singbox = SingBoxManager(self)
-        self._xray_tun_routes = XrayTunRouteManager(self)
         self.zapret = ZapretManager(self)
         self.proxy = ProxyManager()
         self.discord_proxy = DiscordProxyManager()
@@ -298,7 +320,7 @@ class AppController(QObject):
         self._retired_metrics_workers: list[LiveMetricsWorker] = []
         self._retired_workers: list[QThread] = []
         self._xray_update_worker: XrayCoreUpdateWorker | None = None
-        self._resource_update_worker = None
+        self._resource_update_workers: list[QThread] = []
         self._singbox_documents = SingboxDocumentCache()
         self._parsed_singbox_document: ParsedSingboxDocument | None = None
         self._ping_total = 0
@@ -308,7 +330,7 @@ class AppController(QObject):
         self._xray_update_silent = False
         self._xray_update_proxy_url: str | None = None
         self._reconnect_after_xray_update = False
-        self._reconnect_after_resource_update = False
+        self._reconnect_after_resource_updates = False
         self._xray_update_apply_requested = False
         self._reconnecting = False
         self._connecting = False
@@ -361,7 +383,6 @@ class AppController(QObject):
         self.singbox.state_changed.connect(self._on_core_state_changed)
         self.singbox.stopped.connect(lambda code: self._on_core_stopped("singbox", code))
 
-        self._xray_tun_routes.log_received.connect(lambda line: self._on_core_log("tun", line))
         self.zapret.log_line.connect(lambda line: self._on_core_log("zapret", line))
 
         self.network_monitor.network_changed.connect(self._on_network_changed)
@@ -399,7 +420,8 @@ class AppController(QObject):
             return False
 
         self._migrate_sort_order()
-        self._migrate_fake_dns_default_enabled()
+        if apply_dns_defaults_update_once(self.state):
+            self.save()
         self.nodes_changed.emit(self.state.nodes)
         self.selection_changed.emit(self.selected_node)
         self.routing_changed.emit(self.state.routing)
@@ -509,12 +531,16 @@ class AppController(QObject):
             self._background_threads.add(thread)
         thread.start()
 
-    def _join_background_tasks(self) -> None:
+    def _join_background_tasks(self, timeout: float = 3.0) -> None:
         with self._background_threads_lock:
             threads = list(self._background_threads)
+        deadline = time.monotonic() + max(0.1, timeout)
         for thread in threads:
             if thread is not threading.current_thread():
-                thread.join()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                thread.join(timeout=remaining)
 
     def set_data_passphrase(self, passphrase: str) -> None:
         self.storage.passphrase = passphrase
@@ -610,11 +636,7 @@ class AppController(QObject):
 
     def is_singbox_editor_mode(self, settings: AppSettings | None = None) -> bool:
         settings = settings or self.state.settings
-        return bool(settings.tun_mode and str(settings.tun_engine) == "singbox")
-
-    def is_xray_tun_mode(self, settings: AppSettings | None = None) -> bool:
-        settings = settings or self.state.settings
-        return bool(settings.tun_mode and str(settings.tun_engine) == "xray")
+        return bool(settings.tun_mode)
 
     def uses_xray_raw_config(self, settings: AppSettings | None = None) -> bool:
         settings = settings or self.state.settings
@@ -787,7 +809,7 @@ class AppController(QObject):
 
     def get_effective_http_proxy_port(self) -> int | None:
         session = self._active_session
-        if session is not None and session.tun_mode:
+        if (session is not None and session.tun_mode) or self.state.settings.tun_mode:
             return None
         _, http_port = self.get_effective_proxy_ports()
         return http_port if http_port > 0 else None
@@ -925,16 +947,6 @@ class AppController(QObject):
     ) -> tuple[int, tuple[str, ...]]:
         return ensure_xray_metrics_contract_operation(self, payload, allocate_port=allocate_port)
 
-    def _ensure_xray_tun_contract(self, payload: dict[str, Any]) -> str:
-        return ensure_xray_tun_contract_operation(self, payload)
-
-    @staticmethod
-    def _xray_outbound_is_loop_protected(outbound: dict[str, Any]) -> bool:
-        return xray_outbound_is_loop_protected_operation(outbound)
-
-    def _apply_xray_tun_loop_prevention(self, payload: dict[str, Any], interface_alias: str) -> int:
-        return apply_xray_tun_loop_prevention_operation(self, payload, interface_alias)
-
     def _inspect_active_singbox_config(self) -> tuple[Path, str, bool]:
         state = self._get_singbox_document_state()
         return state.source_path, state.text_hash, state.has_proxy_outbound
@@ -998,7 +1010,11 @@ class AppController(QObject):
                 f"relay=127.0.0.1:{plan.xray_sidecar.relay_port} "
                 f"protect=127.0.0.1:{plan.xray_sidecar.protect_port}"
             )
-            if not self.xray.start(self.state.settings.xray_path, plan.xray_sidecar.config):
+            if not self.xray.start(
+                self.state.settings.xray_path,
+                plan.xray_sidecar.config,
+                prevalidated=True,
+            ):
                 self._protect_ss_port = 0
                 self._protect_ss_password = ""
                 return False
@@ -1009,7 +1025,11 @@ class AppController(QObject):
                 self._log("[tun] failed to stop xray before starting sing-box local proxy inbounds")
                 return False
 
-        sb_ok = self.singbox.start(self.state.settings.singbox_path, plan.singbox_config)
+        sb_ok = self.singbox.start(
+            self.state.settings.singbox_path,
+            plan.singbox_config,
+            prevalidated=True,
+        )
         self._log(f"[tun] sing-box start result: {sb_ok}")
         if sb_ok:
             return True
@@ -1020,8 +1040,8 @@ class AppController(QObject):
         self._protect_ss_password = ""
         return False
 
-    def _build_runtime_xray_config(self, node: Node | None = None, *, tun_mode: bool = False) -> XrayRuntimeConfig:
-        return build_runtime_xray_config_operation(self, node, tun_mode=tun_mode)
+    def _build_runtime_xray_config(self, node: Node | None = None) -> XrayRuntimeConfig:
+        return build_runtime_xray_config_operation(self, node)
 
     def _runtime_routing(
         self,
@@ -1094,7 +1114,6 @@ class AppController(QObject):
             node_server=node.server if node else "",
             active_core=core,
             tun_mode=bool(tun),
-            tun_engine=str(settings.tun_engine),
             proxy_enabled=bool(settings.enable_system_proxy),
             proxy_bypass_lan=proxy_bypass_lan,
             xray_path=str(settings.xray_path),
@@ -1205,7 +1224,6 @@ class AppController(QObject):
         return can_tun_hot_swap_rule(
             session=session,
             settings_tun_mode=bool(settings.tun_mode),
-            settings_tun_engine=str(settings.tun_engine),
             has_selected_node=node is not None,
             current_tun_layer_signature=self._tun_layer_signature(node, settings, self.state.routing),
         )
@@ -1327,12 +1345,15 @@ class AppController(QObject):
             self._transition_worker_thread = worker
         worker.start()
 
-    def _join_transition_worker(self) -> None:
+    def _join_transition_worker(self, timeout: float = 3.0) -> None:
         with self._transition_worker_lock:
             worker = self._transition_worker_thread
         if worker is None or worker is threading.current_thread():
             return
-        worker.join()
+        worker.join(timeout=max(0.1, timeout))
+        if worker.is_alive():
+            self._logger.warning("[app] Transition worker did not stop before shutdown timeout")
+            return
         with self._transition_worker_lock:
             if self._transition_worker_thread is worker:
                 self._transition_worker_thread = None
@@ -1415,7 +1436,7 @@ class AppController(QObject):
         finally:
             self._flush_state_saves(timeout=5.0)
             self._save_executor_shutdown = True
-            self._save_executor.shutdown(wait=True, cancel_futures=False)
+            self._save_executor.shutdown(wait=False, cancel_futures=True)
             configure_diagnostics_upload(upload_url="", app_version=APP_VERSION)
 
     @staticmethod
@@ -1474,7 +1495,7 @@ class AppController(QObject):
                 plan = self._plan_runtime_singbox(node, tun_mode=bool(settings.tun_mode))
                 return json.dumps(plan.singbox_config, ensure_ascii=True, indent=2)
             if self.uses_xray_raw_config():
-                runtime = self._build_runtime_xray_config(node, tun_mode=self.is_xray_tun_mode())
+                runtime = self._build_runtime_xray_config(node)
                 return json.dumps(runtime.config, ensure_ascii=True, indent=2)
             if not node:
                 return None
@@ -1550,18 +1571,6 @@ class AppController(QObject):
             for i, node in enumerate(self.state.nodes):
                 node.sort_order = i + 1
             self.save()
-
-    def _migrate_fake_dns_default_enabled(self) -> None:
-        key = "enable_fake_dns_by_default"
-        migrations = getattr(self.state, "applied_migrations", None)
-        if not isinstance(migrations, dict):
-            migrations = {}
-            self.state.applied_migrations = migrations
-        if migrations.get(key):
-            return
-        self.state.routing.dns_fake_enabled = True
-        migrations[key] = True
-        self.save()
 
     def reorder_nodes(self, node_id: str, direction: str) -> None:
         reorder_nodes_operation(self, node_id, direction)
@@ -1756,7 +1765,6 @@ class AppController(QObject):
         old_launch_in_tray = getattr(old_settings, "launch_in_tray_on_startup", True)
         old_admin = old_settings.always_run_as_admin
         old_tun = old_settings.tun_mode
-        old_tun_engine = old_settings.tun_engine
         old_proxy = old_settings.enable_system_proxy
         old_diagnostics_upload = getattr(old_settings, "diagnostics_upload_enabled", True)
         self.state.settings = settings
@@ -1810,6 +1818,12 @@ class AppController(QObject):
                 return
             self._request_transition("settings changed")
 
+    def reset_settings_to_defaults(self) -> None:
+        """Reset application and routing settings while preserving servers and subscriptions."""
+        defaults = self.storage.default_state()
+        self.update_settings(defaults.settings)
+        self.update_routing(defaults.routing)
+
     def ping_nodes(self, node_ids: set[str] | None = None, method: str | None = None) -> None:
         ping_nodes_operation(self, node_ids, method)
 
@@ -1828,34 +1842,50 @@ class AppController(QObject):
     def run_xray_core_update(self, apply_update: bool, silent: bool = False) -> None:
         run_xray_core_update_operation(self, apply_update, silent=silent)
 
-    def run_resource_update(self, kind: str, *, apply_update: bool = True) -> None:
+    def run_resource_update(self, kind: str, *, apply_update: bool = True) -> bool:
         from .core_resource_updater import ResourceUpdateWorker
+        from .qthread_utils import retain_thread_until_finished
+
         if self._shutting_down:
-            return
-        if self._resource_update_worker and self._resource_update_worker.isRunning():
-            self.status.emit("info", "Обновление уже выполняется")
-            return
+            return False
+        kind = str(kind or "").strip().lower()
+        if kind not in {"singbox", "geodata", "droute"}:
+            self.status.emit("error", f"Неизвестный тип обновления: {kind}")
+            return False
+        active_same_kind = next(
+            (
+                worker
+                for worker in self._resource_update_workers
+                if getattr(worker, "_kind", "") == kind and worker.isRunning()
+            ),
+            None,
+        )
+        if active_same_kind is not None:
+            self.status.emit("info", f"Проверка или обновление {kind} уже выполняется")
+            return False
         proxy_url = None
         if self.connected:
             try:
-                proxy_url = f"http://{PROXY_HOST}:{int(self.get_effective_http_proxy_port() or DEFAULT_HTTP_PORT)}"
+                proxy_port = self.get_effective_http_proxy_port()
+                if proxy_port:
+                    proxy_url = f"http://{PROXY_HOST}:{int(proxy_port)}"
             except Exception:
-                proxy_url = f"http://{PROXY_HOST}:{DEFAULT_HTTP_PORT}"
+                proxy_url = None
         worker = ResourceUpdateWorker(
             kind,
             singbox_path=self.state.settings.singbox_path,
             apply_update=apply_update,
             proxy_url=proxy_url,
         )
-        self._resource_update_worker = worker
-        from .qthread_utils import bind_thread_reference
-        bind_thread_reference(self, "_resource_update_worker", worker)
+        worker.finished.connect(self._on_resource_update_worker_finished)
+        retain_thread_until_finished(self, self._resource_update_workers, worker)
         worker.progress.connect(
             lambda percent, update_kind=kind: self.resource_update_progress.emit(update_kind, int(percent))
         )
         worker.done.connect(self._on_resource_update_done)
         worker.request_disconnect.connect(self._on_update_disconnect_request)
         worker.start()
+        return True
 
     def _on_update_disconnect_request(self) -> None:
         """Callback from background update thread before files are replaced.
@@ -1865,24 +1895,39 @@ class AppController(QObject):
         success = True
         if self._shutting_down:
             success = False
-            self._reconnect_after_resource_update = False
+            self._reconnect_after_resource_updates = False
             self._reconnect_after_xray_update = False
         elif self.connected:
             self._logger.info("[updater] Connection active. Disconnecting before replacing files...")
             self.status.emit("info", "Остановка ядра для установки обновлений...")
             stopped = self.disconnect_current()
             if stopped:
-                self._reconnect_after_resource_update = True
-                self._reconnect_after_xray_update = True
+                if worker is self._xray_update_worker:
+                    self._reconnect_after_xray_update = True
+                else:
+                    self._reconnect_after_resource_updates = True
                 self._logger.info("[updater] Disconnected successfully.")
             else:
                 success = False
                 self._logger.warning("[updater] Failed to disconnect.")
-        else:
-            self._reconnect_after_resource_update = False
-            self._reconnect_after_xray_update = False
         if hasattr(worker, "confirm_disconnect"):
             worker.confirm_disconnect(success)
+
+    def _on_resource_update_worker_finished(self) -> None:
+        if not self._reconnect_after_resource_updates or self._shutting_down:
+            return
+        worker = self.sender()
+        another_install_running = any(
+            candidate is not worker
+            and candidate.isRunning()
+            and bool(getattr(candidate, "_apply_update", False))
+            for candidate in self._resource_update_workers
+        )
+        if another_install_running:
+            return
+        self._reconnect_after_resource_updates = False
+        self._desired_connected = True
+        self._request_transition("resource update reconnect")
 
     def _on_resource_update_done(self, result) -> None:
         self.resource_update_result.emit(result)
@@ -1899,10 +1944,8 @@ class AppController(QObject):
             self.status.emit("warning", message)
             self._logger.warning(f"[updater] Resource update ({kind}) warning: status={status}, message={message}")
 
-        if self._reconnect_after_resource_update and not self._shutting_down:
-            self._reconnect_after_resource_update = False
-            self._desired_connected = True
-            self._request_transition("resource update reconnect")
+        if kind == "droute" and status == "updated" and not self._shutting_down:
+            QTimer.singleShot(0, self.apply_discord_proxy)
 
     def _start_metrics_worker(self) -> None:
         start_metrics_worker_operation(self)
@@ -1963,7 +2006,7 @@ class AppController(QObject):
             self._request_transition("auto connect")
 
     _CORE_TAGS = frozenset({
-        "xray", "singbox", "sing-box", "tun", "xray-tun", "zapret", "proxy",
+        "xray", "singbox", "sing-box", "tun", "zapret", "proxy",
         "core", "xray-error", "singbox-error", "zapret-error", "discord",
         "discord-proxy",
     })
@@ -2033,7 +2076,7 @@ class AppController(QObject):
         clean = str(line or "").strip()
         if not clean:
             return
-        if clean.lower().startswith(("[tun]", "[xray]", "[singbox]", "[xray-tun]")):
+        if clean.lower().startswith(("[tun]", "[xray]", "[singbox]")):
             self._on_xray_log(clean)
         else:
             self._on_xray_log(f"[{source}] {clean}")
@@ -2152,7 +2195,6 @@ class AppController(QObject):
 
     def _hot_swap_node(self, reason: str) -> bool:
         """Handle node switch while TUN is active."""
-        node = self.selected_node
         session = self._active_session
         if session is None:
             self._auto_switch_transitioning = False

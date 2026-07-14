@@ -9,8 +9,8 @@ import "."
 ApplicationWindow {
     id: win
     visible: false
-    width: App.windowWidth > 0 ? App.windowWidth : 1280
-    height: App.windowHeight > 0 ? App.windowHeight : 720
+    width: 1280
+    height: 720
     minimumWidth: 640
     minimumHeight: 360
     title: App.appName
@@ -115,6 +115,8 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        win.width = Math.max(win.minimumWidth, App.windowWidth > 0 ? App.windowWidth : 1280);
+        win.height = Math.max(win.minimumHeight, App.windowHeight > 0 ? App.windowHeight : 720);
         restoreSavedWindowPosition();
         Theme.accent = Qt.binding(function() { return App.accentColor; });
         Theme.dark = Qt.binding(function() { return win.resolveDark(); });

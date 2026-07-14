@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..constants import DEFAULT_HTTP_PORT, PROXY_HOST
+from ..constants import PROXY_HOST
 from ..engines.xray import XrayCoreUpdateResult, XrayCoreUpdateWorker
 from ..qthread_utils import bind_thread_reference
 
@@ -14,10 +14,10 @@ def _controller_proxy_url(controller: AppController) -> str | None:
     if not controller.connected:
         return None
     try:
-        port = int(controller.get_effective_http_proxy_port() or DEFAULT_HTTP_PORT)
+        port = controller.get_effective_http_proxy_port()
     except Exception:
-        port = DEFAULT_HTTP_PORT
-    return f"http://{PROXY_HOST}:{port}"
+        return None
+    return f"http://{PROXY_HOST}:{int(port)}" if port else None
 
 
 def _start_xray_worker(controller: AppController, *, apply_update: bool) -> None:
@@ -44,16 +44,9 @@ def run_xray_core_update(controller: AppController, apply_update: bool, silent: 
             controller.status.emit("info", "Обновление Xray уже выполняется")
         return
 
-    if silent and apply_update and controller.connected:
-        controller._log("[core-update] silent auto-update skipped while connected")
-        return
-
     if apply_update and controller.connected:
-        # Non-silent user request (the silent+connected case already returned
-        # above). Run a CHECK-ONLY pass first and only tear down the live
-        # connection once we know a newer version actually exists. The old code
-        # disconnected unconditionally here, dropping the connection even when
-        # Xray was already up to date.
+        # Check first through the live proxy and disconnect only when a verified
+        # newer release is actually ready to install.
         controller._xray_update_apply_requested = True
         controller._reconnect_after_xray_update = False
         worker_apply = False
@@ -85,16 +78,24 @@ def on_xray_update_worker_done(controller: AppController, result: XrayCoreUpdate
     # leave everything untouched when already up to date / on error.
     if controller._xray_update_apply_requested:
         controller._xray_update_apply_requested = False
+        silent = controller._xray_update_silent
         if result.status == "available":
-            controller.status.emit("info", "Обновление Xray...")
+            if not silent:
+                controller.status.emit("info", "Обновление Xray...")
             controller._reconnect_after_xray_update = False
-            controller._xray_update_silent = False
+            controller._xray_update_silent = silent
             _start_xray_worker(controller, apply_update=True)
             return
         if result.status == "error":
-            controller.status.emit("error", result.message)
+            if not silent:
+                controller.status.emit("error", result.message)
+            else:
+                controller._log(f"[core-update] error: {result.message}")
         else:  # up_to_date — connection stays intact, nothing else to do
-            controller.status.emit("info", result.message)
+            if not silent:
+                controller.status.emit("info", result.message)
+            else:
+                controller._log(f"[core-update] {result.message}")
         controller._xray_update_silent = False
         return
 

@@ -348,14 +348,14 @@ def test_system_dns_mode_uses_physical_adapter_dns_without_local_recursion() -> 
         assert servers[tag]["detour"] == "direct"
         assert "domain_resolver" not in servers[tag]
     assert servers["proxy-dns"]["type"] == "https"
-    assert servers["proxy-dns"]["server"] == "dns.google"
+    assert servers["proxy-dns"]["server"] == "cloudflare-dns.com"
     assert servers["proxy-dns"]["detour"] == "proxy"
     assert servers["proxy-dns"]["domain_resolver"] == "bootstrap-dns"
     assert config["dns"]["final"] == "proxy-dns"
-    assert config["dns"]["strategy"] == "prefer_ipv4"
+    assert config["dns"]["strategy"] == "ipv4_only"
     assert config["dns"]["reverse_mapping"] is True
     assert config["route"]["default_domain_resolver"]["server"] == "proxy-dns"
-    assert config["route"]["default_domain_resolver"]["strategy"] == "prefer_ipv4"
+    assert config["route"]["default_domain_resolver"]["strategy"] == "ipv4_only"
     # FakeIP is now enabled regardless of system/built-in DNS mode so ECH sites
     # stay reachable; it adds no upstream recursion.
     assert servers["fake-dns"]["type"] == "fakeip"
@@ -397,13 +397,13 @@ def test_default_system_dns_keeps_proxied_domain_dns_on_proxy_resolver() -> None
     dns_rules = config["dns"]["rules"]
 
     assert servers["bootstrap-dns"]["type"] == "udp"
-    assert servers["bootstrap-dns"]["server"] == "8.8.8.8"
+    assert servers["bootstrap-dns"]["server"] == "1.1.1.1"
     assert servers["direct-dns"]["type"] == "udp"
-    assert servers["direct-dns"]["server"] == "8.8.8.8"
+    assert servers["direct-dns"]["server"] == "1.1.1.1"
     assert servers["proxy-dns"]["type"] == "https"
-    assert servers["proxy-dns"]["server"] == "dns.google"
+    assert servers["proxy-dns"]["server"] == "cloudflare-dns.com"
     assert servers["proxy-dns"]["detour"] == "proxy"
-    assert config["dns"]["strategy"] == "prefer_ipv4"
+    assert config["dns"]["strategy"] == "ipv4_only"
     assert config["dns"]["reverse_mapping"] is True
     assert any(
         rule.get("server") == "proxy-dns"
@@ -444,7 +444,7 @@ def test_system_dns_mode_falls_back_to_explicit_bootstrap_server() -> None:
     assert servers["bootstrap-dns"]["server"] == "1.1.1.1"
     assert servers["bootstrap-dns"]["detour"] == "direct"
     assert servers["proxy-dns"]["type"] == "https"
-    assert servers["proxy-dns"]["server"] == "dns.google"
+    assert servers["proxy-dns"]["server"] == "cloudflare-dns.com"
     assert servers["proxy-dns"]["detour"] == "proxy"
     assert servers["proxy-dns"]["domain_resolver"] == "bootstrap-dns"
 
@@ -470,7 +470,7 @@ def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
         if rule.get("action") == "reject" and rule.get("port") == [135, 137, 138, 139, 5353, 5355]
     )
     assert servers["bootstrap-dns"]["type"] == "udp"
-    assert servers["bootstrap-dns"]["server"] == "8.8.8.8"
+    assert servers["bootstrap-dns"]["server"] == "1.1.1.1"
     assert servers["bootstrap-dns"]["detour"] == "direct"
     assert servers["direct-dns"]["detour"] == "direct"
     assert servers["proxy-dns"]["detour"] == "proxy"
@@ -855,4 +855,35 @@ def test_endpoint_tun_excludes_resolved_domain_peer_from_tun_routes(monkeypatch:
         rule.get("outbound") == "direct"
         and "wg.example.com" in rule.get("domain", [])
         for rule in rules
+    )
+
+
+def test_builtin_dns_adds_multiple_servers_and_hosts_without_unsupported_optimistic_field() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="builtin",
+            dns_bootstrap_servers=["1.1.1.1", "8.8.8.8"],
+            dns_bootstrap_type="udp",
+            dns_proxy_servers=["dns.google", "9.9.9.9"],
+            dns_proxy_type="https",
+            dns_optimistic_cache=True,
+            dns_hosts={"local.test": ["127.0.0.1", "::1"]},
+            tun_default_outbound="proxy",
+        )
+    )
+
+    servers = _dns_servers(config)
+
+    assert servers["direct-dns-2"]["server"] == "8.8.8.8"
+    assert servers["proxy-dns-2"]["server"] == "dns.quad9.net"
+    assert servers["hosts-dns"] == {
+        "tag": "hosts-dns",
+        "type": "hosts",
+        "predefined": {"local.test": ["127.0.0.1", "::1"]},
+    }
+    assert config["dns"].get("optimistic") is None
+    assert any(
+        rule.get("ip_accept_any") is True and rule.get("server") == "hosts-dns"
+        for rule in config["dns"]["rules"]
     )

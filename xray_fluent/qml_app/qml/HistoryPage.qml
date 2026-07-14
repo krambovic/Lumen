@@ -70,8 +70,6 @@ Item {
     function modeLabel(mode) {
         if (mode === "xray")
             return I18n.t("Прокси")
-        if (mode === "xray-tun")
-            return I18n.t("TUN (xray experimental)")
         if (mode === "singbox")
             return I18n.t("TUN (sing-box)")
         return I18n.t(mode || "")

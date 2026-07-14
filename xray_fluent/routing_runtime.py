@@ -479,7 +479,10 @@ def build_singbox_gui_dns_rules(routing: RoutingSettings) -> tuple[list[dict[str
     rule_sets: set[str] = set()
 
     service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
-    preset_direct, preset_proxy = preset_domain_rules(routing.preset_id)
+    if routing.dns_geo_check:
+        preset_direct, preset_proxy = preset_domain_rules(routing.preset_id)
+    else:
+        preset_direct, preset_proxy = [], []
 
     for items, dns_action in (
         (service_direct, "bootstrap-dns"),

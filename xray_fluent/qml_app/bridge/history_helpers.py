@@ -73,7 +73,6 @@ def _duration_seconds(start: str, end: str | None) -> int:
 
 _MODE_LABELS = {
     "xray": "Прокси",
-    "xray-tun": "TUN (xray experimental)",
     "singbox": "TUN (sing-box)",
 }
 

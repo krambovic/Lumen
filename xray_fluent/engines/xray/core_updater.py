@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from http.client import IncompleteRead
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -12,12 +12,13 @@ import threading
 import time
 from urllib.request import Request
 
-from ...http_utils import urlopen_proxy_first
+from ...http_utils import abort_http_response, urlopen_proxy_first
 import zipfile
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from ...constants import APP_VERSION, XRAY_GITHUB_RELEASES_API, XRAY_PATH_DEFAULT
+from ...component_compatibility import ensure_component_compatible
 from ...path_utils import resolve_configured_path
 from ...update_checker import check_update
 from ...zip_utils import safe_extract_zip
@@ -131,12 +132,24 @@ def _normalize_channel(value: str) -> str:
 
 
 def _request_json(url: str, *, proxy_url: str | None = None, cancelled=None) -> object:
-    _raise_if_cancelled(cancelled)
     request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-    with urlopen_proxy_first(request, timeout=12, proxy_url=proxy_url) as response:
-        payload = response.read()
-    _raise_if_cancelled(cancelled)
-    return json.loads(payload.decode("utf-8"))
+    last_error: Exception | None = None
+    for attempt in range(3):
+        _raise_if_cancelled(cancelled)
+        try:
+            with urlopen_proxy_first(request, timeout=12, proxy_url=proxy_url) as response:
+                payload = response.read()
+            _raise_if_cancelled(cancelled)
+            return json.loads(payload.decode("utf-8"))
+        except UpdateCancelled:
+            raise
+        except (OSError, IncompleteRead, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            last_error = exc
+            if attempt >= 2:
+                raise
+            time.sleep(0.15 * (attempt + 1))
+    assert last_error is not None
+    raise last_error
 
 
 def _pick_release_from_github(releases: list[dict], channel: str) -> dict | None:
@@ -146,7 +159,8 @@ def _pick_release_from_github(releases: list[dict], channel: str) -> dict | None
         reverse=True,
     )
     if channel == "stable":
-        return candidates[0] if candidates else None
+        stable = [release for release in candidates if not bool(release.get("prerelease"))]
+        return stable[0] if stable else None
 
     prereleases = [release for release in candidates if bool(release.get("prerelease"))]
     if not prereleases:
@@ -356,6 +370,23 @@ def _install_zip_archive(archive_path: Path, target_xray_path: Path) -> None:
             shutil.copy2(original_xray, target_xray_path.with_suffix(".exe.bak"))
 
 
+def _validate_xray_archive(archive_path: Path, expected_version: str) -> str:
+    with tempfile.TemporaryDirectory(prefix="xray_core_validate_") as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            safe_extract_zip(archive, temp_dir)
+        candidate = _find_file(temp_dir, "xray.exe")
+        if candidate is None:
+            raise RuntimeError("xray.exe не найден в архиве")
+        version = _extract_version(get_xray_version(str(candidate)) or "")
+        ensure_component_compatible("xray", version)
+        if expected_version and _extract_version(expected_version) != version:
+            raise RuntimeError(
+                f"архив содержит Xray {version}, ожидалась версия {expected_version}"
+            )
+        return version
+
+
 def check_and_update_xray_core(
     xray_path: str,
     channel: str,
@@ -420,7 +451,7 @@ def check_and_update_xray_core(
         )
 
     latest_version = _extract_version(release.version)
-    if current_version and not _is_newer(latest_version, current_version):
+    if current_version and _compare_versions(latest_version, current_version) == 0:
         return XrayCoreUpdateResult(
             status="up_to_date",
             message=f"Xray core актуален ({current_version})",
@@ -431,9 +462,10 @@ def check_and_update_xray_core(
         )
 
     if not apply_update:
+        direction = "обновление" if _is_newer(latest_version, current_version) else "переход"
         return XrayCoreUpdateResult(
             status="available",
-            message=f"Доступно обновление Xray: {latest_version}",
+            message=f"Доступен {direction} Xray на {latest_version}",
             channel=release.channel,
             current_version=current_version,
             latest_version=latest_version,
@@ -486,6 +518,18 @@ def check_and_update_xray_core(
                     latest_version=latest_version,
                     updated=False,
                 )
+
+        try:
+            _validate_xray_archive(archive_path, latest_version)
+        except Exception as exc:
+            return XrayCoreUpdateResult(
+                status="error",
+                message=f"Архив Xray не прошел проверку совместимости: {exc}",
+                channel=release.channel,
+                current_version=current_version,
+                latest_version=latest_version,
+                updated=False,
+            )
 
         if on_install_start:
             try:
@@ -557,10 +601,7 @@ class XrayCoreUpdateWorker(QThread):
         with self._response_lock:
             responses = list(self._responses)
         for response in responses:
-            try:
-                response.close()
-            except Exception:
-                pass
+            abort_http_response(response)
 
     def _register_response(self, response: object) -> None:
         with self._response_lock:

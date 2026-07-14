@@ -79,7 +79,7 @@ def transition_signature(
     if controller.uses_xray_raw_config(settings):
         source_path, config_hash, has_proxy_outbound, socks_port, http_port, api_port = controller._inspect_active_xray_config()
         signature_payload = {
-            "mode": "xray-tun" if controller.is_xray_tun_mode(settings) else "xray-direct",
+            "mode": "xray-direct",
             "xray_path": str(settings.xray_path),
             "config_file": str(source_path.name),
             "config_hash": config_hash,
@@ -93,23 +93,19 @@ def transition_signature(
             "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
             "prefer_ipv6": bool(getattr(settings, "prefer_ipv6", False)),
         }
-        if controller.is_xray_tun_mode(settings):
-            signature_payload.update({"tun_mode": True, "tun_engine": "xray"})
-        else:
-            signature_payload.update(
-                {
-                    "proxy_enabled": bool(settings.enable_system_proxy),
-                    "proxy_bypass_lan": system_proxy_bypass_lan(controller, settings),
-                    "socks_port": int(socks_port),
-                    "http_port": int(http_port),
-                }
-            )
+        signature_payload.update(
+            {
+                "proxy_enabled": bool(settings.enable_system_proxy),
+                "proxy_bypass_lan": system_proxy_bypass_lan(controller, settings),
+                "socks_port": int(socks_port),
+                "http_port": int(http_port),
+            }
+        )
         return signature(signature_payload)
     return signature(
         {
             "node_id": node.id if node else None,
             "tun_mode": bool(settings.tun_mode),
-            "tun_engine": str(settings.tun_engine),
             "proxy_enabled": bool(settings.enable_system_proxy),
             "proxy_bypass_lan": bool(routing.bypass_lan),
             "proxy_allow_lan": bool(getattr(settings, "proxy_allow_lan", False)),
@@ -146,7 +142,7 @@ def xray_layer_signature(
     if controller.uses_xray_raw_config(settings):
         source_path, config_hash, has_proxy_outbound, socks_port, http_port, api_port = controller._inspect_active_xray_config()
         signature_payload = {
-            "mode": "xray-tun" if controller.is_xray_tun_mode(settings) else "xray-direct",
+            "mode": "xray-direct",
             "xray_path": str(settings.xray_path),
             "config_file": str(source_path.name),
             "config_hash": config_hash,
@@ -162,14 +158,11 @@ def xray_layer_signature(
             "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
             "prefer_ipv6": bool(getattr(settings, "prefer_ipv6", False)),
         }
-        if controller.is_xray_tun_mode(settings):
-            signature_payload.update({"tun_mode": True, "tun_engine": "xray"})
         return signature(signature_payload)
     return signature(
         {
             "node_id": node.id if node else None,
             "tun_mode": bool(settings.tun_mode),
-            "tun_engine": str(settings.tun_engine),
             "socks_port": int(getattr(settings, "local_socks_port", DEFAULT_SOCKS_PORT)),
             "http_port": int(getattr(settings, "local_http_port", DEFAULT_HTTP_PORT)),
             "xray_path": str(settings.xray_path),
@@ -193,13 +186,6 @@ def tun_layer_signature(
         return ""
     if controller.is_singbox_editor_mode(settings):
         return transition_signature(controller, node, settings, routing)
-    if controller.is_xray_tun_mode(settings):
-        return signature(
-            {
-                "mode": "xray-native-tun",
-                "xray_layer_signature": xray_layer_signature(controller, node, settings, routing),
-            }
-        )
     return signature(
         {
             "mode": "singbox-native",

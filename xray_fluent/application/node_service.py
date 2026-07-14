@@ -4,9 +4,10 @@ import base64
 import binascii
 import json
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import ProxyHandler, Request
 
 from PyQt6.QtCore import QTimer
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 
 MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
+HAPP_WINDOWS_USER_AGENT = "Happ/2.18.3/Windows/2606241603601"
 
 
 class SubscriptionFetchCancelled(RuntimeError):
@@ -277,7 +279,7 @@ _SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
     (
         "Happ Windows",
         {
-            "User-Agent": "Happ/2.18.3/Windows/2606241603601",
+            "User-Agent": HAPP_WINDOWS_USER_AGENT,
             "Accept": "*/*",
             "Accept-Language": "ru-RU,en,*",
             "Profile-Update-Interval": "24",
@@ -324,7 +326,7 @@ _SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
     (
         "Happ",
         {
-            "User-Agent": "Happ/1.0",
+            "User-Agent": HAPP_WINDOWS_USER_AGENT,
             "Accept": "*/*",
             "Profile-Update-Interval": "24",
         },
@@ -457,7 +459,11 @@ def _fetch_subscription(url: str, *, user_agent: str = "LumenKVN-Subscription/1.
 
 
 def _fetch_subscription_happ(url: str) -> tuple[str, dict]:
-    return _fetch_subscription_with_headers(url, "Happ", {"User-Agent": "Happ/1.0", "Accept": "*/*"})
+    return _fetch_subscription_with_headers(
+        url,
+        "Happ Windows",
+        {"User-Agent": HAPP_WINDOWS_USER_AGENT, "Accept": "*/*"},
+    )
 
 
 def _is_tls_eof_error(exc: BaseException) -> bool:
@@ -512,15 +518,26 @@ def _happ_direct_payload(decrypted: str) -> tuple[str, dict, list[str]]:
 
 
 def _find_subscription(controller: AppController, url: str) -> dict | None:
-    for sub in controller.state.subscriptions:
+    for sub in getattr(controller.state, "subscriptions", []):
         if sub.get("url") == url:
             return sub
     return None
 
 
+def _subscription_id(controller: AppController, url: str) -> str:
+    subscription = _find_subscription(controller, url)
+    if subscription is not None:
+        value = str(subscription.get("id") or "").strip()
+        if value:
+            return value
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, url.strip()))
+
+
 def fetch_subscription_payload(
     url: str,
     *,
+    user_agent: str = "",
+    converter_url: str = "",
     cancelled=None,
     response_opened=None,
     response_closed=None,
@@ -547,6 +564,11 @@ def fetch_subscription_payload(
             url = decrypted
         else:
             return _happ_direct_payload(decrypted)
+    if converter_url:
+        try:
+            url = _subscription_converter_target(converter_url, url)
+        except ValueError as exc:
+            return "", {}, [str(exc)]
     attempts: list[str] = []
     first_userinfo: dict = {}
     fetch_options = {}
@@ -556,7 +578,21 @@ def fetch_subscription_payload(
         fetch_options["response_opened"] = response_opened
     if response_closed is not None:
         fetch_options["response_closed"] = response_closed
-    for profile_name, headers in _SUBSCRIPTION_CLIENT_PROFILES:
+    profiles = list(_SUBSCRIPTION_CLIENT_PROFILES)
+    custom_user_agent = str(user_agent or "").strip()
+    if custom_user_agent:
+        profiles.insert(
+            0,
+            (
+                "Custom",
+                {
+                    "User-Agent": custom_user_agent,
+                    "Accept": "text/yaml,application/yaml,application/json,*/*",
+                    "Profile-Update-Interval": "24",
+                },
+            ),
+        )
+    for profile_name, headers in profiles:
         _raise_if_subscription_cancelled(cancelled)
         try:
             text, userinfo = _fetch_subscription_with_headers(
@@ -603,6 +639,63 @@ def fetch_subscription_payload(
     return "", first_userinfo, attempts or ["Не удалось загрузить подписку"]
 
 
+def _subscription_converter_target(template: str, source_url: str) -> str:
+    value = str(template or "").strip()
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("URL конвертера должен начинаться с http:// или https://")
+    if "{url}" not in value and "{raw_url}" not in value:
+        raise ValueError("URL конвертера должен содержать {url} или {raw_url}")
+    return value.replace("{url}", quote(source_url, safe="")).replace("{raw_url}", source_url)
+
+
+def _compile_subscription_patterns(value: str, label: str) -> tuple[list[re.Pattern[str]], list[str]]:
+    patterns: list[re.Pattern[str]] = []
+    errors: list[str] = []
+    for line_number, raw in enumerate(str(value or "").splitlines(), start=1):
+        expression = raw.strip()
+        if not expression:
+            continue
+        try:
+            patterns.append(re.compile(expression, re.IGNORECASE))
+        except re.error as exc:
+            errors.append(f"{label}, строка {line_number}: {exc}")
+    return patterns, errors
+
+
+def _filter_subscription_nodes(controller: AppController, nodes: list) -> tuple[list, list[str]]:
+    settings = controller.state.settings
+    includes, include_errors = _compile_subscription_patterns(
+        getattr(settings, "subscription_include_regex", ""),
+        "Include regex",
+    )
+    excludes, exclude_errors = _compile_subscription_patterns(
+        getattr(settings, "subscription_exclude_regex", ""),
+        "Exclude regex",
+    )
+    errors = [*include_errors, *exclude_errors]
+    if errors:
+        return [], errors
+    if not includes and not excludes:
+        return list(nodes), []
+    filtered = []
+    for node in nodes:
+        haystack = "\n".join(
+            (
+                str(getattr(node, "name", "") or ""),
+                str(getattr(node, "server", "") or ""),
+                str(getattr(node, "scheme", "") or ""),
+                str(getattr(node, "link", "") or ""),
+            )
+        )
+        if includes and not any(pattern.search(haystack) for pattern in includes):
+            continue
+        if excludes and any(pattern.search(haystack) for pattern in excludes):
+            continue
+        filtered.append(node)
+    return filtered, []
+
+
 def _apply_subscription_payload(
     controller: AppController,
     url: str,
@@ -611,66 +704,102 @@ def _apply_subscription_payload(
     *,
     replace_existing_group: bool = False,
 ) -> tuple[int, list[str], dict]:
-    """Применяет уже загруженную подписку к состоянию. Только GUI-поток."""
+    """Apply a fetched subscription as one in-memory transaction."""
     chosen_text, chosen_userinfo, chosen_errors = fetched
-    # Загрузка не удалась — не трогаем существующие узлы группы.
+    result_info = dict(chosen_userinfo or {})
+    result_info["_lumen_applied"] = False
     if not chosen_text:
-        return 0, list(chosen_errors), chosen_userinfo
+        return 0, list(chosen_errors), result_info
 
-    old_selected_link = None
-    old_selected_name = None
-    old_selected_server = None
-    if replace_existing_group and controller.state.selected_node_id:
-        for node in controller.state.nodes:
-            if node.id == controller.state.selected_node_id:
-                old_selected_link = node.link
-                old_selected_name = node.name
-                old_selected_server = node.server
-                break
+    subscription_id = _subscription_id(controller, url)
+    parsed_nodes, parse_errors = parse_links_text(chosen_text)
+    parsed_nodes, filter_errors = _filter_subscription_nodes(controller, parsed_nodes)
+    if filter_errors:
+        return 0, [*chosen_errors, *parse_errors, *filter_errors], result_info
+    prepared = []
+    validation_errors: list[str] = []
+    seen_links: set[str] = set()
+    for node in parsed_nodes:
+        normalize_node_outbound(node)
+        problem = validate_node_outbound(node)
+        if problem:
+            validation_errors.append(problem)
+            continue
+        if not node.link or node.link in seen_links:
+            continue
+        seen_links.add(node.link)
+        node.group = group
+        node.subscription_id = subscription_id
+        if not node.country_code:
+            node.country_code = detect_country(node.name, node.server)
+        prepared.append(node)
 
-    if replace_existing_group:
-        keep: list = []
-        removed_ids: set[str] = set()
-        for node in controller.state.nodes:
-            if (node.group or "Default") == group:
-                removed_ids.add(node.id)
-            else:
-                keep.append(node)
-        controller.state.nodes = keep
-        if controller.state.selected_node_id in removed_ids:
-            controller.state.selected_node_id = None
+    if not prepared:
+        errors = [*chosen_errors, *parse_errors, *validation_errors]
+        if not errors:
+            errors.append("Подписка не содержит серверов, подходящих под regex-фильтры")
+        return 0, errors, result_info
 
-    selected_was_removed = controller.state.selected_node_id is None and bool(replace_existing_group)
-    added, errors = import_nodes_from_text(
-        controller,
-        chosen_text,
-        group=group,
-        auto_connect=False,
-        select_imported=selected_was_removed,
+    old_nodes = [
+        node
+        for node in controller.state.nodes
+        if node.subscription_id == subscription_id
+        or (
+            replace_existing_group
+            and not node.subscription_id
+            and (node.group or "Default") == group
+        )
+    ]
+    old_ids = {node.id for node in old_nodes}
+    old_by_link = {node.link: node for node in old_nodes if node.link}
+    occupied_links = {
+        node.link
+        for node in controller.state.nodes
+        if node.id not in old_ids and node.link
+    }
+    prepared = [node for node in prepared if node.link not in occupied_links]
+    if not prepared:
+        return 0, [*chosen_errors, "Все серверы подписки уже принадлежат другим источникам"], result_info
+
+    selected_id = controller.state.selected_node_id
+    selected_old = next((node for node in old_nodes if node.id == selected_id), None)
+    max_order = max(
+        (node.sort_order for node in controller.state.nodes if node.id not in old_ids),
+        default=0,
     )
+    for node in prepared:
+        previous = old_by_link.get(node.link)
+        if previous is not None:
+            node.id = previous.id
+            node.sort_order = previous.sort_order
+            node.ping_ms = previous.ping_ms
+            node.speed_mbps = previous.speed_mbps
+            node.is_alive = previous.is_alive
+            node.ping_history = list(previous.ping_history)
+            node.speed_history = list(previous.speed_history)
+        else:
+            max_order += 1
+            node.sort_order = max_order
 
-    reconnect_needed = selected_was_removed
-    if selected_was_removed and added:
-        matching_node_id = None
-        for n in controller.state.nodes:
-            if (n.group or "Default") == group:
-                if old_selected_link and n.link == old_selected_link:
-                    matching_node_id = n.id
-                    reconnect_needed = False
-                    break
-                if old_selected_name and old_selected_server and n.name == old_selected_name and n.server == old_selected_server:
-                    matching_node_id = n.id
-                    reconnect_needed = False
-                    break
-        if matching_node_id:
-            controller.state.selected_node_id = matching_node_id
-            controller.selection_changed.emit(controller.selected_node)
-            controller.save()
+    remaining = [node for node in controller.state.nodes if node.id not in old_ids]
+    controller.state.nodes = [*remaining, *prepared]
 
-    if reconnect_needed and added and (controller.connected or controller._desired_connected):
+    reconnect_needed = False
+    if selected_old is not None:
+        replacement = next((node for node in prepared if node.link == selected_old.link), None)
+        if replacement is None:
+            replacement = prepared[0]
+            reconnect_needed = True
+        controller.state.selected_node_id = replacement.id
+
+    controller.nodes_changed.emit(controller.state.nodes)
+    controller.selection_changed.emit(controller.selected_node)
+    result_info["_lumen_applied"] = True
+    if reconnect_needed and (controller.connected or controller._desired_connected):
         controller._desired_connected = True
         controller._request_transition("active subscription updated")
-    return added, [*chosen_errors, *errors], chosen_userinfo
+    errors = [*chosen_errors, *parse_errors, *validation_errors]
+    return len(prepared), errors, result_info
 
 
 def _import_subscription_payload(
@@ -681,7 +810,16 @@ def _import_subscription_payload(
     replace_existing_group: bool = False,
 ) -> tuple[int, list[str], dict]:
     # Синхронный путь (блокирует поток). Оставлен для обратной совместимости.
-    fetched = fetch_subscription_payload(url)
+    settings = controller.state.settings
+    fetched = fetch_subscription_payload(
+        url,
+        user_agent=getattr(settings, "subscription_user_agent", ""),
+        converter_url=(
+            getattr(settings, "subscription_converter_url", "")
+            if getattr(settings, "subscription_converter_enabled", False)
+            else ""
+        ),
+    )
     return _apply_subscription_payload(
         controller, url, group, fetched, replace_existing_group=replace_existing_group
     )
@@ -696,8 +834,11 @@ def _record_subscription(
 ) -> None:
     now = _utc_now_iso()
     info = dict(userinfo) if isinstance(userinfo, dict) else {}
+    info.pop("_lumen_applied", None)
+    subscription_id = _subscription_id(controller, url)
     existing = _find_subscription(controller, url)
     if existing is not None:
+        existing["id"] = subscription_id
         existing["name"] = group
         existing["group"] = group
         existing["updated_at"] = now
@@ -710,6 +851,7 @@ def _record_subscription(
     else:
         controller.state.subscriptions.append(
             {
+                "id": subscription_id,
                 "url": url,
                 "name": group,
                 "group": group,
@@ -736,10 +878,15 @@ def import_subscription(
         new_name = (name or "").strip()
         old_group = (existing.get("group") or "").strip()
         if new_name and new_name != old_group:
+            subscription_id = _subscription_id(controller, url)
             if old_group:
                 for node in controller.state.nodes:
-                    if (node.group or "Default") == old_group:
+                    if node.subscription_id == subscription_id or (
+                        not node.subscription_id
+                        and (node.group or "Default") == old_group
+                    ):
                         node.group = new_name
+                        node.subscription_id = subscription_id
             existing["name"] = new_name
             existing["group"] = new_name
             controller.nodes_changed.emit(controller.state.nodes)
@@ -748,7 +895,8 @@ def import_subscription(
         return update_subscription(controller, url)
     group = (name or "").strip() or _derive_subscription_name(url)
     added, errors, userinfo = _import_subscription_payload(controller, url, group)
-    _record_subscription(controller, url, group, added, userinfo)
+    if userinfo.pop("_lumen_applied", False):
+        _record_subscription(controller, url, group, added, userinfo)
     return added, errors
 
 
@@ -761,7 +909,8 @@ def update_subscription(controller: AppController, url: str) -> tuple[int, list[
     added, errors, userinfo = _import_subscription_payload(
         controller, url, group, replace_existing_group=True
     )
-    _record_subscription(controller, url, group, added, userinfo)
+    if userinfo.pop("_lumen_applied", False):
+        _record_subscription(controller, url, group, added, userinfo)
     return added, errors
 
 
@@ -807,10 +956,15 @@ def apply_fetched_subscription(
             new_name = (name or "").strip()
             old_group = (existing.get("group") or "").strip()
             if new_name and new_name != old_group:
+                subscription_id = _subscription_id(controller, url)
                 if old_group:
                     for node in controller.state.nodes:
-                        if (node.group or "Default") == old_group:
+                        if node.subscription_id == subscription_id or (
+                            not node.subscription_id
+                            and (node.group or "Default") == old_group
+                        ):
                             node.group = new_name
+                            node.subscription_id = subscription_id
                 existing["name"] = new_name
                 existing["group"] = new_name
                 controller.nodes_changed.emit(controller.state.nodes)
@@ -823,7 +977,8 @@ def apply_fetched_subscription(
     added, errs, info = _apply_subscription_payload(
         controller, url, group, fetched, replace_existing_group=replace
     )
-    if kind == "import" and (not text or (added == 0 and errs)):
+    applied = bool(info.pop("_lumen_applied", False))
+    if not applied:
         return added, errs
     _record_subscription(controller, url, group, added, info)
     return added, errs
@@ -835,12 +990,23 @@ def remove_subscription(controller: AppController, url: str, *, delete_nodes: bo
     if sub is None:
         return
     group = (sub.get("group") or "").strip()
+    subscription_id = str(sub.get("id") or "").strip()
     controller.state.subscriptions = [
         item for item in controller.state.subscriptions if item.get("url") != url
     ]
     controller.subscriptions_changed.emit(list(controller.state.subscriptions))
-    if delete_nodes and group:
-        ids = {node.id for node in controller.state.nodes if (node.group or "Default") == group}
+    if delete_nodes:
+        ids = {
+            node.id
+            for node in controller.state.nodes
+            if (subscription_id and node.subscription_id == subscription_id)
+            or (
+                not subscription_id
+                and group
+                and not node.subscription_id
+                and (node.group or "Default") == group
+            )
+        }
         if ids:
             remove_nodes(controller, ids)
             return

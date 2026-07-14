@@ -28,6 +28,35 @@ def _normalize_window_size(width: Any, height: Any) -> tuple[int, int]:
     return w, h
 
 
+def _normalize_string_list(values: Any, *, fallback: str = "") -> list[str]:
+    if isinstance(values, str):
+        values = values.replace(";", "\n").replace(",", "\n").splitlines()
+    if not isinstance(values, (list, tuple, set)):
+        values = []
+    result: list[str] = []
+    for item in values:
+        value = str(item or "").strip()
+        if value and value not in result:
+            result.append(value)
+    if not result and fallback:
+        result.append(fallback)
+    return result
+
+
+def _normalize_dns_hosts(values: Any) -> dict[str, list[str]]:
+    if not isinstance(values, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for raw_domain, raw_addresses in values.items():
+        domain = str(raw_domain or "").strip().lower().rstrip(".")
+        if not domain:
+            continue
+        addresses = _normalize_string_list(raw_addresses)
+        if addresses:
+            result[domain] = addresses
+    return result
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -52,6 +81,7 @@ class Node:
     ping_history: list[tuple[str, int | None]] = field(default_factory=list)
     speed_history: list[tuple[str, float | None]] = field(default_factory=list)
     sort_order: int = 0
+    subscription_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +103,7 @@ class Node:
             "ping_history": self.ping_history,
             "speed_history": self.speed_history,
             "sort_order": self.sort_order,
+            "subscription_id": self.subscription_id,
         }
 
     @staticmethod
@@ -96,6 +127,7 @@ class Node:
             ping_history=data.get("ping_history", []),
             speed_history=data.get("speed_history", []),
             sort_order=int(data.get("sort_order", 0)),
+            subscription_id=str(data.get("subscription_id") or ""),
         )
 
 
@@ -107,20 +139,41 @@ class RoutingSettings:
     direct_domains: list[str] = field(default_factory=list)
     proxy_domains: list[str] = field(default_factory=list)
     block_domains: list[str] = field(default_factory=list)
-    dns_mode: str = "system"  # system | builtin
-    dns_bootstrap_server: str = "8.8.8.8"  # DNS for direct traffic
+    dns_mode: str = "builtin"  # system | builtin
+    dns_bootstrap_server: str = "1.1.1.1"  # DNS for direct traffic
+    dns_bootstrap_servers: list[str] = field(default_factory=list)
     dns_bootstrap_type: str = "udp"        # udp | tcp | tls | https
-    dns_bootstrap_strategy: str = "prefer_ipv4"
-    dns_proxy_server: str = "8.8.8.8"     # DNS for proxy traffic
+    dns_bootstrap_strategy: str = "ipv4_only"
+    dns_proxy_server: str = "cloudflare-dns.com"  # DNS for proxy traffic
+    dns_proxy_servers: list[str] = field(default_factory=list)
     dns_proxy_type: str = "https"          # tcp | tls | https
-    dns_proxy_strategy: str = "prefer_ipv4"
-    dns_fake_enabled: bool = True
+    dns_proxy_strategy: str = "ipv4_only"
+    dns_fake_enabled: bool = False
     dns_hijack_enabled: bool = True
+    dns_parallel_query: bool = False
+    dns_optimistic_cache: bool = False
+    dns_geo_check: bool = True
+    dns_hosts: dict[str, list[str]] = field(default_factory=dict)
     tun_route_exclude_address: list[str] = field(default_factory=list)
     process_rules: list[dict[str, str]] = field(default_factory=list)  # [{"process": "chrome.exe", "action": "direct|proxy|block"}]
     process_preset_routes: dict[str, str] = field(default_factory=dict)  # {"telegram": "proxy", "windows_system": "direct"}
     service_routes: dict[str, str] = field(default_factory=dict)  # {"youtube": "proxy", "steam": "direct", ...}
     tun_default_outbound: str = "direct"  # "proxy" | "direct"
+
+    def __post_init__(self) -> None:
+        bootstrap_defaults = ["1.1.1.1", "8.8.8.8"] if self.dns_bootstrap_server == "1.1.1.1" else [self.dns_bootstrap_server]
+        proxy_defaults = ["cloudflare-dns.com", "dns.google"] if self.dns_proxy_server == "cloudflare-dns.com" else [self.dns_proxy_server]
+        self.dns_bootstrap_servers = _normalize_string_list(
+            self.dns_bootstrap_servers or bootstrap_defaults,
+            fallback="1.1.1.1",
+        )
+        self.dns_proxy_servers = _normalize_string_list(
+            self.dns_proxy_servers or proxy_defaults,
+            fallback="cloudflare-dns.com",
+        )
+        self.dns_bootstrap_server = self.dns_bootstrap_servers[0]
+        self.dns_proxy_server = self.dns_proxy_servers[0]
+        self.dns_hosts = _normalize_dns_hosts(self.dns_hosts)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -132,13 +185,19 @@ class RoutingSettings:
             "block_domains": list(self.block_domains),
             "dns_mode": self.dns_mode,
             "dns_bootstrap_server": self.dns_bootstrap_server,
+            "dns_bootstrap_servers": list(self.dns_bootstrap_servers),
             "dns_bootstrap_type": self.dns_bootstrap_type,
             "dns_bootstrap_strategy": self.dns_bootstrap_strategy,
             "dns_proxy_server": self.dns_proxy_server,
+            "dns_proxy_servers": list(self.dns_proxy_servers),
             "dns_proxy_type": self.dns_proxy_type,
             "dns_proxy_strategy": self.dns_proxy_strategy,
             "dns_fake_enabled": self.dns_fake_enabled,
             "dns_hijack_enabled": self.dns_hijack_enabled,
+            "dns_parallel_query": self.dns_parallel_query,
+            "dns_optimistic_cache": self.dns_optimistic_cache,
+            "dns_geo_check": self.dns_geo_check,
+            "dns_hosts": {key: list(values) for key, values in self.dns_hosts.items()},
             "tun_route_exclude_address": list(self.tun_route_exclude_address),
             "process_rules": list(self.process_rules),
             "process_preset_routes": dict(self.process_preset_routes),
@@ -172,15 +231,21 @@ class RoutingSettings:
             direct_domains=list(data.get("direct_domains") or []),
             proxy_domains=list(data.get("proxy_domains") or []),
             block_domains=list(data.get("block_domains") or []),
-            dns_mode=str(data.get("dns_mode") or "system"),
-            dns_bootstrap_server=str(data.get("dns_bootstrap_server") or "8.8.8.8"),
+            dns_mode=str(data.get("dns_mode") or "builtin"),
+            dns_bootstrap_server=str(data.get("dns_bootstrap_server") or "1.1.1.1"),
+            dns_bootstrap_servers=list(data.get("dns_bootstrap_servers") or []),
             dns_bootstrap_type=str(data.get("dns_bootstrap_type") or "udp"),
-            dns_bootstrap_strategy=str(data.get("dns_bootstrap_strategy") or "prefer_ipv4"),
-            dns_proxy_server=str(data.get("dns_proxy_server") or "8.8.8.8"),
+            dns_bootstrap_strategy=str(data.get("dns_bootstrap_strategy") or "ipv4_only"),
+            dns_proxy_server=str(data.get("dns_proxy_server") or "cloudflare-dns.com"),
+            dns_proxy_servers=list(data.get("dns_proxy_servers") or []),
             dns_proxy_type=str(data.get("dns_proxy_type") or "https"),
-            dns_proxy_strategy=str(data.get("dns_proxy_strategy") or "prefer_ipv4"),
-            dns_fake_enabled=bool(data.get("dns_fake_enabled", True)),
+            dns_proxy_strategy=str(data.get("dns_proxy_strategy") or "ipv4_only"),
+            dns_fake_enabled=bool(data.get("dns_fake_enabled", False)),
             dns_hijack_enabled=bool(data.get("dns_hijack_enabled", True)),
+            dns_parallel_query=bool(data.get("dns_parallel_query", False)),
+            dns_optimistic_cache=bool(data.get("dns_optimistic_cache", False)),
+            dns_geo_check=bool(data.get("dns_geo_check", True)),
+            dns_hosts=dict(data.get("dns_hosts") or {}),
             tun_route_exclude_address=[
                 str(item).strip()
                 for item in (data.get("tun_route_exclude_address") or [])
@@ -257,7 +322,6 @@ class AppSettings:
     multiplex_concurrency: int = 8
     discord_proxy_enabled: bool = False
     tun_mode: bool = False
-    tun_engine: str = "singbox"
     xray_config_file: str = ""
     xray_template_file: str = ""
     singbox_path: str = ""
@@ -283,6 +347,11 @@ class AppSettings:
     speed_test_concurrency: int = 0
     # Интервал авто-обновления подписок в минутах (0 = выключено).
     subscription_auto_update_minutes: int = 240
+    subscription_include_regex: str = ""
+    subscription_exclude_regex: str = ""
+    subscription_user_agent: str = ""
+    subscription_converter_enabled: bool = False
+    subscription_converter_url: str = ""
     # ── Внешний вид 2.0 (Appearance Studio) ──
     ui_density: str = "comfortable"      # comfortable | compact | spacious
     ui_corner_radius: int = 8            # базовый радиус скругления, px
@@ -310,7 +379,6 @@ class AppSettings:
     sniff_route_only: bool = False
 
     def __post_init__(self) -> None:
-        self.tun_engine = _normalize_tun_engine(self.tun_engine)
         self.tun_stack = _normalize_tun_stack(self.tun_stack)
         self.local_socks_port = _normalize_local_port(self.local_socks_port, 10808)
         self.local_http_port = _normalize_local_port(self.local_http_port, 10809)
@@ -355,7 +423,6 @@ class AppSettings:
             "multiplex_concurrency": self.multiplex_concurrency,
             "discord_proxy_enabled": self.discord_proxy_enabled,
             "tun_mode": self.tun_mode,
-            "tun_engine": self.tun_engine,
             "proxy_allow_lan": self.proxy_allow_lan,
             "tun_strict_route": self.tun_strict_route,
             "tun_stack": self.tun_stack,
@@ -385,6 +452,11 @@ class AppSettings:
             "speed_test_url": self.speed_test_url,
             "speed_test_concurrency": self.speed_test_concurrency,
             "subscription_auto_update_minutes": self.subscription_auto_update_minutes,
+            "subscription_include_regex": self.subscription_include_regex,
+            "subscription_exclude_regex": self.subscription_exclude_regex,
+            "subscription_user_agent": self.subscription_user_agent,
+            "subscription_converter_enabled": self.subscription_converter_enabled,
+            "subscription_converter_url": self.subscription_converter_url,
             "ui_density": self.ui_density,
             "ui_corner_radius": self.ui_corner_radius,
             "ui_font_family": self.ui_font_family,
@@ -404,8 +476,8 @@ class AppSettings:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "AppSettings":
-        xray_release_channel = str(data.get("xray_release_channel") or "beta")
-        if xray_release_channel == "stable":
+        xray_release_channel = str(data.get("xray_release_channel") or "beta").strip().lower()
+        if xray_release_channel not in {"stable", "beta"}:
             xray_release_channel = "beta"
         window_width, window_height = _normalize_window_size(
             data.get("window_width"),
@@ -447,7 +519,6 @@ class AppSettings:
             multiplex_concurrency=int(data.get("multiplex_concurrency") or 8),
             discord_proxy_enabled=bool(data.get("discord_proxy_enabled", False)),
             tun_mode=bool(data.get("tun_mode", False)),
-            tun_engine=_normalize_tun_engine(data.get("tun_engine")),
             proxy_allow_lan=bool(data.get("proxy_allow_lan", False)),
             tun_strict_route=bool(data.get("tun_strict_route", False)),
             tun_stack=_normalize_tun_stack(data.get("tun_stack")),
@@ -477,6 +548,11 @@ class AppSettings:
             speed_test_url=str(data.get("speed_test_url") or ""),
             speed_test_concurrency=int(data.get("speed_test_concurrency") or 0),
             subscription_auto_update_minutes=int(data.get("subscription_auto_update_minutes") if data.get("subscription_auto_update_minutes") is not None else 240),
+            subscription_include_regex=str(data.get("subscription_include_regex") or ""),
+            subscription_exclude_regex=str(data.get("subscription_exclude_regex") or ""),
+            subscription_user_agent=str(data.get("subscription_user_agent") or ""),
+            subscription_converter_enabled=bool(data.get("subscription_converter_enabled", False)),
+            subscription_converter_url=str(data.get("subscription_converter_url") or ""),
             ui_density=str(data.get("ui_density") or "comfortable"),
             ui_corner_radius=int(data.get("ui_corner_radius") if data.get("ui_corner_radius") is not None else 8),
             ui_font_family=str(data.get("ui_font_family") or ""),
@@ -529,6 +605,24 @@ class AppState:
     def from_dict(data: dict[str, Any]) -> "AppState":
         nodes_raw = data.get("nodes") or []
         nodes = [Node.from_dict(item) for item in nodes_raw if isinstance(item, dict)]
+        subscriptions = [
+            dict(item)
+            for item in (data.get("subscriptions") or [])
+            if isinstance(item, dict)
+        ]
+        groups: dict[str, list[str]] = {}
+        for subscription in subscriptions:
+            subscription_id = str(subscription.get("id") or uuid.uuid4())
+            subscription["id"] = subscription_id
+            group = str(subscription.get("group") or "").strip()
+            if group:
+                groups.setdefault(group, []).append(subscription_id)
+        for node in nodes:
+            if node.subscription_id:
+                continue
+            matches = groups.get(str(node.group or "Default").strip(), [])
+            if len(matches) == 1:
+                node.subscription_id = matches[0]
         return AppState(
             schema_version=int(data.get("schema_version") or STATE_SCHEMA_VERSION),
             selected_node_id=data.get("selected_node_id"),
@@ -536,7 +630,7 @@ class AppState:
             routing=RoutingSettings.from_dict(dict(data.get("routing") or {})),
             settings=AppSettings.from_dict(dict(data.get("settings") or {})),
             security=SecuritySettings.from_dict(dict(data.get("security") or {})),
-            subscriptions=[dict(item) for item in (data.get("subscriptions") or []) if isinstance(item, dict)],
+            subscriptions=subscriptions,
             manual_groups=[
                 str(item).strip()
                 for item in (data.get("manual_groups") or [])
@@ -571,12 +665,6 @@ def _normalize_local_port(value: Any, default: int) -> int:
     if port < 1025 or port > 65535 or port == 10818:  # 10818 is reserved for droute Discord Voice
         return default
     return port
-
-
-def _normalize_tun_engine(value: Any) -> str:
-    # Lumen KVN TUN is sing-box-extended based. Migrate older saved engines to
-    # the only supported engine.
-    return "singbox"
 
 
 def _normalize_language(value: Any) -> str:

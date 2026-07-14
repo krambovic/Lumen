@@ -34,8 +34,6 @@ def start_metrics_worker(controller: AppController) -> None:
     stop_metrics_worker(controller)
     if controller._active_core == "singbox":
         mode = "singbox"
-    elif controller._active_session is not None and controller._active_session.tun_mode:
-        mode = "xray-tun"
     else:
         mode = "xray"
     socks_port, http_port = controller.get_effective_proxy_ports()
@@ -83,7 +81,6 @@ def cleanup_connection_runtime_state(
     reset_auto_switch_cycle: bool,
     reset_auto_switch_cooldown: bool,
 ) -> None:
-    controller._xray_tun_routes.cleanup()
     controller._xray_api_port = 0
     controller._protect_ss_port = 0
     controller._protect_ss_password = ""
@@ -215,14 +212,14 @@ def shutdown(controller: AppController) -> None:
     controller._retired_workers.clear()
     _join(controller._speed_worker, "speed worker", cancel=True)
     _join(controller._xray_update_worker, "Xray updater", cancel=True)
-    _join(controller._resource_update_worker, "resource updater", cancel=True)
+    for worker in list(controller._resource_update_workers):
+        _join(worker, f"{getattr(worker, '_kind', 'resource')} updater", cancel=True)
 
     controller.disconnect_current(fast=True)
     if controller.singbox.is_running:
         controller.singbox.stop(fast=True)
     if controller.xray.is_running:
         controller.xray.stop(fast=True)
-    controller._xray_tun_routes.cleanup()
     if controller.zapret.running:
         controller.zapret.stop(fast=True)
     if controller.proxy.is_enabled():

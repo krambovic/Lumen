@@ -5,16 +5,15 @@ import json
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from ..constants import DEFAULT_DISCORD_SOCKS_PORT, PROXY_HOST, XRAY_TUN_DEFAULT_INTERFACE_NAME
-from ..engines.xray import get_windows_default_route_context
+from ..constants import DEFAULT_DISCORD_SOCKS_PORT, PROXY_HOST
 from ..multiplex import apply_xray_multiplex
 from ..routing_runtime import apply_xray_gui_routing
-from ..xray_inbounds import build_xray_sniffing, ensure_xray_mixed_proxy_inbound, normalize_xray_sniffing
+from ..xray_inbounds import ensure_xray_mixed_proxy_inbound
 from ..xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
 from .connection_service import find_free_api_port
 from .node_runtime_service import is_native_singbox_only_node, native_singbox_only_message
 from .runtime_introspection import extract_xray_runtime_ports
-from .runtime_security import clamp_xray_local_inbounds, strip_xray_proxy_inbounds
+from .runtime_security import clamp_xray_local_inbounds
 from .session_state import XrayRuntimeConfig
 
 if TYPE_CHECKING:
@@ -25,7 +24,6 @@ if TYPE_CHECKING:
 APP_METRICS_API_TAG = "__app_metrics_api"
 APP_METRICS_API_INBOUND_TAG = "__app_metrics_api_in"
 APP_DISCORD_PROXY_INBOUND_TAG = "discord-socks-in"
-APP_TUN_INBOUND_TAG = "__app_tun_in"
 
 
 def inspect_active_xray_config(controller: AppController) -> tuple:
@@ -211,60 +209,7 @@ def ensure_xray_metrics_contract(
     return api_port, tuple(user_inbound_tags)
 
 
-def ensure_xray_tun_contract(controller: AppController, payload: dict[str, Any]) -> str:
-    inbounds = controller._ensure_list(payload, "inbounds")
-    for inbound in inbounds:
-        if not isinstance(inbound, dict):
-            continue
-        if str(inbound.get("protocol") or "").strip().lower() != "tun":
-            continue
-        settings = controller._ensure_dict(inbound, "settings")
-        return str(settings.get("name") or "").strip() or XRAY_TUN_DEFAULT_INTERFACE_NAME
-
-    inbounds.append(
-        {
-            "tag": APP_TUN_INBOUND_TAG,
-            "protocol": "tun",
-            "settings": {},
-            "sniffing": build_xray_sniffing(),
-        }
-    )
-    return XRAY_TUN_DEFAULT_INTERFACE_NAME
-
-
-def xray_outbound_is_loop_protected(outbound: dict[str, Any]) -> bool:
-    send_through = str(outbound.get("sendThrough") or "").strip()
-    if send_through and send_through not in {"0.0.0.0", "::"}:
-        return True
-    stream_settings = outbound.get("streamSettings")
-    if not isinstance(stream_settings, dict):
-        return False
-    sockopt = stream_settings.get("sockopt")
-    if not isinstance(sockopt, dict):
-        return False
-    return bool(str(sockopt.get("interface") or "").strip())
-
-
-def apply_xray_tun_loop_prevention(controller: AppController, payload: dict[str, Any], interface_alias: str) -> int:
-    patched = 0
-    outbounds = controller._ensure_list(payload, "outbounds")
-    for outbound in outbounds:
-        if not isinstance(outbound, dict):
-            continue
-        tag = str(outbound.get("tag") or "").strip()
-        protocol = str(outbound.get("protocol") or "").strip().lower()
-        if tag in {APP_METRICS_API_TAG, "api"} or protocol in {"blackhole", "loopback", "dns"}:
-            continue
-        if xray_outbound_is_loop_protected(outbound):
-            continue
-        stream_settings = controller._ensure_dict(outbound, "streamSettings")
-        sockopt = controller._ensure_dict(stream_settings, "sockopt")
-        sockopt["interface"] = interface_alias
-        patched += 1
-    return patched
-
-
-def build_runtime_xray_config(controller: AppController, node: Node | None = None, *, tun_mode: bool = False) -> XrayRuntimeConfig:
+def build_runtime_xray_config(controller: AppController, node: Node | None = None) -> XrayRuntimeConfig:
     source_path, text = controller.load_active_xray_config_text()
     try:
         payload = json.loads(text)
@@ -274,22 +219,16 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
     if not isinstance(payload, dict):
         raise ValueError("Корень xray config должен быть JSON-объектом.")
 
-    tun_interface_name = ""
     settings = controller.state.settings
     route_only = bool(getattr(settings, "sniff_route_only", False))
-    if tun_mode:
-        tun_interface_name = controller._ensure_xray_tun_contract(payload)
-        strip_xray_proxy_inbounds(payload)
-        normalize_xray_sniffing(payload, route_only=route_only)
-    else:
-        patched_inbounds = ensure_xray_mixed_proxy_inbound(
-            payload,
-            socks_port=int(getattr(settings, "local_socks_port", 10808)),
-            http_port=int(getattr(settings, "local_http_port", 10809)),
-            route_only=route_only,
-        )
-        if patched_inbounds:
-            controller._log(f"[xray] local proxy inbound normalized for mixed mode ({patched_inbounds} change(s))")
+    patched_inbounds = ensure_xray_mixed_proxy_inbound(
+        payload,
+        socks_port=int(getattr(settings, "local_socks_port", 10808)),
+        http_port=int(getattr(settings, "local_http_port", 10809)),
+        route_only=route_only,
+    )
+    if patched_inbounds:
+        controller._log(f"[xray] local proxy inbound normalized for mixed mode ({patched_inbounds} change(s))")
 
     api_port, inbound_tags = controller._ensure_xray_metrics_contract(payload, allocate_port=True)
 
@@ -341,32 +280,6 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
         if patched:
             controller._log(f"[xray] final TLS fragment enabled for {patched} proxy outbound(s)")
 
-    loop_prevention_interface = ""
-    loop_prevention_patched_outbounds = 0
-    if tun_mode:
-        needs_loop_patch = False
-        if isinstance(outbounds, list):
-            for outbound in outbounds:
-                if not isinstance(outbound, dict):
-                    continue
-                tag = str(outbound.get("tag") or "").strip()
-                protocol = str(outbound.get("protocol") or "").strip().lower()
-                if tag in {APP_METRICS_API_TAG, "api"} or protocol in {"blackhole", "loopback", "dns"}:
-                    continue
-                if not controller._xray_outbound_is_loop_protected(outbound):
-                    needs_loop_patch = True
-                    break
-        if needs_loop_patch:
-            context = get_windows_default_route_context()
-            if context is None:
-                raise ValueError(
-                    "Не удалось определить активный сетевой интерфейс для xray TUN loop prevention. "
-                    "Либо укажите streamSettings.sockopt.interface/sendThrough в raw xray config, "
-                    "либо используйте sing-box TUN."
-                )
-            loop_prevention_interface = context.interface_alias
-            loop_prevention_patched_outbounds = controller._apply_xray_tun_loop_prevention(payload, loop_prevention_interface)
-
     socks_port, http_port, _ = extract_xray_runtime_ports(payload)
     ping_host, ping_port = controller._infer_xray_ping_target(payload, node if used_selected_node else None)
     return XrayRuntimeConfig(
@@ -377,9 +290,6 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
         socks_port=socks_port,
         http_port=http_port,
         api_port=api_port,
-        tun_interface_name=tun_interface_name,
-        loop_prevention_interface=loop_prevention_interface,
-        loop_prevention_patched_outbounds=loop_prevention_patched_outbounds,
         inbound_tags=inbound_tags,
         ping_host=ping_host,
         ping_port=ping_port,

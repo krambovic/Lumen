@@ -4,21 +4,15 @@ import json
 import os
 import subprocess
 import time
-import zipfile
 import ctypes
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.request import Request
 
-from .constants import APP_VERSION, DATA_DIR
-from .http_utils import urlopen
+from .constants import DATA_DIR
 from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pumped
-from .zip_utils import safe_extract_zip
 
 
 DROUTE_LEGACY_VERSION = "1.1.2"
-DROUTE_VERSION = "1.2.0"
-DROUTE_ZIP_URL = f"https://github.com/snowluwu/droute/releases/download/{DROUTE_VERSION}/droute-{DROUTE_VERSION}.zip"
 DROUTE_SOURCE_URL = "https://github.com/snowluwu/droute"
 DROUTE_DIR = DATA_DIR / "external" / "droute"
 DROUTE_EXE = DROUTE_DIR / "droute.exe"
@@ -118,19 +112,13 @@ def ensure_droute_bundle() -> Path:
         _write_droute_notice()
         return DROUTE_EXE
 
-    tmp_zip = DROUTE_DIR / f"droute-{DROUTE_VERSION}.zip"
-    request = Request(DROUTE_ZIP_URL, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-    with urlopen(request, timeout=45) as response:
-        payload = response.read()
-    if len(payload) < 1024:
-        raise RuntimeError("droute archive download is damaged")
-    tmp_zip.write_bytes(payload)
-    with zipfile.ZipFile(tmp_zip) as archive:
-        safe_extract_zip(archive, DROUTE_DIR)
-    tmp_zip.unlink(missing_ok=True)
+    from .core_resource_updater import check_or_update_droute
+
+    result = check_or_update_droute(True)
+    if result.status not in {"updated", "up_to_date"}:
+        raise RuntimeError(result.message)
     if not DROUTE_EXE.is_file():
         raise RuntimeError("droute.exe was not found in the downloaded archive")
-    DROUTE_VERSION_FILE.write_text(DROUTE_VERSION + "\n", encoding="utf-8")
     _write_droute_notice()
     return DROUTE_EXE
 

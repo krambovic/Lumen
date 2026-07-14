@@ -58,6 +58,32 @@ def start_runtime(
         else:
             controller._log(f"[{log_domain}] outbound tag 'proxy' replaced from selected node: {node.name}")
 
+    valid, validation_output = controller.singbox.validate_config(
+        controller.state.settings.singbox_path,
+        plan.singbox_config,
+    )
+    if not valid:
+        controller._active_core = prev_active_core
+        controller._set_connection_status(
+            "error",
+            f"sing-box не принимает новый конфиг: {validation_output}",
+            level="error",
+        )
+        return None
+    if plan.xray_sidecar is not None:
+        valid, validation_output = controller.xray.validate_config(
+            controller.state.settings.xray_path,
+            plan.xray_sidecar.config,
+        )
+        if not valid:
+            controller._active_core = prev_active_core
+            controller._set_connection_status(
+                "error",
+                f"Xray sidecar не принимает новый конфиг: {validation_output}",
+                level="error",
+            )
+            return None
+
     if not controller._start_singbox_runtime_plan(plan):
         controller._set_connection_status(
             "error",
@@ -129,6 +155,30 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
         except ValueError as exc:
             controller._set_connection_status("error", str(exc), level="error")
             return False
+
+        valid, validation_output = controller.singbox.validate_config(
+            controller.state.settings.singbox_path,
+            plan.singbox_config,
+        )
+        if not valid:
+            controller._set_connection_status(
+                "error",
+                f"sing-box не принимает новый конфиг: {validation_output}",
+                level="error",
+            )
+            return False
+        if plan.xray_sidecar is not None:
+            valid, validation_output = controller.xray.validate_config(
+                controller.state.settings.xray_path,
+                plan.xray_sidecar.config,
+            )
+            if not valid:
+                controller._set_connection_status(
+                    "error",
+                    f"Xray sidecar не принимает новый конфиг: {validation_output}",
+                    level="error",
+                )
+                return False
 
         session_label = plan.source_path.name
         if plan.used_selected_node and node is not None:

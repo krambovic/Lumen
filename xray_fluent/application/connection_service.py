@@ -5,20 +5,13 @@ import socket
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QTimer
-
 from ..constants import (
-    DEFAULT_HTTP_PORT,
-    DEFAULT_SOCKS_PORT,
     DEFAULT_XRAY_STATS_API_PORT,
     SINGBOX_PATH_DEFAULT,
     XRAY_PATH_DEFAULT,
 )
 from ..engines.singbox import SingboxRuntimePlan, start_proxy as start_singbox_proxy, start_tun as start_singbox_tun
-from ..engines.xray import (
-    restart_proxy_core as restart_xray_proxy_core,
-    start_proxy as start_xray_proxy,
-)
+from ..engines.xray import start_proxy as start_xray_proxy
 from ..path_utils import resolve_configured_path
 from ..process_conflicts import scan_network_conflicts
 from ..subprocess_utils import kill_processes_by_path
@@ -252,8 +245,7 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
             ),
         )
         controller.save()
-        session_mode = "xray-tun" if tun and controller._active_core == "xray" else controller._active_core
-        controller._traffic_history.start_session(session_label, session_mode)
+        controller._traffic_history.start_session(session_label, controller._active_core)
         # Discord-proxy применяем в GUI-потоке из _on_transition_action_complete:
         # этот код идёт в рабочем потоке перехода, QTimer оттуда запускать нельзя.
         return True

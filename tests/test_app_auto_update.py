@@ -1,6 +1,7 @@
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from xray_fluent.app_updater import AppUpdate, UpdateDownloader, should_auto_install
 from xray_fluent.models import AppSettings, AppState, RoutingSettings
@@ -33,9 +34,16 @@ def test_diagnostics_upload_defaults_to_enabled() -> None:
     assert restored.diagnostics_upload_enabled is False
 
 
-def test_fake_dns_defaults_to_enabled() -> None:
-    assert RoutingSettings().dns_fake_enabled is True
-    assert RoutingSettings.from_dict({}).dns_fake_enabled is True
+def test_legacy_xray_tun_engine_is_ignored() -> None:
+    settings = AppSettings.from_dict({"tun_mode": True, "tun_engine": "xray"})
+
+    assert settings.tun_mode is True
+    assert "tun_engine" not in settings.to_dict()
+
+
+def test_fake_dns_defaults_to_disabled_like_v2rayn() -> None:
+    assert RoutingSettings().dns_fake_enabled is False
+    assert RoutingSettings.from_dict({}).dns_fake_enabled is False
 
 
 def test_applied_migrations_round_trip() -> None:
@@ -64,6 +72,17 @@ def test_legacy_square_window_default_migrates_to_widescreen() -> None:
 def test_saved_window_size_is_preserved() -> None:
     settings = AppSettings.from_dict({"window_width": 1440, "window_height": 900})
     assert (settings.window_width, settings.window_height) == (1440, 900)
+
+
+def test_window_size_is_not_rebound_on_every_settings_change() -> None:
+    main_qml = (
+        Path(__file__).parents[1] / "xray_fluent" / "qml_app" / "qml" / "Main.qml"
+    ).read_text(encoding="utf-8")
+
+    assert "width: App.windowWidth" not in main_qml
+    assert "height: App.windowHeight" not in main_qml
+    assert "win.width = Math.max(win.minimumWidth, App.windowWidth" in main_qml
+    assert "win.height = Math.max(win.minimumHeight, App.windowHeight" in main_qml
 
 
 def test_negative_window_position_is_preserved_for_left_monitor() -> None:
