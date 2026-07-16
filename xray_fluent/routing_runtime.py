@@ -11,7 +11,7 @@ from .constants import DATA_DIR, ROUTING_DIRECT, ROUTING_GLOBAL
 from .geodata_resources import singbox_rule_set_path
 from .models import AppSettings, RoutingSettings
 from .process_presets import PROCESS_PRESETS_BY_ID
-from .routing_presets import custom_domain_rules, preset_domain_rules
+from .routing_presets import ROUTING_PRESET_BLOCKED, custom_domain_rules, preset_domain_rules
 from .service_presets import SERVICE_PRESETS_BY_ID
 
 _SINGBOX_RULE_SET_DIR = DATA_DIR / "runtime" / "sing-box-rule-sets"
@@ -110,7 +110,12 @@ def _routing_final_outbound(routing: RoutingSettings, *, use_rule_default: bool 
         return "direct"
     if not use_rule_default:
         return "direct"
-    return "proxy" if str(routing.tun_default_outbound).strip().lower() == "proxy" else "direct"
+    # The removed "TUN default" UI setting is no longer user-controlled.
+    # Custom/rule routing falls back to proxy. The built-in "blocked only"
+    # preset is the deliberate exception: unmatched traffic must stay direct.
+    if str(routing.preset_id).strip().lower() == ROUTING_PRESET_BLOCKED:
+        return "direct"
+    return "proxy"
 
 
 def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:

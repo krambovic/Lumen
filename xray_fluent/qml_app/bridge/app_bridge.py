@@ -31,7 +31,7 @@ from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_u
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
-from ...qthread_utils import stop_and_wait_for_thread
+from ...qthread_utils import retain_thread_until_finished, stop_and_wait_for_thread
 from ...routing_rule_import import parse_routing_rules
 from ...startup import STARTUP_STATE_DISABLED, get_startup_state, is_process_elevated, relaunch_as_admin
 from .log_model import LogFilterModel, LogModel
@@ -196,6 +196,8 @@ class AppBridge(QObject):
         # Фоновая загрузка подписок (ленивая инициализация потока).
         self._sub_thread: QThread | None = None
         self._sub_worker: SubscriptionFetchWorker | None = None
+        self._retired_sub_threads: list[QThread] = []
+        self._retired_sub_workers: dict[QThread, SubscriptionFetchWorker] = {}
         self._app_update_checker: QThread | None = None
         self._app_update_downloader: QThread | None = None
         self._startup_resource_worker: QThread | None = None
@@ -217,6 +219,7 @@ class AppBridge(QObject):
         self._selected_flag = ""
         self._selected_flag_source = ""
         self._selected_latency = -1
+        self._manual_selection_in_progress = False
         self._routing_mode = "rule"
         self._tun_mode = False
         self._proxy_enabled = False
@@ -344,6 +347,17 @@ class AppBridge(QObject):
                 self._sub_worker = None
                 thread.deleteLater()
 
+        for retired_thread in list(self._retired_sub_threads):
+            retired_worker = self._retired_sub_workers.get(retired_thread)
+            if retired_worker is not None:
+                retired_worker.stop()
+            retired_thread.quit()
+            stop_and_wait_for_thread(
+                retired_thread,
+                label="cancelled subscription thread",
+                logger=logger,
+            )
+
         for attribute, label in (
             ("_app_update_checker", "application update checker"),
             ("_startup_resource_worker", "startup resource checker"),
@@ -405,6 +419,21 @@ class AppBridge(QObject):
             self._app_update_timer.stop()
 
     # ── Фоновая загрузка подписок (сеть вне UI-потока) ──
+    def _retire_sub_worker(self, thread: QThread, worker: SubscriptionFetchWorker | None) -> None:
+        """Keep a cancelled worker alive until its QThread has actually stopped."""
+        if worker is not None:
+            self._retired_sub_workers[thread] = worker
+
+        def _release_worker() -> None:
+            self._retired_sub_workers.pop(thread, None)
+
+        retain_thread_until_finished(
+            self,
+            self._retired_sub_threads,
+            thread,
+            on_finished=_release_worker,
+        )
+
     def _ensure_sub_worker(self) -> None:
         """Лениво поднимает поток+воркер для загрузки подписок (GUI-поток)."""
         if self._quitting or self._sub_thread is not None:
@@ -433,11 +462,15 @@ class AppBridge(QObject):
             return
         settings = self.controller.state.settings
         user_agent = str(getattr(settings, "subscription_user_agent", "") or "").strip()
+        hwid = str(getattr(settings, "subscription_hwid", "") or "").strip()
+        use_real_hwid = bool(getattr(settings, "subscription_use_real_hwid", True))
         converter_url = ""
         if bool(getattr(settings, "subscription_converter_enabled", False)):
             converter_url = str(getattr(settings, "subscription_converter_url", "") or "").strip()
         for job in jobs:
             job.user_agent = user_agent
+            job.hwid = hwid
+            job.use_real_hwid = use_real_hwid
             job.converter_url = converter_url
         self._sub_batch_seq += 1
         batch_id = self._sub_batch_seq
@@ -765,12 +798,19 @@ class AppBridge(QObject):
         prev_id = self._selected_id
         new_id = node.id if node else ""
         new_name = (node.name or node.server) if node else ""
-        # Уведомление о смене сервера во время активного подключения.
-        if self._connected and prev_id and new_id and new_id != prev_id:
-            self.trayNotify.emit(tr("Сервер изменён"), new_name)
         country = (node.country_code or "").upper() or detect_country(node.name or "", node.server or "") if node else ""
+        display_name = _server_display_name_without_country_prefix(new_name, country)
+        selection_changed = bool(new_id and new_id != prev_id)
+        # A QML selection signal is delivered synchronously, before the
+        # controller starts reconnecting. Show the in-app notification here so
+        # the user's click receives immediate feedback without waiting for the
+        # new runtime to become ready. Startup/restore selections are excluded.
+        if selection_changed and self._manual_selection_in_progress:
+            self.toast.emit("info", f'{tr("Сервер изменён")}: {display_name}')
+        if self._connected and prev_id and selection_changed:
+            self.trayNotify.emit(tr("Сервер изменён"), new_name)
         self._selected_id = new_id
-        self._selected_name = _server_display_name_without_country_prefix(new_name, country)
+        self._selected_name = display_name
         self._selected_flag = get_flag_emoji(country)
         self._selected_flag_source = get_flag_svg_data_uri(country)
         self._selected_latency = (
@@ -887,15 +927,27 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def selectNode(self, node_id: str) -> None:
         if node_id:
-            self.controller.set_selected_node(node_id)
+            self._manual_selection_in_progress = True
+            try:
+                self.controller.set_selected_node(node_id)
+            finally:
+                self._manual_selection_in_progress = False
 
     @pyqtSlot()
     def switchNext(self) -> None:
-        self.controller.switch_next_node()
+        self._manual_selection_in_progress = True
+        try:
+            self.controller.switch_next_node()
+        finally:
+            self._manual_selection_in_progress = False
 
     @pyqtSlot()
     def switchPrev(self) -> None:
-        self.controller.switch_prev_node()
+        self._manual_selection_in_progress = True
+        try:
+            self.controller.switch_prev_node()
+        finally:
+            self._manual_selection_in_progress = False
 
     @pyqtSlot(str)
     def setRoutingMode(self, mode: str) -> None:
@@ -1952,28 +2004,44 @@ class AppBridge(QObject):
             self.toast.emit("warning", tr("У сервера нет ссылки для QR-кода"))
             return
         try:
-            import base64
-            import io
-            import qrcode
-            # Низкий уровень коррекции + авто-подбор версии: вмещает длинные
-            # awg/warp/wireguard конфиги, которые не влезали в qrcode.make().
-            qr = qrcode.QRCode(
-                version=None,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                box_size=6,
-                border=2,
-            )
-            qr.add_data(link)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white")
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+            data_uri = self._qr_data_uri(link)
         except Exception as exc:  # noqa: BLE001
             self.toast.emit("error", tr("Не удалось создать QR-код (слишком длинный конфиг?): {err}", err=str(exc)))
             return
         name = getattr(node, "name", "") or getattr(node, "server", "") or ""
         self.nodeQrReady.emit(data_uri, name)
+
+    @staticmethod
+    def _qr_data_uri(payload: str) -> str:
+        import base64
+        import io
+        import qrcode
+
+        # Низкий уровень коррекции + авто-подбор версии: вмещает длинные
+        # awg/warp/wireguard конфиги, которые не влезали в qrcode.make().
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=6,
+            border=2,
+        )
+        qr.add_data(payload)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+    @pyqtSlot(str, result=str)
+    def qrDataUri(self, payload: str) -> str:
+        """Return an in-memory QR PNG for small static values used by QML."""
+        value = str(payload or "").strip()
+        if not value:
+            return ""
+        try:
+            return self._qr_data_uri(value)
+        except Exception:
+            return ""
 
     @pyqtSlot(int, result="QVariantMap")
     def historyData(self, days: int = 30):
@@ -2041,7 +2109,20 @@ class AppBridge(QObject):
         if not silent:
             self.appUpdateState.emit({"phase": "checking"})
         channel = self.releaseChannel
-        checker = UpdateChecker(self, channel=channel, prefer_qml=False)
+        proxy_url = None
+        if self.controller.connected:
+            try:
+                proxy_port = self.controller.get_effective_http_proxy_port()
+                if proxy_port:
+                    proxy_url = f"http://{PROXY_HOST}:{int(proxy_port)}"
+            except Exception:
+                proxy_url = None
+        checker = UpdateChecker(
+            self,
+            channel=channel,
+            prefer_qml=False,
+            proxy_url=proxy_url,
+        )
         self._app_update_checker = checker
         checker.result.connect(self._on_app_update_result)
         checker.error.connect(self._on_app_update_error)
@@ -2491,6 +2572,18 @@ class AppBridge(QObject):
             self.controller, core, text=text, file_label=file_label,
             status_level=level, status_message=message,
         )
+
+    @pyqtSlot(str)
+    def openConfigDirectory(self, core: str) -> None:
+        if core not in ("singbox", "xray"):
+            return
+        try:
+            path = getattr(self.controller, f"get_{core}_config_dir")().resolve()
+            path.mkdir(parents=True, exist_ok=True)
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+                raise OSError(tr("Windows не удалось открыть папку"))
+        except Exception as exc:  # noqa: BLE001
+            self.toast.emit("error", tr("Не удалось открыть папку конфигов: {error}", error=exc))
 
     @pyqtSlot(str, result="QVariantMap")
     def loadConfig(self, core: str):
@@ -3510,6 +3603,26 @@ class AppBridge(QObject):
         self.controller.update_settings(settings)
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def subscriptionUseRealHwid(self) -> bool:
+        return bool(getattr(self.controller.state.settings, "subscription_use_real_hwid", True))
+
+    @pyqtSlot(bool)
+    def setSubscriptionUseRealHwid(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.subscription_use_real_hwid = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def subscriptionHwid(self) -> str:
+        return str(self.controller.state.settings.subscription_hwid or "")
+
+    @pyqtSlot(str)
+    def setSubscriptionHwid(self, value: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.subscription_hwid = str(value or "").strip()
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def subscriptionConverterEnabled(self) -> bool:
         return bool(self.controller.state.settings.subscription_converter_enabled)
 
@@ -3556,25 +3669,17 @@ class AppBridge(QObject):
             except Exception:
                 pass
         if thread is not None:
-            logger = logging.getLogger("xray_fluent.app")
-            try:
-                if worker is not None:
-                    try:
-                        self._sub_fetch_run.disconnect(worker.run_batch)
-                    except Exception:
-                        pass
-                thread.quit()
-                stop_and_wait_for_thread(
-                    thread,
-                    label="subscription import cancellation",
-                    logger=logger,
-                )
-            finally:
-                if self._sub_thread is thread:
-                    self._sub_thread = None
-                if self._sub_worker is worker:
-                    self._sub_worker = None
-                thread.deleteLater()
+            if worker is not None:
+                try:
+                    self._sub_fetch_run.disconnect(worker.run_batch)
+                except Exception:
+                    pass
+            self._retire_sub_worker(thread, worker)
+            if self._sub_thread is thread:
+                self._sub_thread = None
+            if self._sub_worker is worker:
+                self._sub_worker = None
+            thread.quit()
         self.toast.emit("info", tr("Импорт подписки отменён"))
 
     @pyqtSlot(str)
@@ -3755,10 +3860,6 @@ class AppBridge(QObject):
     def tunRouteExcludeAddress(self) -> str:
         return "\n".join(self.controller.state.routing.tun_route_exclude_address)
 
-    @pyqtProperty(str, notify=routingChanged)
-    def tunDefaultOutbound(self) -> str:
-        return self.controller.state.routing.tun_default_outbound
-
     @pyqtProperty('QVariantList', notify=routingChanged)
     def processRules(self):
         return [dict(x) for x in self.controller.state.routing.process_rules]
@@ -3905,12 +4006,6 @@ class AppBridge(QObject):
                 if value:
                     items.append(value)
             r.tun_route_exclude_address = items
-        self._mutate_routing(apply)
-
-    @pyqtSlot(str)
-    def setTunDefaultOutbound(self, value: str) -> None:
-        def apply(r: RoutingSettings) -> None:
-            r.tun_default_outbound = value if value in ("proxy", "direct") else "direct"
         self._mutate_routing(apply)
 
     @pyqtSlot(str, str)

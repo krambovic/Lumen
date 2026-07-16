@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import zipfile
 
+import pytest
+
 from xray_fluent.core_resource_updater import _install_singbox_rule_sets
 from xray_fluent.geodata_resources import SINGBOX_BINARY_RULE_SETS
 from xray_fluent.models import RoutingSettings
@@ -30,6 +32,27 @@ def test_except_ru_keeps_custom_rules_out_of_system_storage() -> None:
     assert routing.preset_id == "except_ru"
     assert routing.direct_domains == ["2ip.ru"]
     assert routing.proxy_domains == ["example.com"]
+
+
+@pytest.mark.parametrize("preset_id", ["global", "blocked", "except_ru"])
+def test_quick_preset_keeps_application_routing(preset_id: str) -> None:
+    process_rules = [
+        {"process": "browser.exe", "action": "proxy"},
+        {"process": "game.exe", "action": "direct"},
+    ]
+    process_preset_routes = {
+        "telegram": "proxy",
+        "torrents": "direct",
+    }
+    current = RoutingSettings(
+        process_rules=process_rules,
+        process_preset_routes=process_preset_routes,
+    )
+
+    routing = build_routing_preset(current, preset_id)
+
+    assert routing.process_rules == process_rules
+    assert routing.process_preset_routes == process_preset_routes
 
 
 def test_except_ru_uses_full_xray_geodata_and_custom_rule_wins() -> None:

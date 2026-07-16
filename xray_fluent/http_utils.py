@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ssl
 import socket
+import sys
 import urllib.request
 from urllib.request import Request
 
@@ -31,6 +32,11 @@ def _make_ssl_context() -> ssl.SSLContext:
 _ssl_ctx = _make_ssl_context()
 
 
+def get_ssl_context() -> ssl.SSLContext:
+    """Return the shared verified SSL context for custom HTTP transports."""
+    return _ssl_ctx
+
+
 def urlopen(request: Request | str, *, timeout: float = 15):
     """Drop-in replacement for urllib.request.urlopen with SSL fix."""
     return urllib.request.urlopen(request, timeout=timeout, context=_ssl_ctx)
@@ -50,13 +56,55 @@ def build_proxy_opener(proxy_url: str | None = None) -> urllib.request.OpenerDir
 
 
 def urlopen_proxy_first(request: Request | str, *, timeout: float = 15, proxy_url: str | None = None):
-    """Open through the local app proxy first, then fall back to direct."""
+    """Open through the local app proxy first, then bypass proxy and TUN."""
     if proxy_url:
         try:
             return build_proxy_opener(proxy_url).open(request, timeout=timeout)
         except Exception:
             pass
-    return urlopen(request, timeout=timeout)
+    return urlopen_direct(request, timeout=timeout)
+
+
+class _OwnedDirectResponse:
+    """Keep temporary direct routes alive until the HTTP response is closed."""
+
+    def __init__(self, response: object, owner: object) -> None:
+        self._response = response
+        self._owner = owner
+        self._closed = False
+
+    def __getattr__(self, name: str):
+        return getattr(self._response, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._response.close()
+        finally:
+            self._owner.__exit__(None, None, None)
+
+
+def urlopen_direct(request: Request | str, *, timeout: float = 15):
+    """Open without system proxies and, on Windows, outside an active TUN."""
+    # Local import avoids a cycle: direct_http reuses this module's SSL context.
+    from .direct_http import DirectUrlOpener
+
+    owner = DirectUrlOpener()
+    opener = owner.__enter__()
+    try:
+        response = opener.open(request, timeout=timeout)
+    except Exception:
+        owner.__exit__(*sys.exc_info())
+        raise
+    return _OwnedDirectResponse(response, owner)
 
 
 def abort_http_response(response: object) -> None:

@@ -168,6 +168,223 @@ def test_legacy_clash_wireguard_link_is_migrated_before_runtime() -> None:
     assert outbound["reserved"] == [14, 84, 156]
 
 
+def test_awg_wgquick_config_normalizes_bare_addresses_and_awg20_fields() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = QGg8AFRn6qKfTB7cT3FWH1WGx3np+OKzlNuQUrqIBmI=
+        Address = 172.16.0.2, 2606:4700:110:80b2::2
+        DNS = 1.1.1.1, 1.0.0.1
+        MTU = 1280
+        Jc = 4
+        Jmin = 40
+        Jmax = 70
+        S1 = 0
+        S2 = 0
+        S3 = 0
+        S4 = 0
+        H1 = 1
+        H2 = 2
+        H3 = 3
+        H4 = 4
+        I1 = <b 0x01020304>
+        I5 = <b 0x05060708>
+        J3 = <b 0x090a0b0c>
+        Itime = 50
+        Id = www.pochta.ru
+        Ip = quic
+        Ib = curl
+
+        [Peer]
+        PublicKey = 3nk7jdnkcL95Fc/z+GCiH7jOovEKhFkLIGPT+U/uLEQ=
+        AllowedIPs = 0.0.0.0/0, ::/0
+        Endpoint = 162.159.192.1:8886
+        PersistentKeepalive = 25
+        """
+    )
+
+    assert errors == []
+    outbound = build_singbox_outbound(nodes[0], tag="proxy")
+    assert nodes[0].scheme == "awg"
+    assert outbound["type"] == "wireguard"
+    assert outbound["address"] == ["172.16.0.2/32", "2606:4700:110:80b2::2/128"]
+    assert "listen_port" not in outbound
+    assert outbound["peers"][0]["persistent_keepalive_interval"] == 25
+    assert outbound["amnezia"]["i1"] == "<b 0x01020304>"
+    assert outbound["amnezia"]["i5"] == "<b 0x05060708>"
+    assert outbound["amnezia"]["j3"] == "<b 0x090a0b0c>"
+    assert outbound["amnezia"]["itime"] == 50
+    assert nodes[0].outbound["_dns"] == ["1.1.1.1", "1.0.0.1"]
+    assert nodes[0].outbound["_protocol_masking"] == {
+        "id": "www.pochta.ru",
+        "ip": "quic",
+        "ib": "curl",
+    }
+
+
+def test_legacy_awg_wgquick_node_is_migrated_before_runtime() -> None:
+    source = """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 172.16.0.2
+        DNS = 1.1.1.1, 1.0.0.1
+        MTU = 1280
+        Jc = 4
+        Jmin = 40
+        Jmax = 70
+        H1 = 1
+        H2 = 2
+        H3 = 3
+        H4 = 4
+
+        [Peer]
+        PublicKey = public-key=
+        AllowedIPs = 0.0.0.0/0, ::/0
+        Endpoint = 8.47.69.2:1074
+        """
+    nodes, errors = parse_links_text(source)
+    assert errors == []
+    node = nodes[0]
+    native = node.outbound["singbox"]
+    native["listen_port"] = 10000
+    node.outbound.pop("_dns")
+
+    assert repair_node_outbound_from_link(node) is True
+
+    assert "listen_port" not in node.outbound["singbox"]
+    assert node.outbound["_dns"] == ["1.1.1.1", "1.0.0.1"]
+
+
+def test_awg_runtime_uses_profile_dns_and_endpoint_mtu() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 172.16.0.2, 2606:4700:110::2
+        DNS = 1.1.1.1, 1.0.0.1
+        MTU = 1280
+        Jc = 4
+        Jmin = 40
+        Jmax = 70
+        S1 = 0
+        S2 = 0
+        S3 = 0
+        S4 = 0
+        H1 = 1
+        H2 = 2
+        H3 = 3
+        H4 = 4
+
+        [Peer]
+        PublicKey = public-key=
+        AllowedIPs = 0.0.0.0/0, ::/0
+        Endpoint = 8.47.69.2:1074
+        """
+    )
+
+    assert errors == []
+    document = parse_singbox_document(Path("default.json"), json.dumps(_base_config()))
+    runtime = plan_singbox_runtime(
+        document,
+        nodes[0],
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+    ).singbox_config
+
+    tun = next(item for item in runtime["inbounds"] if item.get("type") == "tun")
+    proxy_dns = next(item for item in runtime["dns"]["servers"] if item.get("tag") == "proxy-dns")
+    endpoint = next(item for item in runtime["endpoints"] if item.get("tag") == "proxy")
+    assert tun["mtu"] == 1280
+    assert proxy_dns == {
+        "tag": "proxy-dns",
+        "type": "udp",
+        "server": "1.1.1.1",
+        "server_port": 53,
+        "detour": "proxy",
+    }
+    assert endpoint["peers"][0]["address"] == "8.47.69.2"
+
+
+def test_wireguard_config_supports_multiple_peers() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 10.0.0.2
+        ListenPort = 51821
+
+        [Peer]
+        PublicKey = first-public-key=
+        AllowedIPs = 10.1.0.0/16
+        Endpoint = first.example.com:51820
+
+        [Peer]
+        PublicKey = second-public-key=
+        PresharedKey = shared-key=
+        AllowedIPs = 10.2.0.1
+        Endpoint = [2001:db8::1]:51822
+        """
+    )
+
+    assert errors == []
+    outbound = build_singbox_outbound(nodes[0], tag="proxy")
+    assert outbound["listen_port"] == 51821
+    assert outbound["address"] == ["10.0.0.2/32"]
+    assert len(outbound["peers"]) == 2
+    assert outbound["peers"][1]["address"] == "2001:db8::1"
+    assert outbound["peers"][1]["allowed_ips"] == ["10.2.0.1/32"]
+    assert outbound["peers"][1]["pre_shared_key"] == "shared-key="
+
+
+def test_cloudflare_wireguard_reserved_config_uses_native_warp_endpoint() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 172.16.0.2
+        Reserved = DlSc
+
+        [Peer]
+        PublicKey = public-key=
+        AllowedIPs = 0.0.0.0/0, ::/0
+        Endpoint = engage.cloudflareclient.com:2408
+        PersistentKeepalive = 25
+        """
+    )
+
+    assert errors == []
+    outbound = build_singbox_outbound(nodes[0], tag="proxy")
+    assert nodes[0].scheme == "warp"
+    assert outbound["type"] == "warp"
+    assert outbound["reserved"] == [14, 84, 156]
+    assert outbound["persistent_keepalive_interval"] == 25
+    assert outbound["profile"]["private_key"] == "private-key="
+
+
+def test_saved_wireguard_endpoint_is_normalized_again_before_runtime() -> None:
+    nodes, errors = parse_links_text(
+        json.dumps(
+            {
+                "type": "wireguard",
+                "address": ["172.16.0.2", "2606:4700:110::2"],
+                "private_key": "private-key=",
+                "peers": [
+                    {
+                        "address": "162.159.192.1",
+                        "port": 2408,
+                        "public_key": "public-key=",
+                        "allowed_ips": ["0.0.0.0", "::"],
+                    }
+                ],
+            }
+        )
+    )
+
+    assert errors == []
+    outbound = build_singbox_outbound(nodes[0], tag="proxy")
+    assert outbound["address"] == ["172.16.0.2/32", "2606:4700:110::2/128"]
+    assert outbound["peers"][0]["allowed_ips"] == ["0.0.0.0/32", "::/128"]
+
+
 def test_tuic_builds_native_proxy_runtime_without_xray_sidecar() -> None:
     nodes, errors = parse_links_text(
         "tuic://00000000-0000-0000-0000-000000000000:password@example.com:443"

@@ -25,7 +25,7 @@ SpinBox {
     topPadding: 0
     bottomPadding: 0
 
-    contentItem: TextInput {
+    contentItem: FluentTextInput {
         text: control.displayText
         font: control.font
         color: Theme.text

@@ -23,6 +23,7 @@ class LogEntry:
     details: str
     action_id: str = ""
     action_label: str = ""
+    search_text: str = ""
 
 
 def clean_log_text(value: str) -> str:
@@ -115,7 +116,20 @@ def _humanize(body: str, level: str) -> tuple[str, str, str]:
             "Проверьте параметры Reality/XHTTP, время Windows и попробуйте другой сервер. " + body,
             "",
         )
-    if "not found" in low and any(token in low for token in ("xray", "sing-box", ".exe")):
+    if "tunnel not initialized" in low or "endpoint not initialized" in low:
+        return (
+            "Не удалось инициализировать подключение WARP/MASQUE.",
+            "Проверьте доступ к Cloudflare и параметры импортированного профиля. "
+            "Исходная причина обычно указана соседней строкой выше. " + body,
+            "",
+        )
+    core_file_missing = (
+        "sing-box path is not configured" in low
+        or "xray path is not configured" in low
+        or re.search(r"\b(?:xray|sing-box)(?:\.exe)?\s+(?:file\s+)?not found\b", low)
+        or re.search(r"\b(?:xray|sing-box)\.exe\b.{0,80}\bno such file\b", low)
+    )
+    if core_file_missing:
         return (
             "Файл сетевого ядра не найден.",
             "Проверьте путь к ядру в настройках или переустановите Lumen KVN. " + body,
@@ -157,12 +171,16 @@ def parse_log_line(line: str, *, timestamp: datetime | None = None) -> LogEntry:
     body = _TRACE_ID_RE.sub("", body).strip()
     level = classify_log_level(cleaned)
     message, details, action_id = _humanize(body or cleaned, level)
+    source_text = source or ""
+    message_text = message or ""
+    details_text = details or ""
     return LogEntry(
         timestamp=(timestamp or datetime.now()).strftime("%H:%M:%S"),
         level=level,
-        source=source,
-        message=message,
-        details=details,
+        source=source_text,
+        message=message_text,
+        details=details_text,
         action_id=action_id,
         action_label="Сменить порт" if action_id else "",
+        search_text=f"{source_text} {message_text} {details_text}".lower(),
     )

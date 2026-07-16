@@ -54,6 +54,20 @@ def validate_server_preflight(node: Node | None, settings: AppSettings) -> str |
             return "Конфигурация провайдера sing-box extended должна содержать список outbounds."
         return None
 
+    if protocol == "xray_config":
+        full_config = outbound.get("xray_config")
+        if not isinstance(full_config, dict):
+            return "AUTO-профиль Xray повреждён: отсутствует полный JSON-конфиг."
+        if not isinstance(full_config.get("outbounds"), list):
+            return "AUTO-профиль Xray должен содержать список outbounds."
+        routing = full_config.get("routing")
+        observatory = full_config.get("observatory")
+        if not isinstance(routing, dict) or not isinstance(routing.get("balancers"), list):
+            return "AUTO-профиль Xray не содержит routing.balancers."
+        if not isinstance(observatory, dict):
+            return "AUTO-профиль Xray не содержит observatory для проверки серверов."
+        return None
+
     if tun_singbox or proxy_core_for_node(node) == "singbox":
         try:
             build_singbox_outbound(node, tag="proxy")

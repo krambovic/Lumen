@@ -41,9 +41,11 @@ Button {
 
     // Hover tooltip — primarily for the icon-only variant, but also shown for
     // any button that has a glyph but no visible label.
-    ToolTip.visible: control.hovered && control.tip.length > 0 && (control.iconOnly || control.text.length === 0)
-    ToolTip.text: control.tip
-    ToolTip.delay: 450
+    FluentToolTip {
+        visible: control.hovered && control.tip.length > 0 && (control.iconOnly || control.text.length === 0)
+        text: control.tip
+        delay: 450
+    }
 
     contentItem: Item {
         implicitWidth: rowInner.implicitWidth

@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import re
+import shutil
 import subprocess
 import time
 import ctypes
 from dataclasses import dataclass
 from pathlib import Path
 
-from .constants import DATA_DIR
+from .constants import DATA_DIR, INSTALL_DATA_DIR
 from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pumped
 
 
 DROUTE_LEGACY_VERSION = "1.1.2"
 DROUTE_SOURCE_URL = "https://github.com/snowluwu/droute"
+DROUTE_BUNDLED_DIR = INSTALL_DATA_DIR / "external" / "droute"
 DROUTE_DIR = DATA_DIR / "external" / "droute"
 DROUTE_EXE = DROUTE_DIR / "droute.exe"
 DROUTE_NOTICE = DROUTE_DIR / "README.droute.txt"
@@ -87,17 +91,50 @@ def find_installed_discords() -> list[DiscordInstall]:
 
 def _write_droute_notice() -> None:
     DROUTE_NOTICE.write_text(
-        "droute is an external GPL-3.0 component downloaded from:\n"
+        "droute is a bundled external GPL-3.0 component originally published at:\n"
         f"{DROUTE_SOURCE_URL}\n\n"
-        "Lumen KVN does not embed droute source code. The external droute binary is used\n"
+        "Lumen KVN includes the frozen droute 2.0.0 binary distribution because the\n"
+        "upstream repository is no longer available. The external binary is used\n"
         "to install a Discord-local version.dll loader, droute.dll payload and Squirrel\n"
         "updater hook for Discord TCP/UDP SOCKS5 proxying.\n",
         encoding="utf-8",
     )
 
 
-def get_droute_bundle_version() -> str:
-    if not DROUTE_EXE.is_file():
+def _droute_version_at(directory: Path) -> str:
+    exe = directory / DROUTE_EXE.name
+    if not exe.is_file() or exe.stat().st_size < 1024:
+        return ""
+    try:
+        version = (directory / DROUTE_VERSION_FILE.name).read_text(
+            encoding="utf-8"
+        ).strip().lstrip("v")
+    except OSError:
+        version = ""
+    return version or DROUTE_LEGACY_VERSION
+
+
+def _verify_bundled_droute(directory: Path) -> None:
+    manifest = directory / "SHA256SUMS.txt"
+    try:
+        lines = manifest.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise RuntimeError("У встроенного droute отсутствует список контрольных сумм.") from exc
+    for line in lines:
+        expected, separator, relative_name = line.strip().partition("  ")
+        if not separator or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise RuntimeError("Список контрольных сумм droute поврежден.")
+        source = (directory / relative_name).resolve()
+        try:
+            source.relative_to(directory.resolve())
+        except ValueError as exc:
+            raise RuntimeError("Некорректный путь в списке контрольных сумм droute.") from exc
+        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+            raise RuntimeError(f"Контрольная сумма droute не совпадает: {relative_name}")
+
+
+def _current_droute_version() -> str:
+    if not DROUTE_EXE.is_file() or DROUTE_EXE.stat().st_size <= 0:
         return ""
     try:
         version = DROUTE_VERSION_FILE.read_text(encoding="utf-8").strip().lstrip("v")
@@ -106,21 +143,84 @@ def get_droute_bundle_version() -> str:
     return version or DROUTE_LEGACY_VERSION
 
 
+def _droute_version_key(value: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", value))
+
+
+def get_bundled_droute_version(bundle_dir: Path | None = None) -> str:
+    directory = bundle_dir or DROUTE_BUNDLED_DIR
+    version = _droute_version_at(directory)
+    if not version:
+        return ""
+    try:
+        _verify_bundled_droute(directory)
+    except RuntimeError:
+        return ""
+    return version
+
+
+def install_bundled_droute(
+    target_dir: Path | None = None,
+    *,
+    bundle_dir: Path | None = None,
+) -> str:
+    source = bundle_dir or DROUTE_BUNDLED_DIR
+    target = target_dir or DROUTE_DIR
+    version = _droute_version_at(source)
+    if not version:
+        raise RuntimeError("Встроенный droute не найден. Переустановите Lumen KVN.")
+    _verify_bundled_droute(source)
+    try:
+        if source.resolve() == target.resolve():
+            return version
+    except OSError:
+        pass
+
+    target.mkdir(parents=True, exist_ok=True)
+    for source_file in source.rglob("*"):
+        if not source_file.is_file():
+            continue
+        destination = target / source_file.relative_to(source)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        staged = destination.with_name(destination.name + ".lumen-new")
+        try:
+            shutil.copy2(source_file, staged)
+            os.replace(staged, destination)
+        finally:
+            staged.unlink(missing_ok=True)
+    if _droute_version_at(target) != version:
+        raise RuntimeError("Не удалось развернуть встроенный droute.")
+    return version
+
+
+def get_droute_bundle_version() -> str:
+    bundled_version = get_bundled_droute_version()
+    current_version = _current_droute_version()
+    if bundled_version and (
+        not current_version
+        or _droute_version_key(bundled_version) > _droute_version_key(current_version)
+    ):
+        try:
+            install_bundled_droute()
+        except OSError:
+            pass
+        current_version = _current_droute_version()
+    return current_version
+
+
 def ensure_droute_bundle() -> Path:
     DROUTE_DIR.mkdir(parents=True, exist_ok=True)
-    if DROUTE_EXE.is_file() and DROUTE_EXE.stat().st_size > 0:
+    bundled_version = get_bundled_droute_version()
+    current_version = _current_droute_version()
+    if bundled_version and (
+        not current_version
+        or _droute_version_key(bundled_version) > _droute_version_key(current_version)
+    ):
+        install_bundled_droute()
+    if DROUTE_EXE.is_file() and DROUTE_EXE.stat().st_size > 1024:
         _write_droute_notice()
         return DROUTE_EXE
-
-    from .core_resource_updater import check_or_update_droute
-
-    result = check_or_update_droute(True)
-    if result.status not in {"updated", "up_to_date"}:
-        raise RuntimeError(result.message)
-    if not DROUTE_EXE.is_file():
-        raise RuntimeError("droute.exe was not found in the downloaded archive")
-    _write_droute_notice()
-    return DROUTE_EXE
+    raise RuntimeError("Встроенный droute не найден. Переустановите Lumen KVN.")
 
 
 def _powershell_quote(value: str | Path) -> str:

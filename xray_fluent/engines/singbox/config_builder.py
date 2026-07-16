@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from ...wireguard_normalization import normalize_wireguard_endpoint
+
 from ...multiplex import apply_singbox_multiplex
 
 _SUPPORTED_NATIVE_PROTOCOLS = {
@@ -79,6 +81,7 @@ def _convert_outbound(xray_ob: dict[str, Any], *, tag: str = "proxy") -> dict[st
     native = xray_ob.get("singbox")
     if isinstance(native, dict):
         sb = deepcopy(native)
+        sb = normalize_wireguard_endpoint(sb)
         sb["tag"] = tag
         return sb
 

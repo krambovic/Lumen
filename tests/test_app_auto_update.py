@@ -3,8 +3,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from xray_fluent.app_controller import apply_masque_direct_update_once
 from xray_fluent.app_updater import AppUpdate, UpdateDownloader, should_auto_install
-from xray_fluent.models import AppSettings, AppState, RoutingSettings
+from xray_fluent.models import AppSettings, AppState, Node, RoutingSettings
 
 
 def _update(*, downgrade: bool = False) -> AppUpdate:
@@ -51,6 +52,32 @@ def test_applied_migrations_round_trip() -> None:
     state.applied_migrations["enable_fake_dns_by_default"] = True
     restored = AppState.from_dict(state.to_dict())
     assert restored.applied_migrations["enable_fake_dns_by_default"] is True
+
+
+def test_saved_masque_nodes_are_migrated_once_on_update() -> None:
+    native = {
+        "type": "masque",
+        "tag": "proxy",
+        "server": "162.159.198.2",
+        "server_port": 443,
+        "public_key": "public",
+        "address": ["172.16.0.2/32"],
+        "profile": {"detour": "direct", "private_key": "private"},
+    }
+    node = Node(
+        name="Legacy MASQUE",
+        scheme="masque",
+        server="162.159.198.2",
+        port=443,
+        link="",
+        outbound={"protocol": "masque", "singbox": native},
+    )
+    state = AppState(nodes=[node])
+
+    assert apply_masque_direct_update_once(state) is True
+    assert native["private_key"] == "private"
+    assert native["profile"] == {"detour": "direct"}
+    assert apply_masque_direct_update_once(state) is False
 
 
 def test_fragmentation_defaults_to_disabled() -> None:

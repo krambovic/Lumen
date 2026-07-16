@@ -25,7 +25,7 @@ Item {
     property string editOrigName: ""
 
     // Fluent-поле ввода (как в остальном приложении) вместо дефолтного TextField либы.
-    component FluentField: TextField {
+    component FluentField: FluentTextField {
         Layout.fillWidth: true
         implicitHeight: Theme.controlHeight
         leftPadding: 10; rightPadding: 10; topPadding: 0; bottomPadding: 0
@@ -376,7 +376,7 @@ Item {
                         ev.accepted = true
                     }
                 }
-                TextArea.flickable: TextArea {
+                TextArea.flickable: FluentTextArea {
                     id: contentArea
                     placeholderText: I18n.t("Аргументы winws2, по одному на строку.\nСтроки с # — комментарии.")
                     wrapMode: TextEdit.NoWrap

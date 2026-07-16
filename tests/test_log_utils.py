@@ -39,6 +39,24 @@ def test_nonzero_core_exit_is_humanized() -> None:
     assert entry.message == "Сетевое ядро неожиданно остановилось."
 
 
+def test_wintun_element_not_found_is_not_misreported_as_missing_core() -> None:
+    entry = parse_log_line(
+        "[singbox-error] sing-box exited during startup: FATAL start inbound/tun: "
+        "configure tun interface: set ipv6 address: Element not found."
+    )
+
+    assert entry.message == "Сетевое ядро неожиданно остановилось."
+    assert "Файл сетевого ядра не найден" not in entry.message
+
+
+def test_uninitialized_warp_endpoint_has_specific_message() -> None:
+    entry = parse_log_line(
+        "[singbox] ERROR router: process DNS packet: endpoint not initialized"
+    )
+
+    assert entry.message == "Не удалось инициализировать подключение WARP/MASQUE."
+
+
 def test_log_proxy_filters_by_level_and_search() -> None:
     source = LogModel()
     proxy = LogFilterModel(source)

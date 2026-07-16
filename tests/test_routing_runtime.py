@@ -122,6 +122,20 @@ def test_domain_rules_stay_ahead_of_fake_dns_fallback() -> None:
     assert rules[fake_index]["outbound"] == "direct"
 
 
+def test_custom_rule_routing_falls_back_to_proxy_without_tun_default_setting() -> None:
+    payload = {"route": {"rules": [], "final": "direct"}}
+    routing = RoutingSettings(
+        mode="rule",
+        preset_id="custom-user-preset",
+        # A legacy saved value must no longer control the hidden fallback.
+        tun_default_outbound="direct",
+    )
+
+    apply_singbox_gui_routing(payload, routing)
+
+    assert payload["route"]["final"] == "proxy"
+
+
 def test_apply_singbox_gui_routing_keeps_browser_doh_reject_before_fake_dns() -> None:
     payload = {
         "route": {"rules": [], "final": "proxy"},

@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import url2pathname
 
 from .models import Node
+from .wireguard_normalization import normalize_ip_prefixes
 
 try:  # Optional at runtime, listed in requirements for bundled builds.
     import yaml
@@ -64,6 +65,7 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
     for idx, line in enumerate(lines, start=1):
         try:
             node = parse_single(line)
+            _apply_happ_server_metadata(node, line)
             nodes.append(node)
         except Exception as exc:
             errors.append(f"Line {idx}: {exc}")
@@ -195,8 +197,52 @@ def _decode_b64(data: str) -> str:
 
 
 def _clean_name(name: str, fallback: str) -> str:
-    value = unquote(name).strip()
+    value = unquote(name).partition("?")[0].strip()
     return value if value else fallback
+
+
+def _decode_happ_description(value: str) -> str:
+    raw = unquote(str(value or "")).strip()
+    if not raw:
+        return ""
+    try:
+        decoded = _decode_b64(raw).strip()
+        if decoded and all(char.isprintable() or char.isspace() for char in decoded):
+            return decoded[:30]
+    except Exception:
+        pass
+    return raw[:30]
+
+
+def _apply_happ_server_metadata(node: Node, raw: str) -> None:
+    description = ""
+    text = str(raw or "").strip()
+    parsed = urlsplit(text)
+    fragment = unquote(parsed.fragment or "")
+    if "?" in fragment:
+        title, _, query_text = fragment.partition("?")
+        query = parse_qs(query_text, keep_blank_values=True)
+        values = query.get("serverDescription") or query.get("serverdescription")
+        if values:
+            description = _decode_happ_description(values[0])
+        if title.strip():
+            node.name = title.strip()
+    if not description and parsed.scheme.lower() == "vmess":
+        try:
+            payload = json.loads(_decode_b64(text.split("://", 1)[1]))
+            description = _decode_happ_description(str(payload.get("serverDescription") or ""))
+        except Exception:
+            pass
+    if not description and text.startswith("{"):
+        try:
+            payload = json.loads(text)
+            meta = payload.get("meta") if isinstance(payload, dict) else None
+            if isinstance(meta, dict):
+                description = str(meta.get("serverDescription") or "").strip()[:30]
+        except Exception:
+            pass
+    if description:
+        node.description = description
 
 
 def _json_name(payload: dict[str, Any], fallback: str) -> str:
@@ -454,39 +500,106 @@ def _parse_vless(link: str) -> Node:
 
 def repair_node_outbound_from_link(node: Node) -> bool:
     link = str(node.link or "").strip()
+    changed = False
     if not link:
-        return False
+        return _repair_legacy_direct_masque_shape(node)
     clash_payload: dict[str, Any] | None = None
     try:
         if link.startswith("{"):
             decoded = json.loads(link)
             if _is_clash_proxy_payload(decoded):
                 clash_payload = decoded
-        reparsed = _parse_clash_proxy_payload(clash_payload) if clash_payload is not None else parse_single(link)
+        reparsed = (
+            _parse_clash_proxy_payload(clash_payload)
+            if clash_payload is not None
+            else parse_single(link)
+        )
     except Exception:
-        return False
+        return _repair_legacy_direct_masque_shape(node)
     if clash_payload is not None:
-        changed = (
+        reparsed_changed = (
             reparsed.outbound != node.outbound
             or reparsed.link != node.link
             or reparsed.scheme != node.scheme
         )
-        if not changed:
-            return False
-        node.outbound = reparsed.outbound
-        node.link = reparsed.link
-        node.scheme = reparsed.scheme
+        if reparsed_changed:
+            node.outbound = reparsed.outbound
+            node.link = reparsed.link
+            node.scheme = reparsed.scheme
+            changed = True
     else:
-        if reparsed.outbound == node.outbound:
-            return False
-        node.outbound = reparsed.outbound
+        if reparsed.outbound != node.outbound:
+            node.outbound = reparsed.outbound
+            changed = True
     if not node.scheme:
         node.scheme = reparsed.scheme
+        changed = True
     if not node.server:
         node.server = reparsed.server
+        changed = True
     if node.port <= 0:
         node.port = reparsed.port
-    return True
+        changed = True
+    return _repair_legacy_direct_masque_shape(node) or changed
+
+
+def _repair_legacy_direct_masque_shape(node: Node) -> bool:
+    """Move old Clash MASQUE credentials out of the registration profile.
+
+    Early builds stored the client private key under ``profile.private_key``.
+    sing-box extended interprets that as a Cloudflare registration profile and
+    never initializes the imported usque tunnel.  The remaining endpoint data
+    is already present in the node, so it can be migrated without reimporting
+    or contacting the subscription server.
+    """
+    outbound = node.outbound if isinstance(node.outbound, dict) else {}
+    native = (
+        outbound.get("singbox")
+        if isinstance(outbound.get("singbox"), dict)
+        else None
+    )
+    if not isinstance(native, dict):
+        return False
+    protocol = str(
+        outbound.get("protocol") or node.scheme or native.get("type") or ""
+    ).strip().lower()
+    if (
+        protocol != "masque"
+        and str(native.get("type") or "").strip().lower() != "masque"
+    ):
+        return False
+
+    profile = native.get("profile") if isinstance(native.get("profile"), dict) else {}
+    profile_private_key = str(profile.get("private_key") or "").strip()
+    private_key = str(native.get("private_key") or profile_private_key).strip()
+    public_key = str(native.get("public_key") or "").strip()
+    address = native.get("address")
+    server = str(native.get("server") or node.server or "").strip()
+    if not (private_key and public_key and address and server):
+        return False
+
+    changed = False
+    if native.get("private_key") != private_key:
+        native["private_key"] = private_key
+        changed = True
+    if str(native.get("server") or "").strip() != server:
+        native["server"] = server
+        changed = True
+    if not native.get("server_port") and int(node.port or 0) > 0:
+        native["server_port"] = int(node.port)
+        changed = True
+
+    normalized_profile = dict(profile)
+    if "private_key" in normalized_profile:
+        normalized_profile.pop("private_key", None)
+        changed = True
+    if normalized_profile.get("detour") != "direct":
+        normalized_profile["detour"] = "direct"
+        changed = True
+    if native.get("profile") != normalized_profile:
+        native["profile"] = normalized_profile
+        changed = True
+    return changed
 
 
 def _is_clash_proxy_payload(payload: Any) -> bool:
@@ -495,7 +608,7 @@ def _is_clash_proxy_payload(payload: Any) -> bool:
     kind = str(payload.get("type") or "").strip().lower()
     if kind not in {
         "vless", "vmess", "trojan", "ss", "shadowsocks",
-        "hy", "hysteria", "hy2", "hysteria2", "tuic", "wireguard",
+        "hy", "hysteria", "hy2", "hysteria2", "tuic", "wireguard", "masque",
     }:
         return False
     return (
@@ -876,6 +989,8 @@ def _parse_json_nodes_payload(payload: Any) -> tuple[list[Node], list[str]]:
             items = payload["items"]
         elif isinstance(payload.get("providers"), list) and isinstance(payload.get("outbounds"), list):
             items = [payload]
+        elif _is_xray_auto_config_payload(payload):
+            items = [payload]
         elif isinstance(payload.get("outbounds"), list):
             items = _json_proxy_outbounds(payload["outbounds"])
         elif _json_payload_can_be_node(payload):
@@ -990,7 +1105,17 @@ def _looks_like_clash_yaml(text: str) -> bool:
 def _parse_clash_yaml_nodes_text(text: str) -> tuple[list[Node], list[str]]:
     if yaml is None:
         raise LinkParseError("PyYAML is not installed")
-    payload = yaml.safe_load(text)
+    # A few generators emit tabs in indentation or as trailing whitespace.
+    # YAML forbids those tabs even though they do not change the document's
+    # meaning, so normalize structural whitespace before parsing.
+    normalized_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip(" \t")
+        prefix = re.match(r"^[ \t]+", line)
+        if prefix and "\t" in prefix.group(0):
+            line = prefix.group(0).expandtabs(2) + line[len(prefix.group(0)) :]
+        normalized_lines.append(line)
+    payload = yaml.safe_load("\n".join(normalized_lines))
     if not isinstance(payload, dict):
         raise LinkParseError("YAML root must be an object")
     proxies = payload.get("proxies")
@@ -1018,7 +1143,9 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         kind = "hysteria"
     elif kind in {"hy2", "hysteria2"}:
         kind = "hysteria2"
-    if kind not in {"vless", "vmess", "trojan", "shadowsocks", "wireguard", "hysteria", "hysteria2", "tuic"}:
+    elif kind in {"socks", "socks5"}:
+        kind = "socks"
+    if kind not in {"vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria", "hysteria2", "tuic", "masque"}:
         raise LinkParseError(f"unsupported Clash proxy type: {kind or 'unknown'}")
 
     server = str(payload.get("server") or "").strip()
@@ -1030,6 +1157,8 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
     outbound: dict[str, Any]
     if kind == "wireguard":
         return _parse_clash_wireguard_payload(payload, name, server, port)
+    if kind == "masque":
+        return _parse_clash_masque_payload(payload, name, server, port)
     if kind in {"hysteria", "hysteria2", "tuic"}:
         outbound = _native_singbox_outbound(_clash_to_singbox_outbound(payload, kind))
     else:
@@ -1051,6 +1180,95 @@ def _clash_list(value: Any) -> list[str]:
     return _split_csv(str(value or ""))
 
 
+def _parse_clash_masque_payload(
+    payload: dict[str, Any],
+    name: str,
+    server: str,
+    port: int,
+) -> Node:
+    """Convert WARP-generator Clash MASQUE entries to sing-box-extended."""
+    network = str(payload.get("network") or "").strip().lower()
+    profile: dict[str, Any] = {"detour": "direct"}
+    for source, target in (
+        ("profile-id", "id"),
+        ("profile_id", "id"),
+        ("auth-token", "auth_token"),
+        ("auth_token", "auth_token"),
+        ("masque-private-key", "private_key"),
+        ("masque_private_key", "private_key"),
+    ):
+        value = str(payload.get(source) or "").strip()
+        if value:
+            profile[target] = value
+    private_key = str(payload.get("private-key") or payload.get("private_key") or "").strip()
+    public_key = str(payload.get("public-key") or payload.get("public_key") or "").strip()
+    address = normalize_ip_prefixes(
+        _clash_list(payload.get("ip") or payload.get("address"))
+    )
+    address.extend(
+        item
+        for item in normalize_ip_prefixes(_clash_list(payload.get("ipv6")))
+        if item not in address
+    )
+    native: dict[str, Any] = {
+        "type": "masque",
+        "tag": "proxy",
+        "system": False,
+        "name": "masque0",
+        "use_http2": network in {"h2", "http2"},
+        "use_ipv6": _to_bool(payload.get("use-ipv6") or payload.get("use_ipv6") or False),
+        "profile": profile,
+        "udp_timeout": "5m0s",
+        "udp_keepalive_period": "30s",
+        "reconnect_delay": "5s",
+        "congestion_controller": "bbr",
+    }
+    # Mihomo/usque MASQUE profiles contain a ready-to-use ECDSA client key,
+    # endpoint public key and tunnel addresses.  Keep those values together;
+    # treating this format as an empty Cloudflare registration profile leaves
+    # the outbound permanently in "tunnel not initialized" state.
+    if private_key or public_key:
+        if not private_key or not public_key or not server:
+            raise LinkParseError(
+                "direct MASQUE proxy must contain server, private-key and public-key"
+            )
+        if not address:
+            raise LinkParseError(
+                "direct MASQUE proxy must contain ip, ipv6 or address"
+            )
+        native.update(
+            {
+                "server": server,
+                "server_port": int(port or 443),
+                "private_key": private_key,
+                "public_key": public_key,
+                "address": address,
+                "mtu": int(payload.get("mtu") or 1280),
+            }
+        )
+    allowed_ips = normalize_ip_prefixes(
+        _clash_list(payload.get("allowed-ips") or payload.get("allowed_ips"))
+    )
+    if allowed_ips:
+        native["allowed_ips"] = allowed_ips
+    server_name = str(payload.get("sni") or payload.get("servername") or "").strip()
+    if server_name:
+        native["tls"] = {"server_name": server_name}
+    outbound = _native_singbox_outbound(native)
+    dns_servers = _clash_list(payload.get("dns"))
+    if dns_servers:
+        outbound["_dns"] = dns_servers
+    return Node(
+        name=name,
+        scheme="masque",
+        server=server,
+        port=port,
+        link=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        outbound=outbound,
+        tags=["WARP"],
+    )
+
+
 def _parse_clash_wireguard_payload(
     payload: dict[str, Any],
     name: str,
@@ -1062,45 +1280,43 @@ def _parse_clash_wireguard_payload(
     if not private_key or not public_key:
         raise LinkParseError("wireguard proxy must contain private-key and public-key")
 
-    address = _clash_list(payload.get("ip") or payload.get("address"))
-    address.extend(item for item in _clash_list(payload.get("ipv6")) if item not in address)
-    allowed_ips = _clash_list(payload.get("allowed-ips") or payload.get("allowed_ips"))
+    address = normalize_ip_prefixes(_clash_list(payload.get("ip") or payload.get("address")))
+    address.extend(
+        item
+        for item in normalize_ip_prefixes(_clash_list(payload.get("ipv6")))
+        if item not in address
+    )
+    allowed_ips = normalize_ip_prefixes(
+        _clash_list(payload.get("allowed-ips") or payload.get("allowed_ips"))
+    )
     amnezia_options = payload.get("amnezia-wg-option") or payload.get("amnezia")
     amnezia = (
         _amnezia_from_params({str(key): str(value) for key, value in amnezia_options.items()})
         if isinstance(amnezia_options, dict)
         else {}
     )
-    reserved_bytes: list[int] = []
-    reserved = payload.get("reserved")
-    if isinstance(reserved, (list, tuple)):
-        reserved_bytes = [int(value) for value in reserved]
-        if len(reserved_bytes) != 3 or any(value < 0 or value > 255 for value in reserved_bytes):
-            raise LinkParseError("wireguard reserved must contain three bytes")
+    reserved_bytes = _parse_reserved_bytes(payload.get("reserved"))
     keepalive = payload.get("persistent-keepalive") or payload.get("persistent_keepalive_interval")
 
-    if _is_warp_endpoint(server) or reserved_bytes:
-        endpoint: dict[str, Any] = {
-            "type": "warp",
-            "tag": "proxy",
-            "listen_port": 10000,
-            "udp_timeout": "5m0s",
-            "profile": {"detour": "direct", "private_key": _clean_b64_key(private_key)},
-        }
-        if reserved_bytes:
-            endpoint["reserved"] = reserved_bytes
-        if keepalive not in (None, ""):
-            endpoint["persistent_keepalive_interval"] = int(keepalive)
-        if amnezia:
-            endpoint["amnezia"] = amnezia
+    if reserved_bytes:
+        endpoint = _build_warp_profile_endpoint(
+            private_key=private_key,
+            reserved=reserved_bytes,
+            persistent_keepalive=keepalive,
+            amnezia=amnezia,
+            listen_port=payload.get("listen-port") or payload.get("listen_port") or "",
+        )
         scheme = "awg" if amnezia else "warp"
         outbound = _native_singbox_outbound(endpoint)
+        dns_servers = _clash_list(payload.get("dns"))
+        if dns_servers:
+            outbound["_dns"] = dns_servers
         return Node(
             name=name,
             scheme=scheme,
             server=server,
             port=port,
-            link=json.dumps(outbound, ensure_ascii=False, separators=(",", ":")),
+            link=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             outbound=outbound,
             tags=["WARP"],
         )
@@ -1120,6 +1336,7 @@ def _parse_clash_wireguard_payload(
         ),
         mtu=int(payload.get("mtu") or 1408),
         amnezia=amnezia,
+        listen_port=payload.get("listen-port") or payload.get("listen_port") or "",
     )
     peer = endpoint["peers"][0]
     if reserved_bytes:
@@ -1129,12 +1346,15 @@ def _parse_clash_wireguard_payload(
 
     scheme = "awg" if amnezia else "wireguard"
     outbound = _native_singbox_outbound(endpoint)
+    dns_servers = _clash_list(payload.get("dns"))
+    if dns_servers:
+        outbound["_dns"] = dns_servers
     return Node(
         name=name,
         scheme=scheme,
         server=server,
         port=port,
-        link=json.dumps(outbound, ensure_ascii=False, separators=(",", ":")),
+        link=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         outbound=outbound,
         tags=["WARP"] if _is_warp_endpoint(server) else [],
     )
@@ -1159,6 +1379,12 @@ def _clash_to_xray_outbound(payload: dict[str, Any], kind: str) -> dict[str, Any
         settings = {"vnext": [{"address": server, "port": port, "users": [user]}]}
     elif kind == "trojan":
         settings = {"servers": [{"address": server, "port": port, "password": password}]}
+    elif kind in {"socks", "http"}:
+        server_item: dict[str, Any] = {"address": server, "port": port}
+        username = str(payload.get("username") or payload.get("user") or "").strip()
+        if username:
+            server_item["users"] = [{"user": username, "pass": password}]
+        settings = {"servers": [server_item]}
     else:
         settings = {
             "servers": [
@@ -1171,11 +1397,13 @@ def _clash_to_xray_outbound(payload: dict[str, Any], kind: str) -> dict[str, Any
             ]
         }
 
-    return {
+    outbound = {
         "protocol": kind,
         "settings": settings,
-        "streamSettings": _clash_stream_settings(payload),
     }
+    if kind not in {"socks", "http"}:
+        outbound["streamSettings"] = _clash_stream_settings(payload)
+    return outbound
 
 
 def _clash_stream_settings(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1281,8 +1509,13 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
     original_payload = payload
 
     outbound: dict[str, Any]
-    if str(payload.get("protocol") or "").strip().lower() == "singbox_config" and isinstance(payload.get("singbox_config"), dict):
+    explicit_protocol = str(payload.get("protocol") or "").strip().lower()
+    if explicit_protocol == "singbox_config" and isinstance(payload.get("singbox_config"), dict):
         outbound = dict(payload)
+    elif explicit_protocol == "xray_config" and isinstance(payload.get("xray_config"), dict):
+        outbound = dict(payload)
+    elif _is_xray_auto_config_payload(payload):
+        outbound = _native_xray_config(payload)
     elif "type" in payload:
         outbound = _native_singbox_outbound(payload)
     elif "protocol" in payload:
@@ -1341,12 +1574,26 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         native_proxy = proxy if isinstance(proxy, dict) else {}
         server = str(native_proxy.get("server") or "")
         port = int(native_proxy.get("server_port") or 0)
+    elif protocol == "xray_config":
+        full_config = outbound.get("xray_config") if isinstance(outbound.get("xray_config"), dict) else {}
+        proxy = _pick_json_proxy_outbound(list(full_config.get("outbounds") or [])) if isinstance(full_config.get("outbounds"), list) else {}
+        if isinstance(proxy, dict):
+            proxy_node = _parse_json_outbound_payload(proxy)
+            server = proxy_node.server
+            port = proxy_node.port
 
-    display_scheme = str(original_payload.get("__lumen_scheme") or protocol)
+    display_scheme = str(original_payload.get("__lumen_scheme") or ("auto" if protocol == "xray_config" else protocol))
     if original_payload.get("__lumen_server"):
         server = str(original_payload.get("__lumen_server") or server)
     if original_payload.get("__lumen_port"):
         port = int(original_payload.get("__lumen_port") or port)
+
+    meta = original_payload.get("meta") if isinstance(original_payload.get("meta"), dict) else {}
+    description = str(
+        original_payload.get("serverDescription")
+        or meta.get("serverDescription")
+        or ""
+    ).strip()[:30]
 
     return Node(
         name=_json_name(original_payload, f"json-{tag}"),
@@ -1355,6 +1602,7 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         port=port,
         link=json.dumps(original_payload, ensure_ascii=False, separators=(",", ":")),
         outbound=outbound,
+        description=description,
     )
 
 
@@ -1556,7 +1804,21 @@ def _parse_masque(link: str) -> Node:
         "name": _get_param(params, "name", default="masque0") or "masque0",
         "use_http2": _to_bool(_get_param(params, "use_http2", "http2", default="false")),
         "use_ipv6": _to_bool(_get_param(params, "use_ipv6", "ipv6", default="false")),
-        "profile": {},
+        "profile": {"detour": "direct"},
+        "udp_timeout": _get_param(params, "udp_timeout", "udpTimeout", default="5m0s") or "5m0s",
+        "udp_keepalive_period": _get_param(
+            params,
+            "udp_keepalive_period",
+            "udpKeepalivePeriod",
+            default="30s",
+        ) or "30s",
+        "reconnect_delay": _get_param(params, "reconnect_delay", "reconnectDelay", default="5s") or "5s",
+        "congestion_controller": _get_param(
+            params,
+            "congestion_controller",
+            "congestionController",
+            default="bbr",
+        ) or "bbr",
     }
     if profile_id:
         outbound["profile"]["id"] = profile_id
@@ -1624,79 +1886,181 @@ def _parse_wireguard_like_link(link: str, scheme: str) -> Node:
     port = parsed.port or int(_get_param(params, "port", default="0") or 0) or 51820
     private_key = _clean_b64_key(unquote(parsed.username or "") or _get_param(params, "private_key", "privateKey", "key"))
     public_key = _clean_b64_key(_get_param(params, "public_key", "publicKey", "peer_public_key", "peerPublicKey", "pbk"))
-    address = _split_csv(_get_param(params, "address", "local_address", "localAddress", default="10.0.0.2/32"))
-    allowed_ips = _split_csv(_get_param(params, "allowed_ips", "allowedIPs", "allowed", default="0.0.0.0/0,::/0"))
-    pre_shared_key = _get_param(params, "pre_shared_key", "preshared_key", "psk", "reserved")
+    address = normalize_ip_prefixes(
+        _split_csv(
+            _get_param(
+                params,
+                "address",
+                "addresses",
+                "local_address",
+                "localAddress",
+                default="10.0.0.2/32",
+            )
+        )
+    )
+    allowed_ips = normalize_ip_prefixes(
+        _split_csv(
+            _get_param(
+                params,
+                "allowed_ips",
+                "allowedIPs",
+                "allowed",
+                default="0.0.0.0/0,::/0",
+            )
+        )
+    )
+    pre_shared_key = _get_param(params, "pre_shared_key", "preshared_key", "psk")
+    reserved = _parse_reserved_bytes(_get_param(params, "reserved"))
+    keepalive = _get_param(
+        params,
+        "persistent_keepalive",
+        "persistentKeepalive",
+        "persistent_keepalive_interval",
+        "keepalive",
+    )
     mtu = int(_get_param(params, "mtu", default="1408") or 1408)
 
     if not private_key or not public_key or not server:
         raise LinkParseError("wireguard/awg link must contain server, private_key and public_key")
 
-    endpoint = _build_wireguard_endpoint(
-        server=server,
-        port=port,
-        private_key=_clean_b64_key(private_key),
-        public_key=_clean_b64_key(public_key),
-        address=address,
-        allowed_ips=allowed_ips,
-        pre_shared_key=pre_shared_key,
-        mtu=mtu,
-        amnezia=_amnezia_from_params(params) if scheme == "awg" else {},
-    )
+    amnezia = _amnezia_from_params(params)
+    if (_is_warp_endpoint(server) or scheme == "warp") and reserved:
+        endpoint = _build_warp_profile_endpoint(
+            private_key=private_key,
+            reserved=reserved,
+            persistent_keepalive=keepalive,
+            amnezia=amnezia,
+            listen_port=_get_param(params, "listen_port", "listenPort"),
+        )
+    else:
+        endpoint = _build_wireguard_endpoint(
+            server=server,
+            port=port,
+            private_key=_clean_b64_key(private_key),
+            public_key=_clean_b64_key(public_key),
+            address=address,
+            allowed_ips=allowed_ips,
+            pre_shared_key=pre_shared_key,
+            mtu=mtu,
+            amnezia=amnezia,
+            persistent_keepalive=keepalive,
+            listen_port=_get_param(params, "listen_port", "listenPort"),
+        )
     name = _clean_name(
         parsed.fragment,
         _wireguard_display_name(server, port, bool(endpoint.get("amnezia")), scheme),
     )
     tags = ["WARP"] if _is_warp_endpoint(server) else []
-    return Node(name=name, scheme=scheme, server=server, port=port, link=link, outbound=_native_singbox_outbound(endpoint), tags=tags)
+    display_scheme = "awg" if amnezia else ("warp" if endpoint.get("type") == "warp" else scheme)
+    return Node(name=name, scheme=display_scheme, server=server, port=port, link=link, outbound=_native_singbox_outbound(endpoint), tags=tags)
 
 
 def _parse_wireguard_config(text: str) -> Node:
-    sections: dict[str, dict[str, str]] = {}
-    current = ""
-    for raw_line in text.splitlines():
+    interface: dict[str, str] = {}
+    peers: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for raw_line in text.lstrip("\ufeff").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or line.startswith(";"):
             continue
         if line.startswith("[") and line.endswith("]"):
-            current = line.strip("[]").strip().lower()
-            sections.setdefault(current, {})
+            section = line.strip("[]").strip().lower()
+            if section == "interface":
+                current = interface
+            elif section.startswith("peer"):
+                current = {}
+                peers.append(current)
+            else:
+                current = None
             continue
-        if "=" not in line or not current:
+        if "=" not in line or current is None:
             continue
         key, value = line.split("=", 1)
-        sections.setdefault(current, {})[key.strip().lower()] = value.strip()
+        normalized_key = _canonical_wireguard_key(key)
+        normalized_value = value.strip()
+        if normalized_key in {"address", "allowedips", "dns"} and current.get(normalized_key):
+            current[normalized_key] += "," + normalized_value
+        else:
+            current[normalized_key] = normalized_value
 
-    interface = sections.get("interface") or {}
-    peer = sections.get("peer") or {}
-    endpoint_value = peer.get("endpoint", "")
-    server, port = _split_endpoint(endpoint_value)
     private_key = interface.get("privatekey", "")
-    public_key = peer.get("publickey", "")
-    if not server or not private_key or not public_key:
+    if not peers or not private_key:
         raise LinkParseError("wireguard config must contain [Interface] PrivateKey and [Peer] Endpoint/PublicKey")
 
+    parsed_peers: list[dict[str, Any]] = []
+    first_server = ""
+    first_port = 0
+    for peer in peers:
+        server, port = _split_endpoint(peer.get("endpoint", ""))
+        public_key = peer.get("publickey", "")
+        if not server or not public_key:
+            raise LinkParseError("each [Peer] must contain Endpoint and PublicKey")
+        if not first_server:
+            first_server, first_port = server, port or 51820
+        parsed_peers.append(
+            _build_wireguard_peer(
+                server=server,
+                port=port or 51820,
+                public_key=public_key,
+                allowed_ips=normalize_ip_prefixes(
+                    _split_csv(peer.get("allowedips", "0.0.0.0/0,::/0"))
+                ),
+                pre_shared_key=peer.get("presharedkey", ""),
+                persistent_keepalive=peer.get("persistentkeepalive", ""),
+            )
+        )
+
     amnezia = _amnezia_from_params({key: value for key, value in interface.items()})
-    endpoint = _build_wireguard_endpoint(
-        server=server,
-        port=port or 51820,
-        private_key=private_key,
-        public_key=public_key,
-        address=_split_csv(interface.get("address", "10.0.0.2/32")),
-        allowed_ips=_split_csv(peer.get("allowedips", "0.0.0.0/0,::/0")),
-        pre_shared_key=_clean_b64_key(peer.get("presharedkey", "")),
-        mtu=int(interface.get("mtu", "1408") or 1408),
-        amnezia=amnezia,
+    reserved = _parse_reserved_bytes(
+        interface.get("reserved") or peers[0].get("reserved") or ""
     )
-    scheme = "awg" if amnezia else "wireguard"
+    if _is_warp_endpoint(first_server) and reserved:
+        endpoint = _build_warp_profile_endpoint(
+            private_key=private_key,
+            reserved=reserved,
+            persistent_keepalive=peers[0].get("persistentkeepalive", ""),
+            amnezia=amnezia,
+            listen_port=interface.get("listenport", ""),
+        )
+    else:
+        endpoint = {
+            "type": "wireguard",
+            "tag": "proxy",
+            "mtu": int(interface.get("mtu", "1408") or 1408),
+            "address": normalize_ip_prefixes(
+                _split_csv(interface.get("address", "10.0.0.2/32"))
+            ),
+            "private_key": _clean_b64_key(private_key),
+            "peers": parsed_peers,
+            "udp_timeout": "5m0s",
+        }
+        if interface.get("listenport"):
+            endpoint["listen_port"] = int(interface["listenport"])
+        if amnezia:
+            endpoint["amnezia"] = amnezia
+    scheme = "awg" if amnezia else ("warp" if endpoint.get("type") == "warp" else "wireguard")
+    outbound = _native_singbox_outbound(endpoint)
+    dns_servers = _split_csv(interface.get("dns", ""))
+    if dns_servers:
+        outbound["_dns"] = dns_servers
+    protocol_masking = {
+        key: interface[key]
+        for key in ("id", "ip", "ib")
+        if str(interface.get(key) or "").strip()
+    }
+    if protocol_masking:
+        # sing-box-extended currently has no Id/Ip/Ib schema.  Preserve the
+        # source values outside the native endpoint instead of silently
+        # destroying them or passing unknown fields to the strict decoder.
+        outbound["_protocol_masking"] = protocol_masking
     return Node(
-        name=_wireguard_display_name(server, port or 51820, bool(amnezia), scheme),
+        name=_wireguard_display_name(first_server, first_port, bool(amnezia), scheme),
         scheme=scheme,
-        server=server,
-        port=port or 51820,
+        server=first_server,
+        port=first_port,
         link=text,
-        outbound=_native_singbox_outbound(endpoint),
-        tags=["WARP"] if _is_warp_endpoint(server) else [],
+        outbound=outbound,
+        tags=["WARP"] if _is_warp_endpoint(first_server) else [],
     )
 
 
@@ -1704,12 +2068,26 @@ def _build_warp_endpoint(params: dict[str, str]) -> dict[str, Any]:
     endpoint: dict[str, Any] = {
         "type": "warp",
         "tag": "proxy",
-        "listen_port": int(_get_param(params, "listen_port", "listenPort", default="10000") or 10000),
         "udp_timeout": _get_param(params, "udp_timeout", "udpTimeout", default="5m0s") or "5m0s",
     }
+    listen_port = _get_param(params, "listen_port", "listenPort")
+    if listen_port:
+        endpoint["listen_port"] = int(listen_port)
     amnezia = _amnezia_from_params(params)
     if amnezia:
         endpoint["amnezia"] = amnezia
+    reserved = _parse_reserved_bytes(_get_param(params, "reserved"))
+    if reserved:
+        endpoint["reserved"] = reserved
+    keepalive = _get_param(
+        params,
+        "persistent_keepalive",
+        "persistentKeepalive",
+        "persistent_keepalive_interval",
+        "keepalive",
+    )
+    if keepalive:
+        endpoint["persistent_keepalive_interval"] = int(keepalive)
     profile: dict[str, Any] = {"detour": "direct"}
     for source, target in (("id", "id"), ("private_key", "private_key"), ("privateKey", "private_key"), ("auth_token", "auth_token"), ("authToken", "auth_token")):
         value = _get_param(params, source)
@@ -1754,28 +2132,143 @@ def _build_wireguard_endpoint(
     pre_shared_key: str = "",
     mtu: int = 1408,
     amnezia: dict[str, Any] | None = None,
+    persistent_keepalive: Any = "",
+    listen_port: Any = "",
 ) -> dict[str, Any]:
-    peer: dict[str, Any] = {
-        "address": server,
-        "port": int(port),
-        "public_key": public_key,
-        "allowed_ips": allowed_ips or ["0.0.0.0/0", "::/0"],
-    }
-    if pre_shared_key:
-        peer["pre_shared_key"] = _clean_b64_key(pre_shared_key)
+    peer = _build_wireguard_peer(
+        server=server,
+        port=port,
+        public_key=public_key,
+        allowed_ips=allowed_ips,
+        pre_shared_key=pre_shared_key,
+        persistent_keepalive=persistent_keepalive,
+    )
     endpoint: dict[str, Any] = {
         "type": "wireguard",
         "tag": "proxy",
         "mtu": int(mtu or 1408),
-        "address": address or ["10.0.0.2/32"],
+        "address": normalize_ip_prefixes(address or ["10.0.0.2/32"]),
         "private_key": _clean_b64_key(private_key),
-        "listen_port": 10000,
         "peers": [peer],
         "udp_timeout": "5m0s",
     }
+    if listen_port not in (None, ""):
+        endpoint["listen_port"] = int(listen_port)
     if amnezia:
         endpoint["amnezia"] = amnezia
     return endpoint
+
+
+def _build_wireguard_peer(
+    *,
+    server: str,
+    port: int,
+    public_key: str,
+    allowed_ips: list[str],
+    pre_shared_key: str = "",
+    persistent_keepalive: Any = "",
+) -> dict[str, Any]:
+    peer: dict[str, Any] = {
+        "address": server,
+        "port": int(port),
+        "public_key": _clean_b64_key(public_key),
+        "allowed_ips": normalize_ip_prefixes(allowed_ips or ["0.0.0.0/0", "::/0"]),
+    }
+    if pre_shared_key:
+        peer["pre_shared_key"] = _clean_b64_key(pre_shared_key)
+    if persistent_keepalive not in (None, ""):
+        peer["persistent_keepalive_interval"] = int(persistent_keepalive)
+    return peer
+
+
+def _build_warp_profile_endpoint(
+    *,
+    private_key: str,
+    reserved: list[int] | None = None,
+    persistent_keepalive: Any = "",
+    amnezia: dict[str, Any] | None = None,
+    listen_port: Any = "",
+) -> dict[str, Any]:
+    endpoint: dict[str, Any] = {
+        "type": "warp",
+        "tag": "proxy",
+        "udp_timeout": "5m0s",
+        "profile": {"detour": "direct", "private_key": _clean_b64_key(private_key)},
+    }
+    if listen_port not in (None, ""):
+        endpoint["listen_port"] = int(listen_port)
+    if reserved:
+        endpoint["reserved"] = reserved
+    if persistent_keepalive not in (None, ""):
+        endpoint["persistent_keepalive_interval"] = int(persistent_keepalive)
+    if amnezia:
+        endpoint["amnezia"] = amnezia
+    return endpoint
+
+
+def _canonical_wireguard_key(value: str) -> str:
+    return re.sub(r"[\s_-]+", "", str(value or "").strip().lower())
+
+
+def _parse_reserved_bytes(value: Any) -> list[int]:
+    if value in (None, "", [], ()):
+        return []
+    if isinstance(value, (list, tuple)):
+        parts = list(value)
+    else:
+        text = str(value).strip().strip("[]")
+        parts = [part for part in re.split(r"[\s,;]+", text) if part]
+        if len(parts) == 1:
+            encoded = parts[0].replace("-", "+").replace("_", "/")
+            try:
+                decoded = base64.b64decode(
+                    encoded + "=" * (-len(encoded) % 4),
+                    validate=True,
+                )
+            except (ValueError, TypeError):
+                decoded = b""
+            if len(decoded) == 3:
+                return list(decoded)
+    try:
+        result = [int(part) for part in parts]
+    except (TypeError, ValueError) as exc:
+        raise LinkParseError("wireguard reserved must contain three bytes") from exc
+    if len(result) != 3 or any(item < 0 or item > 255 for item in result):
+        raise LinkParseError("wireguard reserved must contain three bytes")
+    return result
+
+
+def _is_xray_auto_config_payload(payload: Any) -> bool:
+    """Recognize full Xray configs whose balancer must not be split into nodes."""
+    if not isinstance(payload, dict):
+        return False
+    outbounds = payload.get("outbounds")
+    if not isinstance(outbounds, list) or not any(
+        isinstance(item, dict) and str(item.get("protocol") or "").strip()
+        for item in outbounds
+    ):
+        return False
+    if isinstance(payload.get("observatory"), dict):
+        return True
+    routing = payload.get("routing")
+    if not isinstance(routing, dict):
+        return False
+    if isinstance(routing.get("balancers"), list) and bool(routing["balancers"]):
+        return True
+    rules = routing.get("rules")
+    return isinstance(rules, list) and any(
+        isinstance(rule, dict) and str(rule.get("balancerTag") or "").strip()
+        for rule in rules
+    )
+
+
+def _native_xray_config(payload: dict[str, Any]) -> dict[str, Any]:
+    name = _json_name(payload, "AUTO")
+    return {
+        "protocol": "xray_config",
+        "tag": name,
+        "xray_config": dict(payload),
+    }
 
 
 def _amnezia_from_params(params: dict[str, str]) -> dict[str, Any]:

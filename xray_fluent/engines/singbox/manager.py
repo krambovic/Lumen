@@ -52,13 +52,23 @@ class SingBoxManager(QObject):
         self._stop_requested = False
         self._startup_failure_reported = False
         self._runtime_error_reported = False
-        self._last_output_lines: deque[str] = deque(maxlen=20)
+        # Keep enough startup context to retain the original WARP/MASQUE
+        # initialization error even when subsequent DNS requests repeat the
+        # shorter "endpoint/tunnel not initialized" message.
+        self._last_output_lines: deque[str] = deque(maxlen=100)
         self._suppressed_noisy_lines = 0
         self._last_noisy_summary_at = 0.0
         self._last_exit_code: int | None = None
         self._exe_path: Path | None = None
         self._tun_mode = True
         self._access_traces: dict[str, dict[str, str]] = {}
+        # sing-box's own ready marker is a better startup boundary than a
+        # separate PowerShell route/DNS probe.  The latter used to keep the UI
+        # in "connecting" for several seconds after real traffic was already
+        # flowing through the TUN adapter.
+        self._core_ready_event = threading.Event()
+        self._profile_ready_event = threading.Event()
+        self._profile_error_event = threading.Event()
 
     @property
     def is_running(self) -> bool:
@@ -77,6 +87,9 @@ class SingBoxManager(QObject):
         )
         if exe is None or not exe.is_file():
             return False, f"sing-box.exe not found: {exe or singbox_path}"
+        compatibility_error = self._direct_masque_compatibility_error(exe, config)
+        if compatibility_error:
+            return False, compatibility_error
         RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         config_path: Path | None = None
         try:
@@ -140,6 +153,8 @@ class SingBoxManager(QObject):
 
         tun_interface_name = self._extract_tun_interface_name(config)
         proxy_ports = self._extract_local_proxy_ports(config)
+        requires_profile_readiness = self._requires_profile_outbound_readiness(config)
+        requires_profile_confirmation = self._requires_lumen_direct_masque(config)
         self._tun_mode = bool(tun_interface_name)
         if not self._tun_mode and not proxy_ports:
             self.error.emit("sing-box config does not contain a TUN or local proxy inbound")
@@ -151,7 +166,7 @@ class SingBoxManager(QObject):
         )
 
         if self._proc_alive():
-            if not self.stop(expected=True):
+            if not self.stop(expected=True, fast=True):
                 self.error.emit("failed to stop previous sing-box process")
                 return False
         elif self._running:
@@ -174,12 +189,20 @@ class SingBoxManager(QObject):
         self._suppressed_noisy_lines = 0
         self._last_noisy_summary_at = time.monotonic()
 
-        # Try up to 3 times — wintun adapter may need time to be released
-        for attempt in range(3):
+        # Retry only actual Wintun/socket races. Profile initialization errors
+        # are deterministic for a given config, so repeating the whole startup
+        # only turns a useful failure into a long UI stall.
+        max_attempts = 1 if requires_profile_readiness or requires_profile_confirmation else 3
+        for attempt in range(max_attempts):
             attempt_started = time.monotonic()
             runtime_label = f"TUN interface={tun_interface_name}" if self._tun_mode else f"proxy ports={proxy_ports}"
-            self.log_received.emit(f"[sing-box] startup attempt {attempt + 1}/3, {runtime_label}")
+            self.log_received.emit(
+                f"[sing-box] startup attempt {attempt + 1}/{max_attempts}, {runtime_label}"
+            )
             self._last_output_lines.clear()
+            self._core_ready_event.clear()
+            self._profile_ready_event.clear()
+            self._profile_error_event.clear()
             self._stop_requested = False
             self._last_exit_code = None
 
@@ -208,6 +231,7 @@ class SingBoxManager(QObject):
             )
             self._reader.start()
 
+            profile_readiness_failed = False
             ready = (
                 self._wait_until_tun_ready(proc, tun_interface_name)
                 if self._tun_mode
@@ -215,14 +239,18 @@ class SingBoxManager(QObject):
             )
             if ready:
                 ready_ms = int((time.monotonic() - attempt_started) * 1000)
-                ready_label = "adapter and routes" if self._tun_mode else "local proxy inbounds"
+                ready_label = "core and TUN" if self._tun_mode else "local proxy inbounds"
                 self.log_received.emit(f"[sing-box] {ready_label} ready in {ready_ms} ms")
                 if self._tun_mode:
-                    sleep_with_events(0.25)
-                    if not self._tun_interface_has_ipv4(tun_interface_name):
+                    if requires_profile_confirmation:
+                        ready = self._wait_for_profile_confirmation(proc, max_wait=3.0)
+                        profile_readiness_failed = not ready
+                    elif requires_profile_readiness and not self._wait_for_profile_startup_settle(
+                        proc,
+                        max_wait=0.4,
+                    ):
+                        profile_readiness_failed = True
                         ready = False
-                    else:
-                        self._warm_windows_dns(proc)
                 if ready:
                     self._starting = False
                     total_ms = int((time.monotonic() - attempt_started) * 1000)
@@ -231,20 +259,29 @@ class SingBoxManager(QObject):
                     )
                     self._mark_running()
                     return True
-                self.log_received.emit("[sing-box] TUN route changed during readiness settle; retrying")
+                if profile_readiness_failed:
+                    suffix = "; retrying" if attempt + 1 < max_attempts else ""
+                    self.log_received.emit(
+                        f"[sing-box] WARP/MASQUE outbound did not become ready{suffix}"
+                    )
+                else:
+                    suffix = "; retrying" if attempt + 1 < max_attempts else ""
+                    self.log_received.emit(
+                        f"[sing-box] TUN did not become ready{suffix}"
+                    )
 
             exited = not self._proc_alive()
             retryable = exited and self._startup_error_is_retryable()
             if not exited:
-                self.stop(expected=True)
-                if self._tun_mode and attempt < 2:
+                self.stop(expected=True, fast=True)
+                if self._tun_mode and attempt + 1 < max_attempts:
                     self.cleanup_orphaned_tun_adapters()
                     self._wait_tun_released()
                     self._wait_clash_api_port_released()
                     self._starting = True
                     continue
 
-            if self._tun_mode and retryable and attempt < 2:
+            if self._tun_mode and retryable and attempt + 1 < max_attempts:
                 self._kill_orphaned(exe)
                 if self._startup_error_is_stale_adapter():
                     self._purge_stale_wintun_devices()  # ghost Wintun device is invisible to Get-NetAdapter cleanup
@@ -263,6 +300,8 @@ class SingBoxManager(QObject):
                 self._report_startup_failure(
                     self._unexpected_exit_message(self._last_exit_code, startup=True)
                 )
+            elif profile_readiness_failed:
+                self._report_startup_failure(self._profile_outbound_not_ready_message())
             elif self._tun_mode:
                 self._report_startup_failure(self._tun_not_ready_message(tun_interface_name))
             else:
@@ -310,7 +349,6 @@ class SingBoxManager(QObject):
         kill_timeout = 0.5 if fast else 2.0
         orphan_timeout = 2 if fast else 5
         final_timeout = 0.3 if fast else 1.0
-        release_timeout = 0.5 if fast else 4.0
 
         if not self._wait_proc(proc, terminate_timeout):
             try:
@@ -335,10 +373,10 @@ class SingBoxManager(QObject):
 
         # Let sing-box/Wintun perform the normal adapter teardown. Disabling a
         # healthy adapter here makes Windows rebuild its network state on every
-        # reconnect and delays the first real connections.
+        # reconnect and delays the first real connections. Do not start a
+        # PowerShell adapter-release probe here either: retry handling already
+        # covers the rare Wintun race, while the probe delayed every hot-swap.
         self._starting = False
-        if self._tun_mode:
-            self._wait_tun_released(max_wait=release_timeout)
         self._join_reader()
         return True
 
@@ -468,11 +506,16 @@ class SingBoxManager(QObject):
                     for line in text.splitlines():
                         clean = line.rstrip()
                         if clean:
-                            # Surface sing-box's native log lines verbatim, the
-                            # same way v2rayN does with the sing-box core: no
-                            # per-connection suppression and no custom
-                            # access-log reformatting.
                             self._last_output_lines.append(clean)
+                            self._observe_startup_line(clean)
+                            # Windows can send captured DNS and connection
+                            # traffic to the adapter before sing-box prints its
+                            # final ready marker.  Hide only that routine chatter
+                            # during this short startup window; failures and all
+                            # logs after the manager has published its running
+                            # state remain visible verbatim.
+                            if not self._running and self._is_startup_routine_line(clean):
+                                continue
                             self.log_received.emit(clean)
         except Exception:
             pass
@@ -497,16 +540,19 @@ class SingBoxManager(QObject):
             self._running = False
             self._proc = None
 
-        if was_starting and not expected:
-            if self._tun_mode:
-                self.cleanup_orphaned_tun_adapters()
-            self._report_startup_failure(self._unexpected_exit_message(exit_code, startup=True))
-        elif was_running and not expected and not self._runtime_error_reported:
+        # start() owns startup retries and reports only the final failure.  The
+        # reader thread used to report the first transient exit immediately,
+        # before start() could retry a Wintun race.
+        if was_running and not expected and not self._runtime_error_reported:
             if self._tun_mode:
                 self.cleanup_orphaned_tun_adapters()
             self._runtime_error_reported = True
             self.error.emit(self._unexpected_exit_message(exit_code, startup=False))
-        self.stopped.emit(exit_code)
+        # A failed startup attempt is an internal detail.  Emitting `stopped`
+        # here makes the controller log it as a final core crash even when the
+        # next Wintun attempt succeeds a moment later.
+        if not was_starting:
+            self.stopped.emit(exit_code)
         if was_running:
             self.state_changed.emit(False)
 
@@ -517,6 +563,16 @@ class SingBoxManager(QObject):
         self._running = True
         self.started.emit()
         self.state_changed.emit(True)
+
+    def _observe_startup_line(self, line: str) -> None:
+        """Translate native core markers into thread-safe startup events."""
+        text = str(line or "").lower()
+        if "sing-box started" in text:
+            self._core_ready_event.set()
+        if "connected to masque server" in text:
+            self._profile_ready_event.set()
+        if "tunnel not initialized" in text or "endpoint not initialized" in text:
+            self._profile_error_event.set()
 
     @staticmethod
     def _extract_tun_interface_name(config: dict[str, Any]) -> str:
@@ -546,6 +602,62 @@ class SingBoxManager(QObject):
         return tuple(ports)
 
     @staticmethod
+    def _requires_profile_outbound_readiness(config: dict[str, Any]) -> bool:
+        """Return whether adapter readiness alone cannot prove connectivity."""
+        for section in ("outbounds", "endpoints"):
+            for item in config.get(section) or []:
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("type") or "").strip().lower()
+                if item_type == "warp":
+                    return True
+                if item_type == "masque" and not (
+                    item.get("server")
+                    and item.get("private_key")
+                    and item.get("public_key")
+                    and item.get("address")
+                ):
+                    return True
+        return False
+
+    @staticmethod
+    def _requires_lumen_direct_masque(config: dict[str, Any]) -> bool:
+        """Return whether the config uses Lumen's raw Clash/usque MASQUE fields."""
+        for outbound in config.get("outbounds") or []:
+            if not isinstance(outbound, dict):
+                continue
+            if str(outbound.get("type") or "").strip().lower() != "masque":
+                continue
+            if all(
+                (
+                    outbound.get("server"),
+                    outbound.get("private_key"),
+                    outbound.get("public_key"),
+                    outbound.get("address"),
+                )
+            ):
+                return True
+        return False
+
+    @classmethod
+    def _direct_masque_compatibility_error(
+        cls,
+        exe: Path,
+        config: dict[str, Any],
+    ) -> str:
+        if not cls._requires_lumen_direct_masque(config):
+            return ""
+        version = get_singbox_version(str(exe)) or ""
+        if re.search(r"-lumen(?:\.|\b)", version, flags=re.IGNORECASE):
+            return ""
+        rendered = version or "unknown"
+        return (
+            "This MASQUE profile requires the Lumen-compatible sing-box core "
+            f"(installed: {rendered}). Reinstall or update Lumen KVN; the regular "
+            "sing-box extended build ignores raw MASQUE keys and leaves the tunnel uninitialized."
+        )
+
+    @staticmethod
     def _wait_until_proxy_ready(
         proc: subprocess.Popen[bytes],
         ports: tuple[int, ...],
@@ -573,12 +685,52 @@ class SingBoxManager(QObject):
         tun_interface_name: str,
         max_wait: float = 20.0,
     ) -> bool:
-        # Treat the runtime as ready only after Windows sees both the adapter
-        # address and a broad route through it. One persistent PowerShell probe
-        # avoids paying process/module startup cost on every 200 ms poll.
+        # `NOTICE sing-box started` is emitted after the TUN service has been
+        # initialized.  In real logs traffic already flows before the slower
+        # Get-NetIPAddress/Get-NetRoute probe returns, so use the native marker
+        # as the primary readiness contract and keep the Windows probe only as
+        # a compatibility fallback for cores that do not print it.
+        marker_wait = min(max_wait, 5.0)
+        deadline = time.monotonic() + marker_wait
+        while time.monotonic() < deadline and proc.poll() is None:
+            if self._core_ready_event.wait(0.05):
+                return proc.poll() is None
+            pump_qt_events()
+
+        if proc.poll() is not None:
+            return False
         if os.name == "nt":
-            return self._wait_for_windows_tun_ready(proc, tun_interface_name, max_wait)
-        return proc.poll() is None
+            remaining = max(0.2, max_wait - marker_wait)
+            return self._wait_for_windows_tun_ready(proc, tun_interface_name, remaining)
+        return True
+
+    def _wait_for_profile_confirmation(
+        self,
+        proc: subprocess.Popen[bytes],
+        *,
+        max_wait: float,
+    ) -> bool:
+        """Wait for the patched direct-MASQUE handshake, without DNS probes."""
+        deadline = time.monotonic() + max(0.0, max_wait)
+        while time.monotonic() < deadline and proc.poll() is None:
+            if self._profile_ready_event.wait(0.05):
+                return proc.poll() is None
+            pump_qt_events()
+        return self._profile_ready_event.is_set() and proc.poll() is None
+
+    def _wait_for_profile_startup_settle(
+        self,
+        proc: subprocess.Popen[bytes],
+        *,
+        max_wait: float,
+    ) -> bool:
+        """Give lazy WARP/profile endpoints a brief error-detection window."""
+        deadline = time.monotonic() + max(0.0, max_wait)
+        while time.monotonic() < deadline and proc.poll() is None:
+            if self._profile_error_event.wait(0.05):
+                return False
+            pump_qt_events()
+        return proc.poll() is None and not self._profile_error_event.is_set()
 
     @staticmethod
     def _wait_for_windows_tun_ready(
@@ -612,58 +764,6 @@ class SingBoxManager(QObject):
             return False
         return result.returncode == 0 and proc.poll() is None
 
-    @staticmethod
-    def _tun_interface_has_ipv4(tun_interface_name: str) -> bool:
-        escaped_name = tun_interface_name.replace("'", "''")
-        script = (
-            f"$ipv4 = Get-NetIPAddress -InterfaceAlias '{escaped_name}' -AddressFamily IPv4 -ErrorAction SilentlyContinue "
-            "| Where-Object { $_.IPAddress -and $_.IPAddress -ne '0.0.0.0' } "
-            "| Select-Object -First 1 IPAddress; "
-            f"$route = Get-NetRoute -InterfaceAlias '{escaped_name}' -AddressFamily IPv4 -ErrorAction SilentlyContinue "
-            "| Where-Object { $_.DestinationPrefix -in @('0.0.0.0/0','0.0.0.0/1','128.0.0.0/1') } "
-            "| Select-Object -First 1 DestinationPrefix; "
-            "if ($ipv4 -and $route) { exit 0 } else { exit 1 }"
-        )
-        try:
-            result = run_text_pumped(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                timeout=4,
-                check=False,
-                creationflags=_CREATE_NO_WINDOW,
-            )
-        except Exception:
-            return False
-        return result.returncode == 0
-
-    def _warm_windows_dns(self, proc: subprocess.Popen[bytes]) -> None:
-        if os.name != "nt" or proc.poll() is not None:
-            return
-        started = time.monotonic()
-        script = (
-            "$ErrorActionPreference = 'Stop'; "
-            "$answer = Resolve-DnsName -Name 'example.com' -Type A -DnsOnly -QuickTimeout "
-            "| Where-Object { $_.IPAddress } | Select-Object -First 1; "
-            "if ($answer) { [string]$answer.IPAddress; exit 0 } else { exit 1 }"
-        )
-        self.log_received.emit("[tun] warming direct and proxy DNS paths...")
-        try:
-            result = run_text_pumped(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                timeout=4,
-                check=False,
-                creationflags=_CREATE_NO_WINDOW,
-            )
-            elapsed_ms = int((time.monotonic() - started) * 1000)
-            output = result_output_text(result).strip().splitlines()
-            if result.returncode == 0:
-                answer = output[-1].strip() if output else "ok"
-                self.log_received.emit(f"[tun] DNS warm-up ready in {elapsed_ms} ms ({answer})")
-            else:
-                self.log_received.emit(f"[tun] DNS warm-up did not answer in {elapsed_ms} ms; continuing")
-        except Exception as exc:
-            elapsed_ms = int((time.monotonic() - started) * 1000)
-            self.log_received.emit(f"[tun] DNS warm-up skipped after {elapsed_ms} ms: {exc}")
-
     def _startup_error_is_retryable(self) -> bool:
         needles = (
             "already exists",
@@ -672,12 +772,27 @@ class SingBoxManager(QObject):
             "external controller listen error",
             "address already in use",
             "bind:",
+            "element not found",
         )
         for line in self._last_output_lines:
             text = line.lower()
             if any(needle in text for needle in needles):
                 return True
         return False
+
+    def _profile_outbound_not_ready_message(self) -> str:
+        marker_detail = ""
+        for line in reversed(self._last_output_lines):
+            text = str(line).lower()
+            if "tunnel not initialized" in text or "endpoint not initialized" in text:
+                marker_detail = str(line).strip()
+                break
+        suffix = f" Last core error: {marker_detail}" if marker_detail else ""
+        return (
+            "sing-box could not initialize the WARP/MASQUE profile outbound; "
+            "TUN was stopped instead of being reported as connected."
+            + suffix
+        )
 
     def _startup_error_is_stale_adapter(self) -> bool:
         needles = (
@@ -783,6 +898,13 @@ class SingBoxManager(QObject):
         if has_error_token:
             return False
         return False
+
+    @classmethod
+    def _is_startup_routine_line(cls, line: str) -> bool:
+        text = str(line or "").lower()
+        if any(marker in text for marker in ("error", "failed", "fatal", "panic")):
+            return False
+        return cls._is_noisy_runtime_line(line)
 
     _TRACE_RE = re.compile(r"\[(?P<trace>\d+)\s+[^\]]+\]\s+(?P<body>.+)$")
     _INBOUND_RE = re.compile(

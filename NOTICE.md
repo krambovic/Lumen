@@ -24,7 +24,7 @@ Bundled third-party components keep their own licenses and notices:
 
 Optional external helpers downloaded or used separately:
 
-- droute: https://github.com/snowluwu/droute
+- droute 2.0.0 (GPL-3.0, bundled frozen binary distribution; original upstream is unavailable): https://github.com/snowluwu/droute
   GPL-3.0 component used as a separate helper for Discord TCP/UDP SOCKS5
   proxying via Discord-local DLL loading and Squirrel updater hook. Its source
   code is not embedded into this repository.

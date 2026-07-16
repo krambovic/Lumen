@@ -134,20 +134,25 @@ def _normalize_channel(value: str) -> str:
 def _request_json(url: str, *, proxy_url: str | None = None, cancelled=None) -> object:
     request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     last_error: Exception | None = None
-    for attempt in range(3):
-        _raise_if_cancelled(cancelled)
-        try:
-            with urlopen_proxy_first(request, timeout=12, proxy_url=proxy_url) as response:
-                payload = response.read()
+    transports = (proxy_url, None) if proxy_url else (None,)
+    for transport_index, active_proxy in enumerate(transports):
+        for attempt in range(3):
             _raise_if_cancelled(cancelled)
-            return json.loads(payload.decode("utf-8"))
-        except UpdateCancelled:
-            raise
-        except (OSError, IncompleteRead, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            last_error = exc
-            if attempt >= 2:
+            try:
+                with urlopen_proxy_first(request, timeout=12, proxy_url=active_proxy) as response:
+                    payload = response.read()
+                _raise_if_cancelled(cancelled)
+                return json.loads(payload.decode("utf-8"))
+            except UpdateCancelled:
                 raise
-            time.sleep(0.15 * (attempt + 1))
+            except (OSError, IncompleteRead, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(0.15 * (attempt + 1))
+                    continue
+                if transport_index < len(transports) - 1:
+                    break
+                raise
     assert last_error is not None
     raise last_error
 
@@ -197,12 +202,21 @@ def _extract_digest(value: str) -> str:
 
 
 def _fetch_dgst_hash(url: str, *, proxy_url: str | None = None, cancelled=None) -> str:
-    _raise_if_cancelled(cancelled)
-    request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-    with urlopen_proxy_first(request, timeout=12, proxy_url=proxy_url) as response:
-        body = response.read().decode("utf-8", errors="replace")
-    _raise_if_cancelled(cancelled)
-    return _extract_digest(body)
+    attempts = (proxy_url, None) if proxy_url else (None,)
+    for index, active_proxy in enumerate(attempts):
+        _raise_if_cancelled(cancelled)
+        request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
+        try:
+            with urlopen_proxy_first(request, timeout=12, proxy_url=active_proxy) as response:
+                body = response.read().decode("utf-8", errors="replace")
+            _raise_if_cancelled(cancelled)
+            return _extract_digest(body)
+        except UpdateCancelled:
+            raise
+        except Exception:
+            if index == len(attempts) - 1:
+                raise
+    return ""
 
 
 def resolve_xray_release(
@@ -269,27 +283,37 @@ def _download_file(
 ) -> None:
     """Download file with optional progress callback(downloaded, total)."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-    with urlopen_proxy_first(request, timeout=120, proxy_url=proxy_url) as response:
-        if response_opened is not None:
-            response_opened(response)
+    attempts = (proxy_url, None) if proxy_url else (None,)
+    for index, active_proxy in enumerate(attempts):
+        request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
         try:
-            total = int(response.headers.get("Content-Length", 0))
-            downloaded = 0
-            with open(destination, "wb") as file:
-                while True:
-                    _raise_if_cancelled(cancelled)
-                    chunk = response.read(1024 * 1024)  # 1 MB
-                    if not chunk:
-                        break
-                    file.write(chunk)
-                    downloaded += len(chunk)
-                    if on_progress and total > 0:
-                        on_progress(downloaded, total)
-        finally:
-            if response_closed is not None:
-                response_closed(response)
-    _raise_if_cancelled(cancelled)
+            with urlopen_proxy_first(request, timeout=120, proxy_url=active_proxy) as response:
+                if response_opened is not None:
+                    response_opened(response)
+                try:
+                    total = int(response.headers.get("Content-Length", 0))
+                    downloaded = 0
+                    with open(destination, "wb") as file:
+                        while True:
+                            _raise_if_cancelled(cancelled)
+                            chunk = response.read(1024 * 1024)  # 1 MB
+                            if not chunk:
+                                break
+                            file.write(chunk)
+                            downloaded += len(chunk)
+                            if on_progress and total > 0:
+                                on_progress(downloaded, total)
+                finally:
+                    if response_closed is not None:
+                        response_closed(response)
+            _raise_if_cancelled(cancelled)
+            return
+        except UpdateCancelled:
+            raise
+        except Exception:
+            if index == len(attempts) - 1:
+                raise
+            destination.unlink(missing_ok=True)
 
 
 def _sha256_file(file_path: Path) -> str:

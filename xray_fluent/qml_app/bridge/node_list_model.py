@@ -40,6 +40,7 @@ class NodeListModel(QAbstractListModel):
     FlagSourceRole = Qt.ItemDataRole.UserRole + 19
     TransportRole = Qt.ItemDataRole.UserRole + 20
     TestedRole = Qt.ItemDataRole.UserRole + 21
+    DescriptionRole = Qt.ItemDataRole.UserRole + 22
 
     _ROLE_NAMES = {
         IdRole: b"nodeId",
@@ -62,6 +63,7 @@ class NodeListModel(QAbstractListModel):
         FlagSourceRole: b"flagSource",
         TransportRole: b"transport",
         TestedRole: b"tested",
+        DescriptionRole: b"description",
     }
 
     def __init__(self, parent=None) -> None:
@@ -95,6 +97,8 @@ class NodeListModel(QAbstractListModel):
             return _server_display_name_without_country_prefix(raw_name, country)
         if role == self.SchemeRole:
             return (node.scheme or "").upper()
+        if role == self.DescriptionRole:
+            return node.description or ""
         if role == self.TransportRole:
             return node_transport(node)
         if role == self.ServerRole:

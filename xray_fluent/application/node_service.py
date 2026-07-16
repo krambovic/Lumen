@@ -6,16 +6,18 @@ import json
 import re
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import TYPE_CHECKING
-from urllib.parse import quote, urlparse
-from urllib.request import ProxyHandler, Request
+from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.request import Request
 
 from PyQt6.QtCore import QTimer
 
 from ..country_flags import detect_country
+from ..direct_http import DirectUrlOpener
 from ..happ_crypt import HappDecryptError, decrypt_happ_link, is_happ_crypt_link, is_happ_link
-from ..http_utils import build_opener, urlopen
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
+from ..models import DEFAULT_SUBSCRIPTION_HWID
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -23,6 +25,93 @@ if TYPE_CHECKING:
 
 MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
 HAPP_WINDOWS_USER_AGENT = "Happ/2.18.3/Windows/2606241603601"
+
+# Parameters documented by Happ for premium subscriptions.  Keep the original
+# kebab-case names in persisted metadata so providers and users can see exactly
+# what the subscription requested, including platform-specific options.
+HAPP_PREMIUM_PARAMETERS: tuple[str, ...] = (
+    "new-url",
+    "new-domain",
+    "subscription-always-hwid-enable",
+    "notification-subs-expire",
+    "hide-settings",
+    "server-address-resolve-enable",
+    "server-address-resolve-dns-domain",
+    "server-address-resolve-dns-ip",
+    "subscription-autoconnect",
+    "subscription-autoconnect-type",
+    "subscription-ping-onopen-enabled",
+    "subscription-auto-update-enable",
+    "fragmentation-enable",
+    "fragmentation-packets",
+    "fragmentation-length",
+    "fragmentation-interval",
+    "ping-type",
+    "check-url-via-proxy",
+    "change-user-agent",
+    "app-auto-start",
+    "subscription-auto-update-open-enable",
+    "per-app-proxy-mode",
+    "per-app-proxy-list",
+    "sniffing-enable",
+    "subscriptions-collapse",
+    "ping-result",
+    "mux-enable",
+    "mux-tcp-connections",
+    "mux-xudp-connections",
+    "mux-quic",
+    "exclude-routes",
+)
+_HAPP_BODY_METADATA_KEYS = {
+    "providerid",
+    "provider-id",
+    "profile-title",
+    "support-url",
+    "profile-web-page-url",
+    "telegram-url",
+    "announce",
+    "announce-url",
+    *HAPP_PREMIUM_PARAMETERS,
+}
+
+
+@lru_cache(maxsize=1)
+def _windows_machine_hwid() -> str:
+    """Return the stable Windows installation identifier without spawning a process."""
+    try:
+        import winreg
+    except ImportError:
+        return ""
+
+    access = winreg.KEY_READ
+    view_flags = [getattr(winreg, "KEY_WOW64_64KEY", 0), 0]
+    for view_flag in dict.fromkeys(view_flags):
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Cryptography",
+                0,
+                access | view_flag,
+            ) as key:
+                raw_value, _ = winreg.QueryValueEx(key, "MachineGuid")
+        except OSError:
+            continue
+        value = str(raw_value or "").strip().strip("{}")
+        if not value or "\r" in value or "\n" in value:
+            continue
+        try:
+            return str(uuid.UUID(value))
+        except ValueError:
+            return value[:256]
+    return ""
+
+
+def _resolve_subscription_hwid(hwid: str, *, use_real_hwid: bool) -> str:
+    if use_real_hwid:
+        machine_hwid = _windows_machine_hwid()
+        if machine_hwid:
+            return machine_hwid
+    return str(hwid or DEFAULT_SUBSCRIPTION_HWID).strip()
 
 
 class SubscriptionFetchCancelled(RuntimeError):
@@ -268,11 +357,149 @@ def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
         info = {str(k): v for k, v in user.items()}
     elif isinstance(data.get("userStatus"), str) or "username" in data:
         info = {str(k): v for k, v in data.items() if k != "links"}
+    for key in (
+        "profileTitle",
+        "subscriptionName",
+        "supportUrl",
+        "profileUrl",
+        "telegramUrl",
+        "announcement",
+        "announcementUrl",
+        "providerId",
+        "profileUpdateInterval",
+    ):
+        if key in data and data.get(key) not in (None, ""):
+            info[key] = data.get(key)
+    premium = data.get("premiumFeatures")
+    if isinstance(premium, dict):
+        info["premiumFeatures"] = {str(key): str(value) for key, value in premium.items()}
+    direct_premium = {
+        key: str(data.get(key))
+        for key in HAPP_PREMIUM_PARAMETERS
+        if data.get(key) not in (None, "")
+    }
+    if direct_premium:
+        info["premiumFeatures"] = {
+            **dict(info.get("premiumFeatures") or {}),
+            **direct_premium,
+        }
     links = data.get("links")
     if isinstance(links, list) and links:
         links_text = "\n".join(str(item) for item in links if item)
         return links_text, info
     return text, info
+
+
+def _merge_subscription_info(*parts: dict | None) -> dict:
+    result: dict = {}
+    premium: dict[str, str] = {}
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        nested = part.get("premiumFeatures")
+        if isinstance(nested, dict):
+            premium.update({str(key): str(value) for key, value in nested.items()})
+        result.update({key: value for key, value in part.items() if key != "premiumFeatures"})
+    if premium:
+        result["premiumFeatures"] = premium
+    return result
+
+
+def _extract_happ_body_metadata(text: str) -> tuple[str, dict]:
+    """Extract Happ directives from ``#key value`` subscription comments."""
+    if not text or "#" not in text:
+        return text, {}
+    kept: list[str] = []
+    premium: dict[str, str] = {}
+    info: dict = {}
+    for line in text.splitlines():
+        match = re.match(r"^\s*#\s*([A-Za-z0-9_-]+)\s*:?[ \t]*(.*?)\s*$", line)
+        if not match:
+            kept.append(line)
+            continue
+        key = match.group(1).strip().lower().replace("_", "-")
+        value = match.group(2).strip()
+        if key not in _HAPP_BODY_METADATA_KEYS:
+            kept.append(line)
+            continue
+        if key in HAPP_PREMIUM_PARAMETERS:
+            premium[key] = value
+        elif key in {"providerid", "provider-id"}:
+            info["providerId"] = value
+        elif key == "profile-title":
+            info["profileTitle"] = _decode_profile_header(value)
+        elif key == "support-url":
+            info["supportUrl"] = value
+        elif key == "profile-web-page-url":
+            info["profileUrl"] = value
+        elif key == "telegram-url":
+            info["telegramUrl"] = value
+        elif key == "announce":
+            info["announcement"] = _decode_profile_header(value)
+        elif key == "announce-url":
+            info["announcementUrl"] = value
+    if premium:
+        info["premiumFeatures"] = premium
+    return "\n".join(kept), info
+
+
+def _metadata_from_subscription_url(url: str) -> dict:
+    parsed = urlparse(str(url or "").strip())
+    values: dict[str, list[str]] = {}
+    for raw in (parsed.query, parsed.fragment.lstrip("?")):
+        if raw:
+            values.update(parse_qs(raw, keep_blank_values=True))
+    lowered = {str(key).lower().replace("_", "-"): items for key, items in values.items()}
+    for key in ("providerid", "provider-id"):
+        items = lowered.get(key)
+        if items and str(items[0]).strip():
+            return {"providerId": str(items[0]).strip()}
+    return {}
+
+
+def _subscription_name_from_info(info: dict | None) -> str:
+    if not isinstance(info, dict):
+        return ""
+    for key in ("profileTitle", "subscriptionName", "name", "title"):
+        value = str(info.get(key) or "").strip()
+        if value:
+            return value[:160]
+    return ""
+
+
+def _premium_subscription_url(url: str, info: dict | None) -> str:
+    premium = info.get("premiumFeatures") if isinstance(info, dict) else None
+    if not isinstance(premium, dict):
+        return url
+    replacement = str(premium.get("new-url") or "").strip()
+    if replacement:
+        parsed = urlparse(replacement)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return replacement
+    new_domain = str(premium.get("new-domain") or "").strip()
+    if new_domain:
+        domain = urlparse("//" + new_domain).netloc
+        source = urlparse(url)
+        if domain and source.scheme in {"http", "https"}:
+            return source._replace(netloc=domain).geturl()
+    return url
+
+
+def _migrate_subscription_url(controller: AppController, old_url: str, new_url: str) -> bool:
+    if not new_url or new_url == old_url:
+        return False
+    if _find_subscription(controller, new_url) is not None:
+        return False
+    old_id = _subscription_id(controller, old_url)
+    new_id = str(uuid.uuid5(uuid.NAMESPACE_URL, new_url.strip()))
+    for node in controller.state.nodes:
+        if node.subscription_id == old_id:
+            node.subscription_id = new_id
+    existing = _find_subscription(controller, old_url)
+    if existing is not None:
+        existing["url"] = new_url
+        existing["id"] = new_id
+    return True
 
 
 _SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
@@ -287,7 +514,7 @@ _SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
             "X-Device-Locale": "RU",
             "X-Device-Model": "Windows_x86_64",
             "X-Device-Os": "Windows",
-            "X-Hwid": "00000000-0000-4000-8000-000000000000",
+            "X-Hwid": DEFAULT_SUBSCRIPTION_HWID,
             "X-Ver-Os": "11_10.0.26200",
         },
     ),
@@ -368,8 +595,24 @@ def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
             "subscription-url",
         )
         telegram_url = _first_header(headers, "telegram-url", "telegram_url", "telegram-link", "telegram")
+        announcement = _decode_profile_header(_first_header(headers, "announce", "announcement"))
+        announcement_url = _first_header(headers, "announce-url", "announcement-url")
+        provider_id = _first_header(headers, "providerid", "provider-id", "provider_id")
+        update_interval = _first_header(headers, "profile-update-interval")
+        content_disposition = _first_header(headers, "content-disposition")
     except Exception:
         return info
+    if not profile_title and content_disposition:
+        filename_match = re.search(
+            r"filename\*?=(?:UTF-8''|\")?([^\";]+)",
+            content_disposition,
+            flags=re.IGNORECASE,
+        )
+        if filename_match:
+            candidate = unquote(filename_match.group(1)).strip().strip('"')
+            candidate = re.sub(r"\.(?:ya?ml|json|txt|conf)$", "", candidate, flags=re.IGNORECASE)
+            if candidate.lower() not in {"config", "subscription", "download"} and not candidate.isdigit():
+                profile_title = candidate[:160]
     if profile_title:
         info["profileTitle"] = profile_title
     if support_url:
@@ -378,6 +621,21 @@ def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
         info["profileUrl"] = profile_url
     if telegram_url:
         info["telegramUrl"] = telegram_url
+    if announcement:
+        info["announcement"] = announcement
+    if announcement_url:
+        info["announcementUrl"] = announcement_url
+    if provider_id:
+        info["providerId"] = provider_id
+    if update_interval:
+        info["profileUpdateInterval"] = update_interval
+    premium = {
+        key: _first_header(headers, key, key.replace("-", "_"))
+        for key in HAPP_PREMIUM_PARAMETERS
+    }
+    premium = {key: value for key, value in premium.items() if value != ""}
+    if premium:
+        info["premiumFeatures"] = premium
     return info
 
 
@@ -397,7 +655,7 @@ def _fetch_subscription_with_headers(
     profile_name: str,
     headers: dict[str, str],
     *,
-    direct: bool = False,
+    direct: bool = True,
     cancelled=None,
     response_opened=None,
     response_closed=None,
@@ -405,51 +663,52 @@ def _fetch_subscription_with_headers(
     """Загружает подписку и возвращает (текст_со_ссылками, userinfo).
 
     userinfo берётся из HTTP-заголовка subscription-userinfo и/или из JSON-тела.
+    Системный/ENV-прокси отключён, а Windows TUN обходится временными
+    маршрутами через физический интерфейс. ``direct`` оставлен только для
+    обратной совместимости с внутренними вызовами.
     """
     request = Request(url, headers=dict(headers))
-    opener = build_opener(ProxyHandler({})) if direct else None
-    open_fn = opener.open if opener is not None else urlopen
     _raise_if_subscription_cancelled(cancelled)
-    with open_fn(request, timeout=20) as response:
-        if response_opened is not None:
-            response_opened(response)
-        try:
+    with DirectUrlOpener() as opener:
+        with opener.open(request, timeout=20) as response:
+            if response_opened is not None:
+                response_opened(response)
             try:
-                declared_size = int(response.headers.get("Content-Length", 0) or 0)
-            except (TypeError, ValueError):
-                declared_size = 0
-            if declared_size > MAX_SUBSCRIPTION_BYTES:
-                raise RuntimeError(
-                    f"подписка слишком большая: {declared_size} байт, максимум {MAX_SUBSCRIPTION_BYTES}"
-                )
-            payload = bytearray()
-            while True:
-                _raise_if_subscription_cancelled(cancelled)
-                chunk = response.read(min(64 * 1024, MAX_SUBSCRIPTION_BYTES + 1 - len(payload)))
-                if not chunk:
-                    break
-                payload.extend(chunk)
-                if len(payload) > MAX_SUBSCRIPTION_BYTES:
+                try:
+                    declared_size = int(response.headers.get("Content-Length", 0) or 0)
+                except (TypeError, ValueError):
+                    declared_size = 0
+                if declared_size > MAX_SUBSCRIPTION_BYTES:
                     raise RuntimeError(
-                        f"подписка превышает допустимый размер {MAX_SUBSCRIPTION_BYTES} байт"
+                        f"подписка слишком большая: {declared_size} байт, максимум {MAX_SUBSCRIPTION_BYTES}"
                     )
-            raw = bytes(payload)
-            try:
-                header_value = response.headers.get("subscription-userinfo", "")
-            except Exception:  # noqa: BLE001 - защита от нестандартных ответов
-                header_value = ""
-            metadata = _extract_subscription_metadata(response.headers, profile_name)
-        finally:
-            if response_closed is not None:
-                response_closed(response)
-    userinfo = _parse_userinfo_header(header_value)
-    userinfo = {**userinfo, **metadata}
+                payload = bytearray()
+                while True:
+                    _raise_if_subscription_cancelled(cancelled)
+                    chunk = response.read(min(64 * 1024, MAX_SUBSCRIPTION_BYTES + 1 - len(payload)))
+                    if not chunk:
+                        break
+                    payload.extend(chunk)
+                    if len(payload) > MAX_SUBSCRIPTION_BYTES:
+                        raise RuntimeError(
+                            f"подписка превышает допустимый размер {MAX_SUBSCRIPTION_BYTES} байт"
+                        )
+                raw = bytes(payload)
+                try:
+                    header_value = response.headers.get("subscription-userinfo", "")
+                except Exception:  # noqa: BLE001 - защита от нестандартных ответов
+                    header_value = ""
+                metadata = _extract_subscription_metadata(response.headers, profile_name)
+            finally:
+                if response_closed is not None:
+                    response_closed(response)
+    userinfo = _merge_subscription_info(_parse_userinfo_header(header_value), metadata)
     text = raw.decode("utf-8", errors="replace").strip()
+    text, directive_info = _extract_happ_body_metadata(text)
     # JSON-тело (например, формат с {"user": {...}, "links": [...]}).
     text, body_info = _extract_userinfo_from_body(text)
-    if body_info:
-        # Данные из тела приоритетнее заголовка.
-        userinfo = {**userinfo, **body_info}
+    # Данные из тела приоритетнее заголовка.
+    userinfo = _merge_subscription_info(userinfo, directive_info, body_info)
     decoded = _maybe_base64_decode(text)
     return (decoded or text), userinfo
 
@@ -508,13 +767,15 @@ def _derive_subscription_name(url: str) -> str:
 
 def _happ_direct_payload(decrypted: str) -> tuple[str, dict, list[str]]:
     """Оформляет расшифрованное тело happ-подписки (список ссылок / base64 / JSON)."""
-    text, body_info = _extract_userinfo_from_body(decrypted)
+    text, directive_info = _extract_happ_body_metadata(decrypted)
+    text, body_info = _extract_userinfo_from_body(text)
+    merged_info = _merge_subscription_info({"clientProfile": "Happ"}, directive_info, body_info)
     text = _maybe_base64_decode(text) or text
     nodes, errors = parse_links_text(text)
     if nodes and _parsed_nodes_are_usable(nodes):
-        return text, {"clientProfile": "Happ", **body_info}, errors
+        return text, merged_info, errors
     detail = "; ".join((_node_validation_errors(nodes) or errors)[:2]) or "нет подходящих серверов"
-    return "", body_info, [f"Happ: {detail}"]
+    return "", merged_info, [f"Happ: {detail}"]
 
 
 def _find_subscription(controller: AppController, url: str) -> dict | None:
@@ -537,6 +798,8 @@ def fetch_subscription_payload(
     url: str,
     *,
     user_agent: str = "",
+    hwid: str = DEFAULT_SUBSCRIPTION_HWID,
+    use_real_hwid: bool = True,
     converter_url: str = "",
     cancelled=None,
     response_opened=None,
@@ -578,7 +841,15 @@ def fetch_subscription_payload(
         fetch_options["response_opened"] = response_opened
     if response_closed is not None:
         fetch_options["response_closed"] = response_closed
-    profiles = list(_SUBSCRIPTION_CLIENT_PROFILES)
+    request_hwid = _resolve_subscription_hwid(hwid, use_real_hwid=use_real_hwid)
+    if "\r" in request_hwid or "\n" in request_hwid:
+        return "", {}, ["HWID не должен содержать переносы строк"]
+    if len(request_hwid) > 256:
+        return "", {}, ["HWID не должен быть длиннее 256 символов"]
+    profiles = [
+        (profile_name, {**headers, "X-Hwid": request_hwid})
+        for profile_name, headers in _SUBSCRIPTION_CLIENT_PROFILES
+    ]
     custom_user_agent = str(user_agent or "").strip()
     if custom_user_agent:
         profiles.insert(
@@ -589,6 +860,7 @@ def fetch_subscription_payload(
                     "User-Agent": custom_user_agent,
                     "Accept": "text/yaml,application/yaml,application/json,*/*",
                     "Profile-Update-Interval": "24",
+                    "X-Hwid": request_hwid,
                 },
             ),
         )
@@ -599,8 +871,11 @@ def fetch_subscription_payload(
                 url,
                 profile_name,
                 headers,
+                direct=True,
                 **fetch_options,
             )
+            userinfo = _merge_subscription_info(_metadata_from_subscription_url(url), userinfo)
+            userinfo = {**userinfo, "networkPath": "direct"}
             if userinfo and not first_userinfo:
                 first_userinfo = dict(userinfo)
             nodes, errors = parse_links_text(text)
@@ -621,6 +896,8 @@ def fetch_subscription_payload(
                         direct=True,
                         **fetch_options,
                     )
+                    userinfo = _merge_subscription_info(_metadata_from_subscription_url(url), userinfo)
+                    userinfo = {**userinfo, "networkPath": "direct"}
                     if userinfo and not first_userinfo:
                         first_userinfo = dict(userinfo)
                     nodes, errors = parse_links_text(text)
@@ -694,6 +971,79 @@ def _filter_subscription_nodes(controller: AppController, nodes: list) -> tuple[
             continue
         filtered.append(node)
     return filtered, []
+
+
+def _happ_enabled(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _apply_happ_premium_settings(controller: AppController, info: dict) -> list[str]:
+    """Apply only Happ commands that have a direct, safe Windows equivalent."""
+    premium = info.get("premiumFeatures") if isinstance(info, dict) else None
+    if not isinstance(premium, dict) or not premium:
+        return []
+    settings = getattr(getattr(controller, "state", None), "settings", None)
+    if settings is None:
+        return []
+    applied: list[str] = []
+
+    def assign(key: str, attribute: str, value: object) -> None:
+        if key not in premium:
+            return
+        if getattr(settings, attribute, None) != value:
+            setattr(settings, attribute, value)
+        applied.append(key)
+
+    if "subscription-always-hwid-enable" in premium and _happ_enabled(
+        premium["subscription-always-hwid-enable"]
+    ):
+        assign("subscription-always-hwid-enable", "subscription_use_real_hwid", True)
+    if "subscription-autoconnect" in premium:
+        assign("subscription-autoconnect", "auto_connect_last", _happ_enabled(premium["subscription-autoconnect"]))
+    if "subscription-auto-update-enable" in premium:
+        enabled = _happ_enabled(premium["subscription-auto-update-enable"])
+        current = int(getattr(settings, "subscription_auto_update_minutes", 240) or 0)
+        assign("subscription-auto-update-enable", "subscription_auto_update_minutes", max(1, current or 240) if enabled else 0)
+    if "fragmentation-enable" in premium:
+        enabled = _happ_enabled(premium["fragmentation-enable"])
+        assign("fragmentation-enable", "enable_xray_fragment", enabled)
+        settings.enable_final_fragment = enabled
+    assign("fragmentation-packets", "fragment_packets", str(premium.get("fragmentation-packets") or "tlshello").strip())
+    assign("fragmentation-length", "fragment_length", str(premium.get("fragmentation-length") or "50-100").strip())
+    assign("fragmentation-interval", "fragment_delay", str(premium.get("fragmentation-interval") or "10-20").strip())
+    if "ping-type" in premium:
+        ping_method = {
+            "proxy": "real",
+            "tcp": "tcping",
+            "icmp": "icmp",
+        }.get(str(premium["ping-type"]).strip().lower())
+        if ping_method:
+            assign("ping-type", "ping_method", ping_method)
+    if "change-user-agent" in premium:
+        assign("change-user-agent", "subscription_user_agent", str(premium["change-user-agent"]).strip())
+    if "mux-enable" in premium:
+        assign("mux-enable", "multiplex_enabled", _happ_enabled(premium["mux-enable"]))
+    if "mux-tcp-connections" in premium:
+        try:
+            concurrency = max(-1, min(1024, int(str(premium["mux-tcp-connections"]).strip())))
+        except (TypeError, ValueError):
+            concurrency = None
+        if concurrency is not None:
+            assign("mux-tcp-connections", "multiplex_concurrency", concurrency)
+    if "exclude-routes" in premium:
+        routing = getattr(getattr(controller, "state", None), "routing", None)
+        if routing is not None:
+            values = [
+                value
+                for value in re.split(r"[\s,;]+", str(premium["exclude-routes"] or "").strip())
+                if value
+            ]
+            routing.tun_route_exclude_address = values
+            applied.append("exclude-routes")
+    # Sniffing is part of both generated Xray and sing-box runtime configs.
+    if "sniffing-enable" in premium and _happ_enabled(premium["sniffing-enable"]):
+        applied.append("sniffing-enable")
+    return list(dict.fromkeys(applied))
 
 
 def _apply_subscription_payload(
@@ -784,6 +1134,14 @@ def _apply_subscription_payload(
     remaining = [node for node in controller.state.nodes if node.id not in old_ids]
     controller.state.nodes = [*remaining, *prepared]
 
+    effective_url = _premium_subscription_url(url, result_info)
+    if effective_url != url and _migrate_subscription_url(controller, url, effective_url):
+        result_info["_lumen_effective_url"] = effective_url
+
+    premium_applied = _apply_happ_premium_settings(controller, result_info)
+    if premium_applied:
+        result_info["premiumApplied"] = premium_applied
+
     reconnect_needed = False
     if selected_old is not None:
         replacement = next((node for node in prepared if node.link == selected_old.link), None)
@@ -808,21 +1166,29 @@ def _import_subscription_payload(
     group: str,
     *,
     replace_existing_group: bool = False,
+    prefer_metadata_name: bool = False,
 ) -> tuple[int, list[str], dict]:
     # Синхронный путь (блокирует поток). Оставлен для обратной совместимости.
     settings = controller.state.settings
     fetched = fetch_subscription_payload(
         url,
         user_agent=getattr(settings, "subscription_user_agent", ""),
+        hwid=getattr(settings, "subscription_hwid", DEFAULT_SUBSCRIPTION_HWID),
+        use_real_hwid=bool(getattr(settings, "subscription_use_real_hwid", True)),
         converter_url=(
             getattr(settings, "subscription_converter_url", "")
             if getattr(settings, "subscription_converter_enabled", False)
             else ""
         ),
     )
-    return _apply_subscription_payload(
-        controller, url, group, fetched, replace_existing_group=replace_existing_group
+    effective_group = group
+    if prefer_metadata_name:
+        effective_group = _subscription_name_from_info(fetched[1]) or group
+    added, errors, info = _apply_subscription_payload(
+        controller, url, effective_group, fetched, replace_existing_group=replace_existing_group
     )
+    info["_lumen_group"] = effective_group
+    return added, errors, info
 
 
 def _record_subscription(
@@ -893,10 +1259,18 @@ def import_subscription(
             controller.subscriptions_changed.emit(list(controller.state.subscriptions))
             controller.save()
         return update_subscription(controller, url)
-    group = (name or "").strip() or _derive_subscription_name(url)
-    added, errors, userinfo = _import_subscription_payload(controller, url, group)
+    explicit_group = (name or "").strip()
+    group = explicit_group or _derive_subscription_name(url)
+    added, errors, userinfo = _import_subscription_payload(
+        controller,
+        url,
+        group,
+        prefer_metadata_name=not bool(explicit_group),
+    )
+    group = str(userinfo.pop("_lumen_group", group) or group)
+    effective_url = str(userinfo.pop("_lumen_effective_url", url) or url)
     if userinfo.pop("_lumen_applied", False):
-        _record_subscription(controller, url, group, added, userinfo)
+        _record_subscription(controller, effective_url, group, added, userinfo)
     return added, errors
 
 
@@ -909,8 +1283,10 @@ def update_subscription(controller: AppController, url: str) -> tuple[int, list[
     added, errors, userinfo = _import_subscription_payload(
         controller, url, group, replace_existing_group=True
     )
+    userinfo.pop("_lumen_group", None)
+    effective_url = str(userinfo.pop("_lumen_effective_url", url) or url)
     if userinfo.pop("_lumen_applied", False):
-        _record_subscription(controller, url, group, added, userinfo)
+        _record_subscription(controller, effective_url, group, added, userinfo)
     return added, errors
 
 
@@ -946,7 +1322,11 @@ def apply_fetched_subscription(
     existing = _find_subscription(controller, url)
 
     if kind == "import" and existing is None:
-        group = (name or "").strip() or _derive_subscription_name(url)
+        group = (
+            (name or "").strip()
+            or _subscription_name_from_info(userinfo)
+            or _derive_subscription_name(url)
+        )
         replace = False
     else:
         if existing is None:
@@ -980,7 +1360,8 @@ def apply_fetched_subscription(
     applied = bool(info.pop("_lumen_applied", False))
     if not applied:
         return added, errs
-    _record_subscription(controller, url, group, added, info)
+    effective_url = str(info.pop("_lumen_effective_url", url) or url)
+    _record_subscription(controller, effective_url, group, added, info)
     return added, errs
 
 

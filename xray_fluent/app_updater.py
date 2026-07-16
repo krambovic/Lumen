@@ -15,11 +15,14 @@ import tempfile
 import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import Request
 
-from .http_utils import abort_http_response, build_opener, urlopen
+from .direct_http import DirectUrlOpener
+from .http_utils import abort_http_response, build_opener, urlopen_proxy_first
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import APP_VERSION, BASE_DIR
@@ -290,10 +293,17 @@ class UpdateChecker(QThread):
     result = pyqtSignal(object)  # AppUpdate | None
     error = pyqtSignal(str)
 
-    def __init__(self, parent=None, channel: str = "stable", prefer_qml: bool = False):
+    def __init__(
+        self,
+        parent=None,
+        channel: str = "stable",
+        prefer_qml: bool = False,
+        proxy_url: str | None = None,
+    ):
         super().__init__(parent)
         self._channel = (channel or "stable").strip().lower()
         self._prefer_qml = bool(prefer_qml) or self._channel == "nightly"
+        self._proxy_url = proxy_url
         self._cancelled = threading.Event()
         self._responses: list[object] = []
         self._response_lock = threading.Lock()
@@ -356,28 +366,48 @@ class UpdateChecker(QThread):
         return self._channel in ("beta", "nightly", "prerelease", "pre-release", "pre")
 
     def _fetch_json(self, url: str):
-        self._raise_if_cancelled()
-        req = Request(url, headers={"User-Agent": USER_AGENT})
-        with urlopen(req, timeout=15) as resp:
-            self._register_response(resp)
+        attempts = (self._proxy_url, None) if self._proxy_url else (None,)
+        for index, proxy_url in enumerate(attempts):
+            self._raise_if_cancelled()
+            req = Request(url, headers={"User-Agent": USER_AGENT})
             try:
-                payload = resp.read()
-            finally:
-                self._unregister_response(resp)
-        self._raise_if_cancelled()
-        return json.loads(payload)
+                with urlopen_proxy_first(req, timeout=15, proxy_url=proxy_url) as resp:
+                    self._register_response(resp)
+                    try:
+                        payload = resp.read()
+                    finally:
+                        self._unregister_response(resp)
+                self._raise_if_cancelled()
+                return json.loads(payload)
+            except UpdateOperationCancelled:
+                raise
+            except Exception:
+                if index == len(attempts) - 1:
+                    raise
+                _log.warning("App update check through proxy failed; retrying direct")
+        raise RuntimeError("app update check failed")
 
     def _fetch_text(self, url: str) -> str:
-        self._raise_if_cancelled()
-        request = Request(url, headers={"User-Agent": USER_AGENT})
-        with urlopen(request, timeout=15) as response:
-            self._register_response(response)
+        attempts = (self._proxy_url, None) if self._proxy_url else (None,)
+        for index, proxy_url in enumerate(attempts):
+            self._raise_if_cancelled()
+            request = Request(url, headers={"User-Agent": USER_AGENT})
             try:
-                payload = response.read()
-            finally:
-                self._unregister_response(response)
-        self._raise_if_cancelled()
-        return payload.decode("utf-8", errors="replace")
+                with urlopen_proxy_first(request, timeout=15, proxy_url=proxy_url) as response:
+                    self._register_response(response)
+                    try:
+                        payload = response.read()
+                    finally:
+                        self._unregister_response(response)
+                self._raise_if_cancelled()
+                return payload.decode("utf-8", errors="replace")
+            except UpdateOperationCancelled:
+                raise
+            except Exception:
+                if index == len(attempts) - 1:
+                    raise
+                _log.warning("App update metadata download through proxy failed; retrying direct")
+        raise RuntimeError("app update metadata download failed")
 
     def _latest_stable(self) -> dict | None:
         # /releases/latest всегда отдаёт новейший НЕ-pre-release независимо от
@@ -565,10 +595,30 @@ class UpdateDownloader(QThread):
             return response.read(_CHUNK_SIZE)
 
     def _build_opener(self, proxy_url: str | None) -> urllib.request.OpenerDirector:
+        if not proxy_url:
+            raise ValueError("proxy URL is required for the proxy opener")
+        handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        return build_opener(handler)
+
+    @contextmanager
+    def _opener_scope(self, proxy_url: str | None):
         if proxy_url:
-            handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
-            return build_opener(handler)
-        return build_opener()
+            opener = self._build_opener(proxy_url)
+            try:
+                yield opener
+            finally:
+                opener.close()
+            return
+        host = (urlsplit(self._update.download_url).hostname or "").lower()
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            opener = build_opener(urllib.request.ProxyHandler({}))
+            try:
+                yield opener
+            finally:
+                opener.close()
+            return
+        with DirectUrlOpener() as opener:
+            yield opener
 
     def _supports_range(self, url: str, opener: urllib.request.OpenerDirector) -> tuple[bool, int]:
         """HEAD request to check Range support and get Content-Length."""
@@ -586,7 +636,7 @@ class UpdateDownloader(QThread):
     def _download_segment(
         self,
         url: str,
-        proxy_url: str | None,
+        opener: urllib.request.OpenerDirector,
         start: int,
         end: int,
         seg_path: Path,
@@ -596,7 +646,6 @@ class UpdateDownloader(QThread):
         total: int,
     ) -> None:
         """Download one segment with Range header."""
-        opener = self._build_opener(proxy_url)
         expected_length = end - start + 1
         req = Request(url, headers={
             "User-Agent": USER_AGENT,
@@ -658,8 +707,15 @@ class UpdateDownloader(QThread):
         Tries parallel Range-based download first; falls back to single
         connection if the server doesn't support Range requests.
         """
+        with self._opener_scope(proxy_url) as opener:
+            self._download_with_opener(target_path, opener)
+
+    def _download_with_opener(
+        self,
+        target_path: Path,
+        opener: urllib.request.OpenerDirector,
+    ) -> None:
         url = self._update.download_url
-        opener = self._build_opener(proxy_url)
 
         # Check if server supports Range requests
         try:
@@ -697,7 +753,7 @@ class UpdateDownloader(QThread):
                 for i, (start, end) in enumerate(segments):
                     fut = pool.submit(
                         self._download_segment,
-                        url, proxy_url, start, end,
+                        url, opener, start, end,
                         seg_paths[i], i, lock, progress_arr, total,
                     )
                     futures.append(fut)

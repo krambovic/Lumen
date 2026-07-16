@@ -211,10 +211,20 @@ def ensure_xray_metrics_contract(
 
 def build_runtime_xray_config(controller: AppController, node: Node | None = None) -> XrayRuntimeConfig:
     source_path, text = controller.load_active_xray_config_text()
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{source_path.name}: {controller._format_json_error_message(text, exc)}") from exc
+    node_outbound = node.outbound if node is not None and isinstance(node.outbound, dict) else {}
+    full_xray_config = (
+        node_outbound.get("xray_config")
+        if str(node_outbound.get("protocol") or "").strip().lower() == "xray_config"
+        else None
+    )
+    using_full_node_config = isinstance(full_xray_config, dict)
+    if using_full_node_config:
+        payload = deepcopy(full_xray_config)
+    else:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{source_path.name}: {controller._format_json_error_message(text, exc)}") from exc
 
     if not isinstance(payload, dict):
         raise ValueError("Корень xray config должен быть JSON-объектом.")
@@ -233,9 +243,9 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
     api_port, inbound_tags = controller._ensure_xray_metrics_contract(payload, allocate_port=True)
 
     outbounds = payload.get("outbounds")
-    has_proxy_outbound = False
-    used_selected_node = False
-    if isinstance(outbounds, list):
+    has_proxy_outbound = bool(using_full_node_config and isinstance(outbounds, list) and outbounds)
+    used_selected_node = using_full_node_config
+    if isinstance(outbounds, list) and not using_full_node_config:
         for index, outbound in enumerate(outbounds):
             if not isinstance(outbound, dict) or outbound.get("tag") != "proxy":
                 continue
@@ -258,8 +268,11 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
             used_selected_node = True
             break
 
-    apply_xray_gui_routing(payload, controller._runtime_routing(), controller.state.settings)
-    if controller.state.settings.enable_xray_fragment:
+    # A full AUTO profile owns its routing/observatory contract. Replacing the
+    # rules here would silently remove balancerTag=auto and disable leastPing.
+    if not using_full_node_config:
+        apply_xray_gui_routing(payload, controller._runtime_routing(), controller.state.settings)
+    if not using_full_node_config and controller.state.settings.enable_xray_fragment:
         patched = apply_xray_outbound_fragment(
             payload,
             packets=controller.state.settings.fragment_packets,
@@ -269,7 +282,7 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
         )
         if patched:
             controller._log(f"[xray] outbound fragment enabled for {patched} outbound(s)")
-    if controller.state.settings.enable_final_fragment:
+    if not using_full_node_config and controller.state.settings.enable_final_fragment:
         patched = apply_xray_final_fragment(
             payload,
             packets=controller.state.settings.fragment_packets,

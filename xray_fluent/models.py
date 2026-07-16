@@ -11,6 +11,7 @@ from .constants import ROUTING_RULE, STATE_SCHEMA_VERSION
 
 DEFAULT_WINDOW_WIDTH = 1280
 DEFAULT_WINDOW_HEIGHT = 720
+DEFAULT_SUBSCRIPTION_HWID = "00000000-0000-4000-8000-000000000000"
 _LEGACY_WINDOW_DEFAULT = (1024, 768)
 
 
@@ -82,6 +83,7 @@ class Node:
     speed_history: list[tuple[str, float | None]] = field(default_factory=list)
     sort_order: int = 0
     subscription_id: str = ""
+    description: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +106,7 @@ class Node:
             "speed_history": self.speed_history,
             "sort_order": self.sort_order,
             "subscription_id": self.subscription_id,
+            "description": self.description,
         }
 
     @staticmethod
@@ -128,6 +131,7 @@ class Node:
             speed_history=data.get("speed_history", []),
             sort_order=int(data.get("sort_order", 0)),
             subscription_id=str(data.get("subscription_id") or ""),
+            description=str(data.get("description") or ""),
         )
 
 
@@ -158,7 +162,9 @@ class RoutingSettings:
     process_rules: list[dict[str, str]] = field(default_factory=list)  # [{"process": "chrome.exe", "action": "direct|proxy|block"}]
     process_preset_routes: dict[str, str] = field(default_factory=dict)  # {"telegram": "proxy", "windows_system": "direct"}
     service_routes: dict[str, str] = field(default_factory=dict)  # {"youtube": "proxy", "steam": "direct", ...}
-    tun_default_outbound: str = "direct"  # "proxy" | "direct"
+    # Kept in persisted data for compatibility with older presets. The runtime
+    # now derives the fallback from the active preset and otherwise uses proxy.
+    tun_default_outbound: str = "proxy"  # "proxy" | "direct"
 
     def __post_init__(self) -> None:
         bootstrap_defaults = ["1.1.1.1", "8.8.8.8"] if self.dns_bootstrap_server == "1.1.1.1" else [self.dns_bootstrap_server]
@@ -254,7 +260,7 @@ class RoutingSettings:
             process_rules=list(data.get("process_rules") or []),
             process_preset_routes=dict(data.get("process_preset_routes") or {}),
             service_routes=dict(data.get("service_routes") or {}),
-            tun_default_outbound=str(data.get("tun_default_outbound") or "direct"),
+            tun_default_outbound=str(data.get("tun_default_outbound") or "proxy"),
         )
 
 
@@ -350,6 +356,8 @@ class AppSettings:
     subscription_include_regex: str = ""
     subscription_exclude_regex: str = ""
     subscription_user_agent: str = ""
+    subscription_use_real_hwid: bool = True
+    subscription_hwid: str = DEFAULT_SUBSCRIPTION_HWID
     subscription_converter_enabled: bool = False
     subscription_converter_url: str = ""
     # ── Внешний вид 2.0 (Appearance Studio) ──
@@ -455,6 +463,8 @@ class AppSettings:
             "subscription_include_regex": self.subscription_include_regex,
             "subscription_exclude_regex": self.subscription_exclude_regex,
             "subscription_user_agent": self.subscription_user_agent,
+            "subscription_use_real_hwid": self.subscription_use_real_hwid,
+            "subscription_hwid": self.subscription_hwid,
             "subscription_converter_enabled": self.subscription_converter_enabled,
             "subscription_converter_url": self.subscription_converter_url,
             "ui_density": self.ui_density,
@@ -551,6 +561,8 @@ class AppSettings:
             subscription_include_regex=str(data.get("subscription_include_regex") or ""),
             subscription_exclude_regex=str(data.get("subscription_exclude_regex") or ""),
             subscription_user_agent=str(data.get("subscription_user_agent") or ""),
+            subscription_use_real_hwid=bool(data.get("subscription_use_real_hwid", True)),
+            subscription_hwid=str(data.get("subscription_hwid") or DEFAULT_SUBSCRIPTION_HWID),
             subscription_converter_enabled=bool(data.get("subscription_converter_enabled", False)),
             subscription_converter_url=str(data.get("subscription_converter_url") or ""),
             ui_density=str(data.get("ui_density") or "comfortable"),

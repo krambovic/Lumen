@@ -90,6 +90,80 @@ def test_windows_tun_readiness_uses_single_persistent_probe(monkeypatch) -> None
     assert "Get-NetIPAddress" in calls[0][0][-1]
 
 
+def test_native_core_ready_marker_skips_slow_windows_probe(monkeypatch) -> None:
+    manager = SingBoxManager()
+    manager._observe_startup_line("NOTICE sing-box started (0.42s)")
+    proc = SimpleNamespace(poll=lambda: None)
+
+    def unexpected_probe(*_args, **_kwargs):
+        raise AssertionError("PowerShell readiness probe must be a fallback only")
+
+    monkeypatch.setattr(manager, "_wait_for_windows_tun_ready", unexpected_probe)
+
+    assert manager._wait_until_tun_ready(proc, "singbox_tun", max_wait=1.0)
+
+
+def test_direct_masque_confirmation_uses_native_handshake_marker() -> None:
+    manager = SingBoxManager()
+    manager._observe_startup_line(
+        "NOTICE outbound/masque[proxy]: Connected to MASQUE server 162.159.198.2:443"
+    )
+    proc = SimpleNamespace(poll=lambda: None)
+
+    assert manager._wait_for_profile_confirmation(proc, max_wait=0.1)
+
+
+def test_transient_masque_error_does_not_override_later_handshake() -> None:
+    manager = SingBoxManager()
+    manager._observe_startup_line("ERROR outbound/masque[proxy]: tunnel not initialized")
+    manager._observe_startup_line(
+        "NOTICE outbound/masque[proxy]: Connected to MASQUE server 162.159.198.2:443"
+    )
+    proc = SimpleNamespace(poll=lambda: None)
+
+    assert manager._wait_for_profile_confirmation(proc, max_wait=0.1)
+
+
+def test_profile_initialization_error_fails_fast() -> None:
+    manager = SingBoxManager()
+    manager._observe_startup_line("ERROR outbound/masque[proxy]: tunnel not initialized")
+    proc = SimpleNamespace(poll=lambda: None)
+
+    assert not manager._wait_for_profile_startup_settle(proc, max_wait=1.0)
+
+
+def test_fast_stop_does_not_block_on_adapter_release_probe(monkeypatch) -> None:
+    class FakeProc:
+        def __init__(self) -> None:
+            self.returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.returncode = 0
+
+    manager = SingBoxManager()
+    manager._proc = FakeProc()
+    manager._tun_mode = True
+
+    def unexpected_release_probe(*_args, **_kwargs):
+        raise AssertionError("fast stop must not launch a PowerShell release probe")
+
+    monkeypatch.setattr(manager, "_wait_tun_released", unexpected_release_probe)
+
+    assert manager.stop(fast=True)
+
+
+def test_startup_chatter_filter_never_hides_errors() -> None:
+    assert SingBoxManager._is_startup_routine_line(
+        "INFO outbound/masque[proxy]: outbound connection to 1.1.1.1:53"
+    )
+    assert not SingBoxManager._is_startup_routine_line(
+        "ERROR outbound/masque[proxy]: tunnel not initialized"
+    )
+
+
 def test_proxy_runtime_ports_are_detected_without_tun() -> None:
     config = {
         "inbounds": [
@@ -102,18 +176,117 @@ def test_proxy_runtime_ports_are_detected_without_tun() -> None:
     assert SingBoxManager._extract_local_proxy_ports(config) == (10808, 10809)
 
 
-def test_dns_warmup_uses_neutral_single_host(monkeypatch) -> None:
-    calls = []
+def test_custom_warp_and_masque_require_runtime_readiness() -> None:
+    assert SingBoxManager._requires_profile_outbound_readiness(
+        {"endpoints": [{"type": "warp", "tag": "proxy"}]}
+    )
+    assert SingBoxManager._requires_profile_outbound_readiness(
+        {"outbounds": [{"type": "masque", "tag": "proxy"}]}
+    )
+    assert not SingBoxManager._requires_profile_outbound_readiness(
+        {
+            "outbounds": [
+                {
+                    "type": "masque",
+                    "tag": "proxy",
+                    "server": "162.159.198.2",
+                    "private_key": "private",
+                    "public_key": "public",
+                    "address": ["172.16.0.2/32"],
+                }
+            ]
+        }
+    )
+    assert not SingBoxManager._requires_profile_outbound_readiness(
+        {"endpoints": [{"type": "wireguard", "tag": "proxy", "amnezia": {"jc": 4}}]}
+    )
+    assert not SingBoxManager._requires_profile_outbound_readiness(
+        {"endpoints": [{"type": "wireguard", "tag": "proxy"}]}
+    )
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return SimpleNamespace(returncode=0, stdout="93.184.216.34\n", stderr="")
 
-    proc = SimpleNamespace(poll=lambda: None)
+def test_direct_masque_requires_lumen_compatible_core(monkeypatch, tmp_path) -> None:
+    exe = tmp_path / "sing-box.exe"
+    exe.write_bytes(b"upstream")
+    config = {
+        "outbounds": [
+            {
+                "type": "masque",
+                "tag": "proxy",
+                "server": "162.159.198.2",
+                "private_key": "private",
+                "public_key": "public",
+                "address": ["172.16.0.2/32"],
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        manager_module,
+        "get_singbox_version",
+        lambda _path: "1.13.14-extended-2.5.1",
+    )
+
+    valid, detail = SingBoxManager().validate_config(str(exe), config)
+
+    assert valid is False
+    assert "Lumen-compatible" in detail
+    assert "tunnel uninitialized" in detail
+
+
+def test_direct_masque_compatibility_accepts_lumen_core(monkeypatch, tmp_path) -> None:
+    exe = tmp_path / "sing-box.exe"
+    exe.write_bytes(b"lumen")
+    config = {
+        "outbounds": [
+            {
+                "type": "masque",
+                "tag": "proxy",
+                "server": "162.159.198.2",
+                "private_key": "private",
+                "public_key": "public",
+                "address": ["172.16.0.2/32"],
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        manager_module,
+        "get_singbox_version",
+        lambda _path: "1.13.14-extended-2.5.1-lumen.1",
+    )
+    monkeypatch.setattr(
+        manager_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=b"", stderr=b""),
+    )
+
+    valid, detail = SingBoxManager().validate_config(str(exe), config)
+
+    assert valid is True
+    assert detail == ""
+
+
+def test_element_not_found_is_a_retryable_wintun_startup_race() -> None:
     manager = SingBoxManager()
-    monkeypatch.setattr(manager_module, "run_text_pumped", fake_run)
+    manager._last_output_lines.append(
+        "FATAL start inbound/tun: configure tun interface: set ipv6 address: Element not found."
+    )
 
-    manager._warm_windows_dns(proc)
+    assert manager._startup_error_is_retryable()
+    assert manager._startup_error_is_stale_adapter()
 
-    assert len(calls) == 1
-    assert "example.com" in calls[0][0][-1]
+
+def test_reader_does_not_report_transient_startup_exit_before_retry() -> None:
+    manager = SingBoxManager()
+    proc = SimpleNamespace(returncode=1)
+    manager._proc = proc
+    manager._starting = True
+    errors: list[str] = []
+    stopped: list[int] = []
+    manager.error.connect(errors.append)
+    manager.stopped.connect(stopped.append)
+
+    manager._handle_process_exit(proc)
+
+    assert errors == []
+    assert stopped == []
+    assert manager._last_exit_code == 1

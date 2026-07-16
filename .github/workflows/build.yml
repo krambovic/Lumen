@@ -66,7 +66,7 @@ jobs:
             Select-Object -First 1
           $singbox = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest" -Headers $headers
           $geodata = Invoke-RestMethod "https://api.github.com/repos/runetfreedom/russia-v2ray-rules-dat/releases/latest" -Headers $headers
-          "cache-key=$($xray.id)-$($singbox.id)-$($geodata.id)-wintun-0.14.1-rulesets-v1" >> $env:GITHUB_OUTPUT
+          "cache-key=$($xray.id)-$($singbox.id)-$($geodata.id)-wintun-0.14.1-rulesets-v1-lumen-masque-v1" >> $env:GITHUB_OUTPUT
 
       - name: Cache core binaries
         id: cache-cores
@@ -74,6 +74,13 @@ jobs:
         with:
           path: core
           key: cores-${{ runner.os }}-${{ steps.core-releases.outputs.cache-key }}
+
+      - name: Set up Go for sing-box
+        if: steps.cache-cores.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache: true
 
       - name: Download core binaries
         if: steps.cache-cores.outputs.cache-hit != 'true'
@@ -129,14 +136,10 @@ jobs:
           Copy-Item _wintun/wintun/bin/amd64/wintun.dll core/
           Remove-Item -Recurse _wintun, wintun.zip
 
-          Write-Host "Downloading sing-box-extended..."
+          Write-Host "Building Lumen-compatible sing-box-extended..."
           $sbRelease = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest" -Headers $githubHeaders
           Write-Host "Using sing-box $($sbRelease.tag_name)"
-          $sbAsset = $sbRelease.assets | Where-Object { $_.name -match "windows-amd64\.zip$" -and $_.name -notmatch "\.sig" }
-          Invoke-WebRequest $sbAsset.browser_download_url -OutFile singbox.zip
-          Expand-Archive singbox.zip -DestinationPath _sb -Force
-          Get-ChildItem _sb -Recurse -Filter "sing-box.exe" | ForEach-Object { Copy-Item $_.FullName core/sing-box.exe }
-          Remove-Item -Recurse _sb, singbox.zip
+          & ./scripts/build_singbox_extended.ps1 -OutputPath core/sing-box.exe -Ref $sbRelease.tag_name
 
           Write-Host "Core binaries ready:"
           Get-ChildItem core/
@@ -195,11 +198,17 @@ jobs:
           body: |
             ## Что изменилось
 
-            - [fix(dns)]: После обновления режим DNS корректно отображается как «Встроенный», а выбранные типы и стратегии DNS больше не сбрасываются визуально при заполнении списков.
-            - [fix(routing)]: Сервисы, домены и приложения сразу показывают сохранённые действия «прокси» или «напрямую» без необходимости вручную менять одно из правил.
-            - [refactor(ui)]: Окна выбора запущенного приложения, сохранения пресета, сброса настроек и QR-кода приведены к единому Fluent-оформлению.
+            - [feat(warp)]: Добавлена расширенная поддержка WARP, AmneziaWG, MASQUE, Clash YAML и AUTO-серверов; sing-box extended теперь собирается с исправлениями Lumen для корректной инициализации туннелей.
+            - [fix(runtime)]: Ускорен запуск прокси и TUN, исправлены повторные перезапуски, ошибки `tunnel/endpoint not initialized`, неверная диагностика ядра и проблемы с IPv6 в WARP/MASQUE-конфигах.
+            - [feat(subscriptions)]: Добавлены функции Happ Premium, настоящий или пользовательский HWID, корректные имена и метаданные подписок; импорт выполняется напрямую и безопасно отменяется без падения клиента.
+            - [fix(updates)]: Проверки приложения, ядер, GeoIP/GeoSite и droute больше не блокируют друг друга; при сетевой ошибке проверка и скачивание повторяются напрямую без прокси.
+            - [feat(packaging)]: droute 2.0.0 включён в установщик и portable-архив с проверкой комплектности и контрольных сумм, поэтому замороженный upstream больше не мешает установке.
+            - [fix(routing)]: Маршрутизация приложений сохраняется при переключении быстрых пресетов, а действия сервисов и доменов корректно отображаются как «прокси» или «напрямую».
+            - [feat(settings)]: Обновлены рекомендуемые DNS-настройки и миграция существующих установок, переработаны разделы DNS, сеть, обновления, данные и компактный режим.
+            - [refactor(ui)]: Контекстные меню, подсказки и диалоги приведены к Fluent-стилю; улучшены анимации настроек, компоновка серверов, отображение подписок и мгновенная загрузка флагов.
+            - [feat(logs)]: Журнал получил копирование текста, единый шрифт, фильтры без задержек, управляемую автопрокрутку и прежнее карточное оформление без мигания.
 
-            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.8.6...v1.8.7
+            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.8.7...v1.9.0
           generate_release_notes: false
           make_latest: true
           files: |

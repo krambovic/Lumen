@@ -35,7 +35,11 @@ def start_proxy(
         session_label = f"{runtime.source_path.name} / {node.name}"
     controller._set_connection_status("starting", f"Запуск прокси: {session_label}...", level="info")
     if runtime.used_selected_node and node is not None:
-        controller._log(f"[xray] outbound tag 'proxy' replaced from selected node: {node.name}")
+        protocol = str((node.outbound or {}).get("protocol") or node.scheme or "").strip().lower()
+        if protocol == "xray_config":
+            controller._log(f"[xray] full AUTO profile selected with its observatory and balancer: {node.name}")
+        else:
+            controller._log(f"[xray] outbound tag 'proxy' replaced from selected node: {node.name}")
 
     controller._xray_api_port = runtime.api_port
     if not controller.xray.start(controller.state.settings.xray_path, runtime.config):

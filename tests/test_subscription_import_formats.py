@@ -7,6 +7,49 @@ from xray_fluent.application import node_service
 from xray_fluent.link_parser import MAX_IMPORT_BYTES, parse_links_text, validate_node_outbound
 
 
+def test_happ_premium_headers_and_body_directives_are_preserved() -> None:
+    metadata = node_service._extract_subscription_metadata(
+        {
+            "profile-title": "Lumen Premium",
+            "providerid": "ABCD1234",
+            "support-url": "https://support.example",
+            "fragmentation-enable": "1",
+            "mux-enable": "true",
+        },
+        "Happ Windows",
+    )
+    cleaned, body = node_service._extract_happ_body_metadata(
+        "#subscription-autoconnect: 1\n#ping-type proxy\n"
+        "vless://00000000-0000-0000-0000-000000000001@one.example:443"
+        "?encryption=none&type=tcp&security=none#one"
+    )
+
+    merged = node_service._merge_subscription_info(metadata, body)
+    assert merged["profileTitle"] == "Lumen Premium"
+    assert merged["providerId"] == "ABCD1234"
+    assert merged["premiumFeatures"] == {
+        "fragmentation-enable": "1",
+        "mux-enable": "true",
+        "subscription-autoconnect": "1",
+        "ping-type": "proxy",
+    }
+    assert cleaned.startswith("vless://")
+
+
+def test_happ_server_description_is_displayed_separately_from_name() -> None:
+    text = (
+        "vless://00000000-0000-0000-0000-000000000001@one.example:443"
+        "?encryption=none&type=tcp&security=none#Premium%20NL"
+        "?serverDescription=SGFwcCB0aGUgYmVzdA=="
+    )
+
+    nodes, errors = parse_links_text(text)
+
+    assert errors == []
+    assert nodes[0].name == "Premium NL"
+    assert nodes[0].description == "Happ the best"
+
+
 def test_unsupported_app_placeholder_is_rejected() -> None:
     text = (
         "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1"
@@ -144,12 +187,54 @@ proxies:
     ]
 
 
+def test_clash_yaml_imports_authenticated_socks5_and_http_proxies() -> None:
+    text = """
+proxies:
+  - name: SOCKS relay
+    type: socks5
+    server: socks.example
+    port: 1080
+    username: socks-user
+    password: socks-pass
+    udp: true
+  - name: HTTP relay
+    type: http
+    server: http.example
+    port: 8080
+    username: http-user
+    password: http-pass
+"""
+
+    nodes, errors = parse_links_text(text)
+
+    assert errors == []
+    assert [(node.scheme, node.server, node.port) for node in nodes] == [
+        ("socks", "socks.example", 1080),
+        ("http", "http.example", 8080),
+    ]
+    assert nodes[0].outbound == {
+        "protocol": "socks",
+        "settings": {
+            "servers": [
+                {
+                    "address": "socks.example",
+                    "port": 1080,
+                    "users": [{"user": "socks-user", "pass": "socks-pass"}],
+                }
+            ]
+        },
+    }
+    assert nodes[1].outbound["settings"]["servers"][0]["users"] == [
+        {"user": "http-user", "pass": "http-pass"}
+    ]
+
+
 def test_subscription_tls_eof_retries_same_profile_direct(monkeypatch) -> None:
     calls = []
 
     def fake_fetch(url: str, profile: str, headers: dict, *, direct: bool = False):
-        calls.append((profile, headers["User-Agent"], direct))
-        if not direct:
+        calls.append((profile, headers["User-Agent"], headers["X-Hwid"], direct))
+        if len(calls) == 1:
             raise OSError("<urlopen error TLS/SSL connection has been closed (EOF) (_ssl.c:1010)>")
         return (
             "vless://00000000-0000-0000-0000-000000000001@one.example:443?encryption=none&type=tcp&security=none#one",
@@ -158,15 +243,29 @@ def test_subscription_tls_eof_retries_same_profile_direct(monkeypatch) -> None:
 
     monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
 
-    text, info, errors = node_service.fetch_subscription_payload("https://sub.example/path")
+    text, info, errors = node_service.fetch_subscription_payload(
+        "https://sub.example/path",
+        hwid="",
+        use_real_hwid=False,
+    )
 
     assert errors == []
     assert "one.example" in text
     assert info["clientProfile"] == "Happ Windows"
     assert info["networkPath"] == "direct"
     assert calls[:2] == [
-        ("Happ Windows", node_service.HAPP_WINDOWS_USER_AGENT, False),
-        ("Happ Windows", node_service.HAPP_WINDOWS_USER_AGENT, True),
+        (
+            "Happ Windows",
+            node_service.HAPP_WINDOWS_USER_AGENT,
+            node_service.DEFAULT_SUBSCRIPTION_HWID,
+            True,
+        ),
+        (
+            "Happ Windows",
+            node_service.HAPP_WINDOWS_USER_AGENT,
+            node_service.DEFAULT_SUBSCRIPTION_HWID,
+            True,
+        ),
     ]
 
 
@@ -174,7 +273,7 @@ def test_subscription_uses_custom_user_agent_and_converter_first(monkeypatch) ->
     calls = []
 
     def fake_fetch(url: str, profile: str, headers: dict, *, direct: bool = False):
-        calls.append((url, profile, headers["User-Agent"], direct))
+        calls.append((url, profile, headers["User-Agent"], headers["X-Hwid"], direct))
         return (
             "vless://00000000-0000-0000-0000-000000000001@one.example:443"
             "?encryption=none&type=tcp&security=none#one",
@@ -186,6 +285,8 @@ def test_subscription_uses_custom_user_agent_and_converter_first(monkeypatch) ->
     text, info, errors = node_service.fetch_subscription_payload(
         "https://sub.example/path?id=1",
         user_agent="CustomClient/2.0",
+        hwid="custom-device-id",
+        use_real_hwid=False,
         converter_url="https://converter.example/sub?url={url}",
     )
 
@@ -196,10 +297,54 @@ def test_subscription_uses_custom_user_agent_and_converter_first(monkeypatch) ->
         (
             "https://converter.example/sub?url=https%3A%2F%2Fsub.example%2Fpath%3Fid%3D1",
             "Custom",
-            "CustomClient/2.0",
-            False,
+                "CustomClient/2.0",
+                "custom-device-id",
+                True,
         )
     ]
+
+
+def test_subscription_uses_real_windows_hwid_by_default(monkeypatch) -> None:
+    calls = []
+
+    monkeypatch.setattr(node_service, "_windows_machine_hwid", lambda: "real-machine-guid")
+
+    def fake_fetch(url: str, profile: str, headers: dict, *, direct: bool = False):
+        calls.append((profile, headers["X-Hwid"], direct))
+        return (
+            "vless://00000000-0000-0000-0000-000000000001@one.example:443"
+            "?encryption=none&type=tcp&security=none#one",
+            {"clientProfile": profile},
+        )
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
+
+    _text, info, errors = node_service.fetch_subscription_payload(
+        "https://sub.example/path",
+        hwid="manual-device-id",
+    )
+
+    assert errors == []
+    assert info["clientProfile"] == "Happ Windows"
+    assert calls == [("Happ Windows", "real-machine-guid", True)]
+
+
+def test_subscription_rejects_hwid_with_newline(monkeypatch) -> None:
+    monkeypatch.setattr(
+        node_service,
+        "_fetch_subscription_with_headers",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("request must not start")),
+    )
+
+    text, info, errors = node_service.fetch_subscription_payload(
+        "https://sub.example/path",
+        hwid="device-id\r\nX-Injected: true",
+        use_real_hwid=False,
+    )
+
+    assert text == ""
+    assert info == {}
+    assert errors == ["HWID не должен содержать переносы строк"]
 
 
 def test_subscription_rejects_declared_oversized_body(monkeypatch) -> None:
@@ -215,7 +360,18 @@ def test_subscription_rejects_declared_oversized_body(monkeypatch) -> None:
         def read(self, _size=-1):
             raise AssertionError("oversized response body must not be read")
 
-    monkeypatch.setattr(node_service, "urlopen", lambda *_args, **_kwargs: _Response())
+    class _Opener:
+        def open(self, *_args, **_kwargs):
+            return _Response()
+
+    class _DirectOpener:
+        def __enter__(self):
+            return _Opener()
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(node_service, "DirectUrlOpener", _DirectOpener)
 
     with pytest.raises(RuntimeError, match="слишком большая"):
         node_service._fetch_subscription_with_headers(

@@ -63,8 +63,6 @@ def build_routing_preset(current: RoutingSettings, preset_id: str) -> RoutingSet
             direct_domains=direct_domains,
             proxy_domains=proxy_domains,
             block_domains=block_domains,
-            process_rules=[],
-            process_preset_routes={},
             service_routes={},
             tun_default_outbound="proxy",
         )
@@ -77,8 +75,6 @@ def build_routing_preset(current: RoutingSettings, preset_id: str) -> RoutingSet
             direct_domains=direct_domains,
             proxy_domains=proxy_domains,
             block_domains=block_domains,
-            process_rules=[],
-            process_preset_routes={},
             service_routes=proxy_default_services(),
             tun_default_outbound="direct",
         )
@@ -91,8 +87,6 @@ def build_routing_preset(current: RoutingSettings, preset_id: str) -> RoutingSet
             direct_domains=direct_domains,
             proxy_domains=proxy_domains,
             block_domains=block_domains,
-            process_rules=[],
-            process_preset_routes={},
             service_routes={},
             tun_default_outbound="proxy",
         )

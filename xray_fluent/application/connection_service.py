@@ -294,7 +294,12 @@ def reconnect(controller: AppController, reason: str) -> bool:
     try:
         controller._log(f"[reconnect] {reason}")
         controller._set_connection_status("starting", "Переподключение...", level="info")
-        stopped = disconnect_current(controller, disable_proxy=False, emit_status=False)
+        stopped = disconnect_current(
+            controller,
+            disable_proxy=False,
+            emit_status=False,
+            fast=True,
+        )
         if not stopped:
             controller._set_connection_status("error", "Не удалось остановить предыдущий процесс Xray", level="error")
             if controller.state.settings.enable_system_proxy:

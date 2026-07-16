@@ -71,6 +71,7 @@ def retain_thread_until_finished(
     worker: QThread,
     *,
     delete_worker: bool = True,
+    on_finished: Callable[[], Any] | None = None,
 ) -> None:
     """Retain a superseded worker without keeping it after completion."""
     if worker in workers:
@@ -82,6 +83,8 @@ def retain_thread_until_finished(
             workers.remove(worker)
         except ValueError:
             pass
+        if on_finished is not None:
+            on_finished()
 
     _connect_cleanup(owner, worker, _release, delete_worker=delete_worker)
 

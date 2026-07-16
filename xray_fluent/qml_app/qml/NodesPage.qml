@@ -32,6 +32,7 @@ Item {
     readonly property var groupModel: [I18n.t("Все группы")].concat(App.groupOptions)
     readonly property var sortLabels: [I18n.t("Вручную"), I18n.t("Имя"), I18n.t("Группа"), I18n.t("Тип"), I18n.t("Транспорт"), I18n.t("Пинг"), I18n.t("Скорость"), I18n.t("Последнее использование")]
     readonly property var sortKeys: ["manual", "name", "group", "scheme", "transport", "ping", "speed", "last"]
+    readonly property bool hasSubscriptionMeta: page.subscriptionMeta(page.selectedSub()) !== null
 
     // ── sizing ───────────────────────────────
     // Closer to the original compact rows (was 36/44).
@@ -143,13 +144,63 @@ Item {
             if (ui.expiresAt) rows.push([I18n.t("Истекает"), fmtTime(ui.expiresAt)]);
             else if (ui.expire) rows.push([I18n.t("Истекает"), fmtTime(ui.expire)]);
             if (ui.trafficLimitStrategy) rows.push([I18n.t("Сброс трафика"), String(ui.trafficLimitStrategy)]);
+            if (ui.profileTitle) rows.push([I18n.t("Название профиля"), String(ui.profileTitle)]);
+            if (ui.providerId) rows.push(["Provider ID", String(ui.providerId)]);
+            if (ui.announcement) rows.push([I18n.t("Объявление"), String(ui.announcement)]);
+            if (ui.profileUpdateInterval) rows.push([I18n.t("Интервал обновления"), String(ui.profileUpdateInterval)]);
+            var premium = ui.premiumFeatures;
+            if (premium && typeof premium === "object") {
+                var keys = Object.keys(premium).sort();
+                for (var p = 0; p < keys.length; p++) {
+                    rows.push([page.premiumFeatureLabel(keys[p]), String(premium[keys[p]])]);
+                }
+            }
         }
         return rows;
+    }
+    function premiumFeatureLabel(key) {
+        var labels = {
+            "new-url": I18n.t("Новый URL подписки"),
+            "new-domain": I18n.t("Новый домен подписки"),
+            "subscription-always-hwid-enable": I18n.t("Обязательный HWID"),
+            "notification-subs-expire": I18n.t("Уведомлять об окончании"),
+            "hide-settings": I18n.t("Скрыть настройки серверов"),
+            "server-address-resolve-enable": I18n.t("Резолвинг адресов серверов"),
+            "server-address-resolve-dns-domain": I18n.t("Домен DNS для резолвинга"),
+            "server-address-resolve-dns-ip": I18n.t("IP DNS для резолвинга"),
+            "subscription-autoconnect": I18n.t("Автоподключение"),
+            "subscription-autoconnect-type": I18n.t("Режим автоподключения"),
+            "subscription-ping-onopen-enabled": I18n.t("Автопинг при открытии"),
+            "subscription-auto-update-enable": I18n.t("Автообновление подписок"),
+            "fragmentation-enable": I18n.t("Фрагментация"),
+            "fragmentation-packets": I18n.t("Пакеты фрагментации"),
+            "fragmentation-length": I18n.t("Размер фрагментации"),
+            "fragmentation-interval": I18n.t("Интервал фрагментации"),
+            "ping-type": I18n.t("Тип пинга"),
+            "check-url-via-proxy": I18n.t("URL проверки через прокси"),
+            "change-user-agent": "User-Agent",
+            "app-auto-start": I18n.t("Автозапуск приложения"),
+            "subscription-auto-update-open-enable": I18n.t("Обновлять подписки при запуске"),
+            "per-app-proxy-mode": I18n.t("Режим прокси приложений"),
+            "per-app-proxy-list": I18n.t("Список приложений"),
+            "sniffing-enable": "Sniffing",
+            "subscriptions-collapse": I18n.t("Сворачивание подписки"),
+            "ping-result": I18n.t("Отображение пинга"),
+            "mux-enable": "Mux",
+            "mux-tcp-connections": "Mux TCP",
+            "mux-xudp-connections": "Mux XUDP",
+            "mux-quic": "Mux QUIC",
+            "exclude-routes": I18n.t("Исключённые маршруты")
+        };
+        return labels[key] || key;
     }
     function subscriptionMeta(sub) {
         if (!sub || !sub.userinfo || typeof sub.userinfo !== "object") return null;
         var ui = sub.userinfo;
-        if (!ui.profileTitle && !ui.supportUrl && !ui.profileUrl && !ui.telegramUrl && !ui.clientProfile) return null;
+        var premium = ui.premiumFeatures && typeof ui.premiumFeatures === "object"
+            && Object.keys(ui.premiumFeatures).length > 0;
+        if (!ui.profileTitle && !ui.supportUrl && !ui.profileUrl && !ui.telegramUrl
+                && !ui.announcement && !ui.announcementUrl && !ui.providerId && !premium) return null;
         return ui;
     }
     function menuNodeId() { return App.nodeIdAt(page.menuRow); }
@@ -330,9 +381,10 @@ Item {
         anchors.margins: Theme.spacing
         spacing: Theme.spacing
 
-        // ── title + search ───────────────────────
+        // ── title ────────────────────────────────
         RowLayout {
             Layout.fillWidth: true
+            Layout.preferredHeight: Theme.controlHeight
             spacing: Theme.spacing
 
             Text {
@@ -351,14 +403,60 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
             }
             Item { Layout.fillWidth: true }
+        }
+
+        // Filters and search always occupy the same stable row.  Subscription
+        // metadata must never move either side vertically.
+        Item {
+            id: serverFiltersRow
+            Layout.fillWidth: true
+            Layout.preferredHeight: Theme.controlHeight
+            Layout.minimumHeight: Theme.controlHeight
+            Layout.maximumHeight: Theme.controlHeight
+
+            Row {
+                id: filterFlow
+                anchors.left: parent.left
+                anchors.top: parent.top
+                height: Theme.controlHeight
+                spacing: 8
+
+                FilterCombo {
+                    id: groupCombo
+                    width: 160
+                    height: Theme.controlHeight
+                    model: page.groupModel
+                    onActivated: { page.filterGroup = (currentIndex <= 0 ? "" : currentText); page.applyFilters() }
+                }
+                FilterCombo {
+                    id: sortCombo
+                    width: 210
+                    height: Theme.controlHeight
+                    model: page.sortLabels
+                    currentIndex: 0
+                    onActivated: {
+                        page.sortKey = page.sortKeys[currentIndex];
+                        App.setNodeSort(page.sortKey, page.sortAsc);
+                    }
+                }
+                AccentButton {
+                    kind: "ghost"
+                    iconOnly: true
+                    glyph: page.sortAsc ? "\uE74A" : "\uE74B"
+                    tip: page.sortAsc ? I18n.t("По возрастанию") : I18n.t("По убыванию")
+                    onClicked: {
+                        page.sortAsc = !page.sortAsc;
+                        App.setNodeSort(page.sortKey, page.sortAsc);
+                    }
+                }
+            }
 
             // Visible, filled search field with a search glyph.
             Rectangle {
                 id: searchBox
-                Layout.preferredWidth: Math.min(300, Math.max(220, page.width * 0.28))
-                Layout.minimumWidth: 220
-                Layout.maximumWidth: 300
-                Layout.alignment: Qt.AlignVCenter
+                anchors.right: parent.right
+                y: page.hasSubscriptionMeta ? -(Theme.controlHeight + 8) : 0
+                width: Math.min(300, Math.max(220, page.width * 0.28))
                 height: Theme.controlHeight
                 radius: Theme.radiusSmall
                 color: Theme.controlFill
@@ -375,7 +473,7 @@ Item {
                     font.pixelSize: 14
                     color: Theme.textFaint
                 }
-                TextField {
+                FluentTextField {
                     id: searchInput
                     anchors.left: searchGlyph.right
                     anchors.leftMargin: 8
@@ -391,40 +489,96 @@ Item {
                     font.pixelSize: page.cellFont
                     onTextChanged: { page.filterText = text; page.applyFilters() }
                 }
-            }
-        }
 
-        // ── filters: group / sort / direction ───────────
-        Flow {
-            Layout.fillWidth: true
-            spacing: 8
-
-            FilterCombo {
-                id: groupCombo
-                Layout.preferredWidth: 160
-                width: 160
-                model: page.groupModel
-                onActivated: { page.filterGroup = (currentIndex <= 0 ? "" : currentText); page.applyFilters() }
-            }
-            FilterCombo {
-                id: sortCombo
-                Layout.preferredWidth: 210
-                width: 210
-                model: page.sortLabels
-                currentIndex: 0
-                onActivated: {
-                    page.sortKey = page.sortKeys[currentIndex];
-                    App.setNodeSort(page.sortKey, page.sortAsc);
+                Behavior on y {
+                    NumberAnimation {
+                        duration: Theme.animations ? 140 : 0
+                        easing.type: Easing.OutCubic
+                    }
                 }
             }
-            AccentButton {
-                kind: "ghost"
-                iconOnly: true
-                glyph: page.sortAsc ? "\uE74A" : "\uE74B"
-                tip: page.sortAsc ? I18n.t("По возрастанию") : I18n.t("По убыванию")
-                onClicked: {
-                    page.sortAsc = !page.sortAsc;
-                    App.setNodeSort(page.sortKey, page.sortAsc);
+
+            // Premium controls replace the search field's normal position.
+            // They are an overlay and therefore cannot resize or move the
+            // filters and action toolbars on the left.
+            RowLayout {
+                id: subMetaRow
+                anchors.right: parent.right
+                anchors.top: parent.top
+                width: Math.min(620, page.width * 0.58)
+                height: Theme.controlHeight
+                spacing: 6
+                visible: page.hasSubscriptionMeta
+
+                Item { Layout.fillWidth: true }
+                Text {
+                    Layout.maximumWidth: Math.max(120, subMetaRow.width - Theme.controlHeight * 4 - 30)
+                    Layout.preferredHeight: 20
+                    text: {
+                        var meta = page.subscriptionMeta(page.selectedSub());
+                        if (!meta) return "";
+                        var title = meta.profileTitle || "";
+                        if (!title.length && meta.providerId) title = "Happ Premium";
+                        return title.length ? title : I18n.t("Профиль подписки");
+                    }
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSmall
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignRight
+                    verticalAlignment: Text.AlignVCenter
+                }
+                AccentButton {
+                    Layout.preferredWidth: Theme.controlHeight
+                    Layout.preferredHeight: Theme.controlHeight
+                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.announcementUrl); }
+                    kind: "ghost"
+                    iconOnly: true
+                    glyph: "\uE7F4"
+                    text: I18n.t("Объявление подписки")
+                    onClicked: {
+                        var meta = page.subscriptionMeta(page.selectedSub());
+                        if (meta && meta.announcementUrl) App.openUrl(meta.announcementUrl);
+                    }
+                }
+                AccentButton {
+                    Layout.preferredWidth: Theme.controlHeight
+                    Layout.preferredHeight: Theme.controlHeight
+                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.supportUrl); }
+                    kind: "ghost"
+                    iconOnly: true
+                    glyph: "\uE8F2"
+                    text: I18n.t("Поддержка подписки")
+                    onClicked: {
+                        var meta = page.subscriptionMeta(page.selectedSub());
+                        if (meta && meta.supportUrl) App.openUrl(meta.supportUrl);
+                    }
+                }
+                AccentButton {
+                    Layout.preferredWidth: Theme.controlHeight
+                    Layout.preferredHeight: Theme.controlHeight
+                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.telegramUrl); }
+                    kind: "ghost"
+                    iconOnly: true
+                    glyph: "\uE8BD"
+                    text: "Telegram"
+                    onClicked: {
+                        var meta = page.subscriptionMeta(page.selectedSub());
+                        if (meta && meta.telegramUrl) App.openUrl(meta.telegramUrl);
+                    }
+                }
+                AccentButton {
+                    Layout.preferredWidth: Theme.controlHeight
+                    Layout.preferredHeight: Theme.controlHeight
+                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.profileUrl); }
+                    kind: "ghost"
+                    iconOnly: true
+                    glyph: "\uE774"
+                    text: I18n.t("Страница подписки")
+                    onClicked: {
+                        var meta = page.subscriptionMeta(page.selectedSub());
+                        if (meta && meta.profileUrl) App.openUrl(meta.profileUrl);
+                    }
                 }
             }
         }
@@ -443,8 +597,7 @@ Item {
                     var meta = page.subscriptionMeta(page.selectedSub());
                     if (!meta) return "";
                     var title = meta.profileTitle || "";
-                    var profile = meta.clientProfile ? (" · " + meta.clientProfile) : "";
-                    return title.length ? (title + profile) : (I18n.t("Профиль подписки") + profile);
+                    return title.length ? title : I18n.t("Профиль подписки");
                 }
                 color: Theme.textMuted
                 font.family: Theme.fontFamily
@@ -516,71 +669,9 @@ Item {
                 Layout.maximumHeight: Theme.controlHeight
 
                 RowLayout {
-                    id: subMetaRow
-                    anchors.right: parent.right
-                    anchors.bottom: subControls.top
-                    anchors.bottomMargin: 8
-                    width: parent.width
-                    height: 28
-                    spacing: 6
-
-                    Item { Layout.fillWidth: true }
-                    Text {
-                        Layout.maximumWidth: Math.max(160, subToolbar.width - 96)
-                        Layout.preferredHeight: 20
-                        opacity: page.subscriptionMeta(page.selectedSub()) !== null ? 1 : 0
-                        text: {
-                            var meta = page.subscriptionMeta(page.selectedSub());
-                            if (!meta) return "";
-                            var title = meta.profileTitle || "";
-                            var profile = meta.clientProfile ? (" · " + meta.clientProfile) : "";
-                            return title.length ? (title + profile) : (I18n.t("Профиль подписки") + profile);
-                        }
-                        color: Theme.textMuted
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSmall
-                        elide: Text.ElideRight
-                        horizontalAlignment: Text.AlignRight
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    AccentButton {
-                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.supportUrl); }
-                        kind: "ghost"
-                        iconOnly: true
-                        glyph: "\uE8F2"
-                        text: I18n.t("Поддержка подписки")
-                        onClicked: {
-                            var meta = page.subscriptionMeta(page.selectedSub());
-                            if (meta && meta.supportUrl) App.openUrl(meta.supportUrl);
-                        }
-                    }
-                    AccentButton {
-                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.telegramUrl); }
-                        kind: "ghost"
-                        iconOnly: true
-                        glyph: "\uE8BD"
-                        text: "Telegram"
-                        onClicked: {
-                            var meta = page.subscriptionMeta(page.selectedSub());
-                            if (meta && meta.telegramUrl) App.openUrl(meta.telegramUrl);
-                        }
-                    }
-                    AccentButton {
-                        visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.profileUrl); }
-                        kind: "ghost"
-                        iconOnly: true
-                        glyph: "\uE774"
-                        text: I18n.t("Страница подписки")
-                        onClicked: {
-                            var meta = page.subscriptionMeta(page.selectedSub());
-                            if (meta && meta.profileUrl) App.openUrl(meta.profileUrl);
-                        }
-                    }
-                }
-                RowLayout {
                     id: subControls
                     anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.bottom: parent.bottom
                     width: parent.width
                     height: Theme.controlHeight
                     spacing: 8
@@ -719,6 +810,7 @@ Item {
                             required property string nodeId
                             required property string name
                             required property string scheme
+                            required property string description
                             required property string transport
                             required property string server
                             required property int port
@@ -771,11 +863,19 @@ Item {
                                         anchors.left: parent.left
                                         anchors.leftMargin: 4
                                         anchors.verticalCenter: parent.verticalCenter
+                                        height: parent.height
                                         spacing: 8
                                         Item {
                                             id: flagBox
+                                            readonly property bool imageReady: !!nodeRow.flagSource && flagImg.status === Image.Ready
+                                            readonly property bool hasShapeFallback: !imageReady
+                                                && nodeRow.flagColors && nodeRow.flagColors.length > 0
+                                                && !!nodeRow.flagOrient
+                                            readonly property bool showEmojiFallback: !imageReady
+                                                && !hasShapeFallback && !!nodeRow.flagEmoji
                                             width: (nodeRow.flagSource || nodeRow.flagEmoji || (nodeRow.flagColors && nodeRow.flagColors.length > 0)) ? 24 : 0
                                             height: 18
+                                            anchors.verticalCenter: parent.verticalCenter
                                             visible: width > 0
                                             clip: true
                                             Image {
@@ -804,7 +904,7 @@ Item {
                                             }
                                             MultiEffect {
                                                 anchors.fill: parent
-                                                visible: !!nodeRow.flagSource
+                                                visible: flagBox.imageReady
                                                 source: flagImg
                                                 maskEnabled: true
                                                 maskSource: flagMask
@@ -818,7 +918,7 @@ Item {
                                             }
                                             Text {
                                                 anchors.centerIn: parent
-                                                visible: !nodeRow.flagSource && !!nodeRow.flagEmoji
+                                                visible: flagBox.showEmojiFallback
                                                 text: nodeRow.flagEmoji
                                                 font.pixelSize: 18
                                                 font.family: "Segoe UI Emoji"
@@ -826,9 +926,9 @@ Item {
                                             }
                                             Column {
                                                 anchors.fill: parent
-                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "h"
+                                                visible: flagBox.hasShapeFallback && nodeRow.flagOrient === "h"
                                                 Repeater {
-                                                    model: (!nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "h" && nodeRow.flagColors) ? nodeRow.flagColors : []
+                                                    model: (flagBox.hasShapeFallback && nodeRow.flagOrient === "h") ? nodeRow.flagColors : []
                                                     delegate: Rectangle {
                                                         required property string modelData
                                                         width: flagBox.width
@@ -839,9 +939,9 @@ Item {
                                             }
                                             Row {
                                                 anchors.fill: parent
-                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "v"
+                                                visible: flagBox.hasShapeFallback && nodeRow.flagOrient === "v"
                                                 Repeater {
-                                                    model: (!nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "v" && nodeRow.flagColors) ? nodeRow.flagColors : []
+                                                    model: (flagBox.hasShapeFallback && nodeRow.flagOrient === "v") ? nodeRow.flagColors : []
                                                     delegate: Rectangle {
                                                         required property string modelData
                                                         width: flagBox.width / Math.max(1, nodeRow.flagColors.length)
@@ -852,7 +952,7 @@ Item {
                                             }
                                             Item {
                                                 anchors.fill: parent
-                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "nordic"
+                                                visible: flagBox.hasShapeFallback && nodeRow.flagOrient === "nordic"
                                                 Rectangle { anchors.fill: parent; color: (nodeRow.flagColors && nodeRow.flagColors.length > 0) ? nodeRow.flagColors[0] : "transparent" }
                                                 Rectangle {
                                                     x: 0; y: Math.round(flagBox.height * 0.36)
@@ -879,7 +979,7 @@ Item {
                                             }
                                             Item {
                                                 anchors.fill: parent
-                                                visible: !nodeRow.flagSource && !nodeRow.flagEmoji && nodeRow.flagOrient === "cross"
+                                                visible: flagBox.hasShapeFallback && nodeRow.flagOrient === "cross"
                                                 Rectangle { anchors.fill: parent; color: (nodeRow.flagColors && nodeRow.flagColors.length > 0) ? nodeRow.flagColors[0] : "transparent" }
                                                 Rectangle {
                                                     anchors.verticalCenter: parent.verticalCenter
@@ -894,7 +994,7 @@ Item {
                                             }
                                             Rectangle {
                                                 anchors.fill: parent
-                                                visible: !nodeRow.flagEmoji
+                                                visible: flagBox.width > 0
                                                 color: "transparent"
                                                 radius: 3
                                                 antialiasing: true
@@ -902,15 +1002,27 @@ Item {
                                                 border.color: Qt.rgba(0, 0, 0, 0.2)
                                             }
                                         }
-                                        Text {
-                                            text: nodeRow.name
-                                            color: Theme.text
-                                            font.family: Theme.fontFamily
-                                            font.pixelSize: page.cellFont
-                                            elide: Text.ElideRight
+                                        Column {
                                             width: page.colName - 24 - flagBox.width
-                                            verticalAlignment: Text.AlignVCenter
                                             anchors.verticalCenter: parent.verticalCenter
+                                            spacing: 0
+                                            Text {
+                                                width: parent.width
+                                                text: nodeRow.name
+                                                color: Theme.text
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: page.cellFont
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                visible: nodeRow.description.length > 0
+                                                width: parent.width
+                                                text: nodeRow.description
+                                                color: Theme.textMuted
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Math.max(9, page.cellFont - 3)
+                                                elide: Text.ElideRight
+                                            }
                                         }
                                     }
                                 }
@@ -1137,41 +1249,12 @@ Item {
     }
 
     // ── context menu (opaque, sized close to the original RoundMenu) ────
-    Menu {
+    FluentMenu {
         id: ctxMenu
         width: 230
-        padding: 5
-        background: Rectangle {
-            color: Theme.flyout
-            radius: 8
-            border.width: 1
-            border.color: Theme.flyoutBorder
-        }
 
-        component Ctx: MenuItem {
-            id: mi
-            implicitHeight: 30
-            contentItem: Text {
-                leftPadding: 12
-                rightPadding: 12
-                text: mi.text
-                color: mi.enabled ? Theme.text : Theme.textFaint
-                font.family: Theme.fontFamily
-                font.pixelSize: page.cellFont
-                verticalAlignment: Text.AlignVCenter
-            }
-            background: Rectangle {
-                radius: 6
-                color: mi.highlighted ? Theme.cardHover : "transparent"
-            }
-        }
-        component Sep: MenuSeparator {
-            padding: 6
-            topPadding: 5
-            bottomPadding: 5
-            background: Item {}
-            contentItem: Rectangle { implicitHeight: 1; color: Theme.divider }
-        }
+        component Ctx: FluentMenuItem {}
+        component Sep: FluentMenuSeparator {}
 
         Ctx {
             text: I18n.t("Установить как активный")
@@ -1332,7 +1415,7 @@ Item {
             }
 
             Text { text: I18n.t("Имя группы"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-            TextField {
+            FluentTextField {
                 id: groupNameField
                 Layout.fillWidth: true
                 implicitHeight: Theme.controlHeight
@@ -1415,7 +1498,7 @@ Item {
             }
 
             Text { text: I18n.t("URL подписки"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-            TextField {
+            FluentTextField {
                 id: subUrlField
                 Layout.fillWidth: true
                 implicitHeight: Theme.controlHeight
@@ -1430,7 +1513,7 @@ Item {
             }
 
             Text { text: I18n.t("Имя группы (необязательно)"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-            TextField {
+            FluentTextField {
                 id: subNameField
                 Layout.fillWidth: true
                 implicitHeight: Theme.controlHeight
@@ -1479,8 +1562,6 @@ Item {
             if (i < 0 || i >= App.subscriptions.length) i = 0;
             infoCombo.currentIndex = i;
             infoDialog.open();
-            var s = App.subscriptions[i];
-            if (s && s.url) App.updateSubscription(s.url);
         }
 
         background: Rectangle {
@@ -1511,15 +1592,22 @@ Item {
                     : [I18n.t("Нет подписок")]
             }
 
-            // Свойства выбранной подписки
-            Column {
+            // Premium-подписка может передать несколько десятков параметров;
+            // свойства остаются доступны в компактном прокручиваемом блоке.
+            FluentScroll {
                 Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(420, Math.max(90, infoProperties.implicitHeight))
+                roundedClip: false
+
+            Column {
+                id: infoProperties
+                width: parent ? Math.max(0, parent.width - 4) : 0
                 spacing: 6
                 Repeater {
                     model: page.infoRows(page.infoSub())
                     delegate: RowLayout {
                         id: infoRow
-                        width: parent ? parent.width : 0
+                        width: infoProperties.width
                         spacing: 12
                         readonly property bool isUrlRow: String(modelData[0]).toLowerCase() === "url"
                         Text {
@@ -1528,6 +1616,7 @@ Item {
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
                             Layout.preferredWidth: 140
+                            Layout.alignment: Qt.AlignTop
                         }
                         Text {
                             visible: !infoRow.isUrlRow
@@ -1535,10 +1624,13 @@ Item {
                             color: Theme.text
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
-                            wrapMode: Text.WrapAnywhere
+                            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.preferredWidth: 1
+                            Layout.alignment: Qt.AlignTop
                         }
-                        TextEdit {
+                        FluentTextEdit {
                             visible: infoRow.isUrlRow
                             text: modelData[1]
                             color: urlMouse.containsMouse ? Theme.accent : Theme.text
@@ -1551,6 +1643,8 @@ Item {
                             selectByMouse: true
                             textFormat: TextEdit.PlainText
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.preferredWidth: 1
 
                             MouseArea {
                                 id: urlMouse
@@ -1571,6 +1665,7 @@ Item {
                     }
                 }
             }
+            }
 
             Text {
                 visible: { var s = page.infoSub(); return s ? !(s.userinfo && typeof s.userinfo === "object" && Object.keys(s.userinfo).length > 0) : false; }
@@ -1585,16 +1680,19 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: 6
+                Layout.rightMargin: 4
+                Layout.bottomMargin: 4
                 Item { Layout.fillWidth: true }
                 AccentButton { kind: "accent"; text: I18n.t("Закрыть"); onClicked: infoDialog.close() }
             }
         }
     }
 
-    Menu {
+    FluentMenu {
         id: subUrlMenu
         property string url: ""
-        MenuItem {
+        width: 210
+        FluentMenuItem {
             text: I18n.t("Копировать ссылку")
             onTriggered: App.copyText(subUrlMenu.url)
         }

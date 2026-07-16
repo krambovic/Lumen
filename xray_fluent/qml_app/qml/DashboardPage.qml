@@ -57,6 +57,7 @@ FluentScroll {
         id: flagBox
         readonly property bool hasSource: App.selectedNodeFlagSource.length > 0
         readonly property bool hasEmoji: App.selectedNodeFlag.length > 0
+        readonly property bool imageReady: hasSource && flagImg.status === Image.Ready
         implicitWidth: (hasSource || hasEmoji) ? 24 : 0
         implicitHeight: 18
         visible: implicitWidth > 0
@@ -90,7 +91,7 @@ FluentScroll {
 
         MultiEffect {
             anchors.fill: parent
-            visible: flagBox.hasSource
+            visible: flagBox.imageReady
             source: flagImg
             maskEnabled: true
             maskSource: flagMask
@@ -105,7 +106,7 @@ FluentScroll {
 
         Text {
             anchors.centerIn: parent
-            visible: !flagBox.hasSource && flagBox.hasEmoji
+            visible: !flagBox.imageReady && flagBox.hasEmoji
             text: App.selectedNodeFlag
             font.pixelSize: 18
             font.family: "Segoe UI Emoji"
@@ -208,15 +209,6 @@ FluentScroll {
                             Text { text: App.proxyEnabled ? I18n.t("Вкл") : I18n.t("Выкл"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                         }
                         Item { Layout.fillWidth: true }
-                        AccentButton {
-                            kind: "ghost"
-                            glyph: "\uE946"
-                            text: ""
-                            Layout.preferredWidth: 32
-                            ToolTip.visible: hovered
-                            ToolTip.text: I18n.t("Справка")
-                            onClicked: modeHelp.open()
-                        }
                     }
                     Dialog {
                         id: modeHelp
@@ -328,6 +320,15 @@ FluentScroll {
                                 var item = App.routingPresetOptions[currentIndex];
                                 if (item) App.applyRoutingPresetOption(item.id);
                             }
+                        }
+                        AccentButton {
+                            kind: "ghost"
+                            glyph: "\uE946"
+                            text: ""
+                            iconOnly: true
+                            tip: I18n.t("Справка")
+                            Layout.preferredWidth: 32
+                            onClicked: modeHelp.open()
                         }
                         Item { Layout.fillWidth: true }
                     }

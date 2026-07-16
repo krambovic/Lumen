@@ -13,6 +13,10 @@ from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pum
 class WindowsDefaultRouteContext:
     interface_alias: str
     dns_servers: tuple[str, ...] = ()
+    interface_index: int = 0
+    next_hop: str = ""
+    is_physical: bool = False
+    tun_active: bool = False
 
 
 _ROUTE_CONTEXT_TTL_SECONDS = 30.0
@@ -68,15 +72,23 @@ def _query_windows_default_route_context() -> WindowsDefaultRouteContext | None:
         "$routes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue "
         "| Where-Object { $_.NextHop -and $_.NextHop -ne '0.0.0.0' } "
         "| Sort-Object RouteMetric, InterfaceMetric); "
-        "$route = $routes | Where-Object { "
+        "$physical = $routes | Where-Object { "
         "$alias = [string]$_.InterfaceAlias; $alias -notmatch '(?i)lumen|xftun|singbox|wintun|tun' "
         "} | Select-Object -First 1; "
+        "$route = $physical; "
         "if (-not $route) { $route = $routes | Select-Object -First 1 }; "
         "if (-not $route) { exit 1 }; "
+        "$tunRoute = Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { "
+        "$alias = [string]$_.InterfaceAlias; "
+        "$alias -match '(?i)lumen|xftun|singbox|wintun|tun' -and "
+        "$_.DestinationPrefix -in @('0.0.0.0/0', '0.0.0.0/1', '128.0.0.0/1') "
+        "} | Select-Object -First 1; "
         "$dns = @(Get-DnsClientServerAddress -InterfaceIndex $route.InterfaceIndex -AddressFamily IPv4 "
         "-ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses } "
         "| Where-Object { $_ -match '^\\d{1,3}(\\.\\d{1,3}){3}$' }); "
-        "@{ interface_alias = $route.InterfaceAlias; dns_servers = $dns } | ConvertTo-Json -Compress"
+        "@{ interface_alias = $route.InterfaceAlias; dns_servers = $dns; "
+        "interface_index = [int]$route.InterfaceIndex; next_hop = [string]$route.NextHop; "
+        "is_physical = [bool]$physical; tun_active = [bool]$tunRoute } | ConvertTo-Json -Compress"
     )
     try:
         result = run_text_pumped(
@@ -102,4 +114,8 @@ def _query_windows_default_route_context() -> WindowsDefaultRouteContext | None:
     return WindowsDefaultRouteContext(
         interface_alias=interface_alias,
         dns_servers=dns_servers,
+        interface_index=int(payload.get("interface_index") or 0),
+        next_hop=str(payload.get("next_hop") or "").strip(),
+        is_physical=bool(payload.get("is_physical", False)),
+        tun_active=bool(payload.get("tun_active", False)),
     )

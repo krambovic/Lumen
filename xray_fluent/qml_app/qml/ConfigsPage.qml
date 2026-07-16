@@ -4,24 +4,10 @@ import QtQuick.Layouts
 import App 1.0
 import "."
 
-// Live port of ui/configs_page.py: a SegmentedWidget switching between two raw
-// editors (sing-box / xray). Each core has config + template selectors, a file
-// label, hint lines, a toolbar (Импорт шаблона / Сбросить / Сохранить /
-// Проверить JSON / Применить), a monospace JSON editor and a status box.
-//
-// Wired to AppBridge config slots (loadConfig / selectConfig / selectTemplate /
-// importTemplate / resetConfig / saveConfig / validateConfig / applyConfig),
-// each returning a QVariantMap editor state. Per-core buffers are cached so
-// unsaved edits survive switching cores; a modal confirm guards discards.
 Item {
     id: page
 
     property string core: "singbox"
-
-    readonly property string singHint: I18n.t("Если в конфиге есть outbound tag `proxy`, он будет заменён на выбранный сервер перед запуском.")
-    readonly property string singDetail: I18n.t("В режиме sing-box TUN правила процесса и пути применяются к перехваченному системному трафику. Если выбранный сервер нельзя запустить нативным sing-box outbound, приложение автоматически оставит этот же raw sing-box.json базой и поднимет local xray sidecar только для proxy path.")
-    readonly property string xrayHint: I18n.t("Если в конфиге есть outbound tag `proxy`, он будет заменён на выбранный сервер перед запуском.")
-    readonly property string xrayDetail: I18n.t("Xray использует raw xray.json для трафика системного прокси Windows или ручной proxy-настройки приложения. TUN всегда работает через sing-box extended.")
 
     // ---- live per-core editor state -------------------------------------
     property var cache: ({})          // core -> snapshot (preserves unsaved edits)
@@ -221,9 +207,18 @@ Item {
             Layout.preferredHeight: 34
             Repeater {
                 model: [{ key: "singbox", label: "sing-box" }, { key: "xray", label: "xray" }]
-                delegate: Item {
+                delegate: Rectangle {
                     width: 120; height: 34
                     readonly property bool active: page.core === modelData.key
+                    radius: Theme.radiusSmall
+                    color: "transparent"
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        color: active ? Theme.accentSoft : Theme.navHover
+                        opacity: active || coreTabMouse.containsMouse ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: Theme.animations ? 140 : 0 } }
+                    }
                     Text {
                         anchors.centerIn: parent
                         text: modelData.label
@@ -240,7 +235,12 @@ Item {
                         color: Theme.accent
                         Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
                     }
-                    TapHandler { onTapped: page.switchCore(modelData.key) }
+                    MouseArea {
+                        id: coreTabMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: page.switchCore(modelData.key)
+                    }
                 }
             }
         }
@@ -266,12 +266,14 @@ Item {
                 model: page.templateItems.length > 0 ? page._labels(page.templateItems) : [I18n.t("Шаблон не выбран")]
                 onActivated: page.doSelectTemplate(templateCombo.currentIndex)
             }
+            AccentButton {
+                kind: "ghost"
+                glyph: "\uE838"
+                iconOnly: true
+                tip: I18n.t("Открыть папку конфигов")
+                onClicked: App.openConfigDirectory(page.core)
+            }
         }
-
-        Text { text: (page.dirty ? "● " : "") + I18n.t("Файл: ") + page.fileLabel; color: page.dirty ? Theme.warning : Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-        Text { text: I18n.t("Шаблон: ") + page.templateLabel; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-        Text { text: page.core === "singbox" ? page.singHint : page.xrayHint; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-        Text { text: page.core === "singbox" ? page.singDetail : page.xrayDetail; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
 
         // ---- toolbar ----
         RowLayout {
@@ -327,7 +329,7 @@ Item {
                     }
                 }
 
-                TextArea.flickable: TextArea {
+                TextArea.flickable: FluentTextArea {
                     id: editor
                     placeholderText: "Raw " + (page.core === "singbox" ? "sing-box" : "xray") + ".json"
                     color: Theme.text
@@ -352,29 +354,6 @@ Item {
             }
         }
 
-        Text { text: I18n.t("Статус"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 76
-            radius: Theme.radiusSmall
-            color: Theme.card
-            border.width: 1; border.color: Theme.borderSolid
-            Text {
-                anchors.fill: parent
-                anchors.margins: 10
-                text: page.statusMessage.length > 0
-                    ? (page._statusPrefix(page.statusLevel).length > 0
-                        ? page._statusPrefix(page.statusLevel) + ": " + I18n.t(page.statusMessage)
-                        : I18n.t(page.statusMessage))
-                    : I18n.t("Готов к работе.")
-                color: page.statusLevel === "success" ? Theme.success
-                     : page.statusLevel === "warning" ? Theme.warning
-                     : page.statusLevel === "error" ? Theme.danger
-                     : Theme.textMuted
-                font.family: "Consolas"; font.pixelSize: 12
-                wrapMode: Text.WordWrap
-            }
-        }
     }
 
     // ---- discard-confirmation modal overlay -----------------------------

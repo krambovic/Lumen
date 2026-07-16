@@ -10,6 +10,7 @@ import threading
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .application.node_service import SubscriptionFetchCancelled, fetch_subscription_payload
+from .http_utils import abort_http_response
 
 
 @dataclass
@@ -20,6 +21,8 @@ class SubscriptionJob:
     kind: str  # "import" | "update"
     name: str = ""
     user_agent: str = ""
+    hwid: str = ""
+    use_real_hwid: bool = True
     converter_url: str = ""
 
 
@@ -42,10 +45,7 @@ class SubscriptionFetchWorker(QObject):
         with self._response_lock:
             responses = list(self._responses)
         for response in responses:
-            try:
-                response.close()
-            except Exception:
-                pass
+            abort_http_response(response)
 
     def _register_response(self, response: object) -> None:
         with self._response_lock:
@@ -64,6 +64,8 @@ class SubscriptionFetchWorker(QObject):
                 text, userinfo, errors = fetch_subscription_payload(
                     job.url,
                     user_agent=job.user_agent,
+                    hwid=job.hwid,
+                    use_real_hwid=job.use_real_hwid,
                     converter_url=job.converter_url,
                     cancelled=self._stopped.is_set,
                     response_opened=self._register_response,

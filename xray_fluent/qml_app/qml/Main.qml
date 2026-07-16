@@ -586,7 +586,7 @@ ApplicationWindow {
                     color: Theme.textFaint; font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSmall; wrapMode: Text.WordWrap
                 }
-                TextField {
+                FluentTextField {
                     id: lockField
                     Layout.fillWidth: true
                     echoMode: TextInput.Password

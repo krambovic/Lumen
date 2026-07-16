@@ -209,7 +209,7 @@ Popup {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 6
-                TextField {
+                FluentTextField {
                     id: hexField
                     Layout.fillWidth: true
                     color: Theme.text

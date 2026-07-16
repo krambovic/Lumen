@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from xray_fluent.application import auto_switch_service, node_service
 from xray_fluent.models import Node
+from xray_fluent.qml_app.bridge import app_bridge
 
 
 class _Signal:
@@ -17,9 +18,11 @@ class _Controller:
             nodes=nodes,
             selected_node_id=selected_id,
             settings=SimpleNamespace(auto_connect_on_import=False),
+            subscriptions=[],
         )
         self.nodes_changed = _Signal()
         self.selection_changed = _Signal()
+        self.subscriptions_changed = _Signal()
         self.connected = False
         self._desired_connected = False
         self.transition_reasons: list[str] = []
@@ -42,6 +45,37 @@ class _Controller:
 
     def _reset_auto_switch_state(self, **_kwargs) -> None:
         pass
+
+
+def test_subscription_profile_title_becomes_group_only_when_name_is_empty() -> None:
+    controller = _Controller([], None)
+    link = (
+        "vless://00000000-0000-0000-0000-000000000001@one.example:443"
+        "?encryption=none&type=tcp&security=none#one"
+    )
+
+    added, errors = node_service.apply_fetched_subscription(
+        controller,
+        "https://sub.example/config",
+        "",
+        "import",
+        link,
+        {"profileTitle": "Provider title"},
+        [],
+    )
+
+    assert added == 1
+    assert errors == []
+    assert controller.state.nodes[0].group == "Provider title"
+    assert controller.state.subscriptions[0]["name"] == "Provider title"
+
+
+class _RecordingSignal:
+    def __init__(self, events: list[tuple]) -> None:
+        self.events = events
+
+    def emit(self, *args) -> None:
+        self.events.append(tuple(args))
 
 
 def _node(node_id: str, group: str, *, speed: float | None = None, alive: bool | None = None) -> Node:
@@ -189,3 +223,61 @@ def test_auto_switch_does_not_jump_when_group_has_no_alternative() -> None:
     controller = _Controller([current, other_group], "current")
 
     assert auto_switch_service.get_next_node_for_auto_switch(controller) is None
+
+
+def test_manual_server_selection_toast_is_emitted_before_reconnect(monkeypatch) -> None:
+    events: list[tuple] = []
+    selected = _node("new", "Main")
+    selected.name = "New server"
+    monkeypatch.setattr(app_bridge, "tr", lambda key, **_params: key)
+
+    bridge = SimpleNamespace(
+        _selected_id="old",
+        _selected_name="Old server",
+        _selected_flag="",
+        _selected_flag_source="",
+        _selected_latency=-1,
+        _manual_selection_in_progress=False,
+        _connected=False,
+        toast=_RecordingSignal(events),
+        trayNotify=_RecordingSignal(events),
+        selectionChanged=_RecordingSignal(events),
+        _node_model=SimpleNamespace(set_selected=lambda node_id: events.append(("model", node_id))),
+    )
+
+    class _SelectionController:
+        def set_selected_node(self, node_id: str) -> None:
+            assert node_id == selected.id
+            app_bridge.AppBridge._on_selection_changed(bridge, selected)
+            events.append(("reconnect",))
+
+    bridge.controller = _SelectionController()
+
+    app_bridge.AppBridge.selectNode(bridge, selected.id)
+
+    assert ("info", "Сервер изменён: New server") in events
+    assert events.index(("info", "Сервер изменён: New server")) < events.index(("reconnect",))
+    assert bridge._manual_selection_in_progress is False
+
+
+def test_restored_server_selection_does_not_show_manual_toast(monkeypatch) -> None:
+    events: list[tuple] = []
+    selected = _node("restored", "Main")
+    monkeypatch.setattr(app_bridge, "tr", lambda key, **_params: key)
+    bridge = SimpleNamespace(
+        _selected_id="",
+        _selected_name="",
+        _selected_flag="",
+        _selected_flag_source="",
+        _selected_latency=-1,
+        _manual_selection_in_progress=False,
+        _connected=False,
+        toast=_RecordingSignal(events),
+        trayNotify=_RecordingSignal(events),
+        selectionChanged=_RecordingSignal(events),
+        _node_model=SimpleNamespace(set_selected=lambda _node_id: None),
+    )
+
+    app_bridge.AppBridge._on_selection_changed(bridge, selected)
+
+    assert not any(event and event[0] == "info" for event in events)

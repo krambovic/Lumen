@@ -54,7 +54,7 @@ Popup {
         font.pixelSize: Theme.fontSmall
         wrapMode: Text.WordWrap
     }
-    component FField: TextField {
+    component FField: FluentTextField {
         Layout.fillWidth: true
         implicitHeight: Theme.controlHeight
         leftPadding: 10

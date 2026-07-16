@@ -198,10 +198,10 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
             controller._log(f"[tun-hot-swap] {line}")
         controller._metrics_request.emit(False)
 
-        if controller.singbox.is_running and not controller.singbox.stop():
+        if controller.singbox.is_running and not controller.singbox.stop(fast=True):
             controller._set_connection_status("error", "Не удалось остановить предыдущий процесс sing-box", level="error")
             return False
-        if controller.xray.is_running and not controller.xray.stop():
+        if controller.xray.is_running and not controller.xray.stop(fast=True):
             controller._set_connection_status("error", "Не удалось остановить предыдущий процесс Xray sidecar", level="error")
             return False
 

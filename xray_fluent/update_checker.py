@@ -21,9 +21,16 @@ def check_update(feed_url: str, channel: str = "stable", timeout: float = 5.0, p
     if not feed_url:
         return None
 
-    request = Request(feed_url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
-    with urlopen_proxy_first(request, timeout=timeout, proxy_url=proxy_url) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    attempts = (proxy_url, None) if proxy_url else (None,)
+    for index, active_proxy in enumerate(attempts):
+        request = Request(feed_url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
+        try:
+            with urlopen_proxy_first(request, timeout=timeout, proxy_url=active_proxy) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            break
+        except Exception:
+            if index == len(attempts) - 1:
+                raise
 
     if isinstance(payload, dict) and "channels" in payload:
         release = payload.get("channels", {}).get(channel)

@@ -98,6 +98,9 @@ Item {
         if (phase === "updated" || phase === "uptodate" || phase === "available") return Theme.success
         return Theme.textMuted
     }
+    function publicSingboxVersion(value) {
+        return String(value || "").replace(/-lumen(?:\.[0-9A-Za-z.-]+)?$/i, "")
+    }
     function escapeHtml(value) {
         return String(value || "")
             .replace(/&/g, "&amp;")
@@ -138,7 +141,7 @@ Item {
         var s = App.updatesInitialState()
         appVersion = s.appVersion || App.appVersion
         xrayVersion = s.xrayVersion || ""
-        singboxVersion = s.singboxVersion || ""
+        singboxVersion = publicSingboxVersion(s.singboxVersion)
         drouteVersion = s.drouteVersion || ""
         appChannel = App.releaseChannel
     }
@@ -169,7 +172,7 @@ Item {
                 page.singboxMessage = s.message !== undefined ? s.message : ""
                 if (s.percent !== undefined) page.singboxPercent = s.percent
                 if (s.phase === "checking") page.singboxPercent = 0
-                if (s.version !== undefined && s.version !== "") page.singboxVersion = s.version
+                if (s.version !== undefined && s.version !== "") page.singboxVersion = page.publicSingboxVersion(s.version)
             } else if ((s.kind || "") === "geodata") {
                 page.geodataPhase = s.phase || "idle"
                 page.geodataMessage = s.message !== undefined ? s.message : ""
@@ -259,7 +262,7 @@ Item {
                                         Behavior on color { ColorAnimation { duration: 120 } }
                                     }
                                     Text {
-                                        id: preTxt; anchors.centerIn: parent; text: I18n.t("Pre-release")
+                                        id: preTxt; anchors.centerIn: parent; text: I18n.t("Beta")
                                         font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                                         font.weight: page.appChannel === "prerelease" ? Font.DemiBold : Font.Normal
                                         color: page.appChannel === "prerelease" ? Theme.accentText : Theme.textMuted
@@ -467,7 +470,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
                         Text { text: I18n.t("Версия:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                        Text { text: page.singboxVersion !== "" ? page.singboxVersion : I18n.t("не найдена"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
+                        Text { text: page.singboxVersion !== "" ? page.publicSingboxVersion(page.singboxVersion) : I18n.t("не найдена"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
                         Item { Layout.fillWidth: true }
                     }
                     Text {

@@ -12,14 +12,21 @@ Item {
     readonly property var presetKeys: ["default", "absolutely", "ayu", "catppuccin", "codex", "dracula", "everforest", "github", "gruvbox", "linear", "lobster", "material", "matrix", "midnight", "monokai", "night-owl", "nord", "notion", "one", "oscurange", "raycast", "rose-pine", "sentry", "solarized", "temple", "tokyo-night", "vercel", "vscode-plus", "xcode"]
     readonly property var presetLabels: ["Default", "Absolutely", "Ayu", "Catppuccin", "Codex", "Dracula", "Everforest", "GitHub", "Gruvbox", "Linear", "Lobster", "Material", "Matrix", "Midnight", "Monokai", "Night Owl", "Nord", "Notion", "One", "Oscurange", "Raycast", "Rose Pine", "Sentry", "Solarized", "Temple", "Tokyo Night", "Vercel", "VS Code Plus", "Xcode"]
     property int currentTab: 0
+    property int displayedTab: 0
+    property int pendingTab: 0
+    property int tabTransitionDirection: 1
+    readonly property real tabEnterDistance: Math.round(Math.max(24, Math.min(40, width * 0.035)))
+    readonly property real tabExitDistance: Math.round(tabEnterDistance * 0.35)
+    readonly property real tabTransitionOpacity: 0.86
+    readonly property bool showAdvancedSettings: !App.compactMode
     readonly property var tabModel: [
         { glyph: "\uE790", label: I18n.t("Внешний вид"),        pageIndex: 0, compactHidden: false },
         { glyph: "\uE774", label: I18n.t("Сеть"),               pageIndex: 3, compactHidden: false },
-        { glyph: "\uE7E8", label: I18n.t("Запуск и тесты"),     pageIndex: 4, compactHidden: false },
+        { glyph: "\uE7E8", label: I18n.t(App.compactMode ? "Запуск" : "Запуск и тесты"), pageIndex: 4, compactHidden: false },
         { glyph: "\uE8C8", label: I18n.t("Подписки"),           pageIndex: 1, compactHidden: false },
         { glyph: "\uE774", label: I18n.t("DNS"),                pageIndex: 2, compactHidden: false },
         { glyph: "\uE895", label: I18n.t("Обновления"),         pageIndex: 5, compactHidden: false },
-        { glyph: "\uE74E", label: I18n.t("Данные"),             pageIndex: 6, compactHidden: true  }
+        { glyph: "\uE74E", label: I18n.t("Данные"),             pageIndex: 6, compactHidden: false }
     ]
     readonly property bool narrowTabs: width < 760
     readonly property bool showTabLabels: width >= 1220
@@ -34,13 +41,103 @@ Item {
         var ok = false;
         for (var i = 0; i < visibleTabs.length; i++)
             if (visibleTabs[i].pageIndex === currentTab) { ok = true; break; }
-        if (!ok && visibleTabs.length > 0) currentTab = visibleTabs[0].pageIndex;
+        if (!ok && visibleTabs.length > 0) activateTab(visibleTabs[0].pageIndex);
+    }
+
+    function visibleIndexForTab(tabIndex) {
+        for (var i = 0; i < visibleTabs.length; i++)
+            if (visibleTabs[i].pageIndex === tabIndex)
+                return i
+        return 0
+    }
+
+    function resetTabTransition() {
+        tabExit.stop()
+        tabEnter.stop()
+        tabTranslate.x = 0
+        tabStack.opacity = 1.0
+    }
+
+    function activateTab(tabIndex) {
+        if (tabIndex < 0 || tabIndex >= tabModel.length)
+            return
+
+        var sourceIndex = visibleIndexForTab(displayedTab)
+        var targetIndex = visibleIndexForTab(tabIndex)
+        tabTransitionDirection = targetIndex >= sourceIndex ? 1 : -1
+        currentTab = tabIndex
+        pendingTab = tabIndex
+
+        if (displayedTab === tabIndex) {
+            if (tabExit.running)
+                resetTabTransition()
+            return
+        }
+
+        if (!Theme.animations) {
+            resetTabTransition()
+            displayedTab = tabIndex
+            return
+        }
+
+        // A new click during the exit animation only changes the destination.
+        // This prevents intermediate settings pages from ever becoming visible.
+        if (tabExit.running)
+            return
+
+        if (tabEnter.running)
+            tabEnter.stop()
+        tabExit.restart()
+    }
+
+    ParallelAnimation {
+        id: tabExit
+        NumberAnimation {
+            target: tabStack
+            property: "opacity"
+            to: page.tabTransitionOpacity
+            duration: 70
+            easing.type: Easing.InCubic
+        }
+        NumberAnimation {
+            target: tabTranslate
+            property: "x"
+            to: -page.tabTransitionDirection * page.tabExitDistance
+            duration: 90
+            easing.type: Easing.InCubic
+        }
+        onFinished: {
+            page.displayedTab = page.pendingTab
+            tabStack.opacity = page.tabTransitionOpacity
+            tabTranslate.x = page.tabTransitionDirection * page.tabEnterDistance
+            tabEnter.restart()
+        }
+    }
+
+    ParallelAnimation {
+        id: tabEnter
+        NumberAnimation {
+            target: tabStack
+            property: "opacity"
+            to: 1.0
+            duration: 120
+            easing.type: Easing.OutCubic
+        }
+        NumberAnimation {
+            target: tabTranslate
+            property: "x"
+            to: 0.0
+            duration: 220
+            easing.type: Theme.easeEmphasized
+        }
     }
 
     function saveSubscriptionSettings() {
         App.setSubscriptionIncludeRegex(subscriptionIncludeRegex.text)
         App.setSubscriptionExcludeRegex(subscriptionExcludeRegex.text)
         App.setSubscriptionUserAgent(subscriptionUserAgent.text)
+        App.setSubscriptionUseRealHwid(subscriptionUseRealHwid.checked)
+        App.setSubscriptionHwid(subscriptionHwid.text)
         App.setSubscriptionConverterEnabled(subscriptionConverterEnabled.checked)
         App.setSubscriptionConverterUrl(subscriptionConverterUrl.text)
     }
@@ -49,7 +146,7 @@ Item {
 
     component StyledCombo: FluentCombo { Layout.preferredWidth: 210 }
 
-    component StyledField: TextField {
+    component StyledField: FluentTextField {
         implicitHeight: Theme.controlHeight
         color: Theme.text
         font.family: Theme.fontFamily
@@ -64,7 +161,7 @@ Item {
         }
     }
 
-    component StyledArea: TextArea {
+    component StyledArea: FluentTextArea {
         Layout.fillWidth: true
         Layout.preferredHeight: 86
         color: Theme.text
@@ -83,6 +180,7 @@ Item {
     }
 
     component InfoIcon: ToolButton {
+        id: infoIconControl
         property string tip: ""
         Layout.preferredWidth: 28
         Layout.preferredHeight: 28
@@ -90,9 +188,11 @@ Item {
         font.family: "Segoe Fluent Icons"
         font.pixelSize: 14
         hoverEnabled: true
-        ToolTip.visible: hovered
-        ToolTip.delay: 250
-        ToolTip.text: tip
+        FluentToolTip {
+            visible: infoIconControl.hovered
+            delay: 250
+            text: infoIconControl.tip
+        }
         contentItem: Text {
             text: parent.text
             font: parent.font
@@ -311,7 +411,7 @@ Item {
                             id: tabMouse
                             anchors.fill: parent
                             hoverEnabled: true
-                            onClicked: page.currentTab = modelData.pageIndex
+                            onClicked: page.activateTab(modelData.pageIndex)
                         }
                     }
                 }
@@ -335,17 +435,13 @@ Item {
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
 
-        SwipeView {
+        StackLayout {
             id: tabStack
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            interactive: false
-            currentIndex: page.currentTab
-
-            Binding { target: tabStack.contentItem; property: "highlightMoveDuration"; value: Theme.animations ? 520 : 0 }
-            Binding { target: tabStack.contentItem; property: "highlightResizeDuration"; value: Theme.animations ? 160 : 0 }
-            Binding { target: tabStack.contentItem; property: "highlightMoveVelocity"; value: Theme.animations ? 2800 : -1 }
+            currentIndex: page.displayedTab
+            transform: Translate { id: tabTranslate }
 
         FluentScroll {
             roundedClip: false
@@ -392,6 +488,7 @@ Item {
                 }
 
                 SettingRow {
+                    visible: page.showAdvancedSettings
                     glyph: "\uE7E6"; title: I18n.t("Свой базовый тон"); subtitle: I18n.t("Кастомный цвет подложки окна (поверх пресета)")
                     AccentButton {
                         kind: "ghost"
@@ -426,19 +523,19 @@ Item {
                 }
 
                 SettingRow {
-                    visible: App.uiWallpaper !== ""
+                    visible: page.showAdvancedSettings && App.uiWallpaper !== ""
                     glyph: "\uE890"; title: I18n.t("Непрозрачность обоев"); subtitle: I18n.t("Насколько ярко видно изображение, %")
                     PercentSlider { value: App.uiWallpaperOpacity; onValueEdited: (v) => App.setUiWallpaperOpacity(v) }
                 }
 
                 SettingRow {
-                    visible: App.uiWallpaper !== ""
+                    visible: page.showAdvancedSettings && App.uiWallpaper !== ""
                     glyph: "\uE7B3"; title: I18n.t("Размытие обоев"); subtitle: I18n.t("Сила размытия фона, 0–100")
                     PercentSlider { value: App.uiWallpaperBlur; onValueEdited: (v) => App.setUiWallpaperBlur(v) }
                 }
 
                 SettingRow {
-                    visible: App.uiWallpaper !== ""
+                    visible: page.showAdvancedSettings && App.uiWallpaper !== ""
                     glyph: "\uE706"; title: I18n.t("Яркость обоев"); subtitle: I18n.t("100 = оригинал, меньше = темнее")
                     PercentSlider { value: App.uiWallpaperBrightness; onValueEdited: (v) => App.setUiWallpaperBrightness(v) }
                 }
@@ -468,6 +565,7 @@ Item {
                 }
 
                 SettingRow {
+                    visible: page.showAdvancedSettings
                     glyph: "\uE8B3"; title: I18n.t("Скругление углов"); subtitle: I18n.t("Радиус скругления карточек и кнопок, px")
                     FluentSpin { from: 0; to: 20; value: App.uiCornerRadius; onValueModified: App.setUiCornerRadius(value) }
                 }
@@ -478,7 +576,7 @@ Item {
                 }
 
                 SettingRow {
-                    glyph: "\uE890"; title: I18n.t("Компактный режим"); subtitle: I18n.t("Скрыть продвинутые настройки и второстепенные разделы")
+                    glyph: "\uE890"; title: I18n.t("Компактный режим"); subtitle: I18n.t("Скрыть сложные и профессиональные настройки")
                     Switch { checked: App.compactMode; onToggled: App.setInterfaceMode(checked ? "compact" : "full") }
                 }
             }
@@ -501,6 +599,7 @@ Item {
 
                 SettingRow {
                     enabled: App.uiBackdrop !== "solid"
+                    visible: page.showAdvancedSettings
                     opacity: enabled ? 1.0 : 0.55
                     glyph: "\uE9E9"; title: I18n.t("Сила прозрачности"); subtitle: I18n.t("0: Mica почти выключена, 100: максимум Mica")
                     PercentSlider { value: App.uiTransparencyStrength; onValueEdited: (v) => App.setUiTransparencyStrength(v) }
@@ -537,6 +636,7 @@ Item {
 
                 Card {
                     Layout.fillWidth: true
+                    visible: page.showAdvancedSettings
                     ColumnLayout {
                         anchors.fill: parent
                         spacing: 14
@@ -563,6 +663,7 @@ Item {
 
                 Card {
                     Layout.fillWidth: true
+                    visible: page.showAdvancedSettings
                     ColumnLayout {
                         anchors.fill: parent
                         spacing: 14
@@ -570,6 +671,21 @@ Item {
                         SettingRow {
                             glyph: "\uE8D4"; title: "User-Agent"; subtitle: I18n.t("Пустое поле использует полный профиль запросов Happ для Windows")
                             StyledField { id: subscriptionUserAgent; Layout.preferredWidth: 360; text: App.subscriptionUserAgent; placeholderText: "Happ/2.18.3/Windows/2606241603601" }
+                        }
+                        SettingRow {
+                            glyph: "\uE72E"; title: I18n.t("Отправлять настоящий HWID"); subtitle: I18n.t("Использовать MachineGuid текущей установки Windows вместо указанного вручную")
+                            Switch { id: subscriptionUseRealHwid; checked: App.subscriptionUseRealHwid }
+                        }
+                        SettingRow {
+                            visible: !subscriptionUseRealHwid.checked
+                            glyph: "\uE950"; title: "HWID"; subtitle: I18n.t("Идентификатор устройства для заголовка X-Hwid; пустое поле использует стандартное значение Happ")
+                            StyledField {
+                                id: subscriptionHwid
+                                Layout.preferredWidth: 360
+                                text: App.subscriptionHwid
+                                placeholderText: "00000000-0000-4000-8000-000000000000"
+                                maximumLength: 256
+                            }
                         }
                         SettingRow {
                             glyph: "\uE8AB"; title: I18n.t("Конвертация подписки"); subtitle: I18n.t("Перед загрузкой передавать URL сервису-конвертеру")
@@ -618,6 +734,7 @@ Item {
 
                 Card {
                     Layout.fillWidth: true
+                    visible: page.showAdvancedSettings
                     enabled: App.dnsMode === "builtin"
                     opacity: enabled ? 1.0 : 0.5
                     ColumnLayout {
@@ -685,6 +802,7 @@ Item {
 
                 Card {
                     Layout.fillWidth: true
+                    visible: page.showAdvancedSettings
                     enabled: App.dnsMode === "builtin"
                     opacity: enabled ? 1.0 : 0.5
                     ColumnLayout {
@@ -728,6 +846,7 @@ Item {
                     Switch { checked: App.reconnectOnNetworkChange; onToggled: App.setReconnectOnNetworkChange(checked) }
                 }
                 SettingRow {
+                    visible: page.showAdvancedSettings
                     glyph: "\uE968"; title: I18n.t("Предпочитать IPv6"); subtitle: I18n.t("Использовать IPv6-адреса раньше IPv4, если сервер и сеть это поддерживают")
                     Switch { checked: App.preferIpv6; onToggled: App.setPreferIpv6(checked) }
                 }
@@ -736,18 +855,14 @@ Item {
                     Switch { checked: App.killSwitch; onToggled: App.setKillSwitch(checked) }
                 }
                 SettingRow {
-                    glyph: "\uE72C"; title: I18n.t("Проверять обновления ядра и geoip/geosite"); subtitle: I18n.t("При запуске проверять обновления и уведомлять")
-                    Switch { checked: App.resourceUpdateCheck; onToggled: App.setResourceUpdateCheck(checked) }
-                }
-                SettingRow {
-                    visible: !App.compactMode
+                    visible: page.showAdvancedSettings
                     Layout.fillWidth: true
                     glyph: "\uE8A6"; title: I18n.t("Фрагментирование"); subtitle: I18n.t("TLS Fragment")
                     InfoIcon { tip: I18n.t("Фрагментирование делит TLS-рукопожатие на части. Может помочь обходу DPI, но иногда снижает стабильность.") }
                     Switch { checked: App.fragmentationEnabled; onToggled: App.setFragmentation(checked) }
                 }
                 SettingRow {
-                    visible: !App.compactMode && App.fragmentationEnabled
+                    visible: page.showAdvancedSettings && App.fragmentationEnabled
                     Layout.fillWidth: true
                     glyph: "\uE9D9"; title: I18n.t("Настройки фрагментирования"); subtitle: I18n.t("Fragment Settings")
                     InfoIcon { tip: I18n.t("Packets выбирает часть трафика, Length размер фрагментов, Delay задержку между ними.") }
@@ -756,14 +871,14 @@ Item {
                     StyledField { id: fragDelay; Layout.preferredWidth: 100; text: App.fragmentDelay; placeholderText: "10-20"; onEditingFinished: App.setFragmentSettings(fragPackets.text, fragLength.text, text) }
                 }
                 SettingRow {
-                    visible: !App.compactMode
+                    visible: page.showAdvancedSettings
                     Layout.fillWidth: true
                     glyph: "\uE7C3"; title: I18n.t("Мультиплексирование"); subtitle: I18n.t("Multiplex")
                     InfoIcon { tip: I18n.t("Мультиплексирование объединяет несколько запросов в один канал. Может ускорить много мелких соединений, но зависит от поддержки сервера.") }
                     Switch { checked: App.multiplexingEnabled; onToggled: App.setMultiplexing(checked) }
                 }
                 SettingRow {
-                    visible: !App.compactMode && App.multiplexingEnabled
+                    visible: page.showAdvancedSettings && App.multiplexingEnabled
                     Layout.fillWidth: true
                     glyph: "\uE9D9"; title: I18n.t("Настройки мультиплексирования"); subtitle: I18n.t("Multiplex Settings")
                     InfoIcon { tip: I18n.t("Потоки задают, сколько запросов можно вести внутри одного мультиплексированного соединения.") }
@@ -773,7 +888,7 @@ Item {
         }
         Card {
             Layout.fillWidth: true
-            visible: !App.compactMode
+            visible: page.showAdvancedSettings
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -799,6 +914,7 @@ Item {
         }
         Card {
             Layout.fillWidth: true
+            visible: page.showAdvancedSettings
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -828,6 +944,7 @@ Item {
         }
         Card {
             Layout.fillWidth: true
+            visible: page.showAdvancedSettings
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -898,6 +1015,7 @@ Item {
                     Switch { checked: App.autoConnectOnImport; onToggled: App.setAutoConnectOnImport(checked) }
                 }
                 SettingRow {
+                    visible: page.showAdvancedSettings
                     glyph: "\uE945"; title: I18n.t("Автозапуск Zapret"); subtitle: I18n.t("Запускать Zapret при старте приложения")
                     Switch { checked: App.zapretAutostart; onToggled: App.setZapretAutostart(checked) }
                 }
@@ -905,7 +1023,7 @@ Item {
         }
         Card {
             Layout.fillWidth: true
-            visible: !App.compactMode
+            visible: page.showAdvancedSettings
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -1047,12 +1165,13 @@ Item {
                 }
 
                 SettingRow {
+                    glyph: "\uE72C"; title: I18n.t("Проверять обновления ядра и geoip/geosite"); subtitle: I18n.t("При запуске проверять обновления и уведомлять")
+                    Switch { checked: App.resourceUpdateCheck; onToggled: App.setResourceUpdateCheck(checked) }
+                }
+
+                SettingRow {
                     glyph: "\uE895"; title: I18n.t("Автообновление приложения"); subtitle: I18n.t("Автоматически скачивать и устанавливать новые версии")
                     Switch { checked: App.appAutoUpdate; onToggled: App.setAppAutoUpdate(checked) }
-                }
-                SettingRow {
-                    glyph: "\uEBD3"; title: I18n.t("Авто-обновление Xray"); subtitle: I18n.t("Обновлять ядро Xray автоматически")
-                    Switch { checked: App.xrayAutoUpdate; onToggled: App.setXrayAutoUpdate(checked) }
                 }
             }
         }
@@ -1067,7 +1186,6 @@ Item {
                 spacing: Theme.spacingLarge
         Card {
             Layout.fillWidth: true
-            visible: !App.compactMode
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -1082,20 +1200,11 @@ Item {
                     glyph: "\uE9D9"; title: I18n.t("Телеметрия"); subtitle: I18n.t("Отправлять диагностические ошибки на сервер Lumen KVN")
                     Switch { checked: App.diagnosticsUploadEnabled; onToggled: App.setDiagnosticsUpload(checked) }
                 }
-                SettingRow {
-                    glyph: "\uE777"; title: I18n.t("Сброс настроек"); subtitle: I18n.t("Вернуть настройки приложения и маршрутизации по умолчанию. Серверы и подписки останутся.")
-                    AccentButton {
-                        kind: "danger"
-                        glyph: "\uE777"
-                        text: I18n.t("Сбросить настройки")
-                        onClicked: resetSettingsDialog.open()
-                    }
-                }
             }
         }
         Card {
             Layout.fillWidth: true
-            visible: !App.compactMode
+            visible: page.showAdvancedSettings
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -1110,6 +1219,22 @@ Item {
                     glyph: "\uE756"; title: I18n.t("Ядро sing-box-extended"); subtitle: I18n.t("Путь к исполняемому файлу sing-box-extended")
                     StyledField { id: sbField; Layout.preferredWidth: 240; text: App.singboxPath; placeholderText: "core\\sing-box.exe"; onEditingFinished: App.setSingboxPath(text) }
                     AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Обзор"); onClicked: { var p = App.browseSingboxPath(); if (p) sbField.text = p } }
+                }
+            }
+        }
+        Card {
+            Layout.fillWidth: true
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 14
+                SettingRow {
+                    glyph: "\uE777"; title: I18n.t("Сброс настроек"); subtitle: I18n.t("Вернуть настройки приложения и маршрутизации по умолчанию. Серверы и подписки останутся.")
+                    AccentButton {
+                        kind: "danger"
+                        glyph: "\uE777"
+                        text: I18n.t("Сбросить настройки")
+                        onClicked: resetSettingsDialog.open()
+                    }
                 }
             }
         }

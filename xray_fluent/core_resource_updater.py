@@ -18,11 +18,14 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from .constants import APP_VERSION, SINGBOX_PATH_DEFAULT, XRAY_PATH_DEFAULT
 from .component_compatibility import ensure_component_compatible, required_geodata_codes
 from .discord_proxy_manager import (
+    DROUTE_BUNDLED_DIR,
     DROUTE_DIR,
     DROUTE_EXE,
     DROUTE_LEGACY_VERSION,
     DROUTE_VERSION_FILE,
+    get_bundled_droute_version,
     get_droute_bundle_version,
+    install_bundled_droute,
 )
 from .engines.singbox import get_singbox_version
 from .geodata_resources import (
@@ -46,7 +49,6 @@ from .subprocess_utils import CREATE_NO_WINDOW, result_output_text
 from .zip_utils import safe_extract_zip
 
 SINGBOX_EXTENDED_LATEST_API = "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest"
-DROUTE_LATEST_API = "https://api.github.com/repos/snowluwu/droute/releases/latest"
 RUNETFREEDOM_LATEST_API = "https://api.github.com/repos/runetfreedom/russia-v2ray-rules-dat/releases/latest"
 GEODATA_METADATA_NAME = "lumen-geodata.json"
 _MAX_RESOURCE_DOWNLOAD_BYTES = 512 * 1024 * 1024
@@ -77,35 +79,45 @@ def _download_direct(
     response_opened=None,
     response_closed=None,
 ) -> None:
-    _raise_if_cancelled(cancelled)
-    request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with urlopen_proxy_first(request, timeout=120, proxy_url=proxy_url) as response:
-        if response_opened is not None:
-            response_opened(response)
+    attempts = (proxy_url, None) if proxy_url else (None,)
+    for index, active_proxy in enumerate(attempts):
+        _raise_if_cancelled(cancelled)
+        request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
         try:
-            total = int(response.headers.get("Content-Length", 0))
-            if total > _MAX_RESOURCE_DOWNLOAD_BYTES:
-                raise RuntimeError(f"ресурс слишком большой: {total} байт")
-            downloaded = 0
-            with open(destination, "wb") as file:
-                while True:
-                    _raise_if_cancelled(cancelled)
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    file.write(chunk)
-                    downloaded += len(chunk)
-                    if downloaded > _MAX_RESOURCE_DOWNLOAD_BYTES:
-                        raise RuntimeError(
-                            f"ресурс превышает лимит {_MAX_RESOURCE_DOWNLOAD_BYTES} байт"
-                        )
-                    if on_progress and total > 0:
-                        on_progress(downloaded, total)
-        finally:
-            if response_closed is not None:
-                response_closed(response)
-    _raise_if_cancelled(cancelled)
+            with urlopen_proxy_first(request, timeout=120, proxy_url=active_proxy) as response:
+                if response_opened is not None:
+                    response_opened(response)
+                try:
+                    total = int(response.headers.get("Content-Length", 0))
+                    if total > _MAX_RESOURCE_DOWNLOAD_BYTES:
+                        raise RuntimeError(f"ресурс слишком большой: {total} байт")
+                    downloaded = 0
+                    with open(destination, "wb") as file:
+                        while True:
+                            _raise_if_cancelled(cancelled)
+                            chunk = response.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            file.write(chunk)
+                            downloaded += len(chunk)
+                            if downloaded > _MAX_RESOURCE_DOWNLOAD_BYTES:
+                                raise RuntimeError(
+                                    f"ресурс превышает лимит {_MAX_RESOURCE_DOWNLOAD_BYTES} байт"
+                                )
+                            if on_progress and total > 0:
+                                on_progress(downloaded, total)
+                finally:
+                    if response_closed is not None:
+                        response_closed(response)
+            _raise_if_cancelled(cancelled)
+            return
+        except UpdateCancelled:
+            raise
+        except Exception:
+            if index == len(attempts) - 1:
+                raise
+            destination.unlink(missing_ok=True)
 
 
 def _extract_singbox_version(text: str) -> str:
@@ -114,14 +126,8 @@ def _extract_singbox_version(text: str) -> str:
     return match.group(1) if match else value
 
 
-def _pick_droute_asset(release: dict) -> tuple[str, str, str]:
-    for asset in release.get("assets") or []:
-        name = str(asset.get("name") or "")
-        url = str(asset.get("browser_download_url") or "")
-        if re.fullmatch(r"droute-[v\d][\w.-]*\.zip", name, flags=re.IGNORECASE) and url:
-            digest = str(asset.get("digest") or "")
-            return name, url, digest.removeprefix("sha256:").strip().lower()
-    raise RuntimeError("droute zip asset was not found in the latest release")
+def _is_lumen_singbox_build(text: str) -> bool:
+    return bool(re.search(r"-lumen(?:\.|\b)", text or "", flags=re.IGNORECASE))
 
 
 def _release_asset_digest(
@@ -439,8 +445,12 @@ def check_or_update_droute(
     response_opened=None,
     response_closed=None,
     bundle_dir: Path | None = None,
+    bundled_dir: Path | None = None,
 ) -> ResourceUpdateResult:
+    del proxy_url, response_opened, response_closed
+    _raise_if_cancelled(cancelled)
     target_dir = bundle_dir or DROUTE_DIR
+    source_dir = bundled_dir or DROUTE_BUNDLED_DIR
     target_exe = target_dir / DROUTE_EXE.name
     version_file = target_dir / DROUTE_VERSION_FILE.name
     if bundle_dir is None:
@@ -453,76 +463,31 @@ def check_or_update_droute(
     else:
         current = ""
 
-    try:
-        release = _request_json(DROUTE_LATEST_API, proxy_url=proxy_url, cancelled=cancelled)
-        if not isinstance(release, dict):
-            raise RuntimeError("invalid GitHub release response")
-        asset_name, asset_url, expected_hash = _pick_droute_asset(release)
-        if not expected_hash:
-            expected_hash = _release_asset_digest(
-                release,
-                asset_name,
-                proxy_url=proxy_url,
-                cancelled=cancelled,
-            )
-        latest = _extract_version(str(release.get("tag_name") or release.get("name") or ""))
-        if not latest:
-            latest = _extract_version(asset_name)
-        if not latest:
-            raise RuntimeError("droute release version was not found")
-    except UpdateCancelled:
-        raise
-    except Exception as exc:
-        return ResourceUpdateResult("droute", "error", f"Не удалось проверить droute: {exc}", current, "")
-
-    if current and not _is_newer(latest, current):
-        return ResourceUpdateResult("droute", "up_to_date", f"droute актуален ({current})", current, latest)
-    if not apply_update:
-        return ResourceUpdateResult("droute", "available", f"Доступен droute {latest}", current, latest)
-
-    if not expected_hash:
+    latest = get_bundled_droute_version(source_dir)
+    if not latest:
         return ResourceUpdateResult(
             "droute",
             "error",
-            "Не удалось обновить droute: издатель не предоставил SHA-256 для архива",
+            "Не удалось проверить droute: встроенный пакет не найден. Переустановите Lumen KVN.",
             current,
-            latest,
+            "",
         )
 
+    if current and not _is_newer(latest, current):
+        return ResourceUpdateResult("droute", "up_to_date", f"droute актуален ({current}, встроенный)", current, latest)
+    if not apply_update:
+        return ResourceUpdateResult("droute", "available", f"Доступен droute {latest} (встроенный)", current, latest)
+
     try:
-        with tempfile.TemporaryDirectory(prefix="droute_update_") as temp_dir_str:
-            temp_dir = Path(temp_dir_str)
-            archive_path = temp_dir / asset_name
-            extract_dir = temp_dir / "extracted"
-            _download_direct(
-                asset_url,
-                archive_path,
-                on_progress,
-                proxy_url=proxy_url,
-                cancelled=cancelled,
-                response_opened=response_opened,
-                response_closed=response_closed,
-            )
-            if _sha256_file(archive_path).lower() != expected_hash:
-                raise RuntimeError("droute archive checksum mismatch")
-            _ensure_zip_file(archive_path, "droute")
-            with zipfile.ZipFile(archive_path) as archive:
-                safe_extract_zip(archive, extract_dir)
-            staged_exe = extract_dir / DROUTE_EXE.name
-            if not staged_exe.is_file() or staged_exe.stat().st_size < 1024:
-                raise RuntimeError("droute.exe was not found in the downloaded archive")
-            (extract_dir / DROUTE_VERSION_FILE.name).write_text(latest + "\n", encoding="utf-8")
-            replacements = [
-                (path, target_dir / path.relative_to(extract_dir))
-                for path in extract_dir.rglob("*")
-                if path.is_file()
-            ]
-            _atomic_replace_files(replacements)
+        _raise_if_cancelled(cancelled)
+        install_bundled_droute(target_dir, bundle_dir=source_dir)
+        if on_progress:
+            on_progress(1, 1)
     except UpdateCancelled:
         raise
     except Exception as exc:
         return ResourceUpdateResult("droute", "error", f"Не удалось обновить droute: {exc}", current, latest)
-    return ResourceUpdateResult("droute", "updated", f"droute обновлен до {latest}", current, latest)
+    return ResourceUpdateResult("droute", "updated", f"droute обновлен до {latest} (из встроенного пакета)", current, latest)
 
 
 def check_or_update_singbox(
@@ -564,6 +529,17 @@ def check_or_update_singbox(
 
     if current and latest and not _is_newer(latest, current):
         return ResourceUpdateResult("singbox", "up_to_date", f"sing-box актуален ({current})", current, latest)
+    if _is_lumen_singbox_build(current_text):
+        return ResourceUpdateResult(
+            "singbox",
+            "available",
+            (
+                f"Доступен sing-box extended {latest}. Совместимое ядро "
+                "устанавливается вместе с обновлением Lumen"
+            ),
+            current,
+            latest,
+        )
     if not apply_update:
         return ResourceUpdateResult("singbox", "available", f"Доступен sing-box extended {latest}", current, latest)
 

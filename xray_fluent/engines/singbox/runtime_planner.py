@@ -31,6 +31,7 @@ from ...models import Node, RoutingSettings
 from ...multiplex import apply_xray_multiplex
 from ...routing_runtime import apply_singbox_gui_routing
 from ...xray_fragments import apply_xray_final_fragment
+from ...wireguard_normalization import normalize_singbox_wireguard_endpoints
 from .config_builder import build_singbox_outbound
 
 
@@ -195,6 +196,7 @@ def plan_singbox_runtime(
 ) -> SingboxRuntimePlan:
     if _node_is_full_singbox_config(node):
         runtime_config = deepcopy((node.outbound or {}).get("singbox_config") or {})
+        normalize_singbox_wireguard_endpoints(runtime_config)
         strip_singbox_proxy_inbounds(runtime_config)
         _configure_singbox_runtime_inbounds(
             runtime_config,
@@ -234,6 +236,7 @@ def plan_singbox_runtime(
         )
 
     runtime_config = deepcopy(document.payload)
+    normalize_singbox_wireguard_endpoints(runtime_config)
     strip_singbox_proxy_inbounds(runtime_config)
     _configure_singbox_runtime_inbounds(
         runtime_config,
@@ -326,6 +329,8 @@ def plan_singbox_runtime(
         _ensure_endpoint_server_bootstrap_contract(runtime_config, native_proxy)
     else:
         _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
+    _apply_imported_proxy_dns(runtime_config, node, routing)
+    _clamp_tun_mtu_for_proxy(runtime_config, native_proxy, enabled=tun_mode)
     _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
     clamp_singbox_local_inbounds(runtime_config)
     _validate_runtime_dns_contract(runtime_config)
@@ -438,6 +443,8 @@ def _node_should_use_xray_sidecar(node: Node | None) -> bool:
         return False
 
     protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
+    if protocol == "xray_config" and isinstance(outbound.get("xray_config"), dict):
+        return True
     stream_settings = outbound.get("streamSettings")
     if isinstance(stream_settings, dict):
         network = str(stream_settings.get("network") or "").strip().lower()
@@ -555,6 +562,67 @@ def _build_xray_sidecar_config(
         raise ValueError("Выбранный сервер не содержит outbound JSON для xray sidecar.")
     if not str(node.outbound.get("protocol") or "").strip():
         raise ValueError("Выбранный сервер не содержит protocol для xray sidecar.")
+    if str(node.outbound.get("protocol") or "").strip().lower() == "xray_config":
+        full_config = node.outbound.get("xray_config")
+        if not isinstance(full_config, dict):
+            raise ValueError("AUTO-профиль Xray повреждён: отсутствует полный JSON-конфиг.")
+        config = deepcopy(full_config)
+        outbounds = config.get("outbounds")
+        if not isinstance(outbounds, list) or not outbounds:
+            raise ValueError("AUTO-профиль Xray не содержит список outbounds.")
+
+        config["inbounds"] = [
+            {
+                "tag": _APP_XRAY_SIDECAR_RELAY_INBOUND_TAG,
+                "protocol": "socks",
+                "listen": PROXY_HOST,
+                "port": relay_port,
+                "settings": {
+                    "auth": "password",
+                    "accounts": [{"user": relay_username, "pass": relay_password}],
+                    "udp": True,
+                },
+                "sniffing": {
+                    "enabled": True,
+                    "destOverride": ["http", "tls"],
+                    "routeOnly": False,
+                },
+            }
+        ]
+        ignored_protocols = {"freedom", "blackhole", "dns"}
+        for outbound in outbounds:
+            if not isinstance(outbound, dict):
+                continue
+            protocol = str(outbound.get("protocol") or "").strip().lower()
+            if protocol in ignored_protocols:
+                continue
+            stream = outbound.get("streamSettings")
+            if not isinstance(stream, dict):
+                stream = {}
+                outbound["streamSettings"] = stream
+            sockopt = stream.get("sockopt")
+            if not isinstance(sockopt, dict):
+                sockopt = {}
+                stream["sockopt"] = sockopt
+            sockopt["dialerProxy"] = _APP_XRAY_SIDECAR_PROTECT_OUTBOUND_TAG
+        outbounds.append(
+            {
+                "tag": _APP_XRAY_SIDECAR_PROTECT_OUTBOUND_TAG,
+                "protocol": "shadowsocks",
+                "settings": {
+                    "servers": [
+                        {
+                            "address": PROXY_HOST,
+                            "port": protect_port,
+                            "method": _SS_PROTECT_METHOD,
+                            "password": protect_password,
+                        }
+                    ]
+                },
+            }
+        )
+        return config
+
     proxy_outbound = deepcopy(node.outbound)
     proxy_outbound["tag"] = "proxy"
     apply_xray_multiplex(
@@ -1090,6 +1158,72 @@ def _set_dns_server_dial_contract(server: dict[str, Any], *, detour: str, resolv
         server["domain_resolver"] = resolver or "system-dns"
     else:
         server.pop("domain_resolver", None)
+
+
+def _apply_imported_proxy_dns(
+    payload: dict[str, Any],
+    node: Node,
+    routing: RoutingSettings | None,
+) -> None:
+    """Honor DNS servers embedded in imported WireGuard/AWG/MASQUE profiles."""
+    node_outbound = node.outbound if isinstance(node.outbound, dict) else {}
+    raw_values = node_outbound.get("_dns")
+    if not isinstance(raw_values, (list, tuple)):
+        return
+    addresses = [str(item).strip() for item in raw_values if str(item).strip()]
+    if not addresses:
+        return
+    dns = payload.get("dns")
+    if not isinstance(dns, dict):
+        return
+    servers = dns.get("servers")
+    if not isinstance(servers, list):
+        return
+
+    servers[:] = [
+        server
+        for server in servers
+        if not (
+            isinstance(server, dict)
+            and (
+                str(server.get("tag") or "") == "proxy-dns"
+                or str(server.get("tag") or "").startswith("proxy-dns-")
+            )
+        )
+    ]
+    strategy = _dns_strategy(routing.dns_proxy_strategy if routing is not None else "")
+    for index, address in enumerate(dict.fromkeys(addresses), start=1):
+        tag = "proxy-dns" if index == 1 else f"proxy-dns-{index}"
+        server = _build_dns_server(tag, address, "udp", strategy)
+        _set_dns_server_dial_contract(server, detour="proxy", resolver="bootstrap-dns")
+        servers.append(server)
+
+
+def _clamp_tun_mtu_for_proxy(
+    payload: dict[str, Any],
+    proxy: dict[str, Any],
+    *,
+    enabled: bool,
+) -> None:
+    """Do not advertise jumbo TUN packets to MTU-limited VPN endpoints."""
+    if not enabled:
+        return
+    proxy_type = str(proxy.get("type") or "").strip().lower()
+    if proxy_type not in {"wireguard", "warp", "masque"}:
+        return
+    try:
+        endpoint_mtu = int(proxy.get("mtu") or 1280)
+    except (TypeError, ValueError):
+        endpoint_mtu = 1280
+    endpoint_mtu = max(576, min(endpoint_mtu, 9000))
+    for inbound in payload.get("inbounds") or []:
+        if not isinstance(inbound, dict) or str(inbound.get("type") or "").lower() != "tun":
+            continue
+        try:
+            current_mtu = int(inbound.get("mtu") or endpoint_mtu)
+        except (TypeError, ValueError):
+            current_mtu = endpoint_mtu
+        inbound["mtu"] = min(current_mtu, endpoint_mtu)
 
 
 def _normalize_route_exclude_addresses(values: list[str] | tuple[str, ...]) -> list[str]:

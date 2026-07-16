@@ -64,6 +64,47 @@ def test_atomic_replace_writes_backup_only_after_success(tmp_path) -> None:
     assert target.with_suffix(".exe.bak").read_bytes() == b"old"
 
 
+def test_lumen_singbox_build_is_not_replaced_by_unpatched_upstream(
+    monkeypatch, tmp_path
+) -> None:
+    exe = tmp_path / "sing-box.exe"
+    exe.write_bytes(b"lumen-sing-box")
+    monkeypatch.setattr(
+        core_resource_updater,
+        "resolve_configured_path",
+        lambda *_args, **_kwargs: exe,
+    )
+    monkeypatch.setattr(
+        core_resource_updater,
+        "get_singbox_version",
+        lambda _path: "sing-box version 1.13.14-extended-2.5.1-lumen.1",
+    )
+    monkeypatch.setattr(
+        core_resource_updater,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "tag_name": "v1.13.15-extended-2.6.0",
+            "assets": [],
+        },
+    )
+    monkeypatch.setattr(
+        core_resource_updater,
+        "_pick_singbox_asset",
+        lambda _release: ("sing-box-windows-amd64.zip", "https://example.invalid/core.zip"),
+    )
+    monkeypatch.setattr(
+        core_resource_updater,
+        "_download_file",
+        lambda *_args, **_kwargs: pytest.fail("unpatched upstream core must not be downloaded"),
+    )
+
+    result = core_resource_updater.check_or_update_singbox(str(exe), True)
+
+    assert result.status == "available"
+    assert result.current_version == "1.13.14-extended-2.5.1"
+    assert result.latest_version == "1.13.15-extended-2.6.0"
+
+
 @pytest.mark.parametrize(
     "worker",
     [
@@ -95,70 +136,55 @@ def test_resource_worker_cancel_closes_active_response() -> None:
     assert response.closed is True
 
 
-def test_droute_check_reports_available_release(monkeypatch, tmp_path) -> None:
-    bundle_dir = tmp_path / "droute"
-    bundle_dir.mkdir()
-    (bundle_dir / "droute.exe").write_bytes(b"old" * 512)
-    (bundle_dir / "version.txt").write_text("1.1.2\n", encoding="utf-8")
-    monkeypatch.setattr(
-        core_resource_updater,
-        "_request_json",
-        lambda *_args, **_kwargs: {
-            "tag_name": "1.2.0",
-            "assets": [
-                {
-                    "name": "droute-1.2.0.zip",
-                    "browser_download_url": "https://example.invalid/droute-1.2.0.zip",
-                }
-            ],
-        },
-    )
+def _write_droute_bundle(directory: Path, version: str, payload: bytes) -> None:
+    directory.mkdir(parents=True)
+    (directory / "droute.exe").write_bytes(payload)
+    (directory / "droute.exe.config").write_text("config", encoding="utf-8")
+    (directory / "LICENSE.txt").write_text("GPL-3.0", encoding="utf-8")
+    (directory / "version.txt").write_text(version + "\n", encoding="utf-8")
+    resources = directory / "ru-RU"
+    resources.mkdir()
+    (resources / "droute.resources.dll").write_bytes(b"resource")
+    checksums = []
+    for path in sorted(item for item in directory.rglob("*") if item.is_file()):
+        relative = path.relative_to(directory).as_posix()
+        checksums.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+    (directory / "SHA256SUMS.txt").write_text("\n".join(checksums) + "\n", encoding="utf-8")
 
-    result = core_resource_updater.check_or_update_droute(False, bundle_dir=bundle_dir)
+
+def test_droute_check_reports_available_bundled_release(tmp_path) -> None:
+    target_dir = tmp_path / "installed"
+    bundled_dir = tmp_path / "bundled"
+    _write_droute_bundle(target_dir, "1.1.2", b"old" * 512)
+    _write_droute_bundle(bundled_dir, "2.0.0", b"new" * 1024)
+
+    result = core_resource_updater.check_or_update_droute(
+        False,
+        bundle_dir=target_dir,
+        bundled_dir=bundled_dir,
+    )
 
     assert result.status == "available"
     assert result.current_version == "1.1.2"
-    assert result.latest_version == "1.2.0"
+    assert result.latest_version == "2.0.0"
 
 
-def test_droute_update_installs_latest_bundle(monkeypatch, tmp_path) -> None:
-    bundle_dir = tmp_path / "droute"
-    bundle_dir.mkdir()
-    (bundle_dir / "droute.exe").write_bytes(b"old" * 512)
-    (bundle_dir / "version.txt").write_text("1.1.2\n", encoding="utf-8")
-    archive_buffer = io.BytesIO()
-    with zipfile.ZipFile(archive_buffer, "w") as archive:
-        archive.writestr("droute.exe", b"new" * 1024)
-        archive.writestr("droute.exe.config", "config")
-        archive.writestr("ru-RU/droute.resources.dll", b"resource")
-    archive_payload = archive_buffer.getvalue()
-    archive_digest = hashlib.sha256(archive_payload).hexdigest()
-    monkeypatch.setattr(
-        core_resource_updater,
-        "_request_json",
-        lambda *_args, **_kwargs: {
-            "tag_name": "1.2.0",
-            "assets": [
-                    {
-                        "name": "droute-1.2.0.zip",
-                        "browser_download_url": "https://example.invalid/droute-1.2.0.zip",
-                        "digest": f"sha256:{archive_digest}",
-                    }
-            ],
-        },
+def test_droute_update_installs_bundled_release_without_network(tmp_path) -> None:
+    target_dir = tmp_path / "installed"
+    bundled_dir = tmp_path / "bundled"
+    _write_droute_bundle(target_dir, "1.1.2", b"old" * 512)
+    _write_droute_bundle(bundled_dir, "2.0.0", b"new" * 1024)
+
+    result = core_resource_updater.check_or_update_droute(
+        True,
+        bundle_dir=target_dir,
+        bundled_dir=bundled_dir,
     )
 
-    def fake_download(_url, destination, *_args, **_kwargs) -> None:
-        destination.write_bytes(archive_payload)
-
-    monkeypatch.setattr(core_resource_updater, "_download_direct", fake_download)
-
-    result = core_resource_updater.check_or_update_droute(True, bundle_dir=bundle_dir)
-
     assert result.status == "updated"
-    assert (bundle_dir / "version.txt").read_text(encoding="utf-8").strip() == "1.2.0"
-    assert (bundle_dir / "droute.exe").read_bytes() == b"new" * 1024
-    assert (bundle_dir / "ru-RU" / "droute.resources.dll").read_bytes() == b"resource"
+    assert (target_dir / "version.txt").read_text(encoding="utf-8").strip() == "2.0.0"
+    assert (target_dir / "droute.exe").read_bytes() == b"new" * 1024
+    assert (target_dir / "ru-RU" / "droute.resources.dll").read_bytes() == b"resource"
 
 
 def test_geodata_same_verified_release_is_not_downloaded(monkeypatch, tmp_path) -> None:

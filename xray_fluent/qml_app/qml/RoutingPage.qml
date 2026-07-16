@@ -9,7 +9,7 @@ import "."
 //  - быстрые пресеты
 //  - Приложения (process_rules) / Сервисы (service_routes) / Домены и IP
 // Each control applies immediately through the App bridge (applyRoutingPreset,
-// applyCustomRoutingPreset, setBypassLan, setTunDefaultOutbound,
+// applyCustomRoutingPreset, setBypassLan,
 // addProcessRule/removeProcessRule, setServiceRoute, addDomainRule/
 // removeDomainRule, importDomainRules/exportDomainRules, applyRoutingPreset).
 Item {
@@ -21,7 +21,6 @@ Item {
         return i < 0 ? 0 : i;
     }
 
-    readonly property var tunOutKeys: ["proxy", "direct"]
     readonly property var procActionKeys: ["direct", "proxy", "block"]
     readonly property var procActionLabels: [I18n.t("Прямой"), I18n.t("Прокси"), I18n.t("Блокировка")]
     readonly property var svcActionKeys: ["direct", "proxy"]
@@ -35,7 +34,7 @@ Item {
         font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
     }
 
-    component DnsField: TextField {
+    component DnsField: FluentTextField {
         Layout.fillWidth: true
         color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal
         selectByMouse: true
@@ -158,19 +157,6 @@ Item {
                         }
                     }
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: App.tunMode
-                        spacing: 4
-                        Text { text: "route_exclude_address"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                        DnsField {
-                            Layout.fillWidth: true
-                            text: App.tunRouteExcludeAddress
-                            placeholderText: "192.168.0.0/16, 10.0.0.0/8"
-                            onEditingFinished: App.setTunRouteExcludeAddress(text)
-                        }
-                    }
-
                     Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
 
                     // Discord Voice — SOCKS5 без TUN (дублирует переключатель с главного экрана)
@@ -201,19 +187,6 @@ Item {
 
             // ---- Приложения -------------------------------------------
             SectionLabel { text: I18n.t("Приложения") }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                Text { text: I18n.t("По умолчанию (TUN)"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
-                StyledCombo {
-                    width: 200
-                    textRole: "label"
-                    model: [ { key: "proxy", label: I18n.t("Через прокси") }, { key: "direct", label: I18n.t("Напрямую") } ]
-                    boundIndex: page.idxIn(page.tunOutKeys, App.tunDefaultOutbound)
-                    onActivated: App.setTunDefaultOutbound(page.tunOutKeys[currentIndex])
-                }
-                Item { Layout.fillWidth: true }
-            }
             // process toolbar
             Flow {
                 Layout.fillWidth: true
@@ -602,7 +575,7 @@ Item {
             ScrollView {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 180
-                TextArea {
+                FluentTextArea {
                     id: importInput
                     wrapMode: TextArea.NoWrap
                     color: Theme.text; font.family: "Cascadia Mono, Consolas, monospace"; font.pixelSize: Theme.fontSmall

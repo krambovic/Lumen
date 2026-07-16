@@ -91,7 +91,7 @@ def _field_capabilities(protocol: str) -> dict[str, bool | str]:
     xray_advanced = protocol in XRAY_ADVANCED_PROTOCOLS
     tls_editable = protocol in {"vless", "vmess", "trojan"}
     endpoint = protocol in ENDPOINT_EDITABLE_PROTOCOLS
-    fixed_endpoint = protocol in {"masque", "singbox_config"}
+    fixed_endpoint = protocol in {"masque", "singbox_config", "xray_config"}
     return {
         "protocol": protocol,
         "xrayAdvanced": xray_advanced,
@@ -106,7 +106,7 @@ def _field_capabilities(protocol: str) -> dict[str, bool | str]:
         "reality": xray_advanced,
         "finalmask": xray_advanced,
         "basicOnly": not xray_advanced,
-        "readOnlyConfig": protocol == "singbox_config",
+        "readOnlyConfig": protocol in {"singbox_config", "xray_config"},
     }
 
 

@@ -12,6 +12,7 @@ Requires .venv created by setup.bat (or manually).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -39,14 +40,49 @@ INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-Setup-windows-x64.exe"
 CORE_DIR = ROOT / "core"
 ZAPRET_DIR = ROOT / "zapret"
 DATA_TEMPLATES_DIR = ROOT / "data" / "templates"
+DROUTE_BUNDLE_DIR = ROOT / "data" / "external" / "droute"
 INNO_SCRIPT = ROOT / "installer" / "LumenKVN.iss"
 ASSETS_DIR = ROOT / "assets"
 NOTICE_FILES = (ROOT / "LICENSE", ROOT / "NOTICE.md", ROOT / "README_QML.md", ROOT / "README.md")
 LEGACY_CORE_FILES = ("tun2socks.exe",)
+DROUTE_REQUIRED_FILES = (
+    "droute.exe",
+    "droute.exe.config",
+    "LICENSE.txt",
+    "SHA256SUMS.txt",
+    "version.txt",
+)
 
 
 def _print(msg: str) -> None:
     print(f"[build-qml] {msg}", flush=True)
+
+
+def _validate_droute_bundle(directory: Path = DROUTE_BUNDLE_DIR) -> str:
+    missing = [name for name in DROUTE_REQUIRED_FILES if not (directory / name).is_file()]
+    if missing:
+        raise RuntimeError(f"Bundled droute is incomplete: {', '.join(missing)}")
+    if (directory / "droute.exe").stat().st_size < 1024:
+        raise RuntimeError("Bundled droute.exe is empty or damaged")
+    version = (directory / "version.txt").read_text(encoding="utf-8").strip().lstrip("v")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise RuntimeError(f"Bundled droute version is invalid: {version or 'empty'}")
+    checksum_lines = (directory / "SHA256SUMS.txt").read_text(encoding="utf-8").splitlines()
+    for line in checksum_lines:
+        expected, separator, relative_name = line.strip().partition("  ")
+        if not separator or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise RuntimeError("Bundled droute checksum manifest is invalid")
+        source = (directory / relative_name).resolve()
+        try:
+            source.relative_to(directory.resolve())
+        except ValueError as exc:
+            raise RuntimeError("Bundled droute checksum path escapes its directory") from exc
+        if not source.is_file():
+            raise RuntimeError(f"Bundled droute checksum target is missing: {relative_name}")
+        actual = hashlib.sha256(source.read_bytes()).hexdigest()
+        if actual != expected:
+            raise RuntimeError(f"Bundled droute checksum mismatch: {relative_name}")
+    return version
 
 
 def _windows_path(path: Path) -> str:
@@ -255,6 +291,11 @@ def build_exe() -> None:
     if DATA_TEMPLATES_DIR.is_dir():
         _print(f"Merging templates -> {dst_templates}")
         _copy_tree_merge(DATA_TEMPLATES_DIR, dst_templates)
+
+    droute_version = _validate_droute_bundle()
+    dst_droute = APP_DIR / "data" / "external" / "droute"
+    _print(f"Merging bundled droute {droute_version} -> {dst_droute}")
+    _copy_tree_merge(DROUTE_BUNDLE_DIR, dst_droute)
 
     dst_assets = APP_DIR / "assets"
     if ASSETS_DIR.is_dir():

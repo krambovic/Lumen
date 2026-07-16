@@ -17,6 +17,10 @@ core/
 data/*
 !data/templates/
 !data/templates/**
+!data/external/
+data/external/*
+!data/external/droute/
+!data/external/droute/**
 
 # IDE
 .idea/

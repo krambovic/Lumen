@@ -80,7 +80,7 @@ jobs:
             Select-Object -First 1
           $singbox = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest" -Headers $headers
           $geodata = Invoke-RestMethod "https://api.github.com/repos/runetfreedom/russia-v2ray-rules-dat/releases/latest" -Headers $headers
-          "cache-key=$($xray.id)-$($singbox.id)-$($geodata.id)-wintun-0.14.1-rulesets-v1" >> $env:GITHUB_OUTPUT
+          "cache-key=$($xray.id)-$($singbox.id)-$($geodata.id)-wintun-0.14.1-rulesets-v1-lumen-masque-v1" >> $env:GITHUB_OUTPUT
 
       - name: Cache core binaries
         id: cache-cores
@@ -88,6 +88,13 @@ jobs:
         with:
           path: core
           key: cores-${{ runner.os }}-${{ steps.core-releases.outputs.cache-key }}
+
+      - name: Set up Go for sing-box
+        if: steps.cache-cores.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache: true
 
       - name: Download core binaries
         if: steps.cache-cores.outputs.cache-hit != 'true'
@@ -143,14 +150,10 @@ jobs:
           Copy-Item _wintun/wintun/bin/amd64/wintun.dll core/
           Remove-Item -Recurse _wintun, wintun.zip
 
-          Write-Host "Downloading sing-box-extended..."
+          Write-Host "Building Lumen-compatible sing-box-extended..."
           $sbRelease = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest" -Headers $githubHeaders
           Write-Host "Using sing-box $($sbRelease.tag_name)"
-          $sbAsset = $sbRelease.assets | Where-Object { $_.name -match "windows-amd64\.zip$" -and $_.name -notmatch "\.sig" }
-          Invoke-WebRequest $sbAsset.browser_download_url -OutFile singbox.zip
-          Expand-Archive singbox.zip -DestinationPath _sb -Force
-          Get-ChildItem _sb -Recurse -Filter "sing-box.exe" | ForEach-Object { Copy-Item $_.FullName core/sing-box.exe }
-          Remove-Item -Recurse _sb, singbox.zip
+          & ./scripts/build_singbox_extended.ps1 -OutputPath core/sing-box.exe -Ref $sbRelease.tag_name
 
           Write-Host "Core binaries ready:"
           Get-ChildItem core/

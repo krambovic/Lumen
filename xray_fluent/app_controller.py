@@ -159,6 +159,7 @@ from .constants import (
 from .diagnostics import export_diagnostics
 from .discord_proxy_manager import DiscordProxyManager
 from .live_metrics_worker import LiveMetricsWorker
+from .link_parser import repair_node_outbound_from_link
 from .log_utils import classify_log_level, clean_log_text
 from .models import AppSettings, AppState, Node, RoutingSettings
 from .network_monitor import NetworkMonitor
@@ -204,6 +205,7 @@ def _find_free_api_port(preferred: int | None = None, excluded: set[int] | None 
 
 
 _DNS_DEFAULTS_MIGRATION_KEY = "recommended_dns_defaults_2026_07"
+_MASQUE_DIRECT_MIGRATION_KEY = "masque_direct_outbound_v1"
 _DNS_SETTING_FIELDS = (
     "dns_mode",
     "dns_bootstrap_server",
@@ -236,8 +238,35 @@ def apply_dns_defaults_update_once(state: AppState) -> bool:
     return True
 
 
+def apply_masque_direct_update_once(state: AppState) -> bool:
+    """Repair saved Clash MASQUE nodes once, without reimporting subscriptions."""
+    migrations = state.applied_migrations
+    if migrations.get(_MASQUE_DIRECT_MIGRATION_KEY):
+        return False
+
+    for node in state.nodes:
+        outbound = node.outbound if isinstance(node.outbound, dict) else {}
+        native = (
+            outbound.get("singbox")
+            if isinstance(outbound.get("singbox"), dict)
+            else {}
+        )
+        protocol = str(
+            outbound.get("protocol") or node.scheme or native.get("type") or ""
+        ).strip().lower()
+        if (
+            protocol == "masque"
+            or str(native.get("type") or "").strip().lower() == "masque"
+        ):
+            repair_node_outbound_from_link(node)
+    migrations[_MASQUE_DIRECT_MIGRATION_KEY] = True
+    return True
+
+
 _XRAY_METRICS_API_TAG = "__app_metrics_api"
 _XRAY_METRICS_API_INBOUND_TAG = "__app_metrics_api_in"
+
+
 class AppController(QObject):
     nodes_changed = pyqtSignal(object)
     selection_changed = pyqtSignal(object)
@@ -420,7 +449,9 @@ class AppController(QObject):
             return False
 
         self._migrate_sort_order()
-        if apply_dns_defaults_update_once(self.state):
+        migrated = apply_masque_direct_update_once(self.state)
+        migrated = apply_dns_defaults_update_once(self.state) or migrated
+        if migrated:
             self.save()
         self.nodes_changed.emit(self.state.nodes)
         self.selection_changed.emit(self.selected_node)
@@ -1494,7 +1525,12 @@ class AppController(QObject):
             if use_singbox:
                 plan = self._plan_runtime_singbox(node, tun_mode=bool(settings.tun_mode))
                 return json.dumps(plan.singbox_config, ensure_ascii=True, indent=2)
-            if self.uses_xray_raw_config():
+            node_protocol = (
+                str((node.outbound or {}).get("protocol") or node.scheme or "").strip().lower()
+                if node
+                else ""
+            )
+            if self.uses_xray_raw_config() or node_protocol == "xray_config":
                 runtime = self._build_runtime_xray_config(node)
                 return json.dumps(runtime.config, ensure_ascii=True, indent=2)
             if not node:

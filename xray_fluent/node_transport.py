@@ -34,6 +34,8 @@ def node_transport(node: Node) -> str:
     protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
     if protocol in _UDP_PROTOCOLS:
         return "UDP"
+    if protocol == "xray_config":
+        return "AUTO"
     if protocol in {"mieru", "singbox_config"}:
         return protocol.upper()
     if protocol in _TCP_PROTOCOLS:

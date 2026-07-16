@@ -16,6 +16,7 @@ class LogModel(QAbstractListModel):
     DetailsRole = Qt.ItemDataRole.UserRole + 5
     ActionIdRole = Qt.ItemDataRole.UserRole + 6
     ActionLabelRole = Qt.ItemDataRole.UserRole + 7
+    SearchRole = Qt.ItemDataRole.UserRole + 8
 
     _ROLE_NAMES = {
         LineRole: b"line",
@@ -25,6 +26,7 @@ class LogModel(QAbstractListModel):
         DetailsRole: b"details",
         ActionIdRole: b"actionId",
         ActionLabelRole: b"actionLabel",
+        SearchRole: b"searchText",
     }
 
     def __init__(self, max_lines: int = 4000, parent=None) -> None:
@@ -58,6 +60,13 @@ class LogModel(QAbstractListModel):
             return entry.action_id
         if role == self.ActionLabelRole:
             return entry.action_label
+        if role == self.SearchRole:
+            return entry.search_text
+        return None
+
+    def entry_at(self, row: int) -> LogEntry | None:
+        if 0 <= row < len(self._lines):
+            return self._lines[row]
         return None
 
     @pyqtSlot(str)
@@ -110,6 +119,7 @@ class LogFilterModel(QSortFilterProxyModel):
             return
         self._search = value
         self.invalidateFilter()
+        self.filterChanged.emit()
 
     @pyqtSlot()
     def clear(self) -> None:
@@ -119,8 +129,12 @@ class LogFilterModel(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
         source = self.sourceModel()
-        index = source.index(source_row, 0, source_parent)
-        level = str(source.data(index, LogModel.LevelRole) or "info")
+        if not isinstance(source, LogModel):
+            return True
+        entry = source.entry_at(source_row)
+        if entry is None:
+            return False
+        level = entry.level or "info"
         if self._level == "error" and level != "error":
             return False
         if self._level == "warning" and level != "warning":
@@ -129,11 +143,6 @@ class LogFilterModel(QSortFilterProxyModel):
             return False
         if self._level == "info" and level != "info":
             return False
-        if self._search:
-            haystack = " ".join(
-                str(source.data(index, role) or "")
-                for role in (LogModel.LineRole, LogModel.DetailsRole, LogModel.SourceRole)
-            ).lower()
-            if self._search not in haystack:
-                return False
+        if self._search and self._search not in entry.search_text:
+            return False
         return True

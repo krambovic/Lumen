@@ -58,6 +58,7 @@ Dialog {
             kind: "ghost"
             text: control.cancelText
             onClicked: control.reject()
+            Layout.rightMargin: control.showOkButton ? 0 : 20
             Layout.topMargin: 6
             Layout.bottomMargin: 18
         }
