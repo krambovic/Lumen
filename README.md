@@ -65,6 +65,15 @@ Lumen KVN supports importing and running these server types:
 - **sing-box / TUN:** Hysteria, Hysteria2, TUIC, Mieru, MASQUE, WireGuard, AmneziaWG (AWG), WARP.
 - **Custom configs:** raw Xray and sing-box JSON configs, including full sing-box config imports.
 
+## Subscription support
+
+- Regular subscription URLs and encrypted Happ links: `happ://crypt`, `happ://crypt2`, `happ://crypt3`, `happ://crypt4`, and `happ://crypt5`.
+- HWID-protected subscriptions: Lumen can send the real Windows device HWID (enabled by default) or a custom HWID configured by the user.
+- Happ Premium subscription metadata and supported controls are displayed directly in the server list and subscription properties.
+
+> [!NOTE]
+> Full `happ://crypt5` decryption support requires [Node.js](https://nodejs.org/) to be installed and available through `PATH`. Earlier `happ://crypt` formats are decrypted by Lumen itself.
+
 ## Installation
 
 Go to the **[Releases](https://github.com/krambovic/Lumen-KVN/releases)** page and download the appropriate package:
