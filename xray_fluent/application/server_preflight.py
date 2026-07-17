@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 
 _XHTTP_MODES = {"", "auto", "packet-up", "stream-up", "stream-one"}
+_XRAY_OBSERVATORY_STRATEGIES = {"leastping", "leastload"}
 
 
 def validate_server_preflight(node: Node | None, settings: AppSettings) -> str | None:
@@ -61,11 +62,17 @@ def validate_server_preflight(node: Node | None, settings: AppSettings) -> str |
         if not isinstance(full_config.get("outbounds"), list):
             return "AUTO-профиль Xray должен содержать список outbounds."
         routing = full_config.get("routing")
-        observatory = full_config.get("observatory")
         if not isinstance(routing, dict) or not isinstance(routing.get("balancers"), list):
             return "AUTO-профиль Xray не содержит routing.balancers."
-        if not isinstance(observatory, dict):
-            return "AUTO-профиль Xray не содержит observatory для проверки серверов."
+        balancers = routing["balancers"]
+        has_observer = isinstance(full_config.get("observatory"), dict) or isinstance(
+            full_config.get("burstObservatory"), dict
+        )
+        if _xray_balancers_require_observatory(balancers) and not has_observer:
+            return (
+                "AUTO-профиль Xray использует leastPing/leastLoad, но не содержит "
+                "observatory или burstObservatory."
+            )
         return None
 
     if tun_singbox or proxy_core_for_node(node) == "singbox":
@@ -76,6 +83,19 @@ def validate_server_preflight(node: Node | None, settings: AppSettings) -> str |
                 return None
             return str(exc)
     return None
+
+
+def _xray_balancers_require_observatory(balancers: list[Any]) -> bool:
+    for balancer in balancers:
+        if not isinstance(balancer, dict):
+            continue
+        strategy = balancer.get("strategy")
+        if not isinstance(strategy, dict):
+            continue
+        strategy_type = str(strategy.get("type") or "").strip().lower()
+        if strategy_type in _XRAY_OBSERVATORY_STRATEGIES:
+            return True
+    return False
 
 
 def _validate_xhttp(stream: dict[str, Any]) -> str | None:

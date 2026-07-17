@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,17 @@ _ENDPOINT_PING_UNSUPPORTED = {
     "xray_config",
 }
 _XRAY_TEST_UNSUPPORTED = {"auto", "singbox_config", "xray_config"}
+_AUTO_CONFIG_PROTOCOLS = {"singbox_config", "xray_config"}
+_IGNORED_AUTO_OUTBOUNDS = {
+    "block",
+    "blackhole",
+    "direct",
+    "dns",
+    "freedom",
+    "selector",
+    "url-test",
+    "urltest",
+}
 
 
 def _node_protocol(node: Node) -> str:
@@ -34,11 +46,131 @@ def _node_protocol(node: Node) -> str:
     return str(outbound.get("protocol") or outbound.get("type") or node.scheme or "").strip().lower()
 
 
+def _outbound_protocol(outbound: dict) -> str:
+    return str(outbound.get("protocol") or outbound.get("type") or "").strip().lower()
+
+
+def _port_number(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _outbound_endpoint(outbound: dict) -> tuple[str, int]:
+    server = str(outbound.get("server") or outbound.get("address") or "").strip()
+    port = _port_number(outbound.get("server_port") or outbound.get("port"))
+    settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
+    for key in ("vnext", "servers"):
+        entries = settings.get(key)
+        if not isinstance(entries, list) or not entries or not isinstance(entries[0], dict):
+            continue
+        server = str(entries[0].get("address") or entries[0].get("server") or server).strip()
+        port = _port_number(entries[0].get("port") or entries[0].get("server_port") or port)
+        break
+    if not server:
+        server = str(settings.get("address") or settings.get("server") or "").strip()
+    if port <= 0:
+        port = _port_number(settings.get("port") or settings.get("server_port"))
+    return server, port
+
+
+def _auto_candidate_outbounds(node: Node) -> list[dict]:
+    outbound = node.outbound if isinstance(node.outbound, dict) else {}
+    protocol = _node_protocol(node)
+    config_key = "xray_config" if protocol == "xray_config" else "singbox_config"
+    config = outbound.get(config_key)
+    if protocol not in _AUTO_CONFIG_PROTOCOLS or not isinstance(config, dict):
+        return []
+    outbounds = [item for item in config.get("outbounds", []) if isinstance(item, dict)]
+    if not outbounds:
+        return []
+
+    selectors: list[str] = []
+    if protocol == "xray_config":
+        routing = config.get("routing") if isinstance(config.get("routing"), dict) else {}
+        for balancer in routing.get("balancers", []):
+            if not isinstance(balancer, dict):
+                continue
+            raw = balancer.get("selector")
+            if isinstance(raw, list):
+                selectors.extend(str(value).strip() for value in raw if str(value).strip())
+        for observer_key in ("observatory", "burstObservatory"):
+            observer = config.get(observer_key)
+            raw = observer.get("subjectSelector") if isinstance(observer, dict) else None
+            if isinstance(raw, list):
+                selectors.extend(str(value).strip() for value in raw if str(value).strip())
+    else:
+        tag_map = {
+            str(item.get("tag") or "").strip(): item
+            for item in outbounds
+            if str(item.get("tag") or "").strip()
+        }
+        for selector in outbounds:
+            if _outbound_protocol(selector) not in {"selector", "url-test", "urltest"}:
+                continue
+            refs = selector.get("outbounds")
+            if isinstance(refs, list):
+                selectors.extend(str(value).strip() for value in refs if str(value).strip())
+        selected = [tag_map[tag] for tag in selectors if tag in tag_map]
+        if selected:
+            outbounds = selected
+            selectors = []
+
+    candidates = [
+        item for item in outbounds
+        if _outbound_protocol(item) not in _IGNORED_AUTO_OUTBOUNDS
+    ]
+    if selectors:
+        selected = [
+            item for item in candidates
+            if any(str(item.get("tag") or "").strip().startswith(prefix) for prefix in selectors)
+        ]
+        if selected:
+            candidates = selected
+    return candidates
+
+
+def _auto_candidate_supports(candidate: dict, test: str, *, ping_method: str) -> bool:
+    protocol = _outbound_protocol(candidate)
+    server, port = _outbound_endpoint(candidate)
+    if not server or port <= 0:
+        return False
+    if test == "speed" or ping_method == "real":
+        return protocol not in _XRAY_TEST_UNSUPPORTED and protocol not in {
+            "awg", "hysteria", "hysteria2", "hy", "hy2", "masque", "mieru",
+            "tuic", "warp", "wireguard",
+        }
+    return protocol not in _ENDPOINT_PING_UNSUPPORTED
+
+
 def _node_supports_test(node: Node, test: str, *, ping_method: str = "tcping") -> bool:
     protocol = _node_protocol(node)
+    if protocol in _AUTO_CONFIG_PROTOCOLS:
+        if protocol == "singbox_config" and (test == "speed" or ping_method == "real"):
+            return False
+        return any(
+            _auto_candidate_supports(candidate, test, ping_method=ping_method)
+            for candidate in _auto_candidate_outbounds(node)
+        )
     if test == "speed" or ping_method == "real":
         return not is_native_singbox_only_node(node) and protocol not in _XRAY_TEST_UNSUPPORTED
     return protocol not in _ENDPOINT_PING_UNSUPPORTED
+
+
+def _node_for_test(node: Node, test: str, *, ping_method: str) -> Node:
+    protocol = _node_protocol(node)
+    if protocol not in _AUTO_CONFIG_PROTOCOLS or test == "speed" or ping_method == "real":
+        return node
+    for candidate in _auto_candidate_outbounds(node):
+        if not _auto_candidate_supports(candidate, test, ping_method=ping_method):
+            continue
+        server, port = _outbound_endpoint(candidate)
+        prepared = deepcopy(node)
+        prepared.server = server
+        prepared.port = port
+        return prepared
+    return node
 
 
 def _filter_testable_nodes(
@@ -51,8 +183,10 @@ def _filter_testable_nodes(
     supported: list[Node] = []
     unsupported: list[Node] = []
     for node in nodes:
-        target = supported if _node_supports_test(node, test, ping_method=ping_method) else unsupported
-        target.append(node)
+        if _node_supports_test(node, test, ping_method=ping_method):
+            supported.append(_node_for_test(node, test, ping_method=ping_method))
+        else:
+            unsupported.append(node)
     if not unsupported:
         return supported
 
@@ -131,8 +265,9 @@ def ping_nodes(
 
     controller._ping_total = len(nodes)
     controller._ping_completed = 0
-    controller._ping_node_map = {node.id: node for node in nodes}
-    _clear_ping_measurements(controller, nodes)
+    state_node_map = {node.id: node for node in controller.state.nodes}
+    controller._ping_node_map = {node.id: state_node_map.get(node.id, node) for node in nodes}
+    _clear_ping_measurements(controller, list(controller._ping_node_map.values()))
     controller.bulk_task_progress.emit("ping", 0, controller._ping_total, False)
 
     if resolved_method == "real":
@@ -204,8 +339,9 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
 
     controller._speed_total = len(nodes)
     controller._speed_completed = 0
-    controller._speed_node_map = {node.id: node for node in nodes}
-    _clear_speed_measurements(controller, nodes)
+    state_node_map = {node.id: node for node in controller.state.nodes}
+    controller._speed_node_map = {node.id: state_node_map.get(node.id, node) for node in nodes}
+    _clear_speed_measurements(controller, list(controller._speed_node_map.values()))
     controller.bulk_task_progress.emit("speed", 0, controller._speed_total, False)
     active_session = controller._active_session
     bypass_tun = bool(controller.connected and active_session is not None and active_session.tun_mode)

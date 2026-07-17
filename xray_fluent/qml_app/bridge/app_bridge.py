@@ -465,6 +465,15 @@ class AppBridge(QObject):
         user_agent = str(getattr(settings, "subscription_user_agent", "") or "").strip()
         hwid = str(getattr(settings, "subscription_hwid", "") or "").strip()
         use_real_hwid = bool(getattr(settings, "subscription_use_real_hwid", True))
+        use_proxy_tun = bool(getattr(settings, "subscription_use_proxy_tun", False))
+        proxy_url = ""
+        if use_proxy_tun and self.controller.connected:
+            try:
+                proxy_port = self.controller.get_effective_http_proxy_port()
+                if proxy_port:
+                    proxy_url = f"http://{PROXY_HOST}:{int(proxy_port)}"
+            except Exception:
+                proxy_url = ""
         converter_url = ""
         if bool(getattr(settings, "subscription_converter_enabled", False)):
             converter_url = str(getattr(settings, "subscription_converter_url", "") or "").strip()
@@ -472,6 +481,8 @@ class AppBridge(QObject):
             job.user_agent = user_agent
             job.hwid = hwid
             job.use_real_hwid = use_real_hwid
+            job.use_proxy_tun = use_proxy_tun
+            job.proxy_url = proxy_url
             job.converter_url = converter_url
         self._sub_batch_seq += 1
         batch_id = self._sub_batch_seq
@@ -3651,6 +3662,16 @@ class AppBridge(QObject):
     def setSubscriptionUseRealHwid(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.subscription_use_real_hwid = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def subscriptionUseProxyTun(self) -> bool:
+        return bool(getattr(self.controller.state.settings, "subscription_use_proxy_tun", False))
+
+    @pyqtSlot(bool)
+    def setSubscriptionUseProxyTun(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.subscription_use_proxy_tun = bool(enabled)
         self.controller.update_settings(settings)
 
     @pyqtProperty(str, notify=settingsChanged)

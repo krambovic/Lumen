@@ -358,6 +358,7 @@ class AppSettings:
     subscription_user_agent: str = ""
     subscription_use_real_hwid: bool = True
     subscription_hwid: str = DEFAULT_SUBSCRIPTION_HWID
+    subscription_use_proxy_tun: bool = False
     subscription_converter_enabled: bool = False
     subscription_converter_url: str = ""
     # ── Внешний вид 2.0 (Appearance Studio) ──
@@ -465,6 +466,7 @@ class AppSettings:
             "subscription_user_agent": self.subscription_user_agent,
             "subscription_use_real_hwid": self.subscription_use_real_hwid,
             "subscription_hwid": self.subscription_hwid,
+            "subscription_use_proxy_tun": self.subscription_use_proxy_tun,
             "subscription_converter_enabled": self.subscription_converter_enabled,
             "subscription_converter_url": self.subscription_converter_url,
             "ui_density": self.ui_density,
@@ -563,6 +565,7 @@ class AppSettings:
             subscription_user_agent=str(data.get("subscription_user_agent") or ""),
             subscription_use_real_hwid=bool(data.get("subscription_use_real_hwid", True)),
             subscription_hwid=str(data.get("subscription_hwid") or DEFAULT_SUBSCRIPTION_HWID),
+            subscription_use_proxy_tun=bool(data.get("subscription_use_proxy_tun", False)),
             subscription_converter_enabled=bool(data.get("subscription_converter_enabled", False)),
             subscription_converter_url=str(data.get("subscription_converter_url") or ""),
             ui_density=str(data.get("ui_density") or "comfortable"),

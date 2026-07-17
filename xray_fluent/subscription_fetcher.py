@@ -130,6 +130,43 @@ def _download_in_current_process(
         return SubscriptionHttpPayload(body, response_headers, status, "process-direct")
 
 
+def _download_via_proxy_or_tun(
+    url: str,
+    headers: dict[str, str],
+    *,
+    timeout: float,
+    max_bytes: int,
+    proxy_url: str = "",
+    response_opened=None,
+    response_closed=None,
+) -> SubscriptionHttpPayload:
+    """Use the active Lumen proxy/TUN path instead of the direct helper."""
+    request = urllib.request.Request(url, headers=dict(headers))
+    handlers: list[object] = []
+    normalized_proxy = str(proxy_url or "").strip()
+    if normalized_proxy:
+        handlers.append(
+            urllib.request.ProxyHandler(
+                {"http": normalized_proxy, "https": normalized_proxy}
+            )
+        )
+    handlers.append(urllib.request.HTTPSHandler(context=get_ssl_context()))
+    opener = urllib.request.build_opener(*handlers)
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            if response_opened is not None:
+                response_opened(response)
+            try:
+                body, response_headers, status = _read_http_response(response, max_bytes)
+            finally:
+                if response_closed is not None:
+                    response_closed(response)
+    finally:
+        opener.close()
+    transport = "lumen-proxy" if normalized_proxy else "system-proxy-tun"
+    return SubscriptionHttpPayload(body, response_headers, status, transport)
+
+
 def _fetcher_command() -> list[str]:
     if not getattr(sys, "frozen", False):
         return []
@@ -235,10 +272,24 @@ def fetch_subscription_http(
     *,
     timeout: float,
     max_bytes: int,
+    use_proxy_tun: bool = False,
+    proxy_url: str = "",
     cancelled: Callable[[], bool] | None = None,
     response_opened=None,
     response_closed=None,
 ) -> SubscriptionHttpPayload:
+    if use_proxy_tun:
+        if cancelled is not None and cancelled():
+            raise SubscriptionFetcherCancelled("загрузка подписки отменена")
+        return _download_via_proxy_or_tun(
+            url,
+            headers,
+            timeout=timeout,
+            max_bytes=max_bytes,
+            proxy_url=proxy_url,
+            response_opened=response_opened,
+            response_closed=response_closed,
+        )
     command = _fetcher_command()
     if command:
         try:

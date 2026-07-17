@@ -23,6 +23,8 @@ class SubscriptionJob:
     user_agent: str = ""
     hwid: str = ""
     use_real_hwid: bool = True
+    use_proxy_tun: bool = False
+    proxy_url: str = ""
     converter_url: str = ""
 
 
@@ -66,6 +68,8 @@ class SubscriptionFetchWorker(QObject):
                     user_agent=job.user_agent,
                     hwid=job.hwid,
                     use_real_hwid=job.use_real_hwid,
+                    use_proxy_tun=job.use_proxy_tun,
+                    proxy_url=job.proxy_url,
                     converter_url=job.converter_url,
                     cancelled=self._stopped.is_set,
                     response_opened=self._register_response,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import sys
+import threading
 
 import pytest
 
@@ -77,6 +79,93 @@ def test_main_process_never_falls_through_into_tun_when_route_is_unavailable(mon
             timeout=7.0,
             max_bytes=1024,
         )
+
+
+def test_proxy_tun_mode_uses_local_proxy_without_starting_direct_helper(monkeypatch) -> None:
+    captured = {}
+
+    class _ProxyOpener:
+        def open(self, _request, *, timeout: float):
+            assert timeout == 7.0
+            return _FakeResponse()
+
+        def close(self) -> None:
+            captured["closed"] = True
+
+    def fake_build_opener(*handlers):
+        captured["handlers"] = handlers
+        return _ProxyOpener()
+
+    monkeypatch.setattr(
+        fetcher,
+        "_fetcher_command",
+        lambda: (_ for _ in ()).throw(AssertionError("direct helper must not start")),
+    )
+    monkeypatch.setattr(fetcher.urllib.request, "build_opener", fake_build_opener)
+
+    result = fetcher.fetch_subscription_http(
+        "https://example.com/sub",
+        {"User-Agent": "Lumen"},
+        timeout=7.0,
+        max_bytes=1024,
+        use_proxy_tun=True,
+        proxy_url="http://127.0.0.1:10808",
+    )
+
+    proxy_handler = next(
+        handler for handler in captured["handlers"]
+        if isinstance(handler, fetcher.urllib.request.ProxyHandler)
+    )
+    assert proxy_handler.proxies == {
+        "http": "http://127.0.0.1:10808",
+        "https": "http://127.0.0.1:10808",
+    }
+    assert result.transport == "lumen-proxy"
+    assert captured["closed"] is True
+
+
+def test_proxy_tun_mode_really_sends_subscription_request_through_local_proxy(monkeypatch) -> None:
+    requests: list[str] = []
+
+    class _ProxyHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            body = b"vless://from-local-proxy"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Profile-Title", "Proxy path")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format: str, *_args) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ProxyHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(
+        fetcher,
+        "_fetcher_command",
+        lambda: (_ for _ in ()).throw(AssertionError("direct helper must not start")),
+    )
+    try:
+        result = fetcher.fetch_subscription_http(
+            "http://subscription.invalid/profile",
+            {"User-Agent": "Lumen"},
+            timeout=3.0,
+            max_bytes=1024,
+            use_proxy_tun=True,
+            proxy_url=f"http://127.0.0.1:{server.server_port}",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+    assert requests == ["http://subscription.invalid/profile"]
+    assert result.body == b"vless://from-local-proxy"
+    assert result.headers["profile-title"] == "Proxy path"
+    assert result.transport == "lumen-proxy"
 
 
 def test_run_fetcher_process_waits_for_one_shot_child_and_decodes_response() -> None:

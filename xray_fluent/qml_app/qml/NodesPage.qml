@@ -131,11 +131,15 @@ Item {
             var limitB = (ui.trafficLimitBytes !== undefined) ? Number(ui.trafficLimitBytes)
                        : ((ui.total !== undefined) ? Number(ui.total) : undefined);
             if (usedB !== undefined || limitB !== undefined) {
-                var uStr = (usedB !== undefined) ? fmtBytes(usedB)
-                         : (ui.trafficUsed !== undefined ? String(ui.trafficUsed) : "?");
-                var lStr = (limitB !== undefined) ? fmtBytes(limitB)
-                         : (ui.trafficLimit !== undefined ? String(ui.trafficLimit) : "∞");
-                rows.push([I18n.t("Трафик"), uStr + " / " + lStr]);
+                if (limitB !== undefined && isFinite(limitB) && limitB <= 0) {
+                    rows.push([I18n.t("Трафик"), I18n.t("Безлимитный трафик")]);
+                } else {
+                    var uStr = (usedB !== undefined) ? fmtBytes(usedB)
+                             : (ui.trafficUsed !== undefined ? String(ui.trafficUsed) : "?");
+                    var lStr = (limitB !== undefined) ? fmtBytes(limitB)
+                             : (ui.trafficLimit !== undefined ? String(ui.trafficLimit) : "∞");
+                    rows.push([I18n.t("Трафик"), uStr + " / " + lStr]);
+                }
             } else if (ui.trafficUsed !== undefined || ui.trafficLimit !== undefined) {
                 var used = (ui.trafficUsed !== undefined ? String(ui.trafficUsed) : "?");
                 var limit = (ui.trafficLimit !== undefined ? String(ui.trafficLimit) : "∞");

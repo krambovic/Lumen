@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from xray_fluent.application.worker_service import (
     _clear_ping_measurements,
     _clear_speed_measurements,
+    _filter_testable_nodes,
+    _node_supports_test,
     ping_nodes,
     speed_test_nodes,
 )
@@ -119,3 +121,74 @@ def test_hysteria2_and_tuic_real_ping_warning_is_emitted_once() -> None:
     assert "TUIC" in controller.status.calls[0][1]
     assert controller.ping_updated.calls == []
     assert all(node.is_alive is None and node.ping_ms is None for node in nodes)
+
+
+def _xray_auto_node(*outbounds: dict) -> Node:
+    return Node(
+        id="auto",
+        name="AUTO",
+        scheme="auto",
+        server="first.invalid",
+        port=443,
+        outbound={
+            "protocol": "xray_config",
+            "xray_config": {
+                "outbounds": list(outbounds),
+                "routing": {
+                    "balancers": [{"tag": "auto", "selector": ["proxy"]}],
+                    "rules": [{"type": "field", "balancerTag": "auto"}],
+                },
+                "observatory": {"subjectSelector": ["proxy"]},
+            },
+        },
+    )
+
+
+def test_xray_auto_is_testable_when_its_candidates_support_the_test() -> None:
+    auto = _xray_auto_node(
+        {
+            "tag": "proxy-1",
+            "protocol": "vless",
+            "settings": {"vnext": [{"address": "one.example", "port": 443}]},
+        },
+        {"tag": "direct", "protocol": "freedom"},
+    )
+
+    assert _node_supports_test(auto, "ping", ping_method="tcping") is True
+    assert _node_supports_test(auto, "ping", ping_method="real") is True
+    assert _node_supports_test(auto, "speed") is True
+
+
+def test_xray_auto_endpoint_ping_uses_a_supported_inner_server() -> None:
+    auto = _xray_auto_node(
+        {
+            "tag": "proxy-awg",
+            "protocol": "awg",
+            "settings": {"address": "awg.example", "port": 443},
+        },
+        {
+            "tag": "proxy-vless",
+            "protocol": "vless",
+            "settings": {"vnext": [{"address": "vless.example", "port": 8443}]},
+        },
+    )
+    controller = _CompatibilityController([auto])
+
+    prepared = _filter_testable_nodes(controller, [auto], "ping", ping_method="tcping")
+
+    assert len(prepared) == 1
+    assert prepared[0].id == auto.id
+    assert (prepared[0].server, prepared[0].port) == ("vless.example", 8443)
+
+
+def test_auto_with_only_unsupported_candidates_stays_untested() -> None:
+    auto = _xray_auto_node(
+        {
+            "tag": "proxy-awg",
+            "protocol": "awg",
+            "settings": {"address": "awg.example", "port": 443},
+        }
+    )
+
+    assert _node_supports_test(auto, "ping", ping_method="tcping") is False
+    assert _node_supports_test(auto, "speed") is False

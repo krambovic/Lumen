@@ -305,6 +305,96 @@ def test_subscription_uses_custom_user_agent_and_converter_first(monkeypatch) ->
     ]
 
 
+def test_subscription_proxy_tun_mode_is_forwarded_to_http_fetch(monkeypatch) -> None:
+    calls = []
+
+    def fake_fetch(
+        url: str,
+        profile: str,
+        headers: dict,
+        *,
+        direct: bool = True,
+        proxy_url: str = "",
+    ):
+        calls.append((url, profile, direct, proxy_url))
+        return (
+            "vless://00000000-0000-0000-0000-000000000001@one.example:443"
+            "?encryption=none&type=tcp&security=none#one",
+            {"clientProfile": profile},
+        )
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
+
+    text, info, errors = node_service.fetch_subscription_payload(
+        "https://sub.example/path",
+        use_proxy_tun=True,
+        proxy_url="http://127.0.0.1:10809",
+    )
+
+    assert errors == []
+    assert "one.example" in text
+    assert info["networkPath"] == "proxy-tun"
+    assert calls == [
+        (
+            "https://sub.example/path",
+            "Happ Windows",
+            False,
+            "http://127.0.0.1:10809",
+        )
+    ]
+
+
+def test_subscription_dns_failure_is_explained_and_suggests_proxy_tun(monkeypatch) -> None:
+    def fail_fetch(*_args, **_kwargs):
+        raise OSError("<urlopen error [Errno 11001] getaddrinfo failed>")
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fail_fetch)
+
+    text, _info, errors = node_service.fetch_subscription_payload("https://blocked.example/sub")
+
+    assert text == ""
+    assert len(errors) == 1
+    assert "ошибка DNS" in errors[0]
+    assert "getaddrinfo" not in errors[0]
+    assert "Загружать подписки через прокси/TUN" in errors[0]
+    assert "Настройки → Подписки" in errors[0]
+
+
+def test_subscription_network_errors_are_decoded_consistently() -> None:
+    cases = {
+        "<urlopen error timed out>": "превышено время ожидания",
+        "<urlopen error [WinError 10054] forcibly closed by remote host>": "принудительно разорвано",
+        "<urlopen error [WinError 10061] connection refused>": "отклонил соединение",
+        "<urlopen error [WinError 10051] network is unreachable>": "прямой маршрут",
+        "<urlopen error TLS/SSL connection has been closed (EOF) (_ssl.c:1010)>": "TLS-обмена",
+        "HTTP Error 404: Not Found": "Подписка не найдена",
+    }
+
+    for raw, expected in cases.items():
+        message = node_service._friendly_subscription_fetch_error(
+            OSError(raw),
+            use_proxy_tun=False,
+        )
+        assert message is not None
+        assert expected in message
+
+
+def test_subscription_error_does_not_suggest_enabling_proxy_tun_twice(monkeypatch) -> None:
+    def fail_fetch(*_args, **_kwargs):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fail_fetch)
+
+    _text, _info, errors = node_service.fetch_subscription_payload(
+        "https://blocked.example/sub",
+        use_proxy_tun=True,
+    )
+
+    assert len(errors) == 1
+    assert "уже включена" in errors[0]
+    assert "Попробуйте включить" not in errors[0]
+
+
 def test_subscription_uses_real_windows_hwid_by_default(monkeypatch) -> None:
     calls = []
 

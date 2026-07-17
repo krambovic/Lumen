@@ -45,6 +45,13 @@ def test_subscription_properties_do_not_refresh_and_use_fluent_copy_menu() -> No
     assert "control.highlighted ? Theme.cardHover" in shared_item
 
 
+def test_zero_subscription_limit_is_shown_as_unlimited() -> None:
+    source = (QML_DIR / "NodesPage.qml").read_text(encoding="utf-8")
+
+    assert "limitB <= 0" in source
+    assert 'I18n.t("Безлимитный трафик")' in source
+
+
 def test_text_controls_and_tooltips_use_shared_fluent_popups() -> None:
     context_menu = (QML_DIR / "TextEditContextMenu.qml").read_text(encoding="utf-8")
     tooltip = (QML_DIR / "FluentToolTip.qml").read_text(encoding="utf-8")

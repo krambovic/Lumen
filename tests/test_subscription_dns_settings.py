@@ -19,6 +19,7 @@ def test_subscription_and_dns_settings_round_trip() -> None:
         subscription_user_agent="Lumen-Test/1.0",
         subscription_use_real_hwid=False,
         subscription_hwid="device-id-for-panel",
+        subscription_use_proxy_tun=True,
         subscription_converter_enabled=True,
         subscription_converter_url="https://converter.test/sub?url={url}",
     )
@@ -37,6 +38,7 @@ def test_subscription_and_dns_settings_round_trip() -> None:
     assert restored_settings.subscription_include_regex == "NL|DE"
     assert restored_settings.subscription_use_real_hwid is False
     assert restored_settings.subscription_hwid == "device-id-for-panel"
+    assert restored_settings.subscription_use_proxy_tun is True
     assert restored_settings.subscription_converter_enabled is True
     assert restored_routing.dns_bootstrap_servers == ["1.1.1.1", "8.8.8.8"]
     assert restored_routing.dns_proxy_server == "dns.google"
@@ -50,6 +52,10 @@ def test_real_subscription_hwid_is_enabled_by_default() -> None:
     assert AppSettings.from_dict({}).subscription_use_real_hwid is True
 
 
+def test_subscription_proxy_tun_is_disabled_by_default() -> None:
+    assert AppSettings.from_dict({}).subscription_use_proxy_tun is False
+
+
 def test_real_subscription_hwid_hides_manual_field() -> None:
     settings_qml = (
         Path(__file__).parents[1] / "xray_fluent" / "qml_app" / "qml" / "SettingsPage.qml"
@@ -57,6 +63,15 @@ def test_real_subscription_hwid_hides_manual_field() -> None:
 
     assert "Switch { id: subscriptionUseRealHwid; checked: App.subscriptionUseRealHwid }" in settings_qml
     assert "visible: !subscriptionUseRealHwid.checked" in settings_qml
+
+
+def test_subscription_proxy_tun_setting_is_exposed() -> None:
+    settings_qml = (
+        Path(__file__).parents[1] / "xray_fluent" / "qml_app" / "qml" / "SettingsPage.qml"
+    ).read_text(encoding="utf-8")
+
+    assert "App.subscriptionUseProxyTun" in settings_qml
+    assert "App.setSubscriptionUseProxyTun(checked)" in settings_qml
 
 
 def test_dns_defaults_use_builtin_split_resolvers() -> None:

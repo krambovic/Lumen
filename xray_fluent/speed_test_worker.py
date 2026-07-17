@@ -141,7 +141,7 @@ class SpeedTestWorker(QThread):
                 self.node_progress.emit(node.id, 0)
 
             max_workers = _resolve_speed_test_concurrency(len(self._nodes), self._concurrency)
-            with _WindowsPingBypass(self._nodes, self._bypass_tun) as bypass:
+            with _WindowsPingBypass(self._bypass_targets(), self._bypass_tun) as bypass:
                 self._bypass = bypass
                 executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speed-test")
                 pending: set[Future[tuple[Node, float | None, bool]]] = set()
@@ -195,6 +195,24 @@ class SpeedTestWorker(QThread):
         else:
             self.result.emit(node.id, value, alive)
         self.progress.emit(self._completed_nodes, total)
+
+    def _bypass_targets(self) -> list[Node]:
+        targets = list(self._nodes)
+        for node in self._nodes:
+            outbound = node.outbound if isinstance(node.outbound, dict) else {}
+            full_config = outbound.get("xray_config")
+            if str(outbound.get("protocol") or "").strip().lower() != "xray_config" or not isinstance(full_config, dict):
+                continue
+            for candidate in full_config.get("outbounds", []):
+                if not isinstance(candidate, dict):
+                    continue
+                host = self._xray_outbound_host(candidate)
+                if not host:
+                    continue
+                target = deepcopy(node)
+                target.server = host
+                targets.append(target)
+        return targets
 
     def _test_node(self, node: Node) -> tuple[Node, float | None, bool]:
         port, reservation = self._reserve_port()
@@ -282,6 +300,10 @@ class SpeedTestWorker(QThread):
     def _build_config(self, target: _SpeedTestTarget) -> dict:
         inbound_tag = "speed-http"
         outbound_tag = "speed-proxy"
+        stored_outbound = target.node.outbound if isinstance(target.node.outbound, dict) else {}
+        full_config = stored_outbound.get("xray_config")
+        if str(stored_outbound.get("protocol") or "").strip().lower() == "xray_config" and isinstance(full_config, dict):
+            return self._build_auto_config(target, full_config, inbound_tag)
         proxy_outbound = deepcopy(target.node.outbound)
         proxy_outbound["tag"] = outbound_tag
         self._apply_direct_ip_to_outbound(proxy_outbound, target.node.server)
@@ -320,6 +342,71 @@ class SpeedTestWorker(QThread):
         }
         apply_xray_final_fragment(config, tag_prefix=outbound_tag)
         return config
+
+    def _build_auto_config(self, target: _SpeedTestTarget, full_config: dict, inbound_tag: str) -> dict:
+        """Build a temporary HTTP inbound while preserving AUTO balancer/observer."""
+        config = deepcopy(full_config)
+        config["log"] = {"loglevel": "none"}
+        config["inbounds"] = [
+            {
+                "tag": inbound_tag,
+                "listen": PROXY_HOST,
+                "port": int(target.http_port),
+                "protocol": "http",
+                "settings": {},
+                "sniffing": {
+                    "enabled": True,
+                    "destOverride": ["http", "tls"],
+                    "routeOnly": False,
+                },
+            }
+        ]
+        config.pop("api", None)
+        config.pop("stats", None)
+        config.pop("policy", None)
+
+        routing = config.get("routing")
+        if not isinstance(routing, dict):
+            routing = {}
+            config["routing"] = routing
+        balancer_tag = ""
+        rules = routing.get("rules") if isinstance(routing.get("rules"), list) else []
+        for rule in rules:
+            if isinstance(rule, dict) and str(rule.get("balancerTag") or "").strip():
+                balancer_tag = str(rule["balancerTag"]).strip()
+                break
+        if not balancer_tag:
+            balancers = routing.get("balancers") if isinstance(routing.get("balancers"), list) else []
+            for balancer in balancers:
+                if isinstance(balancer, dict) and str(balancer.get("tag") or "").strip():
+                    balancer_tag = str(balancer["tag"]).strip()
+                    break
+        if not balancer_tag:
+            raise ValueError("AUTO profile has no balancer tag")
+        routing["rules"] = [
+            {
+                "type": "field",
+                "inboundTag": [inbound_tag],
+                "balancerTag": balancer_tag,
+            }
+        ]
+
+        outbounds = config.get("outbounds") if isinstance(config.get("outbounds"), list) else []
+        for outbound in outbounds:
+            if not isinstance(outbound, dict):
+                continue
+            host = self._xray_outbound_host(outbound)
+            self._apply_direct_ip_to_outbound(outbound, host)
+        return config
+
+    @staticmethod
+    def _xray_outbound_host(outbound: dict) -> str:
+        settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
+        for key in ("vnext", "servers"):
+            entries = settings.get(key)
+            if isinstance(entries, list) and entries and isinstance(entries[0], dict):
+                return str(entries[0].get("address") or entries[0].get("server") or "").strip()
+        return str(settings.get("address") or settings.get("server") or outbound.get("address") or "").strip()
 
     def _real_ping(self, target: _SpeedTestTarget) -> int:
         if self._cancelled:

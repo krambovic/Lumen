@@ -198,15 +198,12 @@ jobs:
           body: |
             ## What's Changed
 
-            - [feat(editor)]: Added protocol-aware editing for every supported server type, including VLESS, VMess, Trojan, Shadowsocks, SOCKS, HTTP, Hysteria, HY2, TUIC, Mieru, WireGuard, AmneziaWG, WARP and MASQUE; credentials, keys and tokens are now shown in full while editing.
-            - [fix(singbox)]: Reworked AWG, WARP and MASQUE normalization and sing-box runtime planning, improving compatibility with generator, Clash YAML and native AmneziaWG configurations.
-            - [fix(subscriptions)]: Subscription traffic now uses an isolated direct fetch path with cached physical-network routing, avoiding the active VPN/proxy without reconnecting the running tunnel.
-            - [feat(groups)]: The same server can now be imported into different groups; added group deletion, a permanent `Default` group, a `No subscription` option and automatic opening of newly imported subscription groups.
-            - [feat(testing)]: Added a per-server ping activity indicator and one consolidated compatibility warning for bulk checks; unsupported AWG, MASQUE and sing-box-only tests are skipped without marking servers as failed.
-            - [refactor(ui)]: Rebuilt the server editor layout with reliable scrolling, consistent one-line fields, aligned protocol controls and left-aligned switches.
-            - [docs(subscriptions)]: Documented HWID-enabled subscriptions, `happ://crypt` support and the Node.js requirement for `happ://crypt5` decryption.
+            - [feat(subscriptions)]: Added an optional subscription download path through the active Lumen proxy or TUN while keeping isolated direct downloads as the default; imports and updates now follow the selected path without restarting the running VPN.
+            - [fix(subscriptions)]: Replaced raw DNS, timeout, connection, TLS and HTTP failures with clear diagnostics and recovery guidance, and display subscriptions with a zero traffic limit as unlimited instead of `0 B / 0 B`.
+            - [feat(testing)]: AUTO Xray profiles can now be pinged and speed-tested when their internal servers support the selected check; test configs preserve the original balancer, `observatory` or `burstObservatory` and work with direct host routes while TUN is active.
+            - [fix(xray)]: AUTO profile validation now accepts both `observatory` and `burstObservatory`, requiring an observer only for `leastPing` and `leastLoad` strategies.
 
-            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.9.0...v1.9.1
+            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.9.1...v1.9.2
           generate_release_notes: false
           make_latest: true
           files: |

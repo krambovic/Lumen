@@ -631,6 +631,10 @@ Item {
                                 onActivated: App.setSubscriptionAutoUpdateMinutes(values[currentIndex])
                             }
                         }
+                        SettingRow {
+                            glyph: "\uE8A7"; title: I18n.t("Загружать подписки через прокси/TUN"); subtitle: I18n.t("Импорт и обновление используют активное подключение Lumen; без подключения — системную сеть")
+                            Switch { checked: App.subscriptionUseProxyTun; onToggled: App.setSubscriptionUseProxyTun(checked) }
+                        }
                     }
                 }
 

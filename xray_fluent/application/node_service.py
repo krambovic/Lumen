@@ -709,6 +709,7 @@ def _fetch_subscription_with_headers(
     headers: dict[str, str],
     *,
     direct: bool = True,
+    proxy_url: str = "",
     cancelled=None,
     response_opened=None,
     response_closed=None,
@@ -716,11 +717,10 @@ def _fetch_subscription_with_headers(
     """Загружает подписку и возвращает (текст_со_ссылками, userinfo).
 
     userinfo берётся из HTTP-заголовка subscription-userinfo и/или из JSON-тела.
-    Системный/ENV-прокси отключён. В сборке запрос выполняет одноразовый
-    helper-процесс: сначала через временный маршрут физического интерфейса,
-    затем (если маршрут недоступен) через постоянное process-direct правило
-    sing-box. ``direct`` оставлен только для обратной совместимости с
-    внутренними вызовами.
+    При ``direct=True`` системный/ENV-прокси отключён, а сборка использует
+    одноразовый helper-процесс и физический маршрут. При ``direct=False``
+    запрос идёт через переданный локальный proxy либо через обычный системный
+    сетевой стек, который перехватывается активным TUN.
     """
     _raise_if_subscription_cancelled(cancelled)
     try:
@@ -729,6 +729,8 @@ def _fetch_subscription_with_headers(
             dict(headers),
             timeout=20,
             max_bytes=MAX_SUBSCRIPTION_BYTES,
+            use_proxy_tun=not direct,
+            proxy_url=proxy_url,
             cancelled=cancelled,
             response_opened=response_opened,
             response_closed=response_closed,
@@ -769,6 +771,108 @@ def _is_tls_eof_error(exc: BaseException) -> bool:
         or "unexpected eof" in text
         or "eof occurred in violation of protocol" in text
     )
+
+
+def _subscription_proxy_tun_hint(use_proxy_tun: bool) -> str:
+    if use_proxy_tun:
+        return (
+            "Загрузка через прокси/TUN уже включена — проверьте подключение Lumen "
+            "или временно отключите эту настройку."
+        )
+    return (
+        "Попробуйте включить «Загружать подписки через прокси/TUN» "
+        "в Настройки → Подписки."
+    )
+
+
+def _friendly_subscription_fetch_error(exc: BaseException, *, use_proxy_tun: bool) -> str | None:
+    raw = str(exc or "").strip()
+    low = raw.casefold()
+    hint = _subscription_proxy_tun_hint(use_proxy_tun)
+
+    if any(
+        token in low
+        for token in (
+            "getaddrinfo failed",
+            "errno 11001",
+            "name or service not known",
+            "nodename nor servname provided",
+            "no address associated with hostname",
+            "temporary failure in name resolution",
+            "eai_again",
+            "eai_noname",
+        )
+    ):
+        return f"Не удалось определить адрес сервера подписки: ошибка DNS. Проверьте системный DNS. {hint}"
+
+    if "certificate verify failed" in low or "cert_verify_failed" in low:
+        return (
+            "Не удалось проверить TLS-сертификат сервера подписки. "
+            "Проверьте дату и время Windows, а также правильность ссылки подписки."
+        )
+
+    http_match = re.search(r"http error\s+(\d{3})", low)
+    if http_match:
+        status = int(http_match.group(1))
+        if status == 401:
+            return "Сервер подписки отклонил авторизацию (HTTP 401). Проверьте ссылку, HWID и срок подписки."
+        if status == 403:
+            return f"Сервер подписки запретил доступ (HTTP 403). Проверьте ссылку и HWID. {hint}"
+        if status == 404:
+            return "Подписка не найдена (HTTP 404). Возможно, ссылка устарела или была удалена."
+        if status == 429:
+            return "Сервер подписки временно ограничил частоту запросов (HTTP 429). Повторите позже."
+        if 500 <= status <= 599:
+            return f"Сервер подписки временно недоступен (HTTP {status}). Повторите попытку позже."
+
+    if any(token in low for token in ("timed out", "timeout", "winerror 10060")):
+        return f"Сервер подписки не ответил вовремя: превышено время ожидания. {hint}"
+    if any(
+        token in low
+        for token in (
+            "winerror 10054",
+            "connection reset",
+            "forcibly closed",
+            "принудительно разорвал",
+            "connection aborted",
+        )
+    ):
+        return f"Соединение с сервером подписки было принудительно разорвано. {hint}"
+    if any(token in low for token in ("winerror 10061", "connection refused")):
+        return f"Сервер подписки отклонил соединение. {hint}"
+    if any(
+        token in low
+        for token in (
+            "winerror 10051",
+            "winerror 10065",
+            "network is unreachable",
+            "no route to host",
+            "physical internet interface",
+            "физический интернет-интерфейс",
+            "direct network",
+        )
+    ):
+        return f"Не удалось построить прямой маршрут к серверу подписки. {hint}"
+    if _is_tls_eof_error(exc) or any(
+        token in low for token in ("ssl eof", "tls handshake", "wrong version number")
+    ):
+        return f"Защищённое соединение с сервером подписки было прервано во время TLS-обмена. {hint}"
+    if "tunnel connection failed" in low or "proxy error" in low:
+        return f"Прокси/TUN не смог подключиться к серверу подписки. {hint}"
+    return None
+
+
+def _append_subscription_fetch_error(
+    attempts: list[str],
+    profile_name: str,
+    exc: BaseException,
+    *,
+    use_proxy_tun: bool,
+) -> None:
+    friendly = _friendly_subscription_fetch_error(exc, use_proxy_tun=use_proxy_tun)
+    message = friendly or f"{profile_name}: {exc}"
+    if message not in attempts:
+        attempts.append(message)
 
 
 def _parsed_nodes_are_usable(nodes: list) -> bool:
@@ -836,6 +940,8 @@ def fetch_subscription_payload(
     user_agent: str = "",
     hwid: str = DEFAULT_SUBSCRIPTION_HWID,
     use_real_hwid: bool = True,
+    use_proxy_tun: bool = False,
+    proxy_url: str = "",
     converter_url: str = "",
     cancelled=None,
     response_opened=None,
@@ -870,7 +976,9 @@ def fetch_subscription_payload(
             return "", {}, [str(exc)]
     attempts: list[str] = []
     first_userinfo: dict = {}
-    fetch_options = {}
+    fetch_options = {"direct": not use_proxy_tun}
+    if proxy_url:
+        fetch_options["proxy_url"] = str(proxy_url).strip()
     if cancelled is not None:
         fetch_options["cancelled"] = cancelled
     if response_opened is not None:
@@ -907,11 +1015,11 @@ def fetch_subscription_payload(
                 url,
                 profile_name,
                 headers,
-                direct=True,
                 **fetch_options,
             )
             userinfo = _merge_subscription_info(_metadata_from_subscription_url(url), userinfo)
-            userinfo = {**userinfo, "networkPath": "direct"}
+            network_path = "proxy-tun" if use_proxy_tun else "direct"
+            userinfo = {**userinfo, "networkPath": network_path}
             if userinfo and not first_userinfo:
                 first_userinfo = dict(userinfo)
             nodes, errors = parse_links_text(text)
@@ -929,16 +1037,16 @@ def fetch_subscription_payload(
                         url,
                         profile_name,
                         headers,
-                        direct=True,
                         **fetch_options,
                     )
                     userinfo = _merge_subscription_info(_metadata_from_subscription_url(url), userinfo)
-                    userinfo = {**userinfo, "networkPath": "direct"}
+                    network_path = "proxy-tun" if use_proxy_tun else "direct"
+                    userinfo = {**userinfo, "networkPath": network_path}
                     if userinfo and not first_userinfo:
                         first_userinfo = dict(userinfo)
                     nodes, errors = parse_links_text(text)
                     if nodes and _parsed_nodes_are_usable(nodes):
-                        return text, {**userinfo, "networkPath": "direct"}, errors
+                        return text, {**userinfo, "networkPath": network_path}, errors
                     validation_errors = _node_validation_errors(nodes)
                     detail = "; ".join((validation_errors or errors or [])[:2]) or "нет подходящих серверов"
                     attempts.append(f"{profile_name} direct: {detail}")
@@ -946,9 +1054,19 @@ def fetch_subscription_payload(
                 except SubscriptionFetchCancelled:
                     raise
                 except Exception as direct_exc:
-                    attempts.append(f"{profile_name} direct: {direct_exc}")
+                    _append_subscription_fetch_error(
+                        attempts,
+                        f"{profile_name} direct",
+                        direct_exc,
+                        use_proxy_tun=use_proxy_tun,
+                    )
                     continue
-            attempts.append(f"{profile_name}: {exc}")
+            _append_subscription_fetch_error(
+                attempts,
+                profile_name,
+                exc,
+                use_proxy_tun=use_proxy_tun,
+            )
     return "", first_userinfo, attempts or ["Не удалось загрузить подписку"]
 
 
