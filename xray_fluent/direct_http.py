@@ -1,10 +1,10 @@
 """HTTP transport that bypasses application proxies and Windows TUN routes.
 
-Direct downloads can target arbitrary domains, so the transport cannot rely on
-a static sing-box routing rule. This module resolves each destination through
-DNS reachable over the physical gateway, installs temporary /32 routes for DNS
-and HTTP targets, and uses an urllib opener with all system/environment proxies
-disabled.
+This is the primary path for one-shot subscription helpers: it resolves each
+destination through DNS reachable over the physical gateway, installs temporary
+/32 routes for DNS and HTTP targets, and uses an urllib opener with all
+system/environment proxies disabled. If Windows cannot prepare a route, the
+packaged helper can still rely on its permanent sing-box process-direct rule.
 """
 
 from __future__ import annotations
@@ -101,6 +101,11 @@ class WindowsDirectRoute:
         if not self._enabled:
             return self
         context = get_windows_default_route_context()
+        if context is None:
+            # Route discovery may briefly fail while Windows updates adapters
+            # or while PowerShell is busy. Retry once instead of failing the
+            # whole subscription update from a transient cached result.
+            context = get_windows_default_route_context(force_refresh=True)
         if context is None:
             raise DirectNetworkUnavailable(
                 "Не удалось определить физический интернет-интерфейс для прямой загрузки"

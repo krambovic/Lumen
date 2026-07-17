@@ -7,7 +7,12 @@ from ipaddress import ip_network
 from pathlib import Path
 from typing import Any
 
-from .constants import DATA_DIR, ROUTING_DIRECT, ROUTING_GLOBAL
+from .constants import (
+    DATA_DIR,
+    ROUTING_DIRECT,
+    ROUTING_GLOBAL,
+    SUBSCRIPTION_FETCHER_EXE_NAME,
+)
 from .geodata_resources import singbox_rule_set_path
 from .models import AppSettings, RoutingSettings
 from .process_presets import PROCESS_PRESETS_BY_ID
@@ -357,12 +362,17 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         rules = []
         route["rules"] = rules
 
-    rules[:] = [rule for rule in rules if not _is_legacy_lumen_singbox_route_rule(rule)]
+    rules[:] = [
+        rule
+        for rule in rules
+        if not _is_legacy_lumen_singbox_route_rule(rule)
+        and not _is_subscription_fetcher_direct_rule(rule)
+    ]
     gui_rules, route_rule_sets = build_singbox_gui_route_rules(routing)
     dns_rules, dns_rule_sets = build_singbox_gui_dns_rules(routing)
     _ensure_singbox_rule_sets(route, route_rule_sets | dns_rule_sets)
     insert_at = _singbox_runtime_rule_insert_index(rules)
-    rules[insert_at:insert_at] = gui_rules
+    rules[insert_at:insert_at] = [_subscription_fetcher_direct_rule(), *gui_rules]
     final_outbound = _routing_final_outbound(routing)
     route["final"] = final_outbound
     dns = payload.get("dns")
@@ -411,6 +421,28 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
                 "action": "reject",
             },
         )
+
+
+def _subscription_fetcher_direct_rule() -> dict[str, Any]:
+    return {
+        "process_name": [SUBSCRIPTION_FETCHER_EXE_NAME],
+        "action": "route",
+        "outbound": "direct",
+    }
+
+
+def _is_subscription_fetcher_direct_rule(rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    names = {
+        str(value or "").strip().casefold()
+        for value in (rule.get("process_name") or [])
+    }
+    return (
+        names == {SUBSCRIPTION_FETCHER_EXE_NAME.casefold()}
+        and rule.get("action") == "route"
+        and rule.get("outbound") == "direct"
+    )
 
 
 def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[str, Any]], set[str]]:

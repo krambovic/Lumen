@@ -5,14 +5,72 @@ from typing import TYPE_CHECKING
 
 from ..connectivity_test import ConnectivityTestWorker
 from ..constants import DEFAULT_HTTP_PORT, XRAY_PATH_DEFAULT
+from ..i18n import tr
 from ..path_utils import resolve_configured_path
 from ..ping_worker import PingWorker
 from ..qthread_utils import bind_thread_reference, retain_thread_until_finished
 from ..speed_test_worker import SpeedTestWorker
+from .node_runtime_service import is_native_singbox_only_node
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
     from ..models import Node
+
+
+_ENDPOINT_PING_UNSUPPORTED = {
+    "auto",
+    "awg",
+    "masque",
+    "singbox_config",
+    "warp",
+    "wireguard",
+    "xray_config",
+}
+_XRAY_TEST_UNSUPPORTED = {"auto", "singbox_config", "xray_config"}
+
+
+def _node_protocol(node: Node) -> str:
+    outbound = node.outbound if isinstance(node.outbound, dict) else {}
+    return str(outbound.get("protocol") or outbound.get("type") or node.scheme or "").strip().lower()
+
+
+def _node_supports_test(node: Node, test: str, *, ping_method: str = "tcping") -> bool:
+    protocol = _node_protocol(node)
+    if test == "speed" or ping_method == "real":
+        return not is_native_singbox_only_node(node) and protocol not in _XRAY_TEST_UNSUPPORTED
+    return protocol not in _ENDPOINT_PING_UNSUPPORTED
+
+
+def _filter_testable_nodes(
+    controller: AppController,
+    nodes: list[Node],
+    test: str,
+    *,
+    ping_method: str = "tcping",
+) -> list[Node]:
+    supported: list[Node] = []
+    unsupported: list[Node] = []
+    for node in nodes:
+        target = supported if _node_supports_test(node, test, ping_method=ping_method) else unsupported
+        target.append(node)
+    if not unsupported:
+        return supported
+
+    test_name = tr("Тест скорости") if test == "speed" else (
+        tr("Реальный пинг") if ping_method == "real" else tr("Пинг")
+    )
+    names = [str(node.name or node.server or node.scheme or "—") for node in unsupported[:3]]
+    if len(unsupported) > 3:
+        names.append(tr("и ещё {count}", count=len(unsupported) - 3))
+    controller.status.emit(
+        "warning",
+        tr(
+            "{test} не поддерживается для выбранных серверов: {servers}",
+            test=test_name,
+            servers=", ".join(names),
+        ),
+    )
+    return supported
 
 
 def _clear_ping_measurements(controller: AppController, nodes: list[Node]) -> None:
@@ -53,6 +111,13 @@ def ping_nodes(
     if not nodes:
         return
 
+    resolved_method = (method or controller.state.settings.ping_method or "tcping").strip().lower()
+    if resolved_method not in ("tcping", "icmp", "real"):
+        resolved_method = "tcping"
+    nodes = _filter_testable_nodes(controller, nodes, "ping", ping_method=resolved_method)
+    if not nodes:
+        return
+
     if controller._ping_worker and controller._ping_worker.isRunning():
         previous = controller._ping_worker
         previous.cancel()
@@ -63,10 +128,6 @@ def ping_nodes(
             delete_worker=False,
         )
         controller._ping_worker = None
-
-    resolved_method = (method or controller.state.settings.ping_method or "tcping").strip().lower()
-    if resolved_method not in ("tcping", "icmp", "real"):
-        resolved_method = "tcping"
 
     controller._ping_total = len(nodes)
     controller._ping_completed = 0
@@ -127,6 +188,10 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
 
     if controller._speed_worker and controller._speed_worker.isRunning():
         controller.status.emit("info", "Тест скорости уже выполняется. Остановите его перед новым запуском.")
+        return False
+
+    nodes = _filter_testable_nodes(controller, nodes, "speed")
+    if not nodes:
         return False
 
     resolved = resolve_configured_path(

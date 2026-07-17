@@ -5,6 +5,7 @@ import pytest
 
 from xray_fluent.application import node_service
 from xray_fluent.link_parser import MAX_IMPORT_BYTES, parse_links_text, validate_node_outbound
+from xray_fluent.subscription_fetcher import _read_http_response
 
 
 def test_happ_premium_headers_and_body_directives_are_preserved() -> None:
@@ -351,34 +352,11 @@ def test_subscription_rejects_declared_oversized_body(monkeypatch) -> None:
     class _Response:
         headers = {"Content-Length": str(node_service.MAX_SUBSCRIPTION_BYTES + 1)}
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
         def read(self, _size=-1):
             raise AssertionError("oversized response body must not be read")
 
-    class _Opener:
-        def open(self, *_args, **_kwargs):
-            return _Response()
-
-    class _DirectOpener:
-        def __enter__(self):
-            return _Opener()
-
-        def __exit__(self, *_args):
-            return None
-
-    monkeypatch.setattr(node_service, "DirectUrlOpener", _DirectOpener)
-
     with pytest.raises(RuntimeError, match="слишком большая"):
-        node_service._fetch_subscription_with_headers(
-            "https://sub.example/large",
-            "Lumen",
-            {"User-Agent": "test"},
-        )
+        _read_http_response(_Response(), node_service.MAX_SUBSCRIPTION_BYTES)
 
 
 def test_import_file_size_limit_is_checked_before_read(tmp_path) -> None:

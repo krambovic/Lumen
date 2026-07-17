@@ -15,6 +15,7 @@ from PyQt6.QtCore import QAbstractListModel, QModelIndex, Qt, pyqtSlot
 from ...models import Node
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri, _STRIPES as _FLAG_STRIPES
 from ...application.node_runtime_service import is_native_singbox_only_node
+from ...i18n import tr
 from ...node_transport import node_transport
 
 
@@ -41,6 +42,7 @@ class NodeListModel(QAbstractListModel):
     TransportRole = Qt.ItemDataRole.UserRole + 20
     TestedRole = Qt.ItemDataRole.UserRole + 21
     DescriptionRole = Qt.ItemDataRole.UserRole + 22
+    PingingRole = Qt.ItemDataRole.UserRole + 23
 
     _ROLE_NAMES = {
         IdRole: b"nodeId",
@@ -64,6 +66,7 @@ class NodeListModel(QAbstractListModel):
         TransportRole: b"transport",
         TestedRole: b"tested",
         DescriptionRole: b"description",
+        PingingRole: b"pinging",
     }
 
     def __init__(self, parent=None) -> None:
@@ -72,6 +75,7 @@ class NodeListModel(QAbstractListModel):
         self._selected_id: str | None = None
         self._index_by_id: dict[str, int] = {}
         self._speed_progress: dict[str, int] = {}
+        self._pinging_ids: set[str] = set()
         self._country_cache: dict[str, str] = {}
         self._allow_native_singbox_only = False
 
@@ -98,7 +102,14 @@ class NodeListModel(QAbstractListModel):
         if role == self.SchemeRole:
             return (node.scheme or "").upper()
         if role == self.DescriptionRole:
-            return node.description or ""
+            description = (node.description or "").strip()
+            if description:
+                return description
+            outbound = node.outbound if isinstance(node.outbound, dict) else {}
+            protocol = str(outbound.get("protocol") or "").strip().lower()
+            if (node.scheme or "").strip().lower() == "auto" or protocol == "xray_config":
+                return tr("Автовыбор лучших серверов")
+            return ""
         if role == self.TransportRole:
             return node_transport(node)
         if role == self.ServerRole:
@@ -109,6 +120,8 @@ class NodeListModel(QAbstractListModel):
             return node.group or ""
         if role == self.PingRole:
             return -1 if node.ping_ms is None else int(node.ping_ms)
+        if role == self.PingingRole:
+            return node.id in self._pinging_ids
         if role == self.SpeedRole:
             return -1.0 if node.speed_mbps is None else float(node.speed_mbps)
         if role == self.AliveRole:
@@ -198,7 +211,21 @@ class NodeListModel(QAbstractListModel):
             return
         self._nodes[row].ping_ms = ping_ms
         self._nodes[row].is_alive = ping_ms is not None
-        self._emit_row_changed(node_id, [self.PingRole, self.AliveRole, self.TestedRole])
+        self._pinging_ids.discard(node_id)
+        self._emit_row_changed(
+            node_id,
+            [self.PingRole, self.AliveRole, self.TestedRole, self.PingingRole],
+        )
+
+    def set_pinging_ids(self, node_ids: Iterable[str]) -> None:
+        next_ids = {str(node_id) for node_id in node_ids if str(node_id)}
+        changed = self._pinging_ids.symmetric_difference(next_ids)
+        self._pinging_ids = next_ids
+        for node_id in changed:
+            self._emit_row_changed(node_id, [self.PingingRole])
+
+    def clear_pinging(self) -> None:
+        self.set_pinging_ids(())
 
     def update_speed(self, node_id: str, speed_mbps: float | None) -> None:
         row = self._index_by_id.get(node_id)

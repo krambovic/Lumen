@@ -1165,19 +1165,55 @@ def _apply_imported_proxy_dns(
     node: Node,
     routing: RoutingSettings | None,
 ) -> None:
-    """Honor DNS servers embedded in imported WireGuard/AWG/MASQUE profiles."""
+    """Use an internal profile DNS without replacing the configured resolver.
+
+    Clash WireGuard/AWG profiles often carry public UDP resolvers such as
+    1.1.1.1.  Some providers block UDP/53 inside the tunnel, so replacing the
+    user's working DoH resolver with that hint makes the endpoint appear dead
+    even after a successful handshake.  Keep the configured proxy resolver;
+    only a private profile DNS may override the default resolver, and never a
+    resolver explicitly customized by the user.
+    """
     node_outbound = node.outbound if isinstance(node.outbound, dict) else {}
     raw_values = node_outbound.get("_dns")
-    if not isinstance(raw_values, (list, tuple)):
-        return
-    addresses = [str(item).strip() for item in raw_values if str(item).strip()]
-    if not addresses:
-        return
+    addresses = (
+        [str(item).strip() for item in raw_values if str(item).strip()]
+        if isinstance(raw_values, (list, tuple))
+        else []
+    )
+    addresses = list(dict.fromkeys(addresses))
     dns = payload.get("dns")
     if not isinstance(dns, dict):
         return
     servers = dns.get("servers")
     if not isinstance(servers, list):
+        return
+
+    configured_proxy_dns = [
+        server
+        for server in servers
+        if isinstance(server, dict)
+        and (
+            str(server.get("tag") or "") == "proxy-dns"
+            or str(server.get("tag") or "").startswith("proxy-dns-")
+        )
+    ]
+    private_dns = ""
+    for address in addresses:
+        try:
+            if ip_address(address).is_private:
+                private_dns = address
+                break
+        except ValueError:
+            continue
+
+    if configured_proxy_dns and (
+        not private_dns
+        or (routing is not None and not _is_default_proxy_dns(routing))
+    ):
+        return
+    selected_dns = private_dns or (addresses[0] if addresses else "")
+    if not selected_dns:
         return
 
     servers[:] = [
@@ -1192,11 +1228,9 @@ def _apply_imported_proxy_dns(
         )
     ]
     strategy = _dns_strategy(routing.dns_proxy_strategy if routing is not None else "")
-    for index, address in enumerate(dict.fromkeys(addresses), start=1):
-        tag = "proxy-dns" if index == 1 else f"proxy-dns-{index}"
-        server = _build_dns_server(tag, address, "udp", strategy)
-        _set_dns_server_dial_contract(server, detour="proxy", resolver="bootstrap-dns")
-        servers.append(server)
+    server = _build_dns_server("proxy-dns", selected_dns, "udp", strategy)
+    _set_dns_server_dial_contract(server, detour="proxy", resolver="bootstrap-dns")
+    servers.append(server)
 
 
 def _clamp_tun_mtu_for_proxy(

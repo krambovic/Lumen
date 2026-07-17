@@ -12,6 +12,7 @@ from .node_runtime_service import (
 from .node_service import (
     apply_fetched_subscription,
     bulk_update_nodes,
+    delete_group,
     fetch_subscription_payload,
     get_all_groups,
     import_nodes_from_text,

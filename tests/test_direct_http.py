@@ -39,7 +39,13 @@ def test_direct_opener_disables_all_urllib_proxies(monkeypatch) -> None:
 
 def test_direct_route_fails_closed_without_physical_interface(monkeypatch) -> None:
     monkeypatch.setattr(direct_http.os, "name", "nt")
-    monkeypatch.setattr(direct_http, "get_windows_default_route_context", lambda: None)
+    calls: list[bool] = []
+
+    def missing_context(*, force_refresh: bool = False):
+        calls.append(force_refresh)
+        return None
+
+    monkeypatch.setattr(direct_http, "get_windows_default_route_context", missing_context)
 
     route = direct_http.WindowsDirectRoute()
     try:
@@ -48,6 +54,34 @@ def test_direct_route_fails_closed_without_physical_interface(monkeypatch) -> No
         pass
     else:
         raise AssertionError("direct-only request must not fall back to a TUN route")
+    assert calls == [False, True]
+
+
+def test_direct_route_retries_transient_context_failure(monkeypatch) -> None:
+    from xray_fluent.network_route_context import WindowsDefaultRouteContext
+
+    calls: list[bool] = []
+
+    def transient_context(*, force_refresh: bool = False):
+        calls.append(force_refresh)
+        if not force_refresh:
+            return None
+        return WindowsDefaultRouteContext(
+            "Ethernet",
+            ("1.1.1.1",),
+            interface_index=13,
+            next_hop="192.168.1.1",
+            is_physical=True,
+            tun_active=False,
+        )
+
+    monkeypatch.setattr(direct_http.os, "name", "nt")
+    monkeypatch.setattr(direct_http, "get_windows_default_route_context", transient_context)
+
+    route = direct_http.WindowsDirectRoute()
+    route.__enter__()
+    assert calls == [False, True]
+    route.__exit__(None, None, None)
 
 
 def test_direct_route_needs_no_host_route_when_tun_is_inactive(monkeypatch) -> None:

@@ -72,3 +72,13 @@ def test_requested_routing_and_config_editor_cleanup_is_kept() -> None:
     assert 'I18n.t("Статус")' not in configs
     assert "App.openConfigDirectory(page.core)" in configs
     assert "coreTabMouse.containsMouse" in configs
+
+
+def test_nodes_page_keeps_group_subscription_and_ping_feedback_controls() -> None:
+    nodes = (QML_DIR / "NodesPage.qml").read_text(encoding="utf-8")
+
+    assert 'I18n.t("Нет подписки")' in nodes
+    assert "function onSubscriptionImported(groupName)" in nodes
+    assert "App.deleteGroup(groupName)" in nodes
+    assert "required property bool pinging" in nodes
+    assert "running: nodeRow.pinging" in nodes

@@ -7,8 +7,9 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen KVN"
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.9.1"
 STATE_SCHEMA_VERSION = 1
+SUBSCRIPTION_FETCHER_EXE_NAME = "lumen-subscription-fetcher.exe"
 
 DIAGNOSTICS_UPLOAD_URL = "https://diagnostics.lumen-kvn.eu.cc/api/ingest"
 DIAGNOSTICS_SECRET = "07f7d005166286e354645dcbce892998987bd8d8d20f296026dbb01ff05a9b8a"

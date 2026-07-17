@@ -26,6 +26,12 @@ MAX_IMPORT_BYTES = 8 * 1024 * 1024
 MAX_IMPORT_LINES = 20_000
 MAX_IMPORT_NODES = 20_000
 
+_AMNEZIA_INT_KEYS = ("jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime")
+_AMNEZIA_RANGE_KEYS = ("h1", "h2", "h3", "h4")
+_AMNEZIA_STR_KEYS = ("i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3")
+_AWG_BYTES_TAG_RE = re.compile(r"<b\s+0x([0-9A-Fa-f]*)>")
+_AWG_UINT_RANGE_RE = re.compile(r"\d+(?:\s*-\s*\d+)?")
+
 
 def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
     if len(text.encode("utf-8", errors="replace")) > MAX_IMPORT_BYTES:
@@ -43,6 +49,9 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
             return _parse_json_nodes_text(stripped)
         except Exception as exc:
             if stripped.startswith("{"):
+                json_lines = _try_parse_json_lines(stripped)
+                if json_lines is not None:
+                    return json_lines
                 return [], [f"JSON: {exc}"]
     if _looks_like_clash_yaml(stripped):
         try:
@@ -608,7 +617,8 @@ def _is_clash_proxy_payload(payload: Any) -> bool:
     kind = str(payload.get("type") or "").strip().lower()
     if kind not in {
         "vless", "vmess", "trojan", "ss", "shadowsocks",
-        "hy", "hysteria", "hy2", "hysteria2", "tuic", "wireguard", "masque",
+        "hy", "hysteria", "hy2", "hysteria2", "tuic", "wireguard",
+        "awg", "amneziawg", "amnezia-wg", "masque",
     }:
         return False
     return (
@@ -692,6 +702,66 @@ def _infer_transport_host(stream_settings: dict[str, Any]) -> str:
     return ""
 
 
+def _validate_wireguard_endpoint(node: Node, endpoint: dict[str, Any]) -> str | None:
+    endpoint_type = str(endpoint.get("type") or "").strip().lower()
+    amnezia = endpoint.get("amnezia")
+    if endpoint_type not in {"wireguard", "awg"}:
+        if isinstance(amnezia, dict) and amnezia:
+            return _validate_amnezia_settings(node, amnezia)
+        return None
+
+    node_label = str(node.name or node.server or "WireGuard").strip()
+    if not str(endpoint.get("private_key") or "").strip():
+        return f"Сервер {node_label} не содержит private_key для WireGuard/AWG."
+    addresses = endpoint.get("address")
+    if not isinstance(addresses, list) or not any(str(item).strip() for item in addresses):
+        return f"Сервер {node_label} не содержит адрес интерфейса WireGuard/AWG."
+    peers = endpoint.get("peers")
+    if not isinstance(peers, list) or not peers:
+        return f"Сервер {node_label} не содержит peers для WireGuard/AWG."
+    for peer in peers:
+        if not isinstance(peer, dict) or not str(peer.get("public_key") or "").strip():
+            return f"Сервер {node_label}: у peer отсутствует public_key."
+        peer_address = str(peer.get("address") or "").strip()
+        try:
+            peer_port = int(peer.get("port") or 0)
+        except (TypeError, ValueError):
+            peer_port = 0
+        if not peer_address or not 0 < peer_port <= 65535:
+            return f"Сервер {node_label}: у peer отсутствует корректный address или port."
+    if isinstance(amnezia, dict) and amnezia:
+        return _validate_amnezia_settings(node, amnezia)
+    return None
+
+
+def _validate_amnezia_settings(node: Node, amnezia: dict[str, Any]) -> str | None:
+    node_label = str(node.name or node.server or "AWG").strip()
+    for key in _AMNEZIA_INT_KEYS:
+        value = amnezia.get(key)
+        if value is not None and type(value) is not int:
+            return f"Сервер {node_label}: параметр AWG `{key}` должен быть целым числом."
+    for key in _AMNEZIA_RANGE_KEYS:
+        value = amnezia.get(key)
+        if value is None or type(value) is int:
+            continue
+        if not isinstance(value, str) or not _AWG_UINT_RANGE_RE.fullmatch(value.strip()):
+            return f"Сервер {node_label}: параметр AWG `{key}` должен быть числом или диапазоном."
+    for key in _AMNEZIA_STR_KEYS:
+        value = amnezia.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            return f"Сервер {node_label}: параметр AWG `{key}` должен быть строкой."
+        for match in _AWG_BYTES_TAG_RE.finditer(value):
+            if len(match.group(1)) % 2:
+                return f"AWG: нечётное число hex-символов в {key.upper()}."
+    jmin = amnezia.get("jmin")
+    jmax = amnezia.get("jmax")
+    if type(jmin) is int and type(jmax) is int and jmin > jmax:
+        return f"Сервер {node_label}: параметр AWG `jmin` не может быть больше `jmax`."
+    return None
+
+
 def validate_node_outbound(node: Node) -> str | None:
     name_l = str(node.name or "").strip().lower()
     if str(node.scheme or "").strip().lower() in {
@@ -722,6 +792,14 @@ def validate_node_outbound(node: Node) -> str | None:
         return "Сервер-заглушка 0.0.0.0:1 пропущен."
 
     outbound = node.outbound if isinstance(node.outbound, dict) else {}
+    native_outbound = (
+        outbound.get("singbox")
+        if isinstance(outbound.get("singbox"), dict)
+        else outbound
+    )
+    endpoint_problem = _validate_wireguard_endpoint(node, native_outbound)
+    if endpoint_problem:
+        return endpoint_problem
     stream_settings = outbound.get("streamSettings") if isinstance(outbound, dict) else None
     if not isinstance(stream_settings, dict):
         return None
@@ -971,6 +1049,43 @@ def _parse_json_nodes_text(text: str) -> tuple[list[Node], list[str]]:
     return _parse_json_nodes_payload(payload)
 
 
+def _try_parse_json_lines(text: str) -> tuple[list[Node], list[str]] | None:
+    """Parse subscriptions that contain one complete JSON node per line.
+
+    Some Clash/AWG providers concatenate standalone proxy objects instead of
+    wrapping them in a JSON array.  Only use this fallback when every non-empty
+    line is valid JSON, so a malformed pretty-printed document still reports
+    the original whole-document JSON error.
+    """
+    lines = [
+        (line_number, line.strip())
+        for line_number, line in enumerate(text.splitlines(), start=1)
+        if line.strip()
+    ]
+    if len(lines) <= 1 or len(lines) > MAX_IMPORT_LINES:
+        return None
+
+    payloads: list[tuple[int, Any]] = []
+    for line_number, line in lines:
+        try:
+            payloads.append((line_number, json.loads(line)))
+        except json.JSONDecodeError:
+            return None
+
+    nodes: list[Node] = []
+    errors: list[str] = []
+    for line_number, payload in payloads:
+        try:
+            parsed_nodes, parsed_errors = _parse_json_nodes_payload(payload)
+            nodes.extend(parsed_nodes)
+            errors.extend(f"JSON line {line_number}: {error}" for error in parsed_errors)
+        except Exception as exc:
+            errors.append(f"JSON line {line_number}: {exc}")
+        if len(nodes) > MAX_IMPORT_NODES:
+            return [], [f"JSON contains more than {MAX_IMPORT_NODES} nodes"]
+    return nodes, errors
+
+
 def _parse_json_nodes_payload(payload: Any) -> tuple[list[Node], list[str]]:
     nodes: list[Node] = []
     errors: list[str] = []
@@ -1145,6 +1260,8 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         kind = "hysteria2"
     elif kind in {"socks", "socks5"}:
         kind = "socks"
+    elif kind in {"awg", "amneziawg", "amnezia-wg"}:
+        kind = "wireguard"
     if kind not in {"vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria", "hysteria2", "tuic", "masque"}:
         raise LinkParseError(f"unsupported Clash proxy type: {kind or 'unknown'}")
 
@@ -1516,6 +1633,8 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         outbound = dict(payload)
     elif _is_xray_auto_config_payload(payload):
         outbound = _native_xray_config(payload)
+    elif _is_clash_proxy_payload(payload):
+        return _parse_clash_proxy_payload(payload)
     elif "type" in payload:
         outbound = _native_singbox_outbound(payload)
     elif "protocol" in payload:

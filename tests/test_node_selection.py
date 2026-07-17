@@ -19,6 +19,7 @@ class _Controller:
             selected_node_id=selected_id,
             settings=SimpleNamespace(auto_connect_on_import=False),
             subscriptions=[],
+            manual_groups=[],
         )
         self.nodes_changed = _Signal()
         self.selection_changed = _Signal()
@@ -134,6 +135,86 @@ def test_direct_import_can_target_selected_group() -> None:
     assert errors == []
     assert controller.state.nodes[0].group == "Manual"
     assert controller.state.selected_node_id is None
+
+
+def test_same_server_can_be_imported_into_another_group_but_not_twice_into_one_group() -> None:
+    existing = _node("existing", "Group B")
+    candidate = _node("candidate", "Default")
+    candidate.link = existing.link
+    controller = _Controller([existing], None)
+
+    original = _patch_imported_nodes([candidate])
+    try:
+        added, errors = node_service.import_nodes_from_text(controller, "same payload", group="Group A")
+    finally:
+        _restore_import_patches(original)
+
+    assert added == 1
+    assert errors == []
+    assert [(node.link, node.group) for node in controller.state.nodes] == [
+        (existing.link, "Group B"),
+        (existing.link, "Group A"),
+    ]
+
+    duplicate = _node("duplicate", "Default")
+    duplicate.link = existing.link
+    original = _patch_imported_nodes([duplicate])
+    try:
+        added, errors = node_service.import_nodes_from_text(controller, "same payload", group="Group A")
+    finally:
+        _restore_import_patches(original)
+
+    assert added == 0
+    assert errors == []
+    assert len(controller.state.nodes) == 2
+
+
+def test_default_group_always_exists_without_nodes_or_manual_groups() -> None:
+    controller = _Controller([], None)
+
+    assert node_service.get_all_groups(controller) == ["Default"]
+
+
+def test_subscription_server_is_not_blocked_by_same_link_in_another_group() -> None:
+    existing = _node("existing", "Manual")
+    candidate = _node("candidate", "Default")
+    candidate.link = existing.link
+    controller = _Controller([existing], None)
+
+    original = _patch_imported_nodes([candidate])
+    try:
+        added, errors, _info = node_service._apply_subscription_payload(
+            controller,
+            "https://example.com/sub",
+            "Subscription",
+            ("same payload", {}, []),
+        )
+    finally:
+        _restore_import_patches(original)
+
+    assert added == 1
+    assert errors == []
+    assert {(node.link, node.group) for node in controller.state.nodes} == {
+        (existing.link, "Manual"),
+        (existing.link, "Subscription"),
+    }
+
+
+def test_delete_group_removes_its_nodes_subscription_and_manual_entry() -> None:
+    grouped = _node("grouped", "Temporary")
+    grouped.subscription_id = "sub-id"
+    keep = _node("keep", "Default")
+    controller = _Controller([grouped, keep], None)
+    controller.state.manual_groups = ["Temporary", "Other"]
+    controller.state.subscriptions = [
+        {"id": "sub-id", "url": "https://example.com/sub", "name": "Temporary", "group": "Temporary"}
+    ]
+
+    assert node_service.delete_group(controller, "Temporary") is True
+    assert controller.state.nodes == [keep]
+    assert controller.state.subscriptions == []
+    assert controller.state.manual_groups == ["Other"]
+    assert node_service.delete_group(controller, "Default") is False
 
 
 def test_direct_import_preserves_the_active_server_until_user_selects_new_one() -> None:

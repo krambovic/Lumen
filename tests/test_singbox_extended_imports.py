@@ -5,7 +5,11 @@ from pathlib import Path
 
 from xray_fluent.engines.singbox.config_builder import build_singbox_outbound
 from xray_fluent.engines.singbox.runtime_planner import parse_singbox_document, plan_singbox_runtime
-from xray_fluent.link_parser import parse_links_text, repair_node_outbound_from_link
+from xray_fluent.link_parser import (
+    parse_links_text,
+    repair_node_outbound_from_link,
+    validate_node_outbound,
+)
 from xray_fluent.models import RoutingSettings
 
 
@@ -168,6 +172,86 @@ def test_legacy_clash_wireguard_link_is_migrated_before_runtime() -> None:
     assert outbound["reserved"] == [14, 84, 156]
 
 
+def test_newline_delimited_clash_awg_json_uses_native_wireguard_endpoints() -> None:
+    def awg_payload(name: str, kind: str, server: str, address: str) -> dict:
+        return {
+            "name": name,
+            "type": kind,
+            "server": server,
+            "port": 44303,
+            "ip": address,
+            "private-key": "private-key=",
+            "public-key": "public-key=",
+            "allowed-ips": ["0.0.0.0/0", "::/0"],
+            "dns": ["1.1.1.1", "1.0.0.1"],
+            "mtu": 1420,
+            "persistent-keepalive": 25,
+            "remote-dns-resolve": True,
+            "amnezia-wg-option": {
+                "jc": 4,
+                "jmin": 64,
+                "jmax": 160,
+                "s1": 44,
+                "s2": 63,
+                "s3": 12,
+                "s4": 8,
+                "h1": "819296636-819296655",
+                "h2": "2094251746-2094251766",
+                "h3": "688450779-688450798",
+                "h4": "1775783192-1775783212",
+                "i1": "<b 0x01020304>",
+                "i5": "<b 0x05060708>",
+            },
+        }
+
+    first = awg_payload("AWG 2.0 one", "wireguard", "203.0.113.10", "10.8.0.64/32")
+    second = awg_payload("AWG 2.0 two", "amneziawg", "198.51.100.20", "10.8.0.100/32")
+    nodes, errors = parse_links_text(
+        json.dumps(first, ensure_ascii=False) + "\n" + json.dumps(second, ensure_ascii=False)
+    )
+
+    assert errors == []
+    assert [node.scheme for node in nodes] == ["awg", "awg"]
+    assert [node.server for node in nodes] == ["203.0.113.10", "198.51.100.20"]
+    for node, expected_address in zip(nodes, ("10.8.0.64/32", "10.8.0.100/32")):
+        endpoint = build_singbox_outbound(node, tag="proxy")
+        peer = endpoint["peers"][0]
+        assert endpoint["type"] == "wireguard"
+        assert endpoint["address"] == [expected_address]
+        assert endpoint["mtu"] == 1420
+        assert peer["allowed_ips"] == ["0.0.0.0/0", "::/0"]
+        assert peer["persistent_keepalive_interval"] == 25
+        assert endpoint["amnezia"]["h1"] == "819296636-819296655"
+        assert endpoint["amnezia"]["i1"] == "<b 0x01020304>"
+        assert node.outbound["_dns"] == ["1.1.1.1", "1.0.0.1"]
+        assert validate_node_outbound(node) is None
+
+
+def test_native_singbox_wireguard_json_is_not_reclassified_as_clash() -> None:
+    payload = {
+        "type": "wireguard",
+        "tag": "native-wg",
+        "address": ["10.0.0.2/32"],
+        "private_key": "private-key=",
+        "peers": [
+            {
+                "address": "203.0.113.10",
+                "port": 51820,
+                "public_key": "public-key=",
+                "allowed_ips": ["0.0.0.0/0"],
+            }
+        ],
+    }
+
+    nodes, errors = parse_links_text(json.dumps(payload))
+
+    assert errors == []
+    assert len(nodes) == 1
+    assert nodes[0].scheme == "wireguard"
+    assert nodes[0].server == "203.0.113.10"
+    assert build_singbox_outbound(nodes[0], tag="proxy")["peers"] == payload["peers"]
+
+
 def test_awg_wgquick_config_normalizes_bare_addresses_and_awg20_fields() -> None:
     nodes, errors = parse_links_text(
         """
@@ -255,7 +339,7 @@ def test_legacy_awg_wgquick_node_is_migrated_before_runtime() -> None:
     assert node.outbound["_dns"] == ["1.1.1.1", "1.0.0.1"]
 
 
-def test_awg_runtime_uses_profile_dns_and_endpoint_mtu() -> None:
+def test_awg_runtime_keeps_configured_doh_for_public_profile_dns() -> None:
     nodes, errors = parse_links_text(
         """
         [Interface]
@@ -294,14 +378,177 @@ def test_awg_runtime_uses_profile_dns_and_endpoint_mtu() -> None:
     proxy_dns = next(item for item in runtime["dns"]["servers"] if item.get("tag") == "proxy-dns")
     endpoint = next(item for item in runtime["endpoints"] if item.get("tag") == "proxy")
     assert tun["mtu"] == 1280
-    assert proxy_dns == {
-        "tag": "proxy-dns",
-        "type": "udp",
-        "server": "1.1.1.1",
-        "server_port": 53,
-        "detour": "proxy",
-    }
+    assert proxy_dns["type"] == "https"
+    assert proxy_dns["server"] == "cloudflare-dns.com"
+    assert proxy_dns["detour"] == "proxy"
+    assert next(
+        item for item in runtime["dns"]["servers"] if item.get("tag") == "proxy-dns-2"
+    )["server"] == "dns.google"
     assert endpoint["peers"][0]["address"] == "8.47.69.2"
+
+
+def test_awg_runtime_prefers_private_profile_dns() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 10.8.0.2/32
+        DNS = 1.1.1.1, 10.8.0.1
+        Jc = 4
+        Jmin = 40
+        Jmax = 70
+
+        [Peer]
+        PublicKey = public-key=
+        AllowedIPs = 0.0.0.0/0
+        Endpoint = 203.0.113.10:51820
+        """
+    )
+
+    assert errors == []
+    document = parse_singbox_document(Path("default.json"), json.dumps(_base_config()))
+    runtime = plan_singbox_runtime(
+        document,
+        nodes[0],
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+    ).singbox_config
+
+    proxy_dns = next(item for item in runtime["dns"]["servers"] if item.get("tag") == "proxy-dns")
+    assert proxy_dns["server"] == "10.8.0.1"
+
+
+def test_awg_runtime_keeps_configured_doh_when_profile_has_no_dns() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 10.8.0.2/32
+        Jc = 4
+        Jmin = 40
+        Jmax = 70
+
+        [Peer]
+        PublicKey = public-key=
+        AllowedIPs = 0.0.0.0/0
+        Endpoint = 203.0.113.10:51820
+        """
+    )
+
+    assert errors == []
+    document = parse_singbox_document(Path("default.json"), json.dumps(_base_config()))
+    runtime = plan_singbox_runtime(
+        document,
+        nodes[0],
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+    ).singbox_config
+
+    proxy_dns = next(item for item in runtime["dns"]["servers"] if item.get("tag") == "proxy-dns")
+    assert proxy_dns["server"] == "cloudflare-dns.com"
+    assert proxy_dns["type"] == "https"
+
+
+def test_plain_wireguard_runtime_keeps_configured_doh_for_public_profile_dns() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 10.8.0.2/32
+        DNS = 9.9.9.9, 1.1.1.1
+
+        [Peer]
+        PublicKey = public-key=
+        AllowedIPs = 0.0.0.0/0
+        Endpoint = 203.0.113.10:51820
+        """
+    )
+
+    assert errors == []
+    document = parse_singbox_document(Path("default.json"), json.dumps(_base_config()))
+    runtime = plan_singbox_runtime(
+        document,
+        nodes[0],
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+    ).singbox_config
+
+    proxy_dns = [
+        item
+        for item in runtime["dns"]["servers"]
+        if str(item.get("tag") or "").startswith("proxy-dns")
+    ]
+    assert [item["server"] for item in proxy_dns] == ["cloudflare-dns.com", "dns.google"]
+
+
+def test_custom_proxy_dns_wins_over_private_awg_profile_dns() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 10.8.0.2/32
+        DNS = 10.8.0.1
+        Jc = 4
+        Jmin = 40
+        Jmax = 70
+
+        [Peer]
+        PublicKey = public-key=
+        AllowedIPs = 0.0.0.0/0
+        Endpoint = 203.0.113.10:51820
+        """
+    )
+
+    assert errors == []
+    document = parse_singbox_document(Path("default.json"), json.dumps(_base_config()))
+    runtime = plan_singbox_runtime(
+        document,
+        nodes[0],
+        routing=RoutingSettings(
+            mode="global",
+            tun_default_outbound="proxy",
+            dns_proxy_server="dns.quad9.net",
+            dns_proxy_servers=["dns.quad9.net"],
+            dns_proxy_type="https",
+        ),
+    ).singbox_config
+
+    proxy_dns = next(item for item in runtime["dns"]["servers"] if item.get("tag") == "proxy-dns")
+    assert proxy_dns["server"] == "dns.quad9.net"
+    assert proxy_dns["type"] == "https"
+
+
+def test_awg_validation_rejects_runtime_only_amnezia_errors() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 10.8.0.2/32
+        Jc = invalid
+        Jmin = 70
+        Jmax = 40
+        I1 = <b 0xabc>
+
+        [Peer]
+        PublicKey = public-key=
+        AllowedIPs = 0.0.0.0/0
+        Endpoint = 203.0.113.10:51820
+        """
+    )
+
+    assert errors == []
+    assert "`jc`" in str(validate_node_outbound(nodes[0]))
+
+    endpoint = nodes[0].outbound["singbox"]
+    endpoint["amnezia"]["jc"] = 4
+    assert "I1" in str(validate_node_outbound(nodes[0]))
+
+    endpoint["amnezia"]["i1"] = "<b 0xabcd>"
+    assert "jmin" in str(validate_node_outbound(nodes[0]))
+
+    endpoint["amnezia"]["jmin"] = 40
+    endpoint["amnezia"]["h1"] = "100-200"
+    assert validate_node_outbound(nodes[0]) is None
+
+    endpoint["amnezia"]["h1"] = "invalid"
+    assert "`h1`" in str(validate_node_outbound(nodes[0]))
 
 
 def test_wireguard_config_supports_multiple_peers() -> None:

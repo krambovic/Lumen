@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
 from dataclasses import dataclass
 
-from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pumped
+from .windows_network import query_windows_route_context
 
 
 @dataclass(slots=True)
@@ -20,6 +19,7 @@ class WindowsDefaultRouteContext:
 
 
 _ROUTE_CONTEXT_TTL_SECONDS = 30.0
+_ROUTE_CONTEXT_WAIT_TIMEOUT_SECONDS = 3.0
 _route_context_lock = threading.Lock()
 _route_context_value: WindowsDefaultRouteContext | None = None
 _route_context_cached_at = 0.0
@@ -48,7 +48,7 @@ def get_windows_default_route_context(
             refresh = threading.Event()
             _route_context_refresh = refresh
     if not owns_refresh:
-        refresh.wait(6.5)
+        refresh.wait(_ROUTE_CONTEXT_WAIT_TIMEOUT_SECONDS)
         with _route_context_lock:
             return _route_context_value
 
@@ -59,7 +59,9 @@ def get_windows_default_route_context(
     finally:
         with _route_context_lock:
             _route_context_value = value
-            _route_context_cached_at = time.monotonic()
+            # A transient Windows network-table failure must not block every
+            # subscription in an "update all" batch for the full cache TTL.
+            _route_context_cached_at = time.monotonic() if value is not None else 0.0
             active_refresh = _route_context_refresh
             _route_context_refresh = None
             if active_refresh is not None:
@@ -68,54 +70,14 @@ def get_windows_default_route_context(
 
 
 def _query_windows_default_route_context() -> WindowsDefaultRouteContext | None:
-    script = (
-        "$routes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue "
-        "| Where-Object { $_.NextHop -and $_.NextHop -ne '0.0.0.0' } "
-        "| Sort-Object RouteMetric, InterfaceMetric); "
-        "$physical = $routes | Where-Object { "
-        "$alias = [string]$_.InterfaceAlias; $alias -notmatch '(?i)lumen|xftun|singbox|wintun|tun' "
-        "} | Select-Object -First 1; "
-        "$route = $physical; "
-        "if (-not $route) { $route = $routes | Select-Object -First 1 }; "
-        "if (-not $route) { exit 1 }; "
-        "$tunRoute = Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { "
-        "$alias = [string]$_.InterfaceAlias; "
-        "$alias -match '(?i)lumen|xftun|singbox|wintun|tun' -and "
-        "$_.DestinationPrefix -in @('0.0.0.0/0', '0.0.0.0/1', '128.0.0.0/1') "
-        "} | Select-Object -First 1; "
-        "$dns = @(Get-DnsClientServerAddress -InterfaceIndex $route.InterfaceIndex -AddressFamily IPv4 "
-        "-ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses } "
-        "| Where-Object { $_ -match '^\\d{1,3}(\\.\\d{1,3}){3}$' }); "
-        "@{ interface_alias = $route.InterfaceAlias; dns_servers = $dns; "
-        "interface_index = [int]$route.InterfaceIndex; next_hop = [string]$route.NextHop; "
-        "is_physical = [bool]$physical; tun_active = [bool]$tunRoute } | ConvertTo-Json -Compress"
-    )
-    try:
-        result = run_text_pumped(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-            timeout=6,
-            creationflags=CREATE_NO_WINDOW,
-        )
-    except Exception:
+    native = query_windows_route_context()
+    if native is None:
         return None
-    if result.returncode != 0:
-        return None
-    try:
-        payload = json.loads(result_output_text(result) or "{}")
-    except json.JSONDecodeError:
-        return None
-    interface_alias = str(payload.get("interface_alias") or "").strip()
-    if not interface_alias:
-        return None
-    dns_raw = payload.get("dns_servers") or []
-    if isinstance(dns_raw, str):
-        dns_raw = [dns_raw]
-    dns_servers = tuple(str(item).strip() for item in dns_raw if str(item).strip())
     return WindowsDefaultRouteContext(
-        interface_alias=interface_alias,
-        dns_servers=dns_servers,
-        interface_index=int(payload.get("interface_index") or 0),
-        next_hop=str(payload.get("next_hop") or "").strip(),
-        is_physical=bool(payload.get("is_physical", False)),
-        tun_active=bool(payload.get("tun_active", False)),
+        interface_alias=native.interface_alias,
+        dns_servers=native.dns_servers,
+        interface_index=native.interface_index,
+        next_hop=native.next_hop,
+        is_physical=True,
+        tun_active=native.tun_active,
     )

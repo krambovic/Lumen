@@ -4,12 +4,8 @@ import QtQuick.Layouts
 import App 1.0
 import "."
 
-// «Редактирование сервера» — QML twin of ui/node_edit_dialog.py.
-//
-// The form only collects values; the protocol-specific outbound load/rebuild
-// lives in Python (bridge/node_edit_helpers.py) so the behaviour is identical
-// to the classic qfluentwidgets dialog. openFor(nodeId) pulls the flattened
-// fields from App.nodeEditFields and Save pushes them back via App.saveNodeEdit.
+// Protocol-aware server editor. Python supplies the exact field schema for
+// the selected protocol; the dialog never exposes keys unsupported by it.
 Popup {
     id: dlg
     modal: true
@@ -20,27 +16,13 @@ Popup {
 
     parent: Overlay.overlay
     anchors.centerIn: Overlay.overlay
-    width: 660
-    height: Math.min(640, (Overlay.overlay ? Overlay.overlay.height : 640) - 48)
+    width: Math.min(760, (Overlay.overlay ? Overlay.overlay.width : 760) - 40)
+    height: Math.min(720, (Overlay.overlay ? Overlay.overlay.height : 720) - 48)
 
     property string nodeId: ""
-    property var opts: App.nodeEditOptions
-
-    readonly property string secVal: secCombo.currentText
-    readonly property bool isTls: secVal === "tls" || secVal === "reality"
-    readonly property bool isReality: secVal === "reality"
-    readonly property bool isRaw: networkCombo.currentText === "raw"
-    property var caps: ({})
-    readonly property bool canEditEndpoint: caps.endpoint === true
-    readonly property bool showIdentity: caps.identity === true
-    readonly property bool showFlow: caps.flow === true
-    readonly property bool showEncryption: caps.encryption === true
-    readonly property bool showTransport: caps.transport === true
-    readonly property bool showRawHeader: caps.rawHeader === true
-    readonly property bool showTls: caps.tls === true
-    readonly property bool showReality: caps.reality === true && dlg.isReality
-    readonly property bool showFinalmask: caps.finalmask === true
-    readonly property bool showHint: editHint.text.length > 0
+    property var protocolFields: []
+    property var fieldValues: ({})
+    property int fieldRevision: 0
 
     background: Rectangle {
         color: Theme.flyout
@@ -51,70 +33,65 @@ Popup {
 
     Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.4) }
 
-    function _setCombo(combo, model, val) {
-        var i = (model && model.indexOf) ? model.indexOf(val) : -1
-        combo.currentIndex = i >= 0 ? i : 0
+    function fieldValue(key, fallback) {
+        var revision = fieldRevision
+        var value = fieldValues[key]
+        return value === undefined || value === null ? (fallback === undefined ? "" : fallback) : value
+    }
+
+    function setFieldValue(key, value) {
+        fieldValues[key] = value
+        fieldRevision += 1
+    }
+
+    function fieldVisible(spec) {
+        var revision = fieldRevision
+        if (!spec || !spec.whenKey || !spec.whenValues)
+            return true
+        var current = String(fieldValue(spec.whenKey, ""))
+        return spec.whenValues.indexOf(current) >= 0
     }
 
     function openFor(id) {
         nodeId = id
-        var f = App.nodeEditFields(id) || {}
-        caps = f.capabilities || {}
-        nameField.text = f.name || ""
-        groupField.text = f.group || ""
-        addressField.text = f.server || ""
-        portField.text = f.port || ""
-        protoLabel.text = f.protocol || "?"
-        uuidField.text = f.uuid || ""
-        encField.text = f.encryption || ""
-        sniField.text = f.sni || ""
-        fpField.text = f.fingerprint || ""
-        pinField.text = f.pinnedPeerCertSha256 || ""
-        pbkField.text = f.publicKey || ""
-        sidField.text = f.shortId || ""
-        spxField.text = f.spiderX || ""
-        pqvField.text = f.pqv || ""
-        fmField.text = f.finalmask || ""
-        editHint.text = f.editHint || ""
-        _setCombo(flowCombo, opts.flows, f.flow || "")
-        _setCombo(networkCombo, opts.networks, f.network || "tcp")
-        _setCombo(rawCombo, opts.rawHeaders, f.rawHeader || "none")
-        _setCombo(secCombo, opts.security, f.security || "none")
+        var data = App.nodeEditFields(id) || {}
+        nameField.text = data.name || ""
+        groupField.text = data.group || ""
+        protoLabel.text = data.protocol || "?"
+        editHint.text = data.editHint || ""
+        protocolFields = data.protocolFields || []
+        var values = {}
+        for (var i = 0; i < protocolFields.length; ++i) {
+            var spec = protocolFields[i]
+            values[spec.key] = spec.value
+        }
+        fieldValues = values
+        fieldRevision += 1
         open()
     }
 
-    function _save() {
-        App.saveNodeEdit(nodeId, {
+    function saveChanges() {
+        var payload = {
             "name": nameField.text,
-            "group": groupField.text,
-            "server": addressField.text,
-            "port": portField.text,
-            "uuid": uuidField.text,
-            "encryption": encField.text,
-            "flow": flowCombo.currentText,
-            "network": networkCombo.currentText,
-            "rawHeader": rawCombo.currentText,
-            "security": secCombo.currentText,
-            "sni": sniField.text,
-            "fingerprint": fpField.text,
-            "pinnedPeerCertSha256": pinField.text,
-            "publicKey": pbkField.text,
-            "shortId": sidField.text,
-            "spiderX": spxField.text,
-            "pqv": pqvField.text,
-            "finalmask": fmField.text
-        })
+            "group": groupField.text
+        }
+        for (var i = 0; i < protocolFields.length; ++i) {
+            var key = protocolFields[i].key
+            payload[key] = fieldValue(key, "")
+        }
+        App.saveNodeEdit(nodeId, payload)
         close()
     }
 
-    // ── reusable form atoms ───────────────────────────────
     component FLabel: Text {
         Layout.alignment: Qt.AlignVCenter
-        Layout.preferredWidth: 130
+        Layout.preferredWidth: 185
         color: Theme.textMuted
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontSmall
+        wrapMode: Text.WordWrap
     }
+
     component FField: FluentTextField {
         Layout.fillWidth: true
         implicitHeight: Theme.controlHeight
@@ -127,7 +104,6 @@ Popup {
         font.pixelSize: Theme.fontNormal
         selectByMouse: true
         verticalAlignment: TextInput.AlignVCenter
-        opacity: enabled ? 1.0 : 0.5
         background: Rectangle {
             radius: Theme.radiusSmall
             color: Theme.controlFill
@@ -136,13 +112,77 @@ Popup {
         }
     }
 
+    component DynamicTextField: FField {
+        property var fieldSpec: ({})
+        text: String(dlg.fieldValue(fieldSpec.key, ""))
+        placeholderText: fieldSpec.placeholder || ""
+        // Редактор серверов всегда показывает исходное значение целиком:
+        // пользователь должен видеть и иметь возможность исправить любой параметр.
+        echoMode: TextInput.Normal
+        inputMethodHints: fieldSpec.kind === "number" ? Qt.ImhDigitsOnly : Qt.ImhNone
+        onTextEdited: dlg.setFieldValue(fieldSpec.key, text)
+    }
+
+    component DynamicCombo: FluentCombo {
+        property var fieldSpec: ({})
+        Layout.fillWidth: true
+        model: fieldSpec.options || []
+
+        function syncCurrentValue() {
+            var index = model.indexOf(String(dlg.fieldValue(fieldSpec.key, "")))
+            currentIndex = index >= 0 ? index : 0
+            if (currentIndex >= 0)
+                dlg.setFieldValue(fieldSpec.key, currentText)
+        }
+
+        Component.onCompleted: Qt.callLater(syncCurrentValue)
+        onFieldSpecChanged: Qt.callLater(syncCurrentValue)
+        onActivated: dlg.setFieldValue(fieldSpec.key, currentText)
+    }
+
+    component DynamicSwitchHost: Item {
+        property var fieldSpec: ({})
+        implicitHeight: Theme.controlHeight
+
+        Switch {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            checked: dlg.fieldValue(parent.fieldSpec.key, false) === true
+            onToggled: dlg.setFieldValue(parent.fieldSpec.key, checked)
+        }
+    }
+
+    component ProtocolFieldRow: RowLayout {
+        property var fieldSpec: ({})
+        Layout.fillWidth: true
+        spacing: 14
+        visible: dlg.fieldVisible(fieldSpec)
+
+        FLabel { text: I18n.t(parent.fieldSpec.label || parent.fieldSpec.key) }
+        Loader {
+            id: editorLoader
+            Layout.fillWidth: true
+            property var spec: parent.fieldSpec
+            sourceComponent: spec.kind === "combo" ? comboEditor
+                             : spec.kind === "bool" ? switchEditor
+                             : textEditor
+            onLoaded: item.fieldSpec = spec
+        }
+    }
+
+    Component { id: textEditor; DynamicTextField {} }
+    Component { id: comboEditor; DynamicCombo {} }
+    Component { id: switchEditor; DynamicSwitchHost {} }
+
     contentItem: ColumnLayout {
         spacing: 0
 
         Text {
             Layout.fillWidth: true
-            Layout.margins: 20
-            Layout.bottomMargin: 6
+            Layout.leftMargin: 20
+            Layout.rightMargin: 20
+            Layout.topMargin: 18
+            Layout.bottomMargin: 12
             text: I18n.t("Редактирование сервера")
             color: Theme.text
             font.family: Theme.fontFamily
@@ -151,99 +191,74 @@ Popup {
         }
 
         ScrollView {
+            id: formScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.leftMargin: 20
             Layout.rightMargin: 14
             clip: true
+            contentWidth: availableWidth
+            contentHeight: formColumn.implicitHeight
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+            ScrollBar.vertical.interactive: true
 
-            GridLayout {
-                width: dlg.width - 40
-                columns: 2
-                columnSpacing: 14
-                rowSpacing: 10
+            ColumnLayout {
+                id: formColumn
+                width: formScroll.availableWidth
+                spacing: 10
 
-                FLabel { text: I18n.t("Псевдоним") }
-                FField { id: nameField }
-
-                FLabel { text: I18n.t("Группа") }
-                FField { id: groupField }
-
-                FLabel { text: I18n.t("Адрес"); visible: dlg.canEditEndpoint }
-                FField { id: addressField; visible: dlg.canEditEndpoint; enabled: dlg.canEditEndpoint }
-
-                FLabel { text: I18n.t("Порт"); visible: dlg.canEditEndpoint }
-                FField { id: portField; visible: dlg.canEditEndpoint; enabled: dlg.canEditEndpoint; inputMethodHints: Qt.ImhDigitsOnly }
-
-                FLabel { text: I18n.t("Протокол") }
-                Text {
-                    id: protoLabel
+                RowLayout {
                     Layout.fillWidth: true
-                    text: "?"
-                    color: Theme.text
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontNormal
-                    verticalAlignment: Text.AlignVCenter
+                    spacing: 14
+                    FLabel { text: I18n.t("Псевдоним") }
+                    FField { id: nameField }
                 }
 
-                Item { visible: dlg.showHint; Layout.preferredWidth: 130 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 14
+                    FLabel { text: I18n.t("Группа") }
+                    FField { id: groupField }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 14
+                    FLabel { text: I18n.t("Протокол") }
+                    Text {
+                        id: protoLabel
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Theme.controlHeight
+                        Layout.leftMargin: 10
+                        color: Theme.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontNormal
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+
                 Text {
                     id: editHint
-                    visible: dlg.showHint
                     Layout.fillWidth: true
+                    visible: text.length > 0
                     color: Theme.textFaint
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSmall
                     wrapMode: Text.WordWrap
                 }
 
-                FLabel { text: "UUID / id"; visible: dlg.showIdentity }
-                FField { id: uuidField; visible: dlg.showIdentity }
-
-                FLabel { text: "Flow"; visible: dlg.showFlow }
-                FluentCombo { id: flowCombo; visible: dlg.showFlow; Layout.fillWidth: true; model: dlg.opts.flows }
-
-                FLabel { text: I18n.t("Шифрование"); visible: dlg.showEncryption }
-                FField { id: encField; visible: dlg.showEncryption }
-
-                FLabel { text: I18n.t("Транспорт"); visible: dlg.showTransport }
-                FluentCombo { id: networkCombo; visible: dlg.showTransport; Layout.fillWidth: true; model: dlg.opts.networks }
-
-                FLabel { text: "Raw camouflage"; visible: dlg.showRawHeader }
-                FluentCombo { id: rawCombo; visible: dlg.showRawHeader; Layout.fillWidth: true; model: dlg.opts.rawHeaders; enabled: dlg.isRaw }
-
-                FLabel { text: "TLS"; visible: dlg.showTls }
-                FluentCombo { id: secCombo; visible: dlg.showTls; Layout.fillWidth: true; model: dlg.opts.security }
-
-                FLabel { text: "SNI"; visible: dlg.showTls }
-                FField { id: sniField; visible: dlg.showTls; enabled: dlg.isTls }
-
-                FLabel { text: "Fingerprint"; visible: dlg.showTls }
-                FField { id: fpField; visible: dlg.showTls; enabled: dlg.isTls; placeholderText: "chrome, firefox, …" }
-
-                FLabel { text: "TLS SHA-256 pin"; visible: dlg.showTls && dlg.secVal === "tls" }
-                FField {
-                    id: pinField
-                    visible: dlg.showTls && dlg.secVal === "tls"
-                    enabled: visible
-                    placeholderText: "64 hex-символа"
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: protocolFields.length > 0
+                    implicitHeight: 1
+                    color: Theme.divider
                 }
 
-                FLabel { text: "Public key"; visible: dlg.showReality }
-                FField { id: pbkField; visible: dlg.showReality; enabled: dlg.isReality }
-
-                FLabel { text: "ShortId"; visible: dlg.showReality }
-                FField { id: sidField; visible: dlg.showReality; enabled: dlg.isReality }
-
-                FLabel { text: "SpiderX"; visible: dlg.showReality }
-                FField { id: spxField; visible: dlg.showReality; enabled: dlg.isReality }
-
-                FLabel { text: "Mldsa65Verify"; visible: dlg.showReality }
-                FField { id: pqvField; visible: dlg.showReality; enabled: dlg.isReality }
-
-                FLabel { text: "Finalmask"; visible: dlg.showFinalmask }
-                FField { id: fmField; visible: dlg.showFinalmask }
+                Repeater {
+                    model: dlg.protocolFields
+                    delegate: ProtocolFieldRow { fieldSpec: modelData }
+                }
             }
         }
 
@@ -261,7 +276,7 @@ Popup {
             AccentButton {
                 kind: "accent"
                 text: I18n.t("Сохранить")
-                onClicked: dlg._save()
+                onClicked: dlg.saveChanges()
             }
         }
     }

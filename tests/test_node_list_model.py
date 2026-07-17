@@ -4,6 +4,7 @@ import sys
 
 from PyQt6.QtCore import QCoreApplication
 
+from xray_fluent.i18n import get_language, set_language
 from xray_fluent.models import Node
 from xray_fluent.qml_app.bridge.node_list_model import NodeListModel
 
@@ -42,3 +43,42 @@ def test_failed_speed_can_override_previous_alive_status() -> None:
     assert model.data(idx, NodeListModel.TestedRole) is True
     assert model.data(idx, NodeListModel.AliveRole) is False
     assert model.data(idx, NodeListModel.SpeedRole) == -1.0
+
+
+def test_pinging_role_is_visible_until_the_node_result_arrives() -> None:
+    _app()
+    first = Node(name="first", server="203.0.113.10", port=443)
+    second = Node(name="second", server="203.0.113.11", port=443)
+    model = NodeListModel()
+    model.set_nodes([first, second], selected_id=None)
+
+    model.set_pinging_ids([first.id, second.id])
+    assert model.data(model.index(0, 0), NodeListModel.PingingRole) is True
+    assert model.data(model.index(1, 0), NodeListModel.PingingRole) is True
+
+    model.update_ping(first.id, 42)
+    assert model.data(model.index(0, 0), NodeListModel.PingingRole) is False
+    assert model.data(model.index(1, 0), NodeListModel.PingingRole) is True
+
+    model.clear_pinging()
+    assert model.data(model.index(1, 0), NodeListModel.PingingRole) is False
+
+
+def test_auto_node_without_description_gets_default_description() -> None:
+    _app()
+    previous_language = get_language()
+    set_language("ru")
+    try:
+        nodes = [
+            Node(name="auto", scheme="auto"),
+            Node(name="xray-auto", outbound={"protocol": "xray_config"}),
+            Node(name="custom", scheme="auto", description="Провайдер выберет сервер"),
+        ]
+        model = NodeListModel()
+        model.set_nodes(nodes, selected_id=None)
+
+        assert model.data(model.index(0, 0), NodeListModel.DescriptionRole) == "Автовыбор лучших серверов"
+        assert model.data(model.index(1, 0), NodeListModel.DescriptionRole) == "Автовыбор лучших серверов"
+        assert model.data(model.index(2, 0), NodeListModel.DescriptionRole) == "Провайдер выберет сервер"
+    finally:
+        set_language(previous_language)

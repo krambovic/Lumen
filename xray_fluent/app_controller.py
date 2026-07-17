@@ -54,6 +54,7 @@ from .application.config import (
 from .application.nodes import (
     apply_fetched_subscription as apply_fetched_subscription_operation,
     bulk_update_nodes as bulk_update_nodes_operation,
+    delete_group as delete_group_operation,
     check_auto_switch as check_auto_switch_operation,
     detect_countries_sync as detect_countries_sync_operation,
     get_all_groups as get_all_groups_operation,
@@ -1592,6 +1593,9 @@ class AppController(QObject):
 
     def remove_nodes(self, node_ids: set[str]) -> None:
         remove_nodes_operation(self, node_ids)
+
+    def delete_group(self, group: str) -> bool:
+        return delete_group_operation(self, group)
 
     def update_node(self, node_id: str, updates: dict) -> bool:
         return update_node_operation(self, node_id, updates)

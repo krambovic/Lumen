@@ -27,6 +27,7 @@ VENV_DIR = ROOT / ".venv"
 VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 
 APP_NAME = "LumenKVN"
+SUBSCRIPTION_FETCHER_EXE_NAME = "lumen-subscription-fetcher.exe"
 SPEC_OUTPUT_NAME = "LumenKVN"
 SPEC_FILE = ROOT / "LumenKVN-qml.spec"
 
@@ -210,6 +211,15 @@ def _remove_legacy_files(root: Path, names: tuple[str, ...]) -> None:
                 raise SystemExit(1)
 
 
+def _install_subscription_fetcher(app_dir: Path = APP_DIR) -> Path:
+    source = app_dir / f"{APP_NAME}.exe"
+    if not source.is_file():
+        raise RuntimeError(f"Main executable is missing: {source}")
+    target = app_dir / SUBSCRIPTION_FETCHER_EXE_NAME
+    shutil.copy2(source, target)
+    return target
+
+
 # ------------------------------------------------------------------
 def ensure_venv() -> None:
     if VENV_PYTHON.exists():
@@ -276,6 +286,8 @@ def build_exe() -> None:
     _print(f"Merging build output -> {APP_DIR}")
     _copy_tree_merge(temp_app, APP_DIR)
     shutil.rmtree(temp_dist, ignore_errors=True)
+    fetcher_path = _install_subscription_fetcher(APP_DIR)
+    _print(f"Installed direct subscription helper -> {fetcher_path}")
 
     dst_core = APP_DIR / "core"
     _print(f"Merging core -> {dst_core}")

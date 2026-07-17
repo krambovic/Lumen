@@ -1,4 +1,5 @@
 {
+  "Автовыбор лучших серверов": "Automatic selection of the best servers",
   "Отпустите файлы для импорта": "Drop files to import",
   "Перетащите поддерживаемый файл конфигурации": "Drop a supported configuration file",
   "Пропущено неподдерживаемых файлов: {count}": "Unsupported files skipped: {count}",
@@ -993,5 +994,14 @@
   "Список приложений": "Application list",
   "Сворачивание подписки": "Subscription collapsing",
   "Отображение пинга": "Ping display",
-  "Исключённые маршруты": "Excluded routes"
+  "Исключённые маршруты": "Excluded routes",
+  "Нет подписки": "No subscription",
+  "Удалить выбранную группу": "Delete selected group",
+  "Удалить группу": "Delete group",
+  "Группа удалена: {name}": "Group deleted: {name}",
+  "Группа «{name}», все её серверы и связанная подписка будут удалены.": "Group ‘{name}’, all of its servers, and its linked subscription will be deleted.",
+  "Реальный пинг": "Real ping",
+  "Тест скорости": "Speed test",
+  "и ещё {count}": "and {count} more",
+  "{test} не поддерживается для выбранных серверов: {servers}": "{test} is not supported for the selected servers: {servers}"
 }

@@ -9,15 +9,17 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, quote, unquote, urlparse
-from urllib.request import Request
 
 from PyQt6.QtCore import QTimer
 
 from ..country_flags import detect_country
-from ..direct_http import DirectUrlOpener
 from ..happ_crypt import HappDecryptError, decrypt_happ_link, is_happ_crypt_link, is_happ_link
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
 from ..models import DEFAULT_SUBSCRIPTION_HWID
+from ..subscription_fetcher import (
+    SubscriptionFetcherCancelled,
+    fetch_subscription_http,
+)
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -136,7 +138,11 @@ def import_nodes_from_text(
         return 0, errors
 
     previous_selected_id = controller.state.selected_node_id
-    existing_links = {node.link for node in controller.state.nodes}
+    existing_nodes = {
+        (node.link, (node.group or "Default").strip().casefold())
+        for node in controller.state.nodes
+        if node.link
+    }
     max_order = max((node.sort_order for node in controller.state.nodes), default=0)
     first_new_id: str | None = None
     added = 0
@@ -146,16 +152,18 @@ def import_nodes_from_text(
         if problem:
             errors.append(problem)
             continue
-        if node.link in existing_links:
+        effective_group = str(group if group is not None else (node.group or "Default")).strip() or "Default"
+        identity = (node.link, effective_group.casefold())
+        if node.link and identity in existing_nodes:
             continue
-        if group:
-            node.group = group
+        node.group = effective_group
         if not node.country_code:
             node.country_code = detect_country(node.name, node.server)
         max_order += 1
         node.sort_order = max_order
         controller.state.nodes.append(node)
-        existing_links.add(node.link)
+        if node.link:
+            existing_nodes.add(identity)
         if first_new_id is None:
             first_new_id = node.id
         added += 1
@@ -257,7 +265,52 @@ def get_all_groups(controller: AppController) -> list[str]:
         for group in getattr(controller.state, "manual_groups", [])
         if str(group).strip()
     )
-    return sorted(groups)
+    other_groups = {
+        str(group).strip()
+        for group in groups
+        if str(group).strip() and str(group).strip().casefold() != "default"
+    }
+    return ["Default", *sorted(other_groups, key=str.lower)]
+
+
+def delete_group(controller: AppController, group: str) -> bool:
+    """Delete a user group together with its nodes and linked subscriptions."""
+    name = str(group or "").strip()
+    if not name or name.casefold() == "default":
+        return False
+    key = name.casefold()
+
+    subscriptions = list(getattr(controller.state, "subscriptions", []))
+    removed_subscriptions = [
+        item
+        for item in subscriptions
+        if str(item.get("group") or item.get("name") or "").strip().casefold() == key
+    ]
+    removed_subscription_ids = {
+        str(item.get("id") or "").strip()
+        for item in removed_subscriptions
+        if str(item.get("id") or "").strip()
+    }
+    if removed_subscriptions:
+        controller.state.subscriptions = [item for item in subscriptions if item not in removed_subscriptions]
+        controller.subscriptions_changed.emit(list(controller.state.subscriptions))
+
+    manual_groups = list(getattr(controller.state, "manual_groups", []))
+    controller.state.manual_groups = [
+        item for item in manual_groups if str(item or "").strip().casefold() != key
+    ]
+    node_ids = {
+        node.id
+        for node in controller.state.nodes
+        if (node.group or "Default").strip().casefold() == key
+        or (node.subscription_id and node.subscription_id in removed_subscription_ids)
+    }
+    changed = bool(removed_subscriptions or node_ids or len(manual_groups) != len(controller.state.manual_groups))
+    if node_ids:
+        remove_nodes(controller, node_ids)
+    elif changed:
+        controller.save()
+    return changed
 
 
 def reorder_nodes(controller: AppController, node_id: str, direction: str) -> None:
@@ -663,45 +716,28 @@ def _fetch_subscription_with_headers(
     """Загружает подписку и возвращает (текст_со_ссылками, userinfo).
 
     userinfo берётся из HTTP-заголовка subscription-userinfo и/или из JSON-тела.
-    Системный/ENV-прокси отключён, а Windows TUN обходится временными
-    маршрутами через физический интерфейс. ``direct`` оставлен только для
-    обратной совместимости с внутренними вызовами.
+    Системный/ENV-прокси отключён. В сборке запрос выполняет одноразовый
+    helper-процесс: сначала через временный маршрут физического интерфейса,
+    затем (если маршрут недоступен) через постоянное process-direct правило
+    sing-box. ``direct`` оставлен только для обратной совместимости с
+    внутренними вызовами.
     """
-    request = Request(url, headers=dict(headers))
     _raise_if_subscription_cancelled(cancelled)
-    with DirectUrlOpener() as opener:
-        with opener.open(request, timeout=20) as response:
-            if response_opened is not None:
-                response_opened(response)
-            try:
-                try:
-                    declared_size = int(response.headers.get("Content-Length", 0) or 0)
-                except (TypeError, ValueError):
-                    declared_size = 0
-                if declared_size > MAX_SUBSCRIPTION_BYTES:
-                    raise RuntimeError(
-                        f"подписка слишком большая: {declared_size} байт, максимум {MAX_SUBSCRIPTION_BYTES}"
-                    )
-                payload = bytearray()
-                while True:
-                    _raise_if_subscription_cancelled(cancelled)
-                    chunk = response.read(min(64 * 1024, MAX_SUBSCRIPTION_BYTES + 1 - len(payload)))
-                    if not chunk:
-                        break
-                    payload.extend(chunk)
-                    if len(payload) > MAX_SUBSCRIPTION_BYTES:
-                        raise RuntimeError(
-                            f"подписка превышает допустимый размер {MAX_SUBSCRIPTION_BYTES} байт"
-                        )
-                raw = bytes(payload)
-                try:
-                    header_value = response.headers.get("subscription-userinfo", "")
-                except Exception:  # noqa: BLE001 - защита от нестандартных ответов
-                    header_value = ""
-                metadata = _extract_subscription_metadata(response.headers, profile_name)
-            finally:
-                if response_closed is not None:
-                    response_closed(response)
+    try:
+        response = fetch_subscription_http(
+            url,
+            dict(headers),
+            timeout=20,
+            max_bytes=MAX_SUBSCRIPTION_BYTES,
+            cancelled=cancelled,
+            response_opened=response_opened,
+            response_closed=response_closed,
+        )
+    except SubscriptionFetcherCancelled as exc:
+        raise SubscriptionFetchCancelled(str(exc)) from exc
+    raw = response.body
+    header_value = response.headers.get("subscription-userinfo", "")
+    metadata = _extract_subscription_metadata(response.headers, profile_name)
     userinfo = _merge_subscription_info(_parse_userinfo_header(header_value), metadata)
     text = raw.decode("utf-8", errors="replace").strip()
     text, directive_info = _extract_happ_body_metadata(text)
@@ -1102,14 +1138,18 @@ def _apply_subscription_payload(
     ]
     old_ids = {node.id for node in old_nodes}
     old_by_link = {node.link: node for node in old_nodes if node.link}
-    occupied_links = {
-        node.link
+    occupied_nodes = {
+        (node.link, (node.group or "Default").strip().casefold())
         for node in controller.state.nodes
         if node.id not in old_ids and node.link
     }
-    prepared = [node for node in prepared if node.link not in occupied_links]
+    prepared = [
+        node
+        for node in prepared
+        if (node.link, (node.group or "Default").strip().casefold()) not in occupied_nodes
+    ]
     if not prepared:
-        return 0, [*chosen_errors, "Все серверы подписки уже принадлежат другим источникам"], result_info
+        return 0, [*chosen_errors, "Все серверы подписки уже есть в этой группе"], result_info
 
     selected_id = controller.state.selected_node_id
     selected_old = next((node for node in old_nodes if node.id == selected_id), None)

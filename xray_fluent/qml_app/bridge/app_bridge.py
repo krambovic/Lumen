@@ -167,6 +167,7 @@ class AppBridge(QObject):
     trayNotify = pyqtSignal(str, str)      # (заголовок, текст) — уведомление события
     nodeQrReady = pyqtSignal(str, str)     # (png data uri, node name)
     nodeImported = pyqtSignal(str)         # first newly imported node id
+    subscriptionImported = pyqtSignal(str) # newly created subscription group
     quittingChanged = pyqtSignal()         # real-exit flag flipped on quit
     languageChanged = pyqtSignal()         # active UI language changed
     subscriptionImportingChanged = pyqtSignal()
@@ -483,6 +484,10 @@ class AppBridge(QObject):
         batch = self._sub_batches.get(batch_id)
         if batch is None:
             return
+        before_subscription_ids = {
+            str(item.get("id") or "")
+            for item in getattr(self.controller.state, "subscriptions", [])
+        }
         try:
             added, errs = self.controller.apply_fetched_subscription(
                 job.url, job.name, job.kind, text, userinfo, list(errors or [])
@@ -492,6 +497,18 @@ class AppBridge(QObject):
         batch["added"] += int(added or 0)
         if errs:
             batch["errors"].extend(errs)
+        if getattr(job, "kind", "") == "import":
+            created = next(
+                (
+                    item
+                    for item in getattr(self.controller.state, "subscriptions", [])
+                    if str(item.get("id") or "") not in before_subscription_ids
+                ),
+                None,
+            )
+            if created is not None:
+                group = str(created.get("group") or created.get("name") or "Default").strip() or "Default"
+                self.subscriptionImported.emit(group)
 
     def _on_sub_batch_completed(self, batch_id: int, total: int) -> None:
         """Показывает итоговый тост после завершения всех задач батча."""
@@ -640,7 +657,7 @@ class AppBridge(QObject):
         c.ping_updated.connect(self._on_ping)
         c.speed_updated.connect(self._on_speed)
         c.speed_progress_updated.connect(self._node_model.update_speed_progress)
-        c.bulk_task_progress.connect(self.bulkTaskProgress.emit)
+        c.bulk_task_progress.connect(self._on_bulk_task_progress)
         c.live_metrics_updated.connect(self._on_live_metrics)
         c.auto_switch_triggered.connect(self._on_auto_switch)
         c.connectivity_test_done.connect(self.connectivityResult.emit)
@@ -895,6 +912,14 @@ class AppBridge(QObject):
         if node_id == self._selected_id:
             self._selected_latency = -1 if ping_ms is None else int(ping_ms)
             self.selectionChanged.emit()
+
+    def _on_bulk_task_progress(self, task: str, current: int, total: int, done: bool) -> None:
+        if task == "ping":
+            if done:
+                self._node_model.clear_pinging()
+            elif current == 0:
+                self._node_model.set_pinging_ids(getattr(self.controller, "_ping_node_map", {}).keys())
+        self.bulkTaskProgress.emit(task, current, total, done)
 
     def _on_speed(self, node_id: str, speed_mbps, is_alive: bool) -> None:
         self._node_model.update_speed(node_id, speed_mbps)
@@ -2919,7 +2944,8 @@ class AppBridge(QObject):
         if not group:
             self.toast.emit("warning", tr("Введите имя группы"))
             return False
-        existing = {str(item).strip().lower() for item in getattr(self.controller.state, "manual_groups", [])}
+        existing = {"default"}
+        existing.update(str(item).strip().lower() for item in getattr(self.controller.state, "manual_groups", []))
         existing.update((node.group or "Default").strip().lower() for node in self.controller.state.nodes)
         if group.lower() in existing:
             self.toast.emit("info", tr("Такая группа уже есть"))
@@ -2930,20 +2956,35 @@ class AppBridge(QObject):
         self.toast.emit("success", tr("Группа создана: {name}", name=group))
         return True
 
+    @pyqtSlot(str, result=bool)
+    def deleteGroup(self, name: str) -> bool:
+        group = str(name or "").strip()
+        if not group or group.casefold() == "default":
+            return False
+        if not self.controller.delete_group(group):
+            return False
+        self.nodeFiltersChanged.emit()
+        self.toast.emit("success", tr("Группа удалена: {name}", name=group))
+        return True
+
     @pyqtProperty("QVariantList", notify=nodeFiltersChanged)
     def groupOptions(self) -> list:
         """Distinct group names across all nodes (for the Группа filter combo)."""
-        seen: list[str] = []
+        seen: list[str] = ["Default"]
+        seen_keys = {"default"}
         for group in getattr(self.controller.state, "manual_groups", []):
             grp = str(group or "").strip()
-            if grp and grp not in seen:
+            key = grp.casefold()
+            if grp and key not in seen_keys:
                 seen.append(grp)
+                seen_keys.add(key)
         for node in self.controller.state.nodes:
-            grp = node.group or "Default"
-            if grp not in seen:
+            grp = str(node.group or "Default").strip() or "Default"
+            key = grp.casefold()
+            if key not in seen_keys:
                 seen.append(grp)
-        seen.sort(key=str.lower)
-        return seen
+                seen_keys.add(key)
+        return ["Default", *sorted(seen[1:], key=str.lower)]
 
     @pyqtSlot()
     def exportDiagnostics(self) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from xray_fluent.constants import SUBSCRIPTION_FETCHER_EXE_NAME
 from xray_fluent.models import RoutingSettings
 from xray_fluent.routing_runtime import (
     apply_singbox_gui_routing,
@@ -134,6 +135,28 @@ def test_custom_rule_routing_falls_back_to_proxy_without_tun_default_setting() -
     apply_singbox_gui_routing(payload, routing)
 
     assert payload["route"]["final"] == "proxy"
+
+
+def test_subscription_fetcher_is_always_routed_direct_before_user_process_rules() -> None:
+    payload = {"route": {"rules": [], "final": "proxy"}}
+    routing = RoutingSettings(
+        process_rules=[
+            {"process": SUBSCRIPTION_FETCHER_EXE_NAME, "action": "proxy"},
+        ],
+    )
+
+    apply_singbox_gui_routing(payload, routing)
+    apply_singbox_gui_routing(payload, routing)
+
+    rules = payload["route"]["rules"]
+    helper_rules = [
+        rule
+        for rule in rules
+        if SUBSCRIPTION_FETCHER_EXE_NAME in rule.get("process_name", [])
+    ]
+    assert helper_rules[0]["outbound"] == "direct"
+    assert helper_rules[1]["outbound"] == "proxy"
+    assert len([rule for rule in helper_rules if rule.get("outbound") == "direct"]) == 1
 
 
 def test_apply_singbox_gui_routing_keeps_browser_doh_reject_before_fake_dns() -> None:

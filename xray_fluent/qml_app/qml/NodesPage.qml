@@ -78,7 +78,7 @@ Item {
     function selectedSub() {
         var subs = App.subscriptions;
         if (!subs || subs.length === 0) return null;
-        var i = subCombo.currentIndex;
+        var i = subCombo.currentIndex - 1;
         if (i < 0 || i >= subs.length) return null;
         return subs[i];
     }
@@ -303,6 +303,19 @@ Item {
             page.applyFilters();
         });
     }
+    function selectSubscriptionByGroup(groupName) {
+        Qt.callLater(function() {
+            var subs = App.subscriptions || [];
+            for (var i = 0; i < subs.length; i++) {
+                var group = String(subs[i].group || subs[i].name || "Default");
+                if (group === groupName) {
+                    subCombo.currentIndex = i + 1;
+                    return;
+                }
+            }
+            subCombo.currentIndex = 0;
+        });
+    }
 
     function applySort(key) {
         if (!key) return;
@@ -447,6 +460,17 @@ Item {
                     onClicked: {
                         page.sortAsc = !page.sortAsc;
                         App.setNodeSort(page.sortKey, page.sortAsc);
+                    }
+                }
+                AccentButton {
+                    kind: "danger"
+                    iconOnly: true
+                    glyph: "\uE74D"
+                    tip: I18n.t("Удалить выбранную группу")
+                    enabled: page.filterGroup.length > 0 && page.filterGroup.toLowerCase() !== "default"
+                    onClicked: {
+                        deleteGroupDialog.groupName = page.filterGroup;
+                        deleteGroupDialog.open();
                     }
                 }
             }
@@ -677,19 +701,18 @@ Item {
                     spacing: 8
 
                     Item { Layout.fillWidth: true }
-                    AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE946"; text: I18n.t("Свойства подписки"); enabled: App.subscriptions.length > 0; onClicked: infoDialog.openInfo() }
+                    AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE946"; text: I18n.t("Свойства подписки"); enabled: page.selectedSub() !== null; onClicked: infoDialog.openInfo() }
                     AccentButton { kind: "accent"; iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт подписки"); onClicked: subDialog.openNew() }
                     FilterCombo {
                         id: subCombo
                         Layout.preferredWidth: Math.round(Math.max(150, Math.min(260, page.width * 0.20)))
-                        enabled: App.subscriptions.length > 0
-                        model: App.subscriptions.length > 0
-                            ? App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
-                            : [I18n.t("Нет подписок")]
+                        model: [I18n.t("Нет подписки")].concat(
+                            App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
+                        )
                     }
-                    AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE72C"; text: I18n.t("Обновить подписку"); enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.updateSubscription(s.url) } }
+                    AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE72C"; text: I18n.t("Обновить подписку"); enabled: page.selectedSub() !== null; onClicked: { var s = page.selectedSub(); if (s) App.updateSubscription(s.url) } }
                     AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE895"; text: I18n.t("Обновить все подписки"); enabled: App.subscriptions.length > 0; onClicked: App.updateAllSubscriptions() }
-                    AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: I18n.t("Удалить подписку (с серверами)"); enabled: App.subscriptions.length > 0; onClicked: { var s = page.selectedSub(); if (s) App.removeSubscription(s.url, true) } }
+                    AccentButton { kind: "danger"; iconOnly: true; glyph: "\uE74D"; text: I18n.t("Удалить подписку (с серверами)"); enabled: page.selectedSub() !== null; onClicked: { var s = page.selectedSub(); if (s) App.removeSubscription(s.url, true) } }
                 }
             }
         }
@@ -816,6 +839,7 @@ Item {
                             required property int port
                             required property string group
                             required property int ping
+                            required property bool pinging
                             required property real speed
                             required property bool isAlive
                             required property bool tested
@@ -1038,12 +1062,32 @@ Item {
                                     width: page.colPing
                                     height: parent.height
                                     Text {
+                                        visible: !nodeRow.pinging
                                         anchors.verticalCenter: parent.verticalCenter
                                         leftPadding: 4
                                         text: nodeRow.ping < 0 ? "—" : (nodeRow.ping + " ms")
                                         color: nodeRow.ping < 0 ? Theme.textFaint : Theme.pingColor(nodeRow.ping)
                                         font.family: Theme.fontFamily
                                         font.pixelSize: page.cellFont
+                                    }
+                                    Text {
+                                        id: pingSpinner
+                                        visible: nodeRow.pinging
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 5
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "\uE895"
+                                        color: Theme.accent
+                                        font.family: "Segoe Fluent Icons"
+                                        font.pixelSize: 15
+                                        transformOrigin: Item.Center
+                                        RotationAnimator on rotation {
+                                            from: 0
+                                            to: 360
+                                            duration: 850
+                                            loops: Animation.Infinite
+                                            running: nodeRow.pinging
+                                        }
                                     }
                                 }
                                 // speed
@@ -1557,8 +1601,8 @@ Item {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         function openInfo() {
-            if (!App.subscriptions || App.subscriptions.length === 0) return;
-            var i = subCombo.currentIndex;
+            if (page.selectedSub() === null) return;
+            var i = subCombo.currentIndex - 1;
             if (i < 0 || i >= App.subscriptions.length) i = 0;
             infoCombo.currentIndex = i;
             infoDialog.open();
@@ -1698,6 +1742,27 @@ Item {
         }
     }
 
+    FluentDialog {
+        id: deleteGroupDialog
+        property string groupName: ""
+        title: I18n.t("Удалить группу")
+        okText: I18n.t("Удалить")
+        cancelText: I18n.t("Отмена")
+        width: 440
+        onAccepted: {
+            var removed = App.deleteGroup(groupName);
+            if (removed)
+                page.selectGroupByName("Default");
+        }
+        contentItem: Text {
+            text: I18n.t("Группа «{name}», все её серверы и связанная подписка будут удалены.").replace("{name}", deleteGroupDialog.groupName)
+            color: Theme.textMuted
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontNormal
+            wrapMode: Text.WordWrap
+        }
+    }
+
     // ---- QR dialog ---------------------------------------------------
     FluentDialog {
         id: qrDialog
@@ -1786,6 +1851,10 @@ Item {
         target: App
         function onNodeImported(nodeId) {
             page.revealImportedNode(nodeId);
+        }
+        function onSubscriptionImported(groupName) {
+            page.selectGroupByName(groupName);
+            page.selectSubscriptionByGroup(groupName);
         }
         function onNodeQrReady(dataUri, name) {
             qrDialog.qrSource = dataUri;
