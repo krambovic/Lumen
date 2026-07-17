@@ -1006,5 +1006,14 @@
   "Реальный пинг": "Real ping",
   "Тест скорости": "Speed test",
   "и ещё {count}": "and {count} more",
-  "{test} не поддерживается для выбранных серверов: {servers}": "{test} is not supported for the selected servers: {servers}"
+  "{test} не поддерживается для выбранных серверов: {servers}": "{test} is not supported for the selected servers: {servers}",
+  "Региональный профиль": "Regional profile",
+  "Меняет быстрые пресеты и источники GeoIP/GeoSite": "Changes quick routing presets and GeoIP/GeoSite sources",
+  "Россия": "Russia",
+  "Китай": "China",
+  "Иран": "Iran",
+  "Всё кроме Китая": "Everything except China",
+  "Всё кроме Ирана": "Everything except Iran",
+  "Регион изменён. Обновите GeoIP/GeoSite, чтобы загрузить региональные данные.": "Region changed. Update GeoIP/GeoSite to download the regional data.",
+  "Быстрые пресеты зависят от регионального профиля в настройках сети. Пресет «Всё кроме региона» пускает ресурсы выбранной страны напрямую, а остальной трафик — через прокси. Для Ирана v2rayN не предоставляет отдельный пресет «Только заблокированное».\n\nСервисы:\n«Прокси» — всегда вести сервис через VPN/прокси.\n«Прямой» — всегда вести сервис напрямую.\n\nПравила по приложениям работают только в режиме TUN.": "Quick presets depend on the regional profile in Network settings. The Everything except region preset sends resources from the selected country directly and routes the rest through the proxy. v2rayN does not provide a separate Blocked only preset for Iran.\n\nServices:\nProxy — always route the service through VPN/proxy.\nDirect — always route the service directly.\n\nPer-app rules work only in TUN mode."
 }

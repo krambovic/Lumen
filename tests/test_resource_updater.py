@@ -15,6 +15,7 @@ from xray_fluent.core_resource_updater import (
     ResourceUpdateResult,
     ResourceUpdateWorker,
     _atomic_replace_files,
+    regional_geodata_installed,
 )
 from xray_fluent.engines.singbox import manager as singbox_manager
 from xray_fluent.engines.xray import core_updater as xray_core_updater
@@ -232,6 +233,43 @@ def test_geodata_same_verified_release_is_not_downloaded(monkeypatch, tmp_path) 
     assert result.latest_version == "202607132228"
 
 
+def test_regional_geodata_installed_requires_matching_active_data_and_all_rules(tmp_path) -> None:
+    core_dir = tmp_path / "core"
+    rule_set_dir = core_dir / "rule-sets"
+    rule_set_dir.mkdir(parents=True)
+    (core_dir / "geoip.dat").write_bytes(b"i" * 2048)
+    (core_dir / "geosite.dat").write_bytes(b"s" * 2048)
+    (core_dir / "lumen-geodata.json").write_text(
+        '{"schema":2,"region":"china","version":"test"}',
+        encoding="utf-8",
+    )
+    for key, source in core_resource_updater.REGIONAL_SINGBOX_RULE_SETS["china"].items():
+        filename = (
+            Path(source.removeprefix("archive:")).name
+            if source.startswith("archive:")
+            else f"{key.replace(':', '-')}.srs"
+        )
+        (rule_set_dir / filename).write_bytes(b"r" * 80)
+
+    assert regional_geodata_installed(
+        "china",
+        target_dir=core_dir,
+        rule_set_dir=rule_set_dir,
+    )
+    assert not regional_geodata_installed(
+        "iran",
+        target_dir=core_dir,
+        rule_set_dir=rule_set_dir,
+    )
+
+    (rule_set_dir / "geosite-gfw.srs").unlink()
+    assert not regional_geodata_installed(
+        "china",
+        target_dir=core_dir,
+        rule_set_dir=rule_set_dir,
+    )
+
+
 def test_resource_card_keeps_installed_version_when_update_is_only_available() -> None:
     emitted: list[dict] = []
     bridge = SimpleNamespace(
@@ -268,6 +306,7 @@ def test_resource_checks_for_different_components_can_run_together(monkeypatch) 
             self._kind = kind
             self._apply_update = kwargs["apply_update"]
             self.proxy_url = kwargs["proxy_url"]
+            self.region = kwargs["region"]
             self.progress = Signal()
             self.done = Signal()
             self.request_disconnect = Signal()
@@ -299,12 +338,93 @@ def test_resource_checks_for_different_components_can_run_together(monkeypatch) 
         _on_update_disconnect_request=lambda: None,
     )
 
-    assert AppController.run_resource_update(controller, "geodata", apply_update=False) is True
+    assert AppController.run_resource_update(
+        controller,
+        "geodata",
+        apply_update=False,
+        region="iran",
+    ) is True
     assert AppController.run_resource_update(controller, "singbox", apply_update=False) is True
     assert AppController.run_resource_update(controller, "droute", apply_update=False) is True
     assert AppController.run_resource_update(controller, "singbox", apply_update=False) is False
     assert [worker._kind for worker in created] == ["geodata", "singbox", "droute"]
     assert all(worker.proxy_url is None for worker in created)
+    assert created[0].region == "iran"
+
+
+def test_regional_profile_waits_for_target_download_before_commit(monkeypatch) -> None:
+    updates: list[tuple[str, bool, str]] = []
+    commits: list[tuple[str, bool]] = []
+    emitted: list[ResourceUpdateResult] = []
+    monkeypatch.setattr(core_resource_updater, "regional_geodata_installed", lambda _region: False)
+    controller = SimpleNamespace(
+        state=SimpleNamespace(
+            settings=SimpleNamespace(regional_preset="russia"),
+        ),
+        _pending_regional_preset="",
+        run_resource_update=lambda kind, *, apply_update, region: (
+            updates.append((kind, apply_update, region)) or True
+        ),
+    )
+
+    outcome = AppController.request_regional_preset_change(controller, "iran")
+
+    assert outcome == "downloading"
+    assert controller.state.settings.regional_preset == "russia"
+    assert controller._pending_regional_preset == "iran"
+    assert updates == [("geodata", True, "iran")]
+
+    controller._reconnect_after_resource_updates = True
+    controller._commit_regional_preset = lambda region, *, restart_runtime: commits.append(
+        (region, restart_runtime)
+    )
+    worker = SimpleNamespace(_region="iran", isRunning=lambda: False)
+    controller.sender = lambda: worker
+    controller._resource_update_workers = [worker]
+    controller._desired_connected = False
+    transitions: list[str] = []
+    controller._request_transition = transitions.append
+    controller.resource_update_result = SimpleNamespace(emit=emitted.append)
+    controller.status = SimpleNamespace(emit=lambda *_args: None)
+    controller._logger = SimpleNamespace(
+        info=lambda *_args: None,
+        warning=lambda *_args: None,
+        error=lambda *_args: None,
+    )
+    controller._shutting_down = False
+    controller.apply_discord_proxy = lambda: None
+    result = ResourceUpdateResult("geodata", "updated", "updated")
+
+    AppController._on_resource_update_done(controller, result)
+
+    assert commits == [("iran", False)]
+    assert controller._pending_regional_preset == ""
+    assert emitted == [result]
+
+    AppController._on_resource_update_worker_finished(controller)
+
+    assert controller._desired_connected is True
+    assert transitions == ["resource update reconnect"]
+
+
+def test_ready_regional_profile_commits_immediately_without_download(monkeypatch) -> None:
+    commits: list[tuple[str, bool]] = []
+    monkeypatch.setattr(core_resource_updater, "regional_geodata_installed", lambda region: region == "china")
+    controller = SimpleNamespace(
+        state=SimpleNamespace(settings=SimpleNamespace(regional_preset="russia")),
+        _pending_regional_preset="",
+        _commit_regional_preset=lambda region, *, restart_runtime: commits.append(
+            (region, restart_runtime)
+        ),
+        run_resource_update=lambda *_args, **_kwargs: pytest.fail(
+            "installed regional data must not be downloaded again"
+        ),
+    )
+
+    outcome = AppController.request_regional_preset_change(controller, "china")
+
+    assert outcome == "applied"
+    assert commits == [("china", True)]
 
 
 def test_update_json_request_retries_transient_connection_reset(monkeypatch) -> None:

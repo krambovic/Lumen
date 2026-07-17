@@ -13,10 +13,15 @@ from .constants import (
     ROUTING_GLOBAL,
     SUBSCRIPTION_FETCHER_EXE_NAME,
 )
-from .geodata_resources import singbox_rule_set_path
+from .geodata_resources import ALL_SINGBOX_BINARY_RULE_SETS, singbox_rule_set_path
 from .models import AppSettings, RoutingSettings
 from .process_presets import PROCESS_PRESETS_BY_ID
-from .routing_presets import ROUTING_PRESET_BLOCKED, custom_domain_rules, preset_domain_rules
+from .routing_presets import (
+    ROUTING_PRESET_BLOCKED,
+    ROUTING_PRESET_BLOCKED_CN,
+    custom_domain_rules,
+    preset_domain_rules,
+)
 from .service_presets import SERVICE_PRESETS_BY_ID
 
 _SINGBOX_RULE_SET_DIR = DATA_DIR / "runtime" / "sing-box-rule-sets"
@@ -81,7 +86,8 @@ _SINGBOX_RULE_SET_SOURCES = {
         ),
     },
 }
-_SINGBOX_MANAGED_RULE_SET_TAGS = {key.replace(":", "-") for key in _SINGBOX_RULE_SET_SOURCES}
+_SINGBOX_KNOWN_RULE_SET_KEYS = set(_SINGBOX_RULE_SET_SOURCES) | set(ALL_SINGBOX_BINARY_RULE_SETS)
+_SINGBOX_MANAGED_RULE_SET_TAGS = {key.replace(":", "-") for key in _SINGBOX_KNOWN_RULE_SET_KEYS}
 _BROWSER_DOH_DOMAIN_SUFFIXES = [
     "cloudflare-dns.com",
     "dns.adguard.com",
@@ -118,7 +124,7 @@ def _routing_final_outbound(routing: RoutingSettings, *, use_rule_default: bool 
     # The removed "TUN default" UI setting is no longer user-controlled.
     # Custom/rule routing falls back to proxy. The built-in "blocked only"
     # preset is the deliberate exception: unmatched traffic must stay direct.
-    if str(routing.preset_id).strip().lower() == ROUTING_PRESET_BLOCKED:
+    if str(routing.preset_id).strip().lower() in {ROUTING_PRESET_BLOCKED, ROUTING_PRESET_BLOCKED_CN}:
         return "direct"
     return "proxy"
 
@@ -304,7 +310,19 @@ def _is_legacy_lumen_xray_route_rule(rule: Any) -> bool:
         return True
     if outbound == "direct" and (ips == {"geoip:private"} or domains == {"geosite:private"}):
         return True
-    if outbound == "direct" and (ips == {"geoip:ru"} or domains == {"geosite:category-ru"}):
+    regional_domains = {
+        "geosite:category-ru", "geosite:ru-available-only-inside", "geosite:ru-blocked",
+        "geosite:cn", "geosite:gfw", "geosite:greatfire", "geosite:google", "geosite:ir",
+    }
+    regional_ips = {
+        "geoip:ru", "geoip:ru-blocked", "geoip:ru-blocked-community", "geoip:cn",
+        "geoip:facebook", "geoip:fastly", "geoip:google", "geoip:netflix",
+        "geoip:telegram", "geoip:twitter", "geoip:ir",
+    }
+    if outbound in {"direct", "proxy"} and (
+        (domains and domains.issubset(regional_domains))
+        or (ips and ips.issubset(regional_ips))
+    ):
         return True
     if outbound == "proxy" and network == "tcp,udp" and not domains and not ips and not processes:
         return True
@@ -770,12 +788,14 @@ def _singbox_domain_dns_rule(items: list[str], dns_action: str) -> tuple[dict[st
 
 
 def _singbox_rule_set_tag(value: str) -> str:
-    if value not in _SINGBOX_RULE_SET_SOURCES:
+    if value not in _SINGBOX_KNOWN_RULE_SET_KEYS:
         return ""
     return value.replace(":", "-")
 
 
 def _singbox_dns_rule_set_tag(value: str) -> str:
+    if value in ALL_SINGBOX_BINARY_RULE_SETS:
+        return value.replace(":", "-") if value.startswith("geosite:") else ""
     source = _SINGBOX_RULE_SET_SOURCES.get(value)
     if not source:
         return ""
@@ -798,7 +818,7 @@ def _ensure_singbox_rule_sets(route: dict[str, Any], tags: set[str]) -> None:
     if not tags:
         return
 
-    reverse_keys = {key.replace(":", "-"): key for key in _SINGBOX_RULE_SET_SOURCES}
+    reverse_keys = {key.replace(":", "-"): key for key in _SINGBOX_KNOWN_RULE_SET_KEYS}
     for tag in sorted(tags):
         key = reverse_keys.get(tag)
         if not key:
@@ -807,9 +827,13 @@ def _ensure_singbox_rule_sets(route: dict[str, Any], tags: set[str]) -> None:
         if binary_path is not None and binary_path.is_file():
             path = binary_path
             rule_format = "binary"
-        else:
+        elif key in _SINGBOX_RULE_SET_SOURCES:
             path = _ensure_singbox_local_rule_set(key)
             rule_format = "source"
+        else:
+            raise RuntimeError(
+                f"Не найден региональный rule-set {key}. Обновите GeoIP/GeoSite в настройках обновлений."
+            )
         existing.append(
             {
                 "type": "local",

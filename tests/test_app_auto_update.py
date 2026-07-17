@@ -108,8 +108,9 @@ def test_window_size_is_not_rebound_on_every_settings_change() -> None:
 
     assert "width: App.windowWidth" not in main_qml
     assert "height: App.windowHeight" not in main_qml
-    assert "win.width = Math.max(win.minimumWidth, App.windowWidth" in main_qml
-    assert "win.height = Math.max(win.minimumHeight, App.windowHeight" in main_qml
+    assert "function applyStartupWindowGeometry()" in main_qml
+    assert "App.windowWidth > 0 ? App.windowWidth : 1280" in main_qml
+    assert "App.windowHeight > 0 ? App.windowHeight : 720" in main_qml
 
 
 def test_negative_window_position_is_preserved_for_left_monitor() -> None:

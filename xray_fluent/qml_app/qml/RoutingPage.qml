@@ -15,7 +15,7 @@ import "."
 Item {
     id: page
 
-    readonly property var builtInPresetKeys: ["global", "blocked", "except_ru"]
+    readonly property var builtInPresetKeys: App.regionalRoutingPresets.map(function(item) { return item.id })
     function idxIn(arr, v) {
         var i = arr.indexOf(v);
         return i < 0 ? 0 : i;
@@ -87,14 +87,11 @@ Item {
                                 id: builtInPresetCombo
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Theme.controlHeight
-                                textRole: "label"
-                                model: [
-                                    { key: "global", label: I18n.t("Всё через VPN") },
-                                    { key: "blocked", label: I18n.t("Только заблокированное") },
-                                    { key: "except_ru", label: I18n.t("Всё кроме РФ") }
-                                ]
+                                textRole: "name"
+                                valueRole: "id"
+                                model: App.regionalRoutingPresets
                                 boundIndex: page.builtInPresetKeys.indexOf(App.activeRoutingPresetId)
-                                onActivated: App.applyRoutingPreset(page.builtInPresetKeys[currentIndex])
+                                onActivated: App.applyRoutingPreset(currentValue)
                             }
                         }
                         ColumnLayout {
@@ -414,7 +411,7 @@ Item {
             spacing: 10
             Text {
                 Layout.fillWidth: true
-                text: I18n.t("Быстрые пресеты:\n«Всё через VPN» отправляет весь трафик через сервер.\n«Только заблокированное» направляет через прокси известные заблокированные ресурсы.\n«Всё кроме РФ» пускает российские ресурсы напрямую, а остальной трафик — через прокси.\n\nСервисы:\n«Прокси» — всегда вести сервис через VPN/прокси.\n«Прямой» — всегда вести сервис напрямую.\n\nПравила по приложениям работают только в режиме TUN.")
+                text: I18n.t("Быстрые пресеты зависят от регионального профиля в настройках сети. Пресет «Всё кроме региона» пускает ресурсы выбранной страны напрямую, а остальной трафик — через прокси. Для Ирана v2rayN не предоставляет отдельный пресет «Только заблокированное».\n\nСервисы:\n«Прокси» — всегда вести сервис через VPN/прокси.\n«Прямой» — всегда вести сервис напрямую.\n\nПравила по приложениям работают только в режиме TUN.")
                 color: Theme.textMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontNormal

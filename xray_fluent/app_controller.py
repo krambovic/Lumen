@@ -166,7 +166,11 @@ from .models import AppSettings, AppState, Node, RoutingSettings
 from .network_monitor import NetworkMonitor
 from .proxy_manager import ProxyManager
 from .process_conflicts import scan_network_conflicts
-from .routing_presets import build_routing_preset
+from .routing_presets import (
+    build_routing_preset,
+    equivalent_regional_preset,
+    normalize_regional_preset,
+)
 from .security import create_password_hash, get_idle_seconds, verify_password
 from .storage import PassphraseRequired, StateLoadError, StateStorage
 from .startup import (
@@ -351,6 +355,7 @@ class AppController(QObject):
         self._retired_workers: list[QThread] = []
         self._xray_update_worker: XrayCoreUpdateWorker | None = None
         self._resource_update_workers: list[QThread] = []
+        self._pending_regional_preset = ""
         self._singbox_documents = SingboxDocumentCache()
         self._parsed_singbox_document: ParsedSingboxDocument | None = None
         self._ping_total = 0
@@ -1779,17 +1784,17 @@ class AppController(QObject):
         index = (index - 1) % len(self.state.nodes)
         self.set_selected_node(self.state.nodes[index].id)
 
-    def update_routing(self, routing: RoutingSettings) -> None:
+    def update_routing(self, routing: RoutingSettings, *, restart_runtime: bool = True) -> None:
         if routing.mode not in ROUTING_MODES:
             routing.mode = "rule"
         self.state.routing = routing
         self.routing_changed.emit(self.state.routing)
         self.schedule_save()
 
-        if self.connected or self._desired_connected:
+        if restart_runtime and (self.connected or self._desired_connected):
             self._request_transition("routing changed")
 
-    def apply_routing_preset(self, preset_id: str) -> None:
+    def apply_routing_preset(self, preset_id: str, *, restart_runtime: bool = True) -> None:
         before = self._routing_signature(self.state.routing)
         routing = build_routing_preset(self.state.routing, preset_id)
         after = self._routing_signature(routing)
@@ -1797,7 +1802,67 @@ class AppController(QObject):
             self._log(f"[routing] preset {preset_id} already active")
             return
         self._log(f"[routing] applying dashboard preset: {preset_id}")
-        self.update_routing(routing)
+        self.update_routing(routing, restart_runtime=restart_runtime)
+
+    def _commit_regional_preset(self, region: str, *, restart_runtime: bool) -> bool:
+        """Atomically apply a region and its equivalent built-in route preset."""
+        region = normalize_regional_preset(region)
+        old_region = normalize_regional_preset(
+            getattr(self.state.settings, "regional_preset", "russia")
+        )
+        current_preset = str(getattr(self.state.routing, "preset_id", "") or "")
+        target_preset = equivalent_regional_preset(current_preset, region)
+        routing = build_routing_preset(self.state.routing, target_preset)
+        routing_changed = self._routing_signature(self.state.routing) != self._routing_signature(routing)
+        if old_region == region and not routing_changed:
+            return False
+
+        settings = deepcopy(self.state.settings)
+        settings.regional_preset = region
+        self.state.settings = settings
+        self.state.routing = routing
+        self.settings_changed.emit(settings)
+        # The regional quick-preset model also listens to routing changes, even
+        # when the currently selected preset remains "global".
+        if routing_changed or old_region != region:
+            self.routing_changed.emit(routing)
+        self.schedule_save()
+        self._log(f"[routing] regional profile committed: {old_region} -> {region}, preset={target_preset}")
+
+        if restart_runtime and (self.connected or self._desired_connected):
+            self._request_transition("regional routing profile changed")
+        return True
+
+    def request_regional_preset_change(self, value: str) -> str:
+        """Apply a region now or download its resources before committing it.
+
+        Returns ``applied``, ``downloading``, ``unchanged``, ``pending`` or
+        ``busy`` for the QML bridge.  The previous region remains active until
+        a successful geodata installation has been reported.
+        """
+        from .core_resource_updater import regional_geodata_installed
+
+        region = normalize_regional_preset(value)
+        current_region = normalize_regional_preset(
+            getattr(self.state.settings, "regional_preset", "russia")
+        )
+        if current_region == region and not self._pending_regional_preset:
+            return "unchanged"
+        if self._pending_regional_preset:
+            return "pending" if self._pending_regional_preset == region else "busy"
+        if regional_geodata_installed(region):
+            self._commit_regional_preset(region, restart_runtime=True)
+            return "applied"
+
+        self._pending_regional_preset = region
+        if not self.run_resource_update(
+            "geodata",
+            apply_update=True,
+            region=region,
+        ):
+            self._pending_regional_preset = ""
+            return "busy"
+        return "downloading"
 
     def update_settings(self, settings: AppSettings) -> None:
         old_settings = self.state.settings
@@ -1882,7 +1947,13 @@ class AppController(QObject):
     def run_xray_core_update(self, apply_update: bool, silent: bool = False) -> None:
         run_xray_core_update_operation(self, apply_update, silent=silent)
 
-    def run_resource_update(self, kind: str, *, apply_update: bool = True) -> bool:
+    def run_resource_update(
+        self,
+        kind: str,
+        *,
+        apply_update: bool = True,
+        region: str | None = None,
+    ) -> bool:
         from .core_resource_updater import ResourceUpdateWorker
         from .qthread_utils import retain_thread_until_finished
 
@@ -1911,11 +1982,15 @@ class AppController(QObject):
                     proxy_url = f"http://{PROXY_HOST}:{int(proxy_port)}"
             except Exception:
                 proxy_url = None
+        update_region = normalize_regional_preset(
+            region or getattr(self.state.settings, "regional_preset", "russia")
+        )
         worker = ResourceUpdateWorker(
             kind,
             singbox_path=self.state.settings.singbox_path,
             apply_update=apply_update,
             proxy_url=proxy_url,
+            region=update_region,
         )
         worker.finished.connect(self._on_resource_update_worker_finished)
         retain_thread_until_finished(self, self._resource_update_workers, worker)
@@ -1970,10 +2045,27 @@ class AppController(QObject):
         self._request_transition("resource update reconnect")
 
     def _on_resource_update_done(self, result) -> None:
-        self.resource_update_result.emit(result)
         status = getattr(result, "status", "")
         message = getattr(result, "message", "") or ""
         kind = getattr(result, "kind", "resources")
+        pending_region = self._pending_regional_preset if kind == "geodata" else ""
+        if pending_region:
+            worker = self.sender()
+            worker_region = normalize_regional_preset(
+                getattr(worker, "_region", pending_region)
+            )
+            if worker_region == pending_region:
+                if status in {"updated", "up_to_date"}:
+                    # An actual install has already stopped the active core and
+                    # _on_resource_update_worker_finished will reconnect it.
+                    # If nothing had to be installed, request one normal runtime
+                    # transition here so the active config still adopts the region.
+                    self._commit_regional_preset(
+                        pending_region,
+                        restart_runtime=not self._reconnect_after_resource_updates,
+                    )
+                self._pending_regional_preset = ""
+        self.resource_update_result.emit(result)
         if status == "error":
             self.status.emit("error", message)
             self._logger.error(f"[updater] Failed to update {kind}: {message}")

@@ -842,6 +842,30 @@ Item {
                 Text { text: I18n.t("Сеть"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
+                    glyph: "\uE909"; title: I18n.t("Региональный профиль"); subtitle: I18n.t("Меняет быстрые пресеты и источники GeoIP/GeoSite")
+                    FluentCombo {
+                        id: regionalPresetCombo
+                        Layout.preferredWidth: 220
+                        enabled: !App.regionalPresetBusy
+                        textRole: "label"
+                        valueRole: "key"
+                        model: [
+                            { key: "russia", label: I18n.t("Россия") },
+                            { key: "china", label: I18n.t("Китай") },
+                            { key: "iran", label: I18n.t("Иран") }
+                        ]
+                        boundIndex: App.regionalPreset === "china" ? 1 : (App.regionalPreset === "iran" ? 2 : 0)
+                        onActivated: App.setRegionalPreset(currentValue)
+                        Connections {
+                            target: App
+                            function onRegionalPresetBusyChanged() {
+                                Qt.callLater(function() { regionalPresetCombo.syncBoundIndex() })
+                            }
+                        }
+                    }
+                }
+
+                SettingRow {
                     glyph: "\uE80F"; title: I18n.t("Прокси в обход локальной сети"); subtitle: I18n.t("Не проксировать адреса локальной сети")
                     Switch { checked: App.proxyBypassLan; onToggled: App.setProxyBypassLan(checked) }
                 }

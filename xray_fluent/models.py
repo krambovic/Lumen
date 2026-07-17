@@ -292,7 +292,7 @@ class SecuritySettings:
 @dataclass(slots=True)
 class AppSettings:
     theme: str = "system"  # system | light | dark
-    language: str = field(default_factory=lambda: _detect_system_language())  # ru | en
+    language: str = field(default_factory=lambda: _detect_system_language())  # ru | en | fa | zh
     accent_color: str = "#0078D4"
     interface_mode: str = "full"  # compact | full
     auto_connect_last: bool = True
@@ -303,6 +303,7 @@ class AppSettings:
     launch_in_tray_on_startup: bool = True
     always_run_as_admin: bool = False
     reconnect_on_network_change: bool = True
+    regional_preset: str = "russia"  # russia | china | iran
     prefer_ipv6: bool = False
     # Kill-switch: при неожиданном обрыве VPN не выпускать трафик напрямую (fail-closed).
     kill_switch: bool = False
@@ -388,6 +389,8 @@ class AppSettings:
     sniff_route_only: bool = False
 
     def __post_init__(self) -> None:
+        from .routing_presets import normalize_regional_preset
+        self.regional_preset = normalize_regional_preset(self.regional_preset)
         self.tun_stack = _normalize_tun_stack(self.tun_stack)
         self.local_socks_port = _normalize_local_port(self.local_socks_port, 10808)
         self.local_http_port = _normalize_local_port(self.local_http_port, 10809)
@@ -409,6 +412,7 @@ class AppSettings:
             "launch_in_tray_on_startup": self.launch_in_tray_on_startup,
             "always_run_as_admin": self.always_run_as_admin,
             "reconnect_on_network_change": self.reconnect_on_network_change,
+            "regional_preset": self.regional_preset,
             "prefer_ipv6": self.prefer_ipv6,
             "kill_switch": self.kill_switch,
             "resource_update_check": self.resource_update_check,
@@ -508,6 +512,7 @@ class AppSettings:
             launch_in_tray_on_startup=bool(data.get("launch_in_tray_on_startup", True)),
             always_run_as_admin=bool(data.get("always_run_as_admin", False)),
             reconnect_on_network_change=bool(data.get("reconnect_on_network_change", True)),
+            regional_preset=str(data.get("regional_preset") or "russia"),
             prefer_ipv6=bool(data.get("prefer_ipv6", False)),
             kill_switch=bool(data.get("kill_switch", False)),
             resource_update_check=bool(data.get("resource_update_check", False)),
@@ -684,7 +689,7 @@ def _normalize_local_port(value: Any, default: int) -> int:
 
 def _normalize_language(value: Any) -> str:
     language = str(value or "").strip().lower()
-    return language if language in {"ru", "en"} else _detect_system_language()
+    return language if language in {"ru", "en", "fa", "zh"} else _detect_system_language()
 
 
 def _detect_system_language() -> str:
@@ -692,4 +697,10 @@ def _detect_system_language() -> str:
         language = (locale.getlocale()[0] or "").lower()
     except Exception:
         language = ""
-    return "ru" if language.startswith("ru") else "en"
+    if language.startswith("ru"):
+        return "ru"
+    if language.startswith("fa"):
+        return "fa"
+    if language.startswith("zh"):
+        return "zh"
+    return "en"

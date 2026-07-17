@@ -11,8 +11,11 @@ ApplicationWindow {
     visible: false
     width: 1280
     height: 720
-    minimumWidth: 640
-    minimumHeight: 360
+    // Installed after QWindowKit attaches, before the hidden window is shown.
+    minimumWidth: 0
+    minimumHeight: 0
+    readonly property int appMinimumWidth: 640
+    readonly property int appMinimumHeight: 360
     title: App.appName
     color: "transparent"
 
@@ -88,36 +91,29 @@ ApplicationWindow {
         return App.windowX !== -1 && App.windowY !== -1;
     }
 
-    function clampToVirtualDesktop() {
-        var vx = Number(Screen.virtualX);
-        var vy = Number(Screen.virtualY);
-        var vw = Number(Screen.virtualWidth);
-        var vh = Number(Screen.virtualHeight);
-        if (!isFinite(vx) || !isFinite(vy) || !isFinite(vw) || !isFinite(vh) || vw <= 0 || vh <= 0)
+    function applyFittedWindowGeometry(width, height, x, y) {
+        var fitted = App.fitWindowGeometry(
+                    width, height, x, y, win.minimumWidth, win.minimumHeight);
+        if (!fitted || fitted.width === undefined || fitted.height === undefined)
             return;
-
-        var minVisibleX = Math.min(96, Math.max(32, win.width / 4));
-        var minVisibleY = Math.min(96, Math.max(32, win.height / 4));
-        var minX = vx - win.width + minVisibleX;
-        var maxX = vx + vw - minVisibleX;
-        var minY = vy;
-        var maxY = vy + vh - minVisibleY;
-        win.x = Math.round(Math.max(minX, Math.min(maxX, win.x)));
-        win.y = Math.round(Math.max(minY, Math.min(maxY, win.y)));
+        win.width = Number(fitted.width);
+        win.height = Number(fitted.height);
+        win.x = Number(fitted.x);
+        win.y = Number(fitted.y);
     }
 
-    function restoreSavedWindowPosition() {
-        if (!hasSavedWindowPosition())
-            return;
-        win.x = App.windowX;
-        win.y = App.windowY;
-        clampToVirtualDesktop();
+    function applyStartupWindowGeometry() {
+        win.minimumWidth = win.appMinimumWidth;
+        win.minimumHeight = win.appMinimumHeight;
+        var desiredWidth = Math.max(win.minimumWidth,
+                                    App.windowWidth > 0 ? App.windowWidth : 1280);
+        var desiredHeight = Math.max(win.minimumHeight,
+                                     App.windowHeight > 0 ? App.windowHeight : 720);
+        applyFittedWindowGeometry(desiredWidth, desiredHeight,
+                                  App.windowX, App.windowY);
     }
 
     Component.onCompleted: {
-        win.width = Math.max(win.minimumWidth, App.windowWidth > 0 ? App.windowWidth : 1280);
-        win.height = Math.max(win.minimumHeight, App.windowHeight > 0 ? App.windowHeight : 720);
-        restoreSavedWindowPosition();
         Theme.accent = Qt.binding(function() { return App.accentColor; });
         Theme.dark = Qt.binding(function() { return win.resolveDark(); });
         Theme.density = Qt.binding(function() { return App.uiDensity; });

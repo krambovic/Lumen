@@ -9,7 +9,10 @@ Item {
     property var win
     readonly property bool _maxified: win && (win.visibility === Window.FullScreen
                                             || win.visibility === Window.Maximized)
-    height: Math.round(34 * Theme.fontScale) + (_maxified ? 2 : 0)
+    // Qt already maps logical QML pixels through the Windows DPI scale. Keep
+    // the caption height stable so the app's optional font scale is not
+    // applied a second time to the native-looking window frame.
+    height: 34 + (_maxified ? 2 : 0)
 
     Rectangle {
         anchors.fill: parent

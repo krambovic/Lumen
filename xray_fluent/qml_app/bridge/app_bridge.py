@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 import socket
 
-from PyQt6.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QPoint, QRect, QObject, Qt, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 
 from ...app_controller import AppController
@@ -38,6 +38,7 @@ from .log_model import LogFilterModel, LogModel
 from .node_list_model import NodeListModel
 from .process_model import ProcessModel
 from ..toast import set_toasts_enabled, show_toast
+from ..window_geometry import fit_window_geometry
 from ...i18n import active_map, available_languages, language_name, set_language, tr
 from ...log_utils import parse_log_line
 
@@ -172,6 +173,7 @@ class AppBridge(QObject):
     languageChanged = pyqtSignal()         # active UI language changed
     subscriptionImportingChanged = pyqtSignal()
     subscriptionImportStatusChanged = pyqtSignal()
+    regionalPresetBusyChanged = pyqtSignal()
 
     # Внутренний: запуск фоновой загрузки подписок (jobs, batch_id)
     _sub_fetch_run = pyqtSignal(object, int)
@@ -202,6 +204,7 @@ class AppBridge(QObject):
         self._app_update_checker: QThread | None = None
         self._app_update_downloader: QThread | None = None
         self._startup_resource_worker: QThread | None = None
+        self._pending_regional_preset = ""
         self._sub_batches: dict[int, dict] = {}
         self._sub_batch_seq = 0
 
@@ -911,6 +914,10 @@ class AppBridge(QObject):
         set_language(self._language)
         if _language_changed:
             self.languageChanged.emit()
+            # Built-in routing preset labels are translated in the bridge and
+            # exposed through properties notified by routingChanged. Refresh
+            # those models immediately when the UI language changes.
+            self.routingChanged.emit()
         self._accent = settings.accent_color or "#0078D4"
         self._node_model.set_runtime_support(True)
         self.settingsChanged.emit()
@@ -999,7 +1006,7 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def applyRoutingPresetOption(self, preset_id: str) -> None:
         preset_id = (preset_id or "").strip()
-        if preset_id in {"global", "blocked", "except_ru"}:
+        if preset_id in {"global", "blocked", "except_ru", "blocked_cn", "except_cn", "except_ir"}:
             self.applyRoutingPreset(preset_id)
         else:
             self.applyCustomRoutingPreset(preset_id)
@@ -1465,6 +1472,58 @@ class AppBridge(QObject):
         settings.window_y = int(y)
         self.controller.update_settings(settings)
 
+    @pyqtSlot(int, int, int, int, int, int, result="QVariantMap")
+    def fitWindowGeometry(
+        self,
+        width: int,
+        height: int,
+        x: int,
+        y: int,
+        minimum_width: int,
+        minimum_height: int,
+    ) -> dict[str, int]:
+        # -1/-1 is the persisted sentinel for "no saved position". Negative
+        # coordinates are otherwise valid for monitors left/above the primary.
+        position_saved = int(x) != -1 and int(y) != -1
+        screens = list(QGuiApplication.screens())
+        target_screen = None
+
+        if position_saved and screens:
+            restored = QRect(int(x), int(y), max(1, int(width)), max(1, int(height)))
+
+            def _intersection_area(screen) -> int:
+                intersection = restored.intersected(screen.geometry())
+                return max(0, intersection.width()) * max(0, intersection.height())
+
+            target_screen = max(screens, key=_intersection_area)
+            if _intersection_area(target_screen) == 0:
+                target_screen = QGuiApplication.screenAt(QPoint(int(x), int(y)))
+
+        if target_screen is None:
+            target_screen = QGuiApplication.primaryScreen()
+        if target_screen is None:
+            return {
+                "x": max(0, int(x)),
+                "y": max(0, int(y)),
+                "width": max(int(minimum_width), int(width)),
+                "height": max(int(minimum_height), int(height)),
+            }
+
+        available = target_screen.availableGeometry()
+        return fit_window_geometry(
+            width,
+            height,
+            x,
+            y,
+            minimum_width,
+            minimum_height,
+            available.x(),
+            available.y(),
+            available.width(),
+            available.height(),
+            position_saved=position_saved,
+        )
+
     # ── «Обновления» settings persistence ───────────────────────
     @pyqtSlot(str)
     def setReleaseChannel(self, channel: str) -> None:
@@ -1557,6 +1616,25 @@ class AppBridge(QObject):
         settings = deepcopy(self.controller.state.settings)
         settings.reconnect_on_network_change = bool(enabled)
         self.controller.update_settings(settings)
+
+    @pyqtSlot(str)
+    def setRegionalPreset(self, value: str) -> None:
+        from ...routing_presets import normalize_regional_preset
+        region = normalize_regional_preset(value)
+        outcome = self.controller.request_regional_preset_change(region)
+        if outcome == "downloading":
+            self._pending_regional_preset = region
+            self.regionalPresetBusyChanged.emit()
+            self.resourceUpdateState.emit(
+                {"kind": "geodata", "phase": "updating", "percent": 0}
+            )
+            self.toast.emit("info", tr("Обновление geoip/geosite..."))
+        elif outcome == "applied":
+            self.toast.emit("success", tr("Применено"))
+        elif outcome in {"pending", "busy"}:
+            self.settingsChanged.emit()
+            self.regionalPresetBusyChanged.emit()
+            self.toast.emit("info", tr("Обновление уже выполняется"))
 
     @pyqtSlot(bool)
     def setPreferIpv6(self, enabled: bool) -> None:
@@ -2187,6 +2265,7 @@ class AppBridge(QObject):
         worker = StartupResourceCheckWorker(
             singbox_path=self.controller.state.settings.singbox_path,
             proxy_url=proxy_url,
+            region=getattr(self.controller.state.settings, "regional_preset", "russia"),
         )
         self._startup_resource_worker = worker
         worker.done.connect(self._on_startup_resource_check_done)
@@ -2444,6 +2523,16 @@ class AppBridge(QObject):
         self.resourceUpdateState.emit({"kind": kind, "phase": "updating", "percent": int(percent)})
 
     def _on_resource_update_result(self, result) -> None:
+        if (
+            getattr(result, "kind", "") == "geodata"
+            and self._pending_regional_preset
+        ):
+            self._pending_regional_preset = ""
+            self.regionalPresetBusyChanged.emit()
+            # Re-evaluate the bound selection after a successful commit and
+            # after a failed download, where the previous region is retained.
+            self.settingsChanged.emit()
+            self.routingChanged.emit()
         phase = {
             "up_to_date": "uptodate",
             "available": "available",
@@ -3299,6 +3388,17 @@ class AppBridge(QObject):
         except Exception:
             return True
 
+    @pyqtProperty(str, notify=settingsChanged)
+    def regionalPreset(self) -> str:
+        try:
+            return str(self.controller.state.settings.regional_preset or "russia")
+        except Exception:
+            return "russia"
+
+    @pyqtProperty(bool, notify=regionalPresetBusyChanged)
+    def regionalPresetBusy(self) -> bool:
+        return bool(self._pending_regional_preset)
+
     @pyqtProperty(bool, notify=settingsChanged)
     def preferIpv6(self) -> bool:
         try:
@@ -3986,17 +4086,29 @@ class AppBridge(QObject):
 
     @pyqtProperty('QVariantList', notify=routingChanged)
     def routingPresetOptions(self):
-        items = [
-            {"id": "global", "name": tr("Всё через VPN")},
-            {"id": "blocked", "name": tr("Только заблокированное")},
-            {"id": "except_ru", "name": tr("Всё кроме РФ")},
-        ]
+        items = list(self.regionalRoutingPresets)
         items.extend(
             {"id": p.get("id", ""), "name": p.get("name", "")}
             for p in self.controller.state.routing_presets
             if p.get("id")
         )
         return items
+
+    @pyqtProperty('QVariantList', notify=routingChanged)
+    def regionalRoutingPresets(self):
+        from ...routing_presets import regional_routing_preset_ids
+        labels = {
+            "global": tr("Всё через VPN"),
+            "blocked": tr("Только заблокированное"),
+            "blocked_cn": tr("Только заблокированное"),
+            "except_ru": tr("Всё кроме РФ"),
+            "except_cn": tr("Всё кроме Китая"),
+            "except_ir": tr("Всё кроме Ирана"),
+        }
+        return [
+            {"id": preset_id, "name": labels[preset_id]}
+            for preset_id in regional_routing_preset_ids(self.regionalPreset)
+        ]
 
     def _mutate_routing(self, fn) -> None:
         routing = deepcopy(self.controller.state.routing)

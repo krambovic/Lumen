@@ -198,12 +198,12 @@ jobs:
           body: |
             ## What's Changed
 
-            - [feat(subscriptions)]: Added an optional subscription download path through the active Lumen proxy or TUN while keeping isolated direct downloads as the default; imports and updates now follow the selected path without restarting the running VPN.
-            - [fix(subscriptions)]: Replaced raw DNS, timeout, connection, TLS and HTTP failures with clear diagnostics and recovery guidance, and display subscriptions with a zero traffic limit as unlimited instead of `0 B / 0 B`.
-            - [feat(testing)]: AUTO Xray profiles can now be pinged and speed-tested when their internal servers support the selected check; test configs preserve the original balancer, `observatory` or `burstObservatory` and work with direct host routes while TUN is active.
-            - [fix(xray)]: AUTO profile validation now accepts both `observatory` and `burstObservatory`, requiring an observer only for `leastPing` and `leastLoad` strategies.
+            - [feat(routing)]: Added regional routing profiles for Russia, China and Iran; quick presets now use region-specific direct and blocked rules, while Xray and sing-box receive the matching GeoIP, GeoSite and binary rule sets.
+            - [fix(routing)]: Regional data is downloaded and validated before a profile is committed; failed downloads keep the previous profile active, while successful switches reconnect the running proxy or TUN only after all required files are ready.
+            - [feat(i18n)]: Added Persian and Simplified Chinese interface translations with automatic language selection from the Windows locale, and made built-in quick-preset names update immediately when the language changes.
+            - [fix(window)]: Restored window geometry is now fitted to the active monitor and applied after the custom frame is initialized, preventing oversized top areas and clipped controls on small or high-DPI displays without changing the interface design.
 
-            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.9.1...v1.9.2
+            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.9.2...v1.9.3
           generate_release_notes: false
           make_latest: true
           files: |

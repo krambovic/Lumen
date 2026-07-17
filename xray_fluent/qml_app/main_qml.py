@@ -577,7 +577,7 @@ def main(argv: list[str] | None = None) -> int:
     _enable_gpu_friendly_defaults()
     _install_message_filter()
 
-    from PyQt6.QtCore import QUrl
+    from PyQt6.QtCore import QMetaObject, QTimer, QUrl
     from PyQt6.QtGui import QIcon
     from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
     from PyQt6.QtWidgets import QApplication
@@ -621,6 +621,13 @@ def main(argv: list[str] | None = None) -> int:
 
     window = engine.rootObjects()[0]
     _attach_qwindowkit(window)
+    # QWindowKit updates Qt's non-client-area geometry.  Restore the saved
+    # size and install minimum constraints only after that setup is complete;
+    # applying them while QML is still loading can leave a DPI-scaled blank
+    # strip above the title bar and push the bottom of the scene off-screen.
+    if not QMetaObject.invokeMethod(window, "applyStartupWindowGeometry"):
+        window.setMinimumWidth(640)
+        window.setMinimumHeight(360)
     start_in_tray = "--tray" in (argv if argv is not None else sys.argv)[1:]
 
     if single_server is not None:
@@ -641,8 +648,6 @@ def main(argv: list[str] | None = None) -> int:
 
     def _refresh_backdrop() -> None:
         _apply_mica(window, _resolve_dark(app, _theme_name(bridge)), bridge.uiBackdrop)
-
-    from PyQt6.QtCore import QMetaObject, QTimer
 
     def _schedule_backdrop_refresh(*_args) -> None:
         QTimer.singleShot(0, _refresh_backdrop)

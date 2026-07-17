@@ -7,9 +7,15 @@ import pytest
 from xray_fluent.core_resource_updater import _install_singbox_rule_sets
 from xray_fluent.geodata_resources import SINGBOX_BINARY_RULE_SETS
 from xray_fluent.models import RoutingSettings
-from xray_fluent.routing_presets import build_routing_preset
+from xray_fluent.routing_presets import (
+    build_routing_preset,
+    equivalent_regional_preset,
+    preset_domain_rules,
+    regional_routing_preset_ids,
+)
 from xray_fluent.routing_runtime import (
     _ensure_singbox_rule_sets,
+    apply_singbox_gui_routing,
     build_singbox_gui_route_rules,
     build_xray_gui_routing_rules,
     split_xray_domain_ip,
@@ -74,7 +80,7 @@ def test_except_ru_uses_full_xray_geodata_and_custom_rule_wins() -> None:
         index
         for index, rule in enumerate(rules)
         if rule.get("outboundTag") == "direct"
-        and "geosite:category-ru" in rule.get("domain", [])
+        and "geosite:ru-available-only-inside" in rule.get("domain", [])
     )
     assert proxy_index < geosite_index
     assert any(
@@ -134,3 +140,92 @@ def test_geodata_archive_installs_only_required_singbox_sets(tmp_path) -> None:
     assert {path.name for path in target.iterdir()} == {
         member.rsplit("/", 1)[-1] for member in SINGBOX_BINARY_RULE_SETS.values()
     }
+
+
+def test_regional_quick_presets_match_v2rayn_profiles() -> None:
+    assert regional_routing_preset_ids("russia") == ("global", "blocked", "except_ru")
+    assert regional_routing_preset_ids("china") == ("global", "blocked_cn", "except_cn")
+    assert regional_routing_preset_ids("iran") == ("global", "except_ir")
+    assert equivalent_regional_preset("except_ru", "china") == "except_cn"
+    assert equivalent_regional_preset("blocked", "iran") == "global"
+
+
+def test_china_and_iran_presets_use_regional_geodata() -> None:
+    china_direct, china_proxy = preset_domain_rules("blocked_cn")
+    assert china_direct == []
+    assert {"geosite:gfw", "geosite:greatfire", "geoip:telegram"}.issubset(china_proxy)
+    assert preset_domain_rules("except_cn") == (["geosite:cn", "geoip:cn"], [])
+    assert preset_domain_rules("except_ir") == (["geosite:ir", "geoip:ir"], [])
+
+
+@pytest.mark.parametrize(
+    ("preset_id", "expected_outbound", "expected_final", "expected_rules"),
+    [
+        (
+            "blocked_cn",
+            "proxy",
+            "direct",
+            {
+                "geosite:gfw",
+                "geosite:greatfire",
+                "geosite:google",
+                "geoip:facebook",
+                "geoip:fastly",
+                "geoip:google",
+                "geoip:netflix",
+                "geoip:telegram",
+                "geoip:twitter",
+            },
+        ),
+        ("except_cn", "direct", "proxy", {"geosite:cn", "geoip:cn"}),
+        ("except_ir", "direct", "proxy", {"geosite:ir", "geoip:ir"}),
+    ],
+)
+def test_regional_presets_render_the_intended_routes_for_both_cores(
+    monkeypatch,
+    preset_id: str,
+    expected_outbound: str,
+    expected_final: str,
+    expected_rules: set[str],
+) -> None:
+    routing = build_routing_preset(RoutingSettings(), preset_id)
+
+    xray_rules = build_xray_gui_routing_rules(routing, _TunSettings())
+    xray_rendered = {
+        *(
+            value
+            for rule in xray_rules
+            if rule.get("outboundTag") == expected_outbound
+            for value in rule.get("domain", [])
+        ),
+        *(
+            value
+            for rule in xray_rules
+            if rule.get("outboundTag") == expected_outbound
+            for value in rule.get("ip", [])
+        ),
+    }
+    assert expected_rules.issubset(xray_rendered)
+    assert xray_rules[-1] == {
+        "type": "field",
+        "network": "tcp,udp",
+        "outboundTag": expected_final,
+    }
+
+    # Rule-set installation is tested separately. Here the generated routing
+    # contract is verified without depending on machine-local downloaded data.
+    monkeypatch.setattr(
+        "xray_fluent.routing_runtime._ensure_singbox_rule_sets",
+        lambda _route, _tags: None,
+    )
+    payload = {"route": {"rules": []}}
+    apply_singbox_gui_routing(payload, routing)
+    expected_tags = {value.replace(":", "-") for value in expected_rules}
+    matching_tags = {
+        tag
+        for rule in payload["route"]["rules"]
+        if rule.get("outbound") == expected_outbound
+        for tag in rule.get("rule_set", [])
+    }
+    assert expected_tags.issubset(matching_tags)
+    assert payload["route"]["final"] == expected_final

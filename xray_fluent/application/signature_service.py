@@ -51,6 +51,7 @@ def transition_signature(
                 "socks_port": int(getattr(settings, "local_socks_port", DEFAULT_SOCKS_PORT)),
                 "http_port": int(getattr(settings, "local_http_port", DEFAULT_HTTP_PORT)),
                 "routing": routing.to_dict(),
+                "regional_preset": str(getattr(settings, "regional_preset", "russia")),
                 "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
                 "prefer_ipv6": bool(getattr(settings, "prefer_ipv6", False)),
             }
@@ -70,6 +71,7 @@ def transition_signature(
             "node_id": node.id if has_proxy_outbound and node else None,
             "node_outbound": node.outbound if has_proxy_outbound and node else None,
             "routing": routing.to_dict(),
+            "regional_preset": str(getattr(settings, "regional_preset", "russia")),
             "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
             "prefer_ipv6": bool(getattr(settings, "prefer_ipv6", False)),
         }
@@ -90,6 +92,7 @@ def transition_signature(
             "proxy_allow_lan": bool(getattr(settings, "proxy_allow_lan", False)),
             "sniff_route_only": bool(getattr(settings, "sniff_route_only", False)),
             "routing": routing.to_dict(),
+            "regional_preset": str(getattr(settings, "regional_preset", "russia")),
             "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
             "prefer_ipv6": bool(getattr(settings, "prefer_ipv6", False)),
         }
@@ -122,6 +125,7 @@ def transition_signature(
             "xray_path": str(settings.xray_path),
             "singbox_path": str(settings.singbox_path),
             "routing": routing.to_dict(),
+            "regional_preset": str(getattr(settings, "regional_preset", "russia")),
             "discord_proxy_enabled": bool(settings.discord_proxy_enabled),
             "prefer_ipv6": bool(getattr(settings, "prefer_ipv6", False)),
         }
