@@ -350,7 +350,7 @@ SERVICE_PRESETS: tuple[ServicePreset, ...] = (
         domains=(
             "claude.ai",
             "claude.com",
-            "antropic.com",
+            "anthropic.com",
         ),
     ),
     # --- Direct by default ---
