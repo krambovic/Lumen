@@ -1,6 +1,9 @@
 # Python
 __pycache__/
 *.pyc
+# Python
+__pycache__/
+*.pyc
 *.pyo
 .venv/
 
@@ -8,6 +11,7 @@ __pycache__/
 build/
 dist/
 *.spec
+!Lumen-qml.spec
 !LumenKVN-qml.spec
 
 # Core binaries (downloaded by CI)
