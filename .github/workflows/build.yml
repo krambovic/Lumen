@@ -151,13 +151,13 @@ jobs:
 
       - name: List release assets
         shell: pwsh
-        run: Get-ChildItem dist/LumenKVN-Setup-windows-x64.exe, dist/LumenKVN-portable-windows-x64.zip | Format-Table Name, Length
+        run: Get-ChildItem dist/Lumen-Setup-windows-x64.exe, dist/Lumen-portable-windows-x64.zip | Format-Table Name, Length
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LumenKVN-portable
-          path: dist/LumenKVN-portable-windows-x64.zip
+          name: Lumen-portable
+          path: dist/Lumen-portable-windows-x64.zip
 
       - name: Check existing release
         if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
@@ -207,5 +207,5 @@ jobs:
           generate_release_notes: false
           make_latest: true
           files: |
-            dist/LumenKVN-Setup-windows-x64.exe
-            dist/LumenKVN-portable-windows-x64.zip
+            dist/Lumen-Setup-windows-x64.exe
+            dist/Lumen-portable-windows-x64.zip
