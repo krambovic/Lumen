@@ -93,7 +93,7 @@ def _write_droute_notice() -> None:
     DROUTE_NOTICE.write_text(
         "droute is a bundled external GPL-3.0 component originally published at:\n"
         f"{DROUTE_SOURCE_URL}\n\n"
-        "Lumen KVN includes the frozen droute 2.0.0 binary distribution because the\n"
+        "Lumen includes the frozen droute 2.0.0 binary distribution because the\n"
         "upstream repository is no longer available. The external binary is used\n"
         "to install a Discord-local version.dll loader, droute.dll payload and Squirrel\n"
         "updater hook for Discord TCP/UDP SOCKS5 proxying.\n",
@@ -168,7 +168,7 @@ def install_bundled_droute(
     target = target_dir or DROUTE_DIR
     version = _droute_version_at(source)
     if not version:
-        raise RuntimeError("Встроенный droute не найден. Переустановите Lumen KVN.")
+        raise RuntimeError("Встроенный droute не найден. Переустановите Lumen.")
     _verify_bundled_droute(source)
     try:
         if source.resolve() == target.resolve():
@@ -220,7 +220,7 @@ def ensure_droute_bundle() -> Path:
     if DROUTE_EXE.is_file() and DROUTE_EXE.stat().st_size > 1024:
         _write_droute_notice()
         return DROUTE_EXE
-    raise RuntimeError("Встроенный droute не найден. Переустановите Lumen KVN.")
+    raise RuntimeError("Встроенный droute не найден. Переустановите Lumen.")
 
 
 def _powershell_quote(value: str | Path) -> str:
@@ -534,7 +534,7 @@ class DiscordProxyManager:
         if not installs:
             return DiscordProxyResult(False, "Discord not found")
         if int(socks_port) <= 0:
-            return DiscordProxyResult(False, "Lumen KVN SOCKS5 port not found")
+            return DiscordProxyResult(False, "Lumen SOCKS5 port not found")
 
         target_port = int(socks_port)
         try:

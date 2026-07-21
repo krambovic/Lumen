@@ -42,6 +42,7 @@ class LiveMetricsWorker(QThread):
         ping_interval_sec: float = 3.0,
         mode: str = "xray",
         clash_api_port: int = 19090,
+        clash_api_secret: str = "",
         socks_port: int = 10808,
         http_port: int = 10809,
         xray_inbound_tags: list[str] | None = None,
@@ -57,6 +58,7 @@ class LiveMetricsWorker(QThread):
         self._last_ping_ms: int | None = None
         self._mode = mode
         self._clash_api_port = clash_api_port
+        self._clash_api_secret = str(clash_api_secret or "")
         self._socks_port = socks_port
         self._http_port = http_port
         self._process_stats_prev_ts = 0.0
@@ -111,7 +113,10 @@ class LiveMetricsWorker(QThread):
             process_stats = None
             if iteration_count % process_stats_interval == 0:
                 if self._mode == "singbox":
-                    process_stats = collect_process_stats(self._clash_api_port)
+                    process_stats = collect_process_stats(
+                        self._clash_api_port,
+                        clash_api_secret=self._clash_api_secret,
+                    )
                 elif self._mode == "xray":
                     process_stats = self._collect_proxy_process_stats(
                         proxy_prev_bytes, proxy_total_bytes,
@@ -219,8 +224,13 @@ class LiveMetricsWorker(QThread):
         return self._query_xray_stats()
 
     def _query_clash_api_totals(self) -> tuple[int | None, int | None]:
+        if not self._clash_api_secret:
+            return None, None
         try:
-            req = Request(f"http://127.0.0.1:{self._clash_api_port}/connections")
+            req = Request(
+                f"http://127.0.0.1:{self._clash_api_port}/connections",
+                headers={"Authorization": f"Bearer {self._clash_api_secret}"},
+            )
             with urlopen(req, timeout=2) as resp:
                 data = json.loads(resp.read())
             upload = int(data.get("uploadTotal") or 0)

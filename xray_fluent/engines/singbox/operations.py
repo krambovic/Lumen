@@ -231,6 +231,7 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
             tun=True,
             core="singbox",
             api_port=0,
+            clash_api_secret=plan.clash_api_secret,
             hybrid=plan.is_hybrid,
             xray_inbound_tags=(),
             sidecar_relay_port=plan.xray_sidecar.relay_port if plan.xray_sidecar else 0,

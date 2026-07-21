@@ -39,7 +39,7 @@ FluentScroll {
             color: Theme.text
             font.family: Theme.fontFamily
             font.pixelSize: 15
-            text: I18n.t("Lumen KVN — самостоятельный Windows-клиент для VPN/TUN, системного прокси, маршрутизации, управления серверами и обхода DPI (DPI bypass) через zapret.")
+            text: I18n.t("Lumen — самостоятельный Windows-клиент для VPN/TUN, системного прокси, маршрутизации, управления серверами и обхода DPI (DPI bypass) через zapret.")
         }
         Text {
             Layout.fillWidth: true

@@ -23,6 +23,7 @@ class ActiveSessionSnapshot:
     tun_layer_signature: str
     hybrid: bool
     api_port: int
+    clash_api_secret: str
     xray_inbound_tags: tuple[str, ...]
     sidecar_relay_port: int
     protect_ss_port: int
@@ -63,6 +64,7 @@ def build_active_session_snapshot(
     tun_layer_signature: str,
     hybrid: bool,
     api_port: int,
+    clash_api_secret: str,
     xray_inbound_tags: tuple[str, ...],
     sidecar_relay_port: int,
     protect_ss_port: int,
@@ -87,6 +89,7 @@ def build_active_session_snapshot(
         tun_layer_signature=tun_layer_signature,
         hybrid=hybrid,
         api_port=api_port,
+        clash_api_secret=clash_api_secret,
         xray_inbound_tags=xray_inbound_tags,
         sidecar_relay_port=sidecar_relay_port,
         protect_ss_port=protect_ss_port,

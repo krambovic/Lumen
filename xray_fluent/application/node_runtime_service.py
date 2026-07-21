@@ -94,7 +94,7 @@ def native_singbox_only_message(node: Node | None = None) -> str:
     name = (node.name or node.server) if node is not None else "Этот сервер"
     return (
         f"{name} не поддерживается ядром Xray. "
-        "Используйте автоматический выбор ядра: Lumen KVN запустит этот сервер через sing-box extended "
+        "Используйте автоматический выбор ядра: Lumen запустит этот сервер через sing-box extended "
         "как в системном прокси, так и в TUN."
     )
 

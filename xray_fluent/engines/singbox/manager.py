@@ -283,7 +283,9 @@ class SingBoxManager(QObject):
 
             if self._tun_mode and retryable and attempt + 1 < max_attempts:
                 self._kill_orphaned(exe)
-                if self._startup_error_is_stale_adapter():
+                if self._startup_error_is_ipv6_disabled():
+                    self._disable_ipv6_in_singbox_config()
+                elif self._startup_error_is_stale_adapter():
                     self._purge_stale_wintun_devices()  # ghost Wintun device is invisible to Get-NetAdapter cleanup
                 self.cleanup_orphaned_tun_adapters()
                 self._wait_tun_released()
@@ -653,7 +655,7 @@ class SingBoxManager(QObject):
         rendered = version or "unknown"
         return (
             "This MASQUE profile requires the Lumen-compatible sing-box core "
-            f"(installed: {rendered}). Reinstall or update Lumen KVN; the regular "
+            f"(installed: {rendered}). Reinstall or update Lumen; the regular "
             "sing-box extended build ignores raw MASQUE keys and leaves the tunnel uninitialized."
         )
 
@@ -805,6 +807,30 @@ class SingBoxManager(QObject):
             if any(needle in text for needle in needles):
                 return True
         return False
+
+    def _startup_error_is_ipv6_disabled(self) -> bool:
+        return any(
+            "set ipv6 address" in line.lower()
+            for line in self._last_output_lines
+        )
+
+    def _disable_ipv6_in_singbox_config(self) -> None:
+        try:
+            from xray_fluent.utils import SINGBOX_CONFIG_FILE
+            import json
+            with open(SINGBOX_CONFIG_FILE, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            modified = False
+            for inbound in config.get("inbounds", []):
+                if isinstance(inbound, dict) and inbound.get("type") == "tun":
+                    inbound["inet6_address"] = []
+                    modified = True
+            if modified:
+                with open(SINGBOX_CONFIG_FILE, "w", encoding="utf-8") as f:
+                    json.dump(config, f, indent=2, ensure_ascii=False)
+                self.log_received.emit("[sing-box] Automatically disabled IPv6 for TUN due to broken Windows IPv6 stack.")
+        except Exception as e:
+            self.log_received.emit(f"[sing-box] Failed to auto-disable TUN IPv6: {e}")
 
     def _tun_not_ready_message(self, tun_interface_name: str) -> str:
         markers = (

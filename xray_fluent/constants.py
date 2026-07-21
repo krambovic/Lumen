@@ -6,7 +6,7 @@ import sys
 from .data_paths import resolve_data_dir, seed_user_data
 
 
-APP_NAME = "Lumen KVN"
+APP_NAME = "Lumen"
 APP_VERSION = "1.9.3"
 STATE_SCHEMA_VERSION = 1
 SUBSCRIPTION_FETCHER_EXE_NAME = "lumen-subscription-fetcher.exe"

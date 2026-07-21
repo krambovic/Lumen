@@ -1225,7 +1225,7 @@ Item {
                     AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Импорт"); onClicked: App.importBackup() }
                 }
                 SettingRow {
-                    glyph: "\uE9D9"; title: I18n.t("Телеметрия"); subtitle: I18n.t("Отправлять диагностические ошибки на сервер Lumen KVN")
+                    glyph: "\uE9D9"; title: I18n.t("Телеметрия"); subtitle: I18n.t("Отправлять диагностические ошибки на сервер Lumen")
                     Switch { checked: App.diagnosticsUploadEnabled; onToggled: App.setDiagnosticsUpload(checked) }
                 }
             }

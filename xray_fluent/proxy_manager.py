@@ -287,8 +287,8 @@ class FirefoxProxyManager:
     use the same mixed endpoint explicitly.
     """
 
-    _MARKER_BEGIN = "// Lumen KVN system proxy begin"
-    _MARKER_END = "// Lumen KVN system proxy end"
+    _MARKER_BEGIN = "// Lumen system proxy begin"
+    _MARKER_END = "// Lumen system proxy end"
 
     def __init__(self) -> None:
         self._backup_file = RUNTIME_DIR / "firefox_proxy_backup.json"

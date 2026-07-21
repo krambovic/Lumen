@@ -199,7 +199,7 @@ def _set_app_user_model_id() -> None:
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "Lumen.LumenKVN"
+            "Lumen.Lumen"
         )
     except Exception:
         pass
@@ -214,7 +214,7 @@ def _register_aumid_toast_identity() -> None:
     try:
         import winreg
         from ..constants import APP_ICON_PATH, APP_NAME
-        key_path = r"Software\Classes\AppUserModelId\Lumen.LumenKVN"
+        key_path = r"Software\Classes\AppUserModelId\Lumen.Lumen"
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
             winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, APP_NAME)
             if APP_ICON_PATH.is_file():
@@ -226,7 +226,7 @@ def _register_aumid_toast_identity() -> None:
 
 
 def _register_toast_protocol() -> None:
-    """Register the lumen-kvn: URL protocol so a toast click reopens the app"""
+    """Register the lumen: URL protocol so a toast click reopens the app"""
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return
     try:
@@ -236,7 +236,7 @@ def _register_toast_protocol() -> None:
             winreg.HKEY_CURRENT_USER, r"Software\Classes\lumen-kvn"
         ) as key:
             winreg.SetValueEx(
-                key, None, 0, winreg.REG_SZ, "URL:Lumen KVN Protocol"
+                key, None, 0, winreg.REG_SZ, "URL:Lumen Protocol"
             )
             winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
         with winreg.CreateKey(
@@ -268,12 +268,12 @@ def _cleanup_legacy_root_program_install() -> None:
             if str(root)
         ):
             return
-        if not (old_dir / "LumenKVN.exe").is_file():
+        if not (old_dir / "Lumen.exe").is_file():
             return
         script = (
             "$old='C:\\Program';"
             "Start-Sleep -Seconds 3;"
-            "if ((Test-Path -LiteralPath (Join-Path $old 'LumenKVN.exe')) -and "
+            "if ((Test-Path -LiteralPath (Join-Path $old 'Lumen.exe')) -and "
             "((Split-Path -Leaf $old) -ieq 'Program')) {"
             "Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue"
             "}"
@@ -314,7 +314,7 @@ def _create_windows_single_instance_mutex() -> tuple[object | None, bool]:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
         kernel32.CreateMutexW.restype = ctypes.c_void_p
-        handle = kernel32.CreateMutexW(None, True, "Local\\LumenKVN.SingleInstance")
+        handle = kernel32.CreateMutexW(None, True, "Local\\Lumen.SingleInstance")
         if not handle:
             return None, True
         already_exists = ctypes.get_last_error() == 183
@@ -356,7 +356,7 @@ def _create_single_instance(app):
     except Exception:
         return None, True
 
-    server_name = "LumenKVN.SingleInstance"
+    server_name = "Lumen.SingleInstance"
     relaunching = any(flag in sys.argv[1:] for flag in ("--relaunch-as-admin", "--relaunched"))
 
     mutex_handle, owns_mutex = _acquire_single_instance_mutex(relaunching)
@@ -369,7 +369,7 @@ def _create_single_instance(app):
             time.sleep(0.1)
         return None, False
 
-    lock = QLockFile(str(Path(tempfile.gettempdir()) / "LumenKVN.SingleInstance.lock"))
+    lock = QLockFile(str(Path(tempfile.gettempdir()) / "Lumen.SingleInstance.lock"))
     lock.setStaleLockTime(30_000)
     deadline = time.monotonic() + (20.0 if relaunching else 0.5)
 

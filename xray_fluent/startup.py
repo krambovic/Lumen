@@ -14,7 +14,7 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 STARTUP_APPROVED_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 APP_COMPAT_LAYERS_KEY = r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
 RUNASADMIN_FLAG = "RUNASADMIN"
-TASK_NAME = "Lumen KVN"
+TASK_NAME = "Lumen"
 CREATE_NO_WINDOW = 0x08000000
 STARTUP_STATE_ABSENT = "absent"
 STARTUP_STATE_ENABLED = "enabled"
@@ -236,9 +236,9 @@ def _installed_executable_path() -> Path | None:
     for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
         root = os.environ.get(env_name, "").strip()
         if root:
-            candidates.append(Path(root) / "Lumen KVN" / "LumenKVN.exe")
-    candidates.append(Path(r"C:\Program Files\Lumen KVN\LumenKVN.exe"))
-    candidates.append(Path(r"C:\Program Files (x86)\Lumen KVN\LumenKVN.exe"))
+            candidates.append(Path(root) / "Lumen" / "Lumen.exe")
+    candidates.append(Path(r"C:\Program Files\Lumen\Lumen.exe"))
+    candidates.append(Path(r"C:\Program Files (x86)\Lumen\Lumen.exe"))
     for candidate in candidates:
         try:
             if candidate.is_file():

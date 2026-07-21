@@ -59,7 +59,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; "User-Agent" = "Lumen-KVN-CI" }
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; "User-Agent" = "Lumen-CI" }
           $xray = Invoke-RestMethod "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=30" -Headers $headers |
             Where-Object { -not $_.draft -and $_.tag_name -match '^v?\d+\.\d+\.\d+' } |
             Sort-Object { [version](([regex]::Matches($_.tag_name, '\d+') | ForEach-Object Value)[0..2] -join '.') } -Descending |
@@ -92,7 +92,7 @@ jobs:
           $githubHeaders = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
             "X-GitHub-Api-Version" = "2022-11-28"
-            "User-Agent" = "Lumen-KVN-CI"
+            "User-Agent" = "Lumen-CI"
           }
 
           Write-Host "Downloading Xray-core..."
@@ -194,7 +194,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "Lumen KVN ${{ env.RELEASE_TAG }}"
+          name: "Lumen ${{ env.RELEASE_TAG }}"
           body: |
             ## What's Changed
 
@@ -203,7 +203,7 @@ jobs:
             - [feat(i18n)]: Added Persian and Simplified Chinese interface translations with automatic language selection from the Windows locale, and made built-in quick-preset names update immediately when the language changes.
             - [fix(window)]: Restored window geometry is now fitted to the active monitor and applied after the custom frame is initialized, preventing oversized top areas and clipped controls on small or high-DPI displays without changing the interface design.
 
-            Full Changelog: https://github.com/krambovic/Lumen-KVN/compare/v1.9.2...v1.9.3
+            Full Changelog: https://github.com/krambovic/Lumen/compare/v1.9.2...v1.9.3
           generate_release_notes: false
           make_latest: true
           files: |

@@ -523,7 +523,7 @@ class ZapretManager(QObject):
             launch_error = self._process.errorString()
             if _is_elevation_launch_error(launch_error):
                 self.log_line.emit(f"[zapret] Запуск winws2.exe отклонён Windows: {launch_error}")
-                self.error.emit("Для запуска Zapret нужны права администратора. Перезапустите Lumen KVN от имени администратора.")
+                self.error.emit("Для запуска Zapret нужны права администратора. Перезапустите Lumen от имени администратора.")
                 self._release_process()
                 self._launch_mode = "direct"
                 return

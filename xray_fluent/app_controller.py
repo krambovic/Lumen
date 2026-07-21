@@ -500,7 +500,7 @@ class AppController(QObject):
         if not is_process_elevated():
             self.status.emit(
                 "warning",
-                "Lumen KVN запущен без прав администратора. TUN, Zapret и WinDivert могут работать нестабильно.",
+                "Lumen запущен без прав администратора. TUN, Zapret и WinDivert могут работать нестабильно.",
             )
 
     def _reconcile_startup_registration(self) -> None:
@@ -1123,6 +1123,7 @@ class AppController(QObject):
         tun: bool,
         core: str,
         api_port: int,
+        clash_api_secret: str = "",
         hybrid: bool = False,
         socks_port: int | None = None,
         http_port: int | None = None,
@@ -1163,6 +1164,7 @@ class AppController(QObject):
             tun_layer_signature=self._tun_layer_signature(node, settings, routing),
             hybrid=hybrid,
             api_port=int(api_port),
+            clash_api_secret=str(clash_api_secret),
             xray_inbound_tags=tuple(xray_inbound_tags),
             sidecar_relay_port=int(sidecar_relay_port),
             protect_ss_port=int(protect_ss_port),
@@ -1494,7 +1496,7 @@ class AppController(QObject):
                 creationflags=0x08000000,
             )
             interfaces = result_output_text(result)
-            for interface_name in ("LumenKVN_TUN", "LumenKVN_TUN"):
+            for interface_name in ("Lumen_TUN", "Lumen_TUN"):
                 if interface_name not in interfaces:
                     continue
                 _sp.run(
@@ -1693,7 +1695,7 @@ class AppController(QObject):
     def toggle_connection(self) -> None:
         current_target = self._desired_connected if (self._transition_active or self._transition_pending) else self.connected
         if not current_target and self.state.settings.tun_mode and not is_process_elevated():
-            self.status.emit("warning", "Для VPN (TUN) нужны права администратора. Перезапускаю Lumen KVN с повышенными правами.")
+            self.status.emit("warning", "Для VPN (TUN) нужны права администратора. Перезапускаю Lumen с повышенными правами.")
             self.admin_relaunch_requested.emit()
             return
         self._desired_connected = not current_target
@@ -1752,7 +1754,7 @@ class AppController(QObject):
             self._log(f"[discord-proxy] disabled while TUN is active: {result.message}")
             return
         if not self.connected and not self._desired_connected:
-            self.status.emit("warning", "Сначала запустите прокси Lumen KVN, потом включите Discord Voice через прокси")
+            self.status.emit("warning", "Сначала запустите прокси Lumen, потом включите Discord Voice через прокси")
             return
         result = self.discord_proxy.enable(int(DEFAULT_DISCORD_SOCKS_PORT))
         self._log(f"[discord-proxy] enable: {result.message}")
@@ -1909,7 +1911,7 @@ class AppController(QObject):
                     if is_process_elevated():
                         self.status.emit("success", "Запуск от имени администратора включён")
                     else:
-                        self.status.emit("warning", "Запуск от имени администратора включён. Перезапускаю Lumen KVN с повышенными правами.")
+                        self.status.emit("warning", "Запуск от имени администратора включён. Перезапускаю Lumen с повышенными правами.")
                         self.admin_relaunch_requested.emit()
                 else:
                     self.status.emit("info", "Запуск от имени администратора отключён")

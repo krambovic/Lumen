@@ -73,7 +73,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; "User-Agent" = "Lumen-KVN-CI" }
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; "User-Agent" = "Lumen-CI" }
           $xray = Invoke-RestMethod "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=30" -Headers $headers |
             Where-Object { -not $_.draft -and $_.tag_name -match '^v?\d+\.\d+\.\d+' } |
             Sort-Object { [version](([regex]::Matches($_.tag_name, '\d+') | ForEach-Object Value)[0..2] -join '.') } -Descending |
@@ -106,7 +106,7 @@ jobs:
           $githubHeaders = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
             "X-GitHub-Api-Version" = "2022-11-28"
-            "User-Agent" = "Lumen-KVN-CI"
+            "User-Agent" = "Lumen-CI"
           }
 
           Write-Host "Downloading Xray-core..."
@@ -210,7 +210,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.PRERELEASE_TAG }}
-          name: "Lumen KVN ${{ env.PRERELEASE_TAG }}"
+          name: "Lumen ${{ env.PRERELEASE_TAG }}"
           body_path: changelog_pre.md
           prerelease: true
           make_latest: false

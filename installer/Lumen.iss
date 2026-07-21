@@ -7,7 +7,7 @@
 #endif
 
 #ifndef SourceDir
-#define SourceDir "..\dist\LumenKVN"
+#define SourceDir "..\dist\Lumen"
 #endif
 
 #ifndef OutputDir
@@ -19,11 +19,11 @@
 #endif
 
 #ifndef AppNameValue
-#define AppNameValue "Lumen KVN"
+#define AppNameValue "Lumen"
 #endif
 
 #ifndef OutputBaseName
-#define OutputBaseName "LumenKVN-Setup-windows-x64"
+#define OutputBaseName "Lumen-Setup-windows-x64"
 #endif
 
 [Setup]
@@ -31,16 +31,16 @@ AppId={#AppId}
 AppName={#AppNameValue}
 AppVersion={#AppVersion}
 AppPublisher=krambovic
-AppCopyright=Copyright (c) youtubediscord/zapret-kvn contributors and krambovic/lumen-kvn contributors
-AppPublisherURL=https://github.com/krambovic/lumen-kvn
-AppSupportURL=https://github.com/krambovic/lumen-kvn/issues
-AppUpdatesURL=https://github.com/krambovic/lumen-kvn/releases
+AppCopyright=Copyright (c) youtubediscord/zapret-kvn contributors and krambovic/Lumen contributors
+AppPublisherURL=https://github.com/krambovic/Lumen
+AppSupportURL=https://github.com/krambovic/Lumen/issues
+AppUpdatesURL=https://github.com/krambovic/Lumen/releases
 DefaultDirName={commonpf64}\{#AppNameValue}
 DefaultGroupName={#AppNameValue}
 DisableProgramGroupPage=yes
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBaseName}
-SetupIconFile=..\assets\LumenKVN.ico
+SetupIconFile=..\assets\Lumen.ico
 LicenseFile=..\LICENSE
 Compression=lzma2/fast
 SolidCompression=no
@@ -50,7 +50,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 CloseApplications=yes
 RestartApplications=no
-UninstallDisplayIcon={app}\LumenKVN.exe
+UninstallDisplayIcon={app}\Lumen.exe
 VersionInfoCompany=krambovic
 VersionInfoDescription={#AppNameValue} installer
 VersionInfoProductName={#AppNameValue}
@@ -69,23 +69,28 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "zapret\exe\*.sys,portable
 Source: "{#SourceDir}\zapret\exe\*.sys"; DestDir: "{app}\zapret\exe"; Flags: ignoreversion restartreplace uninsrestartdelete
 
 [Icons]
-Name: "{group}\{#AppNameValue}"; Filename: "{app}\LumenKVN.exe"; WorkingDir: "{app}"
+Name: "{group}\{#AppNameValue}"; Filename: "{app}\Lumen.exe"; WorkingDir: "{app}"
 Name: "{group}\Удалить {#AppNameValue}"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\{#AppNameValue}"; Filename: "{app}\LumenKVN.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{commondesktop}\{#AppNameValue}"; Filename: "{app}\Lumen.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\LumenKVN.exe"; Description: "Запустить Lumen KVN"; Flags: nowait postinstall skipifsilent runascurrentuser
+Filename: "{app}\Lumen.exe"; Description: "Запустить Lumen"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [UninstallRun]
-Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN ""Lumen KVN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupTask"
-Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v ""Lumen KVN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupRun"
-Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run /v ""Lumen KVN"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupApproved"
+Filename: "{cmd}"; Parameters: "/C schtasks /Delete /TN ""Lumen"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupTask"
+Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v ""Lumen"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupRun"
+Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run /v ""Lumen"" /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteStartupApproved"
+
+[InstallDelete]
+Type: files; Name: "{app}\LumenKVN.exe"
 
 [Code]
 procedure StopZapretDrivers;
 var
   ResultCode: Integer;
 begin
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM LumenKVN.exe >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM Lumen.exe >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM winws.exe >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM winws2.exe >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C for %S in (Monkey WinDivert WinDivert14 WinDivert64 WinDivert2) do @sc stop %S >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);

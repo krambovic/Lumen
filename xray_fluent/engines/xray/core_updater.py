@@ -486,10 +486,13 @@ def check_and_update_xray_core(
         )
 
     if not apply_update:
-        direction = "обновление" if _is_newer(latest_version, current_version) else "переход"
+        if _is_newer(latest_version, current_version):
+            message = f"Доступно обновление Xray до {latest_version}"
+        else:
+            message = f"Доступен переход Xray на {latest_version}"
         return XrayCoreUpdateResult(
             status="available",
-            message=f"Доступен {direction} Xray на {latest_version}",
+            message=message,
             channel=release.channel,
             current_version=current_version,
             latest_version=latest_version,

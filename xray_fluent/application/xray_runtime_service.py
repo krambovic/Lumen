@@ -62,29 +62,31 @@ def ensure_xray_metrics_contract(
     system_policy["statsOutboundDownlink"] = True
 
     outbounds = controller._ensure_list(payload, "outbounds")
-    api = controller._ensure_dict(payload, "api")
-    existing_api_tag = str(api.get("tag") or "").strip()
-    api_tag = APP_METRICS_API_TAG
-    if existing_api_tag:
-        for outbound in outbounds:
-            if not isinstance(outbound, dict):
-                continue
-            if str(outbound.get("tag") or "").strip() != existing_api_tag:
-                continue
-            protocol = str(outbound.get("protocol") or "").strip().lower()
-            if protocol in {"freedom", "loopback"}:
-                api_tag = existing_api_tag
-            break
-    api["tag"] = api_tag
-    services = api.get("services")
-    normalized_services = [str(item) for item in services] if isinstance(services, list) else []
-    if "StatsService" not in normalized_services:
-        normalized_services.append("StatsService")
-    api["services"] = normalized_services
-
+    routing = controller._ensure_dict(payload, "routing")
+    rules = controller._ensure_list(routing, "rules")
     inbounds = controller._ensure_list(payload, "inbounds")
-    existing_ports = controller._collect_xray_inbound_ports(payload)
+    imported_api = payload.get("api")
+    imported_api_tag = str(imported_api.get("tag") or "").strip() if isinstance(imported_api, dict) else ""
+    inbound_by_tag = {
+        str(inbound.get("tag") or "").strip(): inbound
+        for inbound in inbounds
+        if isinstance(inbound, dict) and str(inbound.get("tag") or "").strip()
+    }
+    legacy_api_inbound_tags: set[str] = set()
+    protected_outbound_tags = {"block", "bypass", "direct", "dns", "dns-out", "proxy"}
+    if imported_api_tag and imported_api_tag not in protected_outbound_tags:
+        for rule in rules:
+            if not isinstance(rule, dict) or str(rule.get("outboundTag") or "").strip() != imported_api_tag:
+                continue
+            inbound_tags = rule.get("inboundTag")
+            candidates = inbound_tags if isinstance(inbound_tags, list) else [inbound_tags]
+            for candidate in candidates:
+                tag = str(candidate or "").strip()
+                inbound = inbound_by_tag.get(tag)
+                if isinstance(inbound, dict) and str(inbound.get("protocol") or "").strip().lower() == "dokodemo-door":
+                    legacy_api_inbound_tags.add(tag)
 
+    api_inbound_tags = legacy_api_inbound_tags | {APP_METRICS_API_INBOUND_TAG}
     preferred_api_port = 0
     for inbound in inbounds:
         if not isinstance(inbound, dict):
@@ -96,8 +98,64 @@ def ensure_xray_metrics_contract(
         except (TypeError, ValueError):
             preferred_api_port = 0
         if preferred_api_port > 0:
-            existing_ports.discard(preferred_api_port)
-        break
+            break
+
+    inbounds[:] = [
+        inbound
+        for inbound in inbounds
+        if not (
+            isinstance(inbound, dict)
+            and str(inbound.get("tag") or "").strip() in api_inbound_tags
+        )
+    ]
+    sanitized_rules: list[Any] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            sanitized_rules.append(rule)
+            continue
+        if str(rule.get("outboundTag") or "").strip() == APP_METRICS_API_TAG:
+            continue
+        inbound_tags = rule.get("inboundTag")
+        if isinstance(inbound_tags, list):
+            filtered_tags = [
+                tag
+                for tag in inbound_tags
+                if str(tag or "").strip() not in api_inbound_tags
+            ]
+            if not filtered_tags and inbound_tags:
+                continue
+            if len(filtered_tags) != len(inbound_tags):
+                rule = dict(rule)
+                rule["inboundTag"] = filtered_tags
+        elif str(inbound_tags or "").strip() in api_inbound_tags:
+            continue
+        sanitized_rules.append(rule)
+    rules[:] = sanitized_rules
+    removable_api_outbound_tags = {APP_METRICS_API_TAG}
+    if legacy_api_inbound_tags and not any(
+        isinstance(rule, dict) and str(rule.get("outboundTag") or "").strip() == imported_api_tag
+        for rule in rules
+    ):
+        removable_api_outbound_tags.add(imported_api_tag)
+    outbounds[:] = [
+        outbound
+        for outbound in outbounds
+        if not (
+            isinstance(outbound, dict)
+            and str(outbound.get("tag") or "").strip() in removable_api_outbound_tags
+            and str(outbound.get("protocol") or "").strip().lower() in {"freedom", "loopback"}
+        )
+    ]
+
+    # Imported control-plane services and the simplified api.listen endpoint are
+    # deliberately discarded. Lumen needs only traffic statistics, exposed by
+    # one app-owned loopback inbound below.
+    payload["api"] = {
+        "tag": APP_METRICS_API_TAG,
+        "services": ["StatsService"],
+    }
+    api_tag = APP_METRICS_API_TAG
+    existing_ports = controller._collect_xray_inbound_ports(payload)
 
     if preferred_api_port > 0:
         api_port = preferred_api_port
@@ -116,7 +174,9 @@ def ensure_xray_metrics_contract(
         "protocol": "dokodemo-door",
         "settings": {"address": PROXY_HOST},
     }
-    controller._replace_or_append_tagged(inbounds, APP_METRICS_API_INBOUND_TAG, metrics_inbound)
+    inbounds.append(metrics_inbound)
+    if api_port > 0:
+        existing_ports.add(api_port)
 
     discord_proxy_enabled = bool(controller.state.settings.discord_proxy_enabled)
     if discord_proxy_enabled and (
@@ -145,12 +205,7 @@ def ensure_xray_metrics_contract(
             },
         )
 
-    has_api_outbound = any(
-        isinstance(outbound, dict) and str(outbound.get("tag") or "") == api_tag
-        for outbound in outbounds
-    )
-    if not has_api_outbound:
-        outbounds.append({"tag": api_tag, "protocol": "freedom", "settings": {}})
+    outbounds.append({"tag": api_tag, "protocol": "freedom", "settings": {}})
 
     user_inbound_tags: list[str] = []
     for index, inbound in enumerate(inbounds):
@@ -165,8 +220,6 @@ def ensure_xray_metrics_contract(
         if tag not in user_inbound_tags:
             user_inbound_tags.append(tag)
 
-    routing = controller._ensure_dict(payload, "routing")
-    rules = controller._ensure_list(routing, "rules")
     metrics_rule = {
         "type": "field",
         "inboundTag": [APP_METRICS_API_INBOUND_TAG],
@@ -177,17 +230,7 @@ def ensure_xray_metrics_contract(
         "inboundTag": [APP_DISCORD_PROXY_INBOUND_TAG],
         "outboundTag": "proxy",
     }
-    replaced = False
-    for index, rule in enumerate(rules):
-        if not isinstance(rule, dict):
-            continue
-        inbound_tags = rule.get("inboundTag")
-        if isinstance(inbound_tags, list) and APP_METRICS_API_INBOUND_TAG in [str(item) for item in inbound_tags]:
-            rules[index] = metrics_rule
-            replaced = True
-            break
-    if not replaced:
-        rules.insert(0, metrics_rule)
+    rules.insert(0, metrics_rule)
     if discord_proxy_enabled:
         replaced = False
         for index, rule in enumerate(rules):

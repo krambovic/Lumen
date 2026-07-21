@@ -158,6 +158,21 @@ def _tun_sniff_rule() -> dict:
     }
 
 
+def test_runtime_plan_propagates_its_rotating_clash_api_secret() -> None:
+    document = parse_singbox_document(Path("test.json"), json.dumps(_base_config()))
+
+    first_plan = plan_singbox_runtime(document, _node(), routing=RoutingSettings(mode="global"))
+    second_plan = plan_singbox_runtime(document, _node(), routing=RoutingSettings(mode="global"))
+
+    assert first_plan.clash_api_secret
+    assert first_plan.clash_api_secret != second_plan.clash_api_secret
+    assert (
+        first_plan.singbox_config["experimental"]["clash_api"]["secret"]
+        == first_plan.clash_api_secret
+    )
+    assert first_plan.singbox_config["experimental"]["clash_api"]["external_controller"] == "127.0.0.1:19090"
+
+
 def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     import xray_fluent.engines.singbox.runtime_planner as planner
 

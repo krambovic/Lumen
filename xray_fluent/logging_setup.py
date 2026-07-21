@@ -1,4 +1,4 @@
-"""Centralized, domain-separated logging for Lumen KVN.
+"""Centralized, domain-separated logging for Lumen.
 
 Splits logs into per-domain rotating files inside data/logs/:
   - core.log     - VPN engines (xray / sing-box / TUN / zapret)

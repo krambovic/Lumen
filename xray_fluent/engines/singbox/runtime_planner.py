@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import hashlib
 from ipaddress import ip_address, ip_network
 import json
+import secrets
 import socket
 import threading
 import time
@@ -112,6 +113,7 @@ class SingboxRuntimePlan:
     singbox_config: dict[str, Any]
     has_proxy_outbound: bool
     used_selected_node: bool
+    clash_api_secret: str
     xray_sidecar: SingboxXraySidecarPlan | None
 
     @property
@@ -204,7 +206,7 @@ def plan_singbox_runtime(
             local_socks_port=local_socks_port,
             local_http_port=local_http_port,
         )
-        _ensure_singbox_metrics_contract(runtime_config)
+        clash_api_secret = _ensure_singbox_metrics_contract(runtime_config)
         _ensure_singbox_runtime_contract(
             runtime_config,
             tun_mode=tun_mode,
@@ -232,6 +234,7 @@ def plan_singbox_runtime(
             singbox_config=runtime_config,
             has_proxy_outbound=True,
             used_selected_node=True,
+            clash_api_secret=clash_api_secret,
             xray_sidecar=None,
         )
 
@@ -244,7 +247,7 @@ def plan_singbox_runtime(
         local_socks_port=local_socks_port,
         local_http_port=local_http_port,
     )
-    _ensure_singbox_metrics_contract(runtime_config)
+    clash_api_secret = _ensure_singbox_metrics_contract(runtime_config)
     _ensure_singbox_runtime_contract(
         runtime_config,
         tun_mode=tun_mode,
@@ -275,6 +278,7 @@ def plan_singbox_runtime(
             singbox_config=runtime_config,
             has_proxy_outbound=False,
             used_selected_node=False,
+            clash_api_secret=clash_api_secret,
             xray_sidecar=None,
         )
 
@@ -308,6 +312,7 @@ def plan_singbox_runtime(
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
+            clash_api_secret=clash_api_secret,
         )
         if routing is not None:
             apply_singbox_gui_routing(plan.singbox_config, routing)
@@ -341,6 +346,7 @@ def plan_singbox_runtime(
         singbox_config=runtime_config,
         has_proxy_outbound=True,
         used_selected_node=True,
+        clash_api_secret=clash_api_secret,
         xray_sidecar=None,
     )
 
@@ -361,6 +367,7 @@ def _plan_hybrid_runtime(
     preferred_relay_port: int,
     preferred_protect_port: int,
     preferred_protect_password: str,
+    clash_api_secret: str,
 ) -> SingboxRuntimePlan:
     relay_port = preferred_relay_port if preferred_relay_port > 0 else _find_free_port(preferred=SINGBOX_XRAY_RELAY_PORT)
     excluded_ports = {relay_port}
@@ -432,6 +439,7 @@ def _plan_hybrid_runtime(
         singbox_config=runtime_config,
         has_proxy_outbound=True,
         used_selected_node=True,
+        clash_api_secret=clash_api_secret,
         xray_sidecar=sidecar,
     )
 
@@ -1294,7 +1302,7 @@ def _singbox_discord_rule_insert_index(rules: list[Any]) -> int:
     return index
 
 
-def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> None:
+def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> str:
     log = _ensure_dict(payload, "log")
     if str(log.get("level") or "").strip().lower() in {"", "warn", "warning", "error", "fatal", "panic"}:
         log["level"] = "info"
@@ -1310,8 +1318,12 @@ def _ensure_singbox_metrics_contract(payload: dict[str, Any]) -> None:
     cache_file["path"] = str(cache_path)
     cache_file["store_fakeip"] = True
     cache_file["store_warp_config"] = True
-    clash_api = _ensure_dict(experimental, "clash_api")
-    clash_api["external_controller"] = f"127.0.0.1:{SINGBOX_CLASH_API_PORT}"
+    clash_api_secret = secrets.token_urlsafe(32)
+    experimental["clash_api"] = {
+        "external_controller": f"127.0.0.1:{SINGBOX_CLASH_API_PORT}",
+        "secret": clash_api_secret,
+    }
+    return clash_api_secret
 
 
 _SINGBOX_TUN_IPV6_ADDRESS = "fdfe:dcba:9876::1/126"

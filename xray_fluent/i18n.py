@@ -82,5 +82,52 @@ def translate(_key: str, params: dict | None = None) -> str:
     return text
 
 
+def translate_dynamic(message: str, catalog: dict[str, str] | None = None) -> str | None:
+    """Translate a rendered message by matching catalog keys with placeholders.
+
+    Backend workers report complete Russian messages such as
+    ``sing-box актуален (1.2.3)``.  Regular key lookup cannot translate those
+    once the version has already been inserted, so match them against catalog
+    templates such as ``sing-box актуален ({version})``.
+    """
+    translations = active_map() if catalog is None else catalog
+    if not message or not translations:
+        return None
+    exact = translations.get(message)
+    if exact is not None:
+        return exact
+
+    templates = sorted(
+        (source for source in translations if _PLACEHOLDER.search(source)),
+        key=len,
+        reverse=True,
+    )
+    for source in templates:
+        parts = _PLACEHOLDER.split(source)
+        field_names: list[str] = []
+        pattern_parts: list[str] = []
+        for index, part in enumerate(parts):
+            if index % 2:
+                field_index = len(field_names)
+                field_names.append(part)
+                pattern_parts.append(f"(?P<_field_{field_index}>.*?)")
+            else:
+                pattern_parts.append(re.escape(part))
+        pattern = "".join(pattern_parts)
+        match = re.fullmatch(pattern, message, flags=re.DOTALL)
+        if match is None:
+            continue
+        params = {
+            name: match.group(f"_field_{index}")
+            for index, name in enumerate(field_names)
+        }
+        translated = translations[source]
+        return _PLACEHOLDER.sub(
+            lambda placeholder: params.get(placeholder.group(1), placeholder.group(0)),
+            translated,
+        )
+    return None
+
+
 def tr(_key: str, **params) -> str:
     return translate(_key, params)

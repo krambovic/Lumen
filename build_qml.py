@@ -1,5 +1,5 @@
 """
-Build the Qt Quick (QML) edition of Lumen KVN via PyInstaller.
+Build the Qt Quick (QML) edition of Lumen via PyInstaller.
 
 Usage:  python build_qml.py            - full build (clean + compile + pack zip)
         python build_qml.py --no-zip   - skip zip creation
@@ -26,15 +26,15 @@ ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / ".venv"
 VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 
-APP_NAME = "LumenKVN"
+APP_NAME = "Lumen"
 SUBSCRIPTION_FETCHER_EXE_NAME = "lumen-subscription-fetcher.exe"
-SPEC_OUTPUT_NAME = "LumenKVN"
-SPEC_FILE = ROOT / "LumenKVN-qml.spec"
+SPEC_OUTPUT_NAME = "Lumen"
+SPEC_FILE = ROOT / "Lumen-qml.spec"
 
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
-PYINSTALLER_VERSION_FILE = BUILD_DIR / "LumenKVN-version-info.txt"
-APP_DIR = DIST_DIR / "LumenKVN"
+PYINSTALLER_VERSION_FILE = BUILD_DIR / "Lumen-version-info.txt"
+APP_DIR = DIST_DIR / "Lumen"
 PORTABLE_ZIP_PATH = DIST_DIR / f"{APP_NAME}-portable-windows-x64.zip"
 INSTALLER_PATH = DIST_DIR / f"{APP_NAME}-Setup-windows-x64.exe"
 
@@ -42,7 +42,7 @@ CORE_DIR = ROOT / "core"
 ZAPRET_DIR = ROOT / "zapret"
 DATA_TEMPLATES_DIR = ROOT / "data" / "templates"
 DROUTE_BUNDLE_DIR = ROOT / "data" / "external" / "droute"
-INNO_SCRIPT = ROOT / "installer" / "LumenKVN.iss"
+INNO_SCRIPT = ROOT / "installer" / "Lumen.iss"
 ASSETS_DIR = ROOT / "assets"
 NOTICE_FILES = (ROOT / "LICENSE", ROOT / "NOTICE.md", ROOT / "README_QML.md", ROOT / "README.md")
 LEGACY_CORE_FILES = ("tun2socks.exe",)
@@ -152,12 +152,12 @@ VSVersionInfo(
         '040904B0',
         [
           StringStruct('CompanyName', 'krambovic'),
-          StringStruct('FileDescription', 'Lumen KVN'),
+          StringStruct('FileDescription', 'Lumen'),
           StringStruct('FileVersion', '{version}'),
-          StringStruct('InternalName', 'LumenKVN'),
-          StringStruct('LegalCopyright', 'Copyright (c) krambovic/lumen-kvn contributors'),
-          StringStruct('OriginalFilename', 'LumenKVN.exe'),
-          StringStruct('ProductName', 'Lumen KVN'),
+          StringStruct('InternalName', 'Lumen'),
+          StringStruct('LegalCopyright', 'Copyright (c) krambovic/Lumen contributors'),
+          StringStruct('OriginalFilename', 'Lumen.exe'),
+          StringStruct('ProductName', 'Lumen'),
           StringStruct('ProductVersion', '{version}')
         ]
       )
@@ -207,7 +207,7 @@ def _remove_legacy_files(root: Path, names: tuple[str, ...]) -> None:
                 target.unlink()
                 _print(f"  removed legacy file: {target}")
             except PermissionError:
-                _print(f"ERROR: Cannot remove legacy file {target} — is LumenKVN.exe still running?")
+                _print(f"ERROR: Cannot remove legacy file {target} — is Lumen.exe still running?")
                 raise SystemExit(1)
 
 
@@ -238,7 +238,7 @@ def clean() -> None:
         try:
             shutil.rmtree(BUILD_DIR)
         except PermissionError:
-            _print(f"ERROR: Cannot remove {BUILD_DIR} — is LumenKVN.exe still running?")
+            _print(f"ERROR: Cannot remove {BUILD_DIR} — is Lumen.exe still running?")
             _print("Close the app (tray -> Quit) and try again.")
             raise SystemExit(1)
 
@@ -364,8 +364,8 @@ def build_installer() -> None:
             f"/DSourceDir={source_dir}",
             f"/DOutputDir={output_dir}",
             "/DAppId={{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}",
-            "/DAppNameValue=Lumen KVN",
-            "/DOutputBaseName=LumenKVN-Setup-windows-x64",
+            "/DAppNameValue=Lumen",
+            "/DOutputBaseName=Lumen-Setup-windows-x64",
             _windows_path(INNO_SCRIPT),
         ],
         cwd=str(ROOT),
@@ -375,7 +375,7 @@ def build_installer() -> None:
 
 # ------------------------------------------------------------------
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build Lumen KVN (QML edition)")
+    parser = argparse.ArgumentParser(description="Build Lumen (QML edition)")
     parser.add_argument("--no-zip", action="store_true", help="skip zip creation")
     parser.add_argument("--no-installer", action="store_true", help="skip Inno Setup installer")
     parser.add_argument("--clean", action="store_true", help="only clean build artefacts")

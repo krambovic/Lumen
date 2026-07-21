@@ -19,7 +19,7 @@ def test_droute_bundle_validation_rejects_missing_payload(tmp_path: Path) -> Non
 
 
 def test_subscription_fetcher_is_copied_into_packaged_app(tmp_path: Path) -> None:
-    main_executable = tmp_path / "LumenKVN.exe"
+    main_executable = tmp_path / "Lumen.exe"
     main_executable.write_bytes(b"pyinstaller-launcher")
 
     helper = build_qml._install_subscription_fetcher(tmp_path)

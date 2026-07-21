@@ -98,15 +98,25 @@ def _process_name_from_metadata(meta: dict[str, Any]) -> tuple[str, str]:
     return "system:unknown", tr("Системный трафик")
 
 
-def collect_process_stats(clash_api_port: int = SINGBOX_CLASH_API_PORT) -> list[ProcessTrafficSnapshot]:
+def collect_process_stats(
+    clash_api_port: int = SINGBOX_CLASH_API_PORT,
+    *,
+    clash_api_secret: str = "",
+) -> list[ProcessTrafficSnapshot]:
     """Poll sing-box Clash API and aggregate traffic by process.
 
     Returns list of ProcessTrafficSnapshot sorted by total traffic (desc).
     Returns empty list on error.
     """
+    if not clash_api_secret:
+        return []
     try:
         url = f"http://127.0.0.1:{clash_api_port}/connections"
-        req = urllib.request.Request(url, method="GET")
+        req = urllib.request.Request(
+            url,
+            headers={"Authorization": f"Bearer {clash_api_secret}"},
+            method="GET",
+        )
         with urllib.request.urlopen(req, timeout=2) as resp:
             data: dict[str, Any] = json.loads(resp.read())
     except Exception:

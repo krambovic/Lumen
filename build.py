@@ -1,6 +1,6 @@
-"""Build Lumen KVN.
+"""Build Lumen.
 
-Lumen KVN is QML-only. This wrapper keeps the old `python build.py` command
+Lumen is QML-only. This wrapper keeps the old `python build.py` command
 working while delegating all packaging to build_qml.py.
 """
 

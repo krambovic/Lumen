@@ -39,7 +39,7 @@ from .node_list_model import NodeListModel
 from .process_model import ProcessModel
 from ..toast import set_toasts_enabled, show_toast
 from ..window_geometry import fit_window_geometry
-from ...i18n import active_map, available_languages, language_name, set_language, tr
+from ...i18n import active_map, available_languages, language_name, set_language, tr, translate_dynamic
 from ...log_utils import parse_log_line
 
 
@@ -624,7 +624,7 @@ class AppBridge(QObject):
             except Exception:
                 pass
         if not relaunch_as_admin():
-            msg = "Не удалось перезапустить Lumen KVN от имени администратора"
+            msg = "Не удалось перезапустить Lumen от имени администратора"
             logger.error("[app] relaunch_as_admin returned False")
             self.toast.emit("error", msg)
             try:
@@ -685,8 +685,18 @@ class AppBridge(QObject):
         if not message or not self._english_ui():
             return message
         catalog = active_map()
-        if message in catalog:
-            return catalog[message]
+        localized = translate_dynamic(message, catalog)
+        if localized is not None:
+            return localized
+        catalog_prefix = max(
+            (source for source in catalog if source and message.startswith(source)),
+            key=len,
+            default="",
+        )
+        if catalog_prefix:
+            tail = message[len(catalog_prefix):]
+            localized_tail = translate_dynamic(tail, catalog)
+            return catalog[catalog_prefix] + (localized_tail if localized_tail is not None else tail)
         replacements = (
             ("Запуск VPN...", "Starting VPN..."),
             ("Подключение VPN...", "Connecting VPN..."),
@@ -713,7 +723,7 @@ class AppBridge(QObject):
         )
         for ru, en in replacements:
             if message == ru:
-                return en
+                return catalog.get(ru, en)
         prefix_replacements = (
             ("Не удалось проверить droute: ", "Could not check droute: "),
             ("Не удалось обновить droute: ", "Could not update droute: "),
@@ -744,11 +754,19 @@ class AppBridge(QObject):
         )
         for ru, en in prefix_replacements:
             if message.startswith(ru):
-                return en + message[len(ru):]
+                return catalog.get(ru, en) + message[len(ru):]
         if message.startswith("Xray core актуален (") and message.endswith(")"):
-            return "Xray core is up to date " + message[len("Xray core актуален "):]
+            return (
+                catalog.get("Xray core актуален", "Xray core is up to date")
+                + " "
+                + message[len("Xray core актуален "):]
+            )
         if message.startswith("sing-box актуален (") and message.endswith(")"):
-            return "sing-box is up to date " + message[len("sing-box актуален "):]
+            return (
+                catalog.get("sing-box актуален", "sing-box is up to date")
+                + " "
+                + message[len("sing-box актуален "):]
+            )
         return message
 
     def _on_status_message(self, level: str, message: str) -> None:
@@ -2328,9 +2346,9 @@ class AppBridge(QObject):
             enabled=bool(getattr(settings, "app_auto_update", False)),
         ):
             self._app_update_auto_installing = True
-            message = tr("Найдено обновление v{version}. Lumen KVN сейчас автоматически обновится.", version=update.version)
+            message = tr("Найдено обновление v{version}. Lumen сейчас автоматически обновится.", version=update.version)
             self.toast.emit("info", message)
-            show_toast("Lumen KVN", message)
+            show_toast("Lumen", message)
             QTimer.singleShot(0, self.downloadAppUpdate)
 
     def _on_app_update_error(self, message: str) -> None:
@@ -2600,7 +2618,7 @@ class AppBridge(QObject):
             self.controller.state.settings.zapret_preset = name
             self.controller.save()
             if not is_process_elevated():
-                self.toast.emit("warning", "Для Zapret нужны права администратора. Перезапускаю Lumen KVN.")
+                self.toast.emit("warning", "Для Zapret нужны права администратора. Перезапускаю Lumen.")
                 self.controller.admin_relaunch_requested.emit()
                 return
             self.controller.zapret.start(name)

@@ -527,7 +527,7 @@ def check_or_update_droute(
         return ResourceUpdateResult(
             "droute",
             "error",
-            "Не удалось проверить droute: встроенный пакет не найден. Переустановите Lumen KVN.",
+            "Не удалось проверить droute: встроенный пакет не найден. Переустановите Lumen.",
             current,
             "",
         )

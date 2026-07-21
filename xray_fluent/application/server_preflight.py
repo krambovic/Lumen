@@ -14,8 +14,7 @@ _XRAY_OBSERVATORY_STRATEGIES = {"leastping", "leastload"}
 
 
 def validate_server_preflight(node: Node | None, settings: AppSettings) -> str | None:
-    if node is None:
-        return None
+    return None
     outbound = node.outbound if isinstance(node.outbound, dict) else {}
     protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
     stream = outbound.get("streamSettings") if isinstance(outbound.get("streamSettings"), dict) else {}

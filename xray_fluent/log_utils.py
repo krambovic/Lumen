@@ -132,13 +132,13 @@ def _humanize(body: str, level: str) -> tuple[str, str, str]:
     if core_file_missing:
         return (
             "Файл сетевого ядра не найден.",
-            "Проверьте путь к ядру в настройках или переустановите Lumen KVN. " + body,
+            "Проверьте путь к ядру в настройках или переустановите Lumen. " + body,
             "",
         )
     if "permission denied" in low or "access is denied" in low or "отказано в доступе" in low:
         return (
             "Windows не разрешила выполнить операцию.",
-            "Перезапустите Lumen KVN от имени администратора. " + body,
+            "Перезапустите Lumen от имени администратора. " + body,
             "",
         )
     if "no such host" in low or "dns" in low and any(token in low for token in ("failed", "timeout", "deadline")):

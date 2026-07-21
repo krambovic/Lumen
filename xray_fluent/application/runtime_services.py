@@ -38,6 +38,7 @@ def start_metrics_worker(controller: AppController) -> None:
         mode = "xray"
     socks_port, http_port = controller.get_effective_proxy_ports()
     inbound_tags = controller._active_session.xray_inbound_tags if controller._active_session else ()
+    clash_api_secret = controller._active_session.clash_api_secret if controller._active_session else ""
     controller._metrics_worker = LiveMetricsWorker(
         controller.state.settings.xray_path,
         controller._xray_api_port,
@@ -45,6 +46,7 @@ def start_metrics_worker(controller: AppController) -> None:
         ping_port=ping_port,
         mode=mode,
         clash_api_port=SINGBOX_CLASH_API_PORT,
+        clash_api_secret=clash_api_secret,
         socks_port=socks_port,
         http_port=http_port,
         xray_inbound_tags=list(inbound_tags),
