@@ -95,6 +95,14 @@ def test_lumen_singbox_build_is_not_replaced_by_unpatched_upstream(
     )
     monkeypatch.setattr(
         core_resource_updater,
+        "_pick_singbox_cronet_asset",
+        lambda _release: (
+            "sing-box-windows-amd64-purego.zip",
+            "https://example.invalid/cronet.zip",
+        ),
+    )
+    monkeypatch.setattr(
+        core_resource_updater,
         "_download_file",
         lambda *_args, **_kwargs: pytest.fail("unpatched upstream core must not be downloaded"),
     )
@@ -104,6 +112,82 @@ def test_lumen_singbox_build_is_not_replaced_by_unpatched_upstream(
     assert result.status == "available"
     assert result.current_version == "1.13.14-extended-2.5.1"
     assert result.latest_version == "1.13.15-extended-2.6.0"
+
+
+def test_singbox_cronet_picker_uses_matching_purego_archive() -> None:
+    release = {
+        "assets": [
+            {
+                "name": "sing-box-1.13.14-windows-amd64.zip",
+                "browser_download_url": "https://example.invalid/core.zip",
+            },
+            {
+                "name": "sing-box-1.13.14-windows-amd64-purego.zip",
+                "browser_download_url": "https://example.invalid/purego.zip",
+            },
+        ]
+    }
+
+    assert core_resource_updater._pick_singbox_cronet_asset(release) == (
+        "sing-box-1.13.14-windows-amd64-purego.zip",
+        "https://example.invalid/purego.zip",
+    )
+
+
+def test_singbox_update_repairs_missing_cronet_without_replacing_lumen_core(
+    monkeypatch, tmp_path
+) -> None:
+    exe = tmp_path / "sing-box.exe"
+    exe.write_bytes(b"lumen-patched-core")
+    cronet_archive = io.BytesIO()
+    with zipfile.ZipFile(cronet_archive, "w") as archive:
+        archive.writestr("sing-box/libcronet.dll", b"c" * 2048)
+    cronet_payload = cronet_archive.getvalue()
+    cronet_hash = hashlib.sha256(cronet_payload).hexdigest()
+    release = {
+        "tag_name": "v1.13.14-extended-2.5.2",
+        "assets": [
+            {
+                "name": "sing-box-1.13.14-extended-2.5.2-windows-amd64.zip",
+                "browser_download_url": "https://example.invalid/core.zip",
+            },
+            {
+                "name": "sing-box-1.13.14-extended-2.5.2-windows-amd64-purego.zip",
+                "browser_download_url": "https://example.invalid/cronet.zip",
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        core_resource_updater,
+        "resolve_configured_path",
+        lambda *_args, **_kwargs: exe,
+    )
+    monkeypatch.setattr(
+        core_resource_updater,
+        "get_singbox_version",
+        lambda _path: "sing-box version 1.13.14-extended-2.5.2-lumen.1",
+    )
+    monkeypatch.setattr(core_resource_updater, "_request_json", lambda *_a, **_k: release)
+    monkeypatch.setattr(
+        core_resource_updater,
+        "_singbox_asset_digest",
+        lambda _release, name, **_kwargs: (
+            cronet_hash if "purego" in name else "0" * 64
+        ),
+    )
+
+    def download(_url, destination, **_kwargs) -> None:
+        assert "purego" in destination.name
+        destination.write_bytes(cronet_payload)
+
+    monkeypatch.setattr(core_resource_updater, "_download_file", download)
+
+    result = core_resource_updater.check_or_update_singbox(str(exe), True)
+
+    assert result.status == "updated"
+    assert "NaiveProxy" in result.message
+    assert exe.read_bytes() == b"lumen-patched-core"
+    assert (tmp_path / "libcronet.dll").read_bytes() == b"c" * 2048
 
 
 @pytest.mark.parametrize(

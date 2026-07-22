@@ -670,7 +670,8 @@ Item {
                 spacing: 8
 
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B5"; text: I18n.t("Импорт из буфера"); onClicked: App.importClipboard() }
-                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8E5"; text: I18n.t("Импорт .conf"); onClicked: App.importNodeFile() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8E5"; text: I18n.t("Импорт файла конфигурации"); onClicked: App.importNodeFile() }
+                AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uECC8"; text: I18n.t("Добавить сервер вручную"); onClicked: editDialog.openNew(page.filterGroup || "Default") }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE710"; text: I18n.t("Создать группу"); onClicked: groupDialog.openNew() }
                 AccentButton { kind: "ghost";  iconOnly: true; glyph: "\uE8B3"; text: I18n.t("Выбрать все"); onClicked: page.selectAll() }
                 // Пинг — две кнопки как в оригинале (FIF.SEND / FIF.SYNC), способ из настроек
@@ -1415,7 +1416,10 @@ Item {
     }
 
     // Диалоги редактирования (одиночного и массового) — порт ui/node_edit_dialog.py и ui/bulk_edit_dialog.py.
-    NodeEditDialog { id: editDialog }
+    NodeEditDialog {
+        id: editDialog
+        onNodeCreated: function(nodeId) { page.revealImportedNode(nodeId) }
+    }
     BulkEditDialog { id: bulkDialog }
 
     // ── диалог создания ручной группы без подписки ──────────────

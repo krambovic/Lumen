@@ -299,6 +299,7 @@ class AppSettings:
     start_minimized: bool = False
     enable_system_proxy: bool = True
     system_proxy_bypass_lan: bool = True
+    firefox_proxy_integration: bool = False
     launch_on_startup: bool = False
     launch_in_tray_on_startup: bool = True
     always_run_as_admin: bool = False
@@ -408,6 +409,7 @@ class AppSettings:
             "start_minimized": self.start_minimized,
             "enable_system_proxy": self.enable_system_proxy,
             "system_proxy_bypass_lan": self.system_proxy_bypass_lan,
+            "firefox_proxy_integration": self.firefox_proxy_integration,
             "launch_on_startup": self.launch_on_startup,
             "launch_in_tray_on_startup": self.launch_in_tray_on_startup,
             "always_run_as_admin": self.always_run_as_admin,
@@ -508,6 +510,7 @@ class AppSettings:
             start_minimized=bool(data.get("start_minimized", False)),
             enable_system_proxy=bool(data.get("enable_system_proxy", True)),
             system_proxy_bypass_lan=bool(data.get("system_proxy_bypass_lan", True)),
+            firefox_proxy_integration=bool(data.get("firefox_proxy_integration", False)),
             launch_on_startup=bool(data.get("launch_on_startup", False)),
             launch_in_tray_on_startup=bool(data.get("launch_in_tray_on_startup", True)),
             always_run_as_admin=bool(data.get("always_run_as_admin", False)),

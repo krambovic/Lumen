@@ -21,6 +21,10 @@ def node_transport(node: Node) -> str:
     native = outbound.get("singbox")
     if isinstance(native, dict):
         native_type = str(native.get("type") or "").strip().lower()
+        if native_type == "naive":
+            return "QUIC" if native.get("quic") is True else "H2"
+        if native_type == "openvpn":
+            return _normalize_transport(native.get("proto")) or "UDP"
         transport = native.get("transport")
         if isinstance(transport, str) and native_type == "mieru":
             return f"MIERU/{transport.upper()}"
@@ -36,7 +40,7 @@ def node_transport(node: Node) -> str:
         return "UDP"
     if protocol == "xray_config":
         return "AUTO"
-    if protocol in {"mieru", "singbox_config"}:
+    if protocol in {"mieru", "naive", "singbox_config"}:
         return protocol.upper()
     if protocol in _TCP_PROTOCOLS:
         return "TCP"

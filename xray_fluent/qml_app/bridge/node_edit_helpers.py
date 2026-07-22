@@ -31,6 +31,8 @@ ENDPOINT_EDITABLE_PROTOCOLS = {
     "awg",
     "warp",
     "masque",
+    "openvpn",
+    "naive",
 }
 NATIVE_PROTOCOLS = {
     "wireguard",
@@ -41,8 +43,29 @@ NATIVE_PROTOCOLS = {
     "tuic",
     "mieru",
     "masque",
+    "openvpn",
+    "naive",
     "singbox_config",
 }
+
+MANUAL_NODE_PROTOCOLS = (
+    "vless",
+    "vmess",
+    "trojan",
+    "shadowsocks",
+    "socks",
+    "http",
+    "hysteria",
+    "hysteria2",
+    "tuic",
+    "mieru",
+    "wireguard",
+    "awg",
+    "warp",
+    "masque",
+    "openvpn",
+    "naive",
+)
 
 
 def _first_dict(value: Any) -> dict[str, Any]:
@@ -340,11 +363,24 @@ _AMNEZIA_EDITOR_KEYS = (
 )
 
 
-def _amnezia_editor_fields(values: dict[str, Any]) -> list[dict[str, Any]]:
+def _amnezia_editor_fields(
+    values: dict[str, Any],
+    *,
+    conditional: bool = False,
+) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for key in _AMNEZIA_EDITOR_KEYS:
         kind = "number" if key in {"jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime"} else "area" if key.startswith(("i", "j")) and key not in {"jmin", "jmax"} else "text"
-        result.append(_editor_field(f"awg_{key}", f"AWG {key.upper()}", values.get(f"awg_{key}", ""), kind=kind))
+        result.append(
+            _editor_field(
+                f"awg_{key}",
+                f"AWG {key.upper()}",
+                values.get(f"awg_{key}", ""),
+                kind=kind,
+                when_key="amneziaEnabled" if conditional else "",
+                when_values=("true",) if conditional else (),
+            )
+        )
     return result
 
 
@@ -387,6 +423,21 @@ def _protocol_editor_fields(protocol: str, values: dict[str, Any], native: dict[
             _editor_field("username", "Имя пользователя", values.get("username", "")),
             _editor_field("password", "Пароль", values.get("password", "")),
         ])
+    elif protocol == "naive":
+        fields.extend([
+            _editor_field("username", "Имя пользователя", values.get("username", "")),
+            _editor_field("password", "Пароль", values.get("password", "")),
+            _editor_field("insecureConcurrency", "Insecure concurrency", values.get("insecureConcurrency", 0), kind="number"),
+            _editor_field("extraHeaders", "Дополнительные заголовки (JSON)", values.get("extraHeaders", ""), kind="area", placeholder='{"Host":"example.com"}'),
+            _editor_field("udpOverTcpEnabled", "UDP поверх TCP", values.get("udpOverTcpEnabled", False), kind="bool"),
+            _editor_field("udpOverTcpOptions", "UDP over TCP (JSON)", values.get("udpOverTcpOptions", ""), kind="area", placeholder="{}"),
+            _editor_field("naiveQuic", "Использовать QUIC", values.get("naiveQuic", False), kind="bool"),
+            _editor_field("quicCongestionControl", "QUIC congestion control", values.get("quicCongestionControl", "")),
+        ])
+        # Naive uses Cronet and accepts only the restricted Naive TLS schema.
+        # Keep SNI editable without exposing options that make the core reject
+        # the generated config (ALPN, insecure and uTLS).
+        fields.append(_editor_field("sni", "SNI / Server name", values.get("sni", "")))
     elif protocol == "hysteria":
         fields.extend([
             _editor_field("auth", "Auth / пароль", values.get("auth", "")),
@@ -425,16 +476,26 @@ def _protocol_editor_fields(protocol: str, values: dict[str, Any], native: dict[
         fields.extend([
             _editor_field("interfaceAddresses", "Адреса интерфейса", values.get("interfaceAddresses", ""), kind="area", placeholder="10.0.0.2/32, fd00::2/128"),
             _editor_field("privateKey", "Private key", values.get("privateKey", "")),
+            _editor_field("peersJson", "Peers (JSON)", values.get("peersJson", ""), kind="area", placeholder='[{"address":"example.com","port":51820,...}]'),
             _editor_field("wgPublicKey", "Peer public key", values.get("wgPublicKey", "")),
             _editor_field("preSharedKey", "Pre-shared key", values.get("preSharedKey", "")),
             _editor_field("allowedIps", "Allowed IPs", values.get("allowedIps", ""), kind="area"),
             _editor_field("mtu", "MTU", values.get("mtu", 1408), kind="number"),
             _editor_field("listenPort", "Локальный порт", values.get("listenPort", ""), kind="number"),
             _editor_field("keepalive", "Persistent keepalive", values.get("keepalive", ""), kind="number"),
+            _editor_field("udpTimeout", "UDP timeout", values.get("udpTimeout", "5m0s")),
+            _editor_field("workers", "WireGuard workers", values.get("workers", ""), kind="number"),
+            _editor_field("preallocatedBuffers", "Preallocated buffers", values.get("preallocatedBuffers", ""), kind="number"),
+            _editor_field("disablePauses", "Disable pauses", values.get("disablePauses", False), kind="bool"),
             _editor_field("dns", "DNS профиля", values.get("dns", ""), kind="area"),
+            _editor_field(
+                "amneziaEnabled",
+                "AmneziaWG-совместимость",
+                values.get("amneziaEnabled", protocol == "awg"),
+                kind="bool",
+            ),
         ])
-        if protocol == "awg" or isinstance(native.get("amnezia"), dict):
-            fields.extend(_amnezia_editor_fields(values))
+        fields.extend(_amnezia_editor_fields(values, conditional=True))
     elif protocol == "warp":
         fields.extend([
             _editor_field("profileId", "WARP profile ID", values.get("profileId", "")),
@@ -447,6 +508,33 @@ def _protocol_editor_fields(protocol: str, values: dict[str, Any], native: dict[
             _editor_field("dns", "DNS профиля", values.get("dns", ""), kind="area"),
         ])
         fields.extend(_amnezia_editor_fields(values))
+    elif protocol == "openvpn":
+        fields.extend([
+            _editor_field("openvpnServersJson", "OpenVPN servers (JSON)", values.get("openvpnServersJson", ""), kind="area", placeholder='[{"server":"vpn.example.com","server_port":1194}]'),
+            _editor_field("openvpnProto", "OpenVPN transport", values.get("openvpnProto", "udp"), kind="combo", options=("udp", "tcp")),
+            _editor_field("openvpnCipher", "Data cipher", values.get("openvpnCipher", ""), kind="combo", options=("", "AES-128-GCM", "AES-192-GCM", "AES-256-GCM", "AES-128-CBC", "AES-192-CBC", "AES-256-CBC", "CHACHA20-POLY1305")),
+            _editor_field("openvpnAuth", "HMAC auth", values.get("openvpnAuth", ""), kind="combo", options=("", "SHA1", "SHA256", "SHA384", "SHA512")),
+            _editor_field("username", "Username", values.get("username", "")),
+            _editor_field("password", "Password", values.get("password", "")),
+            _editor_field("tlsCrypt", "TLS Crypt", values.get("tlsCrypt", ""), kind="area"),
+            _editor_field("tlsCryptV2", "TLS Crypt v2", values.get("tlsCryptV2", False), kind="bool"),
+            _editor_field("tlsAuth", "TLS Auth", values.get("tlsAuth", ""), kind="area"),
+            _editor_field("keyDirection", "Key direction", values.get("keyDirection", -1), kind="number"),
+            _editor_field("certificate", "Client certificate", values.get("certificate", ""), kind="area"),
+            _editor_field("privateKey", "Client private key", values.get("privateKey", ""), kind="area"),
+            _editor_field("caCertificate", "CA certificate", values.get("caCertificate", ""), kind="area"),
+            _editor_field("tlsCipherSuites", "TLS cipher suites", values.get("tlsCipherSuites", ""), kind="area"),
+            _editor_field("verifyX509Name", "Verify X.509 name", values.get("verifyX509Name", "")),
+            _editor_field("verifyX509NameMode", "X.509 name mode", values.get("verifyX509NameMode", "exact"), kind="combo", options=("exact", "name-prefix", "name-suffix")),
+            _editor_field("allowedIps", "Allowed IPs", values.get("allowedIps", ""), kind="area"),
+            _editor_field("interfaceName", "Interface name", values.get("interfaceName", "openvpn0")),
+            _editor_field("reconnectDelay", "Reconnect delay", values.get("reconnectDelay", "")),
+            _editor_field("pingInterval", "Ping interval", values.get("pingInterval", "")),
+            _editor_field("pingRestart", "Ping restart", values.get("pingRestart", "")),
+            _editor_field("kernelTx", "Kernel TX", values.get("kernelTx", False), kind="bool"),
+            _editor_field("kernelRx", "Kernel RX", values.get("kernelRx", False), kind="bool"),
+            _editor_field("dns", "Profile DNS", values.get("dns", ""), kind="area"),
+        ])
     elif protocol == "masque":
         fields.extend([
             _editor_field("interfaceName", "Имя интерфейса", values.get("interfaceName", "masque0")),
@@ -484,6 +572,7 @@ def load_node_edit_fields(node) -> dict:
         "server": node.server or "",
         "port": str(node.port or ""),
         "protocol": protocol.upper() or "?",
+        "protocolKey": protocol,
         "uuid": "",
         "encryption": "none",
         "flow": "",
@@ -518,6 +607,7 @@ def load_node_edit_fields(node) -> dict:
         "spiderX": "",
         "pqv": "",
         "finalmask": "",
+        "amneziaEnabled": protocol == "awg" or isinstance(native.get("amnezia"), dict),
         "capabilities": capabilities,
         "editHint": _edit_hint(protocol, capabilities),
     }
@@ -634,18 +724,37 @@ def load_node_edit_fields(node) -> dict:
             fields["serverPorts"] = _text_list(native.get("server_ports"))
             fields["multiplexing"] = str(native.get("multiplexing") or "")
             fields["trafficPattern"] = str(native.get("traffic_pattern") or "")
+        elif protocol == "naive":
+            fields["username"] = str(native.get("username") or "")
+            fields["password"] = str(native.get("password") or "")
+            fields["insecureConcurrency"] = native.get("insecure_concurrency", 0)
+            fields["extraHeaders"] = _json_field(native.get("extra_headers"))
+            udp_over_tcp = native.get("udp_over_tcp", False)
+            fields["udpOverTcpEnabled"] = bool(udp_over_tcp)
+            fields["udpOverTcpOptions"] = _json_field(udp_over_tcp) if isinstance(udp_over_tcp, dict) else ""
+            fields["naiveQuic"] = bool(native.get("quic", False))
+            fields["quicCongestionControl"] = str(native.get("quic_congestion_control") or "")
         elif protocol in {"wireguard", "awg"}:
             peer = _first_dict(native.get("peers"))
             fields["server"] = str(peer.get("address") or peer.get("server") or fields["server"])
             fields["port"] = str(peer.get("port") or peer.get("server_port") or fields["port"])
             fields["interfaceAddresses"] = _text_list(native.get("address"))
             fields["privateKey"] = str(native.get("private_key") or "")
+            fields["peersJson"] = json.dumps(
+                native.get("peers") if isinstance(native.get("peers"), list) else [],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
             fields["wgPublicKey"] = str(peer.get("public_key") or "")
             fields["preSharedKey"] = str(peer.get("pre_shared_key") or "")
             fields["allowedIps"] = _text_list(peer.get("allowed_ips"))
             fields["mtu"] = native.get("mtu", 1408)
             fields["listenPort"] = native.get("listen_port", "")
             fields["keepalive"] = peer.get("persistent_keepalive_interval", "")
+            fields["udpTimeout"] = str(native.get("udp_timeout") or "5m0s")
+            fields["workers"] = native.get("workers", "")
+            fields["preallocatedBuffers"] = native.get("preallocated_buffers_per_pool", "")
+            fields["disablePauses"] = bool(native.get("disable_pauses", False))
             fields["dns"] = _text_list(outbound.get("_dns"))
         elif protocol == "warp":
             profile = native.get("profile") if isinstance(native.get("profile"), dict) else {}
@@ -656,6 +765,39 @@ def load_node_edit_fields(node) -> dict:
             fields["listenPort"] = native.get("listen_port", "")
             fields["keepalive"] = native.get("persistent_keepalive_interval", "")
             fields["udpTimeout"] = str(native.get("udp_timeout") or "5m0s")
+            fields["dns"] = _text_list(outbound.get("_dns"))
+        elif protocol == "openvpn":
+            openvpn_server = _first_dict(native.get("servers"))
+            tls_openvpn = native.get("tls") if isinstance(native.get("tls"), dict) else {}
+            fields["server"] = str(openvpn_server.get("server") or fields["server"])
+            fields["port"] = str(openvpn_server.get("server_port") or fields["port"])
+            fields["openvpnServersJson"] = json.dumps(
+                native.get("servers") if isinstance(native.get("servers"), list) else [],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            fields["openvpnProto"] = str(native.get("proto") or "udp")
+            fields["openvpnCipher"] = str(native.get("cipher") or "")
+            fields["openvpnAuth"] = str(native.get("auth") or "")
+            fields["username"] = str(native.get("username") or "")
+            fields["password"] = str(native.get("password") or "")
+            fields["tlsCrypt"] = str(native.get("tls_crypt") or "")
+            fields["tlsCryptV2"] = bool(native.get("tls_crypt_v2", False))
+            fields["tlsAuth"] = str(native.get("tls_auth") or "")
+            fields["keyDirection"] = native.get("key_direction", -1)
+            fields["certificate"] = str(tls_openvpn.get("certificate") or "")
+            fields["privateKey"] = str(tls_openvpn.get("key") or "")
+            fields["caCertificate"] = str(tls_openvpn.get("ca") or "")
+            fields["tlsCipherSuites"] = _text_list(tls_openvpn.get("cipher_suites"))
+            fields["verifyX509Name"] = str(tls_openvpn.get("verify_x509_name") or "")
+            fields["verifyX509NameMode"] = str(tls_openvpn.get("verify_x509_name_mode") or "exact")
+            fields["allowedIps"] = _text_list(native.get("allowed_ips"))
+            fields["interfaceName"] = str(native.get("name") or "openvpn0")
+            fields["reconnectDelay"] = str(native.get("reconnect_delay") or "")
+            fields["pingInterval"] = str(native.get("ping_interval") or "")
+            fields["pingRestart"] = str(native.get("ping_restart") or "")
+            fields["kernelTx"] = bool(tls_openvpn.get("kernel_tx", False))
+            fields["kernelRx"] = bool(tls_openvpn.get("kernel_rx", False))
             fields["dns"] = _text_list(outbound.get("_dns"))
         elif protocol == "masque":
             profile = native.get("profile") if isinstance(native.get("profile"), dict) else {}
@@ -685,6 +827,21 @@ def load_node_edit_fields(node) -> dict:
 
     fields["protocolFields"] = _protocol_editor_fields(protocol, fields, native)
     return fields
+
+
+def new_node_edit_fields(protocol: str, group: str = "Default") -> dict[str, Any]:
+    """Return the same protocol-aware schema used by the normal node editor."""
+    normalized = str(protocol or "vless").strip().lower()
+    if normalized not in MANUAL_NODE_PROTOCOLS:
+        normalized = "vless"
+    from ...models import Node
+
+    draft = Node(
+        scheme=normalized,
+        group=str(group or "Default").strip() or "Default",
+        outbound={"protocol": normalized},
+    )
+    return load_node_edit_fields(draft)
 
 
 def _edit_hint(protocol: str, capabilities: dict[str, bool | str]) -> str:
@@ -918,7 +1075,7 @@ def build_node_updates(node, fields: dict) -> dict:
             _update_stream_security(stream, g)
     else:
         native = _ensure_native(outbound, protocol)
-        if protocol in {"hysteria", "hysteria2", "tuic", "mieru"}:
+        if protocol in {"hysteria", "hysteria2", "tuic", "mieru", "naive"}:
             native["server"] = server
             native["server_port"] = port
         if protocol == "hysteria":
@@ -952,7 +1109,50 @@ def build_node_updates(node, fields: dict) -> dict:
             _set_optional(native, "server_ports", _split_editor_list(raw("serverPorts")))
             _set_optional(native, "multiplexing", g("multiplexing"))
             _set_optional(native, "traffic_pattern", g("trafficPattern"))
+        elif protocol == "naive":
+            native["username"] = g("username")
+            native["password"] = g("password")
+            native["insecure_concurrency"] = int(_editor_int(raw("insecureConcurrency", 0), 0) or 0)
+            headers_text = g("extraHeaders")
+            if headers_text:
+                try:
+                    headers = json.loads(headers_text)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Дополнительные заголовки должны быть JSON-объектом: {exc.msg}") from exc
+                if not isinstance(headers, dict):
+                    raise ValueError("Дополнительные заголовки должны быть JSON-объектом")
+                native["extra_headers"] = headers
+            else:
+                native.pop("extra_headers", None)
+            udp_options_text = g("udpOverTcpOptions")
+            if udp_options_text:
+                try:
+                    udp_options = json.loads(udp_options_text)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"UDP over TCP должен быть JSON-объектом: {exc.msg}") from exc
+                if not isinstance(udp_options, dict):
+                    raise ValueError("UDP over TCP должен быть JSON-объектом")
+                native["udp_over_tcp"] = udp_options
+            else:
+                native["udp_over_tcp"] = _editor_bool(raw("udpOverTcpEnabled", False))
+            native["quic"] = _editor_bool(raw("naiveQuic", False))
+            _set_optional(native, "quic_congestion_control", g("quicCongestionControl"))
+            tls = native.get("tls") if isinstance(native.get("tls"), dict) else {}
+            tls["enabled"] = True
+            _set_optional(tls, "server_name", g("sni") or server)
+            for unsupported_key in ("alpn", "insecure", "utls"):
+                tls.pop(unsupported_key, None)
+            native["tls"] = tls
         elif protocol in {"wireguard", "awg"}:
+            peers_json = g("peersJson")
+            if peers_json:
+                try:
+                    parsed_peers = json.loads(peers_json)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Peers должен быть корректным JSON-массивом: {exc.msg}") from exc
+                if not isinstance(parsed_peers, list) or not all(isinstance(item, dict) for item in parsed_peers):
+                    raise ValueError("Peers должен быть JSON-массивом объектов")
+                native["peers"] = parsed_peers
             peer = _ensure_first_dict(native, "peers")
             peer["address"] = server
             peer["port"] = port
@@ -964,10 +1164,25 @@ def build_node_updates(node, fields: dict) -> dict:
             _set_optional(peer, "pre_shared_key", g("preSharedKey"))
             peer["allowed_ips"] = _split_editor_list(raw("allowedIps"))
             native["mtu"] = int(_editor_int(raw("mtu", 1408), 1408) or 1408)
+            native["system"] = False
             _set_optional(native, "listen_port", _editor_int(raw("listenPort"), None))
             _set_optional(peer, "persistent_keepalive_interval", _editor_int(raw("keepalive"), None))
+            _set_optional(native, "udp_timeout", g("udpTimeout", "5m0s") or "5m0s")
+            _set_optional(native, "workers", _editor_int(raw("workers"), None))
+            _set_optional(
+                native,
+                "preallocated_buffers_per_pool",
+                _editor_int(raw("preallocatedBuffers"), None),
+            )
+            native["disable_pauses"] = _editor_bool(raw("disablePauses", False))
             _set_optional(outbound, "_dns", _split_editor_list(raw("dns")))
-            if protocol == "awg":
+            amnezia_enabled = _editor_bool(
+                raw(
+                    "amneziaEnabled",
+                    protocol == "awg" or isinstance(native.get("amnezia"), dict),
+                )
+            )
+            if amnezia_enabled:
                 amnezia = native.setdefault("amnezia", {})
                 for key in _AMNEZIA_EDITOR_KEYS:
                     raw_value = raw(f"awg_{key}", "")
@@ -978,6 +1193,12 @@ def build_node_updates(node, fields: dict) -> dict:
                     _set_optional(amnezia, key, parsed)
                 if not amnezia:
                     native.pop("amnezia", None)
+                outbound["protocol"] = "awg"
+                updates["scheme"] = "awg"
+            else:
+                native.pop("amnezia", None)
+                outbound["protocol"] = "wireguard"
+                updates["scheme"] = "wireguard"
         elif protocol == "warp":
             profile = native.setdefault("profile", {})
             profile["detour"] = "direct"
@@ -1006,6 +1227,78 @@ def build_node_updates(node, fields: dict) -> dict:
                 _set_optional(amnezia, key, parsed)
             if not amnezia:
                 native.pop("amnezia", None)
+        elif protocol == "openvpn":
+            servers_json = g("openvpnServersJson")
+            if servers_json:
+                try:
+                    servers = json.loads(servers_json)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"OpenVPN servers must be a valid JSON array: {exc.msg}") from exc
+                if not isinstance(servers, list) or not all(isinstance(item, dict) for item in servers):
+                    raise ValueError("OpenVPN servers must be a JSON array of objects")
+                native["servers"] = servers
+            server_item = _ensure_first_dict(native, "servers")
+            server_item["server"] = server
+            server_item["server_port"] = port
+            native["system"] = False
+            native["name"] = g("interfaceName", "openvpn0") or "openvpn0"
+            native["proto"] = g("openvpnProto", "udp").lower() or "udp"
+            _set_optional(native, "cipher", g("openvpnCipher").upper())
+            _set_optional(native, "auth", g("openvpnAuth").upper())
+            _set_optional(native, "username", g("username"))
+            _set_optional(native, "password", g("password"))
+            _set_optional(native, "allowed_ips", _split_editor_list(raw("allowedIps")))
+            _set_optional(native, "reconnect_delay", g("reconnectDelay"))
+            _set_optional(native, "ping_interval", g("pingInterval"))
+            _set_optional(native, "ping_restart", g("pingRestart"))
+
+            tls_auth = str(raw("tlsAuth", "") or "").strip()
+            tls_crypt = str(raw("tlsCrypt", "") or "").strip()
+            if tls_auth and tls_crypt:
+                raise ValueError("OpenVPN TLS Auth and TLS Crypt cannot be enabled together")
+            if tls_auth:
+                native["tls_auth"] = tls_auth
+                native.pop("tls_auth_path", None)
+                native.pop("tls_crypt", None)
+                native.pop("tls_crypt_path", None)
+                native.pop("tls_crypt_v2", None)
+                native["key_direction"] = int(_editor_int(raw("keyDirection", -1), -1) or 0)
+            else:
+                native.pop("tls_auth", None)
+                if not native.get("tls_auth_path"):
+                    native.pop("key_direction", None)
+                if tls_crypt:
+                    native["tls_crypt"] = tls_crypt
+                    native.pop("tls_crypt_path", None)
+                    native["tls_crypt_v2"] = _editor_bool(raw("tlsCryptV2", False))
+                else:
+                    native.pop("tls_crypt", None)
+                    if not native.get("tls_crypt_path"):
+                        native.pop("tls_crypt_v2", None)
+
+            tls = native.setdefault("tls", {})
+            for field_key, config_key, path_key in (
+                ("certificate", "certificate", "certificate_path"),
+                ("privateKey", "key", "key_path"),
+                ("caCertificate", "ca", "ca_path"),
+            ):
+                content = str(raw(field_key, "") or "").strip()
+                if content:
+                    tls[config_key] = content
+                    tls.pop(path_key, None)
+                else:
+                    tls.pop(config_key, None)
+            _set_optional(tls, "cipher_suites", _split_editor_list(raw("tlsCipherSuites")))
+            _set_optional(tls, "verify_x509_name", g("verifyX509Name"))
+            if tls.get("verify_x509_name"):
+                tls["verify_x509_name_mode"] = g("verifyX509NameMode", "exact") or "exact"
+            else:
+                tls.pop("verify_x509_name_mode", None)
+            tls["kernel_tx"] = _editor_bool(raw("kernelTx", False))
+            tls["kernel_rx"] = _editor_bool(raw("kernelRx", False))
+            if not any(value not in (None, "", False, [], {}) for value in tls.values()):
+                native.pop("tls", None)
+            _set_optional(outbound, "_dns", _split_editor_list(raw("dns")))
         elif protocol == "masque":
             native["server"] = server
             native["server_port"] = port

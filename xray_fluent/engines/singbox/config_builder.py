@@ -22,6 +22,8 @@ _SUPPORTED_NATIVE_PROTOCOLS = {
     "tuic",
     "mieru",
     "masque",
+    "openvpn",
+    "naive",
 }
 
 _DEFAULT_HYSTERIA_UP_MBPS = 50
@@ -82,6 +84,9 @@ def _convert_outbound(xray_ob: dict[str, Any], *, tag: str = "proxy") -> dict[st
     if isinstance(native, dict):
         sb = deepcopy(native)
         sb = normalize_wireguard_endpoint(sb)
+        if str(sb.get("type") or "").strip().lower() == "openvpn":
+            sb["system"] = False
+            sb["name"] = str(sb.get("name") or "openvpn0")
         sb["tag"] = tag
         return sb
 

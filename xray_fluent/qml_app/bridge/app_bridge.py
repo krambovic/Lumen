@@ -28,6 +28,7 @@ from ...application.node_runtime_service import proxy_core_for_node
 from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
 from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, PROXY_HOST
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri
+from ...deeplinks import DeepLinkError, parse_lumen_deep_link
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
@@ -261,7 +262,7 @@ class AppBridge(QObject):
         self.controller.recent_logs.append(line)
         if len(self.controller.recent_logs) > 5000:
             self.controller.recent_logs = self.controller.recent_logs[-5000:]
-        self._log_source_model.append_line(line)
+        self._log_source_model.append_line(self._localized_log_line(line))
 
     # ── lifecycle ──────────────────────────────────────────
     def load(self) -> None:
@@ -635,8 +636,8 @@ class AppBridge(QObject):
             if server is not None:
                 try:
                     from PyQt6.QtNetwork import QLocalServer
-                    QLocalServer.removeServer("LumenKVN.SingleInstance")
-                    server.listen("LumenKVN.SingleInstance")
+                    QLocalServer.removeServer("Lumen.SingleInstance")
+                    server.listen("Lumen.SingleInstance")
                 except Exception:
                     pass
             return
@@ -667,7 +668,7 @@ class AppBridge(QObject):
         c.subscriptions_changed.connect(self._on_subscriptions_changed)
         c.transition_state_changed.connect(self._on_transition)
         c.status.connect(self._on_status_message)
-        c.log_line.connect(self._log_source_model.append_line, type=Qt.ConnectionType.QueuedConnection)
+        c.log_line.connect(self._on_controller_log_line, type=Qt.ConnectionType.QueuedConnection)
         c.ping_updated.connect(self._on_ping)
         c.speed_updated.connect(self._on_speed)
         c.speed_progress_updated.connect(self._node_model.update_speed_progress)
@@ -768,6 +769,17 @@ class AppBridge(QObject):
                 + message[len("sing-box актуален "):]
             )
         return message
+
+    def _localized_log_line(self, line: str) -> str:
+        """Translate app/backend log text while preserving its severity prefix."""
+        match = re.match(r"^(?P<prefix>(?:DEBUG|INFO|WARNING|ERROR|CRITICAL):\s*)(?P<body>.*)$", line, re.DOTALL)
+        if match is None:
+            return self._localized_backend_message(line)
+        return match.group("prefix") + self._localized_backend_message(match.group("body"))
+
+    @pyqtSlot(str)
+    def _on_controller_log_line(self, line: str) -> None:
+        self._log_source_model.append_line(self._localized_log_line(line))
 
     def _on_status_message(self, level: str, message: str) -> None:
         localized = self._localized_backend_message(message)
@@ -1630,6 +1642,12 @@ class AppBridge(QObject):
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
+    def setFirefoxProxyIntegration(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.firefox_proxy_integration = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
     def setReconnectOnNetworkChange(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.reconnect_on_network_change = bool(enabled)
@@ -2026,6 +2044,16 @@ class AppBridge(QObject):
         from .node_edit_helpers import load_node_edit_fields
         return load_node_edit_fields(node)
 
+    @pyqtProperty("QVariantList", constant=True)
+    def manualNodeProtocols(self):
+        from .node_edit_helpers import MANUAL_NODE_PROTOCOLS
+        return list(MANUAL_NODE_PROTOCOLS)
+
+    @pyqtSlot(str, str, result="QVariantMap")
+    def manualNodeFields(self, protocol: str, group: str):
+        from .node_edit_helpers import new_node_edit_fields
+        return new_node_edit_fields(protocol, group)
+
     @pyqtProperty("QVariantMap", constant=True)
     def nodeEditOptions(self):
         """Static combo option lists for the node-edit form (mirror the dialog)."""
@@ -2053,6 +2081,36 @@ class AppBridge(QObject):
             self.toast.emit("error", tr("Не удалось сохранить: {error}", error=exc))
             return
         self.toast.emit("success", "Сервер обновлён")
+
+    @pyqtSlot("QVariantMap", result=str)
+    def createManualNode(self, fields) -> str:
+        """Build, validate and persist a manually entered server."""
+        from .node_edit_helpers import (
+            MANUAL_NODE_PROTOCOLS,
+            build_node_updates,
+        )
+
+        payload = dict(fields or {})
+        protocol = str(payload.pop("protocol", "vless") or "vless").strip().lower()
+        if protocol not in MANUAL_NODE_PROTOCOLS:
+            self.toast.emit("error", tr("Неподдерживаемый протокол: {protocol}", protocol=protocol))
+            return ""
+        draft = Node(
+            scheme=protocol,
+            group=str(payload.get("group") or "Default").strip() or "Default",
+            outbound={"protocol": protocol},
+        )
+        try:
+            updates = build_node_updates(draft, payload)
+            for key in ("name", "group", "scheme", "server", "port", "link", "outbound"):
+                if key in updates:
+                    setattr(draft, key, updates[key])
+            node_id = self.controller.add_manual_node(draft)
+        except Exception as exc:  # noqa: BLE001 - show validation errors in the UI
+            self.toast.emit("error", tr("Не удалось добавить сервер: {error}", error=exc))
+            return ""
+        self.toast.emit("success", tr("Сервер добавлен"))
+        return node_id
 
     @pyqtSlot("QVariantList", "QVariantMap")
     def bulkEditNodes(self, ids: list, operations) -> None:
@@ -2100,6 +2158,8 @@ class AppBridge(QObject):
             proto = str(getattr(node, "scheme", "") or "").lower()
         if proto in ("warp", "wireguard", "awg", "amneziawg"):
             return "wireguard"
+        if proto in ("openvpn", "singbox_config"):
+            return "singbox-config"
         return "uri"
 
     @pyqtSlot('QVariantList')
@@ -2895,25 +2955,19 @@ class AppBridge(QObject):
 
     @pyqtSlot()
     def importNodeFile(self) -> None:
-        from pathlib import Path
         from PyQt6.QtWidgets import QFileDialog
 
         file_path, _ = QFileDialog.getOpenFileName(
             None,
             tr("Импортировать сервер"),
             "",
-            "VPN configs (*.conf *.txt *.json *.yaml *.yml);;All files (*.*)",
+            "VPN configs (*.conf *.ovpn *.txt *.json *.yaml *.yml);;OpenVPN profiles (*.ovpn);;All files (*.*)",
         )
         if not file_path:
             return
-        try:
-            text = Path(file_path).read_text(encoding="utf-8", errors="replace")
-        except Exception as exc:
-            self.toast.emit("error", tr("Не удалось прочитать файл: {error}", error=exc))
-            return
         target_group = (self._filter_group or "").strip() or None
         existing_ids = {node.id for node in self.controller.state.nodes}
-        added, errors = self.controller.import_nodes_from_text(text, group=target_group)
+        added, errors = self.controller.import_nodes_from_text(file_path, group=target_group)
         if added:
             imported_id = next(
                 (node.id for node in self.controller.state.nodes if node.id not in existing_ids),
@@ -2938,7 +2992,7 @@ class AppBridge(QObject):
         if not local_path:
             return None
         path = Path(local_path)
-        if path.suffix.lower() not in {".conf", ".txt", ".json", ".yaml", ".yml"}:
+        if path.suffix.lower() not in {".conf", ".ovpn", ".txt", ".json", ".yaml", ".yml"}:
             return None
         return path if path.is_file() else None
 
@@ -2962,12 +3016,7 @@ class AppBridge(QObject):
         total_added = 0
         errors: list[str] = []
         for path in paths:
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError as exc:
-                errors.append(f"{path.name}: {exc}")
-                continue
-            added, file_errors = self.controller.import_nodes_from_text(text, group=target_group)
+            added, file_errors = self.controller.import_nodes_from_text(str(path), group=target_group)
             total_added += added
             errors.extend(f"{path.name}: {error}" for error in file_errors)
 
@@ -3398,6 +3447,13 @@ class AppBridge(QObject):
             return bool(self.controller.state.settings.system_proxy_bypass_lan)
         except Exception:
             return True
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def firefoxProxyIntegration(self) -> bool:
+        try:
+            return bool(self.controller.state.settings.firefox_proxy_integration)
+        except Exception:
+            return False
 
     @pyqtProperty(bool, notify=settingsChanged)
     def reconnectOnNetworkChange(self) -> bool:
@@ -3876,6 +3932,23 @@ class AppBridge(QObject):
         # Сеть в фоне: UI не блокируется, итог придёт через _on_sub_batch_completed.
         job = SubscriptionJob(url=target, kind="import", name=(name or "").strip())
         self._dispatch_sub_jobs([job], "import")
+
+    @pyqtSlot(str, result=bool)
+    def handleDeepLink(self, value: str) -> bool:
+        """Validate a ``lumen:`` URL and route it through normal import logic."""
+        try:
+            request = parse_lumen_deep_link(value)
+        except DeepLinkError as exc:
+            logging.getLogger(__name__).warning("Rejected lumen deep link: %s", exc)
+            self.toast.emit(
+                "warning",
+                tr("Некорректная ссылка lumen"),
+            )
+            return False
+        if request is None:
+            return False
+        self.importSubscription(request.url, request.name)
+        return True
 
     @pyqtSlot(str)
     def importSubscriptions(self, text: str) -> None:

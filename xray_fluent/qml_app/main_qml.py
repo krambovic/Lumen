@@ -9,6 +9,13 @@ import time
 import ctypes
 from pathlib import Path
 
+from ..deeplinks import (
+    MAX_DEEP_LINK_LENGTH,
+    decode_instance_message,
+    encode_instance_message,
+    find_lumen_deep_link,
+)
+
 
 def _enable_gpu_friendly_defaults() -> None:
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Universal")
@@ -225,25 +232,52 @@ def _register_aumid_toast_identity() -> None:
         pass
 
 
+def _protocol_launch_command() -> tuple[str, Path] | None:
+    """Return the Windows command/icon target for packaged and source runs."""
+    if getattr(sys, "frozen", False):
+        executable = Path(sys.executable).resolve()
+        canonical_exe = executable.with_name("Lumen.exe")
+        if canonical_exe.is_file():
+            executable = canonical_exe
+        return f'"{executable}" "%1"', executable
+
+    run_script = Path(__file__).resolve().parents[2] / "run_qml.py"
+    if not run_script.is_file():
+        return None
+    python_exe = Path(sys.executable).resolve()
+    pythonw_exe = python_exe.with_name("pythonw.exe")
+    if pythonw_exe.is_file():
+        python_exe = pythonw_exe
+    return f'"{python_exe}" "{run_script}" "%1"', python_exe
+
+
 def _register_toast_protocol() -> None:
-    """Register the lumen: URL protocol so a toast click reopens the app"""
-    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+    """Register deep links for installed, portable and source-tree launches."""
+    if sys.platform != "win32":
         return
     try:
         import winreg
-        exe = Path(sys.executable).resolve()
+        launch = _protocol_launch_command()
+        if launch is None:
+            return
+        command, icon_target = launch
+        scheme = "lumen"
         with winreg.CreateKey(
-            winreg.HKEY_CURRENT_USER, r"Software\Classes\lumen-kvn"
+            winreg.HKEY_CURRENT_USER, rf"Software\Classes\{scheme}"
         ) as key:
-            winreg.SetValueEx(
-                key, None, 0, winreg.REG_SZ, "URL:Lumen Protocol"
-            )
+            winreg.SetValueEx(key, None, 0, winreg.REG_SZ, "URL:Lumen Protocol")
             winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
         with winreg.CreateKey(
             winreg.HKEY_CURRENT_USER,
-            r"Software\Classes\lumen-kvn\shell\open\command",
+            rf"Software\Classes\{scheme}\shell\open\command",
         ) as key:
-            winreg.SetValueEx(key, None, 0, winreg.REG_SZ, f'"{exe}" "%1"')
+            winreg.SetValueEx(key, None, 0, winreg.REG_SZ, command)
+        if APP_ICON_PATH.is_file():
+            with winreg.CreateKey(
+                winreg.HKEY_CURRENT_USER,
+                rf"Software\Classes\{scheme}\DefaultIcon",
+            ) as key:
+                winreg.SetValueEx(key, None, 0, winreg.REG_SZ, f"{icon_target},0")
     except Exception:
         pass
 
@@ -253,30 +287,55 @@ def _cleanup_legacy_root_program_install() -> None:
         return
     try:
         current_dir = Path(sys.executable).resolve().parent
-        old_dir = Path("C:/Program")
-        if current_dir == old_dir or not old_dir.is_dir():
+        if any((current_dir / marker).is_file() for marker in ("portable", "portable.txt")):
             return
-        if current_dir.name.lower() != "lumen kvn":
-            return
-        program_files = {
-            Path(os.environ.get("ProgramW6432") or ""),
-            Path(os.environ.get("ProgramFiles") or ""),
+        roots = {
+            Path(value).resolve(strict=False)
+            for value in (
+                os.environ.get("ProgramW6432"),
+                os.environ.get("ProgramFiles"),
+                os.environ.get("ProgramFiles(x86)"),
+            )
+            if value
         }
-        if not any(
-            str(current_dir).lower().startswith(str(root).lower().rstrip("\\/") + "\\")
-            for root in program_files
-            if str(root)
-        ):
+        candidates = {Path("C:/Program")}
+        for root in roots:
+            candidates.update(root / name for name in ("Lumen KVN", "LumenKVN", "lumen-kvn", "Lumen_KVN"))
+        removable: list[Path] = []
+        for candidate in candidates:
+            candidate = candidate.resolve(strict=False)
+            if candidate == current_dir or not candidate.is_dir():
+                continue
+            if not any((candidate / name).is_file() for name in ("Lumen.exe", "LumenKVN.exe")):
+                continue
+            removable.append(candidate)
+        if not removable:
             return
-        if not (old_dir / "Lumen.exe").is_file():
+        paths = ",".join("'" + str(path).replace("'", "''") + "'" for path in removable)
+        script = f"Start-Sleep -Seconds 3; foreach ($old in @({paths})) {{ Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue }}"
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", script],
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        pass
+
+
+def _cleanup_legacy_executable_bridge() -> None:
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    try:
+        current_exe = Path(sys.executable).resolve()
+        legacy_exe = current_exe.with_name("LumenKVN.exe")
+        if not legacy_exe.is_file():
             return
+        if current_exe != legacy_exe:
+            legacy_exe.unlink(missing_ok=True)
+            return
+        escaped = str(legacy_exe).replace("'", "''")
         script = (
-            "$old='C:\\Program';"
-            "Start-Sleep -Seconds 3;"
-            "if ((Test-Path -LiteralPath (Join-Path $old 'Lumen.exe')) -and "
-            "((Split-Path -Leaf $old) -ieq 'Program')) {"
-            "Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue"
-            "}"
+            f"Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue; "
+            f"Remove-Item -LiteralPath '{escaped}' -Force -ErrorAction SilentlyContinue"
         )
         subprocess.Popen(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", script],
@@ -286,7 +345,10 @@ def _cleanup_legacy_root_program_install() -> None:
         pass
 
 
-def _notify_primary_instance(server_name: str) -> bool:
+def _notify_primary_instance(
+    server_name: str,
+    launch_arguments: list[str] | tuple[str, ...] = (),
+) -> bool:
     try:
         from PyQt6.QtCore import QIODevice
         from PyQt6.QtNetwork import QLocalSocket
@@ -298,7 +360,7 @@ def _notify_primary_instance(server_name: str) -> bool:
         socket.abort()
         return False
     try:
-        socket.write(b"activate")
+        socket.write(encode_instance_message(launch_arguments))
         socket.flush()
         socket.waitForBytesWritten(250)
     except Exception:
@@ -334,6 +396,22 @@ def _close_mutex_handle(handle: object | None) -> None:
         pass
 
 
+def _legacy_single_instance_running() -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenMutexW.argtypes = (ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p)
+        kernel32.OpenMutexW.restype = ctypes.c_void_p
+        handle = kernel32.OpenMutexW(0x00100000, False, r"Local\LumenKVN.SingleInstance")
+        if not handle:
+            return False
+        kernel32.CloseHandle(handle)
+        return True
+    except Exception:
+        return False
+
+
 def _acquire_single_instance_mutex(relaunching: bool) -> tuple[object | None, bool]:
     handle, owns = _create_windows_single_instance_mutex()
     if owns or not relaunching:
@@ -348,8 +426,8 @@ def _acquire_single_instance_mutex(relaunching: bool) -> tuple[object | None, bo
     return handle, owns
 
 
-def _create_single_instance(app):
-    """Return (server, is_primary). A second launch just activates the first window."""
+def _create_single_instance(app, launch_arguments=None):
+    """Return (server, is_primary), forwarding deep links to the first process."""
     try:
         from PyQt6.QtCore import QLockFile
         from PyQt6.QtNetwork import QLocalServer
@@ -357,14 +435,23 @@ def _create_single_instance(app):
         return None, True
 
     server_name = "Lumen.SingleInstance"
-    relaunching = any(flag in sys.argv[1:] for flag in ("--relaunch-as-admin", "--relaunched"))
+    arguments = list(launch_arguments if launch_arguments is not None else sys.argv)
+    relaunching = any(flag in arguments[1:] for flag in ("--relaunch-as-admin", "--relaunched"))
+
+    if _legacy_single_instance_running() or _notify_primary_instance("LumenKVN.SingleInstance", arguments):
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if _notify_primary_instance("LumenKVN.SingleInstance", arguments):
+                break
+            time.sleep(0.1)
+        return None, False
 
     mutex_handle, owns_mutex = _acquire_single_instance_mutex(relaunching)
     if not owns_mutex:
         _close_mutex_handle(mutex_handle)
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            if _notify_primary_instance(server_name):
+            if _notify_primary_instance(server_name, arguments):
                 break
             time.sleep(0.1)
         return None, False
@@ -377,7 +464,7 @@ def _create_single_instance(app):
         if relaunching:
             lock.removeStaleLockFile()
         else:
-            _notify_primary_instance(server_name)
+            _notify_primary_instance(server_name, arguments)
         if time.monotonic() >= deadline:
             _close_mutex_handle(mutex_handle)
             return None, False
@@ -385,13 +472,21 @@ def _create_single_instance(app):
 
     try:
         QLocalServer.removeServer(server_name)
+        QLocalServer.removeServer("LumenKVN.SingleInstance")
+        legacy_lock = Path(tempfile.gettempdir()) / "LumenKVN.SingleInstance.lock"
+        if legacy_lock.is_file():
+            legacy_lock.unlink(missing_ok=True)
     except Exception:
         pass
     server = QLocalServer(app)
+    try:
+        server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
+    except Exception:
+        pass
     if not server.listen(server_name):
         lock.unlock()
         _close_mutex_handle(mutex_handle)
-        _notify_primary_instance(server_name)
+        _notify_primary_instance(server_name, arguments)
         return None, False
     server._single_instance_lock = lock
     server._single_instance_mutex_handle = mutex_handle
@@ -574,6 +669,17 @@ def main(argv: list[str] | None = None) -> int:
     _install_crash_guards()
     _set_app_user_model_id()
     _cleanup_legacy_root_program_install()
+    _cleanup_legacy_executable_bridge()
+    try:
+        from ..startup import cleanup_legacy_system_entries
+        cleanup_legacy_system_entries()
+    except Exception:
+        pass
+    try:
+        from ..discord_proxy_manager import migrate_legacy_droute_markers
+        migrate_legacy_droute_markers()
+    except Exception:
+        pass
     _enable_gpu_friendly_defaults()
     _install_message_filter()
 
@@ -595,9 +701,11 @@ def main(argv: list[str] | None = None) -> int:
     from PyQt6.QtQuick import QQuickWindow
     QQuickWindow.setDefaultAlphaBuffer(True)
 
-    app = QApplication(argv if argv is not None else sys.argv)
+    launch_arguments = list(argv if argv is not None else sys.argv)
+    initial_deep_link = find_lumen_deep_link(launch_arguments)
+    app = QApplication(launch_arguments)
     _load_bundled_fonts()
-    single_server, is_primary = _create_single_instance(app)
+    single_server, is_primary = _create_single_instance(app, launch_arguments)
     if not is_primary:
         return 0
 
@@ -628,17 +736,53 @@ def main(argv: list[str] | None = None) -> int:
     if not QMetaObject.invokeMethod(window, "applyStartupWindowGeometry"):
         window.setMinimumWidth(640)
         window.setMinimumHeight(360)
-    start_in_tray = "--tray" in (argv if argv is not None else sys.argv)[1:]
+    start_in_tray = "--tray" in launch_arguments[1:] and not initial_deep_link
 
     if single_server is not None:
+        active_connections: set[object] = set()
+
+        def _read_instance_message(conn, state: dict, *, final: bool = False) -> None:
+            if state["done"]:
+                return
+            try:
+                state["data"].extend(bytes(conn.readAll()))
+            except Exception:
+                final = True
+            if len(state["data"]) > MAX_DEEP_LINK_LENGTH + 1024:
+                state["data"] = state["data"][: MAX_DEEP_LINK_LENGTH + 1024]
+                final = True
+            if not final and b"\n" not in state["data"]:
+                return
+            state["done"] = True
+            active_connections.discard(conn)
+            deep_link = decode_instance_message(bytes(state["data"]))
+            try:
+                conn.disconnectFromServer()
+                conn.deleteLater()
+            except Exception:
+                pass
+            _activate_window(window)
+            if deep_link:
+                bridge.handleDeepLink(deep_link)
+
         def _on_second_instance() -> None:
             while single_server.hasPendingConnections():
                 conn = single_server.nextPendingConnection()
                 if conn is not None:
-                    conn.disconnectFromServer()
-            _activate_window(window)
+                    state = {"data": bytearray(), "done": False}
+                    active_connections.add(conn)
+                    conn.readyRead.connect(
+                        lambda c=conn, s=state: _read_instance_message(c, s)
+                    )
+                    conn.disconnected.connect(
+                        lambda c=conn, s=state: _read_instance_message(c, s, final=True)
+                    )
+                    _read_instance_message(conn, state)
 
         single_server.newConnection.connect(_on_second_instance)
+
+    if initial_deep_link:
+        QTimer.singleShot(0, lambda: bridge.handleDeepLink(initial_deep_link))
 
     if APP_ICON_PATH.is_file():
         try:

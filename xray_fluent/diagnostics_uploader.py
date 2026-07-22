@@ -23,7 +23,7 @@ from .constants import (
 )
 from .data_paths import get_install_id
 
-_USER_AGENT = f"LumenKVN-Diagnostics/{_APP_VERSION}"
+_USER_AGENT = f"Lumen-Diagnostics/{_APP_VERSION}"
 
 _EVENT_TIMEOUT = 10
 _BUNDLE_TIMEOUT = 30

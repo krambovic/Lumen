@@ -61,6 +61,7 @@ def start_proxy(
                 runtime.http_port,
                 runtime.socks_port,
                 bypass_lan=controller._system_proxy_bypass_lan(),
+                configure_firefox=bool(controller.state.settings.firefox_proxy_integration),
             )
         except Exception as exc:
             controller.xray.stop()
@@ -130,6 +131,7 @@ def restart_proxy_core(controller: AppController, reason: str) -> bool:
                     runtime.http_port,
                     runtime.socks_port,
                     bypass_lan=controller._system_proxy_bypass_lan(),
+                    configure_firefox=bool(controller.state.settings.firefox_proxy_integration),
                 )
             except Exception as exc:
                 controller.xray.stop()

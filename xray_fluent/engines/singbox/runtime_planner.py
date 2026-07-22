@@ -199,6 +199,7 @@ def plan_singbox_runtime(
     if _node_is_full_singbox_config(node):
         runtime_config = deepcopy((node.outbound or {}).get("singbox_config") or {})
         normalize_singbox_wireguard_endpoints(runtime_config)
+        _normalize_openvpn_outbounds(runtime_config)
         strip_singbox_proxy_inbounds(runtime_config)
         _configure_singbox_runtime_inbounds(
             runtime_config,
@@ -221,6 +222,8 @@ def plan_singbox_runtime(
             local_socks_port=local_socks_port,
             local_http_port=local_http_port,
         )
+        _ensure_all_endpoint_server_bootstrap_contract(runtime_config)
+        _ensure_all_openvpn_server_bootstrap_contract(runtime_config)
         _ensure_full_config_proxy_alias(runtime_config)
         if routing is not None:
             apply_singbox_gui_routing(runtime_config, routing)
@@ -240,6 +243,7 @@ def plan_singbox_runtime(
 
     runtime_config = deepcopy(document.payload)
     normalize_singbox_wireguard_endpoints(runtime_config)
+    _normalize_openvpn_outbounds(runtime_config)
     strip_singbox_proxy_inbounds(runtime_config)
     _configure_singbox_runtime_inbounds(
         runtime_config,
@@ -262,6 +266,8 @@ def plan_singbox_runtime(
         local_socks_port=local_socks_port,
         local_http_port=local_http_port,
     )
+    _ensure_all_endpoint_server_bootstrap_contract(runtime_config)
+    _ensure_all_openvpn_server_bootstrap_contract(runtime_config)
 
     outbounds = runtime_config.get("outbounds")
     proxy_index = _find_proxy_outbound_index(outbounds)
@@ -332,6 +338,8 @@ def plan_singbox_runtime(
         apply_singbox_gui_routing(runtime_config, routing)
     if native_is_endpoint:
         _ensure_endpoint_server_bootstrap_contract(runtime_config, native_proxy)
+    elif str(native_proxy.get("type") or "").strip().lower() == "openvpn":
+        _ensure_openvpn_server_bootstrap_contract(runtime_config, native_proxy)
     else:
         _ensure_proxy_server_bootstrap_contract(runtime_config, native_proxy, node.server)
     _apply_imported_proxy_dns(runtime_config, node, routing)
@@ -781,6 +789,67 @@ def _ensure_endpoint_server_bootstrap_contract(payload: dict[str, Any], endpoint
             for cidr in resolved_by_host.get(host, []):
                 _ensure_direct_ip_route(payload, cidr)
             _ensure_direct_domain_route(payload, host)
+
+
+def _ensure_all_endpoint_server_bootstrap_contract(payload: dict[str, Any]) -> None:
+    endpoints = payload.get("endpoints")
+    if not isinstance(endpoints, list):
+        return
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        if str(endpoint.get("type") or "").strip().lower() not in {"wireguard", "warp"}:
+            continue
+        _ensure_endpoint_server_bootstrap_contract(payload, endpoint)
+
+
+def _ensure_openvpn_server_bootstrap_contract(
+    payload: dict[str, Any],
+    outbound: dict[str, Any],
+) -> None:
+    servers = outbound.get("servers")
+    if not isinstance(servers, list):
+        return
+    for server_options in servers:
+        if not isinstance(server_options, dict):
+            continue
+        server = str(server_options.get("server") or "").strip()
+        if server:
+            _ensure_proxy_server_bootstrap_contract(payload, outbound, server)
+
+
+def _normalize_openvpn_outbounds(payload: dict[str, Any]) -> None:
+    outbounds = payload.get("outbounds")
+    if not isinstance(outbounds, list):
+        return
+    used_names: set[str] = set()
+    openvpn_index = 0
+    for outbound in outbounds:
+        if not isinstance(outbound, dict):
+            continue
+        if str(outbound.get("type") or "").strip().lower() != "openvpn":
+            continue
+        outbound["system"] = False
+        requested_name = str(outbound.get("name") or f"openvpn{openvpn_index}").strip()
+        name_candidate = requested_name
+        suffix = 1
+        while name_candidate in used_names:
+            name_candidate = f"{requested_name}-{suffix}"
+            suffix += 1
+        outbound["name"] = name_candidate
+        used_names.add(name_candidate)
+        openvpn_index += 1
+
+
+def _ensure_all_openvpn_server_bootstrap_contract(payload: dict[str, Any]) -> None:
+    outbounds = payload.get("outbounds")
+    if not isinstance(outbounds, list):
+        return
+    for outbound in outbounds:
+        if not isinstance(outbound, dict):
+            continue
+        if str(outbound.get("type") or "").strip().lower() == "openvpn":
+            _ensure_openvpn_server_bootstrap_contract(payload, outbound)
 
 
 def _endpoint_ip_cidr(value: str) -> str:
@@ -1251,10 +1320,10 @@ def _clamp_tun_mtu_for_proxy(
     if not enabled:
         return
     proxy_type = str(proxy.get("type") or "").strip().lower()
-    if proxy_type not in {"wireguard", "warp", "masque"}:
+    if proxy_type not in {"wireguard", "warp", "masque", "openvpn"}:
         return
     try:
-        endpoint_mtu = int(proxy.get("mtu") or 1280)
+        endpoint_mtu = int(proxy.get("mtu") or (1500 if proxy_type == "openvpn" else 1280))
     except (TypeError, ValueError):
         endpoint_mtu = 1280
     endpoint_mtu = max(576, min(endpoint_mtu, 9000))

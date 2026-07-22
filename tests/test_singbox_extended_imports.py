@@ -186,6 +186,10 @@ def test_newline_delimited_clash_awg_json_uses_native_wireguard_endpoints() -> N
             "dns": ["1.1.1.1", "1.0.0.1"],
             "mtu": 1420,
             "persistent-keepalive": 25,
+            "udp-timeout": "4m",
+            "workers": 3,
+            "preallocated-buffers-per-pool": 96,
+            "disable-pauses": True,
             "remote-dns-resolve": True,
             "amnezia-wg-option": {
                 "jc": 4,
@@ -219,6 +223,10 @@ def test_newline_delimited_clash_awg_json_uses_native_wireguard_endpoints() -> N
         assert endpoint["type"] == "wireguard"
         assert endpoint["address"] == [expected_address]
         assert endpoint["mtu"] == 1420
+        assert endpoint["udp_timeout"] == "4m"
+        assert endpoint["workers"] == 3
+        assert endpoint["preallocated_buffers_per_pool"] == 96
+        assert endpoint["disable_pauses"] is True
         assert peer["allowed_ips"] == ["0.0.0.0/0", "::/0"]
         assert peer["persistent_keepalive_interval"] == 25
         assert endpoint["amnezia"]["h1"] == "819296636-819296655"
@@ -558,6 +566,10 @@ def test_wireguard_config_supports_multiple_peers() -> None:
         PrivateKey = private-key=
         Address = 10.0.0.2
         ListenPort = 51821
+        UDPTimeout = 4m
+        Workers = 2
+        PreallocatedBuffersPerPool = 64
+        DisablePauses = true
 
         [Peer]
         PublicKey = first-public-key=
@@ -576,10 +588,32 @@ def test_wireguard_config_supports_multiple_peers() -> None:
     outbound = build_singbox_outbound(nodes[0], tag="proxy")
     assert outbound["listen_port"] == 51821
     assert outbound["address"] == ["10.0.0.2/32"]
+    assert outbound["udp_timeout"] == "4m"
+    assert outbound["workers"] == 2
+    assert outbound["preallocated_buffers_per_pool"] == 64
+    assert outbound["disable_pauses"] is True
     assert len(outbound["peers"]) == 2
     assert outbound["peers"][1]["address"] == "2001:db8::1"
     assert outbound["peers"][1]["allowed_ips"] == ["10.2.0.1/32"]
     assert outbound["peers"][1]["pre_shared_key"] == "shared-key="
+
+
+def test_wireguard_uri_imports_singbox_extended_userspace_options() -> None:
+    nodes, errors = parse_links_text(
+        "wireguard://private-key%3D@wg.example.com:51820"
+        "?public_key=public-key%3D&address=10.0.0.2%2F32"
+        "&udp_timeout=3m&workers=4&preallocated_buffers_per_pool=128"
+        "&disable_pauses=true#Extended-WG"
+    )
+
+    assert errors == []
+    endpoint = build_singbox_outbound(nodes[0], tag="proxy")
+    assert endpoint["type"] == "wireguard"
+    assert endpoint["system"] is False
+    assert endpoint["udp_timeout"] == "3m"
+    assert endpoint["workers"] == 4
+    assert endpoint["preallocated_buffers_per_pool"] == 128
+    assert endpoint["disable_pauses"] is True
 
 
 def test_cloudflare_wireguard_reserved_config_uses_native_warp_endpoint() -> None:
@@ -714,3 +748,162 @@ def test_full_provider_config_is_preserved_for_tun_runtime() -> None:
 
     assert planned["providers"] == provider_config["providers"]
     assert any(outbound.get("tag") == "proxy" for outbound in planned["outbounds"])
+
+
+def test_full_wireguard_urltest_config_is_imported_as_one_auto_profile() -> None:
+    profile = {
+        "remarks": "AUTO WireGuard",
+        "endpoints": [
+            {
+                "type": "wireguard",
+                "tag": "wg-one",
+                "system": True,
+                "address": ["10.0.0.2"],
+                "private_key": "private-one=",
+                "peers": [
+                    {
+                        "address": "one.example.com",
+                        "port": 51820,
+                        "public_key": "public-one=",
+                        "allowed_ips": ["0.0.0.0/0", "::/0"],
+                    }
+                ],
+            },
+            {
+                "type": "wireguard",
+                "tag": "wg-two",
+                "address": ["10.0.1.2/32"],
+                "private_key": "private-two=",
+                "peers": [
+                    {
+                        "address": "198.51.100.20",
+                        "port": 51821,
+                        "public_key": "public-two=",
+                        "allowed_ips": ["0.0.0.0/0"],
+                    }
+                ],
+            },
+        ],
+        "outbounds": [
+            {
+                "type": "urltest",
+                "tag": "auto-wg",
+                "outbounds": ["wg-one", "wg-two"],
+                "url": "https://www.gstatic.com/generate_204",
+                "interval": "30s",
+                "tolerance": 50,
+            },
+            {"type": "direct", "tag": "direct"},
+        ],
+        "route": {"final": "auto-wg"},
+    }
+
+    nodes, errors = parse_links_text(json.dumps(profile))
+
+    assert errors == []
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert node.scheme == "auto"
+    assert node.name == "AUTO WireGuard"
+    assert node.server == "one.example.com"
+    assert node.description == "Автовыбор лучших серверов"
+    stored = node.outbound["singbox_config"]
+    assert "remarks" not in stored
+    assert [endpoint["tag"] for endpoint in stored["endpoints"]] == ["wg-one", "wg-two"]
+    assert all(endpoint["system"] is False for endpoint in stored["endpoints"])
+
+    document = parse_singbox_document(Path("default.json"), json.dumps(_base_config()))
+    planned = plan_singbox_runtime(
+        document,
+        node,
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+    ).singbox_config
+    auto = next(item for item in planned["outbounds"] if item.get("tag") == "auto-wg")
+    assert auto["outbounds"] == ["wg-one", "wg-two"]
+    assert next(item for item in planned["outbounds"] if item.get("tag") == "proxy")["outbounds"] == ["auto-wg"]
+    assert planned["route"]["final"] == "proxy"
+    assert all(endpoint["domain_resolver"] == "bootstrap-dns" for endpoint in planned["endpoints"])
+
+
+def test_legacy_wireguard_outbounds_are_migrated_without_breaking_urltest_tags() -> None:
+    profile = {
+        "outbounds": [
+            {
+                "type": "wireguard",
+                "tag": "legacy-one",
+                "server": "192.0.2.10",
+                "server_port": 51820,
+                "local_address": ["10.20.0.2"],
+                "private_key": "private-one=",
+                "peer_public_key": "public-one=",
+            },
+            {
+                "type": "wireguard",
+                "tag": "legacy-two",
+                "server": "192.0.2.20",
+                "server_port": 51821,
+                "local_address": ["10.21.0.2/32"],
+                "private_key": "private-two=",
+                "peer_public_key": "public-two=",
+            },
+            {
+                "type": "urltest",
+                "tag": "auto",
+                "outbounds": ["legacy-one", "legacy-two"],
+            },
+        ],
+        "route": {"final": "auto"},
+    }
+
+    nodes, errors = parse_links_text(json.dumps(profile))
+
+    assert errors == []
+    assert len(nodes) == 1
+    assert nodes[0].scheme == "auto"
+    config = nodes[0].outbound["singbox_config"]
+    assert [endpoint["tag"] for endpoint in config["endpoints"]] == ["legacy-one", "legacy-two"]
+    assert not any(item.get("type") == "wireguard" for item in config["outbounds"])
+    auto = next(item for item in config["outbounds"] if item.get("tag") == "auto")
+    assert auto["outbounds"] == ["legacy-one", "legacy-two"]
+    assert config["endpoints"][0]["address"] == ["10.20.0.2/32"]
+    assert config["endpoints"][0]["peers"][0]["address"] == "192.0.2.10"
+
+
+def test_clash_wireguard_urltest_group_adds_auto_profile() -> None:
+    nodes, errors = parse_links_text(
+        """
+proxies:
+  - name: WG One
+    type: wireguard
+    server: 192.0.2.10
+    port: 51820
+    ip: 10.0.0.2/32
+    private-key: private-one=
+    public-key: public-one=
+    allowed-ips: [0.0.0.0/0]
+  - name: WG Two
+    type: wireguard
+    server: 192.0.2.20
+    port: 51821
+    ip: 10.0.1.2/32
+    private-key: private-two=
+    public-key: public-two=
+    allowed-ips: [0.0.0.0/0]
+proxy-groups:
+  - name: Best WG
+    type: url-test
+    proxies: [WG One, WG Two]
+    url: https://www.gstatic.com/generate_204
+    interval: 60
+"""
+    )
+
+    assert errors == []
+    assert [node.scheme for node in nodes] == ["wireguard", "wireguard", "auto"]
+    auto_node = nodes[-1]
+    assert auto_node.name == "Best WG"
+    config = auto_node.outbound["singbox_config"]
+    assert len(config["endpoints"]) == 2
+    urltest = next(item for item in config["outbounds"] if item.get("type") == "urltest")
+    assert urltest["outbounds"] == ["wg-auto-1-1", "wg-auto-1-2"]
+    assert urltest["interval"] == "60s"

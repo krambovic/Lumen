@@ -21,9 +21,74 @@ STARTUP_STATE_ENABLED = "enabled"
 STARTUP_STATE_DISABLED = "disabled"
 
 
-def set_startup_enabled(app_name: str, enabled: bool, command: str) -> None:
+LEGACY_APP_NAMES = ("Lumen KVN", "LumenKVN", "lumen-kvn", "Lumen_KVN")
+LEGACY_EXECUTABLE_NAMES = {"lumenkvn.exe", "lumenkvn-qml.exe"}
+LEGACY_PROTOCOL_KEYS = (
+    r"Software\Classes\lumen-kvn",
+    r"Software\Classes\AppUserModelId\Lumen.LumenKVN",
+)
+_legacy_startup_was_disabled = False
+
+
+def cleanup_legacy_system_entries() -> None:
+    global _legacy_startup_was_disabled
     if sys.platform != "win32":
         return
+    for name in LEGACY_APP_NAMES:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_RUN_KEY, 0, winreg.KEY_READ) as key:
+                value, _ = winreg.QueryValueEx(key, name)
+            if isinstance(value, (bytes, bytearray)) and value and value[0] == 0x03:
+                _legacy_startup_was_disabled = True
+        except OSError:
+            pass
+        _delete_registry_startup(name)
+        _delete_startup_approved(name)
+        try:
+            subprocess.run(
+                ["schtasks", "/Delete", "/TN", name, "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        except Exception:
+            pass
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            APP_COMPAT_LAYERS_KEY,
+            0,
+            winreg.KEY_READ | winreg.KEY_SET_VALUE,
+        ) as key:
+            i = 0
+            to_delete: list[str] = []
+            while True:
+                try:
+                    val_name, _, _ = winreg.EnumValue(key, i)
+                    executable_name = Path(val_name.strip().strip('"')).name.casefold()
+                    if executable_name in LEGACY_EXECUTABLE_NAMES:
+                        to_delete.append(val_name)
+                    i += 1
+                except OSError:
+                    break
+            for val_name in to_delete:
+                try:
+                    winreg.DeleteValue(key, val_name)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    for key_path in LEGACY_PROTOCOL_KEYS:
+        _delete_registry_tree(winreg.HKEY_CURRENT_USER, key_path)
+
+
+def set_startup_enabled(app_name: str, enabled: bool, command: str) -> None:
+    global _legacy_startup_was_disabled
+    if sys.platform != "win32":
+        return
+    cleanup_legacy_system_entries()
     _delete_startup_task()
     if enabled:
         _create_registry_startup(app_name, command)
@@ -31,12 +96,16 @@ def set_startup_enabled(app_name: str, enabled: bool, command: str) -> None:
     else:
         _delete_registry_startup(app_name)
         _delete_startup_approved(app_name)
+    _legacy_startup_was_disabled = False
 
 
 def get_startup_state(app_name: str) -> str:
     if sys.platform != "win32":
         return STARTUP_STATE_ABSENT
+    cleanup_legacy_system_entries()
     if not _registry_startup_exists(app_name):
+        if app_name == TASK_NAME and _legacy_startup_was_disabled:
+            return STARTUP_STATE_DISABLED
         return STARTUP_STATE_ABSENT
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_RUN_KEY, 0, winreg.KEY_READ) as key:
@@ -113,13 +182,21 @@ def _current_executable_path() -> Path:
     return Path(sys.executable).resolve()
 
 
+def _canonical_frozen_executable() -> Path:
+    executable = Path(sys.executable).resolve()
+    canonical = executable.with_name("Lumen.exe")
+    if canonical.is_file():
+        return canonical
+    return executable
+
+
 def _admin_launch_command(extra_args: list[str] | None = None) -> tuple[Path, str, Path]:
     args = [arg for arg in sys.argv[1:] if arg != "--relaunch-as-admin"]
     if extra_args:
         args.extend(extra_args)
     args.append("--relaunch-as-admin")
     if getattr(sys, "frozen", False):
-        executable = Path(sys.executable).resolve()
+        executable = _canonical_frozen_executable()
         return executable, subprocess.list2cmdline(args), executable.parent
 
     base_dir = Path(__file__).resolve().parents[1]
@@ -149,6 +226,26 @@ def _delete_registry_startup(app_name: str) -> None:
             except FileNotFoundError:
                 pass
     except FileNotFoundError:
+        pass
+
+
+def _delete_registry_tree(root: int, key_path: str) -> None:
+    try:
+        with winreg.OpenKey(root, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
+            children: list[str] = []
+            index = 0
+            while True:
+                try:
+                    children.append(winreg.EnumKey(key, index))
+                    index += 1
+                except OSError:
+                    break
+        for child in children:
+            _delete_registry_tree(root, rf"{key_path}\{child}")
+        winreg.DeleteKey(root, key_path)
+    except FileNotFoundError:
+        pass
+    except OSError:
         pass
 
 
@@ -251,7 +348,7 @@ def _installed_executable_path() -> Path | None:
 def build_startup_command(*, in_tray: bool = True) -> str:
     tray_args = ["--tray"] if in_tray else []
     if getattr(sys, "frozen", False):
-        exe = Path(sys.executable).resolve()
+        exe = _canonical_frozen_executable()
         return subprocess.list2cmdline([str(exe), *tray_args])
 
     installed_exe = _installed_executable_path()

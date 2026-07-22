@@ -6,7 +6,7 @@ import ctypes
 import subprocess
 import sys
 
-AUMID = "Lumen.LumenKVN"
+AUMID = "Lumen.Lumen"
 SM_SHUTTINGDOWN = 0x2000
 
 _toasts_enabled = True
@@ -40,7 +40,7 @@ def show_toast(title: str, message: str, aumid: str = AUMID) -> bool:
         return False
     try:
         xml = (
-            "<toast activationType='protocol' launch='lumen-kvn:show'>"
+            "<toast activationType='protocol' launch='lumen:show'>"
             "<visual><binding template='ToastGeneric'>"
             f"<text>{_xml_escape(title)}</text>"
             f"<text>{_xml_escape(message)}</text>"

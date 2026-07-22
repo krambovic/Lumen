@@ -80,7 +80,7 @@ jobs:
             Select-Object -First 1
           $singbox = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest" -Headers $headers
           $geodata = Invoke-RestMethod "https://api.github.com/repos/runetfreedom/russia-v2ray-rules-dat/releases/latest" -Headers $headers
-          "cache-key=$($xray.id)-$($singbox.id)-$($geodata.id)-wintun-0.14.1-rulesets-v1-lumen-masque-v1" >> $env:GITHUB_OUTPUT
+          "cache-key=$($xray.id)-$($singbox.id)-$($geodata.id)-wintun-0.14.1-rulesets-v1-lumen-masque-v1-naive-v1" >> $env:GITHUB_OUTPUT
 
       - name: Cache core binaries
         id: cache-cores

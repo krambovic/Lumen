@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from xray_fluent import i18n, models
+from xray_fluent.qml_app.bridge.app_bridge import AppBridge
 
 
 def test_persian_and_chinese_catalogs_are_available() -> None:
@@ -73,6 +74,53 @@ def test_dynamic_update_messages_do_not_leave_russian_status_text(language: str)
         assert translated is not None
         assert translated != message
         assert not any("\u0400" <= char <= "\u04ff" for char in translated)
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [
+        (
+            "en",
+            "[transition] background task error: Regional rule set geoip:ir was not found. "
+            "Update GeoIP/GeoSite in Update settings.",
+        ),
+        (
+            "fa",
+            "[transition] خطای وظیفهٔ پس‌زمینه: مجموعه‌قواعد منطقه‌ای geoip:ir پیدا نشد. "
+            "GeoIP/GeoSite را در تنظیمات به‌روزرسانی، به‌روزرسانی کنید.",
+        ),
+        (
+            "zh",
+            "[transition] 后台任务错误：未找到区域规则集 geoip:ir。"
+            "请在更新设置中更新 GeoIP/GeoSite。",
+        ),
+    ],
+)
+def test_transition_rule_set_error_is_localized_in_log(
+    language: str,
+    expected: str,
+) -> None:
+    previous = i18n.get_language()
+    bridge = type("BridgeStub", (), {"_english_ui": lambda self: True})()
+    message = (
+        "[transition] worker error: Не найден региональный rule-set geoip:ir. "
+        "Обновите GeoIP/GeoSite в настройках обновлений."
+    )
+    try:
+        i18n.set_language(language)
+        assert AppBridge._localized_backend_message(bridge, message) == expected
+    finally:
+        i18n.set_language(previous)
+
+
+def test_log_localization_preserves_python_severity_prefix() -> None:
+    bridge = type(
+        "BridgeStub",
+        (),
+        {"_localized_backend_message": lambda self, message: f"translated: {message}"},
+    )()
+
+    assert AppBridge._localized_log_line(bridge, "WARNING: original") == "WARNING: translated: original"
 
 
 @pytest.mark.parametrize(

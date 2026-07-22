@@ -48,7 +48,7 @@ class ConnectivityTestWorker(QThread):
                 )
             )
 
-        request = Request(self._url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
+        request = Request(self._url, headers={"User-Agent": f"Lumen/{APP_VERSION}"})
         started = time.perf_counter()
         try:
             if self._cancelled.is_set():

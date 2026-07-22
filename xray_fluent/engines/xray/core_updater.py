@@ -132,7 +132,7 @@ def _normalize_channel(value: str) -> str:
 
 
 def _request_json(url: str, *, proxy_url: str | None = None, cancelled=None) -> object:
-    request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
+    request = Request(url, headers={"User-Agent": f"Lumen/{APP_VERSION}"})
     last_error: Exception | None = None
     transports = (proxy_url, None) if proxy_url else (None,)
     for transport_index, active_proxy in enumerate(transports):
@@ -205,7 +205,7 @@ def _fetch_dgst_hash(url: str, *, proxy_url: str | None = None, cancelled=None) 
     attempts = (proxy_url, None) if proxy_url else (None,)
     for index, active_proxy in enumerate(attempts):
         _raise_if_cancelled(cancelled)
-        request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
+        request = Request(url, headers={"User-Agent": f"Lumen/{APP_VERSION}"})
         try:
             with urlopen_proxy_first(request, timeout=12, proxy_url=active_proxy) as response:
                 body = response.read().decode("utf-8", errors="replace")
@@ -285,7 +285,7 @@ def _download_file(
     destination.parent.mkdir(parents=True, exist_ok=True)
     attempts = (proxy_url, None) if proxy_url else (None,)
     for index, active_proxy in enumerate(attempts):
-        request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
+        request = Request(url, headers={"User-Agent": f"Lumen/{APP_VERSION}"})
         try:
             with urlopen_proxy_first(request, timeout=120, proxy_url=active_proxy) as response:
                 if response_opened is not None:

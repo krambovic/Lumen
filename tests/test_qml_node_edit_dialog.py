@@ -27,6 +27,10 @@ def test_protocol_aware_node_edit_dialog_compiles() -> None:
             def translations(self):
                 return {{}}
 
+            @pyqtProperty("QVariantList", constant=True)
+            def manualNodeProtocols(self):
+                return ["vless", "wireguard", "awg"]
+
         app = QGuiApplication([])
         stub = StubApp()
         qmlRegisterSingletonInstance("App", 1, 0, "App", stub)
@@ -72,3 +76,6 @@ def test_dialog_uses_dynamic_protocol_schema_instead_of_shared_static_fields() -
     assert 'spec.kind === "area" ? areaEditor' not in source
     assert "echoMode: TextInput.Normal" in source
     assert "TextInput.Password" not in source
+    assert "App.manualNodeProtocols" in source
+    assert "App.createManualNode(payload)" in source
+    assert 'dlg.loadNewProtocol(currentText)' in source

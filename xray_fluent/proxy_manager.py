@@ -226,7 +226,13 @@ class ProxyManager:
         except Exception:
             return []
 
-    def enable(self, http_port: int, socks_port: int, bypass_lan: bool = True) -> None:
+    def enable(
+        self,
+        http_port: int,
+        socks_port: int,
+        bypass_lan: bool = True,
+        configure_firefox: bool = False,
+    ) -> None:
         if not self.is_supported:
             return
         if self._backup is None:
@@ -252,7 +258,22 @@ class ProxyManager:
         )
         if not self._set_wininet_connection_proxy(proxy_server, override, True):
             self._refresh_system_proxy()
-        self._firefox_proxy.enable(http_port=int(http_port), socks_port=int(socks_port), bypass_lan=bypass_lan)
+        # Firefox profile integration is optional.  WinINET is already fully
+        # configured above, so a locked/read-only browser profile must never
+        # turn a successful system-proxy operation into a connection failure.
+        try:
+            if configure_firefox:
+                self._firefox_proxy.enable(
+                    http_port=int(http_port),
+                    socks_port=int(socks_port),
+                    bypass_lan=bypass_lan,
+                )
+            else:
+                # Remove overrides left by older Lumen versions where this
+                # integration was always enabled.
+                self._firefox_proxy.disable()
+        except Exception:
+            pass
 
     def disable(self, restore_previous: bool = True) -> None:
         if not self.is_supported:
@@ -302,16 +323,23 @@ class FirefoxProxyManager:
         backup = self._load_backup()
         changed = False
         for profile in profiles:
-            key = str(profile)
-            if key not in backup:
-                user_js = profile / "user.js"
-                prefs_js = profile / "prefs.js"
-                backup[key] = {
-                    "user.js": user_js.read_text(encoding="utf-8", errors="replace") if user_js.exists() else None,
-                    "prefs.js": prefs_js.read_text(encoding="utf-8", errors="replace") if prefs_js.exists() else None,
-                }
-            self._write_profile_prefs(profile, mixed_port=int(socks_port), bypass_lan=bypass_lan)
-            changed = True
+            try:
+                key = str(profile)
+                if key not in backup:
+                    user_js = profile / "user.js"
+                    prefs_js = profile / "prefs.js"
+                    backup[key] = {
+                        "user.js": user_js.read_text(encoding="utf-8", errors="replace") if user_js.exists() else None,
+                        "prefs.js": prefs_js.read_text(encoding="utf-8", errors="replace") if prefs_js.exists() else None,
+                    }
+                    # Persist originals before attempting to modify either file.
+                    self._save_backup(backup)
+                self._write_profile_prefs(profile, mixed_port=int(socks_port), bypass_lan=bypass_lan)
+                changed = True
+            except Exception:
+                # One protected Firefox profile must not prevent other profiles
+                # (or the Windows system proxy) from being configured.
+                continue
         if changed:
             self._save_backup(backup)
 

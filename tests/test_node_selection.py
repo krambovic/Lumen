@@ -71,6 +71,34 @@ def test_subscription_profile_title_becomes_group_only_when_name_is_empty() -> N
     assert controller.state.subscriptions[0]["name"] == "Provider title"
 
 
+def test_add_manual_node_persists_validated_node() -> None:
+    controller = _Controller([], None)
+    node = Node(
+        name="Manual VLESS",
+        scheme="vless",
+        server="manual.example",
+        port=443,
+        group="Manual",
+        outbound={
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": "manual.example",
+                    "port": 443,
+                    "users": [{"id": "00000000-0000-0000-0000-000000000001"}],
+                }],
+            },
+            "streamSettings": {"network": "tcp", "security": "none"},
+        },
+    )
+
+    node_id = node_service.add_manual_node(controller, node)
+
+    assert node_id == node.id
+    assert controller.state.nodes == [node]
+    assert node.sort_order == 1
+
+
 class _RecordingSignal:
     def __init__(self, events: list[tuple]) -> None:
         self.events = events

@@ -35,7 +35,7 @@ WINWS2_EXE = ZAPRET_DIR / "exe" / "winws2.exe"
 WINWS_EXE = ZAPRET_DIR / "exe" / "winws.exe"
 PRESETS_DIR = ZAPRET_DIR / "presets"
 PROGRAM_DATA_DIR = Path(os.environ.get("ProgramData") or r"C:\ProgramData")
-AT_CONFIG_DIR = PROGRAM_DATA_DIR / "LumenKVN" / "zapret" / "winws2_at_config"
+AT_CONFIG_DIR = PROGRAM_DATA_DIR / "Lumen" / "zapret" / "winws2_at_config"
 _INLINE_ARG_SPLIT_RE = re.compile(r"(?<=\S)\s+(?=--)")
 _LIST_FILE_ARG_RE = re.compile(r"^--(?:ipset|ipset-exclude|hostlist|hostlist-exclude)=(.+)$")
 _ELEVATION_ERROR_MARKERS = (

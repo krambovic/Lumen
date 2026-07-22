@@ -66,6 +66,41 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "built sing-box executable did not start"
     }
+
+    # NaiveProxy on Windows loads Cronet dynamically.  The extended project's
+    # regular archive does not contain the DLL, while its matching purego
+    # archive does.  Fetch the companion from the exact same release and keep
+    # it beside the Lumen-patched executable for installer and portable builds.
+    $headers = @{ "User-Agent" = "Lumen-build" }
+    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+        $headers["Authorization"] = "Bearer $env:GITHUB_TOKEN"
+    }
+    $releaseApi = "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/tags/$Ref"
+    $release = Invoke-RestMethod $releaseApi -Headers $headers
+    $cronetAsset = $release.assets |
+        Where-Object { $_.name -like "*-windows-amd64-purego.zip" } |
+        Select-Object -First 1
+    if (-not $cronetAsset) {
+        throw "matching sing-box extended archive with libcronet.dll was not found"
+    }
+    $cronetArchive = Join-Path $workRoot "sing-box-cronet.zip"
+    $cronetExtract = Join-Path $workRoot "cronet"
+    Invoke-WebRequest $cronetAsset.browser_download_url -OutFile $cronetArchive -Headers $headers
+    $publishedDigest = [string]$cronetAsset.digest
+    if ($publishedDigest -notmatch '^sha256:([0-9a-fA-F]{64})$') {
+        throw "the libcronet archive does not provide a published SHA-256"
+    }
+    $actualDigest = (Get-FileHash -LiteralPath $cronetArchive -Algorithm SHA256).Hash
+    if ($actualDigest -ne $Matches[1]) {
+        throw "the libcronet archive SHA-256 does not match"
+    }
+    Expand-Archive $cronetArchive -DestinationPath $cronetExtract -Force
+    $cronet = Get-ChildItem $cronetExtract -Recurse -Filter libcronet.dll -File |
+        Select-Object -First 1
+    if (-not $cronet -or $cronet.Length -lt 1024) {
+        throw "libcronet.dll is missing or damaged in the sing-box archive"
+    }
+    Copy-Item -LiteralPath $cronet.FullName -Destination (Join-Path $outputDirectory "libcronet.dll") -Force
 }
 finally {
     if ($ownsWorkDirectory -and (Test-Path -LiteralPath $workRoot)) {

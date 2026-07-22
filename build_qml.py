@@ -220,6 +220,16 @@ def _install_subscription_fetcher(app_dir: Path = APP_DIR) -> Path:
     return target
 
 
+def _install_legacy_update_bridge(app_dir: Path = APP_DIR) -> Path:
+    """Keep the portable package compatible with the updater shipped under the old name."""
+    source = app_dir / f"{APP_NAME}.exe"
+    if not source.is_file():
+        raise RuntimeError(f"Main executable is missing: {source}")
+    target = app_dir / "LumenKVN.exe"
+    shutil.copy2(source, target)
+    return target
+
+
 # ------------------------------------------------------------------
 def ensure_venv() -> None:
     if VENV_PYTHON.exists():
@@ -288,6 +298,8 @@ def build_exe() -> None:
     shutil.rmtree(temp_dist, ignore_errors=True)
     fetcher_path = _install_subscription_fetcher(APP_DIR)
     _print(f"Installed direct subscription helper -> {fetcher_path}")
+    legacy_bridge = _install_legacy_update_bridge(APP_DIR)
+    _print(f"Installed legacy update bridge -> {legacy_bridge}")
 
     dst_core = APP_DIR / "core"
     _print(f"Merging core -> {dst_core}")
@@ -325,10 +337,9 @@ def _pack_zip(path: Path) -> None:
     if path.exists():
         path.unlink()
     _print(f"Creating {path} ...")
-    base = APP_DIR.parent
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
         for item in APP_DIR.rglob("*"):
-            zf.write(item, item.relative_to(base))
+            zf.write(item, item.relative_to(APP_DIR))
 
 
 def pack_portable_zip() -> None:

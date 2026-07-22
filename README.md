@@ -1,7 +1,7 @@
 # Lumen
 
 <p align="center">
-  <img src="assets/LumenKVN.png" alt="Lumen Logo" width="140">
+  <img src="assets/Lumen.png" alt="Lumen Logo" width="140">
 </p>
 
 <p align="center">
@@ -70,6 +70,7 @@ Lumen supports importing and running these server types:
 - Regular subscription URLs and encrypted Happ links: `happ://crypt`, `happ://crypt2`, `happ://crypt3`, `happ://crypt4`, and `happ://crypt5`.
 - HWID-protected subscriptions: Lumen can send the real Windows device HWID (enabled by default) or a custom HWID configured by the user.
 - Happ Premium subscription metadata and supported controls are displayed directly in the server list and subscription properties.
+- Websites can open Lumen and import a subscription through the `lumen://` deep-link protocol. Use `lumen://add?url=<percent-encoded-subscription-url>&name=<optional-name>` for an “Add VPN” button.
 
 > [!NOTE]
 > Full `happ://crypt5` decryption support requires [Node.js](https://nodejs.org/) to be installed and available through `PATH`. Earlier `happ://crypt` formats are decrypted by Lumen itself.
@@ -78,8 +79,8 @@ Lumen supports importing and running these server types:
 
 Go to the **[Releases](https://github.com/krambovic/Lumen/releases)** page and download the appropriate package:
 
-* **Installer (`LumenKVN-Setup-windows-x64.exe`):** Recommended for most users.
-* **Portable version (`LumenKVN-portable-windows-x64.zip`):** Standalone archive that runs without installation.
+* **Installer (`Lumen-Setup-windows-x64.exe`):** Recommended for most users.
+* **Portable version (`Lumen-portable-windows-x64.zip`):** Standalone archive that runs without installation.
 
 > [!CAUTION]
 > **Windows Defender or another antivirus may report a false positive for Lumen or its bundled components.** Lumen includes network tools such as Xray, sing-box and zapret, can create a TUN interface, and changes system proxy and routing settings. These capabilities, combined with the unsigned PyInstaller-packaged application, may trigger heuristic antivirus rules even when no malware is present. Download Lumen only from the official [GitHub Releases](https://github.com/krambovic/Lumen/releases) page. Do not disable antivirus protection globally; if a file is blocked, inspect the detection and submit it to the antivirus vendor as a false positive or add a local exception only after verifying the download source.

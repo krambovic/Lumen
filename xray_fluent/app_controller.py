@@ -52,6 +52,7 @@ from .application.config import (
     validate_json_text,
 )
 from .application.nodes import (
+    add_manual_node as add_manual_node_operation,
     apply_fetched_subscription as apply_fetched_subscription_operation,
     bulk_update_nodes as bulk_update_nodes_operation,
     delete_group as delete_group_operation,
@@ -1191,6 +1192,7 @@ class AppController(QObject):
                     http_port,
                     socks_port,
                     bypass_lan=bypass_lan,
+                    configure_firefox=bool(settings.firefox_proxy_integration),
                 )
             else:
                 self.proxy.disable(restore_previous=True)
@@ -1607,6 +1609,9 @@ class AppController(QObject):
     def update_node(self, node_id: str, updates: dict) -> bool:
         return update_node_operation(self, node_id, updates)
 
+    def add_manual_node(self, node: Node) -> str:
+        return add_manual_node_operation(self, node)
+
     def bulk_update_nodes(self, node_ids: set[str], operations: dict) -> int:
         return bulk_update_nodes_operation(self, node_ids, operations)
 
@@ -1873,6 +1878,7 @@ class AppController(QObject):
         old_admin = old_settings.always_run_as_admin
         old_tun = old_settings.tun_mode
         old_proxy = old_settings.enable_system_proxy
+        old_firefox_proxy = getattr(old_settings, "firefox_proxy_integration", False)
         old_diagnostics_upload = getattr(old_settings, "diagnostics_upload_enabled", True)
         self.state.settings = settings
         if old_diagnostics_upload != getattr(settings, "diagnostics_upload_enabled", True):
@@ -1884,6 +1890,8 @@ class AppController(QObject):
             QTimer.singleShot(0, self.apply_discord_proxy)  # strip droute from Discord as soon as TUN takes over
 
         if old_proxy and not settings.enable_system_proxy:
+            self.proxy.disable_necko_overrides()
+        elif old_firefox_proxy and not settings.firefox_proxy_integration:
             self.proxy.disable_necko_overrides()
 
         if (

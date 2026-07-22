@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import ipaddress
 import json
 from pathlib import Path
@@ -10,7 +11,11 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import url2pathname
 
 from .models import Node
-from .wireguard_normalization import normalize_ip_prefixes
+from .openvpn_import import looks_like_openvpn_config, parse_openvpn_config
+from .wireguard_normalization import (
+    normalize_ip_prefixes,
+    normalize_singbox_wireguard_endpoints,
+)
 
 try:  # Optional at runtime, listed in requirements for bundled builds.
     import yaml
@@ -37,11 +42,13 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
     if len(text.encode("utf-8", errors="replace")) > MAX_IMPORT_BYTES:
         return [], [f"Import data exceeds the {MAX_IMPORT_BYTES}-byte limit"]
     stripped = text.strip()
+    source_path: Path | None = None
     try:
-        file_text = _read_import_file_reference(stripped)
+        file_reference = _read_import_file_reference(stripped)
     except LinkParseError as exc:
         return [], [str(exc)]
-    if file_text is not None:
+    if file_reference is not None:
+        file_text, source_path = file_reference
         stripped = file_text.strip()
         text = file_text
     if stripped.startswith(("{", "[")):
@@ -58,6 +65,31 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
             return _parse_clash_yaml_nodes_text(stripped)
         except Exception as exc:
             return [], [f"Clash YAML: {exc}"]
+    if looks_like_openvpn_config(stripped):
+        try:
+            native, dns_servers, profile_name = parse_openvpn_config(
+                stripped,
+                source_path=source_path,
+            )
+            first_server = _first_mapping(native.get("servers"))
+            outbound: dict[str, Any] = {
+                "protocol": "openvpn",
+                "singbox": native,
+            }
+            if dns_servers:
+                outbound["_dns"] = dns_servers
+            return [
+                Node(
+                    name=profile_name,
+                    scheme="openvpn",
+                    server=str(first_server.get("server") or ""),
+                    port=int(first_server.get("server_port") or 0),
+                    link=json.dumps(outbound, ensure_ascii=False, separators=(",", ":")),
+                    outbound=outbound,
+                )
+            ], []
+        except Exception as exc:
+            return [], [f"OpenVPN: {exc}"]
     lowered = stripped.lower()
     if "[interface]" in lowered and "[peer]" in lowered:
         try:
@@ -82,7 +114,7 @@ def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
     return nodes, errors
 
 
-def _read_import_file_reference(text: str) -> str | None:
+def _read_import_file_reference(text: str) -> tuple[str, Path] | None:
     """Accept paths copied from Explorer/QML instead of treating them as links."""
     if not text or "\n" in text:
         return None
@@ -97,7 +129,7 @@ def _read_import_file_reference(text: str) -> str | None:
             path_text = f"\\\\{parsed.netloc}{path_text}"
     elif parsed.scheme == "":
         candidate = candidate_text
-        if candidate.lower().endswith((".conf", ".txt", ".json", ".yaml", ".yml")):
+        if candidate.lower().endswith((".conf", ".ovpn", ".txt", ".json", ".yaml", ".yml")):
             path_text = candidate
     if not path_text:
         return None
@@ -112,7 +144,7 @@ def _read_import_file_reference(text: str) -> str | None:
         raise LinkParseError(
             f"Import file exceeds the {MAX_IMPORT_BYTES}-byte limit"
         )
-    return path.read_text(encoding="utf-8", errors="replace")
+    return path.read_text(encoding="utf-8", errors="replace"), path
 
 
 def parse_single(raw: str) -> Node:
@@ -147,6 +179,8 @@ def parse_single(raw: str) -> Node:
         return _parse_socks(text)
     if scheme in {"http", "https"}:
         return _parse_http_proxy(text)
+    if scheme in {"naive", "naive+https", "naive+quic", "quic"}:
+        return _parse_naive_link(text)
     if scheme in {"wireguard", "wg", "awg", "warp"}:
         return _parse_wireguard_like_link(text, scheme)
     if scheme in {"hysteria", "hy"}:
@@ -618,7 +652,7 @@ def _is_clash_proxy_payload(payload: Any) -> bool:
     if kind not in {
         "vless", "vmess", "trojan", "ss", "shadowsocks",
         "hy", "hysteria", "hy2", "hysteria2", "tuic", "wireguard",
-        "awg", "amneziawg", "amnezia-wg", "masque",
+        "awg", "amneziawg", "amnezia-wg", "masque", "naive",
     }:
         return False
     return (
@@ -775,6 +809,8 @@ def validate_node_outbound(node: Node) -> str | None:
         "hysteria2",
         "tuic",
         "mieru",
+        "openvpn",
+        "naive",
     } and (not str(node.server or "").strip() or int(node.port or 0) <= 0):
         return f"Сервер {node.name or node.scheme} пропущен: нет адреса или порта."
 
@@ -797,6 +833,30 @@ def validate_node_outbound(node: Node) -> str | None:
         if isinstance(outbound.get("singbox"), dict)
         else outbound
     )
+    if str(node.scheme or outbound.get("protocol") or "").strip().lower() == "openvpn":
+        servers = native_outbound.get("servers")
+        if not isinstance(servers, list) or not servers:
+            return "OpenVPN-профиль не содержит ни одного remote-сервера."
+        for server_options in servers:
+            if not isinstance(server_options, dict):
+                return "OpenVPN servers должен быть списком объектов."
+            try:
+                remote_port = int(server_options.get("server_port") or 0)
+            except (TypeError, ValueError):
+                remote_port = 0
+            if not str(server_options.get("server") or "").strip() or remote_port <= 0:
+                return "OpenVPN remote должен содержать адрес и порт."
+        if str(native_outbound.get("proto") or "").strip().lower() not in {"udp", "tcp"}:
+            return "OpenVPN transport должен быть udp или tcp."
+        tls_openvpn = native_outbound.get("tls") if isinstance(native_outbound.get("tls"), dict) else {}
+        if not str(tls_openvpn.get("ca") or tls_openvpn.get("ca_path") or "").strip():
+            return "OpenVPN-профиль не содержит CA-сертификат."
+        has_tls_auth = bool(native_outbound.get("tls_auth") or native_outbound.get("tls_auth_path"))
+        has_tls_crypt = bool(native_outbound.get("tls_crypt") or native_outbound.get("tls_crypt_path"))
+        if has_tls_auth and has_tls_crypt:
+            return "OpenVPN TLS Auth и TLS Crypt нельзя включать одновременно."
+        if native_outbound.get("tls_crypt_v2") and not has_tls_crypt:
+            return "OpenVPN TLS Crypt v2 включён без ключа TLS Crypt."
     endpoint_problem = _validate_wireguard_endpoint(node, native_outbound)
     if endpoint_problem:
         return endpoint_problem
@@ -1090,6 +1150,11 @@ def _parse_json_nodes_payload(payload: Any) -> tuple[list[Node], list[str]]:
     nodes: list[Node] = []
     errors: list[str] = []
 
+    if isinstance(payload, dict) and "proxy" in payload and not any(
+        key in payload for key in ("type", "protocol", "outbounds", "endpoints", "proxies")
+    ):
+        return _parse_naiveproxy_config_payload(payload)
+
     if isinstance(payload, list):
         items = payload
     elif isinstance(payload, dict):
@@ -1102,6 +1167,8 @@ def _parse_json_nodes_payload(payload: Any) -> tuple[list[Node], list[str]]:
             items = payload["nodes"]
         elif isinstance(payload.get("items"), list):
             items = payload["items"]
+        elif _is_singbox_wireguard_config_payload(payload) or _is_singbox_openvpn_config_payload(payload):
+            items = [payload]
         elif isinstance(payload.get("providers"), list) and isinstance(payload.get("outbounds"), list):
             items = [payload]
         elif _is_xray_auto_config_payload(payload):
@@ -1150,6 +1217,8 @@ def _json_proxy_outbounds(outbounds: list[Any]) -> list[dict[str, Any]]:
         "tuic",
         "mieru",
         "masque",
+        "openvpn",
+        "naive",
     }
     auto_kinds = {"selector", "urltest", "url-test"}
     ignored = {"freedom", "blackhole", "dns", "direct", "block", *auto_kinds}
@@ -1192,8 +1261,9 @@ def _resolve_auto_selector_payload(selector: dict[str, Any], tag_map: dict[str, 
             "route": {"final": str(selector.get("tag") or "proxy")},
         }
         name = str(selector.get("name") or selector.get("remarks") or selector.get("tag") or "Автовыбор сервера").strip()
-        server = str(target.get("server") or target.get("address") or "")
-        port = int(target.get("server_port") or target.get("port") or 0)
+        target_server = _first_mapping(target.get("servers")) if target_kind == "openvpn" else {}
+        server = str(target.get("server") or target.get("address") or target_server.get("server") or "")
+        port = int(target.get("server_port") or target.get("port") or target_server.get("server_port") or 0)
         return {
             "protocol": "singbox_config",
             "tag": name,
@@ -1247,7 +1317,94 @@ def _parse_clash_yaml_nodes_text(text: str) -> tuple[list[Node], list[str]]:
             nodes.append(_parse_clash_proxy_payload(item))
         except Exception as exc:
             errors.append(f"Clash proxy {idx}: {exc}")
+    nodes.extend(_parse_clash_wireguard_auto_groups(payload, nodes, errors))
     return nodes, errors
+
+
+def _parse_clash_wireguard_auto_groups(
+    payload: dict[str, Any],
+    nodes: list[Node],
+    errors: list[str],
+) -> list[Node]:
+    """Translate Clash url-test groups made from WG endpoints to sing-box AUTO."""
+    groups = payload.get("proxy-groups") or payload.get("proxy_groups")
+    if not isinstance(groups, list):
+        return []
+
+    node_by_name = {node.name: node for node in nodes if node.name}
+    auto_nodes: list[Node] = []
+    for index, group in enumerate(groups, start=1):
+        if not isinstance(group, dict):
+            continue
+        group_type = str(group.get("type") or "").strip().lower()
+        if group_type not in {"url-test", "urltest"}:
+            continue
+        refs = group.get("proxies")
+        if not isinstance(refs, list):
+            continue
+        members = [node_by_name.get(str(ref or "").strip()) for ref in refs]
+        members = [node for node in members if node is not None]
+        if len(members) < 2 or not all(
+            str((node.outbound or {}).get("protocol") or "").lower()
+            in {"wireguard", "awg", "warp"}
+            for node in members
+        ):
+            continue
+        try:
+            endpoint_tags: list[str] = []
+            endpoints: list[dict[str, Any]] = []
+            for member_index, member in enumerate(members, start=1):
+                native = (member.outbound or {}).get("singbox")
+                if not isinstance(native, dict):
+                    raise LinkParseError(f"{member.name}: missing native WireGuard endpoint")
+                endpoint = deepcopy(native)
+                endpoint_tag = f"wg-auto-{index}-{member_index}"
+                endpoint["tag"] = endpoint_tag
+                endpoint_tags.append(endpoint_tag)
+                endpoints.append(endpoint)
+
+            group_name = str(group.get("name") or f"AUTO WG {index}").strip()
+            group_tag = f"auto-wg-{index}"
+            interval = group.get("interval")
+            interval_text = (
+                f"{int(interval)}s"
+                if isinstance(interval, (int, float)) and int(interval) > 0
+                else str(interval or "3m")
+            )
+            urltest: dict[str, Any] = {
+                "type": "urltest",
+                "tag": group_tag,
+                "outbounds": endpoint_tags,
+                "url": str(group.get("url") or "https://www.gstatic.com/generate_204"),
+                "interval": interval_text,
+                "tolerance": int(group.get("tolerance") or 50),
+                "interrupt_exist_connections": True,
+            }
+            config = {
+                "endpoints": endpoints,
+                "outbounds": [
+                    {"type": "direct", "tag": "direct"},
+                    urltest,
+                ],
+                "route": {"final": group_tag, "auto_detect_interface": True},
+            }
+            wrapper = _native_singbox_config(config)
+            wrapper.update(
+                {
+                    "tag": group_name,
+                    "remarks": group_name,
+                    "__lumen_scheme": "auto",
+                    "__lumen_server": members[0].server,
+                    "__lumen_port": members[0].port,
+                }
+            )
+            node = _parse_json_outbound_payload(wrapper)
+            node.name = group_name
+            node.description = "Автовыбор лучших серверов"
+            auto_nodes.append(node)
+        except Exception as exc:
+            errors.append(f"Clash AUTO WG group {index}: {exc}")
+    return auto_nodes
 
 
 def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
@@ -1262,7 +1419,7 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         kind = "socks"
     elif kind in {"awg", "amneziawg", "amnezia-wg"}:
         kind = "wireguard"
-    if kind not in {"vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria", "hysteria2", "tuic", "masque"}:
+    if kind not in {"vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria", "hysteria2", "tuic", "masque", "naive"}:
         raise LinkParseError(f"unsupported Clash proxy type: {kind or 'unknown'}")
 
     server = str(payload.get("server") or "").strip()
@@ -1276,7 +1433,7 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         return _parse_clash_wireguard_payload(payload, name, server, port)
     if kind == "masque":
         return _parse_clash_masque_payload(payload, name, server, port)
-    if kind in {"hysteria", "hysteria2", "tuic"}:
+    if kind in {"hysteria", "hysteria2", "tuic", "naive"}:
         outbound = _native_singbox_outbound(_clash_to_singbox_outbound(payload, kind))
     else:
         outbound = _clash_to_xray_outbound(payload, kind)
@@ -1289,6 +1446,98 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         link=json.dumps(outbound, ensure_ascii=False, separators=(",", ":")),
         outbound=outbound,
     )
+
+
+def _parse_naive_link(link: str, *, source_scheme: str = "") -> Node:
+    """Parse an explicit NaiveProxy URI into sing-box extended's native outbound.
+
+    Plain ``https://`` remains an HTTP proxy everywhere else.  The explicit
+    ``naive*`` schemes are intentional aliases used by Lumen imports, while
+    official NaiveProxy JSON configs pass their ``https://``/``quic://`` URI
+    here with ``source_scheme`` so the two formats never conflict.
+    """
+    parsed = urlsplit(link)
+    scheme = (source_scheme or parsed.scheme).strip().lower()
+    is_quic = scheme in {"quic", "naive+quic"}
+    if scheme not in {"naive", "naive+https", "naive+quic", "https", "quic"}:
+        raise LinkParseError(f"unsupported NaiveProxy transport: {scheme or 'unknown'}")
+
+    server = str(parsed.hostname or "").strip()
+    port = int(parsed.port or 443)
+    if not server or port <= 0:
+        raise LinkParseError("NaiveProxy URI must contain server and port")
+
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    username = unquote(parsed.username or "")
+    password = unquote(parsed.password or "")
+    server_name = _first(query, "sni") or _first(query, "server_name") or server
+    native: dict[str, Any] = {
+        "type": "naive",
+        "tag": "proxy",
+        "server": server,
+        "server_port": port,
+        "username": username,
+        "password": password,
+        "quic": is_quic or _to_bool(_first(query, "quic")),
+        "tls": {
+            "enabled": True,
+            "server_name": server_name,
+        },
+    }
+    concurrency = _first(query, "insecure_concurrency") or _first(query, "insecure-concurrency")
+    if concurrency:
+        native["insecure_concurrency"] = int(concurrency)
+    congestion = _first(query, "quic_congestion_control") or _first(query, "quic-congestion-control")
+    if congestion:
+        native["quic_congestion_control"] = congestion
+    udp_over_tcp = _first(query, "udp_over_tcp") or _first(query, "udp-over-tcp")
+    if udp_over_tcp:
+        try:
+            decoded_uot = json.loads(udp_over_tcp)
+        except json.JSONDecodeError:
+            decoded_uot = _to_bool(udp_over_tcp)
+        if isinstance(decoded_uot, (bool, dict)):
+            native["udp_over_tcp"] = decoded_uot
+    extra_headers = _first(query, "extra_headers") or _first(query, "extra-headers")
+    if extra_headers:
+        try:
+            decoded_headers = json.loads(extra_headers)
+        except json.JSONDecodeError as exc:
+            raise LinkParseError("NaiveProxy extra_headers must be a JSON object") from exc
+        if not isinstance(decoded_headers, dict):
+            raise LinkParseError("NaiveProxy extra_headers must be a JSON object")
+        native["extra_headers"] = decoded_headers
+
+    name = _clean_name(parsed.fragment, f"naive-{server}:{port}")
+    outbound = _native_singbox_outbound(native)
+    return Node(
+        name=name,
+        scheme="naive",
+        server=server,
+        port=port,
+        link=link,
+        outbound=outbound,
+    )
+
+
+def _parse_naiveproxy_config_payload(payload: dict[str, Any]) -> tuple[list[Node], list[str]]:
+    raw_proxies = payload.get("proxy")
+    proxy_uris = raw_proxies if isinstance(raw_proxies, list) else [raw_proxies]
+    nodes: list[Node] = []
+    errors: list[str] = []
+    for index, value in enumerate(proxy_uris, start=1):
+        uri = str(value or "").strip()
+        if not uri:
+            continue
+        scheme = urlsplit(uri).scheme.lower()
+        if scheme not in {"https", "quic"}:
+            errors.append(f"NaiveProxy proxy {index}: unsupported transport `{scheme or 'unknown'}`")
+            continue
+        try:
+            nodes.append(_parse_naive_link(uri, source_scheme=scheme))
+        except Exception as exc:
+            errors.append(f"NaiveProxy proxy {index}: {exc}")
+    return nodes, errors
 
 
 def _clash_list(value: Any) -> list[str]:
@@ -1454,6 +1703,18 @@ def _parse_clash_wireguard_payload(
         mtu=int(payload.get("mtu") or 1408),
         amnezia=amnezia,
         listen_port=payload.get("listen-port") or payload.get("listen_port") or "",
+        udp_timeout=payload.get("udp-timeout") or payload.get("udp_timeout") or "5m0s",
+        workers=payload.get("workers") or "",
+        preallocated_buffers_per_pool=(
+            payload.get("preallocated-buffers-per-pool")
+            or payload.get("preallocated_buffers_per_pool")
+            or ""
+        ),
+        disable_pauses=(
+            payload.get("disable-pauses")
+            if "disable-pauses" in payload
+            else payload.get("disable_pauses")
+        ),
     )
     peer = endpoint["peers"][0]
     if reserved_bytes:
@@ -1591,17 +1852,31 @@ def _clash_to_singbox_outbound(payload: dict[str, Any], kind: str) -> dict[str, 
         ("uuid", "uuid"),
         ("congestion-controller", "congestion_control"),
         ("udp-relay-mode", "udp_relay_mode"),
+        ("username", "username"),
+        ("insecure-concurrency", "insecure_concurrency"),
+        ("quic-congestion-control", "quic_congestion_control"),
     ):
         value = payload.get(clash_key)
         if value not in (None, ""):
             native[singbox_key] = value
     server_name = str(payload.get("servername") or payload.get("sni") or "").strip()
-    if payload.get("tls") or server_name:
+    if payload.get("tls") or server_name or kind == "naive":
         native["tls"] = {"enabled": True}
         if server_name:
             native["tls"]["server_name"] = server_name
-        if payload.get("skip-cert-verify"):
+        # The Cronet-backed Naive outbound intentionally supports only a
+        # restricted TLS subset.  Passing insecure/ALPN makes sing-box reject
+        # the whole config instead of merely ignoring the unsupported option.
+        if payload.get("skip-cert-verify") and kind != "naive":
             native["tls"]["insecure"] = True
+    if kind == "naive":
+        native["quic"] = _to_bool(payload.get("quic", False))
+        udp_over_tcp = payload.get("udp-over-tcp", payload.get("udp_over_tcp"))
+        if isinstance(udp_over_tcp, (bool, dict)):
+            native["udp_over_tcp"] = deepcopy(udp_over_tcp)
+        extra_headers = payload.get("extra-headers", payload.get("extra_headers"))
+        if isinstance(extra_headers, dict):
+            native["extra_headers"] = deepcopy(extra_headers)
     return native
 
 
@@ -1628,11 +1903,18 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
     outbound: dict[str, Any]
     explicit_protocol = str(payload.get("protocol") or "").strip().lower()
     if explicit_protocol == "singbox_config" and isinstance(payload.get("singbox_config"), dict):
-        outbound = dict(payload)
+        inferred = _native_singbox_config(payload["singbox_config"])
+        outbound = {**inferred, **dict(payload)}
+        outbound["singbox_config"] = inferred["singbox_config"]
+        for metadata_key in ("__lumen_scheme", "__lumen_server", "__lumen_port"):
+            if payload.get(metadata_key) in (None, "") and inferred.get(metadata_key) not in (None, ""):
+                outbound[metadata_key] = inferred[metadata_key]
     elif explicit_protocol == "xray_config" and isinstance(payload.get("xray_config"), dict):
         outbound = dict(payload)
     elif _is_xray_auto_config_payload(payload):
         outbound = _native_xray_config(payload)
+    elif _is_singbox_wireguard_config_payload(payload) or _is_singbox_openvpn_config_payload(payload):
+        outbound = _native_singbox_config(payload)
     elif _is_clash_proxy_payload(payload):
         return _parse_clash_proxy_payload(payload)
     elif "type" in payload:
@@ -1677,7 +1959,7 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         peer = peers[0] if isinstance(peers, list) and peers and isinstance(peers[0], dict) else {}
         server = str(peer.get("address") or native.get("server") or "")
         port = int(peer.get("port") or native.get("server_port") or 0)
-    elif protocol in {"hysteria", "hysteria2", "tuic", "mieru"}:
+    elif protocol in {"hysteria", "hysteria2", "tuic", "mieru", "naive"}:
         if native:
             server = str(native.get("server") or "")
             port = int(native.get("server_port") or 0)
@@ -1687,12 +1969,29 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
     elif protocol == "masque" and native:
         server = str((native.get("profile") or {}).get("id") or native.get("server") or "")
         port = int(native.get("server_port") or 0)
+    elif protocol == "openvpn" and native:
+        openvpn_server = _first_mapping(native.get("servers"))
+        server = str(openvpn_server.get("server") or "")
+        port = int(openvpn_server.get("server_port") or 0)
     elif protocol == "singbox_config":
         full_config = outbound.get("singbox_config") if isinstance(outbound.get("singbox_config"), dict) else {}
-        proxy = _pick_json_proxy_outbound(list(full_config.get("outbounds") or [])) if isinstance(full_config.get("outbounds"), list) else {}
-        native_proxy = proxy if isinstance(proxy, dict) else {}
-        server = str(native_proxy.get("server") or "")
-        port = int(native_proxy.get("server_port") or 0)
+        endpoint = _first_wireguard_endpoint(full_config)
+        if endpoint:
+            peer = _first_mapping(endpoint.get("peers"))
+            server = str(
+                peer.get("address")
+                or ("engage.cloudflareclient.com" if endpoint.get("type") == "warp" else "")
+            )
+            port = int(
+                peer.get("port")
+                or (2408 if endpoint.get("type") == "warp" else 0)
+            )
+        else:
+            proxy = _pick_json_proxy_outbound(list(full_config.get("outbounds") or [])) if isinstance(full_config.get("outbounds"), list) else {}
+            native_proxy = proxy if isinstance(proxy, dict) else {}
+            openvpn_server = _first_mapping(native_proxy.get("servers"))
+            server = str(native_proxy.get("server") or openvpn_server.get("server") or "")
+            port = int(native_proxy.get("server_port") or openvpn_server.get("server_port") or 0)
     elif protocol == "xray_config":
         full_config = outbound.get("xray_config") if isinstance(outbound.get("xray_config"), dict) else {}
         proxy = _pick_json_proxy_outbound(list(full_config.get("outbounds") or [])) if isinstance(full_config.get("outbounds"), list) else {}
@@ -1701,7 +2000,11 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
             server = proxy_node.server
             port = proxy_node.port
 
-    display_scheme = str(original_payload.get("__lumen_scheme") or ("auto" if protocol == "xray_config" else protocol))
+    display_scheme = str(
+        original_payload.get("__lumen_scheme")
+        or outbound.get("__lumen_scheme")
+        or ("auto" if protocol == "xray_config" else protocol)
+    )
     if original_payload.get("__lumen_server"):
         server = str(original_payload.get("__lumen_server") or server)
     if original_payload.get("__lumen_port"):
@@ -1714,8 +2017,15 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         or ""
     ).strip()[:30]
 
+    if protocol == "singbox_config":
+        fallback_name = str(outbound.get("tag") or ("AUTO" if display_scheme == "auto" else display_scheme.upper()))
+    else:
+        fallback_name = f"json-{tag}"
+    if display_scheme == "auto" and not description:
+        description = "Автовыбор лучших серверов"
+
     return Node(
-        name=_json_name(original_payload, f"json-{tag}"),
+        name=_json_name(original_payload, fallback_name),
         scheme=display_scheme,
         server=server,
         port=port,
@@ -1751,6 +2061,8 @@ def _pick_json_proxy_outbound(outbounds: list[Any]) -> dict[str, Any]:
         "tuic",
         "mieru",
         "masque",
+        "openvpn",
+        "naive",
     }
     for item in candidates:
         if str(item.get("tag") or "").strip().lower() == "proxy" and kind(item) not in ignored:
@@ -1771,6 +2083,9 @@ def _native_singbox_outbound(payload: dict[str, Any]) -> dict[str, Any]:
         protocol = native["type"] = "hysteria"
     elif protocol == "hy2":
         protocol = native["type"] = "hysteria2"
+    elif protocol == "openvpn":
+        native["system"] = False
+        native["name"] = str(native.get("name") or "openvpn0")
     return {
         "protocol": "awg" if protocol == "wireguard" and isinstance(native.get("amnezia"), dict) else protocol,
         "singbox": native,
@@ -1778,13 +2093,237 @@ def _native_singbox_outbound(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _native_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
-    name = str(payload.get("tag") or payload.get("name") or "").strip()
-    config = dict(payload)
-    return {
+    config = deepcopy(payload)
+    for metadata_key in (
+        "remarks",
+        "remark",
+        "ps",
+        "name",
+        "meta",
+        "serverDescription",
+        "__lumen_scheme",
+        "__lumen_server",
+        "__lumen_port",
+    ):
+        config.pop(metadata_key, None)
+    normalize_singbox_wireguard_endpoints(config)
+    used_openvpn_names: set[str] = set()
+    openvpn_index = 0
+    for item in config.get("outbounds") or []:
+        if not isinstance(item, dict) or str(item.get("type") or "").strip().lower() != "openvpn":
+            continue
+        item["system"] = False
+        requested_name = str(item.get("name") or f"openvpn{openvpn_index}").strip()
+        name_candidate = requested_name
+        suffix = 1
+        while name_candidate in used_openvpn_names:
+            name_candidate = f"{requested_name}-{suffix}"
+            suffix += 1
+        item["name"] = name_candidate
+        used_openvpn_names.add(name_candidate)
+        openvpn_index += 1
+    name = _json_name(payload, "")
+    endpoint = _first_wireguard_endpoint(config)
+    openvpn_outbound = _first_openvpn_outbound(config)
+    wireguard_auto_group = _wireguard_auto_group(config)
+    openvpn_auto_group = _openvpn_auto_group(config)
+    auto_group = wireguard_auto_group or openvpn_auto_group
+    if not isinstance(config.get("outbounds"), list):
+        config["outbounds"] = []
+    if not any(
+        isinstance(item, dict) and str(item.get("tag") or "") == "direct"
+        for item in config["outbounds"]
+    ):
+        config["outbounds"].insert(0, {"type": "direct", "tag": "direct"})
+
+    wrapper: dict[str, Any] = {
         "protocol": "singbox_config",
-        "tag": name or "sing-box providers",
+        "tag": name or (
+            "AUTO OpenVPN"
+            if openvpn_auto_group
+            else "AUTO WG"
+            if wireguard_auto_group
+            else "OpenVPN"
+            if openvpn_outbound
+            else "sing-box providers"
+        ),
         "singbox_config": config,
     }
+    if endpoint:
+        peer = _first_mapping(endpoint.get("peers"))
+        wrapper["__lumen_server"] = str(
+            peer.get("address")
+            or ("engage.cloudflareclient.com" if endpoint.get("type") == "warp" else "")
+        )
+        wrapper["__lumen_port"] = int(
+            peer.get("port")
+            or (2408 if endpoint.get("type") == "warp" else 0)
+        )
+        if auto_group:
+            wrapper["__lumen_scheme"] = "auto"
+        elif str(endpoint.get("type") or "") == "warp":
+            wrapper["__lumen_scheme"] = "warp"
+        elif isinstance(endpoint.get("amnezia"), dict):
+            wrapper["__lumen_scheme"] = "awg"
+        else:
+            wrapper["__lumen_scheme"] = "wireguard"
+    elif openvpn_outbound:
+        openvpn_server = _first_mapping(openvpn_outbound.get("servers"))
+        wrapper["__lumen_server"] = str(openvpn_server.get("server") or "")
+        wrapper["__lumen_port"] = int(openvpn_server.get("server_port") or 0)
+        wrapper["__lumen_scheme"] = "auto" if openvpn_auto_group else "openvpn"
+    return wrapper
+
+
+def _is_singbox_wireguard_config_payload(payload: Any) -> bool:
+    """Detect complete WG configs that must stay intact instead of being split."""
+    if not isinstance(payload, dict):
+        return False
+    endpoints = payload.get("endpoints")
+    outbounds = payload.get("outbounds")
+    endpoint_items = [item for item in endpoints if isinstance(item, dict)] if isinstance(endpoints, list) else []
+    outbound_items = [item for item in outbounds if isinstance(item, dict)] if isinstance(outbounds, list) else []
+    wireguard_endpoints = [
+        item
+        for item in endpoint_items
+        if str(item.get("type") or "").strip().lower() in {"wireguard", "awg", "warp"}
+    ]
+    legacy_wireguard = [
+        item
+        for item in outbound_items
+        if str(item.get("type") or "").strip().lower() in {"wireguard", "awg"}
+    ]
+    if not wireguard_endpoints and not legacy_wireguard:
+        return False
+
+    endpoint_tags = {
+        str(item.get("tag") or "").strip()
+        for item in [*wireguard_endpoints, *legacy_wireguard]
+        if str(item.get("tag") or "").strip()
+    }
+    has_wg_group = any(
+        str(item.get("type") or "").strip().lower() in {"urltest", "url-test", "selector"}
+        and isinstance(item.get("outbounds"), list)
+        and bool(endpoint_tags.intersection(str(tag or "").strip() for tag in item["outbounds"]))
+        for item in outbound_items
+    )
+    return bool(
+        has_wg_group
+        or len(wireguard_endpoints) + len(legacy_wireguard) > 1
+        or isinstance(payload.get("route"), dict)
+        or isinstance(payload.get("inbounds"), list)
+        or isinstance(payload.get("dns"), dict)
+    )
+
+
+def _is_singbox_openvpn_config_payload(payload: Any) -> bool:
+    """Keep complete OpenVPN/urltest configs intact instead of splitting them."""
+    if not isinstance(payload, dict):
+        return False
+    outbounds = payload.get("outbounds")
+    items = [item for item in outbounds if isinstance(item, dict)] if isinstance(outbounds, list) else []
+    openvpn_items = [
+        item for item in items
+        if str(item.get("type") or "").strip().lower() == "openvpn"
+    ]
+    if not openvpn_items:
+        return False
+    tags = {
+        str(item.get("tag") or "").strip()
+        for item in openvpn_items
+        if str(item.get("tag") or "").strip()
+    }
+    has_group = any(
+        str(item.get("type") or "").strip().lower() in {"urltest", "url-test", "selector"}
+        and isinstance(item.get("outbounds"), list)
+        and bool(tags.intersection(str(tag or "").strip() for tag in item["outbounds"]))
+        for item in items
+    )
+    return bool(
+        has_group
+        or len(openvpn_items) > 1
+        or isinstance(payload.get("route"), dict)
+        or isinstance(payload.get("inbounds"), list)
+        or isinstance(payload.get("dns"), dict)
+    )
+
+
+def _first_wireguard_endpoint(config: dict[str, Any]) -> dict[str, Any]:
+    endpoints = config.get("endpoints")
+    if not isinstance(endpoints, list):
+        return {}
+    for endpoint in endpoints:
+        if isinstance(endpoint, dict) and str(endpoint.get("type") or "").strip().lower() in {
+            "wireguard",
+            "warp",
+        }:
+            return endpoint
+    return {}
+
+
+def _first_openvpn_outbound(config: dict[str, Any]) -> dict[str, Any]:
+    outbounds = config.get("outbounds")
+    if not isinstance(outbounds, list):
+        return {}
+    for outbound in outbounds:
+        if isinstance(outbound, dict) and str(outbound.get("type") or "").strip().lower() == "openvpn":
+            return outbound
+    return {}
+
+
+def _first_mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, list):
+        return {}
+    for item in value:
+        if isinstance(item, dict):
+            return item
+    return {}
+
+
+def _wireguard_auto_group(config: dict[str, Any]) -> dict[str, Any]:
+    endpoint_tags = {
+        str(item.get("tag") or "").strip()
+        for item in config.get("endpoints") or []
+        if isinstance(item, dict)
+        and str(item.get("type") or "").strip().lower() in {"wireguard", "warp"}
+        and str(item.get("tag") or "").strip()
+    }
+    if not endpoint_tags:
+        return {}
+    groups = [item for item in config.get("outbounds") or [] if isinstance(item, dict)]
+    route = config.get("route") if isinstance(config.get("route"), dict) else {}
+    final_tag = str(route.get("final") or "").strip()
+    groups.sort(key=lambda item: str(item.get("tag") or "") != final_tag)
+    for group in groups:
+        if str(group.get("type") or "").strip().lower() not in {"urltest", "url-test", "selector"}:
+            continue
+        refs = group.get("outbounds")
+        if isinstance(refs, list) and endpoint_tags.intersection(str(ref or "").strip() for ref in refs):
+            return group
+    return {}
+
+
+def _openvpn_auto_group(config: dict[str, Any]) -> dict[str, Any]:
+    outbound_tags = {
+        str(item.get("tag") or "").strip()
+        for item in config.get("outbounds") or []
+        if isinstance(item, dict)
+        and str(item.get("type") or "").strip().lower() == "openvpn"
+        and str(item.get("tag") or "").strip()
+    }
+    if not outbound_tags:
+        return {}
+    groups = [item for item in config.get("outbounds") or [] if isinstance(item, dict)]
+    route = config.get("route") if isinstance(config.get("route"), dict) else {}
+    final_tag = str(route.get("final") or "").strip()
+    groups.sort(key=lambda item: str(item.get("tag") or "") != final_tag)
+    for group in groups:
+        if str(group.get("type") or "").strip().lower() not in {"urltest", "url-test", "selector"}:
+            continue
+        refs = group.get("outbounds")
+        if isinstance(refs, list) and outbound_tags.intersection(str(ref or "").strip() for ref in refs):
+            return group
+    return {}
 
 
 def _parse_hysteria(link: str) -> Node:
@@ -2064,6 +2603,23 @@ def _parse_wireguard_like_link(link: str, scheme: str) -> Node:
             amnezia=amnezia,
             persistent_keepalive=keepalive,
             listen_port=_get_param(params, "listen_port", "listenPort"),
+            udp_timeout=_get_param(
+                params,
+                "udp_timeout",
+                "udpTimeout",
+                default="5m0s",
+            ),
+            workers=_get_param(params, "workers"),
+            preallocated_buffers_per_pool=_get_param(
+                params,
+                "preallocated_buffers_per_pool",
+                "preallocatedBuffersPerPool",
+            ),
+            disable_pauses=_get_param(
+                params,
+                "disable_pauses",
+                "disablePauses",
+            ),
         )
     name = _clean_name(
         parsed.fragment,
@@ -2151,12 +2707,21 @@ def _parse_wireguard_config(text: str) -> Node:
             ),
             "private_key": _clean_b64_key(private_key),
             "peers": parsed_peers,
-            "udp_timeout": "5m0s",
+            "udp_timeout": interface.get("udptimeout", "5m0s") or "5m0s",
         }
         if interface.get("listenport"):
             endpoint["listen_port"] = int(interface["listenport"])
         if amnezia:
             endpoint["amnezia"] = amnezia
+        _apply_wireguard_performance_options(
+            endpoint,
+            workers=interface.get("workers", ""),
+            preallocated_buffers_per_pool=interface.get(
+                "preallocatedbuffersperpool",
+                "",
+            ),
+            disable_pauses=interface.get("disablepauses"),
+        )
     scheme = "awg" if amnezia else ("warp" if endpoint.get("type") == "warp" else "wireguard")
     outbound = _native_singbox_outbound(endpoint)
     dns_servers = _split_csv(interface.get("dns", ""))
@@ -2253,6 +2818,10 @@ def _build_wireguard_endpoint(
     amnezia: dict[str, Any] | None = None,
     persistent_keepalive: Any = "",
     listen_port: Any = "",
+    udp_timeout: Any = "5m0s",
+    workers: Any = "",
+    preallocated_buffers_per_pool: Any = "",
+    disable_pauses: Any = None,
 ) -> dict[str, Any]:
     peer = _build_wireguard_peer(
         server=server,
@@ -2269,13 +2838,35 @@ def _build_wireguard_endpoint(
         "address": normalize_ip_prefixes(address or ["10.0.0.2/32"]),
         "private_key": _clean_b64_key(private_key),
         "peers": [peer],
-        "udp_timeout": "5m0s",
+        "udp_timeout": str(udp_timeout or "5m0s").strip() or "5m0s",
     }
     if listen_port not in (None, ""):
         endpoint["listen_port"] = int(listen_port)
     if amnezia:
         endpoint["amnezia"] = amnezia
+    _apply_wireguard_performance_options(
+        endpoint,
+        workers=workers,
+        preallocated_buffers_per_pool=preallocated_buffers_per_pool,
+        disable_pauses=disable_pauses,
+    )
     return endpoint
+
+
+def _apply_wireguard_performance_options(
+    endpoint: dict[str, Any],
+    *,
+    workers: Any = "",
+    preallocated_buffers_per_pool: Any = "",
+    disable_pauses: Any = None,
+) -> None:
+    """Apply the extra userspace options exposed by sing-box-extended."""
+    if workers not in (None, ""):
+        endpoint["workers"] = int(workers)
+    if preallocated_buffers_per_pool not in (None, ""):
+        endpoint["preallocated_buffers_per_pool"] = int(preallocated_buffers_per_pool)
+    if disable_pauses not in (None, ""):
+        endpoint["disable_pauses"] = _to_bool(disable_pauses)
 
 
 def _build_wireguard_peer(

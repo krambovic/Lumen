@@ -12,7 +12,6 @@ build/
 dist/
 *.spec
 !Lumen-qml.spec
-!LumenKVN-qml.spec
 
 # Core binaries (downloaded by CI)
 core/

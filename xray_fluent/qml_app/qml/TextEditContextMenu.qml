@@ -10,6 +10,24 @@ Item {
     anchors.fill: parent
     z: 1000
 
+    function openAt(menuX, menuY) {
+        requestedMenuX = menuX
+        requestedMenuY = menuY
+        editMenuLoader.active = true
+        Qt.callLater(function() {
+            var menu = editMenuLoader.item
+            if (!menu) return
+            if (menu.opened)
+                menu.close()
+            Qt.callLater(function() {
+                if (!editMenuLoader.item) return
+                editMenuLoader.item.x = root.requestedMenuX
+                editMenuLoader.item.y = root.requestedMenuY
+                editMenuLoader.item.open()
+            })
+        })
+    }
+
     MouseArea {
         anchors.fill: parent
         acceptedButtons: Qt.RightButton
@@ -19,15 +37,7 @@ Item {
         onPressed: (mouse) => {
             mouse.accepted = true
             root.editor.forceActiveFocus()
-            root.requestedMenuX = mouse.x
-            root.requestedMenuY = mouse.y
-            editMenuLoader.active = true
-            Qt.callLater(function() {
-                if (!editMenuLoader.item) return
-                editMenuLoader.item.x = root.requestedMenuX
-                editMenuLoader.item.y = root.requestedMenuY
-                editMenuLoader.item.open()
-            })
+            root.openAt(mouse.x, mouse.y)
         }
     }
 
@@ -41,6 +51,32 @@ Item {
             FluentMenu {
                 parent: root
                 width: 190
+                // Consume clicks while the menu is open.  Otherwise a second
+                // right click can leak through Qt's popup overlay to the
+                // underlying TextInput and summon the platform context menu.
+                modal: true
+                dim: false
+                closePolicy: Popup.CloseOnEscape
+
+                // A transparent modal catcher prevents the platform TextInput
+                // menu from receiving the same second right-click.  Right-click
+                // inside this editor moves our menu; any other outside click
+                // simply closes it.  Unlike a dialog this never shades the page.
+                Overlay.modal: MouseArea {
+                    id: menuOverlayCatcher
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onPressed: (mouse) => {
+                        mouse.accepted = true
+                        var point = root.mapFromItem(menuOverlayCatcher, mouse.x, mouse.y)
+                        var insideEditor = point.x >= 0 && point.y >= 0
+                                && point.x <= root.width && point.y <= root.height
+                        editMenuLoader.item.close()
+                        if (mouse.button === Qt.RightButton && insideEditor) {
+                            root.editor.forceActiveFocus()
+                            root.openAt(point.x, point.y)
+                        }
+                    }
+                }
 
                 FluentMenuItem {
                     text: I18n.t("Отменить")

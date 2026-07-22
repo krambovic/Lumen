@@ -109,6 +109,7 @@ def start_runtime(
                     int(settings.local_http_port),
                     int(settings.local_socks_port),
                     bypass_lan=controller._system_proxy_bypass_lan(),
+                    configure_firefox=bool(settings.firefox_proxy_integration),
                 )
             else:
                 controller.proxy.disable(restore_previous=True)
@@ -294,6 +295,10 @@ def _runtime_summary_lines(config: dict[str, Any]) -> list[str]:
             peers = proxy.get("peers") if isinstance(proxy.get("peers"), list) else []
             first_peer = next((peer for peer in peers if isinstance(peer, dict)), {})
             server = str(first_peer.get("address") or "")
+        if not server and str(proxy.get("type") or "") == "openvpn":
+            servers = proxy.get("servers") if isinstance(proxy.get("servers"), list) else []
+            first_server = next((item for item in servers if isinstance(item, dict)), {})
+            server = str(first_server.get("server") or "")
         tls = proxy.get("tls") if isinstance(proxy.get("tls"), dict) else {}
         server_name = str(tls.get("server_name") or "")
         resolver = proxy.get("domain_resolver")

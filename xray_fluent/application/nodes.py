@@ -10,6 +10,7 @@ from .node_runtime_service import (
     start_country_ip_resolution,
 )
 from .node_service import (
+    add_manual_node,
     apply_fetched_subscription,
     bulk_update_nodes,
     delete_group,

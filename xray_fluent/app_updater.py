@@ -33,6 +33,7 @@ GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
 USER_AGENT = f"Lumen/{APP_VERSION}"
 APP_ID = "{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1"
+LEGACY_APP_DIR_NAMES = {"lumen kvn", "lumenkvn", "lumen-kvn", "lumen_kvn"}
 
 
 class UpdateOperationCancelled(RuntimeError):
@@ -72,6 +73,15 @@ def _is_root_program_dir(path: Path) -> bool:
     return resolved.name.lower() == "program" and parent == Path(resolved.anchor)
 
 
+def _is_legacy_app_dir(path: Path) -> bool:
+    return path.resolve(strict=False).name.casefold() in LEGACY_APP_DIR_NAMES
+
+
+def _renamed_app_dir(path: Path) -> Path:
+    resolved = path.resolve(strict=False)
+    return resolved.with_name("Lumen")
+
+
 def _registered_install_dir() -> Path | None:
     if sys.platform != "win32":
         return None
@@ -100,13 +110,20 @@ def _registered_install_dir() -> Path | None:
 
 def _target_app_dir(current_app_dir: Path) -> Path:
     if is_portable():
+        renamed = _renamed_app_dir(current_app_dir)
+        if _is_legacy_app_dir(current_app_dir) and not renamed.exists():
+            return renamed
         return current_app_dir
     if _is_root_program_dir(current_app_dir):
         return _program_files_app_dir()
+    if _is_legacy_app_dir(current_app_dir):
+        return _renamed_app_dir(current_app_dir)
     registered = _registered_install_dir()
     if registered is not None:
         if _is_root_program_dir(registered):
             return _program_files_app_dir()
+        if _is_legacy_app_dir(registered):
+            return _renamed_app_dir(registered)
         return registered
     if sys.platform == "win32":
         return _program_files_app_dir()
@@ -871,6 +888,7 @@ class UpdateDownloader(QThread):
                     f"$appDir = {_powershell_literal(str(app_dir))}",
                     f"$exePath = {_powershell_literal(str(app_dir / exe_name))}",
                     "$fallbackExe = Join-Path $currentAppDir 'Lumen.exe'",
+                    "if (-not (Test-Path -LiteralPath $fallbackExe)) { $fallbackExe = Join-Path $currentAppDir 'LumenKVN.exe' }",
                     f"$tempDir = {_powershell_literal(str(tmp_dir))}",
                     f"$expectedVersion = {_powershell_literal(self._update.version)}",
                     "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
@@ -882,7 +900,7 @@ class UpdateDownloader(QThread):
                     "}",
                     "$proc = Get-Process -Id $pidToWait -ErrorAction SilentlyContinue",
                     "if ($proc) { Stop-Process -Id $pidToWait -Force }",
-                    "Get-Process -Name 'Lumen','Lumen' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+                    "Get-Process -Name 'Lumen','LumenKVN','Lumen-qml','LumenKVN-qml' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
                     "foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
                     "foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
                     "    & sc.exe stop $driverName *> $null",
@@ -896,8 +914,14 @@ class UpdateDownloader(QThread):
                     "    $srcDir = $tempExtractDir",
                     "    if (Test-Path -Path (Join-Path $tempExtractDir 'Lumen')) {",
                     "        $srcDir = Join-Path $tempExtractDir 'Lumen'",
-                    "    } elseif (Test-Path -Path (Join-Path $tempExtractDir 'Lumen')) {",
-                    "        $srcDir = Join-Path $tempExtractDir 'Lumen'",
+                    "    } elseif (Test-Path -Path (Join-Path $tempExtractDir 'LumenKVN')) {",
+                    "        $srcDir = Join-Path $tempExtractDir 'LumenKVN'",
+                    "    }",
+                    "    $currentDataDir = Join-Path $currentAppDir 'data'",
+                    "    $targetDataDir = Join-Path $appDir 'data'",
+                    "    New-Item -ItemType Directory -Path $appDir -Force | Out-Null",
+                    "    if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir) -and -not (Test-Path -LiteralPath $targetDataDir)) {",
+                    "        Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force",
                     "    }",
                     "    Get-ChildItem -Path $appDir -Force | ForEach-Object {",
                     "        $name = $_.Name.ToLower()",
@@ -917,6 +941,10 @@ class UpdateDownloader(QThread):
                     "    Start-Sleep -Seconds 5",
                     "    if ($started.HasExited) {",
                     "        throw ('Updated application exited immediately with code ' + $started.ExitCode)",
+                    "    }",
+                    "    $legacyPortableNames = @('Lumen KVN','LumenKVN','lumen-kvn','Lumen_KVN')",
+                    "    if ($currentAppDir -ine $appDir -and $legacyPortableNames -icontains (Split-Path -Leaf $currentAppDir)) {",
+                    "        Remove-Item -LiteralPath $currentAppDir -Recurse -Force -ErrorAction SilentlyContinue",
                     "    }",
                     "}",
                     "catch {",
@@ -960,13 +988,17 @@ class UpdateDownloader(QThread):
                     "}",
                     "$proc = Get-Process -Id $pidToWait -ErrorAction SilentlyContinue",
                     "if ($proc) { Stop-Process -Id $pidToWait -Force }",
-                    "Get-Process -Name 'Lumen','Lumen' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+                    "Get-Process -Name 'Lumen','LumenKVN','Lumen-qml','LumenKVN-qml' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
                     "foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
                     "foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
                     "    & sc.exe stop $driverName *> $null",
                     "    & sc.exe delete $driverName *> $null",
                     "}",
                     "$zapretExeDir = Join-Path (Join-Path $appDir 'zapret') 'exe'",
+                    "$currentDataDir = Join-Path $currentAppDir 'data'",
+                    "if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir)) {",
+                    "    Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force",
+                    "}",
                     "foreach ($driverFile in @('Monkey64.sys','WinDivert32.sys','WinDivert64.sys')) {",
                     "    Remove-Item -LiteralPath (Join-Path $zapretExeDir $driverFile) -Force -ErrorAction SilentlyContinue",
                     "}",
@@ -979,7 +1011,7 @@ class UpdateDownloader(QThread):
                     "    for ($attempt = 1; $attempt -le 3; $attempt++) {",
                     "        $install = Start-Process -FilePath $setupPath -ArgumentList $installerArgs -Wait -PassThru -ErrorAction Stop",
                     "        if ($install.ExitCode -eq 0 -or $install.ExitCode -eq 3010) { break }",
-                    "        Get-Process -Name 'Lumen','Lumen' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+                    "        Get-Process -Name 'Lumen','LumenKVN','Lumen-qml','LumenKVN-qml' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
                     "        foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
                     "        foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
                     "            & sc.exe stop $driverName *> $null",
@@ -994,8 +1026,8 @@ class UpdateDownloader(QThread):
                     "        $setupTail = ''",
                     "        if (Test-Path -LiteralPath $setupLog) { $setupTail = (Get-Content -LiteralPath $setupLog -Tail 30 -ErrorAction SilentlyContinue) -join [Environment]::NewLine }",
                     "        throw ('Installer exited with code ' + $install.ExitCode + [Environment]::NewLine + 'Setup log tail:' + [Environment]::NewLine + $setupTail) }",
-                    "    $uninstallKeys = @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1')",
-                    "    foreach ($uk in $uninstallKeys) { try { $loc = (Get-ItemProperty -LiteralPath $uk -ErrorAction Stop).InstallLocation; if ($loc -and (Test-Path -LiteralPath (Join-Path $loc 'Lumen.exe'))) { $appDir = $loc.TrimEnd('\\'); $exePath = Join-Path $appDir 'Lumen.exe'; break } } catch {} }",
+                    "    $uninstallKeys = @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1','HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\LumenKVN_is1','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\LumenKVN_is1','HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\LumenKVN_is1')",
+                    "    foreach ($uk in $uninstallKeys) { try { $loc = (Get-ItemProperty -LiteralPath $uk -ErrorAction Stop).InstallLocation; if ($loc -and (Test-Path -LiteralPath (Join-Path $loc 'Lumen.exe'))) { $appDir = $loc.TrimEnd('\\'); $exePath = Join-Path $appDir 'Lumen.exe'; break } elseif ($loc -and (Test-Path -LiteralPath (Join-Path $loc 'LumenKVN.exe'))) { $appDir = $loc.TrimEnd('\\'); $exePath = Join-Path $appDir 'Lumen.exe'; break } } catch {} }",
                     "    $currentDataDir = Join-Path $currentAppDir 'data'",
                     "    if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir)) {",
                     "        Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force",
@@ -1012,15 +1044,20 @@ class UpdateDownloader(QThread):
                     "        if ($expectedVersion -and $installedVersion -and $installedVersion -ne $expectedVersion.TrimStart('v')) { throw ('Updated executable reports v' + $installedVersion + ', expected v' + $expectedVersion) }",
                     "    }",
                     "    $oldExePath = Join-Path $currentAppDir 'Lumen.exe'",
+                    "    $oldLegacyExePath = Join-Path $currentAppDir 'LumenKVN.exe'",
                     "    $currentRoot = [System.IO.Path]::GetPathRoot($currentAppDir)",
                     "    $currentParent = Split-Path -Parent $currentAppDir",
                     "    $isRootProgramDir = ((Split-Path -Leaf $currentAppDir) -ieq 'Program' -and $currentParent.TrimEnd('\\') -ieq $currentRoot.TrimEnd('\\'))",
-                    "    if ($currentAppDir -ine $appDir -and $isRootProgramDir -and (Test-Path -LiteralPath $oldExePath)) {",
+                    "    $legacyDirNames = @('Lumen KVN','LumenKVN','lumen-kvn','Lumen_KVN')",
+                    "    $isLegacyNamedDir = $legacyDirNames -icontains (Split-Path -Leaf $currentAppDir)",
+                    "    $hasLegacyApp = (Test-Path -LiteralPath $oldExePath) -or (Test-Path -LiteralPath $oldLegacyExePath)",
+                    "    if ($currentAppDir -ine $appDir -and ($isRootProgramDir -or $isLegacyNamedDir) -and $hasLegacyApp) {",
                     "        Remove-Item -LiteralPath $currentAppDir -Recurse -Force -ErrorAction SilentlyContinue",
                     "    }",
                     "    $legacyRootProgram = 'C:\\Program'",
                     "    $legacyRootExe = Join-Path $legacyRootProgram 'Lumen.exe'",
-                    "    if ($legacyRootProgram -ine $appDir -and (Test-Path -LiteralPath $legacyRootExe)) {",
+                    "    $legacyRootOldExe = Join-Path $legacyRootProgram 'LumenKVN.exe'",
+                    "    if ($legacyRootProgram -ine $appDir -and ((Test-Path -LiteralPath $legacyRootExe) -or (Test-Path -LiteralPath $legacyRootOldExe))) {",
                     "        Remove-Item -LiteralPath $legacyRootProgram -Recurse -Force -ErrorAction SilentlyContinue",
                     "    }",
                     (

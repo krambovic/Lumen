@@ -5,7 +5,11 @@ import pytest
 from xray_fluent.engines.singbox.config_builder import build_singbox_outbound
 from xray_fluent.link_parser import parse_links_text, parse_single
 from xray_fluent.models import Node
-from xray_fluent.qml_app.bridge.node_edit_helpers import build_node_updates, load_node_edit_fields
+from xray_fluent.qml_app.bridge.node_edit_helpers import (
+    build_node_updates,
+    load_node_edit_fields,
+    new_node_edit_fields,
+)
 
 
 def test_awg_editor_hides_xray_fields_and_updates_native_endpoint() -> None:
@@ -411,6 +415,7 @@ def test_wireguard_awg_editor_exposes_and_updates_all_endpoint_fields() -> None:
     assert {
         "server", "port", "interfaceAddresses", "privateKey", "wgPublicKey",
         "preSharedKey", "allowedIps", "mtu", "listenPort", "keepalive", "dns",
+        "peersJson", "udpTimeout", "workers", "preallocatedBuffers", "disablePauses",
         "awg_jc", "awg_h1", "awg_i1",
     } <= keys
     assert {"uuid", "password", "network", "security"}.isdisjoint(keys)
@@ -430,6 +435,10 @@ def test_wireguard_awg_editor_exposes_and_updates_all_endpoint_fields() -> None:
             "mtu": "1380",
             "listenPort": "12345",
             "keepalive": "30",
+            "udpTimeout": "4m",
+            "workers": "4",
+            "preallocatedBuffers": "128",
+            "disablePauses": True,
             "dns": "10.9.0.1, 1.1.1.1",
             "awg_jc": "5",
             "awg_h1": "10-20",
@@ -442,6 +451,11 @@ def test_wireguard_awg_editor_exposes_and_updates_all_endpoint_fields() -> None:
     assert endpoint["private_key"] == "new-private="
     assert endpoint["mtu"] == 1380
     assert endpoint["listen_port"] == 12345
+    assert endpoint["system"] is False
+    assert endpoint["udp_timeout"] == "4m"
+    assert endpoint["workers"] == 4
+    assert endpoint["preallocated_buffers_per_pool"] == 128
+    assert endpoint["disable_pauses"] is True
     assert peer == {
         "address": "198.51.100.20",
         "port": 51820,
@@ -454,6 +468,62 @@ def test_wireguard_awg_editor_exposes_and_updates_all_endpoint_fields() -> None:
     assert endpoint["amnezia"]["h1"] == "10-20"
     assert endpoint["amnezia"]["i1"] == "<b 0x05060708>"
     assert updates["outbound"]["_dns"] == ["10.9.0.1", "1.1.1.1"]
+
+
+def test_wireguard_editor_can_enable_amnezia_compatibility() -> None:
+    node = Node(
+        name="WG",
+        scheme="wireguard",
+        server="203.0.113.10",
+        port=51820,
+        outbound={
+            "protocol": "wireguard",
+            "singbox": {
+                "type": "wireguard",
+                "address": ["10.0.0.2/32"],
+                "private_key": "private=",
+                "peers": [{
+                    "address": "203.0.113.10",
+                    "port": 51820,
+                    "public_key": "public=",
+                    "allowed_ips": ["0.0.0.0/0"],
+                }],
+            },
+        },
+    )
+
+    fields = load_node_edit_fields(node)
+    specs = {item["key"]: item for item in fields["protocolFields"]}
+    assert fields["amneziaEnabled"] is False
+    assert specs["amneziaEnabled"]["kind"] == "bool"
+    assert specs["awg_jc"]["whenKey"] == "amneziaEnabled"
+
+    updates = build_node_updates(
+        node,
+        {"amneziaEnabled": True, "awg_jc": "4", "awg_h1": "1-2"},
+    )
+    assert updates["scheme"] == "awg"
+    assert updates["outbound"]["protocol"] == "awg"
+    assert updates["outbound"]["singbox"]["amnezia"] == {"jc": 4, "h1": "1-2"}
+
+    reverted = build_node_updates(
+        Node(**{**node.to_dict(), "scheme": "awg", "outbound": updates["outbound"]}),
+        {"amneziaEnabled": False},
+    )
+    assert reverted["scheme"] == "wireguard"
+    assert reverted["outbound"]["protocol"] == "wireguard"
+    assert "amnezia" not in reverted["outbound"]["singbox"]
+
+
+def test_manual_node_schema_changes_with_selected_protocol() -> None:
+    vless = new_node_edit_fields("vless", "Manual")
+    wireguard = new_node_edit_fields("wireguard", "Manual")
+
+    assert vless["protocolKey"] == "vless"
+    assert wireguard["protocolKey"] == "wireguard"
+    assert vless["group"] == wireguard["group"] == "Manual"
+    assert "uuid" in {item["key"] for item in vless["protocolFields"]}
+    assert "privateKey" in {item["key"] for item in wireguard["protocolFields"]}
 
 
 def test_warp_and_masque_editors_have_separate_supported_fields() -> None:

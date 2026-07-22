@@ -412,7 +412,7 @@ class SpeedTestWorker(QThread):
         if self._cancelled:
             return -1
         opener = self._build_proxy_opener(target.http_port)
-        req = Request(SPEED_TEST_PING_URL, headers={"User-Agent": "LumenKVN/SpeedTest"})
+        req = Request(SPEED_TEST_PING_URL, headers={"User-Agent": "Lumen/SpeedTest"})
         self.node_progress.emit(target.node.id, 20)
         started = time.perf_counter()
         try:
@@ -432,7 +432,7 @@ class SpeedTestWorker(QThread):
 
     def _measure_speed(self, target: _SpeedTestTarget) -> float | None:
         opener = self._build_proxy_opener(target.http_port)
-        req = Request(self._test_url, headers={"User-Agent": "LumenKVN/SpeedTest"})
+        req = Request(self._test_url, headers={"User-Agent": "Lumen/SpeedTest"})
 
         try:
             started = time.perf_counter()

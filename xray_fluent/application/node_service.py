@@ -15,7 +15,7 @@ from PyQt6.QtCore import QTimer
 from ..country_flags import detect_country
 from ..happ_crypt import HappDecryptError, decrypt_happ_link, is_happ_crypt_link, is_happ_link
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
-from ..models import DEFAULT_SUBSCRIPTION_HWID
+from ..models import DEFAULT_SUBSCRIPTION_HWID, Node
 from ..subscription_fetcher import (
     SubscriptionFetcherCancelled,
     fetch_subscription_http,
@@ -228,6 +228,8 @@ def update_node(controller: AppController, node_id: str, updates: dict) -> bool:
         node.name = updates["name"]
     if "group" in updates:
         node.group = updates["group"]
+    if "scheme" in updates:
+        node.scheme = str(updates["scheme"] or "")
     if "server" in updates:
         node.server = str(updates["server"])
     if "port" in updates:
@@ -241,6 +243,28 @@ def update_node(controller: AppController, node_id: str, updates: dict) -> bool:
     if controller.connected or controller._desired_connected:
         controller._request_transition("node updated")
     return True
+
+
+def add_manual_node(controller: AppController, node: Node) -> str:
+    """Validate and persist a node assembled by the protocol-aware editor."""
+    normalize_node_outbound(node)
+    problem = validate_node_outbound(node)
+    if problem:
+        raise ValueError(problem)
+
+    node.group = str(node.group or "Default").strip() or "Default"
+    node.name = str(node.name or node.server or node.scheme or "Server").strip()
+    if not node.country_code:
+        node.country_code = detect_country(node.name, node.server)
+    node.sort_order = max(
+        (item.sort_order for item in controller.state.nodes),
+        default=0,
+    ) + 1
+    controller.state.nodes.append(node)
+    controller.nodes_changed.emit(controller.state.nodes)
+    controller.save()
+    QTimer.singleShot(500, controller._start_country_ip_resolution)
+    return node.id
 
 
 def bulk_update_nodes(controller: AppController, node_ids: set[str], operations: dict) -> int:
@@ -614,7 +638,7 @@ _SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
     (
         "Lumen",
         {
-            "User-Agent": "LumenKVN-Subscription/1.0",
+            "User-Agent": "Lumen-Subscription/1.0",
             "Accept": "*/*",
         },
     ),
@@ -751,7 +775,7 @@ def _fetch_subscription_with_headers(
     return (decoded or text), userinfo
 
 
-def _fetch_subscription(url: str, *, user_agent: str = "LumenKVN-Subscription/1.0") -> tuple[str, dict]:
+def _fetch_subscription(url: str, *, user_agent: str = "Lumen-Subscription/1.0") -> tuple[str, dict]:
     return _fetch_subscription_with_headers(url, "Lumen", {"User-Agent": user_agent, "Accept": "*/*"})
 
 

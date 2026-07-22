@@ -86,7 +86,7 @@ def _download_direct(
     attempts = (proxy_url, None) if proxy_url else (None,)
     for index, active_proxy in enumerate(attempts):
         _raise_if_cancelled(cancelled)
-        request = Request(url, headers={"User-Agent": f"LumenKVN/{APP_VERSION}"})
+        request = Request(url, headers={"User-Agent": f"Lumen/{APP_VERSION}"})
         try:
             with urlopen_proxy_first(request, timeout=120, proxy_url=active_proxy) as response:
                 if response_opened is not None:
@@ -459,6 +459,21 @@ def _pick_singbox_asset(release: dict) -> tuple[str, str]:
     return "", ""
 
 
+def _pick_singbox_cronet_asset(release: dict) -> tuple[str, str]:
+    """Return the Windows purego archive that carries libcronet.dll.
+
+    Upstream's regular windows-amd64 archive contains only sing-box.exe.  The
+    Naive outbound loads Cronet dynamically, and the companion DLL is shipped
+    in the purego archive for the same extended release.
+    """
+    for asset in release.get("assets") or []:
+        name = str(asset.get("name") or "")
+        lower = name.lower()
+        if lower.endswith(".zip") and "windows-amd64-purego.zip" in lower:
+            return name, str(asset.get("browser_download_url") or "")
+    return "", ""
+
+
 def _singbox_asset_digest(
     release: dict,
     asset_name: str,
@@ -578,17 +593,39 @@ def check_or_update_singbox(
         if not isinstance(release, dict):
             raise RuntimeError("GitHub вернул неожиданный ответ")
         asset_name, url = _pick_singbox_asset(release)
+        cronet_asset_name, cronet_url = _pick_singbox_cronet_asset(release)
         latest = _extract_singbox_version(str(release.get("tag_name") or release.get("name") or ""))
         if not url:
             raise RuntimeError("не найден windows-amd64 архив sing-box extended")
+        if not cronet_url:
+            raise RuntimeError("не найден windows-amd64-purego архив с libcronet.dll")
     except UpdateCancelled:
         raise
     except Exception as exc:
         return ResourceUpdateResult("singbox", "error", f"Не удалось проверить sing-box: {exc}", current, "")
 
-    if current and latest and not _is_newer(latest, current):
+    cronet_target = exe.with_name("libcronet.dll")
+    cronet_missing = not cronet_target.is_file() or cronet_target.stat().st_size < 1024
+    same_core_version = bool(
+        current
+        and latest
+        and re.search(r"\d+\.\d+\.\d+", current)
+        and re.search(r"\d+\.\d+\.\d+", latest)
+        and re.search(r"\d+\.\d+\.\d+", current).group(0)
+        == re.search(r"\d+\.\d+\.\d+", latest).group(0)
+    )
+    repair_cronet_only = cronet_missing and same_core_version
+    if current and latest and not _is_newer(latest, current) and not repair_cronet_only:
         return ResourceUpdateResult("singbox", "up_to_date", f"sing-box актуален ({current})", current, latest)
-    if _is_lumen_singbox_build(current_text):
+    if repair_cronet_only and not apply_update:
+        return ResourceUpdateResult(
+            "singbox",
+            "available",
+            "Для поддержки NaiveProxy требуется восстановить libcronet.dll",
+            current,
+            latest,
+        )
+    if _is_lumen_singbox_build(current_text) and not repair_cronet_only:
         return ResourceUpdateResult(
             "singbox",
             "available",
@@ -611,6 +648,14 @@ def check_or_update_singbox(
         )
         if not expected_hash:
             raise RuntimeError("для архива sing-box отсутствует SHA-256")
+        cronet_expected_hash = _singbox_asset_digest(
+            release,
+            cronet_asset_name,
+            proxy_url=proxy_url,
+            cancelled=cancelled,
+        )
+        if not cronet_expected_hash:
+            raise RuntimeError("для архива libcronet отсутствует SHA-256")
     except UpdateCancelled:
         raise
     except Exception as exc:
@@ -626,33 +671,56 @@ def check_or_update_singbox(
         with tempfile.TemporaryDirectory(prefix="singbox_update_") as temp_dir_str:
             temp_dir = Path(temp_dir_str)
             archive = temp_dir / asset_name
+            if not repair_cronet_only:
+                _download_file(
+                    url,
+                    archive,
+                    on_progress=on_progress,
+                    proxy_url=proxy_url,
+                    cancelled=cancelled,
+                    response_opened=response_opened,
+                    response_closed=response_closed,
+                )
+                _ensure_zip_file(archive, "sing-box")
+                if _sha256_file(archive).lower() != expected_hash.lower():
+                    raise RuntimeError("контрольная сумма архива sing-box не совпадает")
+            cronet_archive = temp_dir / cronet_asset_name
             _download_file(
-                url,
-                archive,
-                on_progress=on_progress,
+                cronet_url,
+                cronet_archive,
+                on_progress=None if not repair_cronet_only else on_progress,
                 proxy_url=proxy_url,
                 cancelled=cancelled,
                 response_opened=response_opened,
                 response_closed=response_closed,
             )
-            _ensure_zip_file(archive, "sing-box")
-            if _sha256_file(archive).lower() != expected_hash.lower():
-                raise RuntimeError("контрольная сумма архива sing-box не совпадает")
+            _ensure_zip_file(cronet_archive, "libcronet")
+            if _sha256_file(cronet_archive).lower() != cronet_expected_hash.lower():
+                raise RuntimeError("контрольная сумма архива libcronet не совпадает")
             extract_dir = temp_dir / "extract"
             extract_dir.mkdir()
-            with zipfile.ZipFile(archive, "r") as zip_file:
-                safe_extract_zip(zip_file, extract_dir)
-            new_exe = next((p for p in extract_dir.rglob("sing-box.exe") if p.is_file()), None)
-            if new_exe is None:
-                raise RuntimeError("sing-box.exe не найден в архиве")
-            candidate_version = _extract_singbox_version(get_singbox_version(str(new_exe)) or "")
-            ensure_component_compatible("singbox", candidate_version)
-            latest_core = re.search(r"\d+\.\d+\.\d+", latest or "")
-            candidate_core = re.search(r"\d+\.\d+\.\d+", candidate_version)
-            if latest_core and candidate_core and latest_core.group(0) != candidate_core.group(0):
-                raise RuntimeError(
-                    f"архив содержит sing-box {candidate_version}, ожидалась версия {latest}"
-                )
+            new_exe = None
+            if not repair_cronet_only:
+                with zipfile.ZipFile(archive, "r") as zip_file:
+                    safe_extract_zip(zip_file, extract_dir)
+                new_exe = next((p for p in extract_dir.rglob("sing-box.exe") if p.is_file()), None)
+                if new_exe is None:
+                    raise RuntimeError("sing-box.exe не найден в архиве")
+                candidate_version = _extract_singbox_version(get_singbox_version(str(new_exe)) or "")
+                ensure_component_compatible("singbox", candidate_version)
+                latest_core = re.search(r"\d+\.\d+\.\d+", latest or "")
+                candidate_core = re.search(r"\d+\.\d+\.\d+", candidate_version)
+                if latest_core and candidate_core and latest_core.group(0) != candidate_core.group(0):
+                    raise RuntimeError(
+                        f"архив содержит sing-box {candidate_version}, ожидалась версия {latest}"
+                    )
+            cronet_extract_dir = temp_dir / "cronet"
+            cronet_extract_dir.mkdir()
+            with zipfile.ZipFile(cronet_archive, "r") as zip_file:
+                safe_extract_zip(zip_file, cronet_extract_dir)
+            new_cronet = next((p for p in cronet_extract_dir.rglob("libcronet.dll") if p.is_file()), None)
+            if new_cronet is None or new_cronet.stat().st_size < 1024:
+                raise RuntimeError("libcronet.dll не найден или поврежден в архиве")
             exe.parent.mkdir(parents=True, exist_ok=True)
             if on_install_start:
                 try:
@@ -676,8 +744,14 @@ def check_or_update_singbox(
                     )
                 refreshed_holder["version"] = refreshed
 
+                if not cronet_target.is_file() or cronet_target.stat().st_size < 1024:
+                    raise RuntimeError("libcronet.dll не установлен")
+
+            replacements = [(new_cronet, cronet_target)]
+            if new_exe is not None:
+                replacements.insert(0, (new_exe, exe))
             _atomic_replace_files(
-                [(new_exe, exe)],
+                replacements,
                 backup_targets={exe},
                 validator=_validate_installed,
             )
@@ -687,7 +761,12 @@ def check_or_update_singbox(
     except Exception as exc:
         return ResourceUpdateResult("singbox", "error", f"Не удалось обновить sing-box: {exc}", current, latest)
 
-    return ResourceUpdateResult("singbox", "updated", f"sing-box обновлен до {refreshed}", current, refreshed)
+    message = (
+        f"Компонент NaiveProxy для sing-box {refreshed} восстановлен"
+        if repair_cronet_only
+        else f"sing-box обновлен до {refreshed}"
+    )
+    return ResourceUpdateResult("singbox", "updated", message, current, refreshed)
 
 
 def update_geodata(

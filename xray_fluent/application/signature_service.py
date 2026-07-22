@@ -48,6 +48,7 @@ def transition_signature(
                 "node_outbound": node.outbound if node else None,
                 "proxy_enabled": bool(settings.enable_system_proxy),
                 "proxy_bypass_lan": system_proxy_bypass_lan(controller, settings),
+                "firefox_proxy_integration": bool(getattr(settings, "firefox_proxy_integration", False)),
                 "socks_port": int(getattr(settings, "local_socks_port", DEFAULT_SOCKS_PORT)),
                 "http_port": int(getattr(settings, "local_http_port", DEFAULT_HTTP_PORT)),
                 "routing": routing.to_dict(),
@@ -100,6 +101,7 @@ def transition_signature(
             {
                 "proxy_enabled": bool(settings.enable_system_proxy),
                 "proxy_bypass_lan": system_proxy_bypass_lan(controller, settings),
+                "firefox_proxy_integration": bool(getattr(settings, "firefox_proxy_integration", False)),
                 "socks_port": int(socks_port),
                 "http_port": int(http_port),
             }
@@ -111,6 +113,7 @@ def transition_signature(
             "tun_mode": bool(settings.tun_mode),
             "proxy_enabled": bool(settings.enable_system_proxy),
             "proxy_bypass_lan": bool(routing.bypass_lan),
+            "firefox_proxy_integration": bool(getattr(settings, "firefox_proxy_integration", False)),
             "proxy_allow_lan": bool(getattr(settings, "proxy_allow_lan", False)),
             "sniff_route_only": bool(getattr(settings, "sniff_route_only", False)),
             "tun_settings": [

@@ -22,6 +22,7 @@ _ENDPOINT_PING_UNSUPPORTED = {
     "auto",
     "awg",
     "masque",
+    "openvpn",
     "singbox_config",
     "warp",
     "wireguard",
@@ -139,7 +140,7 @@ def _auto_candidate_supports(candidate: dict, test: str, *, ping_method: str) ->
     if test == "speed" or ping_method == "real":
         return protocol not in _XRAY_TEST_UNSUPPORTED and protocol not in {
             "awg", "hysteria", "hysteria2", "hy", "hy2", "masque", "mieru",
-            "tuic", "warp", "wireguard",
+            "openvpn", "naive", "tuic", "warp", "wireguard",
         }
     return protocol not in _ENDPOINT_PING_UNSUPPORTED
 

@@ -870,6 +870,11 @@ Item {
                     Switch { checked: App.proxyBypassLan; onToggled: App.setProxyBypassLan(checked) }
                 }
                 SettingRow {
+                    glyph: "\uE774"; title: I18n.t("Настраивать прокси Firefox"); subtitle: I18n.t("Принудительно записывать прокси в профили браузеров Firefox")
+                    InfoIcon { tip: I18n.t("Обычно Firefox использует системный прокси автоматически. Включайте эту настройку только если Firefox его игнорирует.") }
+                    Switch { checked: App.firefoxProxyIntegration; onToggled: App.setFirefoxProxyIntegration(checked) }
+                }
+                SettingRow {
                     glyph: "\uE895"; title: I18n.t("Переподключение при смене сети"); subtitle: I18n.t("Автоматически переподключаться при изменении сети")
                     Switch { checked: App.reconnectOnNetworkChange; onToggled: App.setReconnectOnNetworkChange(checked) }
                 }

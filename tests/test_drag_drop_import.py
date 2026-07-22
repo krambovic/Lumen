@@ -38,6 +38,10 @@ def test_dropped_config_path_accepts_local_yaml_url(tmp_path) -> None:
     unsupported.write_text("text", encoding="utf-8")
     assert AppBridge._dropped_config_path(QUrl.fromLocalFile(str(unsupported))) is None
 
+    openvpn = tmp_path / "provider.ovpn"
+    openvpn.write_text("client\nremote vpn.example.com 1194\n", encoding="utf-8")
+    assert AppBridge._dropped_config_path(QUrl.fromLocalFile(str(openvpn))) == openvpn
+
 
 def test_dropped_file_is_highlighted_without_changing_active_node(tmp_path) -> None:
     path = tmp_path / "server.txt"

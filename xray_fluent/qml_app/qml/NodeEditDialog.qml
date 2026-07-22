@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Universal
 import QtQuick.Layouts
 import App 1.0
 import "."
@@ -20,9 +20,12 @@ Popup {
     height: Math.min(720, (Overlay.overlay ? Overlay.overlay.height : 720) - 48)
 
     property string nodeId: ""
+    property bool creating: false
+    property string protocolKey: ""
     property var protocolFields: []
     property var fieldValues: ({})
     property int fieldRevision: 0
+    signal nodeCreated(string nodeId)
 
     background: Rectangle {
         color: Theme.flyout
@@ -53,11 +56,13 @@ Popup {
     }
 
     function openFor(id) {
+        creating = false
         nodeId = id
         var data = App.nodeEditFields(id) || {}
+        protocolKey = data.protocolKey || ""
         nameField.text = data.name || ""
         groupField.text = data.group || ""
-        protoLabel.text = data.protocol || "?"
+        protocolCombo.currentIndex = Math.max(0, App.manualNodeProtocols.indexOf(protocolKey))
         editHint.text = data.editHint || ""
         protocolFields = data.protocolFields || []
         var values = {}
@@ -70,16 +75,48 @@ Popup {
         open()
     }
 
+    function openNew(groupName) {
+        creating = true
+        nodeId = ""
+        nameField.text = ""
+        groupField.text = groupName || "Default"
+        loadNewProtocol("vless")
+        open()
+    }
+
+    function loadNewProtocol(protocol) {
+        protocolKey = protocol || "vless"
+        var data = App.manualNodeFields(protocolKey, groupField.text) || {}
+        protocolFields = data.protocolFields || []
+        editHint.text = data.editHint || ""
+        var values = {}
+        for (var i = 0; i < protocolFields.length; ++i) {
+            var spec = protocolFields[i]
+            values[spec.key] = spec.value
+        }
+        fieldValues = values
+        fieldRevision += 1
+        protocolCombo.currentIndex = Math.max(0, App.manualNodeProtocols.indexOf(protocolKey))
+    }
+
     function saveChanges() {
         var payload = {
             "name": nameField.text,
-            "group": groupField.text
+            "group": groupField.text,
+            "protocol": protocolKey
         }
         for (var i = 0; i < protocolFields.length; ++i) {
             var key = protocolFields[i].key
             payload[key] = fieldValue(key, "")
         }
-        App.saveNodeEdit(nodeId, payload)
+        if (creating) {
+            var createdId = App.createManualNode(payload)
+            if (!createdId)
+                return
+            nodeCreated(createdId)
+        } else {
+            App.saveNodeEdit(nodeId, payload)
+        }
         close()
     }
 
@@ -147,6 +184,8 @@ Popup {
         Switch {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
+            Universal.theme: Theme.dark ? Universal.Dark : Universal.Light
+            Universal.accent: Theme.accent
             checked: dlg.fieldValue(parent.fieldSpec.key, false) === true
             onToggled: dlg.setFieldValue(parent.fieldSpec.key, checked)
         }
@@ -183,7 +222,7 @@ Popup {
             Layout.rightMargin: 20
             Layout.topMargin: 18
             Layout.bottomMargin: 12
-            text: I18n.t("Редактирование сервера")
+            text: I18n.t(dlg.creating ? "Новый сервер" : "Редактирование сервера")
             color: Theme.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontTitle
@@ -199,9 +238,18 @@ Popup {
             clip: true
             contentWidth: availableWidth
             contentHeight: formColumn.implicitHeight
+            Component.onCompleted: {
+                if (contentItem)
+                    contentItem.boundsBehavior = Flickable.StopAtBounds
+            }
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-            ScrollBar.vertical.interactive: true
+            ScrollBar.vertical: FluentScrollBar {
+                policy: ScrollBar.AsNeeded
+                interactive: true
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+            }
 
             ColumnLayout {
                 id: formColumn
@@ -226,11 +274,22 @@ Popup {
                     Layout.fillWidth: true
                     spacing: 14
                     FLabel { text: I18n.t("Протокол") }
+                    FluentCombo {
+                        id: protocolCombo
+                        Layout.fillWidth: true
+                        model: App.manualNodeProtocols
+                        visible: dlg.creating
+                        onActivated: {
+                            if (dlg.creating)
+                                dlg.loadNewProtocol(currentText)
+                        }
+                    }
                     Text {
-                        id: protoLabel
                         Layout.fillWidth: true
                         Layout.preferredHeight: Theme.controlHeight
                         Layout.leftMargin: 10
+                        visible: !dlg.creating
+                        text: dlg.protocolKey.toUpperCase() || "?"
                         color: Theme.text
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontNormal

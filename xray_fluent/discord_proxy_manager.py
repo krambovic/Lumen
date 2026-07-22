@@ -22,7 +22,8 @@ DROUTE_DIR = DATA_DIR / "external" / "droute"
 DROUTE_EXE = DROUTE_DIR / "droute.exe"
 DROUTE_NOTICE = DROUTE_DIR / "README.droute.txt"
 DROUTE_VERSION_FILE = DROUTE_DIR / "version.txt"
-DROUTE_INSTALL_VERSION_FILE = "LumenKVN.droute.version"
+DROUTE_INSTALL_VERSION_FILE = "Lumen.droute.version"
+LEGACY_DROUTE_INSTALL_VERSION_FILE = "LumenKVN.droute.version"
 
 _DISCORD_BRANCHES = {
     "stable": ("Discord", "Discord.exe"),
@@ -87,6 +88,22 @@ def find_installed_discords() -> list[DiscordInstall]:
         if install is not None:
             installs.append(install)
     return installs
+
+
+def migrate_legacy_droute_markers() -> None:
+    """Rename the old product-branded Discord marker without reinstalling droute."""
+    for install in find_installed_discords():
+        legacy = install.root / LEGACY_DROUTE_INSTALL_VERSION_FILE
+        current = install.root / DROUTE_INSTALL_VERSION_FILE
+        if not legacy.is_file():
+            continue
+        try:
+            if current.is_file():
+                legacy.unlink(missing_ok=True)
+            else:
+                os.replace(legacy, current)
+        except OSError:
+            continue
 
 
 def _write_droute_notice() -> None:
@@ -445,7 +462,15 @@ def _droute_payload_installed(install: DiscordInstall) -> bool:
     if not current_version:
         return False
     try:
-        installed_version = (install.root / DROUTE_INSTALL_VERSION_FILE).read_text(encoding="utf-8").strip()
+        marker = install.root / DROUTE_INSTALL_VERSION_FILE
+        if not marker.is_file():
+            legacy_marker = install.root / LEGACY_DROUTE_INSTALL_VERSION_FILE
+            installed_version = legacy_marker.read_text(encoding="utf-8").strip()
+            marker.write_text(installed_version + "\n", encoding="utf-8")
+            legacy_marker.unlink(missing_ok=True)
+        else:
+            installed_version = marker.read_text(encoding="utf-8").strip()
+            (install.root / LEGACY_DROUTE_INSTALL_VERSION_FILE).unlink(missing_ok=True)
     except OSError:
         # Existing droute installations predate version markers. Keep them as-is
         # until the user explicitly downloads an update, which creates version.txt.
@@ -459,6 +484,7 @@ def _droute_payload_present(install: DiscordInstall) -> bool:
         (install.root / "Droute.UpdaterHook.dll").is_file()
         or (install.root / "Update.exe.config").is_file()
         or (install.root / DROUTE_INSTALL_VERSION_FILE).is_file()
+        or (install.root / LEGACY_DROUTE_INSTALL_VERSION_FILE).is_file()
     ):
         return True
     for app_dir in install.root.glob("app-*"):
@@ -500,6 +526,7 @@ def _install_droute_payload(exe: Path, install: DiscordInstall) -> None:
     if not version:
         raise RuntimeError("droute bundle version is unknown")
     (branch_root / DROUTE_INSTALL_VERSION_FILE).write_text(version + "\n", encoding="utf-8")
+    (branch_root / LEGACY_DROUTE_INSTALL_VERSION_FILE).unlink(missing_ok=True)
 
 
 def _remove_droute_payload(install: DiscordInstall) -> list[str]:
@@ -507,6 +534,7 @@ def _remove_droute_payload(install: DiscordInstall) -> list[str]:
         install.root / "Droute.UpdaterHook.dll",
         install.root / "Update.exe.config",
         install.root / DROUTE_INSTALL_VERSION_FILE,
+        install.root / LEGACY_DROUTE_INSTALL_VERSION_FILE,
     ]
     for app_dir in install.root.glob("app-*"):
         if app_dir.is_dir():
