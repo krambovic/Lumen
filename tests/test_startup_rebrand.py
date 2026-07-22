@@ -4,6 +4,7 @@ from pathlib import Path
 
 from xray_fluent import app_updater
 from xray_fluent import startup
+from xray_fluent.qml_app import main_qml
 
 
 def test_legacy_registry_cleanup_covers_all_app_owned_identities() -> None:
@@ -67,6 +68,41 @@ def test_legacy_bridge_uses_canonical_executable_for_startup(tmp_path: Path, mon
 
     assert str(canonical) in command
     assert str(legacy) not in command
+
+
+def test_data_only_legacy_program_files_directory_is_scheduled_for_cleanup(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    program_files = tmp_path / "Program Files"
+    current_dir = program_files / "Lumen"
+    legacy_dir = program_files / "Lumen KVN"
+    current_dir.mkdir(parents=True)
+    (legacy_dir / "data" / "logs").mkdir(parents=True)
+    (legacy_dir / "data" / "logs" / "update_error.log").write_text(
+        "old updater failure",
+        encoding="utf-8",
+    )
+    current_exe = current_dir / "Lumen.exe"
+    current_exe.write_bytes(b"app")
+    launched: list[list[str]] = []
+
+    monkeypatch.setattr(main_qml.sys, "platform", "win32")
+    monkeypatch.setattr(main_qml.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(main_qml.sys, "executable", str(current_exe))
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.delenv("ProgramW6432", raising=False)
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    monkeypatch.setattr(
+        main_qml.subprocess,
+        "Popen",
+        lambda command, **_kwargs: launched.append(command),
+    )
+
+    main_qml._cleanup_legacy_root_program_install()
+
+    assert len(launched) == 1
+    assert str(legacy_dir.resolve()) in launched[0][-1]
 
 
 def test_installed_update_moves_legacy_install_to_renamed_sibling(tmp_path: Path, monkeypatch) -> None:

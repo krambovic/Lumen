@@ -298,15 +298,23 @@ def _cleanup_legacy_root_program_install() -> None:
             )
             if value
         }
+        legacy_names = {"Lumen KVN", "LumenKVN", "lumen-kvn", "Lumen_KVN"}
+        legacy_name_keys = {name.casefold() for name in legacy_names}
         candidates = {Path("C:/Program")}
         for root in roots:
-            candidates.update(root / name for name in ("Lumen KVN", "LumenKVN", "lumen-kvn", "Lumen_KVN"))
+            candidates.update(root / name for name in legacy_names)
         removable: list[Path] = []
         for candidate in candidates:
             candidate = candidate.resolve(strict=False)
             if candidate == current_dir or not candidate.is_dir():
                 continue
-            if not any((candidate / name).is_file() for name in ("Lumen.exe", "LumenKVN.exe")):
+            # Exact legacy product directories under Program Files are owned by
+            # Lumen even when a failed old updater recreated only data/logs
+            # after the installer had removed the executable.  Keep the marker
+            # requirement for the historical C:\Program edge case.
+            if candidate.name.casefold() not in legacy_name_keys and not any(
+                (candidate / name).is_file() for name in ("Lumen.exe", "LumenKVN.exe")
+            ):
                 continue
             removable.append(candidate)
         if not removable:

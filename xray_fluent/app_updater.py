@@ -1038,7 +1038,7 @@ class UpdateDownloader(QThread):
                     "    $versionProbe = Start-Process -FilePath $exePath -ArgumentList '--version-file',$versionFile -WorkingDirectory $appDir -PassThru -Wait -ErrorAction Stop",
                     "    $versionLine = Get-Content -LiteralPath $versionFile -ErrorAction SilentlyContinue | Select-Object -First 1",
                     "    if ($null -eq $versionLine -or [string]::IsNullOrWhiteSpace([string]$versionLine)) {",
-                    "        Write-Log 'Updated executable did not write version probe file; continuing because installer finished successfully'",
+                    "        Add-Content -LiteralPath $errorLog -Value 'Updated executable did not write version probe file; continuing because installer finished successfully' -Encoding UTF8",
                     "    } else {",
                     "        $installedVersion = ([string]$versionLine).Trim().TrimStart('v')",
                     "        if ($expectedVersion -and $installedVersion -and $installedVersion -ne $expectedVersion.TrimStart('v')) { throw ('Updated executable reports v' + $installedVersion + ', expected v' + $expectedVersion) }",
