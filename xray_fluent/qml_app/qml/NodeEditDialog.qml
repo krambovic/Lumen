@@ -47,6 +47,30 @@ Popup {
         fieldRevision += 1
     }
 
+    function applyWireGuardAmneziaDefaults() {
+        if (protocolKey !== "wireguard")
+            return
+        var defaults = {
+            "awg_jc": 4,
+            "awg_jmin": 40,
+            "awg_jmax": 70,
+            "awg_s1": 0,
+            "awg_s2": 0,
+            "awg_s3": 0,
+            "awg_s4": 0,
+            "awg_h1": "1",
+            "awg_h2": "2",
+            "awg_h3": "3",
+            "awg_h4": "4"
+        }
+        for (var key in defaults) {
+            var current = fieldValue(key, "")
+            if (current === "" || current === null || current === undefined)
+                fieldValues[key] = defaults[key]
+        }
+        fieldRevision += 1
+    }
+
     function fieldVisible(spec) {
         var revision = fieldRevision
         if (!spec || !spec.whenKey || !spec.whenValues)
@@ -187,7 +211,11 @@ Popup {
             Universal.theme: Theme.dark ? Universal.Dark : Universal.Light
             Universal.accent: Theme.accent
             checked: dlg.fieldValue(parent.fieldSpec.key, false) === true
-            onToggled: dlg.setFieldValue(parent.fieldSpec.key, checked)
+            onToggled: {
+                dlg.setFieldValue(parent.fieldSpec.key, checked)
+                if (parent.fieldSpec.key === "amneziaEnabled" && checked)
+                    dlg.applyWireGuardAmneziaDefaults()
+            }
         }
     }
 

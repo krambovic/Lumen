@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -26,8 +27,51 @@ LEGACY_EXECUTABLE_NAMES = {"lumenkvn.exe", "lumenkvn-qml.exe"}
 LEGACY_PROTOCOL_KEYS = (
     r"Software\Classes\lumen-kvn",
     r"Software\Classes\AppUserModelId\Lumen.LumenKVN",
+    r"Software\Classes\Applications\LumenKVN.exe",
+    r"Software\Microsoft\Windows\CurrentVersion\App Paths\LumenKVN.exe",
+    r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Lumen.LumenKVN",
 )
 _legacy_startup_was_disabled = False
+
+
+def _legacy_shell_paths() -> tuple[Path, ...]:
+    appdata = os.environ.get("APPDATA", "").strip()
+    program_data = os.environ.get("ProgramData", "").strip()
+    user_profile = os.environ.get("USERPROFILE", "").strip()
+    public_profile = os.environ.get("PUBLIC", "").strip()
+    paths: list[Path] = []
+    for name in LEGACY_APP_NAMES:
+        if appdata:
+            programs = Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            paths.extend((programs / name, programs / "Startup" / f"{name}.lnk"))
+            paths.append(
+                Path(appdata)
+                / "Microsoft"
+                / "Internet Explorer"
+                / "Quick Launch"
+                / "User Pinned"
+                / "TaskBar"
+                / f"{name}.lnk"
+            )
+        if program_data:
+            programs = Path(program_data) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            paths.extend((programs / name, programs / "Startup" / f"{name}.lnk"))
+        if user_profile:
+            paths.append(Path(user_profile) / "Desktop" / f"{name}.lnk")
+        if public_profile:
+            paths.append(Path(public_profile) / "Desktop" / f"{name}.lnk")
+    return tuple(dict.fromkeys(paths))
+
+
+def _cleanup_legacy_shell_entries() -> None:
+    for path in _legacy_shell_paths():
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def cleanup_legacy_system_entries() -> None:
@@ -82,6 +126,7 @@ def cleanup_legacy_system_entries() -> None:
 
     for key_path in LEGACY_PROTOCOL_KEYS:
         _delete_registry_tree(winreg.HKEY_CURRENT_USER, key_path)
+    _cleanup_legacy_shell_entries()
 
 
 def set_startup_enabled(app_name: str, enabled: bool, command: str) -> None:

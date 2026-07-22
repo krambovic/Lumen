@@ -704,6 +704,10 @@ def main(argv: list[str] | None = None) -> int:
     launch_arguments = list(argv if argv is not None else sys.argv)
     initial_deep_link = find_lumen_deep_link(launch_arguments)
     app = QApplication(launch_arguments)
+    from .native_context_menu_filter import QmlNativeContextMenuFilter
+
+    native_context_menu_filter = QmlNativeContextMenuFilter(app)
+    app.installEventFilter(native_context_menu_filter)
     _load_bundled_fonts()
     single_server, is_primary = _create_single_instance(app, launch_arguments)
     if not is_primary:

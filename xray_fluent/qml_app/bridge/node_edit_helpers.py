@@ -362,6 +362,23 @@ _AMNEZIA_EDITOR_KEYS = (
     "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3", "itime",
 )
 
+# AWG can talk to a standard WireGuard peer when the packet padding remains
+# disabled and H1-H4 retain WireGuard's original message identifiers.  Client-
+# side junk packets are safe because a regular WireGuard server ignores them.
+_WG_COMPATIBLE_AMNEZIA_DEFAULTS: dict[str, Any] = {
+    "jc": 4,
+    "jmin": 40,
+    "jmax": 70,
+    "s1": 0,
+    "s2": 0,
+    "s3": 0,
+    "s4": 0,
+    "h1": "1",
+    "h2": "2",
+    "h3": "3",
+    "h4": "4",
+}
+
 
 def _amnezia_editor_fields(
     values: dict[str, Any],
@@ -1186,6 +1203,8 @@ def build_node_updates(node, fields: dict) -> dict:
                 amnezia = native.setdefault("amnezia", {})
                 for key in _AMNEZIA_EDITOR_KEYS:
                     raw_value = raw(f"awg_{key}", "")
+                    if protocol == "wireguard" and raw_value in (None, ""):
+                        raw_value = _WG_COMPATIBLE_AMNEZIA_DEFAULTS.get(key, "")
                     if key in {"jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime"}:
                         parsed = _editor_int(raw_value, None)
                     else:

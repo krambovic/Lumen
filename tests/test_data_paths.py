@@ -103,3 +103,69 @@ def test_pre_release_path_marker_is_sanitized_and_cleanup_finishes(tmp_path: Pat
     marker_value = marker.read_text(encoding="utf-8").strip()
     assert len(marker_value) == 64
     assert "lumen" not in marker_value
+
+
+def test_all_legacy_data_directories_are_merged_and_removed(tmp_path: Path, monkeypatch) -> None:
+    first = tmp_path / "Lumen KVN" / "data"
+    second = tmp_path / "LumenKVN" / "data"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    (first / "state.enc").write_bytes(b"primary-legacy-state")
+    (second / "state.enc").write_bytes(b"secondary-legacy-state")
+    (second / "configs" / "xray").mkdir(parents=True)
+    (second / "configs" / "xray" / "extra.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    target = data_paths.user_data_dir("Lumen")
+
+    assert (target / "state.enc").read_bytes() == b"primary-legacy-state"
+    assert (target / "configs" / "xray" / "extra.json").is_file()
+    conflict_states = list(
+        (target / data_paths.MIGRATION_CONFLICTS_DIR).rglob("state.enc")
+    )
+    assert len(conflict_states) == 1
+    assert conflict_states[0].read_bytes() == b"secondary-legacy-state"
+    assert not (tmp_path / "Lumen KVN").exists()
+    assert not (tmp_path / "LumenKVN").exists()
+    marker_ids = (target / data_paths.NAME_MIGRATION_MARKER).read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert len(marker_ids) == 2
+    assert all(len(source_id) == 64 for source_id in marker_ids)
+
+
+def test_legacy_root_cache_is_removed_and_unknown_files_are_preserved(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    legacy_root = tmp_path / "Lumen KVN"
+    (legacy_root / "cache").mkdir(parents=True)
+    (legacy_root / "cache" / "stale.bin").write_bytes(b"cache")
+    (legacy_root / "custom-note.txt").write_text("keep me", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    target = data_paths.user_data_dir("Lumen")
+
+    assert not legacy_root.exists()
+    preserved = list(
+        (target / data_paths.MIGRATION_ROOT_BACKUPS_DIR).rglob("custom-note.txt")
+    )
+    assert len(preserved) == 1
+    assert preserved[0].read_text(encoding="utf-8") == "keep me"
+    assert not list(target.rglob("stale.bin"))
+
+
+def test_roaming_legacy_data_migrates_to_local_appdata(tmp_path: Path, monkeypatch) -> None:
+    local = tmp_path / "Local"
+    roaming = tmp_path / "Roaming"
+    legacy = roaming / "LumenKVN" / "data"
+    legacy.mkdir(parents=True)
+    (legacy / "state.enc").write_bytes(b"roaming-state")
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("APPDATA", str(roaming))
+
+    target = data_paths.user_data_dir("Lumen")
+
+    assert target == local / "Lumen" / "data"
+    assert (target / "state.enc").read_bytes() == b"roaming-state"
+    assert not (roaming / "LumenKVN").exists()

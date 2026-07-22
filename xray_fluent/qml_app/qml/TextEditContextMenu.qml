@@ -37,8 +37,12 @@ Item {
         onPressed: (mouse) => {
             mouse.accepted = true
             root.editor.forceActiveFocus()
+        }
+        onReleased: (mouse) => {
+            mouse.accepted = true
             root.openAt(mouse.x, mouse.y)
         }
+        onClicked: (mouse) => mouse.accepted = true
     }
 
     // Text editors are used heavily in the log delegate.  Instantiate the
@@ -51,32 +55,12 @@ Item {
             FluentMenu {
                 parent: root
                 width: 190
-                // Consume clicks while the menu is open.  Otherwise a second
-                // right click can leak through Qt's popup overlay to the
-                // underlying TextInput and summon the platform context menu.
-                modal: true
+                // Keep the menu modeless so the rest of the page remains
+                // usable.  Open it only after the right button is released so
+                // that the opening click cannot immediately close the popup.
+                modal: false
                 dim: false
-                closePolicy: Popup.CloseOnEscape
-
-                // A transparent modal catcher prevents the platform TextInput
-                // menu from receiving the same second right-click.  Right-click
-                // inside this editor moves our menu; any other outside click
-                // simply closes it.  Unlike a dialog this never shades the page.
-                Overlay.modal: MouseArea {
-                    id: menuOverlayCatcher
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    onPressed: (mouse) => {
-                        mouse.accepted = true
-                        var point = root.mapFromItem(menuOverlayCatcher, mouse.x, mouse.y)
-                        var insideEditor = point.x >= 0 && point.y >= 0
-                                && point.x <= root.width && point.y <= root.height
-                        editMenuLoader.item.close()
-                        if (mouse.button === Qt.RightButton && insideEditor) {
-                            root.editor.forceActiveFocus()
-                            root.openAt(point.x, point.y)
-                        }
-                    }
-                }
+                closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
 
                 FluentMenuItem {
                     text: I18n.t("Отменить")

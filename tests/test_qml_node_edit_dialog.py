@@ -79,3 +79,14 @@ def test_dialog_uses_dynamic_protocol_schema_instead_of_shared_static_fields() -
     assert "App.manualNodeProtocols" in source
     assert "App.createManualNode(payload)" in source
     assert 'dlg.loadNewProtocol(currentText)' in source
+
+
+def test_wireguard_amnezia_toggle_populates_compatible_defaults() -> None:
+    source = (QML_DIR / "NodeEditDialog.qml").read_text(encoding="utf-8")
+
+    assert "function applyWireGuardAmneziaDefaults()" in source
+    assert '"awg_jc": 4' in source
+    assert '"awg_jmin": 40' in source
+    assert '"awg_jmax": 70' in source
+    assert '"awg_h1": "1"' in source
+    assert 'parent.fieldSpec.key === "amneziaEnabled" && checked' in source

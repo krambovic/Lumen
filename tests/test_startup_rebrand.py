@@ -6,6 +6,55 @@ from xray_fluent import app_updater
 from xray_fluent import startup
 
 
+def test_legacy_registry_cleanup_covers_all_app_owned_identities() -> None:
+    assert r"Software\Classes\lumen-kvn" in startup.LEGACY_PROTOCOL_KEYS
+    assert r"Software\Classes\AppUserModelId\Lumen.LumenKVN" in startup.LEGACY_PROTOCOL_KEYS
+    assert r"Software\Classes\Applications\LumenKVN.exe" in startup.LEGACY_PROTOCOL_KEYS
+    assert r"Software\Microsoft\Windows\CurrentVersion\App Paths\LumenKVN.exe" in startup.LEGACY_PROTOCOL_KEYS
+    assert (
+        r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Lumen.LumenKVN"
+        in startup.LEGACY_PROTOCOL_KEYS
+    )
+
+
+def test_legacy_shell_shortcuts_and_start_menu_groups_are_removed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    appdata = tmp_path / "AppData" / "Roaming"
+    program_data = tmp_path / "ProgramData"
+    user_profile = tmp_path / "User"
+    public_profile = tmp_path / "Public"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("ProgramData", str(program_data))
+    monkeypatch.setenv("USERPROFILE", str(user_profile))
+    monkeypatch.setenv("PUBLIC", str(public_profile))
+
+    old_group = appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Lumen KVN"
+    old_group.mkdir(parents=True)
+    (old_group / "Lumen KVN.lnk").write_bytes(b"shortcut")
+    old_startup = (
+        program_data
+        / "Microsoft"
+        / "Windows"
+        / "Start Menu"
+        / "Programs"
+        / "Startup"
+        / "LumenKVN.lnk"
+    )
+    old_startup.parent.mkdir(parents=True)
+    old_startup.write_bytes(b"shortcut")
+    old_desktop = user_profile / "Desktop" / "lumen-kvn.lnk"
+    old_desktop.parent.mkdir(parents=True)
+    old_desktop.write_bytes(b"shortcut")
+
+    startup._cleanup_legacy_shell_entries()
+
+    assert not old_group.exists()
+    assert not old_startup.exists()
+    assert not old_desktop.exists()
+
+
 def test_legacy_bridge_uses_canonical_executable_for_startup(tmp_path: Path, monkeypatch) -> None:
     legacy = tmp_path / "LumenKVN.exe"
     canonical = tmp_path / "Lumen.exe"

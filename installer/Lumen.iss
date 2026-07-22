@@ -66,7 +66,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "zapret\exe\*.sys,portable"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "zapret\exe\*.sys,portable,LumenKVN.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\zapret\exe\*.sys"; DestDir: "{app}\zapret\exe"; Flags: ignoreversion restartreplace uninsrestartdelete
 
 [Icons]
@@ -103,6 +103,9 @@ Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Classes\lumen /F >nu
 Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Classes\lumen-kvn /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteLegacyUrlProtocol"
 Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Classes\AppUserModelId\Lumen.Lumen /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteAumid"
 Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Classes\AppUserModelId\Lumen.LumenKVN /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteLegacyAumid"
+Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Classes\Applications\LumenKVN.exe /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteLegacyApplication"
+Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\LumenKVN.exe /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteLegacyAppPath"
+Filename: "{cmd}"; Parameters: "/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Lumen.LumenKVN /F >nul 2>nul"; Flags: runhidden; RunOnceId: "DeleteLegacyNotificationSettings"
 
 [InstallDelete]
 Type: files; Name: "{app}\LumenKVN.exe"
@@ -229,6 +232,13 @@ begin
   Exec(ExpandConstant('{cmd}'), '/C schtasks /Delete /TN "Lumen_KVN" /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C reg delete HKCU\Software\Classes\lumen-kvn /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C reg delete HKCU\Software\Classes\AppUserModelId\Lumen.LumenKVN /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C reg delete HKCU\Software\Classes\Applications\LumenKVN.exe /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\LumenKVN.exe /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Lumen.LumenKVN /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C reg delete HKLM\Software\Classes\lumen-kvn /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C reg delete HKLM\Software\Classes\AppUserModelId\Lumen.LumenKVN /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C reg delete HKLM\Software\Classes\Applications\LumenKVN.exe /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{cmd}'), '/C reg delete HKLM\Software\Microsoft\Windows\CurrentVersion\App Paths\LumenKVN.exe /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C reg delete HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LumenKVN_is1 /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C reg delete HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\LumenKVN_is1 /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'), '/C reg delete HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LumenKVN_is1 /F >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);

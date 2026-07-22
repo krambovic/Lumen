@@ -61,12 +61,15 @@ def test_installer_carries_one_launch_bridge_for_legacy_updater() -> None:
     installer = build_qml.INNO_SCRIPT.read_text(encoding="utf-8")
 
     assert "UsePreviousAppDir=no" in installer
-    assert 'Excludes: "zapret\\exe\\*.sys,portable"' in installer
+    assert 'Excludes: "zapret\\exe\\*.sys,portable,LumenKVN.exe"' in installer
     assert 'Type: files; Name: "{app}\\LumenKVN.exe"' in installer
     assert 'Type: files; Name: "{app}\\assets\\LumenKVN.ico"' in installer
     assert "WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\LumenKVN_is1" in installer
     assert "procedure UseCanonicalInstallDir;" in installer
     assert "function PrepareToInstall(var NeedsRestart: Boolean): String;" in installer
+    assert "Notifications\\Settings\\Lumen.LumenKVN" in installer
+    assert "Classes\\Applications\\LumenKVN.exe" in installer
+    assert "HKLM\\Software\\Classes\\lumen-kvn" in installer
 
 
 def test_installer_registers_lumen_deep_link_protocol() -> None:

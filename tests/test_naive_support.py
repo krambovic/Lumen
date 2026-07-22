@@ -135,7 +135,13 @@ def test_editor_uses_styled_scroll_and_context_menu_consumes_repeat_clicks() -> 
     assert "ScrollBar.vertical: FluentScrollBar" in editor
     assert "Flickable.StopAtBounds" in editor
     assert "Universal.accent: Theme.accent" in editor
-    assert "modal: true" in context_menu
+    assert "modal: false" in context_menu
+    assert "Popup.CloseOnPressOutside | Popup.CloseOnEscape" in context_menu
+    assert "Overlay.modal: MouseArea" not in context_menu
+    assert "onReleased: (mouse) => {" in context_menu
+    assert "root.openAt(mouse.x, mouse.y)" in context_menu
+    pressed_handler = context_menu.split("onPressed: (mouse) => {", 1)[1].split("}", 1)[0]
+    assert "root.openAt(" not in pressed_handler
 
 
 def test_release_build_bundles_naive_cronet_companion() -> None:

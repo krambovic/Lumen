@@ -500,11 +500,32 @@ def test_wireguard_editor_can_enable_amnezia_compatibility() -> None:
 
     updates = build_node_updates(
         node,
-        {"amneziaEnabled": True, "awg_jc": "4", "awg_h1": "1-2"},
+        {"amneziaEnabled": True},
     )
     assert updates["scheme"] == "awg"
     assert updates["outbound"]["protocol"] == "awg"
-    assert updates["outbound"]["singbox"]["amnezia"] == {"jc": 4, "h1": "1-2"}
+    assert updates["outbound"]["singbox"]["amnezia"] == {
+        "jc": 4,
+        "jmin": 40,
+        "jmax": 70,
+        "s1": 0,
+        "s2": 0,
+        "s3": 0,
+        "s4": 0,
+        "h1": "1",
+        "h2": "2",
+        "h3": "3",
+        "h4": "4",
+    }
+
+    custom = build_node_updates(
+        node,
+        {"amneziaEnabled": True, "awg_jc": "7", "awg_h1": "99"},
+    )
+    custom_amnezia = custom["outbound"]["singbox"]["amnezia"]
+    assert custom_amnezia["jc"] == 7
+    assert custom_amnezia["h1"] == "99"
+    assert custom_amnezia["jmin"] == 40
 
     reverted = build_node_updates(
         Node(**{**node.to_dict(), "scheme": "awg", "outbound": updates["outbound"]}),
