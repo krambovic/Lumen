@@ -134,11 +134,22 @@ def set_startup_enabled(app_name: str, enabled: bool, command: str) -> None:
     if sys.platform != "win32":
         return
     cleanup_legacy_system_entries()
-    _delete_startup_task()
     if enabled:
-        _create_registry_startup(app_name, command)
-        _set_startup_approved(app_name, enabled=True)
+        if _startup_requires_scheduled_task():
+            # HKCU Run entries pointing at executables that require elevation
+            # are silently skipped by Windows at logon, while Task Manager
+            # keeps showing them as "Enabled". Lumen runs elevated (UAC
+            # manifest / RUNASADMIN layer), so register a scheduled task with
+            # the highest run level instead.
+            _delete_registry_startup(app_name)
+            _delete_startup_approved(app_name)
+            _create_startup_task(command)
+        else:
+            _delete_startup_task()
+            _create_registry_startup(app_name, command)
+            _set_startup_approved(app_name, enabled=True)
     else:
+        _delete_startup_task()
         _delete_registry_startup(app_name)
         _delete_startup_approved(app_name)
     _legacy_startup_was_disabled = False
@@ -148,6 +159,8 @@ def get_startup_state(app_name: str) -> str:
     if sys.platform != "win32":
         return STARTUP_STATE_ABSENT
     cleanup_legacy_system_entries()
+    if app_name == TASK_NAME and _startup_task_exists():
+        return STARTUP_STATE_ENABLED
     if not _registry_startup_exists(app_name):
         if app_name == TASK_NAME and _legacy_startup_was_disabled:
             return STARTUP_STATE_DISABLED
@@ -160,6 +173,27 @@ def get_startup_state(app_name: str) -> str:
     if isinstance(value, (bytes, bytearray)) and value and value[0] == 0x03:
         return STARTUP_STATE_DISABLED
     return STARTUP_STATE_ENABLED
+
+
+def _startup_requires_scheduled_task() -> bool:
+    if is_process_elevated():
+        return True
+    try:
+        return is_always_run_as_admin_enabled()
+    except Exception:
+        return False
+
+
+def _startup_task_exists() -> bool:
+    try:
+        result = subprocess.run(
+            ["schtasks", "/Query", "/TN", TASK_NAME],
+            capture_output=True,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
 
 
 def is_process_elevated() -> bool:

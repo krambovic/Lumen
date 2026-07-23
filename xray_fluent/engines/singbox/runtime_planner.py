@@ -762,6 +762,14 @@ def _ensure_proxy_server_bootstrap_contract(
 def _ensure_endpoint_server_bootstrap_contract(payload: dict[str, Any], endpoint: dict[str, Any]) -> None:
     endpoint_type = str(endpoint.get("type") or "").strip().lower()
     hosts: list[str] = []
+    if endpoint_type in {"wireguard", "warp"} and not str(endpoint.get("detour") or "").strip():
+        # sing-box on Windows fails to bind the WireGuard endpoint socket when
+        # route.auto_detect_interface is enabled and the endpoint has no detour
+        # ("unable to update bind: An invalid argument was supplied", see
+        # SagerNet/sing-box#2900). The endpoint then reports "connected" but
+        # passes no traffic. Pin the endpoint dialer to the direct outbound,
+        # mirroring what masque/openvpn outbounds already do.
+        endpoint["detour"] = "direct"
     if endpoint_type == "wireguard":
         endpoint["domain_resolver"] = "bootstrap-dns"
         for peer in endpoint.get("peers") or []:

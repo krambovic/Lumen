@@ -50,3 +50,7 @@ CLAUDE.md
 AGENTS.md
 HANDOFF*.md
 sing-box.md
+
+# Worktrees
+.worktrees/
+

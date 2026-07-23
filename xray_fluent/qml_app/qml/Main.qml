@@ -463,7 +463,7 @@ ApplicationWindow {
             return false;
         for (var i = 0; i < urls.length; ++i) {
             var value = String(urls[i]).toLowerCase().split("?", 1)[0].split("#", 1)[0];
-            if (/\.(conf|txt|json|ya?ml)$/.test(value))
+            if (/\.(conf|ovpn|txt|json|ya?ml)$/.test(value))
                 return true;
         }
         return false;
