@@ -198,10 +198,14 @@ jobs:
           body: |
             ## What's Changed
 
-            - [feat(routing)]: Added regional routing profiles for Russia, China and Iran; quick presets now use region-specific direct and blocked rules, while Xray and sing-box receive the matching GeoIP, GeoSite and binary rule sets.
-            - [fix(routing)]: Regional data is downloaded and validated before a profile is committed; failed downloads keep the previous profile active, while successful switches reconnect the running proxy or TUN only after all required files are ready.
-            - [feat(i18n)]: Added Persian and Simplified Chinese interface translations with automatic language selection from the Windows locale, and made built-in quick-preset names update immediately when the language changes.
-            - [fix(window)]: Restored window geometry is now fitted to the active monitor and applied after the custom frame is initialized, preventing oversized top areas and clipped controls on small or high-DPI displays without changing the interface design.
+            - feat(brand): rebrand application to Lumen, update app icons, installer scripts, and repository links
+            - feat(deeplinks): add `lumen://` system URL scheme handler for one-click browser configuration imports
+            - feat(protocols): add NaïveProxy (`naive+https://`) configuration parser and core execution support
+            - feat(protocols): add OpenVPN (`.ovpn`) configuration file import and parser support
+            - feat(engines): expand sing-box extended support and AmneziaWG (AWG) header/junk normalization (`jc`, `jmin`, `jmax`, `s1..s4`, `h1..h4`, `i1..i5`)
+            - feat(subscriptions): enhance Happ Crypt (`happ://crypt..crypt5`) link decryption and subscription parsing
+            - fix(ui): resolve QML text field context menu actions (Copy, Cut, Paste, Select All) and native menu filter
+            - fix(routing): correct domain typo in Anthropic / Claude routing preset
 
             Full Changelog: https://github.com/krambovic/Lumen/compare/v1.9.3...${{ env.RELEASE_TAG }}
           generate_release_notes: false
