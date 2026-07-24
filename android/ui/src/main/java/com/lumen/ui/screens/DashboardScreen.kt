@@ -240,12 +240,10 @@ fun DashboardScreen(
                                     DropdownMenu(
                                         expanded = showSortMenu,
                                         onDismissRequest = { showSortMenu = false },
-                                        modifier = Modifier
-                                            .widthIn(min = 220.dp)
-                                            .shadow(8.dp, menuShape)
-                                            .clip(menuShape)
-                                            .background(MaterialTheme.colorScheme.surfaceContainerHigh, menuShape)
-                                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                                        shape = menuShape,
+                                        containerColor = MaterialTheme.colorScheme.surface,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                                        modifier = Modifier.widthIn(min = 220.dp)
                                     ) {
                                         Column(Modifier.padding(vertical = 6.dp)) {
                                             DropdownMenuItem(
@@ -400,12 +398,10 @@ fun DashboardScreen(
                                 DropdownMenu(
                                     expanded = showImportMenu,
                                     onDismissRequest = { showImportMenu = false },
-                                    modifier = Modifier
-                                        .widthIn(min = 220.dp)
-                                        .shadow(8.dp, menuShape)
-                                        .clip(menuShape)
-                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, menuShape)
-                                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                                    shape = menuShape,
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                                    modifier = Modifier.widthIn(min = 220.dp)
                                 ) {
                                     Column(Modifier.padding(vertical = 4.dp)) {
                                         DropdownMenuItem(
@@ -715,7 +711,14 @@ private fun SubscriptionHeaderTile(
                             modifier = Modifier.size(20.dp)
                         )
                     }
-                    DropdownMenu(expanded = showPingMenu, onDismissRequest = { showPingMenu = false }) {
+                    val pingMenuShape = RoundedCornerShape(14.dp)
+                    DropdownMenu(
+                        expanded = showPingMenu,
+                        onDismissRequest = { showPingMenu = false },
+                        shape = pingMenuShape,
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                    ) {
                         DropdownMenuItem(text = { Text("Ping") }, onClick = { onPingGroup(); showPingMenu = false })
                         DropdownMenuItem(text = { Text("UDP Ping") }, onClick = { onUdpPingGroup(); showPingMenu = false })
                     }
@@ -750,12 +753,10 @@ private fun SubscriptionHeaderTile(
                     DropdownMenu(
                         expanded = showMenu,
                         onDismissRequest = { showMenu = false },
-                        modifier = Modifier
-                            .widthIn(min = 220.dp)
-                            .shadow(8.dp, menuShape)
-                            .clip(menuShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh, menuShape)
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                        shape = menuShape,
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                        modifier = Modifier.widthIn(min = 220.dp)
                     ) {
                         Column(Modifier.padding(vertical = 6.dp)) {
                             if (group.isSubscription) {
@@ -969,12 +970,10 @@ private fun ServerTileRow(
                     DropdownMenu(
                         expanded = showActionMenu,
                         onDismissRequest = { showActionMenu = false },
-                        modifier = Modifier
-                            .widthIn(min = 200.dp)
-                            .shadow(8.dp, menuShape)
-                            .clip(menuShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh, menuShape)
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                        shape = menuShape,
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                        modifier = Modifier.widthIn(min = 200.dp)
                     ) {
                         Column(Modifier.padding(vertical = 4.dp)) {
                             DropdownMenuItem(

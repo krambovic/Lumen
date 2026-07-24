@@ -1,4 +1,4 @@
-﻿package com.lumen.ui.screens
+package com.lumen.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -85,11 +85,10 @@ fun LumenDropdown(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier
-                    .widthIn(min = 220.dp)
-                    .clip(menuShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, menuShape)
-                    .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                shape = menuShape,
+                containerColor = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                modifier = Modifier.widthIn(min = 220.dp)
             ) {
                 Column(Modifier.padding(vertical = 6.dp)) {
                     options.forEach { option ->
@@ -116,6 +115,31 @@ fun LumenDropdown(
             }
         }
     }
+}
+
+/** High contrast, vibrant theme switch component. */
+@Composable
+fun LumenSwitch(
+    checked: Boolean,
+    onCheckedChange: ((Boolean) -> Unit)?,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    androidx.compose.material3.Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = modifier,
+        enabled = enabled,
+        colors = androidx.compose.material3.SwitchDefaults.colors(
+            checkedThumbColor = Color.White,
+            checkedTrackColor = MaterialTheme.colorScheme.primary,
+            checkedBorderColor = Color.Transparent,
+            checkedIconColor = MaterialTheme.colorScheme.primary,
+            uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+            uncheckedBorderColor = MaterialTheme.colorScheme.outline
+        )
+    )
 }
 
 /** Material Design 3 Card container */

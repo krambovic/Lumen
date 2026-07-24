@@ -83,18 +83,16 @@ fun RoutingScreen(
                         DropdownMenu(
                             expanded = showOptions,
                             onDismissRequest = { showOptions = false },
-                            modifier = Modifier
-                                .widthIn(min = 220.dp)
-                                .shadow(8.dp, menuShape)
-                                .clip(menuShape)
-                                .background(MaterialTheme.colorScheme.surfaceContainerHigh, menuShape)
-                                .border(androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                            shape = menuShape,
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                            modifier = Modifier.widthIn(min = 220.dp)
                         ) {
                             Column(Modifier.padding(vertical = 4.dp)) {
                                 DropdownMenuItem(
                                     text = { Text(strings.hideSystem) },
                                     trailingIcon = {
-                                        Switch(checked = hideSystem, onCheckedChange = { hideSystem = it })
+                                        LumenSwitch(checked = hideSystem, onCheckedChange = { hideSystem = it })
                                     },
                                     onClick = { hideSystem = !hideSystem }
                                 )

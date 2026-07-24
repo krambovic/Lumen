@@ -179,12 +179,10 @@ fun DomainRoutingScreen(
                         DropdownMenu(
                             expanded = showActionMenu,
                             onDismissRequest = { showActionMenu = false },
-                            modifier = Modifier
-                                .widthIn(min = 180.dp)
-                                .shadow(8.dp, menuShape)
-                                .clip(menuShape)
-                                .background(MaterialTheme.colorScheme.surfaceContainerHigh, menuShape)
-                                .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                            shape = menuShape,
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                            modifier = Modifier.widthIn(min = 180.dp)
                         ) {
                             DropdownMenuItem(
                                 text = { Text(s.directAction, color = MaterialTheme.colorScheme.onSurface) },
@@ -420,12 +418,10 @@ private fun RuleRowItem(
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },
-                modifier = Modifier
-                    .widthIn(min = 150.dp)
-                    .shadow(8.dp, menuShape)
-                    .clip(menuShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, menuShape)
-                    .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                shape = menuShape,
+                containerColor = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                modifier = Modifier.widthIn(min = 150.dp)
             ) {
                 DropdownMenuItem(
                     text = { Text(s.directAction, color = MaterialTheme.colorScheme.onSurface) },

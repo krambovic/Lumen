@@ -225,7 +225,7 @@ fun ThemeSettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Switch(
+                LumenSwitch(
                     checked = state.useMaterialYou,
                     onCheckedChange = { onUpdate(state.copy(useMaterialYou = it)) }
                 )
@@ -265,7 +265,7 @@ fun ThemeSettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Switch(
+                LumenSwitch(
                     checked = state.useAmoledBlack,
                     onCheckedChange = { onUpdate(state.copy(useAmoledBlack = it)) }
                 )

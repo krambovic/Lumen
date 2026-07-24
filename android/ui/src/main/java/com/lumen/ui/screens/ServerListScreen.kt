@@ -201,7 +201,7 @@ private fun SubscriptionCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(s.auto, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.width(6.dp))
-                    Switch(sub.autoUpdateEnabled, onCheckedChange = onAutoUpdate)
+                    LumenSwitch(sub.autoUpdateEnabled, onCheckedChange = onAutoUpdate)
                 }
             }
         }

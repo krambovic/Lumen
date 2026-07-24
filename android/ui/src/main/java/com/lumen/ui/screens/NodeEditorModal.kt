@@ -208,7 +208,7 @@ private fun ToggleField(label: String, checked: Boolean, onChange: (Boolean) -> 
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium)
-        Switch(checked = checked, onCheckedChange = onChange)
+        LumenSwitch(checked = checked, onCheckedChange = onChange)
     }
 }
 

@@ -379,7 +379,7 @@ private fun ToggleRow(title: String, description: String, checked: Boolean, onCh
             Text(title)
             Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        LumenSwitch(checked = checked, onCheckedChange = onChange)
     }
 }
 
