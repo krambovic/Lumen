@@ -82,10 +82,15 @@ internal object SubscriptionClient {
         // then the remaining compatible profiles.
         val profiles = buildList {
             if (!customUserAgent.isNullOrBlank()) add("Custom" to customUserAgent)
-            add("Lumen Android" to "Lumen-Subscription/Android-1.0")
+            // Happ first: panels that gate on the client name recognise it most often,
+            // and this matches what the desktop build sends.
             add("Happ compatible" to "Happ/2.18.3/Windows/2606241603601")
+            add("v2rayNG" to "v2rayNG/1.9.16")
+            add("Lumen Android" to "Lumen-Subscription/Android-1.0")
             add("SFA" to "SFA/1.11.0")
+            add("Streisand" to "Streisand/1.6.40")
             add("Clash Meta" to "clash.meta")
+            add("Generic" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36")
         }
         var lastError: Throwable? = null
         for ((profile, userAgent) in profiles) {

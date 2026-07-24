@@ -1,5 +1,6 @@
 package com.lumen.app.subscription
 
+import com.lumen.core.config.parser.LinkParser
 import java.net.URI
 import java.util.Locale
 
@@ -44,7 +45,11 @@ internal object ImportClassifier {
         val looksStructured = text.startsWith("{") || text.startsWith("[") || isYamlOrIni ||
             (text.length >= 24 && text.length % 4 == 0 &&
                 text.all { it.isLetterOrDigit() || it in "+/=\r\n-_" })
-        return if (hasConfigScheme || looksStructured) {
+        // Final arbiter: the parser understands base64 blobs, Clash YAML, sing-box JSON,
+        // OpenVPN and WireGuard files, so trust it before rejecting the payload.
+        val parsable = !hasConfigScheme && !looksStructured &&
+            runCatching { LinkParser.parseLinksText(text).first.isNotEmpty() }.getOrDefault(false)
+        return if (hasConfigScheme || looksStructured || parsable) {
             ImportClassification.Ready(ImportKind.CONFIG, text)
         } else ImportClassification.Rejected("Clipboard does not contain a subscription or supported config")
     }

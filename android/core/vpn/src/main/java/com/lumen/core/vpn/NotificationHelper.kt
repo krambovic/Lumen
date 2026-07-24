@@ -16,8 +16,12 @@ object NotificationHelper {
     const val CHANNEL_NAME = "Lumen VPN Service"
     const val NOTIFICATION_ID = 1001
 
+    @Volatile
+    private var channelCreated = false
+
     fun createNotificationChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !channelCreated) {
+            channelCreated = true
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 CHANNEL_NAME,

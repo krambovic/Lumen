@@ -112,5 +112,21 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/lumen_widget_info" />
         </receiver>
+
+        <!-- Quick Settings Tile (Nothing OS / Android Quick Settings shade) -->
+        <service
+            android:name="com.lumen.core.vpn.LumenTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher"
+            tools:replace="android:icon"
+            android:label="Lumen VPN"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
     </application>
 </manifest>

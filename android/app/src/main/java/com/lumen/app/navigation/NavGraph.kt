@@ -37,8 +37,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -91,6 +99,9 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.height
+
+// Shared slow-out easing for the bottom bar indicator.
+private val NavPremiumEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 private data class LumenDest(val route: String, val icon: ImageVector)
 private val DESTINATIONS = listOf(
@@ -146,26 +157,53 @@ fun LumenApp(
                         .padding(bottom = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    val pillShape = RoundedCornerShape(24.dp)
+                    val pillShape = RoundedCornerShape(26.dp)
                     val primaryPaletteColor = MaterialTheme.colorScheme.primary
                     val pillBgColor = MaterialTheme.colorScheme.surfaceVariant
                     val pillBorderColor = primaryPaletteColor.copy(alpha = 0.35f)
+                    val backStack by navController.currentBackStackEntryAsState()
+                    val currentRoute = backStack?.destination?.route
+                    val slotWidth = 100.dp
+                    val selectedIndex = DESTINATIONS.indexOfFirst { it.route == currentRoute }
+                    // Sub-screens keep the pill on the tab they were opened from.
+                    val lastTabIndex = remember { mutableIntStateOf(0) }
+                    LaunchedEffect(selectedIndex) {
+                        if (selectedIndex >= 0) lastTabIndex.intValue = selectedIndex
+                    }
+                    val activeIndex = if (selectedIndex >= 0) selectedIndex else lastTabIndex.intValue
+                    // The highlight slides between tabs instead of fading in place.
+                    val indicatorOffset by animateDpAsState(
+                        targetValue = slotWidth * activeIndex,
+                        animationSpec = tween(durationMillis = 420, easing = NavPremiumEasing),
+                        label = "nav_indicator_offset"
+                    )
+                    val indicatorAlpha by animateFloatAsState(
+                        targetValue = if (selectedIndex >= 0) 0.20f else 0.10f,
+                        animationSpec = tween(durationMillis = 260, easing = NavPremiumEasing),
+                        label = "nav_indicator_alpha"
+                    )
 
                     Box(
                         modifier = Modifier
-                            .width(170.dp)
-                            .height(48.dp)
+                            .width(slotWidth * DESTINATIONS.size + 12.dp)
+                            .height(56.dp)
                             .clip(pillShape)
                             .background(pillBgColor)
                             .border(1.dp, pillBorderColor, pillShape)
+                            .padding(6.dp)
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .offset(x = indicatorOffset)
+                                .width(slotWidth)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(primaryPaletteColor.copy(alpha = indicatorAlpha))
+                        )
                         Row(
                             modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val backStack by navController.currentBackStackEntryAsState()
-                            val currentRoute = backStack?.destination?.route
                             DESTINATIONS.forEach { dest ->
                                 val selected = currentRoute == dest.route
                                 val label = when (dest.route) {
@@ -175,21 +213,25 @@ fun LumenApp(
                                 }
                                 val iconColor by animateColorAsState(
                                     targetValue = if (selected) primaryPaletteColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    animationSpec = tween(190),
+                                    animationSpec = tween(220, easing = FastOutSlowInEasing),
                                     label = "nav_icon_color"
                                 )
-                                val bgColor by animateColorAsState(
-                                    targetValue = if (selected) primaryPaletteColor.copy(alpha = 0.22f) else Color.Transparent,
-                                    animationSpec = tween(190),
-                                    label = "nav_bg_color"
+                                val iconScale by animateFloatAsState(
+                                    targetValue = if (selected) 1.12f else 1f,
+                                    animationSpec = spring(dampingRatio = 0.55f, stiffness = 420f),
+                                    label = "nav_icon_scale"
                                 )
 
                                 Box(
                                     modifier = Modifier
-                                        .size(width = 60.dp, height = 34.dp)
-                                        .clip(RoundedCornerShape(17.dp))
-                                        .background(bgColor)
-                                         .clickable {
+                                        .width(slotWidth)
+                                        .fillMaxHeight()
+                                        .clip(RoundedCornerShape(20.dp))
+                                        // No ripple: the sliding pill is the only selection cue.
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) {
                                             if (dest.route == "settings") {
                                                 settingsResetSignal++
                                                 if (currentRoute != "settings") {
@@ -209,7 +251,9 @@ fun LumenApp(
                                         imageVector = dest.icon,
                                         contentDescription = label,
                                         tint = iconColor,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier
+                                            .size(21.dp)
+                                            .scale(iconScale)
                                     )
                                 }
                             }
@@ -218,49 +262,53 @@ fun LumenApp(
                 }
             }
         ) { padding ->
-            val routeOrder = remember { listOf("dashboard", "servers", "routing", "settings") }
-                fun getRouteIndex(route: String?): Int {
-                    val idx = routeOrder.indexOf(route)
-                    return if (idx >= 0) idx else 99
+            val mainTabs = remember { listOf("dashboard", "settings") }
+            // Slow-out easing shared by all screen transitions.
+            val PremiumEasing = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
+            fun isTabForward(from: String?, to: String?): Boolean {
+                if (from in mainTabs && to in mainTabs) {
+                    return mainTabs.indexOf(to) >= mainTabs.indexOf(from)
                 }
+                return true
+            }
 
             NavHost(
                 navController = navController,
                 startDestination = "dashboard",
                 modifier = Modifier.padding(padding),
                 enterTransition = {
-                    val initialIdx = getRouteIndex(initialState.destination.route)
-                    val targetIdx = getRouteIndex(targetState.destination.route)
-                    if (targetIdx >= initialIdx) {
-                        slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 3 } + fadeIn(tween(220))
-                    } else {
-                        slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 3 } + fadeIn(tween(220))
-                    }
+                    val dir = if (isTabForward(initialState.destination.route, targetState.destination.route)) 1 else -1
+                    slideInHorizontally(tween(320, easing = PremiumEasing)) { dir * it / 6 } +
+                        fadeIn(tween(260, easing = PremiumEasing)) +
+                        androidx.compose.animation.scaleIn(tween(320, easing = PremiumEasing), initialScale = 0.98f)
                 },
                 exitTransition = {
-                    val initialIdx = getRouteIndex(initialState.destination.route)
-                    val targetIdx = getRouteIndex(targetState.destination.route)
-                    if (targetIdx >= initialIdx) {
-                        slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 3 } + fadeOut(tween(220))
-                    } else {
-                        slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 3 } + fadeOut(tween(220))
-                    }
+                    val dir = if (isTabForward(initialState.destination.route, targetState.destination.route)) 1 else -1
+                    slideOutHorizontally(tween(320, easing = PremiumEasing)) { -dir * it / 6 } +
+                        fadeOut(tween(180)) +
+                        androidx.compose.animation.scaleOut(tween(320, easing = PremiumEasing), targetScale = 0.98f)
                 },
                 popEnterTransition = {
-                    slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 3 } + fadeIn(tween(220))
+                    slideInHorizontally(tween(320, easing = PremiumEasing)) { -it / 6 } +
+                        fadeIn(tween(260, easing = PremiumEasing)) +
+                        androidx.compose.animation.scaleIn(tween(320, easing = PremiumEasing), initialScale = 0.98f)
                 },
                 popExitTransition = {
-                    slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 3 } + fadeOut(tween(220))
+                    slideOutHorizontally(tween(320, easing = PremiumEasing)) { it / 6 } +
+                        fadeOut(tween(180)) +
+                        androidx.compose.animation.scaleOut(tween(320, easing = PremiumEasing), targetScale = 0.98f)
                 }
             ) {
                 composable("dashboard") {
                     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
                     val nodes by viewModel.nodes.collectAsStateWithLifecycle()
                     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
+                    val pingingNodeIds by viewModel.pingingNodeIds.collectAsStateWithLifecycle()
                     DashboardScreen(
                         connectionState = connectionState,
                         nodes = nodes,
                         subscriptions = subscriptions,
+                        pingingNodeIds = pingingNodeIds,
                         onToggleConnection = onToggleConnection,
                         onSelectNode = { node ->
                             val wasSelected = node.isSelected

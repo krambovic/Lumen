@@ -1,7 +1,9 @@
 package com.lumen.core.vpn
 
 import android.content.Intent
+import android.net.ConnectivityManager
 import android.net.VpnService
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.lumen.core.engine.EngineManager
@@ -65,6 +67,7 @@ class LumenVpnService : VpnService() {
                     configJson = intent.getStringExtra(EXTRA_CONFIG_JSON) ?: "{}",
                     mtu = intent.getIntExtra(EXTRA_MTU, DEFAULT_MTU).coerceIn(1280, 9000),
                     localSocksPort = intent.getIntExtra(EXTRA_LOCAL_SOCKS_PORT, LOCAL_SOCKS_PORT).coerceIn(1024, 65535),
+                    dnsMode = intent.getStringExtra(EXTRA_DNS_MODE) ?: "automatic",
                     splitConfig = SplitTunnelingConfig(
                         splitMode,
                         (intent.getStringArrayListExtra(EXTRA_SPLIT_PACKAGES) ?: arrayListOf()).toSet()
@@ -81,6 +84,7 @@ class LumenVpnService : VpnService() {
         configJson: String,
         mtu: Int,
         localSocksPort: Int,
+        dnsMode: String,
         splitConfig: SplitTunnelingConfig
     ) {
         VpnLogBus.clearLastError()
@@ -98,6 +102,7 @@ class LumenVpnService : VpnService() {
         serviceScope.launch {
             stopRuntime(closeInterface = true)
             try {
+                enforcePrivateDnsPolicy(dnsMode)
                 val builder = Builder()
                     .setMtu(mtu)
                     .addAddress(DEFAULT_IPV4_ADDRESS, DEFAULT_IPV4_PREFIX)
@@ -105,7 +110,12 @@ class LumenVpnService : VpnService() {
                     .addRoute("0.0.0.0", 0)
                     .addRoute("::", 0)
                     .setSession("Lumen VPN")
-                DEFAULT_DNS_SERVERS.forEach(builder::addDnsServer)
+                val vpnDnsServers = if (dnsMode.lowercase() in setOf("android", "system")) {
+                    currentNetworkDnsServers()
+                } else {
+                    listOf(INTERNAL_DNS_ADDRESS)
+                }
+                vpnDnsServers.forEach(builder::addDnsServer)
                 // The core's outbound sockets must bypass this VPN to avoid a routing loop.
                 // ALLOW_LIST caveats: our own package must never be allowed, and an
                 // empty allow-list would make Android capture ALL apps (VpnService
@@ -169,10 +179,9 @@ misc:
                 }
                 delay(350)
                 check(tunnelStarted) { "hev-socks5-tunnel failed to start" }
-                // A remote SOCKS probe cannot be a start prerequisite: some working
-                // servers intentionally delay/reject a fixed probe destination.
-                // The engine and tun2socks remain responsible for live traffic, while
-                // their own errors are still observed and surfaced below.
+                // Do not publish Connected for a merely running process. A domain
+                // CONNECT exercises bootstrap DNS, managed DNS and the selected proxy.
+                verifyProxyDataPath(localSocksPort)
                 _isRunning.value = true
                 sendBroadcast(Intent("com.lumen.app.widget.ACTION_UPDATE_STATE"))
                 TelemetryManager.startHeartbeatLoop(this@LumenVpnService, serviceScope)
@@ -186,6 +195,31 @@ misc:
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
+        }
+    }
+
+    private fun currentNetworkDnsServers(): List<String> {
+        val manager = getSystemService(ConnectivityManager::class.java)
+        val addresses = manager.activeNetwork
+            ?.let(manager::getLinkProperties)
+            ?.dnsServers
+            ?.mapNotNull { it.hostAddress?.substringBefore('%') }
+            ?.distinct()
+            .orEmpty()
+        return addresses.ifEmpty { DEFAULT_DNS_SERVERS }
+    }
+
+    private fun enforcePrivateDnsPolicy(dnsMode: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P ||
+            dnsMode.lowercase() !in setOf("automatic", "secure")) return
+        val manager = getSystemService(ConnectivityManager::class.java)
+        val strictHost = manager.activeNetwork
+            ?.let(manager::getLinkProperties)
+            ?.privateDnsServerName
+            ?.trim()
+            .orEmpty()
+        check(strictHost.isEmpty()) {
+            "Strict Private DNS ($strictHost) conflicts with managed VPN DNS. Select DNS Android or disable Private DNS."
         }
     }
 
@@ -352,11 +386,13 @@ misc:
         const val EXTRA_SPLIT_PACKAGES = "extra_split_packages"
         const val EXTRA_MTU = "extra_mtu"
         const val EXTRA_LOCAL_SOCKS_PORT = "extra_local_socks_port"
+        const val EXTRA_DNS_MODE = "extra_dns_mode"
         const val DEFAULT_IPV4_ADDRESS = "172.19.0.1"
         const val DEFAULT_IPV4_PREFIX = 30
         const val DEFAULT_IPV6_ADDRESS = "fdfe:dcba:9876::1"
         const val DEFAULT_IPV6_PREFIX = 126
         const val DEFAULT_MTU = 1500
+        const val INTERNAL_DNS_ADDRESS = "172.19.0.2"
         val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8")
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()

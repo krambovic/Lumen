@@ -20,6 +20,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,8 +47,16 @@ fun LogsScreen(
     val strings = LocalStrings.current
     val clipboard = LocalClipboardManager.current
     val listState = rememberLazyListState()
-    LaunchedEffect(logs.size) {
-        if (logs.isNotEmpty()) {
+    // Follow the tail only while the user is already at the bottom, otherwise every
+    // new line yanks the list back and fights manual scrolling.
+    val isAtBottom by remember {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()
+            last == null || last.index >= listState.layoutInfo.totalItemsCount - 2
+        }
+    }
+    LaunchedEffect(logs.size, isAtBottom) {
+        if (logs.isNotEmpty() && isAtBottom) {
             listState.scrollToItem(logs.size - 1)
         }
     }

@@ -51,7 +51,18 @@ data class LumenStrings(
     val subscriptionProperties: String, val exportAll: String, val exportSelected: String,
     val selected: String, val url: String, val copied: String, val udpPing: String,
     val address: String, val action: String, val directAction: String, val proxyAction: String,
-    val blockAction: String, val noRulesYet: String, val clearAll: String
+    val blockAction: String, val noRulesYet: String, val clearAll: String,
+    val dnsSettings: String, val dnsModeSection: String, val dnsModeAuto: String,
+    val dnsModeAndroid: String, val dnsModeSecure: String, val dnsModeJson: String,
+    val dnsModeAutoHint: String, val dnsModeAndroidHint: String, val dnsModeSecureHint: String,
+    val dnsModeJsonHint: String, val dnsDirectSection: String, val dnsProxySection: String,
+    val dnsServersLabel: String, val dnsTypeLabel: String, val dnsStrategyLabel: String,
+    val dnsIpv4Only: String, val dnsIpv4OnlyDesc: String, val dnsBehaviorSection: String,
+    val dnsHijack: String, val dnsHijackDesc: String, val dnsFakeIp: String, val dnsFakeIpDesc: String,
+    val dnsParallel: String, val dnsParallelDesc: String, val dnsOptimistic: String,
+    val dnsOptimisticDesc: String, val dnsGeoCheck: String, val dnsGeoCheckDesc: String,
+    val dnsHostsSection: String, val dnsHostsLabel: String, val dnsOverride: String,
+    val dnsOverrideDesc: String, val dnsHostname: String, val dnsIpv4: String
 )
 
 private val EN = LumenStrings(
@@ -113,7 +124,25 @@ private val EN = LumenStrings(
     subscriptionProperties="Subscription properties", exportAll="Export all", exportSelected="Export selected",
     selected="selected", url="URL", copied="Copied", udpPing="UDP Ping",
     address="Address", action="Action", directAction="Direct", proxyAction="Proxy",
-    blockAction="Block", noRulesYet="No domain or IP rules configured", clearAll="Clear all"
+    blockAction="Block", noRulesYet="No domain or IP rules configured", clearAll="Clear all",
+    dnsSettings="DNS settings", dnsModeSection="DNS mode", dnsModeAuto="Automatic",
+    dnsModeAndroid="Android DNS", dnsModeSecure="Secure", dnsModeJson="From JSON",
+    dnsModeAutoHint="TCP/UDP 53 is hijacked inside the VPN; direct and proxy resolvers are picked by rules.",
+    dnsModeAndroidHint="System Android resolver without hijacking inside the VPN.",
+    dnsModeSecureHint="DoH/DoT through the proxy outbound only; strict Private DNS is checked before start.",
+    dnsModeJsonHint="DNS comes from your custom JSON config.",
+    dnsDirectSection="Direct DNS", dnsProxySection="DNS over proxy",
+    dnsServersLabel="Servers (one per line)", dnsTypeLabel="Type", dnsStrategyLabel="Strategy",
+    dnsIpv4Only="IPv4 only over VPN", dnsIpv4OnlyDesc="Filter AAAA in the managed proxy DNS",
+    dnsBehaviorSection="Behavior", dnsHijack="Hijack DNS in TUN",
+    dnsHijackDesc="Do not let plain DNS queries escape the built-in resolver",
+    dnsFakeIp="Fake DNS", dnsFakeIpDesc="FakeIP is off by default; enable only when needed",
+    dnsParallel="Parallel queries", dnsParallelDesc="Query fallback resolvers simultaneously",
+    dnsOptimistic="Optimistic cache", dnsOptimisticDesc="Serve a stale answer while refreshing in background",
+    dnsGeoCheck="DNS geo check", dnsGeoCheckDesc="Keeps the direct/proxy choice for domain rules",
+    dnsHostsSection="Hosts and override", dnsHostsLabel="Hosts: domain=ip",
+    dnsOverride="DNS override", dnsOverrideDesc="Exact hostname → IPv4 before other DNS rules",
+    dnsHostname="Hostname", dnsIpv4="IPv4"
 )
 
 private val RU = EN.copy(
@@ -176,7 +205,25 @@ private val RU = EN.copy(
     subscriptionProperties="Свойства подписки", exportAll="Экспорт всех", exportSelected="Экспорт выбранных",
     selected="выбрано", url="URL", copied="Скопировано", udpPing="UDP Пинг",
     address="Адрес", action="Действие", directAction="Прямой", proxyAction="Прокси",
-    blockAction="Блокировать", noRulesYet="Правила по доменам и IP не заданы", clearAll="Очистить все"
+    blockAction="Блокировать", noRulesYet="Правила по доменам и IP не заданы", clearAll="Очистить все",
+    dnsSettings="Настройки DNS", dnsModeSection="Режим DNS", dnsModeAuto="Автоматически",
+    dnsModeAndroid="DNS Android", dnsModeSecure="Защищённый", dnsModeJson="Из JSON",
+    dnsModeAutoHint="TCP/UDP 53 перехватывается внутри VPN, прямые и proxy resolver подбираются по правилам.",
+    dnsModeAndroidHint="Системный resolver Android без перехвата внутри VPN.",
+    dnsModeSecureHint="DoH/DoT только через proxy outbound; строгий Private DNS проверяется до старта.",
+    dnsModeJsonHint="DNS берётся из пользовательского JSON-конфига.",
+    dnsDirectSection="Прямой DNS", dnsProxySection="DNS через прокси",
+    dnsServersLabel="Серверы (по одному в строке)", dnsTypeLabel="Тип", dnsStrategyLabel="Стратегия",
+    dnsIpv4Only="Только IPv4 через VPN", dnsIpv4OnlyDesc="Фильтровать AAAA в управляемом proxy DNS",
+    dnsBehaviorSection="Поведение", dnsHijack="Перехватывать DNS в TUN",
+    dnsHijackDesc="Не выпускать обычные DNS-запросы мимо встроенного resolver",
+    dnsFakeIp="Fake DNS", dnsFakeIpDesc="FakeIP выключен по умолчанию; включайте только при необходимости",
+    dnsParallel="Параллельные запросы", dnsParallelDesc="Опрашивать резервные resolver одновременно",
+    dnsOptimistic="Оптимистичный кэш", dnsOptimisticDesc="Разрешить устаревший ответ с обновлением в фоне",
+    dnsGeoCheck="Geo-проверка DNS", dnsGeoCheckDesc="Сохраняет прямой/proxy выбор для доменных правил",
+    dnsHostsSection="Hosts и override", dnsHostsLabel="Hosts: domain=ip",
+    dnsOverride="DNS override", dnsOverrideDesc="Точный hostname → IPv4 до остальных DNS-правил",
+    dnsHostname="Hostname", dnsIpv4="IPv4"
 )
 
 private val ZH = EN.copy(

@@ -2,8 +2,12 @@ package com.lumen.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -13,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -50,13 +55,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 
+// Shared slow-out curve for settings transitions and card entrance.
+private val PremiumEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+
 private val LANGUAGES = listOf("en", "ru", "fa", "zh")
-private enum class SettingsPage { HUB, SUBSCRIPTIONS, TRAFFIC, APP, THEME }
+private enum class SettingsPage { HUB, SUBSCRIPTIONS, TRAFFIC, DNS, APP, THEME }
 
 private fun languageLabel(code: String): String = when (code) {
     "ru" -> "Русский"
@@ -102,24 +112,27 @@ fun SettingsScreen(
     AnimatedContent(
         targetState = page,
         transitionSpec = {
-            if (targetState != SettingsPage.HUB) {
-                (slideInHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 4 } + fadeIn(tween(190)))
-                    .togetherWith(slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { -it / 4 } + fadeOut(tween(190)))
-            } else {
-                (slideInHorizontally(tween(190, easing = FastOutSlowInEasing)) { -it / 4 } + fadeIn(tween(190)))
-                    .togetherWith(slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 4 } + fadeOut(tween(190)))
-            }
+            val dir = if (targetState != SettingsPage.HUB) 1 else -1
+            (slideInHorizontally(tween(320, easing = PremiumEasing)) { dir * it / 6 } +
+                fadeIn(tween(260, easing = PremiumEasing)) +
+                scaleIn(tween(320, easing = PremiumEasing), initialScale = 0.98f))
+                .togetherWith(
+                    slideOutHorizontally(tween(320, easing = PremiumEasing)) { -dir * it / 6 } +
+                        fadeOut(tween(180)) +
+                        scaleOut(tween(320, easing = PremiumEasing), targetScale = 0.98f)
+                )
         },
         label = "settings_page_transition"
     ) { currentPage ->
         Column(
-            modifier.fillMaxSize().padding(horizontal = 16.dp)
+            modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
         ) {
             when (currentPage) {
                 SettingsPage.HUB -> SettingsHub(
                     onTheme = { page = SettingsPage.THEME },
                     onSubscriptions = { page = SettingsPage.SUBSCRIPTIONS },
                     onTraffic = { page = SettingsPage.TRAFFIC },
+                    onDns = { page = SettingsPage.DNS },
                     onApp = { page = SettingsPage.APP },
                     onRouting = onOpenRouting,
                     onLogs = onOpenLogs,
@@ -132,6 +145,10 @@ fun SettingsScreen(
                 SettingsPage.TRAFFIC -> {
                     LumenScreenHeader(title = s.trafficSettings, onBack = { page = SettingsPage.HUB })
                     TrafficSettings(state, onUpdate)
+                }
+                SettingsPage.DNS -> {
+                    LumenScreenHeader(title = s.dnsSettings, onBack = { page = SettingsPage.HUB })
+                    DnsSettings(state, onUpdate)
                 }
                 SettingsPage.APP -> {
                     LumenScreenHeader(title = s.appSettings, onBack = { page = SettingsPage.HUB })
@@ -149,6 +166,7 @@ private fun SettingsHub(
     onTheme: () -> Unit,
     onSubscriptions: () -> Unit,
     onTraffic: () -> Unit,
+    onDns: () -> Unit,
     onApp: () -> Unit,
     onRouting: () -> Unit,
     onLogs: () -> Unit,
@@ -164,6 +182,8 @@ private fun SettingsHub(
         SettingsDivider()
         SettingsMenuRow(Icons.AutoMirrored.Filled.Send, s.trafficSettings, onTraffic)
         SettingsDivider()
+        SettingsMenuRow(Icons.Filled.Settings, s.dnsSettings, onDns)
+        SettingsDivider()
         SettingsMenuRow(Icons.AutoMirrored.Filled.List, s.routing, onRouting)
         SettingsDivider()
         SettingsMenuRow(Icons.Filled.Settings, s.appSettings, onApp)
@@ -172,7 +192,7 @@ private fun SettingsHub(
     }
     SectionHeader(s.infoSection)
     SettingsCard {
-        InfoRow(s.version, "0.2.0")
+        InfoRow(s.version, "0.7.0")
         SettingsDivider()
         InfoRow("sing-box extended", "1.13.14-extended-2.5.2")
     }
@@ -186,11 +206,13 @@ private fun SettingsHub(
 private fun SubscriptionSettings(state: SettingsUiState, onUpdate: (SettingsUiState) -> Unit) {
     val s = LocalStrings.current
     SectionHeader(s.requestParameters)
+    SettingsCard {
+    Spacer(Modifier.height(10.dp))
     LumenDropdown(
         label = "User-Agent",
         options = listOf(
             "Happ/2.18.3/Windows/2606241603601",
-            "Lumen-Subscription/Android-0.2.0",
+            "Lumen-Subscription/Android-0.7.0",
             "SFA/1.11.0",
             "clash.meta",
             "v2rayNG/1.10.31"
@@ -213,12 +235,199 @@ private fun SubscriptionSettings(state: SettingsUiState, onUpdate: (SettingsUiSt
             onUpdate(state.copy(subscriptionHwid = it.take(256).replace("\r", "").replace("\n", "")))
         }
     }
+    Spacer(Modifier.height(6.dp))
+    }
     SectionHeader(s.subscriptionProfile)
+    SettingsCard {
+    Spacer(Modifier.height(4.dp))
     ToggleRow(
         s.allowOverrides,
         s.allowOverridesDesc,
         state.allowSubscriptionOverrides
     ) { onUpdate(state.copy(allowSubscriptionOverrides = it)) }
+    Spacer(Modifier.height(4.dp))
+    }
+}
+
+private val DNS_MODES = listOf("automatic", "android", "secure", "json")
+
+private fun dnsModeLabel(mode: String, s: LumenStrings): String = when (mode) {
+    "android" -> s.dnsModeAndroid
+    "secure" -> s.dnsModeSecure
+    "json" -> s.dnsModeJson
+    else -> s.dnsModeAuto
+}
+
+private fun dnsModeHint(mode: String, s: LumenStrings): String = when (mode) {
+    "android" -> s.dnsModeAndroidHint
+    "secure" -> s.dnsModeSecureHint
+    "json" -> s.dnsModeJsonHint
+    else -> s.dnsModeAutoHint
+}
+
+@Composable
+private fun DnsSettings(
+    state: SettingsUiState,
+    onUpdate: (SettingsUiState) -> Unit
+) {
+    val s = LocalStrings.current
+    SectionHeader(s.dnsModeSection)
+    SettingsCard {
+        Spacer(Modifier.height(12.dp))
+        // Two rows of chips instead of a dropdown: mode is the most-used switch here.
+        DNS_MODES.chunked(2).forEach { row ->
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                row.forEach { mode ->
+                    DnsModeChip(
+                        label = dnsModeLabel(mode, s),
+                        selected = state.dnsMode == mode,
+                        modifier = Modifier.weight(1f)
+                    ) { onUpdate(state.copy(dnsMode = mode)) }
+                }
+            }
+        }
+        Text(
+            dnsModeHint(state.dnsMode, s),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 14.dp)
+        )
+    }
+
+    SectionHeader(s.dnsDirectSection)
+    SettingsCard {
+        Spacer(Modifier.height(8.dp))
+        TextAreaSettingField(s.dnsServersLabel, state.dnsDirectServers) {
+            onUpdate(state.copy(dnsDirectServers = it.take(2048)))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LumenDropdown(
+                label = s.dnsTypeLabel,
+                options = listOf("udp", "tcp", "tls", "https"),
+                selected = state.dnsDirectType,
+                onSelected = { onUpdate(state.copy(dnsDirectType = it)) },
+                modifier = Modifier.weight(1f)
+            )
+            LumenDropdown(
+                label = s.dnsStrategyLabel,
+                options = listOf("prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"),
+                selected = state.dnsDirectStrategy,
+                onSelected = { onUpdate(state.copy(dnsDirectStrategy = it)) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    SectionHeader(s.dnsProxySection)
+    SettingsCard {
+        Spacer(Modifier.height(8.dp))
+        TextAreaSettingField(s.dnsServersLabel, state.dnsProxyServers) {
+            onUpdate(state.copy(dnsProxyServers = it.take(2048)))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LumenDropdown(
+                label = s.dnsTypeLabel,
+                options = listOf("udp", "tcp", "tls", "https"),
+                selected = state.dnsProxyType,
+                onSelected = { onUpdate(state.copy(dnsProxyType = it)) },
+                modifier = Modifier.weight(1f)
+            )
+            LumenDropdown(
+                label = s.dnsStrategyLabel,
+                options = listOf("prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"),
+                selected = state.dnsProxyStrategy,
+                onSelected = { onUpdate(state.copy(dnsProxyStrategy = it)) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        SettingsDivider()
+        ToggleRow(s.dnsIpv4Only, s.dnsIpv4OnlyDesc, state.dnsProxyIpv4Only) {
+            onUpdate(state.copy(dnsProxyIpv4Only = it))
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+
+    SectionHeader(s.dnsBehaviorSection)
+    SettingsCard {
+        Spacer(Modifier.height(4.dp))
+        ToggleRow(s.dnsHijack, s.dnsHijackDesc, state.dnsHijackEnabled) {
+            onUpdate(state.copy(dnsHijackEnabled = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.dnsFakeIp, s.dnsFakeIpDesc, state.dnsFakeIpEnabled) {
+            onUpdate(state.copy(dnsFakeIpEnabled = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.dnsParallel, s.dnsParallelDesc, state.dnsParallelQuery) {
+            onUpdate(state.copy(dnsParallelQuery = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.dnsOptimistic, s.dnsOptimisticDesc, state.dnsOptimisticCache) {
+            onUpdate(state.copy(dnsOptimisticCache = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.dnsGeoCheck, s.dnsGeoCheckDesc, state.dnsGeoCheck) {
+            onUpdate(state.copy(dnsGeoCheck = it))
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+
+    SectionHeader(s.dnsHostsSection)
+    SettingsCard {
+        Spacer(Modifier.height(8.dp))
+        TextAreaSettingField(s.dnsHostsLabel, state.dnsHosts) { onUpdate(state.copy(dnsHosts = it.take(4096))) }
+        SettingsDivider()
+        ToggleRow(s.dnsOverride, s.dnsOverrideDesc, state.dnsOverrideEnabled) {
+            onUpdate(state.copy(dnsOverrideEnabled = it))
+        }
+        if (state.dnsOverrideEnabled) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1.4f)) {
+                    TextSettingField(s.dnsHostname, state.dnsOverrideHostname) {
+                        onUpdate(state.copy(dnsOverrideHostname = it.take(253)))
+                    }
+                }
+                Box(Modifier.weight(1f)) {
+                    TextSettingField(s.dnsIpv4, state.dnsOverrideIpv4) {
+                        onUpdate(state.copy(dnsOverrideIpv4 = it.take(15)))
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun DnsModeChip(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(12.dp)
+    val accent = MaterialTheme.colorScheme.primary
+    Box(
+        modifier
+            .clip(shape)
+            .background(if (selected) accent.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surface)
+            .border(1.dp, if (selected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), shape)
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) accent else MaterialTheme.colorScheme.onSurface
+        )
+    }
 }
 
 @Composable
@@ -227,14 +436,9 @@ private fun TrafficSettings(
     onUpdate: (SettingsUiState) -> Unit
 ) {
     val s = LocalStrings.current
-    SectionHeader("DNS")
-    TextSettingField(s.proxyDns, state.proxyDnsServer) {
-        onUpdate(state.copy(proxyDnsServer = it.take(253)))
-    }
-    TextSettingField(s.directDns, state.directDnsServer) {
-        onUpdate(state.copy(directDnsServer = it.take(253)))
-    }
     SectionHeader(s.autoSelect)
+    SettingsCard {
+    Spacer(Modifier.height(10.dp))
     LumenDropdown(
         label = s.autoSelectUrl,
         options = listOf(
@@ -252,7 +456,11 @@ private fun TrafficSettings(
     NumberField(s.toleranceMs, state.urlTestToleranceMs) {
         onUpdate(state.copy(urlTestToleranceMs = it.coerceIn(0, 5000)))
     }
+    Spacer(Modifier.height(6.dp))
+    }
     SectionHeader(s.connection)
+    SettingsCard {
+    Spacer(Modifier.height(4.dp))
     ToggleRow("Multiplex (MUX)", s.muxDescription, state.muxEnabled) {
         onUpdate(state.copy(muxEnabled = it))
     }
@@ -277,6 +485,8 @@ private fun TrafficSettings(
     ToggleRow(s.sniffRouteOnly, s.sniffRouteOnlyDescription, state.sniffRouteOnly) {
         onUpdate(state.copy(sniffRouteOnly = it))
     }
+    Spacer(Modifier.height(4.dp))
+    }
 }
 
 @Composable
@@ -287,38 +497,69 @@ private fun AppSettings(
 ) {
     val s = LocalStrings.current
     SectionHeader(s.localProxy)
-    ToggleRow(s.localInbound, s.localInboundDescription, state.localInboundEnabled) {
-        onUpdate(state.copy(localInboundEnabled = it))
-    }
-    if (state.localInboundEnabled) {
-        NumberField(s.socksPort, state.localSocksPort) {
-            onUpdate(state.copy(localSocksPort = it.coerceIn(1024, 65535)))
+    SettingsCard {
+        Spacer(Modifier.height(4.dp))
+        ToggleRow(s.localInbound, s.localInboundDescription, state.localInboundEnabled) {
+            onUpdate(state.copy(localInboundEnabled = it))
         }
-        NumberField(s.httpPort, state.localHttpPort) {
-            onUpdate(state.copy(localHttpPort = it.coerceIn(1024, 65535)))
+        if (state.localInboundEnabled) {
+            SettingsDivider()
+            Spacer(Modifier.height(4.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) {
+                    NumberField(s.socksPort, state.localSocksPort) {
+                        onUpdate(state.copy(localSocksPort = it.coerceIn(1024, 65535)))
+                    }
+                }
+                Box(Modifier.weight(1f)) {
+                    NumberField(s.httpPort, state.localHttpPort) {
+                        onUpdate(state.copy(localHttpPort = it.coerceIn(1024, 65535)))
+                    }
+                }
+            }
+            SettingsDivider()
+            ToggleRow(s.allowLan, s.allowLanDescription, state.lanSharingEnabled) {
+                onUpdate(state.copy(lanSharingEnabled = it))
+            }
         }
-        ToggleRow(s.allowLan, s.allowLanDescription, state.lanSharingEnabled) {
-            onUpdate(state.copy(lanSharingEnabled = it))
-        }
+        Spacer(Modifier.height(4.dp))
     }
     SectionHeader(s.language)
-    LumenDropdown(
-        label = "",
-        options = LANGUAGES,
-        selected = state.language.ifBlank { "en" },
-        onSelected = {
-            onUpdate(state.copy(language = it))
-            onLanguageChange(it)
-        },
-        optionLabel = { languageLabel(it) }
-    )
+    SettingsCard {
+        Spacer(Modifier.height(10.dp))
+        LumenDropdown(
+            label = "",
+            options = LANGUAGES,
+            selected = state.language.ifBlank { "en" },
+            onSelected = {
+                onUpdate(state.copy(language = it))
+                onLanguageChange(it)
+            },
+            optionLabel = { languageLabel(it) }
+        )
+        Spacer(Modifier.height(10.dp))
+    }
 }
 @Composable
 internal fun SettingsCard(content: @Composable () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
+    // One-shot fade + lift so cards settle in instead of popping.
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val appear by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(340, easing = PremiumEasing),
+        label = "settings_card_appear"
+    )
     Column(
         Modifier
             .fillMaxWidth()
+            .graphicsLayer {
+                alpha = appear
+                translationY = (1f - appear) * 24f
+                scaleX = 0.98f + 0.02f * appear
+                scaleY = scaleX
+            }
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), shape)
@@ -364,7 +605,7 @@ private fun InfoRow(title: String, value: String) {
 internal fun SettingsDivider() {
     Spacer(
         Modifier.fillMaxWidth().height(1.dp)
-            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
     )
 }
 
@@ -403,6 +644,18 @@ private fun TextSettingField(label: String, value: String, onChange: (String) ->
         onValueChange = onChange,
         label = { Text(label) },
         singleLine = true,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+    )
+}
+
+@Composable
+private fun TextAreaSettingField(label: String, value: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(label) },
+        minLines = 3,
+        maxLines = 6,
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
     )
 }

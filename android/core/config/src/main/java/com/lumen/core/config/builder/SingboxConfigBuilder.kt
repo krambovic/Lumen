@@ -23,8 +23,25 @@ data class SingboxConfigOptions(
     val preferIpv6: Boolean = false,
     val blockQuic: Boolean = false,
     val sniffRouteOnly: Boolean = false,
-    val proxyDnsServer: String = "1.1.1.1",
+    val proxyDnsServer: String = "cloudflare-dns.com",
     val directDnsServer: String = "1.1.1.1",
+    val dnsMode: String = "automatic",
+    val dnsDirectServers: List<String> = listOf("1.1.1.1", "8.8.8.8"),
+    val dnsProxyServers: List<String> = listOf("cloudflare-dns.com", "dns.google"),
+    val dnsDirectType: String = "udp",
+    val dnsProxyType: String = "https",
+    val dnsDirectStrategy: String = "ipv4_only",
+    val dnsProxyStrategy: String = "ipv4_only",
+    val dnsHijackEnabled: Boolean = true,
+    val dnsFakeIpEnabled: Boolean = false,
+    val dnsParallelQuery: Boolean = false,
+    val dnsOptimisticCache: Boolean = false,
+    val dnsGeoCheck: Boolean = true,
+    val dnsProxyIpv4Only: Boolean = true,
+    val dnsHosts: Map<String, List<String>> = emptyMap(),
+    val dnsOverrideEnabled: Boolean = true,
+    val dnsOverrideHostname: String = "ntc.party",
+    val dnsOverrideIpv4: String = "130.255.77.28",
     val logLevel: String = "info",
     val urlTestUrl: String = "https://www.gstatic.com/generate_204",
     val urlTestIntervalMinutes: Int = 3,
@@ -102,27 +119,35 @@ object SingboxConfigBuilder {
         val activeNode = selectedNode ?: nodes.firstOrNull()
 
         if (activeNode != null) {
-            if (activeNode.scheme == "auto" || activeNode.outbound["type"] == "urltest" || activeNode.outbound["type"] == "selector") {
+            if (activeNode.scheme.equals("auto", true) || activeNode.outbound["type"] == "urltest" || activeNode.outbound["type"] == "selector") {
                 // Auto Virtual Node
-                val poolNodes = nodes.filter { it.scheme != "auto" }
+                val poolNodes = nodes.filterNot { it.scheme.equals("auto", true) }
                 val poolTags = mutableListOf<String>()
 
-                for ((index, poolNode) in poolNodes.withIndex()) {
-                    val tag = "proxy-$index"
-                    val ob = buildOutboundMap(poolNode, tag, options)
+                for (poolNode in poolNodes) {
+                    val tag = "proxy-${poolTags.size}"
+                    // One broken server must not invalidate the whole auto pool.
+                    val ob = try { buildOutboundMap(poolNode, tag, options) } catch (_: Exception) { null }
+                    if (ob == null || ob["type"] == null) continue
                     outbounds.add(ob)
                     poolTags.add(tag)
                 }
 
-                val autoOutbound = mutableMapOf<String, Any?>(
-                    "type" to "urltest",
-                    "tag" to "proxy",
-                    "outbounds" to poolTags,
-                    "url" to options.urlTestUrl,
-                    "interval" to "${options.urlTestIntervalMinutes.coerceIn(1, 1440)}m",
-                    "tolerance" to options.urlTestToleranceMs.coerceIn(0, 5000)
-                )
-                outbounds.add(0, autoOutbound)
+                if (poolTags.isEmpty()) {
+                    // sing-box rejects an empty urltest pool: keep the config valid.
+                    outbounds.add(mapOf("type" to "direct", "tag" to "proxy"))
+                } else {
+                    val autoOutbound = mutableMapOf<String, Any?>(
+                        "type" to "urltest",
+                        "tag" to "proxy",
+                        "outbounds" to poolTags,
+                        "url" to options.urlTestUrl,
+                        "interval" to "${options.urlTestIntervalMinutes.coerceIn(1, 1440)}m",
+                        "tolerance" to options.urlTestToleranceMs.coerceIn(0, 5000),
+                        "interrupt_exist_connections" to true
+                    )
+                    outbounds.add(0, autoOutbound)
+                }
             } else {
                 // Single node
                 val ob = buildOutboundMap(activeNode, "proxy", options)
@@ -136,54 +161,80 @@ object SingboxConfigBuilder {
 
         root["outbounds"] = outbounds
 
-        // 4. DNS
-        // Desktop parity: remote DNS must go over DoH (TCP) through the proxy.
-        // Plain UDP:53 via the proxy fails on servers that do not relay UDP
-        // (most vless/vmess/trojan setups) and spams "dns: exchange failed".
-        // Known public resolver IPs are mapped to their DoH hostnames; the DoH
-        // hostname itself is resolved via dns-direct to avoid recursion into
-        // the proxy before the tunnel is ready.
+        // 4. DNS. Managed resolvers are deterministic: bootstrap/direct never
+        // recurse into the tunnel, while every remote resolver dials via proxy.
         val dohHostByIp = mapOf(
-            "1.1.1.1" to "cloudflare-dns.com",
-            "1.0.0.1" to "cloudflare-dns.com",
-            "8.8.8.8" to "dns.google",
-            "8.8.4.4" to "dns.google",
-            "9.9.9.9" to "dns.quad9.net",
-            "149.112.112.112" to "dns.quad9.net"
+            "1.1.1.1" to "cloudflare-dns.com", "1.0.0.1" to "cloudflare-dns.com",
+            "8.8.8.8" to "dns.google", "8.8.4.4" to "dns.google",
+            "9.9.9.9" to "dns.quad9.net", "149.112.112.112" to "dns.quad9.net"
         )
-        val proxyDnsRaw = options.proxyDnsServer.trim()
-        val dohHost = dohHostByIp[proxyDnsRaw]
-            ?: proxyDnsRaw.takeIf { host -> host.any { it.isLetter() } }
-        val dnsRemote: Map<String, Any?> = if (dohHost != null) {
-            mapOf(
-                "type" to "https",
-                "tag" to "dns-remote",
-                "server" to dohHost,
-                "path" to "/dns-query",
-                "detour" to "proxy",
-                "domain_resolver" to "dns-direct"
-            )
-        } else {
-            // Unknown custom IP resolver: keep plain UDP through the proxy.
-            mapOf(
-                "type" to "udp",
-                "tag" to "dns-remote",
-                "server" to proxyDnsRaw,
-                "detour" to "proxy"
+        val directServers = options.dnsDirectServers.map(String::trim).filter(String::isNotEmpty)
+            .ifEmpty { listOf(options.directDnsServer.ifBlank { "1.1.1.1" }) }
+        val proxyServers = options.dnsProxyServers.map(String::trim).filter(String::isNotEmpty)
+            .ifEmpty { listOf(options.proxyDnsServer.ifBlank { "cloudflare-dns.com" }) }
+        fun dnsServer(tag: String, raw: String, type: String, detour: String, strategy: String): Map<String, Any?> {
+            val normalizedType = type.lowercase().takeIf { it in setOf("udp", "tcp", "tls", "https") } ?: "udp"
+            val server = if (normalizedType in setOf("tls", "https")) dohHostByIp[raw] ?: raw else raw
+            // Dial-field "domain_strategy" is legacy since 1.12: strategy now
+            // lives inside the domain_resolver object.
+            return mutableMapOf<String, Any?>(
+                "type" to normalizedType, "tag" to tag, "server" to server,
+                "detour" to detour
+            ).apply {
+                if (normalizedType == "https") put("path", "/dns-query")
+                if (server.any { it.isLetter() } && tag != "dns-bootstrap") {
+                    put("domain_resolver", mapOf("server" to "dns-bootstrap", "strategy" to strategy))
+                }
+            }
+        }
+        val dnsServers = mutableListOf<Map<String, Any?>>()
+        dnsServers += dnsServer("dns-bootstrap", directServers.first(), options.dnsDirectType, "direct", options.dnsDirectStrategy)
+        directServers.forEachIndexed { index, server ->
+            dnsServers += dnsServer("dns-direct-${index + 1}", server, options.dnsDirectType, "direct", options.dnsDirectStrategy)
+        }
+        proxyServers.forEachIndexed { index, server ->
+            dnsServers += dnsServer("dns-proxy-${index + 1}", server, options.dnsProxyType, "proxy", options.dnsProxyStrategy)
+        }
+        val hosts = options.dnsHosts.toMutableMap()
+        if (options.dnsOverrideEnabled && options.dnsOverrideHostname.isNotBlank() && options.dnsOverrideIpv4.isNotBlank()) {
+            hosts[options.dnsOverrideHostname.trim().trimEnd('.').lowercase()] = listOf(options.dnsOverrideIpv4.trim())
+        }
+        if (hosts.isNotEmpty()) {
+            dnsServers.add(0, mapOf("type" to "hosts", "tag" to "dns-hosts", "predefined" to hosts))
+        }
+        if (options.dnsFakeIpEnabled) {
+            dnsServers += mapOf(
+                "type" to "fakeip", "tag" to "dns-fake",
+                "inet4_range" to "198.18.0.0/15", "inet6_range" to "fc00::/18"
             )
         }
+        val dnsRules = mutableListOf<Map<String, Any?>>(
+            mapOf("query_type" to listOf("HTTPS", "SVCB"), "action" to "reject"),
+            mapOf("domain_suffix" to listOf("dns.google", "cloudflare-dns.com", "mozilla.cloudflare-dns.com", "doh.opendns.com"), "action" to "reject")
+        )
+        if (hosts.isNotEmpty()) dnsRules.add(0, mapOf("ip_accept_any" to true, "server" to "dns-hosts"))
+        if (options.dnsProxyIpv4Only && options.dnsMode != "json") {
+            dnsRules += mapOf("query_type" to listOf("AAAA"), "action" to "reject")
+        }
+        // Direct-listed domains must resolve through direct DNS: proxy-resolved
+        // IPs would otherwise be routed direct and break geo-based access.
+        val directDnsDomains = options.directDomains
+            .map { it.substringAfter(':').trim().trimEnd('.').lowercase() }
+            .filter { it.isNotEmpty() && !it.contains('/') && it.any { c -> c.isLetter() } }
+        if (options.dnsGeoCheck && directDnsDomains.isNotEmpty()) {
+            dnsRules += mapOf("domain_suffix" to directDnsDomains, "server" to "dns-direct-1")
+        }
+        val useAndroidDns = options.dnsMode.lowercase() in setOf("android", "system")
         root["dns"] = mapOf(
-            "servers" to listOf(
-                dnsRemote,
-                mapOf(
-                    "type" to "udp",
-                    "tag" to "dns-direct",
-                    "server" to options.directDnsServer,
-                    "detour" to "direct"
-                )
-            ),
-            "final" to "dns-remote",
-            "strategy" to (if (options.preferIpv6) "prefer_ipv6" else "prefer_ipv4")
+            "servers" to dnsServers,
+            "rules" to dnsRules,
+            "final" to if (useAndroidDns) "dns-direct-1" else if (options.dnsFakeIpEnabled) "dns-fake" else "dns-proxy-1",
+            "strategy" to if (useAndroidDns) options.dnsDirectStrategy else options.dnsProxyStrategy,
+            "independent_cache" to true,
+            "reverse_mapping" to true,
+            // Optimistic cache = serve stale answers while refreshing.
+            "disable_expire" to options.dnsOptimisticCache,
+            "cache_capacity" to if (options.dnsParallelQuery) 4096 else 2048
         )
 
         // 5. Route (sing-box 1.13 rule actions)
@@ -270,14 +321,27 @@ object SingboxConfigBuilder {
         // through the proxy (which many vless/vmess/trojan servers do not
         // relay), so nothing resolves even though the tunnel is up. Keep them
         // strictly first so DNS is always answered by the built-in resolver.
-        routeRules.add(0, mapOf("port" to 53, "action" to "hijack-dns"))
-        routeRules.add(0, mapOf("protocol" to "dns", "action" to "hijack-dns"))
+        val managedDns = options.dnsHijackEnabled && options.dnsMode.lowercase() !in setOf("android", "system")
+        if (managedDns) {
+            routeRules.add(0, mapOf("port" to 53, "action" to "hijack-dns"))
+            routeRules.add(0, mapOf("protocol" to "dns", "action" to "hijack-dns"))
+        } else {
+            routeRules.add(0, mapOf("port" to 53, "outbound" to "direct"))
+        }
+        routeRules.add(0, mapOf(
+            "domain_suffix" to listOf("dns.google", "cloudflare-dns.com", "mozilla.cloudflare-dns.com", "doh.opendns.com"),
+            "action" to "reject"
+        ))
         routeRules.add(0, mapOf("action" to "sniff"))
         val routeMap = mutableMapOf<String, Any?>(
             // Android's app sandbox forbids sing-box's netlink network monitor.
             // SOCKS-only mode relies on VpnService + tun2socks and the OS default route.
             "auto_detect_interface" to options.tunMode,
-            "default_domain_resolver" to "dns-direct",
+            // Replaces legacy per-outbound domain_strategy (removed in 1.14).
+            "default_domain_resolver" to mapOf(
+                "server" to "dns-bootstrap",
+                "strategy" to options.dnsDirectStrategy
+            ),
             "rules" to routeRules,
             "final" to "proxy"
         )
@@ -315,6 +379,13 @@ object SingboxConfigBuilder {
                 result[k] = v
             }
         }
+        // Imported configs often carry legacy dial fields; sing-box 1.12+ aborts
+        // on them, so migrate domain_strategy into a domain_resolver object.
+        val legacyStrategy = result.remove("domain_strategy") as? String
+        if (!legacyStrategy.isNullOrBlank() && result["domain_resolver"] == null) {
+            result["domain_resolver"] = mapOf("server" to "dns-bootstrap", "strategy" to legacyStrategy)
+        }
+        result.remove("address_strategy")
         return result
     }
 

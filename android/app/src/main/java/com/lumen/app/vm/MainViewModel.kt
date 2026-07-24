@@ -131,8 +131,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             "geo_resource_source",
             "https://github.com/runetfreedom/russia-v2ray-rules-dat/"
         ) ?: "https://github.com/runetfreedom/russia-v2ray-rules-dat/",
-        proxyDnsServer = prefs.getString("proxy_dns", "1.1.1.1") ?: "1.1.1.1",
+        proxyDnsServer = prefs.getString("proxy_dns", "cloudflare-dns.com") ?: "cloudflare-dns.com",
         directDnsServer = prefs.getString("direct_dns", "1.1.1.1") ?: "1.1.1.1",
+        dnsMode = prefs.getString("dns_mode", "automatic") ?: "automatic",
+        dnsDirectServers = prefs.getString("dns_direct_servers", null)
+            ?: (prefs.getString("direct_dns", "1.1.1.1") + "\n8.8.8.8"),
+        dnsProxyServers = prefs.getString("dns_proxy_servers", null)
+            ?: (prefs.getString("proxy_dns", "cloudflare-dns.com") + "\ndns.google"),
+        dnsDirectType = prefs.getString("dns_direct_type", "udp") ?: "udp",
+        dnsProxyType = prefs.getString("dns_proxy_type", "https") ?: "https",
+        dnsDirectStrategy = prefs.getString("dns_direct_strategy", "ipv4_only") ?: "ipv4_only",
+        dnsProxyStrategy = prefs.getString("dns_proxy_strategy", "ipv4_only") ?: "ipv4_only",
+        dnsHijackEnabled = prefs.getBoolean("dns_hijack_enabled", true),
+        dnsFakeIpEnabled = prefs.getBoolean("dns_fake_ip_enabled", false),
+        dnsParallelQuery = prefs.getBoolean("dns_parallel_query", false),
+        dnsOptimisticCache = prefs.getBoolean("dns_optimistic_cache", false),
+        dnsGeoCheck = prefs.getBoolean("dns_geo_check", true),
+        dnsProxyIpv4Only = prefs.getBoolean("dns_proxy_ipv4_only", true),
+        dnsHosts = prefs.getString("dns_hosts", "") ?: "",
+        dnsOverrideEnabled = prefs.getBoolean("dns_override_enabled", true),
+        dnsOverrideHostname = prefs.getString("dns_override_hostname", "ntc.party") ?: "ntc.party",
+        dnsOverrideIpv4 = prefs.getString("dns_override_ipv4", "130.255.77.28") ?: "130.255.77.28",
         urlTestUrl = prefs.getString("url_test_url", "https://www.gstatic.com/generate_204")
             ?: "https://www.gstatic.com/generate_204",
         urlTestIntervalMinutes = prefs.getInt("url_test_interval_minutes", 3),
@@ -143,7 +162,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         subscriptionSendHwid = prefs.getBoolean("subscription_send_hwid", true),
         subscriptionDirect = prefs.getBoolean("subscription_direct", true),
         allowSubscriptionOverrides = prefs.getBoolean("allow_subscription_overrides", true),
-        logLevel = "debug",
+        // Core debug logging is the single biggest CPU/battery drain: every line
+        // crosses the log bus and recomposes the UI. Keep it opt-in.
+        logLevel = prefs.getString("log_level", "warn") ?: "warn",
         language = prefs.getString("language", "en")?.takeIf { it in setOf("en", "ru", "fa", "zh") } ?: "en",
         themeMode = runCatching {
             ThemeMode.valueOf(prefs.getString("theme_mode", ThemeMode.DARK.name) ?: ThemeMode.DARK.name)
@@ -159,6 +180,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _settings.value = s
         prefs.edit()
             .putString("engine_type", s.engine)
+            .putString("log_level", s.logLevel)
             .putBoolean("mux_enabled", s.muxEnabled)
             .putInt("mux_concurrency", s.muxConcurrency)
             .putBoolean("fragment_enabled", s.fragmentEnabled)
@@ -177,8 +199,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putString("routing_direct_domains", s.directDomains)
             .putString("routing_direct_ip_cidrs", s.directIpCidrs)
             .putString("geo_resource_source", s.geoResourceSource)
-            .putString("proxy_dns", s.proxyDnsServer.trim().take(253))
-            .putString("direct_dns", s.directDnsServer.trim().take(253))
+            .putString("proxy_dns", s.dnsProxyServers.lineSequence().firstOrNull()?.trim().orEmpty().take(253))
+            .putString("direct_dns", s.dnsDirectServers.lineSequence().firstOrNull()?.trim().orEmpty().take(253))
+            .putString("dns_mode", s.dnsMode)
+            .putString("dns_direct_servers", s.dnsDirectServers.take(2048))
+            .putString("dns_proxy_servers", s.dnsProxyServers.take(2048))
+            .putString("dns_direct_type", s.dnsDirectType)
+            .putString("dns_proxy_type", s.dnsProxyType)
+            .putString("dns_direct_strategy", s.dnsDirectStrategy)
+            .putString("dns_proxy_strategy", s.dnsProxyStrategy)
+            .putBoolean("dns_hijack_enabled", s.dnsHijackEnabled)
+            .putBoolean("dns_fake_ip_enabled", s.dnsFakeIpEnabled)
+            .putBoolean("dns_parallel_query", s.dnsParallelQuery)
+            .putBoolean("dns_optimistic_cache", s.dnsOptimisticCache)
+            .putBoolean("dns_geo_check", s.dnsGeoCheck)
+            .putBoolean("dns_proxy_ipv4_only", s.dnsProxyIpv4Only)
+            .putString("dns_hosts", s.dnsHosts.take(4096))
+            .putBoolean("dns_override_enabled", s.dnsOverrideEnabled)
+            .putString("dns_override_hostname", s.dnsOverrideHostname.trim().take(253))
+            .putString("dns_override_ipv4", s.dnsOverrideIpv4.trim().take(15))
             .putString("url_test_url", s.urlTestUrl.trim().take(512))
             .putInt("url_test_interval_minutes", s.urlTestIntervalMinutes.coerceIn(1, 1440))
             .putInt("url_test_tolerance_ms", s.urlTestToleranceMs.coerceIn(0, 5000))
@@ -233,7 +272,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     connection.connectTimeout = 20_000
                     connection.readTimeout = 120_000
                     connection.instanceFollowRedirects = true
-                    connection.setRequestProperty("User-Agent", "Lumen/0.2.0")
+                    connection.setRequestProperty("User-Agent", "Lumen/0.7.0")
                     try {
                         if (connection.responseCode !in 200..299) {
                             error("$name: HTTP ${connection.responseCode}")
@@ -376,7 +415,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         val safeName = stripFlagEmoji(sourceName).ifBlank { e.server.ifBlank { "Server" } }
                         val safeServer = e.server
                         val safeProtocol = e.protocol.ifBlank { "vless" }
-                        val displayProto = extractDisplayProtocol(safeProtocol, e.outboundJson, e.link)
+                        // Auto pool nodes are always labelled AUTO, whatever protocol got stored.
+                        val autoFlag = e.isAutoNode || safeProtocol.equals("auto", true)
+                        val displayProto = if (autoFlag) "AUTO"
+                            else extractDisplayProtocol(safeProtocol, e.outboundJson, e.link)
                         NodeUiModel(
                             id = e.id,
                             name = safeName,
@@ -385,7 +427,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             port = e.port,
                             pingMs = null,
                             countryCode = runCatching { CountryFlagHelper.detectCountry(sourceName, safeServer) }.getOrDefault(""),
-                            isAutoNode = e.isAutoNode,
+                            isAutoNode = autoFlag,
                             isSelected = false,
                             subscriptionId = e.subscriptionId,
                             displayProtocol = displayProto
@@ -394,7 +436,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     base.copy(
                         port = e.port,
                         pingMs = e.pingMs,
-                        isAutoNode = e.isAutoNode,
+                        isAutoNode = e.isAutoNode || e.protocol.equals("auto", true),
                         subscriptionId = e.subscriptionId,
                         isSelected = e.id == selectedId
                     )
@@ -785,6 +827,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val testingNodeId: StateFlow<String?> = _testingNodeId
     private val _serverTestResults = MutableStateFlow<Map<String, String>>(emptyMap())
     val serverTestResults: StateFlow<Map<String, String>> = _serverTestResults
+    private val _pingingNodeIds = MutableStateFlow<Set<String>>(emptySet())
+    val pingingNodeIds: StateFlow<Set<String>> = _pingingNodeIds
+
+    // ICMP fallback wakes the radio; keep it far below the ping concurrency.
+    private val icmpSemaphore = kotlinx.coroutines.sync.Semaphore(4)
 
     fun pingAll() {
         val targets = nodeEntities.value.filter { !it.isAutoNode }
@@ -811,33 +858,47 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_isPinging.value || targets.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             _isPinging.value = true
-            log("Pinging ${targets.size} node(s) in parallel${if (useUdp) " (UDP)" else ""}…")
-            val semaphore = kotlinx.coroutines.sync.Semaphore(25)
-            val results = java.util.Collections.synchronizedList(mutableListOf<Pair<String, Int?>>())
+            log("Pinging ${targets.size} node(s), 15 at a time${if (useUdp) " (UDP)" else ""}…")
+            // Drop stale values first: the row must show "measuring", not the previous ping.
+            val targetIds = targets.map { it.id }
+            _serverTestResults.value = _serverTestResults.value - targetIds.toSet()
+            _pingingNodeIds.value = targetIds.toSet()
+            nodeDao.updatePingsBatch(targetIds.map { Pair(it, null as Int?) })
+            val pending = java.util.Collections.synchronizedSet(targetIds.toMutableSet())
+            val semaphore = kotlinx.coroutines.sync.Semaphore(15)
             val jobs = targets.map { node ->
                 async {
                     semaphore.withPermit {
                         val ping = if (useUdp) udpPing(node.server, node.port) else tcpPing(node.server, node.port)
-                        results.add(Pair(node.id, if (ping >= 0) ping else null))
+                        nodeDao.updatePing(node.id, ping.takeIf { it >= 0 })
+                        synchronized(pending) {
+                            pending.remove(node.id)
+                            _pingingNodeIds.value = pending.toSet()
+                        }
                     }
                 }
             }
             jobs.awaitAll()
-            nodeDao.updatePingsBatch(results)
+            _pingingNodeIds.value = emptySet()
             _isPinging.value = false
-            log("Ping finished for ${results.size} node(s)")
+            log("Ping finished for ${targets.size} node(s)")
         }
     }
 
     fun pingNode(node: NodeUiModel) {
-        if (_testingNodeId.value != null) return
+        if (node.id in _pingingNodeIds.value) return
         viewModelScope.launch(Dispatchers.IO) {
             _testingNodeId.value = node.id
+            _pingingNodeIds.value = _pingingNodeIds.value + node.id
+            // Old value is dropped before measuring so the row never shows a stale ping.
+            _serverTestResults.value = _serverTestResults.value - node.id
+            nodeDao.updatePing(node.id, null)
             val ping = tcpPing(node.server, node.port)
             nodeDao.updatePing(node.id, ping.takeIf { it >= 0 })
             val result = if (ping >= 0) "$ping ms" else "Timeout"
             _serverTestResults.value = _serverTestResults.value + (node.id to result)
             log("Ping ${node.name}: $result")
+            _pingingNodeIds.value = _pingingNodeIds.value - node.id
             _testingNodeId.value = null
         }
     }
@@ -866,7 +927,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Many VPN servers don't answer garbage datagrams, so on timeout we fall back
      * to an ICMP echo to the host to still get a latency estimate.
      */
-    private fun udpPing(host: String, port: Int): Int = try {
+    private suspend fun udpPing(host: String, port: Int): Int = try {
         val address = java.net.InetAddress.getByName(host)
         var latency = -1
         java.net.DatagramSocket().use { socket ->
@@ -882,11 +943,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: java.net.PortUnreachableException) {
                 -1
             } catch (e: java.net.SocketTimeoutException) {
-                val icmpStart = System.nanoTime()
-                if (address.isReachable(1500)) {
-                    ((System.nanoTime() - icmpStart) / 1_000_000).toInt()
-                } else {
-                    -1
+                // Throttled separately: mass pings would otherwise fire dozens of ICMP probes at once.
+                icmpSemaphore.withPermit {
+                    val icmpStart = System.nanoTime()
+                    if (address.isReachable(1500)) {
+                        ((System.nanoTime() - icmpStart) / 1_000_000).toInt()
+                    } else {
+                        -1
+                    }
                 }
             }
         }
@@ -921,10 +985,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var connectTimeoutJob: kotlinx.coroutines.Job? = null
+
     fun markConnecting() {
         VpnLogBus.clearLastError()
         _connectionState.value = ConnectionState.Connecting
-        viewModelScope.launch {
+        // Repeated taps must not stack watchdogs racing to flip the state to Error.
+        connectTimeoutJob?.cancel()
+        connectTimeoutJob = viewModelScope.launch {
             delay(20_000)
             if (!LumenVpnService.isRunning.value &&
                 _connectionState.value == ConnectionState.Connecting
@@ -968,9 +1036,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         preferIpv6 = s.preferIpv6,
                         blockQuic = s.blockQuic,
                         sniffRouteOnly = s.sniffRouteOnly,
-                        proxyDnsServer = s.proxyDnsServer.ifBlank { "1.1.1.1" },
-                        directDnsServer = s.directDnsServer.ifBlank { "1.1.1.1" },
-                        logLevel = "debug",
+                        proxyDnsServer = s.dnsProxyServers.lineSequence().firstOrNull()?.trim().orEmpty().ifBlank { "cloudflare-dns.com" },
+                        directDnsServer = s.dnsDirectServers.lineSequence().firstOrNull()?.trim().orEmpty().ifBlank { "1.1.1.1" },
+                        dnsMode = s.dnsMode,
+                        dnsDirectServers = s.dnsDirectServers.split(Regex("[\\n,;]+")).map(String::trim).filter(String::isNotEmpty),
+                        dnsProxyServers = s.dnsProxyServers.split(Regex("[\\n,;]+")).map(String::trim).filter(String::isNotEmpty),
+                        dnsDirectType = s.dnsDirectType,
+                        dnsProxyType = s.dnsProxyType,
+                        dnsDirectStrategy = s.dnsDirectStrategy,
+                        dnsProxyStrategy = s.dnsProxyStrategy,
+                        dnsHijackEnabled = s.dnsHijackEnabled,
+                        dnsFakeIpEnabled = s.dnsFakeIpEnabled,
+                        dnsParallelQuery = s.dnsParallelQuery,
+                        dnsOptimisticCache = s.dnsOptimisticCache,
+                        dnsGeoCheck = s.dnsGeoCheck,
+                        dnsProxyIpv4Only = s.dnsProxyIpv4Only,
+                        dnsHosts = s.dnsHosts.lineSequence().mapNotNull { line ->
+                            val host = line.substringBefore('=').trim().trimEnd('.').lowercase()
+                            val addresses = line.substringAfter('=', "").split(',').map(String::trim).filter(String::isNotEmpty)
+                            if (host.isNotBlank() && addresses.isNotEmpty()) host to addresses else null
+                        }.toMap(),
+                        dnsOverrideEnabled = s.dnsOverrideEnabled,
+                        dnsOverrideHostname = s.dnsOverrideHostname,
+                        dnsOverrideIpv4 = s.dnsOverrideIpv4,
+                        logLevel = s.logLevel,
                         urlTestUrl = s.urlTestUrl.ifBlank { "https://www.gstatic.com/generate_204" },
                         urlTestIntervalMinutes = s.urlTestIntervalMinutes.coerceIn(1, 1440),
                         urlTestToleranceMs = s.urlTestToleranceMs.coerceIn(0, 5000),
@@ -1003,6 +1092,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
             putExtra(LumenVpnService.EXTRA_MTU, s.mtu.coerceIn(1280, 9000))
             putExtra(LumenVpnService.EXTRA_LOCAL_SOCKS_PORT, s.localSocksPort.coerceIn(1024, 65535))
+            putExtra(LumenVpnService.EXTRA_DNS_MODE, s.dnsMode)
         }
     }
 
@@ -1013,7 +1103,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun parseEntity(entity: NodeEntity): ParsedNode {
         try {
-            if (entity.isAutoNode || entity.protocol == "auto") {
+            if (entity.isAutoNode || entity.protocol.equals("auto", true) || entity.link.trim().equals("auto", true)) {
                 return ParsedNode(
                     name = entity.name,
                     scheme = "auto",

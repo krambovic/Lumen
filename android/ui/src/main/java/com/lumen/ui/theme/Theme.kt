@@ -8,6 +8,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalContext
 import com.lumen.ui.screens.ThemePreset
 
@@ -192,10 +193,18 @@ fun LumenTheme(
         else -> DarkBlueColorScheme
     }
 
+    // Several presets ship outline == surfaceVariant, so borders vanished.
+    // Derive both outlines from onSurface to keep them visible everywhere.
+    val outlineBase = baseScheme.onSurface
+    val readableScheme = baseScheme.copy(
+        outline = outlineBase.copy(alpha = 0.46f).compositeOver(baseScheme.surfaceVariant),
+        outlineVariant = outlineBase.copy(alpha = 0.30f).compositeOver(baseScheme.surfaceVariant)
+    )
+
     val finalScheme = if (useAmoledBlack && themePreset != ThemePreset.LIGHT) {
-        baseScheme.copy(background = Color.Black, surface = Color(0xFF0F0F0F))
+        readableScheme.copy(background = Color.Black, surface = Color(0xFF0F0F0F))
     } else {
-        baseScheme
+        readableScheme
     }
 
     MaterialTheme(

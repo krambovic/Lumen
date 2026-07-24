@@ -362,7 +362,7 @@ private fun RuleRowItem(
             .fillMaxWidth()
             .border(
                 0.5.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f),
                 RoundedCornerShape(0.dp)
             )
             .padding(horizontal = 14.dp, vertical = 8.dp),

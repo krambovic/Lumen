@@ -33,6 +33,7 @@ object VpnLogBus {
 
     @Volatile
     private var lastEmittedTime = 0L
+    private val pendingEntries = mutableListOf<VpnLogEntry>()
 
     fun beginSession(engine: String) {
         clearLastError()
@@ -79,11 +80,15 @@ object VpnLogBus {
             component = component,
             message = normalized
         )
-        // Rate-limit state updates for non-error logs to max 4 times/sec to prevent UI thread lag
+        // Coalesce non-error logs to max 4 emissions/sec: buffer instead of dropping,
+        // otherwise bursty core output silently loses lines needed for diagnosis.
         val forceUpdate = level == VpnLogLevel.ERROR || level == VpnLogLevel.WARNING
-        if (forceUpdate || now - lastEmittedTime > 250) {
+        val flushed = synchronized(pendingEntries) {
+            pendingEntries.add(entry)
+            if (!forceUpdate && now - lastEmittedTime <= 250) return
             lastEmittedTime = now
-            _entries.update { (it + entry).takeLast(MAX_ENTRIES) }
+            pendingEntries.toList().also { pendingEntries.clear() }
         }
+        _entries.update { (it + flushed).takeLast(MAX_ENTRIES) }
     }
 }

@@ -69,7 +69,7 @@ class ProcessEngine(
             start()
         }
 
-        Thread.sleep(250)
+        kotlinx.coroutines.delay(250)
         if (!started.isAlive) {
             val code = started.exitValue()
             process = null

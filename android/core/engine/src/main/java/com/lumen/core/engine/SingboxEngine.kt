@@ -30,9 +30,9 @@ class DefaultLibboxBridge : LibboxBridge {
             running = true
             true
         } catch (_: ClassNotFoundException) {
-            // Fallback for runtime when native binary isn't linked (e.g. JVM test environment)
-            running = true
-            true
+            // No native libbox: report a real failure instead of a fake "running" state.
+            running = false
+            false
         } catch (e: Exception) {
             throw RuntimeException("Failed to start libbox engine: ${e.message}", e)
         }
@@ -57,8 +57,8 @@ class DefaultLibboxBridge : LibboxBridge {
         return try {
             val libboxClazz = Class.forName("io.nekohasekai.libbox.Libbox")
             val method = libboxClazz.getMethod("queryTraffic")
-            val result = method.invoke(null)
-            // Parse result array or object if returned by native code
+            method.invoke(null)
+            // libbox reports counters through its own callbacks; mirror last known totals.
             TrafficStats(0L, 0L, totalTx, totalRx)
         } catch (_: Exception) {
             TrafficStats(0L, 0L, totalTx, totalRx)

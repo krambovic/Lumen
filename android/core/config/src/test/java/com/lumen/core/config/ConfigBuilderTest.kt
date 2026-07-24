@@ -58,25 +58,28 @@ class ConfigBuilderTest {
 
         assertTrue((0 until outbounds.length()).none { outbounds.getJSONObject(it).optString("type") == "dns" })
         val dnsServers = json.getJSONObject("dns").getJSONArray("servers")
-        // Remote DNS is DoH over TCP via the proxy (desktop parity): plain UDP
-        // via the proxy fails on servers that don't relay UDP.
-        assertEquals("https", dnsServers.getJSONObject(0).getString("type"))
-        assertEquals("cloudflare-dns.com", dnsServers.getJSONObject(0).getString("server"))
-        assertEquals("proxy", dnsServers.getJSONObject(0).getString("detour"))
-        assertEquals("dns-direct", dnsServers.getJSONObject(0).getString("domain_resolver"))
-        assertTrue(!dnsServers.getJSONObject(0).has("address"))
-        assertEquals("udp", dnsServers.getJSONObject(1).getString("type"))
-        assertEquals("dns-direct", dnsServers.getJSONObject(1).getString("tag"))
+        val dnsRemote = (0 until dnsServers.length())
+            .map { dnsServers.getJSONObject(it) }
+            .first { it.optString("tag") == "dns-proxy-1" }
+        assertEquals("https", dnsRemote.getString("type"))
+        assertEquals("cloudflare-dns.com", dnsRemote.getString("server"))
+        assertEquals("proxy", dnsRemote.getString("detour"))
+        // 1.12+ dial fields: strategy moved inside domain_resolver.
+        assertEquals("dns-bootstrap", dnsRemote.getJSONObject("domain_resolver").getString("server"))
+        assertTrue(!dnsRemote.has("domain_strategy"))
+        assertTrue(!dnsRemote.has("address"))
+        val bootstrap = (0 until dnsServers.length())
+            .map { dnsServers.getJSONObject(it) }
+            .first { it.optString("tag") == "dns-bootstrap" }
+        assertEquals("udp", bootstrap.getString("type"))
+        assertEquals("direct", bootstrap.getString("detour"))
         val route = json.getJSONObject("route")
-        assertEquals("dns-direct", route.getString("default_domain_resolver"))
+        assertEquals("dns-bootstrap", route.getJSONObject("default_domain_resolver").getString("server"))
         val routeRules = route.getJSONArray("rules")
-        // sing-box 1.12+: sniff must run before the `protocol: dns` matcher works.
-        assertEquals("sniff", routeRules.getJSONObject(0).getString("action"))
-        assertEquals("hijack-dns", routeRules.getJSONObject(1).getString("action"))
-        assertEquals("dns", routeRules.getJSONObject(1).getString("protocol"))
-        assertEquals("hijack-dns", routeRules.getJSONObject(2).getString("action"))
-        assertEquals(53, routeRules.getJSONObject(2).getInt("port"))
-        assertTrue(!routeRules.getJSONObject(1).has("outbound"))
+        val rules = (0 until routeRules.length()).map { routeRules.getJSONObject(it) }
+        assertEquals("sniff", rules.first().getString("action"))
+        assertTrue(rules.any { it.optString("protocol") == "dns" && it.optString("action") == "hijack-dns" })
+        assertTrue(rules.any { it.optInt("port") == 53 && it.optString("action") == "hijack-dns" })
         // Legacy inbound-level sniff fields were removed in sing-box 1.12+.
         assertTrue(!tunInbound.has("sniff"))
         assertTrue(!tunInbound.has("sniff_override_destination"))
@@ -178,6 +181,15 @@ class ConfigBuilderTest {
     }
 
     @Test
+    fun autoNodeWithoutPoolStaysValid() {
+        val node = ParsedNode("Auto", "auto", "", 0, "")
+        val json = JSONObject(SingboxConfigBuilder.buildConfig(emptyList(), node, SingboxConfigOptions()))
+        val proxy = json.getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("proxy", proxy.getString("tag"))
+        assertEquals("direct", proxy.getString("type"))
+    }
+
+    @Test
     fun singboxUsesUserTrafficSettings() {
         val node = ParsedNode(
             name = "Auto",
@@ -186,9 +198,11 @@ class ConfigBuilderTest {
             port = 0,
             link = ""
         )
+        // Auto needs at least one real server: an empty pool now falls back to direct.
+        val poolNode = ParsedNode("S1", "trojan", "1.2.3.4", 443, "", mapOf("password" to "x"))
         val json = JSONObject(
             SingboxConfigBuilder.buildConfig(
-                emptyList(),
+                listOf(poolNode, node),
                 node,
                 SingboxConfigOptions(
                     logLevel = "warning",
@@ -205,5 +219,53 @@ class ConfigBuilderTest {
         assertEquals("https://example.com/ping", auto.getString("url"))
         assertEquals("7m", auto.getString("interval"))
         assertEquals(125, auto.getInt("tolerance"))
+    }
+
+    @Test
+    fun managedDnsUsesProxyHostsAndIpv4Policy() {
+        val node = ParsedNode("DNS", "trojan", "1.2.3.4", 443, "", mapOf("password" to "x"))
+        val json = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(
+                    tunMode = false,
+                    dnsMode = "secure",
+                    dnsProxyServers = listOf("dns.google"),
+                    dnsHosts = mapOf("example.test" to listOf("192.0.2.10")),
+                    dnsOverrideEnabled = true,
+                    dnsOverrideHostname = "ntc.party",
+                    dnsOverrideIpv4 = "130.255.77.28",
+                    dnsProxyIpv4Only = true
+                )
+            )
+        )
+        val dns = json.getJSONObject("dns")
+        val servers = (0 until dns.getJSONArray("servers").length())
+            .map { dns.getJSONArray("servers").getJSONObject(it) }
+        val remote = servers.first { it.optString("tag") == "dns-proxy-1" }
+        assertEquals("proxy", remote.getString("detour"))
+        val hosts = servers.first { it.optString("tag") == "dns-hosts" }.getJSONObject("predefined")
+        assertEquals("130.255.77.28", hosts.getJSONArray("ntc.party").getString(0))
+        assertEquals("192.0.2.10", hosts.getJSONArray("example.test").getString(0))
+        val rules = dns.getJSONArray("rules")
+        assertTrue((0 until rules.length()).any { rules.getJSONObject(it).optJSONArray("query_type")?.toString()?.contains("AAAA") == true })
+    }
+
+    @Test
+    fun androidDnsDoesNotHijackPort53() {
+        val node = ParsedNode("DNS", "trojan", "1.2.3.4", 443, "", mapOf("password" to "x"))
+        val json = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(tunMode = false, dnsMode = "android")
+            )
+        )
+        assertEquals("dns-direct-1", json.getJSONObject("dns").getString("final"))
+        val rules = json.getJSONObject("route").getJSONArray("rules")
+        assertTrue((0 until rules.length()).none { rules.getJSONObject(it).optString("action") == "hijack-dns" })
+        assertTrue((0 until rules.length()).any {
+            val rule = rules.getJSONObject(it)
+            rule.optInt("port") == 53 && rule.optString("outbound") == "direct"
+        })
     }
 }

@@ -52,6 +52,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -83,6 +84,7 @@ fun DashboardScreen(
     connectionState: ConnectionState,
     nodes: List<NodeUiModel>,
     subscriptions: List<SubscriptionUiModel>,
+    pingingNodeIds: Set<String> = emptySet(),
     onToggleConnection: () -> Unit,
     onSelectNode: (NodeUiModel) -> Unit,
     onImportClipboard: () -> Unit,
@@ -122,28 +124,29 @@ fun DashboardScreen(
     // Subscription properties dialog state
     var propertiesSub by remember { mutableStateOf<SubscriptionUiModel?>(null) }
 
+    // One grouping pass + allocation-free name comparator: ping refreshes rebuild this
+    // list on every update, so it must not scan the node list once per subscription.
     val groups = remember(nodes, subscriptions, strings.manual, sortByPing) {
-        fun sortNodes(list: List<NodeUiModel>): List<NodeUiModel> =
-            if (sortByPing) {
-                list.sortedBy { it.pingMs?.takeIf { p -> p >= 0 } ?: Int.MAX_VALUE }
-            } else {
-                list.sortedBy { it.name.lowercase() }
-            }
+        val byName = compareBy(String.CASE_INSENSITIVE_ORDER, NodeUiModel::name)
+        val byPing = compareBy<NodeUiModel> { it.pingMs?.takeIf { p -> p >= 0 } ?: Int.MAX_VALUE }
+        val comparator = if (sortByPing) byPing else byName
+        val bySubscription = nodes.filterNot { it.isAutoNode }.groupBy { it.subscriptionId }
         buildList {
-            val manualNodes = sortNodes(nodes.filter { it.subscriptionId == null && !it.isAutoNode })
-            if (manualNodes.isNotEmpty()) {
-                add(HomeServerGroup("manual", strings.groupDefault, manualNodes))
+            bySubscription[null]?.takeIf { it.isNotEmpty() }?.let {
+                add(HomeServerGroup("manual", strings.groupDefault, it.sortedWith(comparator)))
             }
             subscriptions.forEach { subscription ->
-                val subscriptionNodes = sortNodes(nodes.filter { it.subscriptionId == subscription.id && !it.isAutoNode })
+                val subscriptionNodes = bySubscription[subscription.id].orEmpty()
                 if (subscriptionNodes.isNotEmpty()) {
-                    add(HomeServerGroup(subscription.id, subscription.name, subscriptionNodes, true, subscription))
+                    add(HomeServerGroup(subscription.id, subscription.name, subscriptionNodes.sortedWith(comparator), true, subscription))
                 }
             }
         }
     }
-    val initialExpanded = remember(subscriptions) { groups.map { it.id }.toSet() }
-    var expandedGroups by remember(subscriptions) { mutableStateOf(initialExpanded) }
+    // Key on group ids: a new group appears expanded, while ping refreshes (which
+    // rebuild `groups` but keep ids) no longer reset the user's collapse state.
+    val groupIds = remember(groups) { groups.map { it.id } }
+    var expandedGroups by remember(groupIds) { mutableStateOf(groupIds.toSet()) }
 
     Column(modifier = modifier.fillMaxSize()) {
         // Selection mode top bar
@@ -164,8 +167,8 @@ fun DashboardScreen(
                 }
             )
         } else {
-            LumenScreenHeader(title = "Lumen", subtitle = "v0.2.0", actions = {
-                IconButton(onClick = { uriHandler.openUri("https://github.com/lumenkvn/lumen") }) {
+            LumenScreenHeader(title = "Lumen", subtitle = "v0.7.0", actions = {
+                IconButton(onClick = { uriHandler.openUri("https://github.com/krambovic/Lumen") }) {
                     Icon(Icons.Filled.Code, contentDescription = "GitHub")
                 }
                 IconButton(onClick = { showDonateDialog = true }) {
@@ -329,6 +332,8 @@ fun DashboardScreen(
                                     node = node,
                                     isSelectionMode = isSelectionMode,
                                     isNodeSelected = node.id in selectedNodeIds,
+                                    isPinging = node.id in pingingNodeIds,
+                                    modern = true,
                                     onClick = {
                                         if (isSelectionMode) {
                                             val newSet = if (node.id in selectedNodeIds) selectedNodeIds - node.id else selectedNodeIds + node.id
@@ -870,6 +875,8 @@ private fun ServerTileRow(
     node: NodeUiModel,
     isSelectionMode: Boolean,
     isNodeSelected: Boolean,
+    isPinging: Boolean = false,
+    modern: Boolean = true,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onEditNode: () -> Unit,
@@ -888,28 +895,42 @@ private fun ServerTileRow(
     }
     var showActionMenu by remember { mutableStateOf(false) }
 
+    // modern = reworked look; false restores the original compact row.
+    val tileShape = RoundedCornerShape(if (modern) 18.dp else 12.dp)
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(tileShape)
             .border(
-                1.dp,
-                if (selected) primaryColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-                RoundedCornerShape(12.dp)
+                if (modern && selected) 2.dp else 1.dp,
+                if (selected) primaryColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                tileShape
             )
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
             ),
         color = rowBg,
-        shape = RoundedCornerShape(12.dp)
+        shape = tileShape
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = if (modern) 12.dp else 14.dp, vertical = if (modern) 13.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (modern) {
+                // Accent rail marks the active server without an extra row.
+                Box(
+                    Modifier
+                        .width(3.dp)
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(primaryColor.copy(alpha = if (selected) 1f else 0f))
+                )
+                Spacer(Modifier.width(10.dp))
+            }
             // Checkbox in selection mode
             if (isSelectionMode) {
                 Checkbox(
@@ -938,22 +959,78 @@ private fun ServerTileRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = node.displayProtocol,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp
-                )
+                if (modern) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(primaryColor.copy(alpha = 0.14f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = node.displayProtocol.uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = primaryColor,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (node.isAutoNode) strings.autoSelect else "${node.server}:${node.port}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                } else {
+                    Text(
+                        text = node.displayProtocol,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                }
             }
-            node.pingMs?.let { ping ->
-                Text(
-                    text = if (ping >= 0) "$ping ms" else "—",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = pingColor(ping),
-                    fontSize = 12.sp,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+            if (isPinging) {
+                // Spinner replaces the (already cleared) ping value while the probe runs.
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = primaryColor
                 )
                 Spacer(Modifier.width(8.dp))
+            } else {
+                node.pingMs?.let { ping ->
+                    if (modern) {
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(pingColor(ping).copy(alpha = 0.15f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (ping >= 0) "$ping ms" else "—",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = pingColor(ping),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = if (ping >= 0) "$ping ms" else "—",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = pingColor(ping),
+                            fontSize = 12.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
             }
 
             // Trailing ">" action button with dropdown menu

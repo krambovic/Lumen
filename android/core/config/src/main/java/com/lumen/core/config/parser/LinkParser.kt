@@ -24,6 +24,12 @@ data class ParsedNode(
 object LinkParser {
 
     private val WHITESPACE_REGEX = Regex("\\s+")
+    // Used to split glued or space separated links inside a single line.
+    private val SCHEME_SPLIT_REGEX = Regex(
+        "(?i)\\b(vless|vmess|trojan|ss|ssr|hysteria2|hysteria|hy2|hy|tuic|wireguard|wg|awg|" +
+            "amneziawg|warp|naive\\+https|naive\\+quic|naive|mierus|mieru|masque|socks5|socks|" +
+            "https|http|happ|snell|juicity|anytls)://"
+    )
     private val AMNEZIA_JUNK_KEYS = setOf(
         "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",
         "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3", "itime"
@@ -95,7 +101,7 @@ object LinkParser {
             }
         }
 
-        val lines = stripped.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val lines = splitImportTokens(stripped)
         if (lines.size > MAX_IMPORT_LINES) {
             return Pair(emptyList(), listOf("Import contains more than $MAX_IMPORT_LINES non-empty lines"))
         }
@@ -113,11 +119,55 @@ object LinkParser {
                 applyHappServerMetadata(node, currentLine)
                 nodes.add(node)
             } catch (e: Exception) {
-                errors.add("Line ${idx + 1}: ${e.message}")
+                // A single entry can itself be base64 (per-line encoded subscriptions).
+                val nested = if (isBase64Blob(line)) {
+                    runCatching { parseLinksText(decodeB64(line)) }.getOrNull()
+                } else null
+                if (nested != null && nested.first.isNotEmpty()) {
+                    nodes.addAll(nested.first)
+                } else {
+                    errors.add("Line ${idx + 1}: ${e.message}")
+                }
+            }
+        }
+
+        if (nodes.isEmpty()) {
+            // Last resort: the whole payload may be base64 that failed the strict
+            // blob checks above (stray characters, percent-encoded padding).
+            val candidate = runCatching {
+                decodeB64(URLDecoder.decode(stripped, "UTF-8"))
+            }.getOrNull() ?: runCatching { decodeB64(stripped) }.getOrNull()
+            if (!candidate.isNullOrBlank() && candidate.trim() != stripped) {
+                val salvaged = runCatching { parseLinksText(candidate) }.getOrNull()
+                if (salvaged != null && salvaged.first.isNotEmpty()) return salvaged
             }
         }
 
         return Pair(nodes, errors)
+    }
+
+    /**
+     * Splits a payload into candidate entries: newline separated, but also comma,
+     * whitespace and glued links such as "vless://a...vless://b...".
+     */
+    private fun splitImportTokens(text: String): List<String> {
+        val result = mutableListOf<String>()
+        for (rawLine in text.lines()) {
+            var line = rawLine.trim().trim('\uFEFF').removeSurrounding("\"").trim()
+            if (line.startsWith("- ")) line = line.removePrefix("- ").trim()
+            if (line.isEmpty() || line.startsWith("//") || line.startsWith("#") || line.startsWith(";")) continue
+            val starts = SCHEME_SPLIT_REGEX.findAll(line).map { it.range.first }.toList()
+            if (starts.size > 1) {
+                for ((i, start) in starts.withIndex()) {
+                    val end = if (i + 1 < starts.size) starts[i + 1] else line.length
+                    line.substring(start, end).trim().trimEnd(',', ';', '|')
+                        .takeIf { it.isNotEmpty() }?.let { result += it }
+                }
+            } else {
+                result += line.trimEnd(',', ';', '|')
+            }
+        }
+        return result
     }
 
     fun parseSingle(raw: String): ParsedNode {
@@ -1671,11 +1721,29 @@ object LinkParser {
         if (text.startsWith("[")) {
             val array = JSONArray(text)
             for (i in 0 until array.length()) {
-                val item = array.get(i)
-                if (item is JSONObject) {
-                    nodes.add(parseJsonObjectOutbound(item))
-                } else if (item is String) {
-                    nodes.add(parseSingle(item))
+                // One bad entry must not abort a whole array of configs.
+                try {
+                    when (val item = array.get(i)) {
+                        is JSONObject ->
+                            // Panels ship arrays of whole client configs, not bare outbounds.
+                            if (item.has("outbounds") || item.has("endpoints") || item.has("proxies") || item.has("inbounds")) {
+                                val (inner, innerErrors) = parseJsonNodesText(item.toString())
+                                val label = listOf("remarks", "profile_title", "name", "tag")
+                                    .firstNotNullOfOrNull { key -> item.optString(key).takeIf { it.isNotBlank() } }
+                                    .orEmpty()
+                                nodes += if (label.isEmpty()) inner else inner.map { node ->
+                                    val suffix = node.name.takeIf { it.isNotBlank() && it != label }
+                                    node.copy(name = if (suffix == null) label else "$label · $suffix")
+                                }
+                                errors += innerErrors.map { "Config ${i + 1}: $it" }
+                            } else {
+                                nodes.add(parseJsonItem(item))
+                            }
+                        is String -> nodes.add(parseSingle(item))
+                        else -> Unit
+                    }
+                } catch (e: Exception) {
+                    errors.add("Item ${i + 1}: ${e.message}")
                 }
             }
         } else if (text.startsWith("{")) {
@@ -1712,25 +1780,62 @@ object LinkParser {
             for (arrayKey in listOf("outbounds", "endpoints")) {
                 if (!json.has(arrayKey)) continue
                 handled = true
-                val outbounds = json.getJSONArray(arrayKey)
+                val outbounds = json.optJSONArray(arrayKey) ?: continue
                 for (i in 0 until outbounds.length()) {
-                    val item = outbounds.getJSONObject(i)
+                    // Outbound arrays may also hold plain links or nested strings.
+                    val raw = outbounds.get(i)
+                    if (raw is String) {
+                        runCatching { nodes.add(parseSingle(raw)) }
+                            .onFailure { errors.add("Outbound ${i + 1}: ${it.message}") }
+                        continue
+                    }
+                    val item = raw as? JSONObject ?: continue
                     val protocol = item.optString("protocol", item.optString("type"))
-                    if (protocol.isNotEmpty() && protocol.lowercase() !in skipProtocols) {
-                        try {
-                            nodes.add(parseJsonObjectOutbound(item))
-                        } catch (e: Exception) {
-                            errors.add("Outbound ${i + 1}: ${e.message}")
+                    if (protocol.lowercase() in skipProtocols) continue
+                    if (protocol.isEmpty() && item.optString("server").isEmpty()) continue
+                    try {
+                        nodes.add(parseJsonItem(item))
+                    } catch (e: Exception) {
+                        errors.add("Outbound ${i + 1}: ${e.message}")
+                    }
+                }
+            }
+            for (arrayKey in listOf("proxies", "servers", "nodes", "configs", "links", "subs")) {
+                if (handled || !json.has(arrayKey)) continue
+                val array = json.optJSONArray(arrayKey) ?: continue
+                handled = true
+                for (i in 0 until array.length()) {
+                    try {
+                        when (val item = array.get(i)) {
+                            is JSONObject -> nodes.add(parseJsonItem(item))
+                            is String -> nodes.add(parseSingle(item))
+                            else -> Unit
                         }
+                    } catch (e: Exception) {
+                        errors.add("$arrayKey ${i + 1}: ${e.message}")
                     }
                 }
             }
             if (!handled) {
-                nodes.add(parseJsonObjectOutbound(json))
+                nodes.add(parseJsonItem(json))
             }
         }
 
+        // Fall back to the other formats instead of reporting an empty import.
+        if (nodes.isEmpty()) throw LinkParseError("No servers found in JSON payload")
+
         return Pair(nodes, errors)
+    }
+
+    // Config arrays mix sing-box/v2ray outbounds with Clash-style proxy maps.
+    private fun parseJsonItem(item: JSONObject): ParsedNode = try {
+        parseJsonObjectOutbound(item)
+    } catch (e: Exception) {
+        try {
+            parseClashProxyMap(jsonToMap(item))
+        } catch (_: Exception) {
+            throw e
+        }
     }
 
     private fun parseJsonOutbound(text: String): ParsedNode {

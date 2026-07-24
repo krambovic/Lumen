@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.widget.RemoteViews
 import net.kramb.lumen.R
@@ -77,6 +78,7 @@ class LumenWidgetProvider : AppWidgetProvider() {
         ) {
             val isRunning = LumenVpnService.isRunning.value
             val views = RemoteViews(context.packageName, R.layout.widget_lumen_toggle)
+            val prefs = context.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
 
             val toggleIntent = Intent(context, LumenWidgetProvider::class.java).apply {
                 action = ACTION_TOGGLE_VPN
@@ -91,16 +93,31 @@ class LumenWidgetProvider : AppWidgetProvider() {
             )
 
             views.setOnClickPendingIntent(R.id.widget_container, pendingIntent)
-            views.setOnClickPendingIntent(R.id.widget_button, pendingIntent)
+            views.setOnClickPendingIntent(R.id.widget_button_bg, pendingIntent)
+            views.setOnClickPendingIntent(R.id.widget_button_icon, pendingIntent)
+
+            val themePalette = prefs.getString("theme_palette", "DEFAULT") ?: "DEFAULT"
+            val palettePrimaryColor = when (themePalette) {
+                "ROSE_PINE" -> Color.parseColor("#EB6F92")
+                "TOKYO_NIGHT" -> Color.parseColor("#7AA2F7")
+                "NORD" -> Color.parseColor("#88C0D0")
+                "CYBERPUNK" -> Color.parseColor("#FF007F")
+                "EMERALD" -> Color.parseColor("#10B981")
+                "SUNSET" -> Color.parseColor("#F59E0B")
+                "DRACULA" -> Color.parseColor("#BD93F9")
+                "MONOKAI" -> Color.parseColor("#A6E22E")
+                "MATERIAL_YOU" -> Color.parseColor("#3B82F6")
+                else -> Color.parseColor("#0088FF") // Standard Blue / Cyan
+            }
 
             if (isRunning) {
-                views.setInt(R.id.widget_container, "setBackgroundResource", R.drawable.widget_bg_connected)
-                views.setTextViewText(R.id.widget_status, "Connected • Active")
-                views.setTextColor(R.id.widget_status, android.graphics.Color.parseColor("#00E5FF"))
+                // Connected: Bright Green circle, Pause icon
+                views.setInt(R.id.widget_button_bg, "setColorFilter", Color.parseColor("#00E676"))
+                views.setImageViewResource(R.id.widget_button_icon, R.drawable.ic_pause)
             } else {
-                views.setInt(R.id.widget_container, "setBackgroundResource", R.drawable.widget_bg_disconnected)
-                views.setTextViewText(R.id.widget_status, "Disconnected")
-                views.setTextColor(R.id.widget_status, android.graphics.Color.parseColor("#94A3B8"))
+                // Disconnected: Theme Palette primary color, Power icon
+                views.setInt(R.id.widget_button_bg, "setColorFilter", palettePrimaryColor)
+                views.setImageViewResource(R.id.widget_button_icon, R.drawable.ic_power)
             }
 
             appWidgetManager.updateAppWidget(appWidgetId, views)
