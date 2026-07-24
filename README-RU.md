@@ -1,13 +1,13 @@
 # Lumen
 
 <p align="center">
-  <img src="assets/Lumen.png" alt="Lumen Logo" width="140">
+  <img src="windows/assets/Lumen.png" alt="Lumen Logo" width="140">
 </p>
 
 <p align="center">
   <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?style=for-the-badge&label=Release&labelColor=3A3A3A&color=8A2BE2" alt="Релиз"></a>
   <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=Downloads&labelColor=3A3A3A&color=17A673" alt="Скачивания"></a>
-  <img src="https://img.shields.io/badge/Platform-Windows%2011%20%7C%2010-29B6F6?style=for-the-badge&labelColor=3A3A3A" alt="Платформа">
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=3A3A3A" alt="Платформа">
 </p>
 
 <p align="center">
@@ -16,28 +16,28 @@
 
 ---
 
-Lumen - самостоятельный Windows-клиент для VPN/TUN, системного прокси, маршрутизации, управления серверами и обхода DPI (DPI bypass) через zapret. Проект предлагает графический интерфейс на базе QML с эффектами Mica/Acrylic и аппаратным ускорением рендеринга.
+Lumen — кроссплатформенный клиент для VPN/TUN, системного прокси, маршрутизации, управления серверами и обхода DPI (DPI bypass). Проект поддерживает **Windows Desktop** (PyQt6 QML с эффектами Mica/Acrylic) и **Android** (Jetpack Compose, VpnService и встроенный Go-ядро sing-box extended).
 
 > [!IMPORTANT]
-> Для работы TUN/VPN режимов и запуска средств обхода DPI (zapret) требуются права администратора.
+> Для работы TUN/VPN режимов и запуска средств обхода DPI (zapret) на Windows требуются права администратора.
 
 ---
 
 ## Скриншоты
 
 <details>
-<summary>Панель управления и темы оформления</summary>
+<summary>Панель управления и темы оформления (Windows)</summary>
 <br>
 
-<img src="assets/screenshots/dashboard-dark.png" alt="Панель управления в темной теме" width="100%">
+<img src="windows/assets/screenshots/dashboard-dark.png" alt="Панель управления в темной теме" width="100%">
 <br><br>
-<img src="assets/screenshots/dashboard-red.png" alt="Панель управления с красным акцентом" width="100%">
+<img src="windows/assets/screenshots/dashboard-red.png" alt="Панель управления с красным акцентом" width="100%">
 <br><br>
-<img src="assets/screenshots/settings-rose-pine.png" alt="Настройки в теме Rose Pine" width="100%">
+<img src="windows/assets/screenshots/settings-rose-pine.png" alt="Настройки в теме Rose Pine" width="100%">
 <br><br>
-<img src="assets/screenshots/dashboard-light.png" alt="Панель управления в светлой теме" width="100%">
+<img src="windows/assets/screenshots/dashboard-light.png" alt="Панель управления в светлой теме" width="100%">
 <br><br>
-<img src="assets/screenshots/zapret-dark.png" alt="Экран обхода DPI через zapret" width="100%">
+<img src="windows/assets/screenshots/zapret-dark.png" alt="Экран обхода DPI через zapret" width="100%">
 
 </details>
 
@@ -47,13 +47,13 @@ Lumen - самостоятельный Windows-клиент для VPN/TUN, си
 
 | Раздел | Используемые компоненты | Описание |
 | :--- | :--- | :--- |
-| **Обход DPI** | zapret / WinDivert | Обход замедлений и блокировок YouTube, Discord и других сервисов на уровне пакетов. |
+| **Обход DPI (Windows)** | zapret / WinDivert | Обход замедлений и блокировок YouTube, Discord и других сервисов на уровне пакетов. |
 | **TUN / VPN** | sing-box-extended | Полноценный TUN-режим с поддержкой AmneziaWG (AWG 2.0), WireGuard и XHTTP. |
 | **Прокси** | xray-core | Системный прокси (VLESS, Trojan, Shadowsocks, VMess). |
 | **Маршрутизация** | GUI-пресеты | Удобная настройка маршрутов через интерфейс: пресеты, пользовательские домены, IP-правила и поведение отдельных сервисов. |
 | **Discord Voice** | droute / SOCKS5 | Направляет голосовые каналы и стримы Discord через прокси без включения полного TUN-режима. |
 | **Диагностика** | встроенные тесты | Проверка ping и реальной скорости скачивания серверов. |
-| **Интерфейс** | PyQt6 / QML | Динамические акцентные цвета, темы оформления и поддержка фоновых обоев. |
+| **Кроссплатформенность** | Windows & Android | Графический интерфейс на QML для Windows и Jetpack Compose для Android. |
 
 ---
 
@@ -72,66 +72,47 @@ Lumen поддерживает импорт и запуск таких типо�
 - Метаданные и поддерживаемые функции подписок Happ Premium отображаются прямо в списке серверов и свойствах подписки.
 - Сайты могут открыть Lumen и импортировать подписку через диплинк `lumen://`. Для кнопки «Добавить VPN» используйте `lumen://add?url=<URL-подписки-в-percent-encoding>&name=<необязательное-имя>`.
 
-> [!NOTE]
-> Для полной поддержки расшифровки `happ://crypt5` должен быть установлен [Node.js](https://nodejs.org/), доступный через `PATH`. Более ранние форматы `happ://crypt` Lumen расшифровывает самостоятельно.
+---
+
+## Структура репозитория
+
+- **`windows/`**: Клиент для Windows (Python, PyQt6, QML, zapret).
+- **`android/`**: Нативный клиент для Android (`:app`, `:ui`, `:core:config`, `:core:database`, `:core:engine`, `:core:vpn`).
+
+---
 
 ## Установка и запуск
 
 Перейдите на страницу **[Releases](https://github.com/krambovic/Lumen/releases)** и скачайте актуальную версию:
 
-* **Установщик (`Lumen-Setup-windows-x64.exe`):** Рекомендуется для большинства пользователей.
-* **Портативная версия (`Lumen-portable-windows-x64.zip`):** Работает без установки.
-
-> [!CAUTION]
-> **Windows Defender или другой антивирус может ошибочно обнаружить угрозу в Lumen или его встроенных компонентах.** Lumen содержит сетевые инструменты Xray, sing-box и zapret, умеет создавать TUN-интерфейс, а также изменяет системный прокси и маршрутизацию. Эти возможности вместе с упаковкой неподписанного приложения через PyInstaller могут срабатывать на эвристические правила антивирусов, даже если вредоносного кода нет. Скачивайте Lumen только со страницы официальных [релизов GitHub](https://github.com/krambovic/Lumen/releases). Не отключайте антивирус полностью: если файл заблокирован, проверьте название обнаружения и отправьте его разработчику антивируса как ложное срабатывание либо добавьте локальное исключение только после проверки источника файла.
-
----
-
-## Быстрый старт
-
-1. Запустите Lumen от имени администратора.
-2. Импортируйте ссылку сервера или поддерживаемый `.conf` файл.
-3. Выберите режим подключения: системный прокси, VPN/TUN или обход DPI через zapret.
-4. Выберите пресет маршрутизации и подключитесь.
-
-WARP, WireGuard, AmneziaWG, Hysteria, Hysteria2, TUIC, Mieru и MASQUE конфиги работают через TUN на `sing-box-extended`; VLESS, VMess, Trojan, Shadowsocks, SOCKS и HTTP ссылки можно использовать через режим системного прокси.
+* **Windows Установщик (`Lumen-Setup-windows-x64.exe`):** Рекомендуется для Windows.
+* **Windows Портативная версия (`Lumen-portable-windows-x64.zip`):** Работает без установки.
+* **Android APK (`app-universal-debug.apk`):** Приложение для смартфонов и эмуляторов Android.
 
 ---
 
 ## Сборка проекта (для разработчиков)
 
 <details>
-<summary><b>Показать инструкции по сборке</b></summary>
+<summary><b>Сборка для Windows</b></summary>
 
-1. Установите зависимости проекта:
-   ```powershell
-   pip install -r requirements.txt
-   ```
-2. Поместите исполняемые файлы ядер (`xray.exe`, `sing-box.exe`, `wintun.dll`, файлы базы GeoIP) в каталог `core/`.
-3. Запустите скрипт компиляции и сборки:
-   ```powershell
-   python build_qml.py
-   ```
-Сборка создает установщик и портативный архив в директории `dist/`.
+```powershell
+cd windows
+pip install -r requirements.txt
+python build_qml.py
+```
+Сборка создает установщик и портативный архив в директории `windows/dist/`.
 </details>
 
----
+<details>
+<summary><b>Сборка для Android</b></summary>
 
-## Star History
-
-<a href="https://www.star-history.com/?repos=krambovic%2FLumen&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=krambovic/Lumen&type=date&theme=dark&legend=top-left&sealed_token=fW_XUyA3Qay011mKD7tuewBXpt8nzW6MbbuhvhOy-y-fr9jxvjrRZ_K88QIDpCds5soFksO_3iAvFQ9bkLGkB9My96Lkis7F7wxOS5LzxAb8FXS2yXAbrLbB-oBrdliut-myHmPUuPT8QPARlDbYrE7_dL2-sMUq6luZ_bOH15ALx_8XEKtC6iMCsI9f" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=krambovic/Lumen&type=date&legend=top-left&sealed_token=fW_XUyA3Qay011mKD7tuewBXpt8nzW6MbbuhvhOy-y-fr9jxvjrRZ_K88QIDpCds5soFksO_3iAvFQ9bkLGkB9My96Lkis7F7wxOS5LzxAb8FXS2yXAbrLbB-oBrdliut-myHmPUuPT8QPARlDbYrE7_dL2-sMUq6luZ_bOH15ALx_8XEKtC6iMCsI9f" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=krambovic/Lumen&type=date&legend=top-left&sealed_token=fW_XUyA3Qay011mKD7tuewBXpt8nzW6MbbuhvhOy-y-fr9jxvjrRZ_K88QIDpCds5soFksO_3iAvFQ9bkLGkB9My96Lkis7F7wxOS5LzxAb8FXS2yXAbrLbB-oBrdliut-myHmPUuPT8QPARlDbYrE7_dL2-sMUq6luZ_bOH15ALx_8XEKtC6iMCsI9f" />
- </picture>
-</a>
-
----
-
-## Участники проекта
-
-[![Участники](https://contrib.rocks/image?repo=krambovic/Lumen)](https://github.com/krambovic/Lumen/graphs/contributors)
+```powershell
+cd android
+./gradlew assembleDebug
+```
+Сборка создает APK в директории `android/app/build/outputs/apk/debug/`.
+</details>
 
 ---
 
