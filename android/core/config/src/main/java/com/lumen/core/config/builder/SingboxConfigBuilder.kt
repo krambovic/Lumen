@@ -67,9 +67,7 @@ object SingboxConfigBuilder {
                     "mtu" to options.tunMtu,
                     "auto_route" to true,
                     "strict_route" to options.tunStrictRoute,
-                    "stack" to options.tunStack,
-                    "sniff" to true,
-                    "sniff_override_destination" to !options.sniffRouteOnly
+                    "stack" to options.tunStack
                 )
             )
         }
@@ -132,9 +130,9 @@ object SingboxConfigBuilder {
             }
         }
 
-        // Auxiliary Outbounds
+        // Auxiliary Outbounds. Note: the legacy special "block" outbound was
+        // removed in sing-box 1.13; blocking is done via `action: reject` rules.
         outbounds.add(mapOf("type" to "direct", "tag" to "direct"))
-        outbounds.add(mapOf("type" to "block", "tag" to "block"))
 
         root["outbounds"] = outbounds
 
@@ -154,12 +152,12 @@ object SingboxConfigBuilder {
                     "detour" to "direct"
                 )
             ),
-            "final" to "dns-remote"
+            "final" to "dns-remote",
+            "strategy" to (if (options.preferIpv6) "prefer_ipv6" else "prefer_ipv4")
         )
 
         // 5. Route (sing-box 1.13 rule actions)
         val routeRules = mutableListOf<Map<String, Any?>>(
-            mapOf("protocol" to "dns", "action" to "hijack-dns"),
             mapOf("ip_cidr" to listOf("224.0.0.0/3", "ff00::/8"), "action" to "reject")
         )
         // User Routing Rules (Domains, Geosite, IP CIDRs)
@@ -211,17 +209,41 @@ object SingboxConfigBuilder {
         if (proxyDomains.isNotEmpty()) routeRules.add(0, mapOf("domain" to proxyDomains, "outbound" to "proxy"))
         if (directDomains.isNotEmpty()) routeRules.add(0, mapOf("domain" to directDomains, "outbound" to "direct"))
 
+        // sing-box 1.12+ removed the legacy `geosite` rule key; use remote
+        // rule-sets instead (same data, .srs format, cached by the core).
+        val ruleSets = mutableListOf<Map<String, Any?>>()
         geositeRules.forEach { (code, action) ->
+            val tag = "geosite-$code"
+            if (ruleSets.none { it["tag"] == tag }) {
+                ruleSets.add(
+                    mapOf(
+                        "type" to "remote",
+                        "tag" to tag,
+                        "format" to "binary",
+                        "url" to "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/$tag.srs",
+                        "download_detour" to "direct"
+                    )
+                )
+            }
             if (action == "block") {
-                routeRules.add(0, mapOf("geosite" to listOf(code), "action" to "reject"))
+                routeRules.add(0, mapOf("rule_set" to listOf(tag), "action" to "reject"))
             } else {
-                routeRules.add(0, mapOf("geosite" to listOf(code), "outbound" to action))
+                routeRules.add(0, mapOf("rule_set" to listOf(tag), "outbound" to action))
             }
         }
         if (options.blockQuic) {
             routeRules.add(0, mapOf("network" to "udp", "port" to 443, "action" to "reject"))
         }
-        root["route"] = mapOf(
+        // sing-box 1.12+: the `protocol: dns` matcher only works after traffic
+        // has been sniffed, and the legacy inbound-level sniff fields were
+        // removed. Without these rules DNS from apps leaks as raw UDP:53
+        // through the proxy (which many vless/vmess/trojan servers do not
+        // relay), so nothing resolves even though the tunnel is up. Keep them
+        // strictly first so DNS is always answered by the built-in resolver.
+        routeRules.add(0, mapOf("port" to 53, "action" to "hijack-dns"))
+        routeRules.add(0, mapOf("protocol" to "dns", "action" to "hijack-dns"))
+        routeRules.add(0, mapOf("action" to "sniff"))
+        val routeMap = mutableMapOf<String, Any?>(
             // Android's app sandbox forbids sing-box's netlink network monitor.
             // SOCKS-only mode relies on VpnService + tun2socks and the OS default route.
             "auto_detect_interface" to options.tunMode,
@@ -229,6 +251,10 @@ object SingboxConfigBuilder {
             "rules" to routeRules,
             "final" to "proxy"
         )
+        if (ruleSets.isNotEmpty()) {
+            routeMap["rule_set"] = ruleSets
+        }
+        root["route"] = routeMap
 
         // 6. Normalize AmneziaWG and WireGuard outbounds to extended endpoints format
         AmneziaWGNormalizer.normalizeSingboxWireguardEndpoints(root)
@@ -388,6 +414,18 @@ object SingboxConfigBuilder {
                 if (obfs is Map<*, *>) {
                     result["obfs"] = obfs
                 }
+                // hysteria2 always requires TLS in sing-box; without it the core
+                // rejects the config (legacy stored nodes may lack a native block).
+                if (result["tls"] == null) {
+                    val tls = mutableMapOf<String, Any?>("enabled" to true)
+                    tls["server_name"] = outbound["sni"]?.toString()?.takeIf { it.isNotEmpty() }
+                        ?: outbound["server_name"]?.toString()?.takeIf { it.isNotEmpty() }
+                        ?: node.server
+                    if (outbound["insecure"] == true || outbound["allowInsecure"] == true) {
+                        tls["insecure"] = true
+                    }
+                    result["tls"] = tls
+                }
             }
             "tuic" -> {
                 result["type"] = "tuic"
@@ -399,6 +437,16 @@ object SingboxConfigBuilder {
                 if (password.isNotEmpty()) result["password"] = password
                 result["congestion_control"] = outbound["congestion_control"]?.toString() ?: "cubic"
                 result["zero_rtt_handshake"] = outbound["zero_rtt_handshake"] == true
+                // TUIC always requires TLS in sing-box.
+                if (result["tls"] == null) {
+                    val tls = mutableMapOf<String, Any?>("enabled" to true)
+                    tls["server_name"] = outbound["sni"]?.toString()?.takeIf { it.isNotEmpty() } ?: node.server
+                    (outbound["alpn"] as? List<*>)?.let { tls["alpn"] = it }
+                    if (outbound["insecure"] == true || outbound["allowInsecure"] == true) {
+                        tls["insecure"] = true
+                    }
+                    result["tls"] = tls
+                }
             }
             "openvpn" -> {
                 result["type"] = "openvpn"
@@ -425,7 +473,9 @@ object SingboxConfigBuilder {
             }
         }
 
-        if (options.multiplexEnabled) {
+        // smux is only supported by these protocols in sing-box; attaching it to
+        // e.g. socks/http/hysteria2/tuic makes the core reject the whole config.
+        if (options.multiplexEnabled && result["type"] in setOf("vless", "vmess", "trojan", "shadowsocks")) {
             val multiplexMap = mutableMapOf<String, Any?>(
                 "enabled" to true,
                 "protocol" to "smux",

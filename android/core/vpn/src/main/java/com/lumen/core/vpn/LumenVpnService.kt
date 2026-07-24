@@ -107,10 +107,22 @@ class LumenVpnService : VpnService() {
                     .setSession("Lumen VPN")
                 DEFAULT_DNS_SERVERS.forEach(builder::addDnsServer)
                 // The core's outbound sockets must bypass this VPN to avoid a routing loop.
-                if (splitConfig.mode != SplitTunnelingMode.ALLOW_LIST) {
+                // ALLOW_LIST caveats: our own package must never be allowed, and an
+                // empty allow-list would make Android capture ALL apps (VpnService
+                // applies to everyone when no allowed app was added) including the
+                // sing-box process itself -> traffic loop and a dead tunnel.
+                val effectiveSplit = when {
+                    splitConfig.mode == SplitTunnelingMode.ALLOW_LIST &&
+                        (splitConfig.packages - packageName).isEmpty() ->
+                        SplitTunnelingConfig(SplitTunnelingMode.DISABLED)
+                    splitConfig.mode == SplitTunnelingMode.ALLOW_LIST ->
+                        splitConfig.copy(packages = splitConfig.packages - packageName)
+                    else -> splitConfig
+                }
+                if (effectiveSplit.mode != SplitTunnelingMode.ALLOW_LIST) {
                     builder.addDisallowedApplication(packageName)
                 }
-                SplitTunnelingManager.applySplitTunneling(builder, splitConfig)
+                SplitTunnelingManager.applySplitTunneling(builder, effectiveSplit)
 
                 val pfd = checkNotNull(builder.establish()) { "Failed to establish VPN interface" }
                 vpnInterface = pfd

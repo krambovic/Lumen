@@ -64,8 +64,16 @@ class ConfigBuilderTest {
         val route = json.getJSONObject("route")
         assertEquals("dns-direct", route.getString("default_domain_resolver"))
         val routeRules = route.getJSONArray("rules")
-        assertEquals("hijack-dns", routeRules.getJSONObject(0).getString("action"))
-        assertTrue(!routeRules.getJSONObject(0).has("outbound"))
+        // sing-box 1.12+: sniff must run before the `protocol: dns` matcher works.
+        assertEquals("sniff", routeRules.getJSONObject(0).getString("action"))
+        assertEquals("hijack-dns", routeRules.getJSONObject(1).getString("action"))
+        assertEquals("dns", routeRules.getJSONObject(1).getString("protocol"))
+        assertEquals("hijack-dns", routeRules.getJSONObject(2).getString("action"))
+        assertEquals(53, routeRules.getJSONObject(2).getInt("port"))
+        assertTrue(!routeRules.getJSONObject(1).has("outbound"))
+        // Legacy inbound-level sniff fields were removed in sing-box 1.12+.
+        assertTrue(!tunInbound.has("sniff"))
+        assertTrue(!tunInbound.has("sniff_override_destination"))
     }
 
     @Test
