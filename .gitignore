@@ -24,6 +24,11 @@ data/external/*
 !data/external/droute/
 !data/external/droute/**
 
+# Android signing (never commit)
+keystore.properties
+*.jks
+*.keystore
+
 # Android
 .gradle/
 android/.gradle/
