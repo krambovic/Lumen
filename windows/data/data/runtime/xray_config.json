@@ -1,0 +1,233 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "protocol": "mixed",
+      "settings": {
+        "auth": "noauth",
+        "udp": true,
+        "allowTransparent": false
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ],
+        "routeOnly": false
+      }
+    },
+    {
+      "tag": "http-in",
+      "listen": "127.0.0.1",
+      "port": 10809,
+      "protocol": "http",
+      "settings": {},
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ],
+        "routeOnly": false
+      }
+    },
+    {
+      "tag": "__app_metrics_api_in",
+      "listen": "127.0.0.1",
+      "port": 19085,
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "127.0.0.1"
+      }
+    },
+    {
+      "tag": "discord-socks-in",
+      "listen": "127.0.0.1",
+      "port": 10818,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ],
+        "routeOnly": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "212.34.145.199",
+            "port": 23916,
+            "users": [
+              {
+                "id": "743672c5-6c95-4b1c-a08e-7783e28822a4",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "www.microsoft.com",
+          "fingerprint": "edge",
+          "publicKey": "HkLK62c3szw51gYtORRnPlO0v6kxOSd_aCd0J4rTKzo",
+          "shortId": "628da9aed237",
+          "spiderX": "/",
+          "show": false
+        }
+      },
+      "tag": "proxy"
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {}
+    },
+    {
+      "tag": "__app_metrics_api",
+      "protocol": "freedom",
+      "settings": {}
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": [
+          "__app_metrics_api_in"
+        ],
+        "outboundTag": "__app_metrics_api"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "discord-socks-in"
+        ],
+        "outboundTag": "proxy"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "geoip:private"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "geosite:private"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "process": [
+          "Discord.exe"
+        ],
+        "network": "tcp,udp",
+        "outboundTag": "proxy"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:anthropic.com",
+          "domain:api.openai.com",
+          "domain:auth.openai.com",
+          "domain:browser-intake-datadoghq.com",
+          "domain:cdn.oaistatic.com",
+          "domain:cdn.openai.com",
+          "domain:challenges.cloudflare.com",
+          "domain:chat.openai.com",
+          "domain:chatgpt.com",
+          "domain:chatgpt.livekit.cloud",
+          "domain:claude.ai",
+          "domain:claude.com",
+          "domain:events.statsigapi.net",
+          "domain:featuregates.org",
+          "domain:files.oaiusercontent.com",
+          "domain:intercom.io",
+          "domain:intercomcdn.com",
+          "domain:oaistatic.com",
+          "domain:oaiusercontent.com",
+          "domain:openai.com",
+          "domain:openaiapi-site.azureedge.net",
+          "domain:sentry.io"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:habr.com"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:google.com"
+        ],
+        "outboundTag": "proxy"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "geosite:ru-available-only-inside"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "geoip:ru"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "network": "tcp,udp",
+        "outboundTag": "proxy"
+      }
+    ]
+  },
+  "stats": {},
+  "policy": {
+    "system": {
+      "statsInboundUplink": true,
+      "statsInboundDownlink": true,
+      "statsOutboundUplink": true,
+      "statsOutboundDownlink": true
+    }
+  },
+  "api": {
+    "tag": "__app_metrics_api",
+    "services": [
+      "StatsService"
+    ]
+  }
+}

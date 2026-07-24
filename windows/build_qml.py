@@ -23,7 +23,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VENV_DIR = ROOT / ".venv"
+REPO_ROOT = ROOT.parent
+VENV_DIR = REPO_ROOT / ".venv"
 VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 
 APP_NAME = "Lumen"
@@ -44,7 +45,7 @@ DATA_TEMPLATES_DIR = ROOT / "data" / "templates"
 DROUTE_BUNDLE_DIR = ROOT / "data" / "external" / "droute"
 INNO_SCRIPT = ROOT / "installer" / "Lumen.iss"
 ASSETS_DIR = ROOT / "assets"
-NOTICE_FILES = (ROOT / "LICENSE", ROOT / "NOTICE.md", ROOT / "README_QML.md", ROOT / "README.md")
+NOTICE_FILES = (REPO_ROOT / "LICENSE", REPO_ROOT / "NOTICE.md", REPO_ROOT / "README-RU.md", REPO_ROOT / "README.md")
 LEGACY_CORE_FILES = ("tun2socks.exe",)
 DROUTE_REQUIRED_FILES = (
     "droute.exe",

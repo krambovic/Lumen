@@ -15,6 +15,7 @@ from xray_fluent.qml_app.bridge.node_edit_helpers import (
 
 QML_DIR = Path(__file__).parents[1] / "xray_fluent" / "qml_app" / "qml"
 ROOT = Path(__file__).parents[1]
+REPO_ROOT = Path(__file__).parents[2]
 
 
 def test_explicit_naive_uri_builds_native_extended_outbound() -> None:
@@ -148,11 +149,11 @@ def test_release_build_bundles_naive_cronet_companion() -> None:
     build_script = (ROOT / "scripts" / "build_singbox_extended.ps1").read_text(
         encoding="utf-8"
     )
-    stable_workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(
+    stable_workflow = (REPO_ROOT / ".github" / "workflows" / "build.yml").read_text(
         encoding="utf-8"
     )
     prerelease_workflow = (
-        ROOT / ".github" / "workflows" / "prerelease.yml"
+        REPO_ROOT / ".github" / "workflows" / "prerelease.yml"
     ).read_text(encoding="utf-8")
 
     assert "windows-amd64-purego.zip" in build_script
