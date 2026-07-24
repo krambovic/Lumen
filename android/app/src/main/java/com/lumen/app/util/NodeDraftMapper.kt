@@ -17,7 +17,7 @@ object NodeDraftMapper {
 
     fun draftFromEntity(entity: NodeEntity?): NodeDraft? {
         if (entity == null) return null
-        return NodeDraft(
+        val base = NodeDraft(
             id = entity.id,
             name = entity.name,
             protocol = normalizeProtocol(entity.protocol),
@@ -25,6 +25,108 @@ object NodeDraftMapper {
             port = entity.port.toString(),
             rawConfig = entity.link
         )
+        // Editing must expose every protocol parameter, so the stored link is parsed back.
+        return runCatching { fillFromLink(base, entity.link) }.getOrDefault(base)
+    }
+
+    private fun fillFromLink(base: NodeDraft, link: String): NodeDraft {
+        val raw = link.trim()
+        if (raw.isBlank() || raw == "auto") return base
+        return when (base.protocol) {
+            "wireguard", "awg" -> fillWireGuard(base, raw)
+            "openvpn" -> base
+            "vmess" -> fillVmess(base, raw)
+            "ss" -> fillShadowsocks(base, raw)
+            else -> fillUri(base, raw)
+        }
+    }
+
+    private fun decode(v: String): String =
+        runCatching { java.net.URLDecoder.decode(v, "UTF-8") }.getOrDefault(v)
+
+    private fun queryOf(raw: String): Map<String, String> {
+        val q = raw.substringAfter('?', "").substringBefore('#')
+        if (q.isBlank()) return emptyMap()
+        return q.split("&").mapNotNull {
+            val k = it.substringBefore('=')
+            if (k.isBlank()) null else k.lowercase() to decode(it.substringAfter('=', ""))
+        }.toMap()
+    }
+
+    private fun fillUri(base: NodeDraft, raw: String): NodeDraft {
+        val afterScheme = raw.substringAfter("://")
+        val authority = afterScheme.substringBefore('?').substringBefore('#')
+        val userinfo = if (authority.contains('@')) authority.substringBeforeLast('@') else ""
+        val q = queryOf(raw)
+        val security = q["security"] ?: if (q["tls"] == "1") "tls" else "none"
+        return base.copy(
+            secret = decode(userinfo),
+            flow = q["flow"] ?: "",
+            network = q["type"] ?: q["net"] ?: base.network,
+            security = security,
+            path = q["path"] ?: "",
+            host = q["host"] ?: "",
+            serviceName = q["servicename"] ?: "",
+            sni = q["sni"] ?: q["peer"] ?: "",
+            alpn = q["alpn"] ?: "",
+            fingerprint = q["fp"] ?: "",
+            publicKey = q["pbk"] ?: "",
+            shortId = q["sid"] ?: "",
+            obfs = q["obfs"] ?: "",
+            obfsPassword = q["obfs-password"] ?: q["obfs_password"] ?: "",
+            congestionControl = q["congestion_control"] ?: base.congestionControl,
+            insecure = q["allowinsecure"] == "1" || q["insecure"] == "1" || q["allow_insecure"] == "1"
+        )
+    }
+
+    private fun fillVmess(base: NodeDraft, raw: String): NodeDraft {
+        val payload = raw.substringAfter("://").substringBefore('#').trim()
+        val json = JSONObject(String(Base64.getDecoder().decode(padB64(payload)), Charsets.UTF_8))
+        return base.copy(
+            secret = json.optString("id"),
+            network = json.optString("net").ifBlank { base.network },
+            security = if (json.optString("tls").isNotBlank()) "tls" else "none",
+            path = json.optString("path"),
+            host = json.optString("host"),
+            sni = json.optString("sni"),
+            alpn = json.optString("alpn"),
+            fingerprint = json.optString("fp")
+        )
+    }
+
+    private fun fillShadowsocks(base: NodeDraft, raw: String): NodeDraft {
+        val body = raw.substringAfter("://").substringBefore('#')
+        val userinfo = if (body.contains('@')) body.substringBeforeLast('@') else body
+        val decoded = runCatching {
+            String(Base64.getUrlDecoder().decode(padB64(userinfo)), Charsets.UTF_8)
+        }.getOrDefault(decode(userinfo))
+        val method = decoded.substringBefore(':', base.method)
+        val password = decoded.substringAfter(':', "")
+        return base.copy(method = method.ifBlank { base.method }, secret = password)
+    }
+
+    private fun fillWireGuard(base: NodeDraft, raw: String): NodeDraft {
+        val values = raw.lines().mapNotNull { line ->
+            val t = line.trim()
+            if (!t.contains('=') || t.startsWith("#") || t.startsWith("[")) null
+            else t.substringBefore('=').trim().lowercase() to t.substringAfter('=').trim()
+        }.toMap()
+        return base.copy(
+            secret = values["privatekey"] ?: "",
+            publicKey = values["publickey"] ?: "",
+            presharedKey = values["presharedkey"] ?: "",
+            address = values["address"] ?: "",
+            allowedIps = values["allowedips"] ?: base.allowedIps,
+            reserved = values["reserved"] ?: "",
+            jc = values["jc"] ?: "", jmin = values["jmin"] ?: "", jmax = values["jmax"] ?: "",
+            s1 = values["s1"] ?: "", s2 = values["s2"] ?: "", s3 = values["s3"] ?: "", s4 = values["s4"] ?: ""
+        )
+    }
+
+    private fun padB64(v: String): String {
+        val clean = v.trim()
+        val rem = clean.length % 4
+        return if (rem == 0) clean else clean + "=".repeat(4 - rem)
     }
 
     private fun normalizeProtocol(p: String): String = when (p.lowercase()) {

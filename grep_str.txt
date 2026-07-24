@@ -1,0 +1,23 @@
+﻿
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:31:    val expiresUnlimited: String, val day
+sRemaining: String, val serverCount: String,
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:59:    val dnsServersLabel: String, val dnsT
+ypeLabel: String, val dnsStrategyLabel: String,
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:108:    autoUpdateOneHour="Auto-update - 1h"
+, expiresUnlimited="Expires: Unlimited", daysRemaining="days remaining",
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:143:    dnsServersLabel="Servers (one per li
+ne)", dnsTypeLabel="Type", dnsStrategyLabel="Strategy",
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:198:    autoUpdateOneHour="Автообновление - 
+1 ч.", expiresUnlimited="Истекает: Безлимитно", daysRemaining="дней осталось",
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:233:    dnsServersLabel="Серверы (по одному 
+в строке)", dnsTypeLabel="Тип", dnsStrategyLabel="Стратегия",
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:269:    autoUpdateOneHour="自动更新 - 1小时", expi
+resUnlimited="到期时间: 无限制", daysRemaining="天剩余",
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:322:    dnsServersLabel="服务器（每行一个）", dnsType
+Label="类型", dnsStrategyLabel="策略",
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:358:    autoUpdateOneHour="به‌روزرسانی خودکا
+ر - ۱ ساعت", expiresUnlimited="انقضا: نامحدود", daysRemaining="روز باقی‌مانده",
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\Strings.kt:416:    dnsServersLabel="سرورها (هر خط یکی)"
+, dnsTypeLabel="نوع", dnsStrategyLabel="استراتژی",
+
+

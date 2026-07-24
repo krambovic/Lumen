@@ -78,6 +78,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    init {
+        // Single source of truth for the version shown in the UI and sent in headers.
+        com.lumen.ui.screens.LumenVersion.appVersion = net.kramb.lumen.BuildConfig.VERSION_NAME
+        com.lumen.core.vpn.TelemetryManager.appVersion = net.kramb.lumen.BuildConfig.VERSION_NAME
+    }
+
     // ---------- Logs ----------
     val logs: StateFlow<List<String>> = VpnLogBus.entries
         .map { entries ->
@@ -173,7 +179,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ThemePreset.valueOf(prefs.getString("theme_preset", ThemePreset.DARK.name) ?: ThemePreset.DARK.name)
         }.getOrDefault(ThemePreset.DARK),
         useMaterialYou = prefs.getBoolean("use_material_you", false),
-        useAmoledBlack = prefs.getBoolean("use_amoled_black", false)
+        useAmoledBlack = prefs.getBoolean("use_amoled_black", false),
+        hapticsEnabled = prefs.getBoolean("haptics_enabled", true),
+        pingType = prefs.getString("server_speed_test_type", "tcp")?.lowercase()
+            ?.takeIf { it in setOf("tcp", "udp", "url") } ?: "tcp",
+        pingTimeoutMs = prefs.getInt("ping_timeout_ms", 3000),
+        pingConcurrency = prefs.getInt("ping_concurrency", 15),
+        pingUrl = prefs.getString("ping_url", "https://www.gstatic.com/generate_204")
+            ?: "https://www.gstatic.com/generate_204",
+        pingOnOpen = prefs.getBoolean("ping_on_open", false),
+        pingSortAfter = prefs.getBoolean("ping_sort_after", false)
     )
 
     fun updateSettings(s: SettingsUiState) {
@@ -232,6 +247,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putString("theme_preset", s.themePreset.name)
             .putBoolean("use_material_you", s.useMaterialYou)
             .putBoolean("use_amoled_black", s.useAmoledBlack)
+            .putBoolean("haptics_enabled", s.hapticsEnabled)
+            .putString("server_speed_test_type", s.pingType)
+            .putInt("ping_timeout_ms", s.pingTimeoutMs.coerceIn(500, 20000))
+            .putInt("ping_concurrency", s.pingConcurrency.coerceIn(1, 32))
+            .putString("ping_url", s.pingUrl.trim().take(512))
+            .putBoolean("ping_on_open", s.pingOnOpen)
+            .putBoolean("ping_sort_after", s.pingSortAfter)
             .apply()
     }
 
@@ -272,7 +294,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     connection.connectTimeout = 20_000
                     connection.readTimeout = 120_000
                     connection.instanceFollowRedirects = true
-                    connection.setRequestProperty("User-Agent", "Lumen/0.7.0")
+                    connection.setRequestProperty("User-Agent", "Lumen/${net.kramb.lumen.BuildConfig.VERSION_NAME}")
                     try {
                         if (connection.responseCode !in 200..299) {
                             error("$name: HTTP ${connection.responseCode}")
@@ -399,8 +421,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private data class NodeUiCacheEntry(val fingerprint: Int, val base: NodeUiModel)
     private val nodeUiCache = java.util.concurrent.ConcurrentHashMap<String, NodeUiCacheEntry>()
 
+    // Set after a ping run when "sort after ping" is enabled; reset on any list change source.
+    private val _sortByPing = MutableStateFlow(false)
+
     val nodes: StateFlow<List<NodeUiModel>> =
-        combine(nodeEntities, _selectedNodeId) { list, selectedId ->
+        combine(nodeEntities, _selectedNodeId, _sortByPing) { list, selectedId, sortByPing ->
             val liveIds = HashSet<String>(list.size * 2)
             val mapped = list.mapNotNull { e ->
                 runCatching {
@@ -443,7 +468,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }.getOrNull()
             }
             nodeUiCache.keys.retainAll(liveIds)
-            mapped
+            // Auto nodes stay pinned on top; unreachable ones sink to the bottom.
+            if (sortByPing) mapped.sortedWith(
+                compareByDescending<NodeUiModel> { it.isAutoNode }
+                    .thenBy { it.pingMs ?: Int.MAX_VALUE }
+            ) else mapped
         }.flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -595,7 +624,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val subEntities: StateFlow<List<SubscriptionEntity>> = subscriptionDao.getSubscriptions()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     private val _subscriptionPremium = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
-    private val _subscriptionTraffic = MutableStateFlow<Map<String, String>>(emptyMap())
+    // Premium API extras kept in one map so the subscriptions combine stays 5-arity.
+    private data class SubMeta(
+        val summary: String,
+        val ratio: Float?,
+        val intervalHours: Int?,
+        val announce: String?
+    )
+    private val _subscriptionTraffic = MutableStateFlow<Map<String, SubMeta>>(emptyMap())
     private val _subscriptionExpiry = MutableStateFlow<Map<String, Long>>(emptyMap())
 
     val subscriptions: StateFlow<List<SubscriptionUiModel>> =
@@ -609,11 +645,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     nodeCount = allNodes.count { it.subscriptionId == s.id },
                     autoUpdateEnabled = s.autoUpdateEnabled,
                     premiumFeatureCount = premium[s.id]?.size ?: 0,
-                    trafficSummary = traffic[s.id],
+                    trafficSummary = traffic[s.id]?.summary,
                     expiryDaysLeft = expiry[s.id]?.let { expireEpochSec ->
                         val daysLeft = ((expireEpochSec * 1000L - System.currentTimeMillis()) / 86_400_000L).toInt()
                         daysLeft.coerceAtLeast(0)
-                    }
+                    },
+                    trafficRatio = traffic[s.id]?.ratio,
+                    updateIntervalHours = traffic[s.id]?.intervalHours,
+                    announce = traffic[s.id]?.announce
                 )
             }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -676,7 +715,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 importedCount = valid.size
                 _subscriptionPremium.value = _subscriptionPremium.value + (sub.id to payload.premiumFeatures)
                 payload.userInfo.takeIf { it.isNotEmpty() }?.let { info ->
-                    _subscriptionTraffic.value = _subscriptionTraffic.value + (sub.id to formatSubscriptionTraffic(info))
+                    val used = (info["upload"] ?: 0L) + (info["download"] ?: 0L)
+                    val total = info["total"] ?: 0L
+                    val meta = SubMeta(
+                        summary = formatSubscriptionTraffic(info),
+                        ratio = if (total > 0L) (used.toDouble() / total).coerceIn(0.0, 1.0).toFloat() else null,
+                        intervalHours = payload.updateIntervalHours?.takeIf { it in 1..8760 },
+                        announce = payload.premiumFeatures["announce"]?.take(240)?.ifBlank { null }
+                    )
+                    _subscriptionTraffic.value = _subscriptionTraffic.value + (sub.id to meta)
                     val expireEpochSec = info["expire"] ?: 0L
                     _subscriptionExpiry.value = if (expireEpochSec > 0L) {
                         _subscriptionExpiry.value + (sub.id to expireEpochSec)
@@ -848,6 +895,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pingNodeListInternal(targets, useUdp = true)
     }
 
+    /** Called when the server list is opened; pings everything once if the setting is on. */
+    fun pingOnOpenIfEnabled() {
+        if (!_settings.value.pingOnOpen || _isPinging.value) return
+        pingNodeListInternal(nodeEntities.value.filter { !it.isAutoNode })
+    }
+
     fun pingNodes(nodes: List<NodeUiModel>) {
         val nodeIds = nodes.map { it.id }.toSet()
         val targets = nodeEntities.value.filter { it.id in nodeIds }
@@ -856,20 +909,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun pingNodeListInternal(targets: List<NodeEntity>, useUdp: Boolean = false) {
         if (_isPinging.value || targets.isEmpty()) return
+        val cfg = _settings.value
+        val udp = useUdp || cfg.pingType == "udp"
+        val limit = cfg.pingConcurrency.coerceIn(1, 32)
         viewModelScope.launch(Dispatchers.IO) {
             _isPinging.value = true
-            log("Pinging ${targets.size} node(s), 15 at a time${if (useUdp) " (UDP)" else ""}…")
+            log("Pinging ${targets.size} node(s), $limit at a time${if (udp) " (UDP)" else ""}…")
             // Drop stale values first: the row must show "measuring", not the previous ping.
             val targetIds = targets.map { it.id }
             _serverTestResults.value = _serverTestResults.value - targetIds.toSet()
             _pingingNodeIds.value = targetIds.toSet()
             nodeDao.updatePingsBatch(targetIds.map { Pair(it, null as Int?) })
             val pending = java.util.Collections.synchronizedSet(targetIds.toMutableSet())
-            val semaphore = kotlinx.coroutines.sync.Semaphore(15)
+            val semaphore = kotlinx.coroutines.sync.Semaphore(limit)
             val jobs = targets.map { node ->
                 async {
                     semaphore.withPermit {
-                        val ping = if (useUdp) udpPing(node.server, node.port) else tcpPing(node.server, node.port)
+                        val ping = when {
+                            udp -> udpPing(node.server, node.port)
+                            cfg.pingType == "url" -> urlPing()
+                            else -> tcpPing(node.server, node.port)
+                        }
                         nodeDao.updatePing(node.id, ping.takeIf { it >= 0 })
                         synchronized(pending) {
                             pending.remove(node.id)
@@ -881,6 +941,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             jobs.awaitAll()
             _pingingNodeIds.value = emptySet()
             _isPinging.value = false
+            if (cfg.pingSortAfter) _sortByPing.value = true
             log("Ping finished for ${targets.size} node(s)")
         }
     }
@@ -893,7 +954,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Old value is dropped before measuring so the row never shows a stale ping.
             _serverTestResults.value = _serverTestResults.value - node.id
             nodeDao.updatePing(node.id, null)
-            val ping = tcpPing(node.server, node.port)
+            val ping = when (_settings.value.pingType) {
+                "udp" -> udpPing(node.server, node.port)
+                "url" -> urlPing()
+                else -> tcpPing(node.server, node.port)
+            }
             nodeDao.updatePing(node.id, ping.takeIf { it >= 0 })
             val result = if (ping >= 0) "$ping ms" else "Timeout"
             _serverTestResults.value = _serverTestResults.value + (node.id to result)
@@ -914,10 +979,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return targets.mapNotNull { it.link.takeIf { l -> l.isNotBlank() } }.joinToString("\n")
     }
 
-    private fun tcpPing(host: String, port: Int): Int = try {
+    private fun pingTimeout(): Int = _settings.value.pingTimeoutMs.coerceIn(500, 20_000)
+
+    private fun tcpPing(host: String, port: Int, timeoutMs: Int = pingTimeout()): Int = try {
         val start = System.nanoTime()
-        Socket().use { it.connect(InetSocketAddress(host, port), 3000) }
+        Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs) }
         ((System.nanoTime() - start) / 1_000_000).toInt()
+    } catch (e: Exception) {
+        -1
+    }
+
+    /** URL delay test: measures time to first response byte, like the url-test outbound. */
+    private fun urlPing(timeoutMs: Int = pingTimeout()): Int = try {
+        val url = URL(_settings.value.pingUrl.trim().ifBlank { "https://www.gstatic.com/generate_204" })
+        val conn = url.openConnection() as HttpURLConnection
+        conn.connectTimeout = timeoutMs
+        conn.readTimeout = timeoutMs
+        conn.requestMethod = "HEAD"
+        val start = System.nanoTime()
+        val code = conn.responseCode
+        conn.disconnect()
+        if (code in 200..399) ((System.nanoTime() - start) / 1_000_000).toInt() else -1
     } catch (e: Exception) {
         -1
     }
@@ -927,11 +1009,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Many VPN servers don't answer garbage datagrams, so on timeout we fall back
      * to an ICMP echo to the host to still get a latency estimate.
      */
-    private suspend fun udpPing(host: String, port: Int): Int = try {
+    private suspend fun udpPing(host: String, port: Int, timeoutMs: Int = pingTimeout()): Int = try {
         val address = java.net.InetAddress.getByName(host)
         var latency = -1
         java.net.DatagramSocket().use { socket ->
-            socket.soTimeout = 1500
+            socket.soTimeout = timeoutMs
             socket.connect(address, port)
             val payload = ByteArray(8)
             val buffer = ByteArray(128)

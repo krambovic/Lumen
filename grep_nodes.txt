@@ -1,0 +1,15 @@
+﻿
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:190:        pingOnOpen = prefs.getBoolean
+("ping_on_open", false),
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:191:        pingSortAfter = prefs.getBool
+ean("ping_sort_after", false)
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:255:            .putBoolean("ping_on_open
+", s.pingOnOpen)
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:256:            .putBoolean("ping_sort_af
+ter", s.pingSortAfter)
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:400:                    .sortedBy { it.la
+bel.lowercase(Locale.getDefault()) }
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:424:    val nodes: StateFlow<List<NodeUiM
+odel>> =
+
+

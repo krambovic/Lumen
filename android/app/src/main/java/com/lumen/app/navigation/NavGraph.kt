@@ -145,7 +145,10 @@ fun LumenApp(
 
     var settingsResetSignal by remember { mutableIntStateOf(0) }
 
-    CompositionLocalProvider(LocalStrings provides strings) {
+    CompositionLocalProvider(
+        LocalStrings provides strings,
+        com.lumen.ui.screens.LocalHapticsEnabled provides settings.hapticsEnabled
+    ) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -275,7 +278,8 @@ fun LumenApp(
             NavHost(
                 navController = navController,
                 startDestination = "dashboard",
-                modifier = Modifier.padding(padding),
+                // Bottom bar floats above content; screens reserve room with their own spacer.
+                modifier = Modifier.padding(top = padding.calculateTopPadding()),
                 enterTransition = {
                     val dir = if (isTabForward(initialState.destination.route, targetState.destination.route)) 1 else -1
                     slideInHorizontally(tween(320, easing = PremiumEasing)) { dir * it / 6 } +
@@ -304,6 +308,8 @@ fun LumenApp(
                     val nodes by viewModel.nodes.collectAsStateWithLifecycle()
                     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
                     val pingingNodeIds by viewModel.pingingNodeIds.collectAsStateWithLifecycle()
+                    // "Ping on open" setting: one automatic sweep per screen entry.
+                    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.pingOnOpenIfEnabled() }
                     DashboardScreen(
                         connectionState = connectionState,
                         nodes = nodes,

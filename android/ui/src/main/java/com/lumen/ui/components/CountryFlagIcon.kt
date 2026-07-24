@@ -35,7 +35,8 @@ fun CountryFlagIcon(
     fallbackText: String? = null
 ) {
     val code = countryCode.trim().uppercase(Locale.US)
-    val flagData = CountryFlagHelper.STRIPES[code]
+    // Unknown country: show the US flag placeholder instead of a protocol text badge.
+    val flagData = CountryFlagHelper.STRIPES[code] ?: CountryFlagHelper.STRIPES["US"]
     val shape = RoundedCornerShape(3.dp)
 
     if (flagData != null) {

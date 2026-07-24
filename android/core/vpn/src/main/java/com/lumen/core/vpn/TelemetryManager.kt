@@ -15,7 +15,8 @@ import java.util.UUID
 object TelemetryManager {
 
     private const val TELEMETRY_URL = "https://diagnostics.lumen-kvn.eu.cc/api/ingest"
-    private const val APP_VERSION = "0.7.0"
+    // Filled by the app layer from BuildConfig so the reported version never drifts.
+    var appVersion: String = "0.7.0"
     // A 15-minute loop kept waking the radio for the whole session; daily is enough.
     private const val HEARTBEAT_INTERVAL_MS = 24 * 60 * 60 * 1000L
     private var heartbeatJob: Job? = null
@@ -51,7 +52,7 @@ object TelemetryManager {
             val installId = getInstallId(context)
             val json = JSONObject().apply {
                 put("kind", "heartbeat")
-                put("app_version", APP_VERSION)
+                put("app_version", appVersion)
                 put("platform", "android")
                 put("install_id", installId)
                 put("ts", System.currentTimeMillis() / 1000)
@@ -60,7 +61,7 @@ object TelemetryManager {
             val connection = (URL(TELEMETRY_URL).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                setRequestProperty("User-Agent", "Lumen-Android/$APP_VERSION")
+                setRequestProperty("User-Agent", "Lumen-Android/$appVersion")
                 connectTimeout = 10000
                 readTimeout = 10000
                 doOutput = true

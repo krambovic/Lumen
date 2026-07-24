@@ -66,6 +66,9 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -121,6 +124,8 @@ fun DashboardScreen(
     var showUsdtDialog by remember { mutableStateOf(false) }
     val uriHandler = LocalUriHandler.current
     val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
+    val hapticsEnabled = LocalHapticsEnabled.current
     // Subscription properties dialog state
     var propertiesSub by remember { mutableStateOf<SubscriptionUiModel?>(null) }
 
@@ -167,7 +172,7 @@ fun DashboardScreen(
                 }
             )
         } else {
-            LumenScreenHeader(title = "Lumen", subtitle = "v0.7.0", actions = {
+            LumenScreenHeader(title = "Lumen", subtitle = "v${LumenVersion.appVersion}", actions = {
                 IconButton(onClick = { uriHandler.openUri("https://github.com/krambovic/Lumen") }) {
                     Icon(Icons.Filled.Code, contentDescription = "GitHub")
                 }
@@ -344,6 +349,7 @@ fun DashboardScreen(
                                         }
                                     },
                                     onLongClick = {
+                                        if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                         isSelectionMode = true
                                         selectedNodeIds = setOf(node.id)
                                     },
@@ -486,7 +492,10 @@ fun DashboardScreen(
         ) {
             ConnectionSliderBar(
                 connectionState = connectionState,
-                onToggleConnection = onToggleConnection
+                onToggleConnection = {
+                    if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onToggleConnection()
+                }
             )
         }
     }
@@ -861,11 +870,31 @@ private fun SubscriptionInfoBar(sub: SubscriptionUiModel) {
         }
         Spacer(Modifier.height(6.dp))
         LinearProgressIndicator(
-            progress = { 0.25f },
+            // Real usage ratio from subscription-userinfo; unlimited plans stay empty.
+            progress = { sub.trafficRatio ?: 0f },
             modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
             color = primaryColor,
             trackColor = primaryColor.copy(alpha = 0.2f)
         )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = buildString {
+                append("${sub.nodeCount} ${strings.serverCount}")
+                sub.updateIntervalHours?.let { append("  |  \u21bb ${it}h") }
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp
+        )
+        sub.announce?.takeIf { it.isNotBlank() }?.let { announce ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = announce,
+                style = MaterialTheme.typography.bodySmall,
+                color = primaryColor,
+                fontSize = 11.sp
+            )
+        }
     }
 }
 
@@ -888,9 +917,12 @@ private fun ServerTileRow(
     val strings = LocalStrings.current
     val selected = node.isSelected
     val primaryColor = MaterialTheme.colorScheme.primary
+    // On AMOLED the surface is pure black, so tiles are tinted with the palette accent instead.
+    val amoled = MaterialTheme.colorScheme.background.luminance() < 0.02f
     val rowBg = when {
-        isSelectionMode && isNodeSelected -> primaryColor.copy(alpha = 0.18f)
-        selected -> primaryColor.copy(alpha = 0.14f)
+        isSelectionMode && isNodeSelected -> primaryColor.copy(alpha = if (amoled) 0.24f else 0.18f)
+        selected -> primaryColor.copy(alpha = if (amoled) 0.20f else 0.14f)
+        amoled -> primaryColor.copy(alpha = 0.08f)
         else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     }
     var showActionMenu by remember { mutableStateOf(false) }
@@ -945,9 +977,11 @@ private fun ServerTileRow(
                 Spacer(Modifier.width(8.dp))
             }
 
+            // Larger flags on the dashboard; unknown codes fall back to the US placeholder.
             CountryFlagIcon(
                 countryCode = node.countryCode,
-                fallbackText = node.displayProtocol.take(3)
+                width = 34.dp,
+                height = 23.dp
             )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {

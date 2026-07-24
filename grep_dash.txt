@@ -1,0 +1,16 @@
+﻿
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\DashboardScreen.kt:89:    onToggleConnection: () -> Uni
+t,
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\DashboardScreen.kt:347:                                
+    onLongClick = {
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\DashboardScreen.kt:490:                onToggleConnecti
+on = onToggleConnection
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\DashboardScreen.kt:850:                    text = sub.t
+rafficSummary ?: "— / ∞",
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\DashboardScreen.kt:857:                text = sub.expir
+yDaysLeft?.let { "$it ${strings.daysRemaining}" } ?: strings.expiresUnlimited,
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\DashboardScreen.kt:882:    onLongClick: () -> Unit,
+Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\DashboardScreen.kt:916:                onLongClick = on
+LongClick
+
+

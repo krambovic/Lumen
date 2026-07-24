@@ -1,0 +1,13 @@
+﻿
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:633:                    premiumFeatureCou
+nt = premium[s.id]?.size ?: 0,
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:634:                    trafficSummary = 
+traffic[s.id],
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:635:                    expiryDaysLeft = 
+expiry[s.id]?.let { expireEpochSec ->
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:700:                payload.userInfo.take
+If { it.isNotEmpty() }?.let { info ->
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:716:                        name = payloa
+d.profileTitle?.take(160)?.ifBlank { sub.name } ?: sub.name,
+
+

@@ -1,0 +1,39 @@
+﻿
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:38:import com.lumen.ui.screens.SettingsUi
+State
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:77:            prefs.edit().putString("su
+bscription_hwid", it).apply()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:109:    val settings: StateFlow<SettingsU
+iState> = _settings
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:111:    private fun loadSettings() = Sett
+ingsUiState(
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:173:            ThemePreset.valueOf(prefs
+.getString("theme_preset", ThemePreset.DARK.name) ?: ThemePreset.DARK.name)
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:176:        useAmoledBlack = prefs.getBoo
+lean("use_amoled_black", false)
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:179:    fun updateSettings(s: SettingsUiS
+tate) {
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:181:        prefs.edit()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:232:            .putString("theme_preset"
+, s.themePreset.name)
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:234:            .putBoolean("use_amoled_b
+lack", s.useAmoledBlack)
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:326:        prefs.edit().putString("split
+_mode", mode.name).apply()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:334:        prefs.edit().putStringSet("sp
+lit_packages", next).apply()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:344:        prefs.edit().putStringSet("sp
+lit_packages", selected).apply()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:349:        prefs.edit().putStringSet("sp
+lit_packages", emptySet()).apply()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:456:        prefs.edit().putString("selec
+ted_node_id", node.id).apply()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:771:            prefs.edit().putString("s
+ubscription_user_agent", it).apply()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:775:            prefs.edit().putString("s
+erver_speed_test_type", it.take(32)).apply()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:798:                prefs.edit().putStrin
+gSet("split_packages", packages).apply()
+Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:1075:        prefs.edit()
+
+

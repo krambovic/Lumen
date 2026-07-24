@@ -35,9 +35,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -66,7 +70,7 @@ import androidx.compose.ui.unit.dp
 private val PremiumEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 private val LANGUAGES = listOf("en", "ru", "fa", "zh")
-private enum class SettingsPage { HUB, SUBSCRIPTIONS, TRAFFIC, DNS, APP, THEME }
+private enum class SettingsPage { HUB, SUBSCRIPTIONS, TRAFFIC, DNS, PING, APP, THEME }
 
 private fun languageLabel(code: String): String = when (code) {
     "ru" -> "Русский"
@@ -133,6 +137,7 @@ fun SettingsScreen(
                     onSubscriptions = { page = SettingsPage.SUBSCRIPTIONS },
                     onTraffic = { page = SettingsPage.TRAFFIC },
                     onDns = { page = SettingsPage.DNS },
+                    onPing = { page = SettingsPage.PING },
                     onApp = { page = SettingsPage.APP },
                     onRouting = onOpenRouting,
                     onLogs = onOpenLogs,
@@ -149,6 +154,10 @@ fun SettingsScreen(
                 SettingsPage.DNS -> {
                     LumenScreenHeader(title = s.dnsSettings, onBack = { page = SettingsPage.HUB })
                     DnsSettings(state, onUpdate)
+                }
+                SettingsPage.PING -> {
+                    LumenScreenHeader(title = s.pingSettings, onBack = { page = SettingsPage.HUB })
+                    PingSettings(state, onUpdate)
                 }
                 SettingsPage.APP -> {
                     LumenScreenHeader(title = s.appSettings, onBack = { page = SettingsPage.HUB })
@@ -167,6 +176,7 @@ private fun SettingsHub(
     onSubscriptions: () -> Unit,
     onTraffic: () -> Unit,
     onDns: () -> Unit,
+    onPing: () -> Unit,
     onApp: () -> Unit,
     onRouting: () -> Unit,
     onLogs: () -> Unit,
@@ -175,26 +185,37 @@ private fun SettingsHub(
     val s = LocalStrings.current
     LumenScreenHeader(title = s.settings)
     Spacer(Modifier.height(8.dp))
+    SectionHeader(s.categoryAppearance)
     SettingsCard {
-        SettingsMenuRow(Icons.Filled.Settings, s.themeSettings, onTheme)
-        SettingsDivider()
-        SettingsMenuRow(Icons.AutoMirrored.Filled.List, s.subscriptionSettings, onSubscriptions)
-        SettingsDivider()
-        SettingsMenuRow(Icons.AutoMirrored.Filled.Send, s.trafficSettings, onTraffic)
-        SettingsDivider()
-        SettingsMenuRow(Icons.Filled.Settings, s.dnsSettings, onDns)
-        SettingsDivider()
-        SettingsMenuRow(Icons.AutoMirrored.Filled.List, s.routing, onRouting)
+        SettingsMenuRow(Icons.Filled.Palette, s.themeSettings, onTheme)
         SettingsDivider()
         SettingsMenuRow(Icons.Filled.Settings, s.appSettings, onApp)
+    }
+    SectionHeader(s.categoryConnection)
+    SettingsCard {
+        SettingsMenuRow(Icons.AutoMirrored.Filled.Send, s.trafficSettings, onTraffic)
         SettingsDivider()
+        SettingsMenuRow(Icons.Filled.Dns, s.dnsSettings, onDns)
+        SettingsDivider()
+        SettingsMenuRow(Icons.Filled.Speed, s.pingSettings, onPing)
+    }
+    SectionHeader(s.categoryTunnel)
+    SettingsCard {
+        SettingsMenuRow(Icons.AutoMirrored.Filled.List, s.routing, onRouting)
+    }
+    SectionHeader(s.categoryProviders)
+    SettingsCard {
+        SettingsMenuRow(Icons.Filled.CloudDownload, s.subscriptionSettings, onSubscriptions)
+    }
+    SectionHeader(s.categoryOther)
+    SettingsCard {
         SettingsMenuRow(Icons.Filled.Menu, s.logs, onLogs)
     }
     SectionHeader(s.infoSection)
     SettingsCard {
-        InfoRow(s.version, "0.7.0")
+        InfoRow(s.version, LumenVersion.appVersion)
         SettingsDivider()
-        InfoRow("sing-box extended", "1.13.14-extended-2.5.2")
+        InfoRow("sing-box extended", LumenVersion.ENGINE)
     }
     Spacer(Modifier.height(18.dp))
     SettingsCard {
@@ -212,7 +233,7 @@ private fun SubscriptionSettings(state: SettingsUiState, onUpdate: (SettingsUiSt
         label = "User-Agent",
         options = listOf(
             "Happ/2.18.3/Windows/2606241603601",
-            "Lumen-Subscription/Android-0.7.0",
+            "Lumen-Subscription/Android-${LumenVersion.appVersion}",
             "SFA/1.11.0",
             "clash.meta",
             "v2rayNG/1.10.31"
@@ -490,12 +511,65 @@ private fun TrafficSettings(
 }
 
 @Composable
+private fun PingSettings(
+    state: SettingsUiState,
+    onUpdate: (SettingsUiState) -> Unit
+) {
+    val s = LocalStrings.current
+    SectionHeader(s.ping)
+    SettingsCard {
+        Spacer(Modifier.height(10.dp))
+        LumenDropdown(
+            label = s.pingTypeLabel,
+            options = PING_TYPES,
+            selected = state.pingType,
+            onSelected = { onUpdate(state.copy(pingType = it)) },
+            optionLabel = { it.uppercase() }
+        )
+        if (state.pingType == "url") {
+            TextSettingField(s.pingUrlLabel, state.pingUrl) { onUpdate(state.copy(pingUrl = it.take(256))) }
+        }
+        NumberField(s.pingTimeoutLabel, state.pingTimeoutMs) {
+            onUpdate(state.copy(pingTimeoutMs = it.coerceIn(500, 20000)))
+        }
+        NumberField(s.pingConcurrencyLabel, state.pingConcurrency) {
+            onUpdate(state.copy(pingConcurrency = it.coerceIn(1, 32)))
+        }
+        Spacer(Modifier.height(6.dp))
+    }
+    SectionHeader(s.behavior)
+    SettingsCard {
+        Spacer(Modifier.height(4.dp))
+        ToggleRow(s.pingAutoOnOpen, s.pingAutoOnOpenDesc, state.pingOnOpen) {
+            onUpdate(state.copy(pingOnOpen = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.pingSortAfter, s.pingSortAfterDesc, state.pingSortAfter) {
+            onUpdate(state.copy(pingSortAfter = it))
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+@Composable
 private fun AppSettings(
     state: SettingsUiState,
     onUpdate: (SettingsUiState) -> Unit,
     onLanguageChange: (String) -> Unit
 ) {
     val s = LocalStrings.current
+    SectionHeader(s.behavior)
+    SettingsCard {
+        Spacer(Modifier.height(4.dp))
+        ToggleRow(s.vibration, s.vibrationDesc, state.hapticsEnabled) {
+            onUpdate(state.copy(hapticsEnabled = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.autoConnect, s.autoConnectDescription, state.autoConnectOnBoot) {
+            onUpdate(state.copy(autoConnectOnBoot = it))
+        }
+        Spacer(Modifier.height(4.dp))
+    }
     SectionHeader(s.localProxy)
     SettingsCard {
         Spacer(Modifier.height(4.dp))

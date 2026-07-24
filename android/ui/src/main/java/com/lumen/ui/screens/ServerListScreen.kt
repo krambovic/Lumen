@@ -33,6 +33,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,8 +68,11 @@ fun ServerListScreen(
     onRefreshSubscription: (SubscriptionUiModel) -> Unit,
     onDeleteSubscription: (SubscriptionUiModel) -> Unit,
     onToggleAutoUpdate: (SubscriptionUiModel, Boolean) -> Unit,
+    onOpen: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    // "Ping on open" setting is handled by the caller; fired once per screen entry.
+    LaunchedEffect(Unit) { onOpen() }
     val s = LocalStrings.current
     var query by remember { mutableStateOf("") }
     var group by remember { mutableStateOf("all") }
@@ -227,10 +231,7 @@ private fun NodeRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (node.isAutoNode) Text("⚡", Modifier.width(24.dp))
-        else CountryFlagIcon(
-            countryCode = node.countryCode,
-            fallbackText = node.displayProtocol.take(3)
-        )
+        else CountryFlagIcon(countryCode = node.countryCode, width = 30.dp, height = 20.dp)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(node.name, maxLines = 1, overflow = TextOverflow.Ellipsis)

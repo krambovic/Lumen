@@ -1,0 +1,321 @@
+> Task :core:vpn:preBuild UP-TO-DATE
+> Task :core:vpn:preReleaseBuild UP-TO-DATE
+> Task :core:database:preBuild UP-TO-DATE
+> Task :core:engine:preBuild UP-TO-DATE
+> Task :core:database:preReleaseBuild UP-TO-DATE
+> Task :core:engine:preReleaseBuild UP-TO-DATE
+> Task :core:engine:writeReleaseAarMetadata UP-TO-DATE
+> Task :core:config:preBuild UP-TO-DATE
+> Task :core:config:preReleaseBuild UP-TO-DATE
+> Task :core:database:writeReleaseAarMetadata UP-TO-DATE
+> Task :core:engine:generateReleaseResValues UP-TO-DATE
+> Task :core:config:writeReleaseAarMetadata UP-TO-DATE
+> Task :core:vpn:writeReleaseAarMetadata UP-TO-DATE
+> Task :ui:preBuild UP-TO-DATE
+> Task :ui:preReleaseBuild UP-TO-DATE
+> Task :app:buildKotlinToolingMetadata UP-TO-DATE
+> Task :core:database:generateReleaseResValues UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :core:engine:generateReleaseResources UP-TO-DATE
+> Task :core:config:generateReleaseResValues UP-TO-DATE
+> Task :core:vpn:generateReleaseResValues UP-TO-DATE
+> Task :core:database:generateReleaseResources UP-TO-DATE
+> Task :core:config:generateReleaseResources UP-TO-DATE
+> Task :app:generateReleaseBuildConfig UP-TO-DATE
+> Task :core:vpn:generateReleaseResources UP-TO-DATE
+> Task :ui:writeReleaseAarMetadata UP-TO-DATE
+> Task :app:generateReleaseResValues UP-TO-DATE
+> Task :core:engine:packageReleaseResources UP-TO-DATE
+> Task :ui:generateReleaseResValues UP-TO-DATE
+> Task :ui:generateReleaseResources UP-TO-DATE
+> Task :core:database:packageReleaseResources UP-TO-DATE
+> Task :core:database:extractDeepLinksRelease UP-TO-DATE
+> Task :core:engine:extractDeepLinksRelease UP-TO-DATE
+> Task :core:config:packageReleaseResources UP-TO-DATE
+> Task :core:config:extractDeepLinksRelease UP-TO-DATE
+> Task :core:database:processReleaseManifest UP-TO-DATE
+> Task :ui:packageReleaseResources UP-TO-DATE
+> Task :core:vpn:packageReleaseResources UP-TO-DATE
+> Task :core:database:compileReleaseLibraryResources UP-TO-DATE
+> Task :core:config:processReleaseManifest UP-TO-DATE
+> Task :ui:extractDeepLinksRelease UP-TO-DATE
+> Task :core:engine:processReleaseManifest UP-TO-DATE
+> Task :core:config:compileReleaseLibraryResources UP-TO-DATE
+> Task :core:engine:compileReleaseLibraryResources UP-TO-DATE
+> Task :ui:processReleaseManifest UP-TO-DATE
+> Task :ui:compileReleaseLibraryResources UP-TO-DATE
+> Task :core:vpn:extractDeepLinksRelease UP-TO-DATE
+> Task :core:vpn:processReleaseManifest UP-TO-DATE
+> Task :core:database:parseReleaseLocalResources UP-TO-DATE
+> Task :core:vpn:compileReleaseLibraryResources UP-TO-DATE
+> Task :core:database:generateReleaseRFile UP-TO-DATE
+> Task :core:database:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:config:parseReleaseLocalResources UP-TO-DATE
+> Task :core:config:generateReleaseRFile UP-TO-DATE
+> Task :core:config:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:engine:parseReleaseLocalResources UP-TO-DATE
+> Task :ui:parseReleaseLocalResources UP-TO-DATE
+> Task :core:engine:generateReleaseRFile UP-TO-DATE
+> Task :core:engine:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :ui:generateReleaseRFile UP-TO-DATE
+> Task :ui:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:vpn:parseReleaseLocalResources UP-TO-DATE
+> Task :core:vpn:generateReleaseRFile UP-TO-DATE
+> Task :core:vpn:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:vpn:javaPreCompileRelease UP-TO-DATE
+> Task :core:vpn:extractProguardFiles UP-TO-DATE
+> Task :core:vpn:prepareLintJarForPublish UP-TO-DATE
+> Task :core:vpn:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :core:vpn:mergeReleaseNativeLibs NO-SOURCE
+> Task :core:vpn:stripReleaseDebugSymbols NO-SOURCE
+> Task :core:vpn:copyReleaseJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :core:vpn:extractDeepLinksForAarRelease UP-TO-DATE
+> Task :core:vpn:mergeReleaseShaders UP-TO-DATE
+> Task :core:vpn:compileReleaseShaders NO-SOURCE
+> Task :core:vpn:generateReleaseAssets UP-TO-DATE
+> Task :core:vpn:packageReleaseAssets UP-TO-DATE
+> Task :core:vpn:prepareReleaseArtProfile UP-TO-DATE
+> Task :core:vpn:writeReleaseLintModelMetadata UP-TO-DATE
+> Task :core:vpn:copyReleaseJniLibsProjectOnly UP-TO-DATE
+> Task :core:engine:compileReleaseKotlin UP-TO-DATE
+> Task :core:engine:javaPreCompileRelease UP-TO-DATE
+> Task :core:engine:compileReleaseJavaWithJavac NO-SOURCE
+> Task :core:engine:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :core:engine:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :core:engine:processReleaseJavaRes UP-TO-DATE
+> Task :core:engine:createFullJarRelease UP-TO-DATE
+> Task :core:engine:extractProguardFiles UP-TO-DATE
+> Task :core:config:compileReleaseKotlin UP-TO-DATE
+> Task :core:vpn:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :core:config:javaPreCompileRelease UP-TO-DATE
+> Task :core:engine:generateReleaseLintModel UP-TO-DATE
+> Task :core:engine:prepareLintJarForPublish UP-TO-DATE
+> Task :core:engine:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :core:vpn:mergeReleaseResources UP-TO-DATE
+> Task :core:config:compileReleaseJavaWithJavac NO-SOURCE
+> Task :core:engine:mergeReleaseNativeLibs NO-SOURCE
+> Task :core:config:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :core:config:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :core:engine:stripReleaseDebugSymbols NO-SOURCE
+> Task :core:engine:copyReleaseJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :core:config:processReleaseJavaRes UP-TO-DATE
+> Task :core:config:createFullJarRelease UP-TO-DATE
+> Task :core:config:extractProguardFiles UP-TO-DATE
+> Task :core:config:generateReleaseLintModel UP-TO-DATE
+> Task :core:engine:extractDeepLinksForAarRelease UP-TO-DATE
+> Task :core:config:prepareLintJarForPublish UP-TO-DATE
+> Task :core:config:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :core:config:mergeReleaseNativeLibs NO-SOURCE
+> Task :core:config:stripReleaseDebugSymbols NO-SOURCE
+> Task :core:config:copyReleaseJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :core:config:extractDeepLinksForAarRelease UP-TO-DATE
+> Task :core:vpn:verifyReleaseResources UP-TO-DATE
+> Task :core:engine:extractReleaseAnnotations UP-TO-DATE
+> Task :core:engine:mergeReleaseGeneratedProguardFiles UP-TO-DATE
+> Task :core:config:extractReleaseAnnotations UP-TO-DATE
+> Task :core:engine:mergeReleaseConsumerProguardFiles UP-TO-DATE
+> Task :core:config:mergeReleaseGeneratedProguardFiles UP-TO-DATE
+> Task :core:engine:mergeReleaseShaders UP-TO-DATE
+> Task :core:engine:compileReleaseShaders NO-SOURCE
+> Task :core:engine:generateReleaseAssets UP-TO-DATE
+> Task :core:config:mergeReleaseConsumerProguardFiles UP-TO-DATE
+> Task :core:engine:packageReleaseAssets UP-TO-DATE
+> Task :core:engine:prepareReleaseArtProfile UP-TO-DATE
+> Task :core:vpn:compileReleaseKotlin UP-TO-DATE
+> Task :core:engine:mergeReleaseJavaResource UP-TO-DATE
+> Task :core:engine:syncReleaseLibJars UP-TO-DATE
+> Task :core:engine:bundleReleaseLocalLintAar UP-TO-DATE
+> Task :core:config:mergeReleaseShaders UP-TO-DATE
+> Task :core:vpn:compileReleaseJavaWithJavac UP-TO-DATE
+> Task :core:vpn:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :core:config:compileReleaseShaders NO-SOURCE
+> Task :core:config:generateReleaseAssets UP-TO-DATE
+> Task :core:vpn:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :core:config:packageReleaseAssets UP-TO-DATE
+> Task :core:vpn:processReleaseJavaRes UP-TO-DATE
+> Task :core:config:prepareReleaseArtProfile UP-TO-DATE
+> Task :core:config:mergeReleaseJavaResource UP-TO-DATE
+> Task :core:config:syncReleaseLibJars UP-TO-DATE
+> Task :app:checkReleaseAarMetadata UP-TO-DATE
+> Task :core:database:kspReleaseKotlin UP-TO-DATE
+> Task :core:vpn:createFullJarRelease
+> Task :core:engine:lintVitalAnalyzeRelease UP-TO-DATE
+> Task :app:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :app:generateReleaseResources UP-TO-DATE
+> Task :core:engine:writeReleaseLintModelMetadata UP-TO-DATE
+> Task :core:config:bundleReleaseLocalLintAar UP-TO-DATE
+> Task :app:mergeReleaseResources UP-TO-DATE
+> Task :app:packageReleaseResources UP-TO-DATE
+> Task :app:parseReleaseLocalResources UP-TO-DATE
+> Task :app:createReleaseCompatibleScreenManifests UP-TO-DATE
+> Task :core:engine:generateReleaseLintVitalModel UP-TO-DATE
+> Task :app:extractDeepLinksRelease UP-TO-DATE
+> Task :core:engine:copyReleaseJniLibsProjectOnly UP-TO-DATE
+> Task :core:engine:bundleLibRuntimeToDirRelease UP-TO-DATE
+> Task :app:processReleaseMainManifest UP-TO-DATE
+> Task :app:processReleaseManifest UP-TO-DATE
+> Task :app:processReleaseManifestForPackage UP-TO-DATE
+> Task :core:config:lintVitalAnalyzeRelease UP-TO-DATE
+> Task :core:config:writeReleaseLintModelMetadata UP-TO-DATE
+> Task :core:database:compileReleaseKotlin UP-TO-DATE
+> Task :core:config:generateReleaseLintVitalModel UP-TO-DATE
+> Task :core:config:copyReleaseJniLibsProjectOnly UP-TO-DATE
+> Task :core:database:javaPreCompileRelease UP-TO-DATE
+> Task :core:config:bundleLibRuntimeToDirRelease UP-TO-DATE
+> Task :core:database:compileReleaseJavaWithJavac UP-TO-DATE
+> Task :core:database:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :core:database:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :ui:compileReleaseKotlin UP-TO-DATE
+> Task :ui:javaPreCompileRelease UP-TO-DATE
+> Task :core:database:processReleaseJavaRes UP-TO-DATE
+> Task :core:database:createFullJarRelease UP-TO-DATE
+> Task :core:database:extractProguardFiles UP-TO-DATE
+> Task :ui:compileReleaseJavaWithJavac NO-SOURCE
+> Task :ui:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :ui:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :ui:processReleaseJavaRes UP-TO-DATE
+> Task :core:vpn:generateReleaseLintModel
+> Task :app:processReleaseResources UP-TO-DATE
+> Task :core:vpn:extractReleaseAnnotations
+> Task :core:vpn:mergeReleaseGeneratedProguardFiles UP-TO-DATE
+> Task :core:database:generateReleaseLintModel UP-TO-DATE
+> Task :core:database:prepareLintJarForPublish UP-TO-DATE
+> Task :core:vpn:mergeReleaseConsumerProguardFiles UP-TO-DATE
+> Task :core:vpn:mergeReleaseJavaResource UP-TO-DATE
+> Task :core:database:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :core:database:mergeReleaseNativeLibs NO-SOURCE
+> Task :core:database:stripReleaseDebugSymbols NO-SOURCE
+> Task :core:database:copyReleaseJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :core:database:extractDeepLinksForAarRelease UP-TO-DATE
+> Task :core:vpn:syncReleaseLibJars
+> Task :core:database:extractReleaseAnnotations UP-TO-DATE
+> Task :core:database:mergeReleaseGeneratedProguardFiles UP-TO-DATE
+> Task :core:database:mergeReleaseConsumerProguardFiles UP-TO-DATE
+> Task :core:database:mergeReleaseShaders UP-TO-DATE
+> Task :core:database:compileReleaseShaders NO-SOURCE
+> Task :core:database:generateReleaseAssets UP-TO-DATE
+> Task :core:database:packageReleaseAssets UP-TO-DATE
+> Task :core:database:prepareReleaseArtProfile UP-TO-DATE
+> Task :ui:createFullJarRelease
+> Task :ui:extractProguardFiles UP-TO-DATE
+> Task :core:database:mergeReleaseJavaResource UP-TO-DATE
+> Task :app:kspReleaseKotlin UP-TO-DATE
+> Task :core:database:syncReleaseLibJars UP-TO-DATE
+> Task :core:vpn:bundleReleaseLocalLintAar
+> Task :core:database:bundleReleaseLocalLintAar UP-TO-DATE
+> Task :app:compileReleaseKotlin UP-TO-DATE
+> Task :app:javaPreCompileRelease UP-TO-DATE
+> Task :app:compileReleaseJavaWithJavac UP-TO-DATE
+> Task :app:extractProguardFiles UP-TO-DATE
+> Task :core:database:lintVitalAnalyzeRelease UP-TO-DATE
+> Task :core:database:writeReleaseLintModelMetadata UP-TO-DATE
+> Task :core:database:generateReleaseLintVitalModel UP-TO-DATE
+> Task :app:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :core:database:copyReleaseJniLibsProjectOnly UP-TO-DATE
+> Task :core:database:bundleLibRuntimeToDirRelease UP-TO-DATE
+> Task :app:checkReleaseDuplicateClasses UP-TO-DATE
+> Task :ui:generateReleaseLintModel
+> Task :ui:prepareLintJarForPublish UP-TO-DATE
+> Task :ui:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :ui:mergeReleaseNativeLibs NO-SOURCE
+> Task :ui:stripReleaseDebugSymbols NO-SOURCE
+> Task :ui:copyReleaseJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :core:vpn:generateReleaseLintVitalModel
+> Task :ui:extractDeepLinksForAarRelease UP-TO-DATE
+> Task :ui:extractReleaseAnnotations
+> Task :ui:mergeReleaseGeneratedProguardFiles UP-TO-DATE
+> Task :ui:mergeReleaseConsumerProguardFiles UP-TO-DATE
+> Task :ui:mergeReleaseShaders UP-TO-DATE
+> Task :ui:compileReleaseShaders NO-SOURCE
+> Task :ui:generateReleaseAssets UP-TO-DATE
+> Task :ui:packageReleaseAssets UP-TO-DATE
+> Task :ui:prepareReleaseArtProfile UP-TO-DATE
+> Task :ui:mergeReleaseJavaResource UP-TO-DATE
+> Task :core:config:bundleReleaseAar UP-TO-DATE
+> Task :core:config:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :core:config:mergeReleaseResources UP-TO-DATE
+> Task :core:config:verifyReleaseResources UP-TO-DATE
+> Task :core:config:assembleRelease UP-TO-DATE
+> Task :core:database:bundleReleaseAar UP-TO-DATE
+> Task :core:database:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :core:database:mergeReleaseResources UP-TO-DATE
+> Task :core:database:verifyReleaseResources UP-TO-DATE
+> Task :core:database:assembleRelease UP-TO-DATE
+> Task :core:engine:bundleReleaseAar UP-TO-DATE
+> Task :core:engine:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :core:engine:mergeReleaseResources UP-TO-DATE
+> Task :core:engine:verifyReleaseResources UP-TO-DATE
+> Task :core:engine:assembleRelease UP-TO-DATE
+> Task :core:vpn:bundleReleaseAar
+> Task :core:vpn:assembleRelease
+> Task :core:vpn:bundleLibRuntimeToDirRelease
+> Task :ui:syncReleaseLibJars
+> Task :ui:bundleReleaseLocalLintAar
+> Task :ui:writeReleaseLintModelMetadata UP-TO-DATE
+> Task :ui:generateReleaseLintVitalModel
+> Task :ui:copyReleaseJniLibsProjectOnly UP-TO-DATE
+> Task :ui:bundleReleaseAar
+> Task :ui:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :ui:mergeReleaseResources UP-TO-DATE
+> Task :ui:verifyReleaseResources UP-TO-DATE
+> Task :ui:assembleRelease
+> Task :app:dexBuilderRelease
+> Task :app:generateReleaseLintVitalReportModel
+> Task :app:mergeReleaseNativeLibs UP-TO-DATE
+> Task :app:stripReleaseDebugSymbols UP-TO-DATE
+> Task :app:extractReleaseNativeSymbolTables UP-TO-DATE
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:desugarReleaseFileDependencies UP-TO-DATE
+> Task :app:mergeReleaseStartupProfile UP-TO-DATE
+> Task :app:mergeExtDexRelease UP-TO-DATE
+> Task :ui:bundleLibRuntimeToDirRelease
+> Task :app:mergeReleaseArtProfile UP-TO-DATE
+> Task :app:mergeReleaseShaders UP-TO-DATE
+> Task :app:compileReleaseShaders NO-SOURCE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:mergeReleaseAssets UP-TO-DATE
+> Task :app:compressReleaseAssets UP-TO-DATE
+> Task :app:extractReleaseVersionControlInfo UP-TO-DATE
+> Task :app:processReleaseJavaRes UP-TO-DATE
+> Task :app:mergeReleaseJavaResource UP-TO-DATE
+> Task :app:optimizeReleaseResources UP-TO-DATE
+> Task :app:collectReleaseDependencies UP-TO-DATE
+> Task :app:sdkReleaseDependencyData UP-TO-DATE
+> Task :app:validateSigningRelease UP-TO-DATE
+> Task :app:writeReleaseAppMetadata UP-TO-DATE
+> Task :app:writeReleaseSigningConfigVersions UP-TO-DATE
+> Task :app:processApplicationManifestReleaseForBundle UP-TO-DATE
+> Task :app:bundleReleaseResources UP-TO-DATE
+> Task :app:configureReleaseDependencies UP-TO-DATE
+> Task :app:parseReleaseIntegrityConfig UP-TO-DATE
+> Task :core:vpn:lintVitalAnalyzeRelease
+> Task :app:mergeReleaseGlobalSynthetics UP-TO-DATE
+> Task :app:mergeDexRelease
+> Task :app:compileReleaseArtProfile
+> Task :app:buildReleasePreBundle
+> Task :ui:lintVitalAnalyzeRelease
+> Task :app:packageReleaseBundle
+> Task :app:packageRelease
+> Task :app:createReleaseApkListingFileRedirect UP-TO-DATE
+> Task :app:lintVitalAnalyzeRelease
+> Task :app:lintVitalReportRelease
+> Task :app:lintVitalRelease
+> Task :app:assembleRelease
+> Task :app:signReleaseBundle
+> Task :app:produceReleaseBundleIdeListingFile
+> Task :app:createReleaseBundleListingFileRedirect UP-TO-DATE
+> Task :app:bundleRelease
+
+[Incubating] Problems report is available at: file:///C:/Lumen-KVN-release/android/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.3.0/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 57s
+258 actionable tasks: 30 executed, 228 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.3.0/userguide/configuration_cache_enabling.html

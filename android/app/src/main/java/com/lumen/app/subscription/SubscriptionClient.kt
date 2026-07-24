@@ -32,7 +32,7 @@ internal object SubscriptionClient {
         "ping-type", "change-user-agent", "per-app-proxy-mode",
         "per-app-proxy-list", "sniffing-enable", "subscriptions-collapse",
         "ping-result", "mux-enable", "mux-tcp-connections",
-        "mux-xudp-connections", "mux-quic", "exclude-routes"
+        "mux-xudp-connections", "mux-quic", "exclude-routes", "announce"
     )
 
     private val placeholderMarkers = listOf(

@@ -33,7 +33,11 @@ data class SubscriptionUiModel(
     val autoUpdateEnabled: Boolean = true,
     val premiumFeatureCount: Int = 0,
     val trafficSummary: String? = null,
-    val expiryDaysLeft: Int? = null
+    val expiryDaysLeft: Int? = null,
+    // Premium API extras shown on the dashboard card.
+    val trafficRatio: Float? = null,
+    val updateIntervalHours: Int? = null,
+    val announce: String? = null
 )
 
 @Immutable
@@ -142,7 +146,14 @@ data class SettingsUiState(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val themePreset: ThemePreset = ThemePreset.DARK,
     val useMaterialYou: Boolean = false,
-    val useAmoledBlack: Boolean = false
+    val useAmoledBlack: Boolean = false,
+    val hapticsEnabled: Boolean = true,
+    val pingType: String = "tcp",
+    val pingTimeoutMs: Int = 3000,
+    val pingConcurrency: Int = 15,
+    val pingUrl: String = "https://www.gstatic.com/generate_204",
+    val pingOnOpen: Boolean = false,
+    val pingSortAfter: Boolean = false
 )
 
 /**
@@ -201,3 +212,14 @@ val SS_METHODS: List<String> = listOf(
 )
 
 val CONGESTION_OPTIONS: List<String> = listOf("bbr", "cubic", "new_reno")
+
+val PING_TYPES: List<String> = listOf("tcp", "udp", "url")
+
+/** Global haptics switch so any screen can respect the vibration setting. */
+val LocalHapticsEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }
+
+/** Single source of version strings; the app layer fills [appVersion] from BuildConfig. */
+object LumenVersion {
+    var appVersion: String = "0.7.0"
+    const val ENGINE: String = "1.13.14-extended-2.5.2"
+}
