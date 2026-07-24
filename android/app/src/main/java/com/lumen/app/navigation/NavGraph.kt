@@ -212,10 +212,13 @@ fun LumenApp(
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
+                            }
+                        }
                     }
                 }
-            ) { padding ->
-                val routeOrder = remember { listOf("dashboard", "servers", "routing", "settings") }
+            }
+        ) { padding ->
+            val routeOrder = remember { listOf("dashboard", "servers", "routing", "settings") }
                 fun getRouteIndex(route: String?): Int {
                     val idx = routeOrder.indexOf(route)
                     return if (idx >= 0) idx else 99
