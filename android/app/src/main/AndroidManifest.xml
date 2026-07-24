@@ -97,5 +97,20 @@
             android:theme="@style/zxing_CaptureTheme"
             android:windowSoftInputMode="stateAlwaysHidden"
             tools:ignore="LockedOrientationActivity" />
+
+        <!-- Desktop Home Screen AppWidget -->
+        <receiver
+            android:name="com.lumen.app.widget.LumenWidgetProvider"
+            android:exported="true"
+            android:label="Lumen VPN Widget">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.lumen.app.widget.ACTION_TOGGLE_VPN" />
+                <action android:name="com.lumen.app.widget.ACTION_UPDATE_STATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/lumen_widget_info" />
+        </receiver>
     </application>
 </manifest>

@@ -175,7 +175,7 @@ fun DomainRoutingScreen(
                             }
                         }
 
-                        val menuShape = RoundedCornerShape(16.dp)
+                        val menuShape = RoundedCornerShape(4.dp)
                         DropdownMenu(
                             expanded = showActionMenu,
                             onDismissRequest = { showActionMenu = false },
@@ -415,7 +415,7 @@ private fun RuleRowItem(
                 }
             }
 
-            val menuShape = RoundedCornerShape(14.dp)
+            val menuShape = RoundedCornerShape(4.dp)
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },

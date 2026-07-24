@@ -79,7 +79,7 @@ fun RoutingScreen(
                         IconButton(onClick = { showOptions = true }) {
                             Icon(Icons.Filled.MoreVert, contentDescription = strings.settings, tint = MaterialTheme.colorScheme.primary)
                         }
-                        val menuShape = RoundedCornerShape(20.dp)
+                        val menuShape = RoundedCornerShape(4.dp)
                         DropdownMenu(
                             expanded = showOptions,
                             onDismissRequest = { showOptions = false },

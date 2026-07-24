@@ -236,7 +236,7 @@ fun DashboardScreen(
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.clickable { showSortMenu = true }
                                     )
-                                    val menuShape = RoundedCornerShape(20.dp)
+                                    val menuShape = RoundedCornerShape(4.dp)
                                     DropdownMenu(
                                         expanded = showSortMenu,
                                         onDismissRequest = { showSortMenu = false },
@@ -395,7 +395,7 @@ fun DashboardScreen(
                                     }
                                 }
 
-                                val menuShape = RoundedCornerShape(20.dp)
+                                val menuShape = RoundedCornerShape(4.dp)
                                 DropdownMenu(
                                     expanded = showImportMenu,
                                     onDismissRequest = { showImportMenu = false },
@@ -713,7 +713,7 @@ private fun SubscriptionHeaderTile(
                             modifier = Modifier.size(20.dp)
                         )
                     }
-                    val pingMenuShape = RoundedCornerShape(14.dp)
+                    val pingMenuShape = RoundedCornerShape(4.dp)
                     DropdownMenu(
                         expanded = showPingMenu,
                         onDismissRequest = { showPingMenu = false },
@@ -752,7 +752,7 @@ private fun SubscriptionHeaderTile(
                         )
                     }
 
-                    val menuShape = RoundedCornerShape(20.dp)
+                    val menuShape = RoundedCornerShape(4.dp)
                     DropdownMenu(
                         expanded = showMenu,
                         onDismissRequest = { showMenu = false },
@@ -970,7 +970,7 @@ private fun ServerTileRow(
                             modifier = Modifier.size(20.dp)
                         )
                     }
-                    val menuShape = RoundedCornerShape(20.dp)
+                    val menuShape = RoundedCornerShape(4.dp)
                     DropdownMenu(
                         expanded = showActionMenu,
                         onDismissRequest = { showActionMenu = false },

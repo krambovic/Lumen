@@ -217,22 +217,39 @@ fun LumenApp(
                     }
                 }
             }
-        ) { padding ->
+            val routeOrder = remember { listOf("dashboard", "servers", "routing", "settings") }
+            fun getRouteIndex(route: String?): Int {
+                val idx = routeOrder.indexOf(route)
+                return if (idx >= 0) idx else 99
+            }
+
             NavHost(
                 navController = navController,
                 startDestination = "dashboard",
                 modifier = Modifier.padding(padding),
                 enterTransition = {
-                    slideInHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 6 } + fadeIn(tween(190))
+                    val initialIdx = getRouteIndex(initialState.destination.route)
+                    val targetIdx = getRouteIndex(targetState.destination.route)
+                    if (targetIdx >= initialIdx) {
+                        slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 3 } + fadeIn(tween(220))
+                    } else {
+                        slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 3 } + fadeIn(tween(220))
+                    }
                 },
                 exitTransition = {
-                    slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { -it / 6 } + fadeOut(tween(190))
+                    val initialIdx = getRouteIndex(initialState.destination.route)
+                    val targetIdx = getRouteIndex(targetState.destination.route)
+                    if (targetIdx >= initialIdx) {
+                        slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 3 } + fadeOut(tween(220))
+                    } else {
+                        slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 3 } + fadeOut(tween(220))
+                    }
                 },
                 popEnterTransition = {
-                    slideInHorizontally(tween(190, easing = FastOutSlowInEasing)) { -it / 6 } + fadeIn(tween(190))
+                    slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 3 } + fadeIn(tween(220))
                 },
                 popExitTransition = {
-                    slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { it / 6 } + fadeOut(tween(190))
+                    slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 3 } + fadeOut(tween(220))
                 }
             ) {
                 composable("dashboard") {

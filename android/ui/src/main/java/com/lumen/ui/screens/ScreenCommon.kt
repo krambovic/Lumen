@@ -58,7 +58,7 @@ fun LumenDropdown(
     optionLabel: (String) -> String = { it }
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val menuShape = RoundedCornerShape(20.dp)
+    val menuShape = RoundedCornerShape(4.dp)
 
     Column(modifier) {
         if (label.isNotEmpty()) {
