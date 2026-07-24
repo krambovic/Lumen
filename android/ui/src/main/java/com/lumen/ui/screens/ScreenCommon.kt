@@ -85,10 +85,11 @@ fun LumenDropdown(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                shape = menuShape,
-                containerColor = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-                modifier = Modifier.widthIn(min = 220.dp)
+                modifier = Modifier
+                    .widthIn(min = 220.dp)
+                    .clip(menuShape)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
             ) {
                 Column(Modifier.padding(vertical = 6.dp)) {
                     options.forEach { option ->

@@ -179,10 +179,11 @@ fun DomainRoutingScreen(
                         DropdownMenu(
                             expanded = showActionMenu,
                             onDismissRequest = { showActionMenu = false },
-                            shape = menuShape,
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-                            modifier = Modifier.widthIn(min = 180.dp)
+                            modifier = Modifier
+                                .widthIn(min = 180.dp)
+                                .clip(menuShape)
+                                .background(MaterialTheme.colorScheme.surface)
+                                .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
                         ) {
                             DropdownMenuItem(
                                 text = { Text(s.directAction, color = MaterialTheme.colorScheme.onSurface) },
@@ -418,10 +419,11 @@ private fun RuleRowItem(
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },
-                shape = menuShape,
-                containerColor = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-                modifier = Modifier.widthIn(min = 150.dp)
+                modifier = Modifier
+                    .widthIn(min = 150.dp)
+                    .clip(menuShape)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
             ) {
                 DropdownMenuItem(
                     text = { Text(s.directAction, color = MaterialTheme.colorScheme.onSurface) },
