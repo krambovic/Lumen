@@ -2,537 +2,546 @@ package com.lumen.ui.screens
 
 import androidx.compose.runtime.staticCompositionLocalOf
 
-data class LumenStrings(
-    val home: String, val servers: String, val routing: String, val settings: String, val logs: String,
-    val noServer: String, val fastest: String, val addNode: String, val searchServers: String,
-    val pingAll: String, val pinging: String, val importClipboard: String, val noServers: String,
-    val allGroups: String, val manual: String, val subscriptions: String, val addSubscription: String,
-    val refresh: String, val delete: String, val edit: String, val auto: String, val never: String,
-    val nodes: String, val updated: String, val nameOptional: String, val cancel: String, val add: String,
-    val splitTunneling: String, val off: String, val offDescription: String, val vpnOnly: String,
-    val vpnOnlyDescription: String, val exclude: String, val excludeDescription: String,
-    val appsUsingVpn: String, val appsBypassingVpn: String, val searchApps: String,
-    val loadingApps: String, val hideSystem: String, val autoSelect: String, val clear: String,
-    val vpnEngine: String, val connection: String, val muxDescription: String, val muxConcurrency: String,
-    val tlsFragmentation: String, val tlsDescription: String, val fragmentPackets: String,
-    val fragmentLength: String, val fragmentDelay: String, val tunnelMtu: String, val localProxy: String,
-    val localInbound: String, val localInboundDescription: String, val allowLan: String,
-    val allowLanDescription: String, val behavior: String, val autoConnect: String,
-    val autoConnectDescription: String, val language: String, val systemDefault: String,
-    val speedTest: String, val testing: String, val runSpeedTest: String, val export: String,
-    val noLogs: String, val tapToConnect: String, val connectingStatus: String,
-    val connectedStatus: String, val connectionError: String, val diagnostics: String,
-    val openLogs: String, val preferIpv6: String, val preferIpv6Description: String,
-    val blockQuic: String, val blockQuicDescription: String, val sniffRouteOnly: String,
-    val sniffRouteOnlyDescription: String, val socksPort: String, val httpPort: String,
-    val centerConnect: String, val centerConnecting: String, val centerConnected: String, val centerError: String,
-    val importFromClipboard: String, val importQrCode: String, val importFromFile: String, val importManually: String,
-    val refreshSubscription: String, val deleteSubscription: String, val autoUpdateOneHour: String,
-    val expiresUnlimited: String, val daysRemaining: String, val serverCount: String,
-    val sortByPing: String, val pingGroup: String, val sortBy: String, val sortByName: String,
-    val subscriptionSettings: String, val trafficSettings: String, val appSettings: String,
-    val infoSection: String, val version: String, val community: String, val back: String,
-    val requestParameters: String, val directLoad: String, val directLoadDesc: String,
-    val sendHwid: String, val sendHwidDesc: String, val allowOverrides: String, val allowOverridesDesc: String,
-    val subscriptionAutoUpdate: String, val subscriptionAutoUpdateDesc: String, val subscriptionAutoUpdateInterval: String,
-    val subscriptionIncludeRegexLabel: String, val subscriptionExcludeRegexLabel: String,
-    val subscriptionUseProxyTun: String, val subscriptionUseProxyTunDesc: String,
-    val subscriptionConverter: String, val subscriptionConverterDesc: String, val subscriptionConverterUrlLabel: String,
-    val subscriptionProfile: String, val proxyDns: String, val directDns: String, val autoSelectUrl: String,
-    val checkInterval: String, val toleranceMs: String, val appearance: String, val theme: String,
-    val domainIpRouting: String, val appRouting: String, val geoResourceFiles: String,
-    val domainsAndIpDirect: String, val directRulesNotice: String, val domainsDirectLabel: String,
-    val ipCidrDirectLabel: String, val geoSourceLabel: String, val geoNotLoaded: String,
-    val groupDefault: String, val importAction: String,
-    val themeSettings: String, val done: String, val greenTheme: String, val greenThemeDesc: String,
-    val lightTheme: String, val lightThemeDesc: String, val darkTheme: String, val darkThemeDesc: String,
-    val additional: String, val materialYou: String, val materialYouDesc: String,
-    val amoledBlack: String, val amoledBlackDesc: String, val connectionStyleTitle: String,
-    val classicStyle: String, val compactStyle: String,
-    val addOrPaste: String, val swipeOrTapToConnect: String, val swipeOrTapToDisconnect: String,
-    val slideToConnect: String, val slideToDisconnect: String, val paste: String,
-    val copyLink: String, val exportQrCode: String, val ping: String,
-    val subscriptionProperties: String, val exportAll: String, val exportSelected: String,
-    val selected: String, val url: String, val copied: String, val udpPing: String,
-    val address: String, val action: String, val directAction: String, val proxyAction: String,
-    val blockAction: String, val noRulesYet: String, val clearAll: String,
-    val dnsSettings: String, val dnsModeSection: String, val dnsModeAuto: String,
-    val dnsModeAndroid: String, val dnsModeSecure: String, val dnsModeJson: String,
-    val dnsModeAutoHint: String, val dnsModeAndroidHint: String, val dnsModeSecureHint: String,
-    val dnsModeJsonHint: String, val dnsDirectSection: String, val dnsProxySection: String,
-    val dnsServersLabel: String, val dnsTypeLabel: String, val dnsStrategyLabel: String,
-    val dnsIpv4Only: String, val dnsIpv4OnlyDesc: String, val dnsBehaviorSection: String,
-    val dnsHijack: String, val dnsHijackDesc: String, val dnsFakeIp: String, val dnsFakeIpDesc: String,
-    val dnsParallel: String, val dnsParallelDesc: String, val dnsOptimistic: String,
-    val dnsOptimisticDesc: String, val dnsGeoCheck: String, val dnsGeoCheckDesc: String,
-    val dnsHostsSection: String, val dnsHostsLabel: String, val dnsOverride: String,
-    val dnsOverrideDesc: String, val dnsHostname: String, val dnsIpv4: String,
-    val vibration: String, val vibrationDesc: String,
-    val pingSettings: String, val pingTypeLabel: String, val pingTimeoutLabel: String,
-    val pingConcurrencyLabel: String, val pingUrlLabel: String, val pingAutoOnOpen: String,
-    val pingAutoOnOpenDesc: String, val pingSortAfter: String, val pingSortAfterDesc: String,
-    val categoryAppearance: String, val categoryConnection: String, val categoryTunnel: String,
-    val categoryProviders: String, val categoryOther: String, val perAppProxy: String,
-    val trafficUsed: String, val trafficTotal: String, val expiresLabel: String,
-    val unlimited: String, val subscriptionInfo: String, val password: String,
-    val editNode: String, val close: String, val nodeName: String, val protocolField: String,
-    val transportLabel: String, val pathLabel: String, val hostHeaderLabel: String, val grpcServiceNameLabel: String,
-    val securityLabel: String, val sniLabel: String, val alpnLabel: String, val utlsFingerprintLabel: String,
-    val allowInsecureTlsLabel: String, val realityPublicKeyLabel: String, val realityShortIdLabel: String,
-    val uuidLabel: String, val flowLabel: String, val noneOption: String, val encryptionMethodLabel: String,
-    val passwordAuthLabel: String, val obfsLabel: String, val obfsPasswordLabel: String, val uuidPasswordLabel: String,
-    val congestionControlLabel: String, val userPasswordOptionalLabel: String, val privateKeyLabel: String,
-    val peerPublicKeyLabel: String, val wgAddressLabel: String, val presharedKeyLabel: String,
-    val allowedIpsLabel: String, val reservedLabel: String, val awgJunkParamsLabel: String,
-    val openvpnConfigLabel: String, val autoNodeDescriptionLabel: String, val serverLabel: String,
-    val portLabel: String, val saveAction: String
-)
+class LumenStrings {
+    var home = ""; var servers = ""; var routing = ""; var settings = ""; var logs = ""
+    var noServer = ""; var fastest = ""; var addNode = ""; var searchServers = ""
+    var pingAll = ""; var pinging = ""; var importClipboard = ""; var noServers = ""
+    var allGroups = ""; var manual = ""; var subscriptions = ""; var addSubscription = ""
+    var refresh = ""; var delete = ""; var edit = ""; var auto = ""; var never = ""
+    var nodes = ""; var updated = ""; var nameOptional = ""; var cancel = ""; var add = ""
+    var splitTunneling = ""; var off = ""; var offDescription = ""; var vpnOnly = ""
+    var vpnOnlyDescription = ""; var exclude = ""; var excludeDescription = ""
+    var appsUsingVpn = ""; var appsBypassingVpn = ""; var searchApps = ""
+    var loadingApps = ""; var hideSystem = ""; var autoSelect = ""; var clear = ""
+    var vpnEngine = ""; var connection = ""; var muxDescription = ""; var muxConcurrency = ""
+    var tlsFragmentation = ""; var tlsDescription = ""; var fragmentPackets = ""
+    var fragmentLength = ""; var fragmentDelay = ""; var tunnelMtu = ""; var localProxy = ""
+    var localInbound = ""; var localInboundDescription = ""; var allowLan = ""
+    var allowLanDescription = ""; var behavior = ""; var autoConnect = ""
+    var autoConnectDescription = ""; var language = ""; var systemDefault = ""
+    var speedTest = ""; var testing = ""; var runSpeedTest = ""; var export = ""
+    var noLogs = ""; var tapToConnect = ""; var connectingStatus = ""
+    var connectedStatus = ""; var connectionError = ""; var diagnostics = ""
+    var openLogs = ""; var preferIpv6 = ""; var preferIpv6Description = ""
+    var blockQuic = ""; var blockQuicDescription = ""; var sniffRouteOnly = ""
+    var sniffRouteOnlyDescription = ""; var socksPort = ""; var httpPort = ""
+    var centerConnect = ""; var centerConnecting = ""; var centerConnected = ""; var centerError = ""
+    var importFromClipboard = ""; var importQrCode = ""; var importFromFile = ""; var importManually = ""
+    var refreshSubscription = ""; var deleteSubscription = ""; var autoUpdateOneHour = ""
+    var expiresUnlimited = ""; var daysRemaining = ""; var serverCount = ""
+    var sortByPing = ""; var pingGroup = ""; var sortBy = ""; var sortByName = ""
+    var subscriptionSettings = ""; var trafficSettings = ""; var appSettings = ""
+    var infoSection = ""; var version = ""; var community = ""; var back = ""
+    var requestParameters = ""; var directLoad = ""; var directLoadDesc = ""
+    var sendHwid = ""; var sendHwidDesc = ""; var allowOverrides = ""; var allowOverridesDesc = ""
+    var subscriptionAutoUpdate = ""; var subscriptionAutoUpdateDesc = ""; var subscriptionAutoUpdateInterval = ""
+    var subscriptionIncludeRegexLabel = ""; var subscriptionExcludeRegexLabel = ""
+    var subscriptionUseProxyTun = ""; var subscriptionUseProxyTunDesc = ""
+    var subscriptionConverter = ""; var subscriptionConverterDesc = ""; var subscriptionConverterUrlLabel = ""
+    var subscriptionProfile = ""; var proxyDns = ""; var directDns = ""; var autoSelectUrl = ""
+    var checkInterval = ""; var toleranceMs = ""; var appearance = ""; var theme = ""
+    var domainIpRouting = ""; var appRouting = ""; var geoResourceFiles = ""
+    var domainsAndIpDirect = ""; var directRulesNotice = ""; var domainsDirectLabel = ""
+    var ipCidrDirectLabel = ""; var geoSourceLabel = ""; var geoNotLoaded = ""
+    var groupDefault = ""; var importAction = ""
+    var themeSettings = ""; var done = ""; var greenTheme = ""; var greenThemeDesc = ""
+    var lightTheme = ""; var lightThemeDesc = ""; var darkTheme = ""; var darkThemeDesc = ""
+    var additional = ""; var materialYou = ""; var materialYouDesc = ""
+    var amoledBlack = ""; var amoledBlackDesc = ""; var connectionStyleTitle = ""
+    var classicStyle = ""; var compactStyle = ""
+    var addOrPaste = ""; var swipeOrTapToConnect = ""; var swipeOrTapToDisconnect = ""
+    var slideToConnect = ""; var slideToDisconnect = ""; var paste = ""
+    var copyLink = ""; var exportQrCode = ""; var ping = ""
+    var subscriptionProperties = ""; var exportAll = ""; var exportSelected = ""
+    var selected = ""; var url = ""; var copied = ""; var udpPing = ""
+    var address = ""; var action = ""; var directAction = ""; var proxyAction = ""
+    var blockAction = ""; var noRulesYet = ""; var clearAll = ""
+    var dnsSettings = ""; var dnsModeSection = ""; var dnsModeAuto = ""
+    var dnsModeAndroid = ""; var dnsModeSecure = ""; var dnsModeJson = ""
+    var dnsModeAutoHint = ""; var dnsModeAndroidHint = ""; var dnsModeSecureHint = ""
+    var dnsModeJsonHint = ""; var dnsDirectSection = ""; var dnsProxySection = ""
+    var dnsServersLabel = ""; var dnsTypeLabel = ""; var dnsStrategyLabel = ""
+    var dnsIpv4Only = ""; var dnsIpv4OnlyDesc = ""; var dnsBehaviorSection = ""
+    var dnsHijack = ""; var dnsHijackDesc = ""; var dnsFakeIp = ""; var dnsFakeIpDesc = ""
+    var dnsParallel = ""; var dnsParallelDesc = ""; var dnsOptimistic = ""
+    var dnsOptimisticDesc = ""; var dnsGeoCheck = ""; var dnsGeoCheckDesc = ""
+    var dnsHostsSection = ""; var dnsHostsLabel = ""; var dnsOverride = ""
+    var dnsOverrideDesc = ""; var dnsHostname = ""; var dnsIpv4 = ""
+    var vibration = ""; var vibrationDesc = ""
+    var pingSettings = ""; var pingTypeLabel = ""; var pingTimeoutLabel = ""
+    var pingConcurrencyLabel = ""; var pingUrlLabel = ""; var pingAutoOnOpen = ""
+    var pingAutoOnOpenDesc = ""; var pingSortAfter = ""; var pingSortAfterDesc = ""
+    var categoryAppearance = ""; var categoryConnection = ""; var categoryTunnel = ""
+    var categoryProviders = ""; var categoryOther = ""; var perAppProxy = ""
+    var trafficUsed = ""; var trafficTotal = ""; var expiresLabel = ""
+    var unlimited = ""; var subscriptionInfo = ""; var password = ""
+    var editNode = ""; var close = ""; var nodeName = ""; var protocolField = ""
+    var transportLabel = ""; var pathLabel = ""; var hostHeaderLabel = ""; var grpcServiceNameLabel = ""
+    var securityLabel = ""; var sniLabel = ""; var alpnLabel = ""; var utlsFingerprintLabel = ""
+    var allowInsecureTlsLabel = ""; var realityPublicKeyLabel = ""; var realityShortIdLabel = ""
+    var uuidLabel = ""; var flowLabel = ""; var noneOption = ""; var encryptionMethodLabel = ""
+    var passwordAuthLabel = ""; var obfsLabel = ""; var obfsPasswordLabel = ""; var uuidPasswordLabel = ""
+    var congestionControlLabel = ""; var userPasswordOptionalLabel = ""; var privateKeyLabel = ""
+    var peerPublicKeyLabel = ""; var wgAddressLabel = ""; var presharedKeyLabel = ""
+    var allowedIpsLabel = ""; var reservedLabel = ""; var awgJunkParamsLabel = ""
+    var openvpnConfigLabel = ""; var autoNodeDescriptionLabel = ""; var serverLabel = ""
+    var portLabel = ""; var saveAction = ""
 
-private val EN = LumenStrings(
-    home="Home", servers="Servers", routing="Routing", settings="Settings", logs="Logs",
-    noServer="No server selected — tap to choose", fastest="fastest available", addNode="Add node",
-    searchServers="Search servers…", pingAll="Ping all", pinging="Pinging…",
-    importClipboard="Import clipboard", noServers="No servers yet. Add a node or subscription.",
-    allGroups="All servers", manual="Manual", subscriptions="Subscriptions", addSubscription="Add subscription",
-    refresh="Refresh", delete="Delete", edit="Edit", auto="Auto", never="never", nodes="nodes",
-    updated="updated", nameOptional="Name (optional)", cancel="Cancel", add="Add",
-    splitTunneling="Split tunneling", off="Off", offDescription="Route all traffic through the VPN",
-    vpnOnly="VPN only for selected apps", vpnOnlyDescription="Only checked apps use the tunnel",
-    exclude="Exclude selected apps", excludeDescription="Checked apps bypass the tunnel",
-    appsUsingVpn="Apps using VPN", appsBypassingVpn="Apps bypassing VPN", searchApps="Search apps…",
-    loadingApps="Loading installed apps…", hideSystem="Hide system apps", autoSelect="Auto-select",
-    clear="Clear", vpnEngine="VPN engine", connection="Connection",
-    muxDescription="Reuse one connection for multiple streams", muxConcurrency="MUX concurrency",
-    tlsFragmentation="TLS fragmentation", tlsDescription="Split TLS ClientHello to evade DPI",
-    fragmentPackets="Fragment packets", fragmentLength="Fragment length", fragmentDelay="Fragment delay (ms)",
-    tunnelMtu="Tunnel MTU", localProxy="Local proxy", localInbound="Local SOCKS/HTTP inbound",
-    localInboundDescription="Ports 10808 (SOCKS5) and 10809 (HTTP)", allowLan="Allow LAN connections",
-    allowLanDescription="Share the local proxy on your network", behavior="Behavior",
-    autoConnect="Auto-connect on boot", autoConnectDescription="Reconnect after reboot",
-    language="Language", systemDefault="System default", speedTest="Speed test", testing="Testing…",
-    runSpeedTest="Run speed test", export="Export", noLogs="No log entries yet.",
-    tapToConnect="Tap to connect", connectingStatus="Connecting…", connectedStatus="Connected",
-    connectionError="Connection error", diagnostics="Diagnostics", openLogs="Open logs",
-    preferIpv6="Prefer IPv6", preferIpv6Description="Use IPv6 when IPv4 and IPv6 are both available",
-    blockQuic="Block QUIC", blockQuicDescription="Reject QUIC on UDP/443 and fall back to TCP",
-    sniffRouteOnly="Sniff route only", sniffRouteOnlyDescription="Use sniffing for routing without replacing destinations",
-    socksPort="SOCKS port", httpPort="HTTP port",
-    centerConnect="Connect", centerConnecting="Connecting…", centerConnected="Connected", centerError="Error",
-    importFromClipboard="Import from clipboard", importQrCode="QR code", importFromFile="From file", importManually="Manually",
-    refreshSubscription="Refresh subscription", deleteSubscription="Delete subscription",
-    autoUpdateOneHour="Auto-update - 1h", expiresUnlimited="Expires: Unlimited", daysRemaining="days remaining",
-    serverCount="server(s)", sortByPing="Sort by ping", pingGroup="Ping group servers",
-    sortBy="Sort by:", sortByName="Name", subscriptionSettings="Subscription settings",
-    trafficSettings="Traffic settings", appSettings="App settings", infoSection="INFORMATION",
-    version="Version", community="Community", back="Back", requestParameters="Request parameters",
-    directLoad="Load directly", directLoadDesc="Load subscription bypassing proxy",
-    sendHwid="Send HWID", sendHwidDesc="Send device ID in X-Hwid header",
-    allowOverrides="Allow subscription overrides", allowOverridesDesc="Apply compatible MUX, fragmentation & routing parameters",
-    subscriptionAutoUpdate="Auto-update subscriptions", subscriptionAutoUpdateDesc="Periodically refresh subscription links in the background",
-    subscriptionAutoUpdateInterval="Update interval (minutes)",
-    subscriptionIncludeRegexLabel="Include filter (regex)", subscriptionExcludeRegexLabel="Exclude filter (regex)",
-    subscriptionUseProxyTun="Load subscriptions through proxy tunnel", subscriptionUseProxyTunDesc="Route subscription requests via the active VPN tunnel",
-    subscriptionConverter="Subscription converter", subscriptionConverterDesc="Convert subscription links using an external converter service",
-    subscriptionConverterUrlLabel="Converter URL",
-    subscriptionProfile="Subscription profile", proxyDns="Proxy DNS", directDns="Direct DNS",
-    autoSelectUrl="Check URL", checkInterval="Check interval (min)", toleranceMs="Delay tolerance (ms)",
-    appearance="Appearance", theme="Theme", domainIpRouting="Domain / IP routing",
-    appRouting="App routing", geoResourceFiles="Geo-resource files", domainsAndIpDirect="Direct Domains & IP",
-    directRulesNotice="Specified addresses bypass proxy. Changes take effect on next connection.",
-    domainsDirectLabel="Direct domains", ipCidrDirectLabel="Direct IP / CIDR",
-    geoSourceLabel="Geo-resource source", geoNotLoaded="Files not downloaded yet",
-    groupDefault="Default", importAction="Import",
-    themeSettings="Theme", done="Done", greenTheme="Green", greenThemeDesc="Dark forest with green accent",
-    lightTheme="Light", lightThemeDesc="Light mode with soft colors", darkTheme="Dark", darkThemeDesc="Clean dark with blue accent",
-    additional="Additional", materialYou="Material You", materialYouDesc="Use system wallpaper colors",
-    amoledBlack="AMOLED Black", amoledBlackDesc="Pure black background — saves battery on OLED",
-    connectionStyleTitle="Connection style", classicStyle="Classic", compactStyle="Compact",
-    addOrPaste="+ Add or Paste", swipeOrTapToConnect="Slide to Connect", swipeOrTapToDisconnect="Slide to Disconnect",
-    slideToConnect="Slide to Connect", slideToDisconnect="Slide to Disconnect", paste="Paste",
-    copyLink="Copy link", exportQrCode="Export QR code", ping="Ping",
-    subscriptionProperties="Subscription properties", exportAll="Export all", exportSelected="Export selected",
-    selected="selected", url="URL", copied="Copied", udpPing="UDP Ping",
-    address="Address", action="Action", directAction="Direct", proxyAction="Proxy",
-    blockAction="Block", noRulesYet="No domain or IP rules configured", clearAll="Clear all",
-    dnsSettings="DNS settings", dnsModeSection="DNS mode", dnsModeAuto="Automatic",
-    dnsModeAndroid="Android DNS", dnsModeSecure="Secure", dnsModeJson="From JSON",
-    dnsModeAutoHint="TCP/UDP 53 is hijacked inside the VPN; direct and proxy resolvers are picked by rules.",
-    dnsModeAndroidHint="System Android resolver without hijacking inside the VPN.",
-    dnsModeSecureHint="DoH/DoT through the proxy outbound only; strict Private DNS is checked before start.",
-    dnsModeJsonHint="DNS comes from your custom JSON config.",
-    dnsDirectSection="Direct DNS", dnsProxySection="DNS over proxy",
-    dnsServersLabel="Servers (one per line)", dnsTypeLabel="Type", dnsStrategyLabel="Strategy",
-    dnsIpv4Only="IPv4 only over VPN", dnsIpv4OnlyDesc="Filter AAAA in the managed proxy DNS",
-    dnsBehaviorSection="Behavior", dnsHijack="Hijack DNS in TUN",
-    dnsHijackDesc="Do not let plain DNS queries escape the built-in resolver",
-    dnsFakeIp="Fake DNS", dnsFakeIpDesc="FakeIP is off by default; enable only when needed",
-    dnsParallel="Parallel queries", dnsParallelDesc="Query fallback resolvers simultaneously",
-    dnsOptimistic="Optimistic cache", dnsOptimisticDesc="Serve a stale answer while refreshing in background",
-    dnsGeoCheck="DNS geo check", dnsGeoCheckDesc="Keeps the direct/proxy choice for domain rules",
-    dnsHostsSection="Hosts and override", dnsHostsLabel="Hosts: domain=ip",
-    dnsOverride="DNS override", dnsOverrideDesc="Exact hostname → IPv4 before other DNS rules",
-    dnsHostname="Hostname", dnsIpv4="IPv4",
-    vibration="Vibration", vibrationDesc="Haptic feedback on taps and actions",
-    pingSettings="Ping settings", pingTypeLabel="Ping type", pingTimeoutLabel="Timeout (ms)",
-    pingConcurrencyLabel="Parallel checks", pingUrlLabel="Ping URL", pingAutoOnOpen="Ping on open",
-    pingAutoOnOpenDesc="Check servers when the list opens", pingSortAfter="Sort after ping",
-    pingSortAfterDesc="Reorder servers by latency when a check finishes",
-    categoryAppearance="APPEARANCE", categoryConnection="CONNECTION", categoryTunnel="TUNNEL",
-    categoryProviders="PROVIDERS", categoryOther="OTHER", perAppProxy="Per-app proxy",
-    trafficUsed="Used", trafficTotal="Total", expiresLabel="Expires", unlimited="Unlimited",
-    subscriptionInfo="Subscription info", password="Password",
-    editNode="Edit node", close="Close", nodeName="Name", protocolField="Protocol",
-    transportLabel="Transport", pathLabel="Path", hostHeaderLabel="Host header", grpcServiceNameLabel="gRPC serviceName",
-    securityLabel="Security", sniLabel="SNI", alpnLabel="ALPN (comma separated)",
-    utlsFingerprintLabel="uTLS fingerprint (chrome, firefox\u2026)", allowInsecureTlsLabel="Allow insecure TLS",
-    realityPublicKeyLabel="Reality public key (pbk)", realityShortIdLabel="Reality short ID (sid)",
-    uuidLabel="UUID", flowLabel="Flow", noneOption="(none)", encryptionMethodLabel="Encryption method",
-    passwordAuthLabel="Password / auth", obfsLabel="Obfs (salamander, optional)", obfsPasswordLabel="Obfs password",
-    uuidPasswordLabel="UUID:Password", congestionControlLabel="Congestion control",
-    userPasswordOptionalLabel="user:password (optional)", privateKeyLabel="Private key",
-    peerPublicKeyLabel="Peer public key", wgAddressLabel="Address (e.g. 10.0.0.2/32)",
-    presharedKeyLabel="Pre-shared key (optional)", allowedIpsLabel="Allowed IPs",
-    reservedLabel="Reserved (e.g. 1,2,3 \u2014 optional)", awgJunkParamsLabel="AmneziaWG junk parameters",
-    openvpnConfigLabel="OpenVPN config (.ovpn contents)",
-    autoNodeDescriptionLabel="Auto node automatically picks the fastest server (url-test).",
-    serverLabel="Server", portLabel="Port", saveAction="Save"
-)
+    fun copyFrom(src: LumenStrings): LumenStrings = apply {
+        src.javaClass.declaredFields.forEach { f ->
+            if (f.type == String::class.java) {
+                f.isAccessible = true
+                f.set(this, f.get(src))
+            }
+        }
+    }
+}
 
-private val RU = EN.copy(
-    home="Главная", servers="Серверы", routing="Маршрутизация", settings="Настройки", logs="Логи",
-    noServer="Сервер не выбран — нажмите, чтобы выбрать", fastest="самый быстрый", addNode="Добавить сервер",
-    searchServers="Поиск серверов…", pingAll="Проверить все", pinging="Проверка…",
-    importClipboard="Импорт из буфера", noServers="Серверов пока нет. Добавьте сервер или подписку.",
-    allGroups="Все серверы", manual="Вручную", subscriptions="Подписки", addSubscription="Добавить подписку",
-    refresh="Обновить", delete="Удалить", edit="Изменить", auto="Авто", never="никогда", nodes="серверов",
-    updated="обновлено", nameOptional="Название (необязательно)", cancel="Отмена", add="Добавить",
-    splitTunneling="Раздельная маршрутизация", off="Выключено", offDescription="Весь трафик через VPN",
-    vpnOnly="VPN только для выбранных", vpnOnlyDescription="Только отмеченные приложения используют VPN",
-    exclude="Исключить выбранные", excludeDescription="Отмеченные приложения обходят VPN",
-    appsUsingVpn="Приложения через VPN", appsBypassingVpn="Приложения в обход VPN", searchApps="Поиск приложений…",
-    loadingApps="Загрузка приложений…", hideSystem="Скрыть системные", autoSelect="Авто-выбор", clear="Очистить",
-    vpnEngine="VPN-движок", connection="Соединение", muxDescription="Одно соединение для нескольких потоков",
-    muxConcurrency="Параллельность MUX", tlsFragmentation="Фрагментация TLS",
-    tlsDescription="Разделять TLS ClientHello для обхода DPI", fragmentPackets="Пакеты фрагментации",
-    fragmentLength="Длина фрагмента", fragmentDelay="Задержка фрагмента (мс)", tunnelMtu="MTU туннеля",
-    localProxy="Локальный прокси", localInbound="Локальный SOCKS/HTTP",
-    localInboundDescription="Порты 10808 (SOCKS5) и 10809 (HTTP)", allowLan="Разрешить подключения из LAN",
-    allowLanDescription="Открыть локальный прокси в сети", behavior="Поведение",
-    autoConnect="Подключаться при запуске", autoConnectDescription="Переподключаться после перезагрузки",
-    language="Язык", systemDefault="Как в системе", speedTest="Тест скорости", testing="Проверка…",
-    runSpeedTest="Запустить тест", export="Экспорт", noLogs="Записей пока нет.",
-    tapToConnect="Нажмите для подключения", connectingStatus="Подключение…",
-    connectedStatus="Подключено", connectionError="Ошибка подключения",
-    diagnostics="Диагностика", openLogs="Открыть логи",
-    preferIpv6="Предпочитать IPv6", preferIpv6Description="Использовать IPv6, когда доступны IPv4 и IPv6",
-    blockQuic="Блокировать QUIC", blockQuicDescription="Блокировать QUIC на UDP/443 с переходом на TCP",
-    sniffRouteOnly="Сниффинг только для маршрутов", sniffRouteOnlyDescription="Использовать сниффинг для маршрутизации без замены адреса назначения",
-    socksPort="Порт SOCKS", httpPort="Порт HTTP",
-    centerConnect="Подключиться", centerConnecting="Подключение…", centerConnected="Подключено", centerError="Ошибка",
-    importFromClipboard="Вставить из буфера", importQrCode="QR-код", importFromFile="Из файла", importManually="Вручную",
-    refreshSubscription="Обновить подписку", deleteSubscription="Удалить подписку",
-    autoUpdateOneHour="Автообновление - 1 ч.", expiresUnlimited="Истекает: Безлимитно", daysRemaining="дней осталось",
-    serverCount="сервер(ов)", sortByPing="Сортировать по пингу", pingGroup="Проверить пинг группы",
-    sortBy="Сортировать по:", sortByName="Имя", subscriptionSettings="Настройки подписок",
-    trafficSettings="Настройки трафика", appSettings="Настройки приложения", infoSection="ИНФОРМАЦИЯ",
-    version="Версия", community="Сообщество", back="Назад", requestParameters="Параметры запроса",
-    directLoad="Загружать напрямую", directLoadDesc="Подписка загружается в обход выбранного прокси-сервера",
-    sendHwid="Отправлять HWID", sendHwidDesc="Передавать идентификатор устройства в заголовке X-Hwid",
-    allowOverrides="Разрешить настройки из подписки", allowOverridesDesc="Применять совместимые параметры MUX, фрагментации и маршрутизации",
-    subscriptionAutoUpdate="Автообновление подписок", subscriptionAutoUpdateDesc="Периодически обновлять ссылки подписок в фоне",
-    subscriptionAutoUpdateInterval="Интервал обновления (мин)",
-    subscriptionIncludeRegexLabel="Фильтр включения (regex)", subscriptionExcludeRegexLabel="Фильтр исключения (regex)",
-    subscriptionUseProxyTun="Загружать подписки через прокси-туннель", subscriptionUseProxyTunDesc="Отправлять запросы подписки через активный VPN-туннель",
-    subscriptionConverter="Конвертер подписок", subscriptionConverterDesc="Преобразовывать ссылки подписок через внешний сервис-конвертер",
-    subscriptionConverterUrlLabel="URL конвертера",
-    subscriptionProfile="Профиль подписки", proxyDns="DNS через прокси", directDns="DNS напрямую",
-    autoSelectUrl="URL проверки", checkInterval="Интервал проверки (мин)", toleranceMs="Допуск задержки (мс)",
-    appearance="Оформление", theme="Тема", domainIpRouting="Маршрутизация по домену/IP",
-    appRouting="Маршрутизация приложений", geoResourceFiles="Файлы георесурсов", domainsAndIpDirect="Домены и IP напрямую",
-    directRulesNotice="Указанные адреса обходят прокси. Изменения применятся при следующем подключении.",
-    domainsDirectLabel="Домены напрямую", ipCidrDirectLabel="IP / CIDR напрямую",
-    geoSourceLabel="Источник георесурсов", geoNotLoaded="Файлы ещё не загружены",
-    groupDefault="Default", importAction="Импорт",
-    themeSettings="Тема", done="Готово", greenTheme="Зелёная", greenThemeDesc="Тёмный лес с зелёным акцентом",
-    lightTheme="Светлая", lightThemeDesc="Светлый режим с мягкими цветами", darkTheme="Тёмная", darkThemeDesc="Чистый тёмный с голубым акцентом",
-    additional="Дополнительно", materialYou="Material You", materialYouDesc="Использовать цвета обоев системы",
-    amoledBlack="AMOLED чёрный", amoledBlackDesc="Чистый чёрный фон — экономит заряд на OLED",
-    connectionStyleTitle="Стиль подключения", classicStyle="Классический", compactStyle="Компактный",
-    addOrPaste="+ Добавить или Вставить", swipeOrTapToConnect="Проведите для подключения", swipeOrTapToDisconnect="Проведите для отключения",
-    slideToConnect="Проведите для подключения", slideToDisconnect="Проведите для отключения", paste="Вставить",
-    copyLink="Копировать ссылку", exportQrCode="Экспорт в QR-код", ping="Пинг",
-    subscriptionProperties="Свойства подписки", exportAll="Экспорт всех", exportSelected="Экспорт выбранных",
-    selected="выбрано", url="URL", copied="Скопировано", udpPing="UDP Пинг",
-    address="Адрес", action="Действие", directAction="Прямой", proxyAction="Прокси",
-    blockAction="Блокировать", noRulesYet="Правила по доменам и IP не заданы", clearAll="Очистить все",
-    dnsSettings="Настройки DNS", dnsModeSection="Режим DNS", dnsModeAuto="Автоматически",
-    dnsModeAndroid="DNS Android", dnsModeSecure="Защищённый", dnsModeJson="Из JSON",
-    dnsModeAutoHint="TCP/UDP 53 перехватывается внутри VPN, прямые и proxy resolver подбираются по правилам.",
-    dnsModeAndroidHint="Системный resolver Android без перехвата внутри VPN.",
-    dnsModeSecureHint="DoH/DoT только через proxy outbound; строгий Private DNS проверяется до старта.",
-    dnsModeJsonHint="DNS берётся из пользовательского JSON-конфига.",
-    dnsDirectSection="Прямой DNS", dnsProxySection="DNS через прокси",
-    dnsServersLabel="Серверы (по одному в строке)", dnsTypeLabel="Тип", dnsStrategyLabel="Стратегия",
-    dnsIpv4Only="Только IPv4 через VPN", dnsIpv4OnlyDesc="Фильтровать AAAA в управляемом proxy DNS",
-    dnsBehaviorSection="Поведение", dnsHijack="Перехватывать DNS в TUN",
-    dnsHijackDesc="Не выпускать обычные DNS-запросы мимо встроенного resolver",
-    dnsFakeIp="Fake DNS", dnsFakeIpDesc="FakeIP выключен по умолчанию; включайте только при необходимости",
-    dnsParallel="Параллельные запросы", dnsParallelDesc="Опрашивать резервные resolver одновременно",
-    dnsOptimistic="Оптимистичный кэш", dnsOptimisticDesc="Разрешить устаревший ответ с обновлением в фоне",
-    dnsGeoCheck="Geo-проверка DNS", dnsGeoCheckDesc="Сохраняет прямой/proxy выбор для доменных правил",
-    dnsHostsSection="Hosts и override", dnsHostsLabel="Hosts: domain=ip",
-    dnsOverride="DNS override", dnsOverrideDesc="Точный hostname → IPv4 до остальных DNS-правил",
-    dnsHostname="Hostname", dnsIpv4="IPv4",
-    vibration="Вибрация", vibrationDesc="Тактильный отклик при нажатиях и действиях",
-    pingSettings="Настройки пинга", pingTypeLabel="Тип проверки", pingTimeoutLabel="Таймаут (мс)",
-    pingConcurrencyLabel="Параллельных проверок", pingUrlLabel="URL проверки", pingAutoOnOpen="Пинг при открытии",
-    pingAutoOnOpenDesc="Проверять серверы при открытии списка", pingSortAfter="Сортировать после пинга",
-    pingSortAfterDesc="Переставлять серверы по задержке после проверки",
-    categoryAppearance="ОФОРМЛЕНИЕ", categoryConnection="СОЕДИНЕНИЕ", categoryTunnel="ТУННЕЛЬ",
-    categoryProviders="ПОДПИСКИ", categoryOther="ПРОЧЕЕ", perAppProxy="Прокси по приложениям",
-    trafficUsed="Использовано", trafficTotal="Всего", expiresLabel="Истекает", unlimited="Безлимит",
-    subscriptionInfo="Информация о подписке", password="Пароль",
-    editNode="Изменить сервер", close="Закрыть", nodeName="Имя", protocolField="Протокол",
-    transportLabel="Транспорт", pathLabel="Путь", hostHeaderLabel="Заголовок Host", grpcServiceNameLabel="gRPC serviceName",
-    securityLabel="Безопасность", sniLabel="SNI", alpnLabel="ALPN (через запятую)",
-    utlsFingerprintLabel="Отпечаток uTLS (chrome, firefox\u2026)", allowInsecureTlsLabel="Разрешить небезопасный TLS",
-    realityPublicKeyLabel="Публичный ключ Reality (pbk)", realityShortIdLabel="Короткий ID Reality (sid)",
-    uuidLabel="UUID", flowLabel="Flow", noneOption="(нет)", encryptionMethodLabel="Метод шифрования",
-    passwordAuthLabel="Пароль / авторизация", obfsLabel="Obfs (salamander, опционально)", obfsPasswordLabel="Пароль Obfs",
-    uuidPasswordLabel="UUID:Пароль", congestionControlLabel="Контроль перегрузки",
-    userPasswordOptionalLabel="логин:пароль (опционально)", privateKeyLabel="Приватный ключ",
-    peerPublicKeyLabel="Публичный ключ пира", wgAddressLabel="Адрес (например, 10.0.0.2/32)",
-    presharedKeyLabel="Предварительный ключ (опционально)", allowedIpsLabel="Разрешённые IP",
-    reservedLabel="Reserved (например, 1,2,3 \u2014 опционально)", awgJunkParamsLabel="Мусорные параметры AmneziaWG",
-    openvpnConfigLabel="Конфиг OpenVPN (содержимое .ovpn)",
-    autoNodeDescriptionLabel="Авто-сервер сам выбирает самый быстрый сервер (url-test).",
-    serverLabel="Сервер", portLabel="Порт", saveAction="Сохранить"
-)
+private val EN = LumenStrings().apply {
+    home="Home"; servers="Servers"; routing="Routing"; settings="Settings"; logs="Logs"
+    noServer="No server selected — tap to choose"; fastest="fastest available"; addNode="Add node"
+    searchServers="Search servers…"; pingAll="Ping all"; pinging="Pinging…"
+    importClipboard="Import clipboard"; noServers="No servers yet. Add a node or subscription."
+    allGroups="All servers"; manual="Manual"; subscriptions="Subscriptions"; addSubscription="Add subscription"
+    refresh="Refresh"; delete="Delete"; edit="Edit"; auto="Auto"; never="never"; nodes="nodes"
+    updated="updated"; nameOptional="Name (optional)"; cancel="Cancel"; add="Add"
+    splitTunneling="Split tunneling"; off="Off"; offDescription="Route all traffic through the VPN"
+    vpnOnly="VPN only for selected apps"; vpnOnlyDescription="Only checked apps use the tunnel"
+    exclude="Exclude selected apps"; excludeDescription="Checked apps bypass the tunnel"
+    appsUsingVpn="Apps using VPN"; appsBypassingVpn="Apps bypassing VPN"; searchApps="Search apps…"
+    loadingApps="Loading installed apps…"; hideSystem="Hide system apps"; autoSelect="Auto-select"
+    clear="Clear"; vpnEngine="VPN engine"; connection="Connection"
+    muxDescription="Reuse one connection for multiple streams"; muxConcurrency="MUX concurrency"
+    tlsFragmentation="TLS fragmentation"; tlsDescription="Split TLS ClientHello to evade DPI"
+    fragmentPackets="Fragment packets"; fragmentLength="Fragment length"; fragmentDelay="Fragment delay (ms)"
+    tunnelMtu="Tunnel MTU"; localProxy="Local proxy"; localInbound="Local SOCKS/HTTP inbound"
+    localInboundDescription="Ports 10808 (SOCKS5) and 10809 (HTTP)"; allowLan="Allow LAN connections"
+    allowLanDescription="Share the local proxy on your network"; behavior="Behavior"
+    autoConnect="Auto-connect on boot"; autoConnectDescription="Reconnect after reboot"
+    language="Language"; systemDefault="System default"; speedTest="Speed test"; testing="Testing…"
+    runSpeedTest="Run speed test"; export="Export"; noLogs="No log entries yet."
+    tapToConnect="Tap to connect"; connectingStatus="Connecting…"; connectedStatus="Connected"
+    connectionError="Connection error"; diagnostics="Diagnostics"; openLogs="Open logs"
+    preferIpv6="Prefer IPv6"; preferIpv6Description="Use IPv6 when IPv4 and IPv6 are both available"
+    blockQuic="Block QUIC"; blockQuicDescription="Reject QUIC on UDP/443 and fall back to TCP"
+    sniffRouteOnly="Sniff route only"; sniffRouteOnlyDescription="Use sniffing for routing without replacing destinations"
+    socksPort="SOCKS port"; httpPort="HTTP port"
+    centerConnect="Connect"; centerConnecting="Connecting…"; centerConnected="Connected"; centerError="Error"
+    importFromClipboard="Import from clipboard"; importQrCode="QR code"; importFromFile="From file"; importManually="Manually"
+    refreshSubscription="Refresh subscription"; deleteSubscription="Delete subscription"
+    autoUpdateOneHour="Auto-update - 1h"; expiresUnlimited="Expires: Unlimited"; daysRemaining="days remaining"
+    serverCount="server(s)"; sortByPing="Sort by ping"; pingGroup="Ping group servers"
+    sortBy="Sort by:"; sortByName="Name"; subscriptionSettings="Subscription settings"
+    trafficSettings="Traffic settings"; appSettings="App settings"; infoSection="INFORMATION"
+    version="Version"; community="Community"; back="Back"; requestParameters="Request parameters"
+    directLoad="Load directly"; directLoadDesc="Load subscription bypassing proxy"
+    sendHwid="Send HWID"; sendHwidDesc="Send device ID in X-Hwid header"
+    allowOverrides="Allow subscription overrides"; allowOverridesDesc="Apply compatible MUX, fragmentation & routing parameters"
+    subscriptionAutoUpdate="Auto-update subscriptions"; subscriptionAutoUpdateDesc="Periodically refresh subscription links in the background"
+    subscriptionAutoUpdateInterval="Update interval (minutes)"
+    subscriptionIncludeRegexLabel="Include filter (regex)"; subscriptionExcludeRegexLabel="Exclude filter (regex)"
+    subscriptionUseProxyTun="Load subscriptions through proxy tunnel"; subscriptionUseProxyTunDesc="Route subscription requests via the active VPN tunnel"
+    subscriptionConverter="Subscription converter"; subscriptionConverterDesc="Convert subscription links using an external converter service"
+    subscriptionConverterUrlLabel="Converter URL"
+    subscriptionProfile="Subscription profile"; proxyDns="Proxy DNS"; directDns="Direct DNS"
+    autoSelectUrl="Check URL"; checkInterval="Check interval (min)"; toleranceMs="Delay tolerance (ms)"
+    appearance="Appearance"; theme="Theme"; domainIpRouting="Domain / IP routing"
+    appRouting="App routing"; geoResourceFiles="Geo-resource files"; domainsAndIpDirect="Direct Domains & IP"
+    directRulesNotice="Specified addresses bypass proxy. Changes take effect on next connection."
+    domainsDirectLabel="Direct domains"; ipCidrDirectLabel="Direct IP / CIDR"
+    geoSourceLabel="Geo-resource source"; geoNotLoaded="Files not downloaded yet"
+    groupDefault="Default"; importAction="Import"
+    themeSettings="Theme"; done="Done"; greenTheme="Green"; greenThemeDesc="Dark forest with green accent"
+    lightTheme="Light"; lightThemeDesc="Light mode with soft colors"; darkTheme="Dark"; darkThemeDesc="Clean dark with blue accent"
+    additional="Additional"; materialYou="Material You"; materialYouDesc="Use system wallpaper colors"
+    amoledBlack="AMOLED Black"; amoledBlackDesc="Pure black background — saves battery on OLED"
+    connectionStyleTitle="Connection style"; classicStyle="Classic"; compactStyle="Compact"
+    addOrPaste="+ Add or Paste"; swipeOrTapToConnect="Slide to Connect"; swipeOrTapToDisconnect="Slide to Disconnect"
+    slideToConnect="Slide to Connect"; slideToDisconnect="Slide to Disconnect"; paste="Paste"
+    copyLink="Copy link"; exportQrCode="Export QR code"; ping="Ping"
+    subscriptionProperties="Subscription properties"; exportAll="Export all"; exportSelected="Export selected"
+    selected="selected"; url="URL"; copied="Copied"; udpPing="UDP Ping"
+    address="Address"; action="Action"; directAction="Direct"; proxyAction="Proxy"
+    blockAction="Block"; noRulesYet="No domain or IP rules configured"; clearAll="Clear all"
+    dnsSettings="DNS settings"; dnsModeSection="DNS mode"; dnsModeAuto="Automatic"
+    dnsModeAndroid="Android DNS"; dnsModeSecure="Secure"; dnsModeJson="From JSON"
+    dnsModeAutoHint="TCP/UDP 53 is hijacked inside the VPN; direct and proxy resolvers are picked by rules."
+    dnsModeAndroidHint="System Android resolver without hijacking inside the VPN."
+    dnsModeSecureHint="DoH/DoT through the proxy outbound only; strict Private DNS is checked before start."
+    dnsModeJsonHint="DNS comes from your custom JSON config."
+    dnsDirectSection="Direct DNS"; dnsProxySection="DNS over proxy"
+    dnsServersLabel="Servers (one per line)"; dnsTypeLabel="Type"; dnsStrategyLabel="Strategy"
+    dnsIpv4Only="IPv4 only over VPN"; dnsIpv4OnlyDesc="Filter AAAA in the managed proxy DNS"
+    dnsBehaviorSection="Behavior"; dnsHijack="Hijack DNS in TUN"
+    dnsHijackDesc="Do not let plain DNS queries escape the built-in resolver"
+    dnsFakeIp="Fake DNS"; dnsFakeIpDesc="FakeIP is off by default; enable only when needed"
+    dnsParallel="Parallel queries"; dnsParallelDesc="Query fallback resolvers simultaneously"
+    dnsOptimistic="Optimistic cache"; dnsOptimisticDesc="Serve a stale answer while refreshing in background"
+    dnsGeoCheck="DNS geo check"; dnsGeoCheckDesc="Keeps the direct/proxy choice for domain rules"
+    dnsHostsSection="Hosts and override"; dnsHostsLabel="Hosts: domain=ip"
+    dnsOverride="DNS override"; dnsOverrideDesc="Exact hostname → IPv4 before other DNS rules"
+    dnsHostname="Hostname"; dnsIpv4="IPv4"
+    vibration="Vibration"; vibrationDesc="Haptic feedback on taps and actions"
+    pingSettings="Ping settings"; pingTypeLabel="Ping type"; pingTimeoutLabel="Timeout (ms)"
+    pingConcurrencyLabel="Parallel checks"; pingUrlLabel="Ping URL"; pingAutoOnOpen="Ping on open"
+    pingAutoOnOpenDesc="Check servers when the list opens"; pingSortAfter="Sort after ping"
+    pingSortAfterDesc="Reorder servers by latency when a check finishes"
+    categoryAppearance="APPEARANCE"; categoryConnection="CONNECTION"; categoryTunnel="TUNNEL"
+    categoryProviders="PROVIDERS"; categoryOther="OTHER"; perAppProxy="Per-app proxy"
+    trafficUsed="Used"; trafficTotal="Total"; expiresLabel="Expires"; unlimited="Unlimited"
+    subscriptionInfo="Subscription info"; password="Password"
+    editNode="Edit node"; close="Close"; nodeName="Name"; protocolField="Protocol"
+    transportLabel="Transport"; pathLabel="Path"; hostHeaderLabel="Host header"; grpcServiceNameLabel="gRPC serviceName"
+    securityLabel="Security"; sniLabel="SNI"; alpnLabel="ALPN (comma separated)"
+    utlsFingerprintLabel="uTLS fingerprint (chrome, firefox\u2026)"; allowInsecureTlsLabel="Allow insecure TLS"
+    realityPublicKeyLabel="Reality public key (pbk)"; realityShortIdLabel="Reality short ID (sid)"
+    uuidLabel="UUID"; flowLabel="Flow"; noneOption="(none)"; encryptionMethodLabel="Encryption method"
+    passwordAuthLabel="Password / auth"; obfsLabel="Obfs (salamander, optional)"; obfsPasswordLabel="Obfs password"
+    uuidPasswordLabel="UUID:Password"; congestionControlLabel="Congestion control"
+    userPasswordOptionalLabel="user:password (optional)"; privateKeyLabel="Private key"
+    peerPublicKeyLabel="Peer public key"; wgAddressLabel="Address (e.g. 10.0.0.2/32)"
+    presharedKeyLabel="Pre-shared key (optional)"; allowedIpsLabel="Allowed IPs"
+    reservedLabel="Reserved (e.g. 1,2,3 \u2014 optional)"; awgJunkParamsLabel="AmneziaWG junk parameters"
+    openvpnConfigLabel="OpenVPN config (.ovpn contents)"
+    autoNodeDescriptionLabel="Auto node automatically picks the fastest server (url-test)."
+    serverLabel="Server"; portLabel="Port"; saveAction="Save"
+}
 
-private val ZH = EN.copy(
-    home="主页", servers="服务器", routing="路由", settings="设置", logs="日志",
-    subscriptions="订阅", addSubscription="添加订阅", searchServers="搜索服务器…",
-    hideSystem="隐藏系统应用", autoSelect="自动选择", clear="清除",
-    language="语言", systemDefault="跟随系统", speedTest="速度测试", runSpeedTest="开始测试",
-    tapToConnect="点击连接", connectingStatus="正在连接…", connectedStatus="已连接",
-    connectionError="连接错误", diagnostics="诊断", openLogs="打开日志",
-    preferIpv6="优先使用 IPv6", preferIpv6Description="IPv4 和 IPv6 都可用时优先使用 IPv6",
-    blockQuic="阻止 QUIC", blockQuicDescription="阻止 UDP/443 上的 QUIC 并回退到 TCP",
-    sniffRouteOnly="仅用于路由嗅探", sniffRouteOnlyDescription="嗅探仅用于路由，不替换目标地址",
-    socksPort="SOCKS 端口", httpPort="HTTP 端口",
-    centerConnect="连接", centerConnecting="正在连接…", centerConnected="已连接", centerError="错误",
-    importFromClipboard="剪贴板导入", importQrCode="二维码", importFromFile="从文件导入", importManually="手动添加",
-    refreshSubscription="刷新订阅", deleteSubscription="删除订阅",
-    autoUpdateOneHour="自动更新 - 1小时", expiresUnlimited="到期时间: 无限制", daysRemaining="天剩余",
-    serverCount="个服务器", sortByPing="按延迟排序", pingGroup="测试分组延迟",
-    sortBy="排序方式:", sortByName="名称", subscriptionSettings="订阅设置",
-    trafficSettings="流量设置", appSettings="应用设置", infoSection="信息",
-    version="版本", community="社区", back="返回", requestParameters="请求参数",
-    directLoad="直接加载", directLoadDesc="绕过代理加载订阅",
-    sendHwid="发送 HWID", sendHwidDesc="在 X-Hwid 标头中发送设备 ID",
-    allowOverrides="允许订阅覆盖", allowOverridesDesc="应用兼容的 MUX、分片和路由参数",
-    subscriptionAutoUpdate="自动更新订阅", subscriptionAutoUpdateDesc="在后台定期刷新订阅链接",
-    subscriptionAutoUpdateInterval="更新间隔（分钟）",
-    subscriptionIncludeRegexLabel="包含过滤（正则）", subscriptionExcludeRegexLabel="排除过滤（正则）",
-    subscriptionUseProxyTun="通过代理隧道加载订阅", subscriptionUseProxyTunDesc="通过当前 VPN 隧道发送订阅请求",
-    subscriptionConverter="订阅转换器", subscriptionConverterDesc="使用外部转换服务转换订阅链接",
-    subscriptionConverterUrlLabel="转换器 URL",
-    subscriptionProfile="订阅配置", proxyDns="代理 DNS", directDns="直连 DNS",
-    autoSelectUrl="检查 URL", checkInterval="检查间隔 (分钟)", toleranceMs="延迟容忍度 (毫秒)",
-    appearance="外观", theme="主题", domainIpRouting="域名 / IP 路由",
-    appRouting="应用路由", geoResourceFiles="Geo 资源文件", domainsAndIpDirect="直连域名与 IP",
-    directRulesNotice="指定的地址将绕过代理。更改将在下次连接时生效。",
-    domainsDirectLabel="直连域名", ipCidrDirectLabel="直连 IP / CIDR",
-    geoSourceLabel="Geo 资源来源", geoNotLoaded="文件尚未下载",
-    groupDefault="默认", importAction="导入",
-    themeSettings="主题", done="完成", greenTheme="绿色", greenThemeDesc="带绿色点缀的深色森林",
-    lightTheme="浅色", lightThemeDesc="柔和色彩的浅色模式", darkTheme="深色", darkThemeDesc="带蓝色点缀的纯正深色",
-    additional="附加设置", materialYou="Material You", materialYouDesc="使用系统壁纸颜色",
-    amoledBlack="AMOLED 纯黑", amoledBlackDesc="纯黑背景 — 在 OLED 上更省电",
-    connectionStyleTitle="连接样式", classicStyle="经典", compactStyle="紧凑",
-    noServer="未选择服务器 — 点击选择", fastest="最快可用", addNode="添加节点",
-    pingAll="全部测延迟", pinging="测试中…", importClipboard="从剪贴板导入",
-    noServers="还没有服务器。请添加节点或订阅。", allGroups="全部服务器", manual="手动",
-    refresh="刷新", delete="删除", edit="编辑", auto="自动", never="从未", nodes="个节点",
-    updated="已更新", nameOptional="名称（可选）", cancel="取消", add="添加",
-    splitTunneling="分流代理", off="关闭", offDescription="所有流量走 VPN",
-    vpnOnly="仅所选应用使用 VPN", vpnOnlyDescription="仅勾选的应用使用隔离道",
-    exclude="排除所选应用", excludeDescription="勾选的应用绕过隔离道",
-    appsUsingVpn="使用 VPN 的应用", appsBypassingVpn="绕过 VPN 的应用", searchApps="搜索应用…",
-    loadingApps="正在加载已安装应用…", vpnEngine="VPN 引擎", connection="连接",
-    muxDescription="多个流复用一个连接", muxConcurrency="MUX 并发数",
-    tlsFragmentation="TLS 分片", tlsDescription="分割 TLS ClientHello 以绕过 DPI",
-    fragmentPackets="分片数据包", fragmentLength="分片长度", fragmentDelay="分片延迟 (毫秒)",
-    tunnelMtu="隔离道 MTU", localProxy="本地代理", localInbound="本地 SOCKS/HTTP 入口",
-    localInboundDescription="端口 10808 (SOCKS5) 和 10809 (HTTP)", allowLan="允许局域网连接",
-    allowLanDescription="在网络中共享本地代理", behavior="行为",
-    autoConnect="开机自动连接", autoConnectDescription="重启后重新连接",
-    testing="测试中…", export="导出", noLogs="暂无日志。",
-    paste="粘贴", copyLink="复制链接", exportQrCode="导出二维码", ping="延迟",
-    subscriptionProperties="订阅属性", exportAll="全部导出", exportSelected="导出所选",
-    selected="已选", url="链接", copied="已复制", udpPing="UDP 延迟",
-    address="地址", action="动作", directAction="直连", proxyAction="代理",
-    blockAction="拦截", noRulesYet="尚未配置域名或 IP 规则", clearAll="全部清除",
-    addOrPaste="+ 添加或粘贴", swipeOrTapToConnect="滑动连接", swipeOrTapToDisconnect="滑动断开",
-    slideToConnect="滑动连接", slideToDisconnect="滑动断开",
-    dnsSettings="DNS 设置", dnsModeSection="DNS 模式", dnsModeAuto="自动",
-    dnsModeAndroid="Android DNS", dnsModeSecure="安全", dnsModeJson="来自 JSON",
-    dnsModeAutoHint="在 VPN 内接管 TCP/UDP 53，按规则选择直连与代理解析器。",
-    dnsModeAndroidHint="使用系统 Android 解析器，不在 VPN 内接管。",
-    dnsModeSecureHint="仅通过代理出口使用 DoH/DoT；启动前检查严格私密 DNS。",
-    dnsModeJsonHint="DNS 来自你的自定义 JSON 配置。",
-    dnsDirectSection="直连 DNS", dnsProxySection="代理 DNS",
-    dnsServersLabel="服务器（每行一个）", dnsTypeLabel="类型", dnsStrategyLabel="策略",
-    dnsIpv4Only="VPN 内仅 IPv4", dnsIpv4OnlyDesc="在托管代理 DNS 中过滤 AAAA",
-    dnsBehaviorSection="行为", dnsHijack="在 TUN 中接管 DNS",
-    dnsHijackDesc="不让明文 DNS 查询绕过内置解析器",
-    dnsFakeIp="Fake DNS", dnsFakeIpDesc="FakeIP 默认关闭，仅在需要时开启",
-    dnsParallel="并行查询", dnsParallelDesc="同时查询备用解析器",
-    dnsOptimistic="乐观缓存", dnsOptimisticDesc="先返回旧结果，后台刷新",
-    dnsGeoCheck="DNS 地理检查", dnsGeoCheckDesc="保留域名规则的直连/代理选择",
-    dnsHostsSection="Hosts 与覆盖", dnsHostsLabel="Hosts: domain=ip",
-    dnsOverride="DNS 覆盖", dnsOverrideDesc="精确主机名 → IPv4，优先于其他规则",
-    dnsHostname="主机名", dnsIpv4="IPv4",
-    vibration="震动", vibrationDesc="点击和操作时的触觉反馈",
-    pingSettings="延迟设置", pingTypeLabel="测试类型", pingTimeoutLabel="超时 (毫秒)",
-    pingConcurrencyLabel="并发测试数", pingUrlLabel="测试链接", pingAutoOnOpen="打开时测试",
-    pingAutoOnOpenDesc="打开列表时自动测试服务器", pingSortAfter="测试后排序",
-    pingSortAfterDesc="测试完成后按延迟重新排序",
-    categoryAppearance="外观", categoryConnection="连接", categoryTunnel="隔离道",
-    categoryProviders="订阅源", categoryOther="其他", perAppProxy="分应用代理",
-    trafficUsed="已用", trafficTotal="总量", expiresLabel="到期", unlimited="无限制",
-    subscriptionInfo="订阅信息", password="密码",
-    editNode="编辑节点", close="关闭", nodeName="名称", protocolField="协议",
-    transportLabel="传输方式", pathLabel="路径", hostHeaderLabel="Host 头", grpcServiceNameLabel="gRPC 服务名",
-    securityLabel="安全", sniLabel="SNI", alpnLabel="ALPN（逗号分隔）",
-    utlsFingerprintLabel="uTLS 指纹（chrome、firefox\u2026）", allowInsecureTlsLabel="允许不安全的 TLS",
-    realityPublicKeyLabel="Reality 公钥（pbk）", realityShortIdLabel="Reality 短 ID（sid）",
-    uuidLabel="UUID", flowLabel="Flow", noneOption="（无）", encryptionMethodLabel="加密方式",
-    passwordAuthLabel="密码 / 认证", obfsLabel="Obfs（salamander，可选）", obfsPasswordLabel="Obfs 密码",
-    uuidPasswordLabel="UUID:密码", congestionControlLabel="拥塞控制",
-    userPasswordOptionalLabel="用户名:密码（可选）", privateKeyLabel="私钥",
-    peerPublicKeyLabel="对端公钥", wgAddressLabel="地址（例如 10.0.0.2/32）",
-    presharedKeyLabel="预共享密钥（可选）", allowedIpsLabel="允许的 IP",
-    reservedLabel="Reserved（例如 1,2,3 \u2014 可选）", awgJunkParamsLabel="AmneziaWG 垃圾参数",
-    openvpnConfigLabel="OpenVPN 配置（.ovpn 内容）",
-    autoNodeDescriptionLabel="自动节点会自动选择最快的服务器（url-test）。",
-    serverLabel="服务器", portLabel="端口", saveAction="保存"
-)
+private val RU = LumenStrings().apply {
+    home="Главная"; servers="Серверы"; routing="Маршрутизация"; settings="Настройки"; logs="Логи"
+    noServer="Сервер не выбран — нажмите, чтобы выбрать"; fastest="самый быстрый"; addNode="Добавить сервер"
+    searchServers="Поиск серверов…"; pingAll="Проверить все"; pinging="Проверка…"
+    importClipboard="Импорт из буфера"; noServers="Серверов пока нет. Добавьте сервер или подписку."
+    allGroups="Все серверы"; manual="Вручную"; subscriptions="Подписки"; addSubscription="Добавить подписку"
+    refresh="Обновить"; delete="Удалить"; edit="Изменить"; auto="Авто"; never="никогда"; nodes="серверов"
+    updated="обновлено"; nameOptional="Название (необязательно)"; cancel="Отмена"; add="Добавить"
+    splitTunneling="Раздельная маршрутизация"; off="Выключено"; offDescription="Весь трафик через VPN"
+    vpnOnly="VPN только для выбранных"; vpnOnlyDescription="Только отмеченные приложения используют VPN"
+    exclude="Исключить выбранные"; excludeDescription="Отмеченные приложения обходят VPN"
+    appsUsingVpn="Приложения через VPN"; appsBypassingVpn="Приложения в обход VPN"; searchApps="Поиск приложений…"
+    loadingApps="Загрузка приложений…"; hideSystem="Скрыть системные"; autoSelect="Авто-выбор"; clear="Очистить"
+    vpnEngine="VPN-движок"; connection="Соединение"; muxDescription="Одно соединение для нескольких потоков"
+    muxConcurrency="Параллельность MUX"; tlsFragmentation="Фрагментация TLS"
+    tlsDescription="Разделять TLS ClientHello для обхода DPI"; fragmentPackets="Пакеты фрагментации"
+    fragmentLength="Длина фрагмента"; fragmentDelay="Задержка фрагмента (мс)"; tunnelMtu="MTU туннеля"
+    localProxy="Локальный прокси"; localInbound="Локальный SOCKS/HTTP"
+    localInboundDescription="Порты 10808 (SOCKS5) и 10809 (HTTP)"; allowLan="Разрешить подключения из LAN"
+    allowLanDescription="Открыть локальный прокси в сети"; behavior="Поведение"
+    autoConnect="Подключаться при запуске"; autoConnectDescription="Переподключаться после перезагрузки"
+    language="Язык"; systemDefault="Как в системе"; speedTest="Тест скорости"; testing="Проверка…"
+    runSpeedTest="Запустить тест"; export="Экспорт"; noLogs="Записей пока нет."
+    tapToConnect="Нажмите для подключения"; connectingStatus="Подключение…"
+    connectedStatus="Подключено"; connectionError="Ошибка подключения"
+    diagnostics="Диагностика"; openLogs="Открыть логи"
+    preferIpv6="Предпочитать IPv6"; preferIpv6Description="Использовать IPv6, когда доступны IPv4 и IPv6"
+    blockQuic="Блокировать QUIC"; blockQuicDescription="Блокировать QUIC на UDP/443 с переходом на TCP"
+    sniffRouteOnly="Сниффинг только для маршрутов"; sniffRouteOnlyDescription="Использовать сниффинг для маршрутизации без замены адреса назначения"
+    socksPort="Порт SOCKS"; httpPort="Порт HTTP"
+    centerConnect="Подключиться"; centerConnecting="Подключение…"; centerConnected="Подключено"; centerError="Ошибка"
+    importFromClipboard="Вставить из буфера"; importQrCode="QR-код"; importFromFile="Из файла"; importManually="Вручную"
+    refreshSubscription="Обновить подписку"; deleteSubscription="Удалить подписку"
+    autoUpdateOneHour="Автообновление - 1 ч."; expiresUnlimited="Истекает: Безлимитно"; daysRemaining="дней осталось"
+    serverCount="сервер(ов)"; sortByPing="Сортировать по пингу"; pingGroup="Проверить пинг группы"
+    sortBy="Сортировать по:"; sortByName="Имя"; subscriptionSettings="Настройки подписок"
+    trafficSettings="Настройки трафика"; appSettings="Настройки приложения"; infoSection="ИНФОРМАЦИЯ"
+    version="Версия"; community="Сообщество"; back="Назад"; requestParameters="Параметры запроса"
+    directLoad="Загружать напрямую"; directLoadDesc="Подписка загружается в обход выбранного прокси-сервера"
+    sendHwid="Отправлять HWID"; sendHwidDesc="Передавать идентификатор устройства в заголовке X-Hwid"
+    allowOverrides="Разрешить настройки из подписки"; allowOverridesDesc="Применять совместимые параметры MUX, фрагментации и маршрутизации"
+    subscriptionAutoUpdate="Автообновление подписок"; subscriptionAutoUpdateDesc="Периодически обновлять ссылки подписок в фоне"
+    subscriptionAutoUpdateInterval="Интервал обновления (мин)"
+    subscriptionIncludeRegexLabel="Фильтр включения (regex)"; subscriptionExcludeRegexLabel="Фильтр исключения (regex)"
+    subscriptionUseProxyTun="Загружать подписки через прокси-туннель"; subscriptionUseProxyTunDesc="Отправлять запросы подписки через активный VPN-туннель"
+    subscriptionConverter="Конвертер подписок"; subscriptionConverterDesc="Преобразовывать ссылки подписок через внешний сервис-конвертер"
+    subscriptionConverterUrlLabel="URL конвертера"
+    subscriptionProfile="Профиль подписки"; proxyDns="DNS через прокси"; directDns="DNS напрямую"
+    autoSelectUrl="URL проверки"; checkInterval="Интервал проверки (мин)"; toleranceMs="Допуск задержки (мс)"
+    appearance="Оформление"; theme="Тема"; domainIpRouting="Маршрутизация по домену/IP"
+    appRouting="Маршрутизация приложений"; geoResourceFiles="Файлы георесурсов"; domainsAndIpDirect="Домены и IP напрямую"
+    directRulesNotice="Указанные адреса обходят прокси. Изменения применятся при следующем подключении."
+    domainsDirectLabel="Домены напрямую"; ipCidrDirectLabel="IP / CIDR напрямую"
+    geoSourceLabel="Источник георесурсов"; geoNotLoaded="Файлы ещё не загружены"
+    groupDefault="Default"; importAction="Импорт"
+    themeSettings="Тема"; done="Готово"; greenTheme="Зелёная"; greenThemeDesc="Тёмный лес с зелёным акцентом"
+    lightTheme="Светлая"; lightThemeDesc="Светлый режим с мягкими цветами"; darkTheme="Тёмная"; darkThemeDesc="Чистый тёмный с голубым акцентом"
+    additional="Дополнительно"; materialYou="Material You"; materialYouDesc="Использовать цвета обоев системы"
+    amoledBlack="AMOLED чёрный"; amoledBlackDesc="Чистый чёрный фон — экономит заряд на OLED"
+    connectionStyleTitle="Стиль подключения"; classicStyle="Классический"; compactStyle="Компактный"
+    addOrPaste="+ Добавить или Вставить"; swipeOrTapToConnect="Проведите для подключения"; swipeOrTapToDisconnect="Проведите для отключения"
+    slideToConnect="Проведите для подключения"; slideToDisconnect="Проведите для отключения"; paste="Вставить"
+    copyLink="Копировать ссылку"; exportQrCode="Экспорт в QR-код"; ping="Пинг"
+    subscriptionProperties="Свойства подписки"; exportAll="Экспорт всех"; exportSelected="Экспорт выбранных"
+    selected="выбрано"; url="URL"; copied="Скопировано"; udpPing="UDP Пинг"
+    address="Адрес"; action="Действие"; directAction="Прямой"; proxyAction="Прокси"
+    blockAction="Блокировать"; noRulesYet="Правила по доменам и IP не заданы"; clearAll="Очистить все"
+    dnsSettings="Настройки DNS"; dnsModeSection="Режим DNS"; dnsModeAuto="Автоматически"
+    dnsModeAndroid="DNS Android"; dnsModeSecure="Защищённый"; dnsModeJson="Из JSON"
+    dnsModeAutoHint="TCP/UDP 53 перехватывается внутри VPN, прямые и proxy resolver подбираются по правилам."
+    dnsModeAndroidHint="Системный resolver Android без перехвата внутри VPN."
+    dnsModeSecureHint="DoH/DoT только через proxy outbound; строгий Private DNS проверяется до старта."
+    dnsModeJsonHint="DNS берётся из пользовательского JSON-конфига."
+    dnsDirectSection="Прямой DNS"; dnsProxySection="DNS через прокси"
+    dnsServersLabel="Серверы (по одному в строке)"; dnsTypeLabel="Тип"; dnsStrategyLabel="Стратегия"
+    dnsIpv4Only="Только IPv4 через VPN"; dnsIpv4OnlyDesc="Фильтровать AAAA в управляемом proxy DNS"
+    dnsBehaviorSection="Поведение"; dnsHijack="Перехватывать DNS в TUN"
+    dnsHijackDesc="Не выпускать обычные DNS-запросы мимо встроенного resolver"
+    dnsFakeIp="Fake DNS"; dnsFakeIpDesc="FakeIP выключен по умолчанию; включайте только при необходимости"
+    dnsParallel="Параллельные запросы"; dnsParallelDesc="Опрашивать резервные resolver одновременно"
+    dnsOptimistic="Оптимистичный кэш"; dnsOptimisticDesc="Разрешить устаревший ответ с обновлением в фоне"
+    dnsGeoCheck="Geo-проверка DNS"; dnsGeoCheckDesc="Сохраняет прямой/proxy выбор для доменных правил"
+    dnsHostsSection="Hosts и override"; dnsHostsLabel="Hosts: domain=ip"
+    dnsOverride="DNS override"; dnsOverrideDesc="Точный hostname → IPv4 до остальных DNS-правил"
+    dnsHostname="Hostname"; dnsIpv4="IPv4"
+    vibration="Вибрация"; vibrationDesc="Тактильный отклик при нажатиях и действиях"
+    pingSettings="Настройки пинга"; pingTypeLabel="Тип проверки"; pingTimeoutLabel="Таймаут (мс)"
+    pingConcurrencyLabel="Параллельных проверок"; pingUrlLabel="URL проверки"; pingAutoOnOpen="Пинг при открытии"
+    pingAutoOnOpenDesc="Проверять серверы при открытии списка"; pingSortAfter="Сортировать после пинга"
+    pingSortAfterDesc="Переставлять серверы по задержке после проверки"
+    categoryAppearance="ОФОРМЛЕНИЕ"; categoryConnection="СОЕДИНЕНИЕ"; categoryTunnel="ТУННЕЛЬ"
+    categoryProviders="ПОДПИСКИ"; categoryOther="ПРОЧЕЕ"; perAppProxy="Прокси по приложениям"
+    trafficUsed="Использовано"; trafficTotal="Всего"; expiresLabel="Истекает"; unlimited="Безлимит"
+    subscriptionInfo="Информация о подписке"; password="Пароль"
+    editNode="Изменить сервер"; close="Закрыть"; nodeName="Имя"; protocolField="Протокол"
+    transportLabel="Транспорт"; pathLabel="Путь"; hostHeaderLabel="Заголовок Host"; grpcServiceNameLabel="gRPC serviceName"
+    securityLabel="Безопасность"; sniLabel="SNI"; alpnLabel="ALPN (через запятую)"
+    utlsFingerprintLabel="Отпечаток uTLS (chrome, firefox\u2026)"; allowInsecureTlsLabel="Разрешить небезопасный TLS"
+    realityPublicKeyLabel="Публичный ключ Reality (pbk)"; realityShortIdLabel="Короткий ID Reality (sid)"
+    uuidLabel="UUID"; flowLabel="Flow"; noneOption="(нет)"; encryptionMethodLabel="Метод шифрования"
+    passwordAuthLabel="Пароль / авторизация"; obfsLabel="Obfs (salamander, опционально)"; obfsPasswordLabel="Пароль Obfs"
+    uuidPasswordLabel="UUID:Пароль"; congestionControlLabel="Контроль перегрузки"
+    userPasswordOptionalLabel="логин:пароль (опционально)"; privateKeyLabel="Приватный ключ"
+    peerPublicKeyLabel="Публичный ключ пира"; wgAddressLabel="Адрес (например, 10.0.0.2/32)"
+    presharedKeyLabel="Предварительный ключ (опционально)"; allowedIpsLabel="Разрешённые IP"
+    reservedLabel="Reserved (например, 1,2,3 \u2014 опционально)"; awgJunkParamsLabel="Мусорные параметры AmneziaWG"
+    openvpnConfigLabel="Конфиг OpenVPN (содержимое .ovpn)"
+    autoNodeDescriptionLabel="Авто-сервер сам выбирает самый быстрый сервер (url-test)."
+    serverLabel="Сервер"; portLabel="Порт"; saveAction="Сохранить"
+}
 
-private val FA = EN.copy(
-    home="خانه", servers="سرورها", routing="مسیریابی", settings="تنظیمات", logs="گزارش‌ها",
-    subscriptions="اشتراک‌ها", addSubscription="افزودن اشتراک", hideSystem="پنهان کردن برنامه‌های سیستمی",
-    autoSelect="انتخاب خودکار", clear="پاک کردن", language="زبان", systemDefault="پیش‌فرض سیستم",
-    tapToConnect="برای اتصال ضربه بزنید", connectingStatus="در حال اتصال…",
-    connectedStatus="متصل", connectionError="خطای اتصال", diagnostics="عیب‌یابی",
-    openLogs="باز کردن گزارش‌ها", preferIpv6="ترجیح IPv6",
-    preferIpv6Description="وقتی IPv4 و IPv6 در دسترس هستند از IPv6 استفاده شود",
-    blockQuic="مسدود کردن QUIC", blockQuicDescription="QUIC روی UDP/443 مسدود و از TCP استفاده شود",
-    sniffRouteOnly="اسنیف فقط برای مسیریابی", sniffRouteOnlyDescription="اسنیف فقط برای مسیریابی باشد و مقصد را تغییر ندهد",
-    socksPort="پورت SOCKS", httpPort="پورت HTTP",
-    centerConnect="اتصال", centerConnecting="در حال اتصال…", centerConnected="متصل شد", centerError="خطا",
-    importFromClipboard="جای‌گذاری از حافظه", importQrCode="کد QR", importFromFile="از فایل", importManually="دستی",
-    refreshSubscription="به‌روزرسانی اشتراک", deleteSubscription="حذف اشتراک",
-    autoUpdateOneHour="به‌روزرسانی خودکار - ۱ ساعت", expiresUnlimited="انقضا: نامحدود", daysRemaining="روز باقی‌مانده",
-    serverCount="سرور", sortByPing="مرتب‌سازی بر اساس پینگ", pingGroup="تست پینگ گروه",
-    sortBy="مرتب‌سازی بر اساس:", sortByName="نام", subscriptionSettings="تنظیمات اشتراک",
-    trafficSettings="تنظیمات ترافیک", appSettings="تنظیمات برنامه", infoSection="اطلاعات",
-    version="نسخه", community="انجمن", back="بازگشت", requestParameters="پارامترهای درخواست",
-    directLoad="بارگیری مستقیم", directLoadDesc="بارگیری اشتراک بدون استفاده از پروکسی",
-    sendHwid="ارسال HWID", sendHwidDesc="ارسال شناسه دستگاه در هدر X-Hwid",
-    allowOverrides="اجازه اعمال تنظیمات اشتراک", allowOverridesDesc="اعمال تنظیمات سازگار MUX، تکه‌تکه‌سازی و مسیریابی",
-    subscriptionAutoUpdate="به‌روزرسانی خودکار اشتراک‌ها", subscriptionAutoUpdateDesc="به‌روزرسانی دوره‌ای پیوندهای اشتراک در پس‌زمینه",
-    subscriptionAutoUpdateInterval="فاصله به‌روزرسانی (دقیقه)",
-    subscriptionIncludeRegexLabel="فیلتر شمول (regex)", subscriptionExcludeRegexLabel="فیلتر استثنا (regex)",
-    subscriptionUseProxyTun="بارگیری اشتراک‌ها از طریق تونل پروکسی", subscriptionUseProxyTunDesc="ارسال درخواست‌های اشتراک از طریق تونل VPN فعال",
-    subscriptionConverter="مبدل اشتراک", subscriptionConverterDesc="تبدیل پیوندهای اشتراک با استفاده از سرویس مبدل خارجی",
-    subscriptionConverterUrlLabel="نشانی URL مبدل",
-    subscriptionProfile="پروفایل اشتراک", proxyDns="دی‌ان‌اس پروکسی", directDns="دی‌ان‌اس مستقیم",
-    autoSelectUrl="آدرس بررسی", checkInterval="فاصله بررسی (دقیقه)", toleranceMs="تحمل تاخیر (میلی‌ثانیه)",
-    appearance="ظاهر", theme="پوسته", domainIpRouting="مسیریابی دامنه / IP",
-    appRouting="مسیریابی برنامه‌ها", geoResourceFiles="فایل‌های منابع جغرافیا", domainsAndIpDirect="دامنه‌ها و IPهای مستقیم",
-    directRulesNotice="آدرس‌های مشخص شده پروکسی را دور می‌زنند. تغییرات در اتصال بعدی اعمال می‌شوند.",
-    domainsDirectLabel="دامنه‌های مستقیم", ipCidrDirectLabel="IP / CIDR مستقیم",
-    geoSourceLabel="منبع اطلاعات جغرافیایی", geoNotLoaded="فایل‌ها هنوز دانلود نشده‌اند",
-    groupDefault="پیش‌فرض", importAction="وارد کردن",
-    themeSettings="پوسته", done="انجام شد", greenTheme="سبز", greenThemeDesc="جنگل تاریک با رنگ سبز",
-    lightTheme="روشن", lightThemeDesc="حالت روشن با رنگ‌های ملایم", darkTheme="تاریک", darkThemeDesc="تاریک خالص با رنگ آبی",
-    additional="اضافی", materialYou="Material You", materialYouDesc="استفاده از رنگ‌های تصویر زمینه سیستم",
-    amoledBlack="مشکی AMOLED", amoledBlackDesc="پس‌زمینه کاملاً مشکی — کاهش مصرف باتری در OLED",
-    connectionStyleTitle="سبک اتصال", classicStyle="کلاسیک", compactStyle="فشرده",
-    noServer="سروری انتخاب نشده — برای انتخاب ضربه بزنید", fastest="سریع‌ترین موجود",
-    addNode="افزودن سرور", searchServers="جستجوی سرورها…", pingAll="تست همه",
-    pinging="در حال تست…", importClipboard="وارد کردن از حافظه",
-    noServers="هنوز سروری نیست. یک سرور یا اشتراک اضافه کنید.",
-    allGroups="همه سرورها", manual="دستی", refresh="به‌روزرسانی", delete="حذف",
-    edit="ویرایش", auto="خودکار", never="هرگز", nodes="سرور", updated="به‌روزشده",
-    nameOptional="نام (اختیاری)", cancel="لغو", add="افزودن",
-    splitTunneling="تونل تفکیکی", off="خاموش", offDescription="همه ترافیک از طریق VPN",
-    vpnOnly="VPN فقط برای برنامه‌های انتخابی", vpnOnlyDescription="فقط برنامه‌های علامت‌خورده از تونل استفاده می‌کنند",
-    exclude="حذف برنامه‌های انتخابی", excludeDescription="برنامه‌های علامت‌خورده تونل را دور می‌زنند",
-    appsUsingVpn="برنامه‌های متصل به VPN", appsBypassingVpn="برنامه‌های خارج از VPN",
-    searchApps="جستجوی برنامه‌ها…", loadingApps="در حال بارگذاری برنامه‌ها…",
-    vpnEngine="موتور VPN", connection="اتصال", muxDescription="استفاده از یک اتصال برای چند جریان",
-    muxConcurrency="همزمانی MUX", tlsFragmentation="تکه‌تکه‌سازی TLS",
-    tlsDescription="تقسیم TLS ClientHello برای عبور از DPI", fragmentPackets="بسته‌های تکه‌شده",
-    fragmentLength="طول تکه", fragmentDelay="تاخیر تکه (میلی‌ثانیه)", tunnelMtu="MTU تونل",
-    localProxy="پروکسی محلی", localInbound="ورودی محلی SOCKS/HTTP",
-    localInboundDescription="پورت‌های 10808 (SOCKS5) و 10809 (HTTP)", allowLan="اجازه اتصال از شبکه محلی",
-    allowLanDescription="اشتراک پروکسی محلی در شبکه", behavior="رفتار",
-    autoConnect="اتصال خودکار در روشن شدن", autoConnectDescription="اتصال دوباره پس از راه‌اندازی مجدد",
-    speedTest="تست سرعت", testing="در حال تست…", runSpeedTest="شروع تست", export="خروجی",
-    noLogs="هنوز گزارشی ثبت نشده است.", paste="جای‌گذاری", copyLink="کپی لینک",
-    exportQrCode="خروجی کد QR", ping="پینگ", subscriptionProperties="ویژگی‌های اشتراک",
-    exportAll="خروجی همه", exportSelected="خروجی موارد انتخابی", selected="انتخاب‌شده",
-    url="آدرس", copied="کپی شد", udpPing="پینگ UDP", address="آدرس", action="عملکرد",
-    directAction="مستقیم", proxyAction="پروکسی", blockAction="مسدود",
-    noRulesYet="قانونی برای دامنه یا IP تعریف نشده", clearAll="پاک کردن همه",
-    addOrPaste="+ افزودن یا جای‌گذاری", swipeOrTapToConnect="برای اتصال بکشید",
-    swipeOrTapToDisconnect="برای قطع بکشید", slideToConnect="برای اتصال بکشید",
-    slideToDisconnect="برای قطع بکشید",
-    dnsSettings="تنظیمات DNS", dnsModeSection="حالت DNS", dnsModeAuto="خودکار",
-    dnsModeAndroid="DNS اندروید", dnsModeSecure="امن", dnsModeJson="از JSON",
-    dnsModeAutoHint="پورت 53 درون VPN گرفته می‌شود و حل‌کننده‌ها طبق قوانین انتخاب می‌شوند.",
-    dnsModeAndroidHint="حل‌کننده سیستمی اندروید بدون مداخله درون VPN.",
-    dnsModeSecureHint="DoH/DoT فقط از طریق پروکسی؛ پیش از شروع Private DNS بررسی می‌شود.",
-    dnsModeJsonHint="DNS از پیکربندی JSON شما خوانده می‌شود.",
-    dnsDirectSection="DNS مستقیم", dnsProxySection="DNS از طریق پروکسی",
-    dnsServersLabel="سرورها (هر خط یکی)", dnsTypeLabel="نوع", dnsStrategyLabel="استراتژی",
-    dnsIpv4Only="فقط IPv4 در VPN", dnsIpv4OnlyDesc="فیلتر کردن AAAA در DNS پروکسی",
-    dnsBehaviorSection="رفتار", dnsHijack="گرفتن DNS در TUN",
-    dnsHijackDesc="اجازه ندهید پرس‌وجوهای DNS از حل‌کننده داخلی خارج شوند",
-    dnsFakeIp="Fake DNS", dnsFakeIpDesc="FakeIP پیش‌فرض خاموش است؛ فقط در صورت نیاز فعال کنید",
-    dnsParallel="پرس‌وجوی موازی", dnsParallelDesc="پرس‌وجوی همزمان از حل‌کننده‌های پشتیبان",
-    dnsOptimistic="کش خوشبینانه", dnsOptimisticDesc="پاسخ قدیمی داده و در پس‌زمینه به‌روز می‌شود",
-    dnsGeoCheck="بررسی جغرافیایی DNS", dnsGeoCheckDesc="انتخاب مستقیم/پروکسی را برای قوانین دامنه حفظ می‌کند",
-    dnsHostsSection="Hosts و بازنویسی", dnsHostsLabel="Hosts: domain=ip",
-    dnsOverride="بازنویسی DNS", dnsOverrideDesc="نام دقیق میزبان ← IPv4 پیش از سایر قوانین",
-    dnsHostname="نام میزبان", dnsIpv4="IPv4",
-    vibration="لرزش", vibrationDesc="بازخورد لمسی هنگام لمس و عملیات",
-    pingSettings="تنظیمات پینگ", pingTypeLabel="نوع تست", pingTimeoutLabel="مهلت (میلی‌ثانیه)",
-    pingConcurrencyLabel="تست‌های همزمان", pingUrlLabel="آدرس تست", pingAutoOnOpen="پینگ هنگام باز شدن",
-    pingAutoOnOpenDesc="هنگام باز شدن فهرست، سرورها تست شوند", pingSortAfter="مرتب‌سازی پس از تست",
-    pingSortAfterDesc="پس از پایان تست، سرورها بر اساس تاخیر مرتب شوند",
-    categoryAppearance="ظاهر", categoryConnection="اتصال", categoryTunnel="تونل",
-    categoryProviders="اشتراک‌ها", categoryOther="سایر", perAppProxy="پروکسی براساس برنامه",
-    trafficUsed="مصرف‌شده", trafficTotal="کل", expiresLabel="انقضا", unlimited="نامحدود",
-    subscriptionInfo="اطلاعات اشتراک", password="گذرواژه",
-    editNode="ویرایش سرور", close="بستن", nodeName="نام", protocolField="پروتکل",
-    transportLabel="انتقال", pathLabel="مسیر", hostHeaderLabel="هدر Host", grpcServiceNameLabel="gRPC serviceName",
-    securityLabel="امنیت", sniLabel="SNI", alpnLabel="ALPN (با کاما جدا شود)",
-    utlsFingerprintLabel="اثر انگشت uTLS (chrome، firefox\u2026)", allowInsecureTlsLabel="اجازه TLS ناامن",
-    realityPublicKeyLabel="کلید عمومی Reality (pbk)", realityShortIdLabel="شناسه کوتاه Reality (sid)",
-    uuidLabel="UUID", flowLabel="Flow", noneOption="(هیچ‌کدام)", encryptionMethodLabel="روش رمزنگاری",
-    passwordAuthLabel="گذرواژه / احراز هویت", obfsLabel="Obfs (salamander، اختیاری)", obfsPasswordLabel="گذرواژه Obfs",
-    uuidPasswordLabel="UUID:گذرواژه", congestionControlLabel="کنترل ازدحام",
-    userPasswordOptionalLabel="کاربر:گذرواژه (اختیاری)", privateKeyLabel="کلید خصوصی",
-    peerPublicKeyLabel="کلید عمومی همتا", wgAddressLabel="آدرس (مثلاً 10.0.0.2/32)",
-    presharedKeyLabel="کلید مشترک (اختیاری)", allowedIpsLabel="IPهای مجاز",
-    reservedLabel="Reserved (مثلاً 1,2,3 \u2014 اختیاری)", awgJunkParamsLabel="پارامترهای زائد AmneziaWG",
-    openvpnConfigLabel="پیکربندی OpenVPN (محتوای .ovpn)",
-    autoNodeDescriptionLabel="سرور خودکار سریع‌ترین سرور را انتخاب می‌کند (url-test).",
-    serverLabel="سرور", portLabel="پورت", saveAction="ذخیره"
-)
+private val ZH = LumenStrings().copyFrom(EN).apply {
+    home="主页"; servers="服务器"; routing="路由"; settings="设置"; logs="日志"
+    subscriptions="订阅"; addSubscription="添加订阅"; searchServers="搜索服务器…"
+    hideSystem="隐藏系统应用"; autoSelect="自动选择"; clear="清除"
+    language="语言"; systemDefault="跟随系统"; speedTest="速度测试"; runSpeedTest="开始测试"
+    tapToConnect="点击连接"; connectingStatus="正在连接…"; connectedStatus="已连接"
+    connectionError="连接错误"; diagnostics="诊断"; openLogs="打开日志"
+    preferIpv6="优先使用 IPv6"; preferIpv6Description="IPv4 和 IPv6 都可用时优先使用 IPv6"
+    blockQuic="阻止 QUIC"; blockQuicDescription="阻止 UDP/443 上的 QUIC 并回退到 TCP"
+    sniffRouteOnly="仅用于路由嗅探"; sniffRouteOnlyDescription="嗅探仅用于路由，不替换目标地址"
+    socksPort="SOCKS 端口"; httpPort="HTTP 端口"
+    centerConnect="连接"; centerConnecting="正在连接…"; centerConnected="已连接"; centerError="错误"
+    importFromClipboard="剪贴板导入"; importQrCode="二维码"; importFromFile="从文件导入"; importManually="手动添加"
+    refreshSubscription="刷新订阅"; deleteSubscription="删除订阅"
+    autoUpdateOneHour="自动更新 - 1小时"; expiresUnlimited="到期时间: 无限制"; daysRemaining="天剩余"
+    serverCount="个服务器"; sortByPing="按延迟排序"; pingGroup="测试分组延迟"
+    sortBy="排序方式:"; sortByName="名称"; subscriptionSettings="订阅设置"
+    trafficSettings="流量设置"; appSettings="应用设置"; infoSection="信息"
+    version="版本"; community="社区"; back="返回"; requestParameters="请求参数"
+    directLoad="直接加载"; directLoadDesc="绕过代理加载订阅"
+    sendHwid="发送 HWID"; sendHwidDesc="在 X-Hwid 标头中发送设备 ID"
+    allowOverrides="允许订阅覆盖"; allowOverridesDesc="应用兼容的 MUX、分片和路由参数"
+    subscriptionAutoUpdate="自动更新订阅"; subscriptionAutoUpdateDesc="在后台定期刷新订阅链接"
+    subscriptionAutoUpdateInterval="更新间隔（分钟）"
+    subscriptionIncludeRegexLabel="包含过滤（正则）"; subscriptionExcludeRegexLabel="排除过滤（正则）"
+    subscriptionUseProxyTun="通过代理隧道加载订阅"; subscriptionUseProxyTunDesc="通过当前 VPN 隧道发送订阅请求"
+    subscriptionConverter="订阅转换器"; subscriptionConverterDesc="使用外部转换服务转换订阅链接"
+    subscriptionConverterUrlLabel="转换器 URL"
+    subscriptionProfile="订阅配置"; proxyDns="代理 DNS"; directDns="直连 DNS"
+    autoSelectUrl="检查 URL"; checkInterval="检查间隔 (分钟)"; toleranceMs="延迟容忍度 (毫秒)"
+    appearance="外观"; theme="主题"; domainIpRouting="域名 / IP 路由"
+    appRouting="应用路由"; geoResourceFiles="Geo 资源文件"; domainsAndIpDirect="直连域名与 IP"
+    directRulesNotice="指定的地址将绕过代理。更改将在下次连接时生效。"
+    domainsDirectLabel="直连域名"; ipCidrDirectLabel="直连 IP / CIDR"
+    geoSourceLabel="Geo 资源来源"; geoNotLoaded="文件尚未下载"
+    groupDefault="默认"; importAction="导入"
+    themeSettings="主题"; done="完成"; greenTheme="绿色"; greenThemeDesc="带绿色点缀的深色森林"
+    lightTheme="浅色"; lightThemeDesc="柔和色彩的浅色模式"; darkTheme="深色"; darkThemeDesc="带蓝色点缀的纯正深色"
+    additional="附加设置"; materialYou="Material You"; materialYouDesc="使用系统壁纸颜色"
+    amoledBlack="AMOLED 纯黑"; amoledBlackDesc="纯黑背景 — 在 OLED 上更省电"
+    connectionStyleTitle="连接样式"; classicStyle="经典"; compactStyle="紧凑"
+    noServer="未选择服务器 — 点击选择"; fastest="最快可用"; addNode="添加节点"
+    pingAll="全部测延迟"; pinging="测试中…"; importClipboard="从剪贴板导入"
+    noServers="还没有服务器。请添加节点或订阅。"; allGroups="全部服务器"; manual="手动"
+    refresh="刷新"; delete="删除"; edit="编辑"; auto="自动"; never="从未"; nodes="个节点"
+    updated="已更新"; nameOptional="名称（可选）"; cancel="取消"; add="添加"
+    splitTunneling="分流代理"; off="关闭"; offDescription="所有流量走 VPN"
+    vpnOnly="仅所选应用使用 VPN"; vpnOnlyDescription="仅勾选的应用使用隔离道"
+    exclude="排除所选应用"; excludeDescription="勾选的应用绕过隔离道"
+    appsUsingVpn="使用 VPN 的应用"; appsBypassingVpn="绕过 VPN 的应用"; searchApps="搜索应用…"
+    loadingApps="正在加载已安装应用…"; vpnEngine="VPN 引擎"; connection="连接"
+    muxDescription="多个流复用一个连接"; muxConcurrency="MUX 并发数"
+    tlsFragmentation="TLS 分片"; tlsDescription="分割 TLS ClientHello 以绕过 DPI"
+    fragmentPackets="分片数据包"; fragmentLength="分片长度"; fragmentDelay="分片延迟 (毫秒)"
+    tunnelMtu="隔离道 MTU"; localProxy="本地代理"; localInbound="本地 SOCKS/HTTP 入口"
+    localInboundDescription="端口 10808 (SOCKS5) 和 10809 (HTTP)"; allowLan="允许局域网连接"
+    allowLanDescription="在网络中共享本地代理"; behavior="行为"
+    autoConnect="开机自动连接"; autoConnectDescription="重启后重新连接"
+    testing="测试中…"; export="导出"; noLogs="暂无日志。"
+    paste="粘贴"; copyLink="复制链接"; exportQrCode="导出二维码"; ping="延迟"
+    subscriptionProperties="订阅属性"; exportAll="全部导出"; exportSelected="导出所选"
+    selected="已选"; url="链接"; copied="已复制"; udpPing="UDP 延迟"
+    address="地址"; action="动作"; directAction="直连"; proxyAction="代理"
+    blockAction="拦截"; noRulesYet="尚未配置域名或 IP 规则"; clearAll="全部清除"
+    addOrPaste="+ 添加或粘贴"; swipeOrTapToConnect="滑动连接"; swipeOrTapToDisconnect="滑动断开"
+    slideToConnect="滑动连接"; slideToDisconnect="滑动断开"
+    dnsSettings="DNS 设置"; dnsModeSection="DNS 模式"; dnsModeAuto="自动"
+    dnsModeAndroid="Android DNS"; dnsModeSecure="安全"; dnsModeJson="来自 JSON"
+    dnsModeAutoHint="在 VPN 内接管 TCP/UDP 53，按规则选择直连与代理解析器。"
+    dnsModeAndroidHint="使用系统 Android 解析器，不在 VPN 内接管。"
+    dnsModeSecureHint="仅通过代理出口使用 DoH/DoT；启动前检查严格私密 DNS。"
+    dnsModeJsonHint="DNS 来自你的自定义 JSON 配置。"
+    dnsDirectSection="直连 DNS"; dnsProxySection="代理 DNS"
+    dnsServersLabel="服务器（每行一个）"; dnsTypeLabel="类型"; dnsStrategyLabel="策略"
+    dnsIpv4Only="VPN 内仅 IPv4"; dnsIpv4OnlyDesc="在托管代理 DNS 中过滤 AAAA"
+    dnsBehaviorSection="行为"; dnsHijack="在 TUN 中接管 DNS"
+    dnsHijackDesc="不让明文 DNS 查询绕过内置解析器"
+    dnsFakeIp="Fake DNS"; dnsFakeIpDesc="FakeIP 默认关闭，仅在需要时开启"
+    dnsParallel="并行查询"; dnsParallelDesc="同时查询备用解析器"
+    dnsOptimistic="乐观缓存"; dnsOptimisticDesc="先返回旧结果，后台刷新"
+    dnsGeoCheck="DNS 地理检查"; dnsGeoCheckDesc="保留域名规则的直连/代理选择"
+    dnsHostsSection="Hosts 与覆盖"; dnsHostsLabel="Hosts: domain=ip"
+    dnsOverride="DNS 覆盖"; dnsOverrideDesc="精确主机名 → IPv4，优先于其他规则"
+    dnsHostname="主机名"; dnsIpv4="IPv4"
+    vibration="震动"; vibrationDesc="点击和操作时的触觉反馈"
+    pingSettings="延迟设置"; pingTypeLabel="测试类型"; pingTimeoutLabel="超时 (毫秒)"
+    pingConcurrencyLabel="并发测试数"; pingUrlLabel="测试链接"; pingAutoOnOpen="打开时测试"
+    pingAutoOnOpenDesc="打开列表时自动测试服务器"; pingSortAfter="测试后排序"
+    pingSortAfterDesc="测试完成后按延迟重新排序"
+    categoryAppearance="外观"; categoryConnection="连接"; categoryTunnel="隔离道"
+    categoryProviders="订阅源"; categoryOther="其他"; perAppProxy="分应用代理"
+    trafficUsed="已用"; trafficTotal="总量"; expiresLabel="到期"; unlimited="无限制"
+    subscriptionInfo="订阅信息"; password="密码"
+    editNode="编辑节点"; close="关闭"; nodeName="名称"; protocolField="协议"
+    transportLabel="传输方式"; pathLabel="路径"; hostHeaderLabel="Host 头"; grpcServiceNameLabel="gRPC 服务名"
+    securityLabel="安全"; sniLabel="SNI"; alpnLabel="ALPN（逗号分隔）"
+    utlsFingerprintLabel="uTLS 指纹（chrome、firefox\u2026）"; allowInsecureTlsLabel="允许不安全的 TLS"
+    realityPublicKeyLabel="Reality 公钥（pbk）"; realityShortIdLabel="Reality 短 ID（sid）"
+    uuidLabel="UUID"; flowLabel="Flow"; noneOption="（无）"; encryptionMethodLabel="加密方式"
+    passwordAuthLabel="密码 / 认证"; obfsLabel="Obfs（salamander，可选）"; obfsPasswordLabel="Obfs 密码"
+    uuidPasswordLabel="UUID:密码"; congestionControlLabel="拥塞控制"
+    userPasswordOptionalLabel="用户名:密码（可选）"; privateKeyLabel="私钥"
+    peerPublicKeyLabel="对端公钥"; wgAddressLabel="地址（例如 10.0.0.2/32）"
+    presharedKeyLabel="预共享密钥（可选）"; allowedIpsLabel="允许的 IP"
+    reservedLabel="Reserved（例如 1,2,3 \u2014 可选）"; awgJunkParamsLabel="AmneziaWG 垃圾参数"
+    openvpnConfigLabel="OpenVPN 配置（.ovpn 内容）"
+    autoNodeDescriptionLabel="自动节点会自动选择最快的服务器（url-test）。"
+    serverLabel="服务器"; portLabel="端口"; saveAction="保存"
+}
+
+private val FA = LumenStrings().apply {
+    home="خانه"; servers="سرورها"; routing="مسیریابی"; settings="تنظیمات"; logs="گزارش‌ها"
+    subscriptions="اشتراک‌ها"; addSubscription="افزودن اشتراک"; hideSystem="پنهان کردن برنامه‌های سیستمی"
+    autoSelect="انتخاب خودکار"; clear="پاک کردن"; language="زبان"; systemDefault="پیش‌فرض سیستم"
+    tapToConnect="برای اتصال ضربه بزنید"; connectingStatus="در حال اتصال…"
+    connectedStatus="متصل"; connectionError="خطای اتصال"; diagnostics="عیب‌یابی"
+    openLogs="باز کردن گزارش‌ها"; preferIpv6="ترجیح IPv6"
+    preferIpv6Description="وقتی IPv4 و IPv6 در دسترس هستند از IPv6 استفاده شود"
+    blockQuic="مسدود کردن QUIC"; blockQuicDescription="QUIC روی UDP/443 مسدود و از TCP استفاده شود"
+    sniffRouteOnly="اسنیف فقط برای مسیریابی"; sniffRouteOnlyDescription="اسنیف فقط برای مسیریابی باشد و مقصد را تغییر ندهد"
+    socksPort="پورت SOCKS"; httpPort="پورت HTTP"
+    centerConnect="اتصال"; centerConnecting="در حال اتصال…"; centerConnected="متصل شد"; centerError="خطا"
+    importFromClipboard="جای‌گذاری از حافظه"; importQrCode="کد QR"; importFromFile="از فایل"; importManually="دستی"
+    refreshSubscription="به‌روزرسانی اشتراک"; deleteSubscription="حذف اشتراک"
+    autoUpdateOneHour="به‌روزرسانی خودکار - ۱ ساعت"; expiresUnlimited="انقضا: نامحدود"; daysRemaining="روز باقی‌مانده"
+    serverCount="سرور"; sortByPing="مرتب‌سازی بر اساس پینگ"; pingGroup="تست پینگ گروه"
+    sortBy="مرتب‌سازی بر اساس:"; sortByName="نام"; subscriptionSettings="تنظیمات اشتراک"
+    trafficSettings="تنظیمات ترافیک"; appSettings="تنظیمات برنامه"; infoSection="اطلاعات"
+    version="نسخه"; community="انجمن"; back="بازگشت"; requestParameters="پارامترهای درخواست"
+    directLoad="بارگیری مستقیم"; directLoadDesc="بارگیری اشتراک بدون استفاده از پروکسی"
+    sendHwid="ارسال HWID"; sendHwidDesc="ارسال شناسه دستگاه در هدر X-Hwid"
+    allowOverrides="اجازه اعمال تنظیمات اشتراک"; allowOverridesDesc="اعمال تنظیمات سازگار MUX، تکه‌تکه‌سازی و مسیریابی"
+    subscriptionAutoUpdate="به‌روزرسانی خودکار اشتراک‌ها"; subscriptionAutoUpdateDesc="به‌روزرسانی دوره‌ای پیوندهای اشتراک در پس‌زمینه"
+    subscriptionAutoUpdateInterval="فاصله به‌روزرسانی (دقیقه)"
+    subscriptionIncludeRegexLabel="فیلتر شمول (regex)"; subscriptionExcludeRegexLabel="فیلتر استثنا (regex)"
+    subscriptionUseProxyTun="بارگیری اشتراک‌ها از طریق تونل پروکسی"; subscriptionUseProxyTunDesc="ارسال درخواست‌های اشتراک از طریق تونل VPN فعال"
+    subscriptionConverter="مبدل اشتراک"; subscriptionConverterDesc="تبدیل پیوندهای اشتراک با استفاده از سرویس مبدل خارجی"
+    subscriptionConverterUrlLabel="نشانی URL مبدل"
+    subscriptionProfile="پروفایل اشتراک"; proxyDns="دی‌ان‌اس پروکسی"; directDns="دی‌ان‌اس مستقیم"
+    autoSelectUrl="آدرس بررسی"; checkInterval="فاصله بررسی (دقیقه)"; toleranceMs="تحمل تاخیر (میلی‌ثانیه)"
+    appearance="ظاهر"; theme="پوسته"; domainIpRouting="مسیریابی دامنه / IP"
+    appRouting="مسیریابی برنامه‌ها"; geoResourceFiles="فایل‌های منابع جغرافیا"; domainsAndIpDirect="دامنه‌ها و IPهای مستقیم"
+    directRulesNotice="آدرس‌های مشخص شده پروکسی را دور می‌زنند. تغییرات در اتصال بعدی اعمال می‌شوند."
+    domainsDirectLabel="دامنه‌های مستقیم"; ipCidrDirectLabel="IP / CIDR مستقیم"
+    geoSourceLabel="منبع اطلاعات جغرافیایی"; geoNotLoaded="فایل‌ها هنوز دانلود نشده‌اند"
+    groupDefault="پیش‌فرض"; importAction="وارد کردن"
+    themeSettings="پوسته"; done="انجام شد"; greenTheme="سبز"; greenThemeDesc="جنگل تاریک با رنگ سبز"
+    lightTheme="روشن"; lightThemeDesc="حالت روشن با رنگ‌های ملایم"; darkTheme="تاریک"; darkThemeDesc="تاریک خالص با رنگ آبی"
+    additional="اضافی"; materialYou="Material You"; materialYouDesc="استفاده از رنگ‌های تصویر زمینه سیستم"
+    amoledBlack="مشکی AMOLED"; amoledBlackDesc="پس‌زمینه کاملاً مشکی — کاهش مصرف باتری در OLED"
+    connectionStyleTitle="سبک اتصال"; classicStyle="کلاسیک"; compactStyle="فشرده"
+    noServer="سروری انتخاب نشده — برای انتخاب ضربه بزنید"; fastest="سریع‌ترین موجود"
+    addNode="افزودن سرور"; searchServers="جستجوی سرورها…"; pingAll="تست همه"
+    pinging="در حال تست…"; importClipboard="وارد کردن از حافظه"
+    noServers="هنوز سروری نیست. یک سرور یا اشتراک اضافه کنید."
+    allGroups="همه سرورها"; manual="دستی"; refresh="به‌روزرسانی"; delete="حذف"
+    edit="ویرایش"; auto="خودکار"; never="هرگز"; nodes="سرور"; updated="به‌روزشده"
+    nameOptional="نام (اختیاری)"; cancel="لغو"; add="افزودن"
+    splitTunneling="تونل تفکیکی"; off="خاموش"; offDescription="همه ترافیک از طریق VPN"
+    vpnOnly="VPN فقط برای برنامه‌های انتخابی"; vpnOnlyDescription="فقط برنامه‌های علامت‌خورده از تونل استفاده می‌کنند"
+    exclude="حذف برنامه‌های انتخابی"; excludeDescription="برنامه‌های علامت‌خورده تونل را دور می‌زنند"
+    appsUsingVpn="برنامه‌های متصل به VPN"; appsBypassingVpn="برنامه‌های خارج از VPN"
+    searchApps="جستجوی برنامه‌ها…"; loadingApps="در حال بارگذاری برنامه‌ها…"
+    vpnEngine="موتور VPN"; connection="اتصال"; muxDescription="استفاده از یک اتصال برای چند جریان"
+    muxConcurrency="همزمانی MUX"; tlsFragmentation="تکه‌تکه‌سازی TLS"
+    tlsDescription="تقسیم TLS ClientHello برای عبور از DPI"; fragmentPackets="بسته‌های تکه‌شده"
+    fragmentLength="طول تکه"; fragmentDelay="تاخیر تکه (میلی‌ثانیه)"; tunnelMtu="MTU تونل"
+    localProxy="پروکسی محلی"; localInbound="ورودی محلی SOCKS/HTTP"
+    localInboundDescription="پورت‌های 10808 (SOCKS5) و 10809 (HTTP)"; allowLan="اجازه اتصال از شبکه محلی"
+    allowLanDescription="اشتراک پروکسی محلی در شبکه"; behavior="رفتار"
+    autoConnect="اتصال خودکار در روشن شدن"; autoConnectDescription="اتصال دوباره پس از راه‌اندازی مجدد"
+    speedTest="تست سرعت"; testing="در حال تست…"; runSpeedTest="شروع تست"; export="خروجی"
+    noLogs="هنوز گزارشی ثبت نشده است."; paste="جای‌گذاری"; copyLink="کپی لینک"
+    exportQrCode="خروجی کد QR"; ping="پینگ"; subscriptionProperties="ویژگی‌های اشتراک"
+    exportAll="خروجی همه"; exportSelected="خروجی موارد انتخابی"; selected="انتخاب‌شده"
+    url="آدرس"; copied="کپی شد"; udpPing="پینگ UDP"; address="آدرس"; action="عملکرد"
+    directAction="مستقیم"; proxyAction="پروکسی"; blockAction="مسدود"
+    noRulesYet="قانونی برای دامنه یا IP تعریف نشده"; clearAll="پاک کردن همه"
+    addOrPaste="+ افزودن یا جای‌گذاری"; swipeOrTapToConnect="برای اتصال بکشید"
+    swipeOrTapToDisconnect="برای قطع بکشید"; slideToConnect="برای اتصال بکشید"
+    slideToDisconnect="برای قطع بکشید"
+    dnsSettings="تنظیمات DNS"; dnsModeSection="حالت DNS"; dnsModeAuto="خودکار"
+    dnsModeAndroid="DNS اندروید"; dnsModeSecure="امن"; dnsModeJson="از JSON"
+    dnsModeAutoHint="پورت 53 درون VPN گرفته می‌شود و حل‌کننده‌ها طبق قوانین انتخاب می‌شوند."
+    dnsModeAndroidHint="حل‌کننده سیستمی اندروید بدون مداخله درون VPN."
+    dnsModeSecureHint="DoH/DoT فقط از طریق پروکسی؛ پیش از شروع Private DNS بررسی می‌شود."
+    dnsModeJsonHint="DNS از پیکربندی JSON شما خوانده می‌شود."
+    dnsDirectSection="DNS مستقیم"; dnsProxySection="DNS از طریق پروکسی"
+    dnsServersLabel="سرورها (هر خط یکی)"; dnsTypeLabel="نوع"; dnsStrategyLabel="استراتژی"
+    dnsIpv4Only="فقط IPv4 در VPN"; dnsIpv4OnlyDesc="فیلتر کردن AAAA در DNS پروکسی"
+    dnsBehaviorSection="رفتار"; dnsHijack="گرفتن DNS در TUN"
+    dnsHijackDesc="اجازه ندهید پرس‌وجوهای DNS از حل‌کننده داخلی خارج شوند"
+    dnsFakeIp="Fake DNS"; dnsFakeIpDesc="FakeIP پیش‌فرض خاموش است؛ فقط در صورت نیاز فعال کنید"
+    dnsParallel="پرس‌وجوی موازی"; dnsParallelDesc="پرس‌وجوی همزمان از حل‌کننده‌های پشتیبان"
+    dnsOptimistic="کش خوشبینانه"; dnsOptimisticDesc="پاسخ قدیمی داده و در پس‌زمینه به‌روز می‌شود"
+    dnsGeoCheck="بررسی جغرافیایی DNS"; dnsGeoCheckDesc="انتخاب مستقیم/پروکسی را برای قوانین دامنه حفظ می‌کند"
+    dnsHostsSection="Hosts و بازنویسی"; dnsHostsLabel="Hosts: domain=ip"
+    dnsOverride="بازنویسی DNS"; dnsOverrideDesc="نام دقیق میزبان ← IPv4 پیش از سایر قوانین"
+    dnsHostname="نام میزبان"; dnsIpv4="IPv4"
+    vibration="لرزش"; vibrationDesc="بازخورد لمسی هنگام لمس و عملیات"
+    pingSettings="تنظیمات پینگ"; pingTypeLabel="نوع تست"; pingTimeoutLabel="مهلت (میلی‌ثانیه)"
+    pingConcurrencyLabel="تست‌های همزمان"; pingUrlLabel="آدرس تست"; pingAutoOnOpen="پینگ هنگام باز شدن"
+    pingAutoOnOpenDesc="هنگام باز شدن فهرست، سرورها تست شوند"; pingSortAfter="مرتب‌سازی پس از تست"
+    pingSortAfterDesc="پس از پایان تست، سرورها بر اساس تاخیر مرتب شوند"
+    categoryAppearance="ظاهر"; categoryConnection="اتصال"; categoryTunnel="تونل"
+    categoryProviders="اشتراک‌ها"; categoryOther="سایر"; perAppProxy="پروکسی براساس برنامه"
+    trafficUsed="مصرف‌شده"; trafficTotal="کل"; expiresLabel="انقضا"; unlimited="نامحدود"
+    subscriptionInfo="اطلاعات اشتراک"; password="گذرواژه"
+    editNode="ویرایش سرور"; close="بستن"; nodeName="نام"; protocolField="پروتکل"
+    transportLabel="انتقال"; pathLabel="مسیر"; hostHeaderLabel="هدر Host"; grpcServiceNameLabel="gRPC serviceName"
+    securityLabel="امنیت"; sniLabel="SNI"; alpnLabel="ALPN (با کاما جدا شود)"
+    utlsFingerprintLabel="اثر انگشت uTLS (chrome، firefox\u2026)"; allowInsecureTlsLabel="اجازه TLS ناامن"
+    realityPublicKeyLabel="کلید عمومی Reality (pbk)"; realityShortIdLabel="شناسه کوتاه Reality (sid)"
+    uuidLabel="UUID"; flowLabel="Flow"; noneOption="(هیچ‌کدام)"; encryptionMethodLabel="روش رمزنگاری"
+    passwordAuthLabel="گذرواژه / احراز هویت"; obfsLabel="Obfs (salamander، اختیاری)"; obfsPasswordLabel="گذرواژه Obfs"
+    uuidPasswordLabel="UUID:گذرواژه"; congestionControlLabel="کنترل ازدحام"
+    userPasswordOptionalLabel="کاربر:گذرواژه (اختیاری)"; privateKeyLabel="کلید خصوصی"
+    peerPublicKeyLabel="کلید عمومی همتا"; wgAddressLabel="آدرس (مثلاً 10.0.0.2/32)"
+    presharedKeyLabel="کلید مشترک (اختیاری)"; allowedIpsLabel="IPهای مجاز"
+    reservedLabel="Reserved (مثلاً 1,2,3 \u2014 اختیاری)"; awgJunkParamsLabel="پارامترهای زائد AmneziaWG"
+    openvpnConfigLabel="پیکربندی OpenVPN (محتوای .ovpn)"
+    autoNodeDescriptionLabel="سرور خودکار سریع‌ترین سرور را انتخاب می‌کند (url-test)."
+    serverLabel="سرور"; portLabel="پورت"; saveAction="ذخیره"
+}
 
 val LocalStrings = staticCompositionLocalOf { EN }
 
