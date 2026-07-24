@@ -8,7 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.widget.RemoteViews
-import com.lumen.app.R
+import net.kramb.lumen.R
 import com.lumen.core.vpn.LumenVpnService
 
 class LumenWidgetProvider : AppWidgetProvider() {
