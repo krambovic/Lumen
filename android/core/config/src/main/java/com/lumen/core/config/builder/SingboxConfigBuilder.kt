@@ -137,14 +137,44 @@ object SingboxConfigBuilder {
         root["outbounds"] = outbounds
 
         // 4. DNS
+        // Desktop parity: remote DNS must go over DoH (TCP) through the proxy.
+        // Plain UDP:53 via the proxy fails on servers that do not relay UDP
+        // (most vless/vmess/trojan setups) and spams "dns: exchange failed".
+        // Known public resolver IPs are mapped to their DoH hostnames; the DoH
+        // hostname itself is resolved via dns-direct to avoid recursion into
+        // the proxy before the tunnel is ready.
+        val dohHostByIp = mapOf(
+            "1.1.1.1" to "cloudflare-dns.com",
+            "1.0.0.1" to "cloudflare-dns.com",
+            "8.8.8.8" to "dns.google",
+            "8.8.4.4" to "dns.google",
+            "9.9.9.9" to "dns.quad9.net",
+            "149.112.112.112" to "dns.quad9.net"
+        )
+        val proxyDnsRaw = options.proxyDnsServer.trim()
+        val dohHost = dohHostByIp[proxyDnsRaw]
+            ?: proxyDnsRaw.takeIf { host -> host.any { it.isLetter() } }
+        val dnsRemote: Map<String, Any?> = if (dohHost != null) {
+            mapOf(
+                "type" to "https",
+                "tag" to "dns-remote",
+                "server" to dohHost,
+                "path" to "/dns-query",
+                "detour" to "proxy",
+                "domain_resolver" to "dns-direct"
+            )
+        } else {
+            // Unknown custom IP resolver: keep plain UDP through the proxy.
+            mapOf(
+                "type" to "udp",
+                "tag" to "dns-remote",
+                "server" to proxyDnsRaw,
+                "detour" to "proxy"
+            )
+        }
         root["dns"] = mapOf(
             "servers" to listOf(
-                mapOf(
-                    "type" to "udp",
-                    "tag" to "dns-remote",
-                    "server" to options.proxyDnsServer,
-                    "detour" to "proxy"
-                ),
+                dnsRemote,
                 mapOf(
                     "type" to "udp",
                     "tag" to "dns-direct",

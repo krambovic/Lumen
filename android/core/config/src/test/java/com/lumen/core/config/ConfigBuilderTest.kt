@@ -58,9 +58,15 @@ class ConfigBuilderTest {
 
         assertTrue((0 until outbounds.length()).none { outbounds.getJSONObject(it).optString("type") == "dns" })
         val dnsServers = json.getJSONObject("dns").getJSONArray("servers")
-        assertEquals("udp", dnsServers.getJSONObject(0).getString("type"))
-        assertEquals("1.1.1.1", dnsServers.getJSONObject(0).getString("server"))
+        // Remote DNS is DoH over TCP via the proxy (desktop parity): plain UDP
+        // via the proxy fails on servers that don't relay UDP.
+        assertEquals("https", dnsServers.getJSONObject(0).getString("type"))
+        assertEquals("cloudflare-dns.com", dnsServers.getJSONObject(0).getString("server"))
+        assertEquals("proxy", dnsServers.getJSONObject(0).getString("detour"))
+        assertEquals("dns-direct", dnsServers.getJSONObject(0).getString("domain_resolver"))
         assertTrue(!dnsServers.getJSONObject(0).has("address"))
+        assertEquals("udp", dnsServers.getJSONObject(1).getString("type"))
+        assertEquals("dns-direct", dnsServers.getJSONObject(1).getString("tag"))
         val route = json.getJSONObject("route")
         assertEquals("dns-direct", route.getString("default_domain_resolver"))
         val routeRules = route.getJSONArray("rules")
