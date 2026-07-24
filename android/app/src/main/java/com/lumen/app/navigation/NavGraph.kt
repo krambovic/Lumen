@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -91,6 +92,7 @@ import com.lumen.ui.screens.NodeDraft
 import com.lumen.ui.screens.NodeEditorModal
 import com.lumen.ui.screens.RoutingHubScreen
 import com.lumen.ui.screens.RoutingScreen
+import com.lumen.ui.screens.ServerListScreen
 import com.lumen.ui.screens.SettingsScreen
 import com.lumen.ui.screens.SplitModeUi
 import com.lumen.ui.screens.stringsForLanguage
@@ -106,6 +108,7 @@ private val NavPremiumEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private data class LumenDest(val route: String, val icon: ImageVector)
 private val DESTINATIONS = listOf(
     LumenDest("dashboard", Icons.Filled.Home),
+    LumenDest("servers", Icons.AutoMirrored.Filled.List),
     LumenDest("settings", Icons.Filled.Settings)
 )
 
@@ -211,6 +214,7 @@ fun LumenApp(
                                 val selected = currentRoute == dest.route
                                 val label = when (dest.route) {
                                     "dashboard" -> strings.home
+                                    "servers" -> strings.servers
                                     "settings" -> strings.settings
                                     else -> strings.home
                                 }
@@ -265,7 +269,7 @@ fun LumenApp(
                 }
             }
         ) { padding ->
-            val mainTabs = remember { listOf("dashboard", "settings") }
+            val mainTabs = remember { listOf("dashboard", "servers", "settings") }
             // Slow-out easing shared by all screen transitions.
             val PremiumEasing = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
             fun isTabForward(from: String?, to: String?): Boolean {
@@ -275,11 +279,16 @@ fun LumenApp(
                 return true
             }
 
+            val navBackStackEntry by navController.currentBackStackEntryAsState()
+            val currentNavRoute = navBackStackEntry?.destination?.route
             NavHost(
                 navController = navController,
                 startDestination = "dashboard",
-                // Bottom bar floats above content; screens reserve room with their own spacer.
-                modifier = Modifier.padding(top = padding.calculateTopPadding()),
+                // Bottom bar only floats over content in settings; other tabs reserve room for it.
+                modifier = Modifier.padding(
+                    top = padding.calculateTopPadding(),
+                    bottom = if (currentNavRoute == "settings") 0.dp else padding.calculateBottomPadding()
+                ),
                 enterTransition = {
                     val dir = if (isTabForward(initialState.destination.route, targetState.destination.route)) 1 else -1
                     slideInHorizontally(tween(320, easing = PremiumEasing)) { dir * it / 6 } +
@@ -370,6 +379,39 @@ fun LumenApp(
                         }
                     )
                 }
+                composable("servers") {
+                    val nodes by viewModel.nodes.collectAsStateWithLifecycle()
+                    val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
+                    val refreshingIds by viewModel.refreshingIds.collectAsStateWithLifecycle()
+                    val isPinging by viewModel.isPinging.collectAsStateWithLifecycle()
+                    val testingNodeId by viewModel.testingNodeId.collectAsStateWithLifecycle()
+                    val serverTestResults by viewModel.serverTestResults.collectAsStateWithLifecycle()
+                    ServerListScreen(
+                        nodes = nodes,
+                        subscriptions = subscriptions,
+                        refreshingIds = refreshingIds,
+                        isPinging = isPinging,
+                        testingNodeId = testingNodeId,
+                        serverTestResults = serverTestResults,
+                        onSelectNode = { node ->
+                            val wasSelected = node.isSelected
+                            viewModel.selectNode(node)
+                            if (!wasSelected && LumenVpnService.isRunning.value) onRestartConnection()
+                        },
+                        onEditNode = { node -> editorDraft = viewModel.draftForNode(node) },
+                        onDeleteNode = viewModel::deleteNode,
+                        onAddNode = { editorDraft = NodeDraft() },
+                        onPingAll = viewModel::pingAll,
+                        onPingNode = viewModel::pingNode,
+                        onImportClipboard = {
+                            viewModel.prepareImportText(clipboard.getText()?.text)
+                        },
+                        onAddSubscription = viewModel::addSubscription,
+                        onRefreshSubscription = viewModel::refreshSubscription,
+                        onDeleteSubscription = viewModel::deleteSubscription,
+                        onToggleAutoUpdate = viewModel::toggleAutoUpdate
+                    )
+                }
                 composable("routing") {
                     RoutingHubScreen(
                         onOpenDomainIp = { navController.navigate("routing/domain") },
@@ -426,6 +468,11 @@ fun LumenApp(
                     )
                 }
                 composable("logs") {
+                    // Logs are only formatted while this tab is visible; leaving it clears the flow.
+                    DisposableEffect(Unit) {
+                        viewModel.setLogsVisible(true)
+                        onDispose { viewModel.setLogsVisible(false) }
+                    }
                     val logs by viewModel.logs.collectAsStateWithLifecycle()
                     LogsScreen(
                         logs = logs,

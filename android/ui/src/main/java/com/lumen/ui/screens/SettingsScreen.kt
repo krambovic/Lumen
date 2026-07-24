@@ -165,7 +165,7 @@ fun SettingsScreen(
                 }
                 SettingsPage.THEME -> Unit
             }
-            Spacer(Modifier.height(84.dp))
+            Spacer(Modifier.height(140.dp))
         }
     }
 }
@@ -256,7 +256,48 @@ private fun SubscriptionSettings(state: SettingsUiState, onUpdate: (SettingsUiSt
             onUpdate(state.copy(subscriptionHwid = it.take(256).replace("\r", "").replace("\n", "")))
         }
     }
+    ToggleRow(
+        s.subscriptionUseProxyTun,
+        s.subscriptionUseProxyTunDesc,
+        state.subscriptionUseProxyTun
+    ) { onUpdate(state.copy(subscriptionUseProxyTun = it)) }
     Spacer(Modifier.height(6.dp))
+    }
+    SectionHeader(s.subscriptionAutoUpdate)
+    SettingsCard {
+    Spacer(Modifier.height(4.dp))
+    ToggleRow(
+        s.subscriptionAutoUpdate,
+        s.subscriptionAutoUpdateDesc,
+        state.subscriptionAutoUpdateMinutes > 0
+    ) { onUpdate(state.copy(subscriptionAutoUpdateMinutes = if (it) 240 else 0)) }
+    if (state.subscriptionAutoUpdateMinutes > 0) {
+        NumberField(s.subscriptionAutoUpdateInterval, state.subscriptionAutoUpdateMinutes) {
+            onUpdate(state.copy(subscriptionAutoUpdateMinutes = it.coerceIn(15, 1440)))
+        }
+    }
+    TextSettingField(s.subscriptionIncludeRegexLabel, state.subscriptionIncludeRegex) {
+        onUpdate(state.copy(subscriptionIncludeRegex = it.take(512)))
+    }
+    TextSettingField(s.subscriptionExcludeRegexLabel, state.subscriptionExcludeRegex) {
+        onUpdate(state.copy(subscriptionExcludeRegex = it.take(512)))
+    }
+    Spacer(Modifier.height(4.dp))
+    }
+    SectionHeader(s.subscriptionConverter)
+    SettingsCard {
+    Spacer(Modifier.height(4.dp))
+    ToggleRow(
+        s.subscriptionConverter,
+        s.subscriptionConverterDesc,
+        state.subscriptionConverterEnabled
+    ) { onUpdate(state.copy(subscriptionConverterEnabled = it)) }
+    if (state.subscriptionConverterEnabled) {
+        TextSettingField(s.subscriptionConverterUrlLabel, state.subscriptionConverterUrl) {
+            onUpdate(state.copy(subscriptionConverterUrl = it.take(512)))
+        }
+    }
+    Spacer(Modifier.height(4.dp))
     }
     SectionHeader(s.subscriptionProfile)
     SettingsCard {
@@ -457,28 +498,6 @@ private fun TrafficSettings(
     onUpdate: (SettingsUiState) -> Unit
 ) {
     val s = LocalStrings.current
-    SectionHeader(s.autoSelect)
-    SettingsCard {
-    Spacer(Modifier.height(10.dp))
-    LumenDropdown(
-        label = s.autoSelectUrl,
-        options = listOf(
-            "https://www.gstatic.com/generate_204",
-            "https://cp.cloudflare.com/generate_204",
-            "https://www.google.com/generate_204",
-            "https://connectivitycheck.platform.hicloud.com/generate_204"
-        ),
-        selected = state.urlTestUrl,
-        onSelected = { onUpdate(state.copy(urlTestUrl = it)) }
-    )
-    NumberField(s.checkInterval, state.urlTestIntervalMinutes) {
-        onUpdate(state.copy(urlTestIntervalMinutes = it.coerceIn(1, 1440)))
-    }
-    NumberField(s.toleranceMs, state.urlTestToleranceMs) {
-        onUpdate(state.copy(urlTestToleranceMs = it.coerceIn(0, 5000)))
-    }
-    Spacer(Modifier.height(6.dp))
-    }
     SectionHeader(s.connection)
     SettingsCard {
     Spacer(Modifier.height(4.dp))
@@ -548,6 +567,29 @@ private fun PingSettings(
             onUpdate(state.copy(pingSortAfter = it))
         }
         Spacer(Modifier.height(4.dp))
+    }
+    // url-test settings live next to ping: both measure server latency.
+    SectionHeader(s.autoSelect)
+    SettingsCard {
+        Spacer(Modifier.height(10.dp))
+        LumenDropdown(
+            label = s.autoSelectUrl,
+            options = listOf(
+                "https://www.gstatic.com/generate_204",
+                "https://cp.cloudflare.com/generate_204",
+                "https://www.google.com/generate_204",
+                "https://connectivitycheck.platform.hicloud.com/generate_204"
+            ),
+            selected = state.urlTestUrl,
+            onSelected = { onUpdate(state.copy(urlTestUrl = it)) }
+        )
+        NumberField(s.checkInterval, state.urlTestIntervalMinutes) {
+            onUpdate(state.copy(urlTestIntervalMinutes = it.coerceIn(1, 1440)))
+        }
+        NumberField(s.toleranceMs, state.urlTestToleranceMs) {
+            onUpdate(state.copy(urlTestToleranceMs = it.coerceIn(0, 5000)))
+        }
+        Spacer(Modifier.height(6.dp))
     }
 }
 

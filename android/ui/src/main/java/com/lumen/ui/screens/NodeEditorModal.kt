@@ -48,6 +48,7 @@ fun NodeEditorModal(
     onSave: (NodeDraft) -> Unit
 ) {
     var draft by remember(initial) { mutableStateOf(initial) }
+    val s = LocalStrings.current
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -68,11 +69,11 @@ fun NodeEditorModal(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        if (initial.id == null) "Add node" else "Edit node",
+                        if (initial.id == null) s.addNode else s.editNode,
                         style = MaterialTheme.typography.titleMedium
                     )
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Filled.Close, contentDescription = s.close, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 Column(
@@ -80,9 +81,9 @@ fun NodeEditorModal(
                         .weight(1f)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    Field("Name", draft.name) { draft = draft.copy(name = it) }
+                    Field(s.nodeName, draft.name) { draft = draft.copy(name = it) }
                     LumenDropdown(
-                        label = "Protocol",
+                        label = s.protocolField,
                         options = SUPPORTED_PROTOCOLS,
                         selected = draft.protocol,
                         onSelected = { draft = draft.copy(protocol = it) },
@@ -91,12 +92,12 @@ fun NodeEditorModal(
                     Spacer(Modifier.height(8.dp))
                     when (draft.protocol) {
                         "auto" -> Text(
-                            "Auto node automatically picks the fastest server (url-test).",
+                            s.autoNodeDescriptionLabel,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         "openvpn" -> Field(
-                            "OpenVPN config (.ovpn contents)",
+                            s.openvpnConfigLabel,
                             draft.rawConfig,
                             singleLine = false,
                             minLines = 12
@@ -114,13 +115,13 @@ fun NodeEditorModal(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = onDismiss) { Text(s.cancel) }
                     Spacer(Modifier.width(8.dp))
                     OutlinedButton(
                         onClick = { onSave(draft) },
                         enabled = isDraftValid(draft)
                     ) {
-                        Text("Save")
+                        Text(s.saveAction)
                     }
                 }
             }
@@ -174,11 +175,12 @@ private fun Field(
 
 @Composable
 private fun ServerPortRow(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
+    val s = LocalStrings.current
     Row(Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = draft.server,
             onValueChange = { onChange(draft.copy(server = it)) },
-            label = { Text("Server") },
+            label = { Text(s.serverLabel) },
             singleLine = true,
             modifier = Modifier
                 .weight(0.65f)
@@ -188,7 +190,7 @@ private fun ServerPortRow(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
         OutlinedTextField(
             value = draft.port,
             onValueChange = { onChange(draft.copy(port = it)) },
-            label = { Text("Port") },
+            label = { Text(s.portLabel) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier
@@ -214,19 +216,20 @@ private fun ToggleField(label: String, checked: Boolean, onChange: (Boolean) -> 
 
 @Composable
 private fun TransportFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
+    val s = LocalStrings.current
     LumenDropdown(
-        label = "Transport",
+        label = s.transportLabel,
         options = NETWORK_TRANSPORTS,
         selected = draft.network,
         onSelected = { onChange(draft.copy(network = it)) }
     )
     Spacer(Modifier.height(4.dp))
     if (draft.network in listOf("ws", "xhttp", "http")) {
-        Field("Path", draft.path) { onChange(draft.copy(path = it)) }
-        Field("Host header", draft.host) { onChange(draft.copy(host = it)) }
+        Field(s.pathLabel, draft.path) { onChange(draft.copy(path = it)) }
+        Field(s.hostHeaderLabel, draft.host) { onChange(draft.copy(host = it)) }
     }
     if (draft.network == "grpc") {
-        Field("gRPC serviceName", draft.serviceName) { onChange(draft.copy(serviceName = it)) }
+        Field(s.grpcServiceNameLabel, draft.serviceName) { onChange(draft.copy(serviceName = it)) }
     }
 }
 
@@ -236,84 +239,86 @@ private fun SecurityFields(
     onChange: (NodeDraft) -> Unit,
     allowReality: Boolean = true
 ) {
+    val s = LocalStrings.current
     val options = if (allowReality) SECURITY_OPTIONS else listOf("none", "tls")
     LumenDropdown(
-        label = "Security",
+        label = s.securityLabel,
         options = options,
         selected = draft.security,
         onSelected = { onChange(draft.copy(security = it)) }
     )
     Spacer(Modifier.height(4.dp))
     if (draft.security != "none") {
-        Field("SNI", draft.sni) { onChange(draft.copy(sni = it)) }
-        Field("ALPN (comma separated)", draft.alpn) { onChange(draft.copy(alpn = it)) }
-        Field("uTLS fingerprint (chrome, firefox\u2026)", draft.fingerprint) { onChange(draft.copy(fingerprint = it)) }
-        ToggleField("Allow insecure TLS", draft.insecure) { onChange(draft.copy(insecure = it)) }
+        Field(s.sniLabel, draft.sni) { onChange(draft.copy(sni = it)) }
+        Field(s.alpnLabel, draft.alpn) { onChange(draft.copy(alpn = it)) }
+        Field(s.utlsFingerprintLabel, draft.fingerprint) { onChange(draft.copy(fingerprint = it)) }
+        ToggleField(s.allowInsecureTlsLabel, draft.insecure) { onChange(draft.copy(insecure = it)) }
     }
     if (draft.security == "reality") {
-        Field("Reality public key (pbk)", draft.publicKey) { onChange(draft.copy(publicKey = it)) }
-        Field("Reality short ID (sid)", draft.shortId) { onChange(draft.copy(shortId = it)) }
+        Field(s.realityPublicKeyLabel, draft.publicKey) { onChange(draft.copy(publicKey = it)) }
+        Field(s.realityShortIdLabel, draft.shortId) { onChange(draft.copy(shortId = it)) }
     }
 }
 
 @Composable
 private fun UriProtocolFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
+    val s = LocalStrings.current
     ServerPortRow(draft, onChange)
     when (draft.protocol) {
         "vless" -> {
-            Field("UUID", draft.secret) { onChange(draft.copy(secret = it)) }
+            Field(s.uuidLabel, draft.secret) { onChange(draft.copy(secret = it)) }
             LumenDropdown(
-                label = "Flow",
+                label = s.flowLabel,
                 options = listOf("", "xtls-rprx-vision"),
                 selected = draft.flow,
                 onSelected = { onChange(draft.copy(flow = it)) },
-                optionLabel = { it.ifEmpty { "(none)" } }
+                optionLabel = { it.ifEmpty { s.noneOption } }
             )
             Spacer(Modifier.height(4.dp))
             TransportFields(draft, onChange)
             SecurityFields(draft, onChange)
         }
         "vmess" -> {
-            Field("UUID", draft.secret) { onChange(draft.copy(secret = it)) }
+            Field(s.uuidLabel, draft.secret) { onChange(draft.copy(secret = it)) }
             TransportFields(draft, onChange)
             SecurityFields(draft, onChange, allowReality = false)
         }
         "trojan" -> {
-            Field("Password", draft.secret) { onChange(draft.copy(secret = it)) }
+            Field(s.password, draft.secret) { onChange(draft.copy(secret = it)) }
             TransportFields(draft, onChange)
             SecurityFields(draft, onChange)
         }
         "ss" -> {
             LumenDropdown(
-                label = "Encryption method",
+                label = s.encryptionMethodLabel,
                 options = SS_METHODS,
                 selected = draft.method,
                 onSelected = { onChange(draft.copy(method = it)) }
             )
-            Field("Password", draft.secret) { onChange(draft.copy(secret = it)) }
+            Field(s.password, draft.secret) { onChange(draft.copy(secret = it)) }
         }
         "hysteria2" -> {
-            Field("Password / auth", draft.secret) { onChange(draft.copy(secret = it)) }
-            Field("SNI", draft.sni) { onChange(draft.copy(sni = it)) }
-            Field("Obfs (salamander, optional)", draft.obfs) { onChange(draft.copy(obfs = it)) }
-            Field("Obfs password", draft.obfsPassword) { onChange(draft.copy(obfsPassword = it)) }
-            ToggleField("Allow insecure TLS", draft.insecure) { onChange(draft.copy(insecure = it)) }
+            Field(s.passwordAuthLabel, draft.secret) { onChange(draft.copy(secret = it)) }
+            Field(s.sniLabel, draft.sni) { onChange(draft.copy(sni = it)) }
+            Field(s.obfsLabel, draft.obfs) { onChange(draft.copy(obfs = it)) }
+            Field(s.obfsPasswordLabel, draft.obfsPassword) { onChange(draft.copy(obfsPassword = it)) }
+            ToggleField(s.allowInsecureTlsLabel, draft.insecure) { onChange(draft.copy(insecure = it)) }
         }
         "tuic" -> {
-            Field("UUID:Password", draft.secret) { onChange(draft.copy(secret = it)) }
-            Field("SNI", draft.sni) { onChange(draft.copy(sni = it)) }
-            Field("ALPN (comma separated)", draft.alpn) { onChange(draft.copy(alpn = it)) }
+            Field(s.uuidPasswordLabel, draft.secret) { onChange(draft.copy(secret = it)) }
+            Field(s.sniLabel, draft.sni) { onChange(draft.copy(sni = it)) }
+            Field(s.alpnLabel, draft.alpn) { onChange(draft.copy(alpn = it)) }
             LumenDropdown(
-                label = "Congestion control",
+                label = s.congestionControlLabel,
                 options = CONGESTION_OPTIONS,
                 selected = draft.congestionControl,
                 onSelected = { onChange(draft.copy(congestionControl = it)) }
             )
             Spacer(Modifier.height(4.dp))
-            ToggleField("Allow insecure TLS", draft.insecure) { onChange(draft.copy(insecure = it)) }
+            ToggleField(s.allowInsecureTlsLabel, draft.insecure) { onChange(draft.copy(insecure = it)) }
         }
         "socks", "http" -> {
-            Field("user:password (optional)", draft.secret) { onChange(draft.copy(secret = it)) }
+            Field(s.userPasswordOptionalLabel, draft.secret) { onChange(draft.copy(secret = it)) }
         }
     }
 }
@@ -324,15 +329,16 @@ private fun WireGuardFields(
     isAwg: Boolean,
     onChange: (NodeDraft) -> Unit
 ) {
+    val s = LocalStrings.current
     ServerPortRow(draft, onChange)
-    Field("Private key", draft.secret) { onChange(draft.copy(secret = it)) }
-    Field("Peer public key", draft.publicKey) { onChange(draft.copy(publicKey = it)) }
-    Field("Address (e.g. 10.0.0.2/32)", draft.address) { onChange(draft.copy(address = it)) }
-    Field("Pre-shared key (optional)", draft.presharedKey) { onChange(draft.copy(presharedKey = it)) }
-    Field("Allowed IPs", draft.allowedIps) { onChange(draft.copy(allowedIps = it)) }
-    Field("Reserved (e.g. 1,2,3 \u2014 optional)", draft.reserved) { onChange(draft.copy(reserved = it)) }
+    Field(s.privateKeyLabel, draft.secret) { onChange(draft.copy(secret = it)) }
+    Field(s.peerPublicKeyLabel, draft.publicKey) { onChange(draft.copy(publicKey = it)) }
+    Field(s.wgAddressLabel, draft.address) { onChange(draft.copy(address = it)) }
+    Field(s.presharedKeyLabel, draft.presharedKey) { onChange(draft.copy(presharedKey = it)) }
+    Field(s.allowedIpsLabel, draft.allowedIps) { onChange(draft.copy(allowedIps = it)) }
+    Field(s.reservedLabel, draft.reserved) { onChange(draft.copy(reserved = it)) }
     if (isAwg) {
-        SectionHeader("AmneziaWG junk parameters")
+        SectionHeader(s.awgJunkParamsLabel)
         Row(Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 value = draft.jc,

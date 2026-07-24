@@ -201,88 +201,108 @@ fun ThemeSettingsScreen(
 
         Spacer(Modifier.height(8.dp))
 
-        // Material You & AMOLED Black in a separate bottom panel
-        SettingsCard {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Star,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = s.materialYou,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = s.materialYouDesc,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                LumenSwitch(
-                    checked = state.useMaterialYou,
-                    onCheckedChange = { onUpdate(state.copy(useMaterialYou = it)) }
-                )
-            }
-
-            SettingsDivider()
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Info,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = s.amoledBlack,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = s.amoledBlackDesc,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                LumenSwitch(
-                    checked = state.useAmoledBlack,
-                    onCheckedChange = { onUpdate(state.copy(useAmoledBlack = it)) }
-                )
-            }
+        // Two square toggle tiles instead of switch rows, matching the preset grid.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ThemeToggleTile(
+                title = s.materialYou,
+                subtitle = s.materialYouDesc,
+                icon = Icons.Filled.Star,
+                checked = state.useMaterialYou,
+                modifier = Modifier.weight(1f)
+            ) { onUpdate(state.copy(useMaterialYou = it)) }
+            ThemeToggleTile(
+                title = s.amoledBlack,
+                subtitle = s.amoledBlackDesc,
+                icon = Icons.Filled.Info,
+                checked = state.useAmoledBlack,
+                modifier = Modifier.weight(1f)
+            ) { onUpdate(state.copy(useAmoledBlack = it)) }
         }
 
-        Spacer(Modifier.height(84.dp))
+        Spacer(Modifier.height(140.dp))
+    }
+}
+
+// Compact square tile with an accent glow when on; replaces the old switch rows.
+@Composable
+private fun ThemeToggleTile(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    checked: Boolean,
+    modifier: Modifier = Modifier,
+    onChange: (Boolean) -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    val accent = MaterialTheme.colorScheme.primary
+    val border = if (checked) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+    Column(
+        modifier = modifier
+            .height(158.dp)
+            .clip(shape)
+            .background(
+                if (checked) Brush.verticalGradient(
+                    listOf(accent.copy(alpha = 0.22f), MaterialTheme.colorScheme.surfaceVariant)
+                ) else Brush.verticalGradient(
+                    listOf(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.surfaceVariant)
+                )
+            )
+            .border(if (checked) 2.dp else 1.dp, border, shape)
+            .clickable { onChange(!checked) }
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(if (checked) accent else MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (checked) MaterialTheme.colorScheme.onPrimary else accent,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(if (checked) accent else Color.Transparent)
+                    .border(1.dp, if (checked) accent else MaterialTheme.colorScheme.outline, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                if (checked) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -302,6 +322,8 @@ private fun ThemePresetCard(
     val cardBorder = if (isSelected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
     Column(
         modifier = modifier
+            // Fixed height keeps every preset tile the same size regardless of text length.
+            .height(158.dp)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(if (isSelected) 2.dp else 1.dp, cardBorder, shape)

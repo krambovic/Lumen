@@ -85,13 +85,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- Logs ----------
-    val logs: StateFlow<List<String>> = VpnLogBus.entries
-        .map { entries ->
-            entries.map { entry ->
-                "[${entry.formattedTime}] [${entry.level.name}] [${entry.component}] ${entry.message}"
-            }
+    // Log text is only formatted while the logs tab is open; elsewhere the flow stays empty.
+    private val _logsVisible = MutableStateFlow(false)
+
+    fun setLogsVisible(visible: Boolean) { _logsVisible.value = visible }
+
+    val logs: StateFlow<List<String>> = combine(VpnLogBus.entries, _logsVisible) { entries, visible ->
+        if (!visible) emptyList() else entries.map { entry ->
+            "[${entry.formattedTime}] [${entry.level.name}] [${entry.component}] ${entry.message}"
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun log(message: String) = VpnLogBus.info("APP", message)
 
@@ -168,6 +171,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         subscriptionSendHwid = prefs.getBoolean("subscription_send_hwid", true),
         subscriptionDirect = prefs.getBoolean("subscription_direct", true),
         allowSubscriptionOverrides = prefs.getBoolean("allow_subscription_overrides", true),
+        subscriptionAutoUpdateMinutes = prefs.getInt("subscription_auto_update_minutes", 240),
+        subscriptionIncludeRegex = prefs.getString("subscription_include_regex", "") ?: "",
+        subscriptionExcludeRegex = prefs.getString("subscription_exclude_regex", "") ?: "",
+        subscriptionUseProxyTun = prefs.getBoolean("subscription_use_proxy_tun", false),
+        subscriptionConverterEnabled = prefs.getBoolean("subscription_converter_enabled", false),
+        subscriptionConverterUrl = prefs.getString("subscription_converter_url", "") ?: "",
         // Core debug logging is the single biggest CPU/battery drain: every line
         // crosses the log bus and recomposes the UI. Keep it opt-in.
         logLevel = prefs.getString("log_level", "warn") ?: "warn",
@@ -241,6 +250,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("subscription_send_hwid", s.subscriptionSendHwid)
             .putBoolean("subscription_direct", s.subscriptionDirect)
             .putBoolean("allow_subscription_overrides", s.allowSubscriptionOverrides)
+            .putInt("subscription_auto_update_minutes", s.subscriptionAutoUpdateMinutes.coerceIn(15, 1440))
+            .putString("subscription_include_regex", s.subscriptionIncludeRegex.trim().take(512))
+            .putString("subscription_exclude_regex", s.subscriptionExcludeRegex.trim().take(512))
+            .putBoolean("subscription_use_proxy_tun", s.subscriptionUseProxyTun)
+            .putBoolean("subscription_converter_enabled", s.subscriptionConverterEnabled)
+            .putString("subscription_converter_url", s.subscriptionConverterUrl.trim().take(512))
             .putString("engine_log_level", "debug")
             .putString("language", s.language)
             .putString("theme_mode", s.themeMode.name)

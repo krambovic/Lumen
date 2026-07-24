@@ -1,5 +1,7 @@
 package com.lumen.ui.screens
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -14,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -120,6 +123,12 @@ fun DashboardScreen(
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedNodeIds by remember { mutableStateOf(setOf<String>()) }
 
+    // Back in selection mode only clears the selection, it must not change tabs.
+    BackHandler(enabled = isSelectionMode) {
+        isSelectionMode = false
+        selectedNodeIds = emptySet()
+    }
+
     var showDonateDialog by remember { mutableStateOf(false) }
     var showUsdtDialog by remember { mutableStateOf(false) }
     val uriHandler = LocalUriHandler.current
@@ -216,6 +225,8 @@ fun DashboardScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
+                // Extra bottom room so the last tiles can be scrolled clear of the bars.
+                contentPadding = PaddingValues(bottom = 96.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
@@ -917,13 +928,13 @@ private fun ServerTileRow(
     val strings = LocalStrings.current
     val selected = node.isSelected
     val primaryColor = MaterialTheme.colorScheme.primary
-    // On AMOLED the surface is pure black, so tiles are tinted with the palette accent instead.
+    // Tiles always carry the palette accent; AMOLED only makes the tint slightly stronger.
     val amoled = MaterialTheme.colorScheme.background.luminance() < 0.02f
     val rowBg = when {
         isSelectionMode && isNodeSelected -> primaryColor.copy(alpha = if (amoled) 0.24f else 0.18f)
         selected -> primaryColor.copy(alpha = if (amoled) 0.20f else 0.14f)
-        amoled -> primaryColor.copy(alpha = 0.08f)
-        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        else -> primaryColor.copy(alpha = if (amoled) 0.08f else 0.06f)
+            .compositeOver(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     }
     var showActionMenu by remember { mutableStateOf(false) }
 

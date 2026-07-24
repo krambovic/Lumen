@@ -86,7 +86,7 @@ internal object SubscriptionClient {
             // and this matches what the desktop build sends.
             add("Happ compatible" to "Happ/2.18.3/Windows/2606241603601")
             add("v2rayNG" to "v2rayNG/1.9.16")
-            add("Lumen Android" to "Lumen-Subscription/Android-1.0")
+            add("Lumen Android" to "Lumen-Subscription/Android-${net.kramb.lumen.BuildConfig.VERSION_NAME}")
             add("SFA" to "SFA/1.11.0")
             add("Streisand" to "Streisand/1.6.40")
             add("Clash Meta" to "clash.meta")

@@ -47,6 +47,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import com.lumen.ui.screens.LocalHapticsEnabled
 import com.lumen.ui.screens.LocalStrings
 import kotlin.math.roundToInt
 
@@ -57,6 +60,10 @@ fun ConnectionSliderBar(
     modifier: Modifier = Modifier
 ) {
     val s = LocalStrings.current
+    val haptics = LocalHapticFeedback.current
+    val hapticsEnabled = LocalHapticsEnabled.current
+    // Slider gestures buzz on grab and on the toggle that follows the release.
+    fun buzz(type: HapticFeedbackType) { if (hapticsEnabled) haptics.performHapticFeedback(type) }
 
     // Keep primary theme color for ALL states (no changing to green/yellow/red)
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -170,12 +177,15 @@ fun ConnectionSliderBar(
                     onDragStarted = {
                         isDragging = true
                         dragPx = effectiveOffsetPx
+                        buzz(HapticFeedbackType.TextHandleMove)
                     },
                     onDragStopped = {
                         isDragging = false
                         if (dragPx > maxOffsetPx * 0.4f && connectionState == ConnectionState.Disconnected) {
+                            buzz(HapticFeedbackType.LongPress)
                             onToggleConnection()
                         } else if (dragPx < maxOffsetPx * 0.6f && connectionState == ConnectionState.Connected) {
+                            buzz(HapticFeedbackType.LongPress)
                             onToggleConnection()
                         } else {
                             dragPx = if (connectionState == ConnectionState.Connected) maxOffsetPx else 0f
