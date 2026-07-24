@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lumen</string>
+    <string name="connect">Ш§ШЄШµШ§Щ„</string>
+    <string name="disconnect">Щ‚Ш·Ш№ Ш§ШЄШµШ§Щ„</string>
+    <string name="connected">Щ…ШЄШµЩ„ ШґШЇ</string>
+    <string name="connecting">ШЇШ± Ш­Ш§Щ„ Ш§ШЄШµШ§Щ„...</string>
+    <string name="disconnected">Щ‚Ш·Ш№ ШґШЇЩ‡</string>
+    <string name="error">Ш®Ш·Ш§</string>
+    <string name="servers">ШіШ±Щ€Ш±Щ‡Ш§</string>
+    <string name="subscriptions">Ш§ШґШЄШ±Ш§Ъ©вЂЊЩ‡Ш§</string>
+    <string name="routing">Щ…ШіЫЊШ±ЫЊШ§ШЁЫЊ</string>
+    <string name="settings">ШЄЩ†ШёЫЊЩ…Ш§ШЄ</string>
+    <string name="logs">ЪЇШІШ§Ш±ШґвЂЊЩ‡Ш§</string>
+    <string name="add_subscription">Ш§ЩЃШІЩ€ШЇЩ† Ш§ШґШЄШ±Ш§Ъ©</string>
+    <string name="auto_select">Ш§Щ†ШЄШ®Ш§ШЁ Ш®Щ€ШЇЪ©Ш§Ш±</string>
+    <string name="ping_all">ШЄШіШЄ ЩѕЫЊЩ†ЪЇ Щ‡Щ…Щ‡</string>
+    <string name="speed_test">ШЄШіШЄ ШіШ±Ш№ШЄ</string>
+    <string name="protocol_vless">VLESS</string>
+    <string name="protocol_vmess">VMess</string>
+    <string name="protocol_trojan">Trojan</string>
+    <string name="protocol_ss">Shadowsocks</string>
+    <string name="protocol_hy2">Hysteria 2</string>
+    <string name="protocol_tuic">TUIC</string>
+    <string name="protocol_wg">WireGuard</string>
+    <string name="protocol_awg">AmneziaWG</string>
+    <string name="protocol_openvpn">OpenVPN</string>
+    <string name="engine_singbox">sing-box</string>
+    <string name="split_tunneling">ШЄЩ€Щ†Щ„вЂЊШІЩ†ЫЊ ШЄЩЃЪ©ЫЊЪ©ЫЊ</string>
+    <string name="per_app_vpn">ЩѕШ±Щ€Ъ©ШіЫЊ ШЁШ± Ш§ШіШ§Ші ШЁШ±Щ†Ш§Щ…Щ‡</string>
+    <string name="node_editor_title">Щ€ЫЊШ±Ш§ЫЊШґ ШіШ±Щ€Ш±</string>
+    <string name="server_address">ШўШЇШ±Ші ШіШ±Щ€Ш±</string>
+    <string name="server_port">ЩѕЩ€Ш±ШЄ</string>
+    <string name="uuid_password">UUID / Ш±Щ…ШІ Ш№ШЁЩ€Ш±</string>
+    <string name="sni">SNI</string>
+    <string name="flow">Flow</string>
+    <string name="alpn">ALPN</string>
+    <string name="fingerprint">Ш§Ш«Ш± Ш§Щ†ЪЇШґШЄ (Fingerprint)</string>
+    <string name="public_key">Ъ©Щ„ЫЊШЇ Ш№Щ…Щ€Щ…ЫЊ</string>
+    <string name="short_id">ШґЩ†Ш§ШіЩ‡ Ъ©Щ€ШЄШ§Щ‡ (Short ID)</string>
+    <string name="awg_junk_params">ЩѕШ§Ш±Ш§Щ…ШЄШ±Щ‡Ш§ЫЊ AWG Junk</string>
+</resources>

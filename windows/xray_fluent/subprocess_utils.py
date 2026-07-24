@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import locale
+import os
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+
+CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+_SUBPROCESS_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="xray_fluent_subprocess")
+
+
+def decode_output(data: bytes | None) -> str:
+    if not data:
+        return ""
+    encodings: list[str] = ["utf-8"]
+    if os.name == "nt":
+        encodings.extend(["cp866", locale.getpreferredencoding(False), "cp1251"])
+    for encoding in dict.fromkeys(encodings):
+        try:
+            return data.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def result_output_text(result: subprocess.CompletedProcess[bytes]) -> str:
+    return decode_output(result.stdout or result.stderr or b"")
+
+
+def run_text(
+    command: list[str],
+    *,
+    timeout: float,
+    check: bool = False,
+    creationflags: int | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    kwargs: dict[str, int | bool | float] = {
+        "capture_output": True,
+        "text": False,
+        "timeout": timeout,
+        "check": check,
+    }
+    if creationflags is not None:
+        kwargs["creationflags"] = creationflags
+    return subprocess.run(command, **kwargs)
+
+
+def _qt_app_on_current_thread() -> Any | None:
+    try:
+        from PyQt6.QtCore import QThread
+        from PyQt6.QtWidgets import QApplication
+    except Exception:
+        return None
+
+    app = QApplication.instance()
+    if app is None or QThread.currentThread() != app.thread():
+        return None
+    return app
+
+
+def pump_qt_events() -> None:
+    app = _qt_app_on_current_thread()
+    if app is None:
+        return
+    from PyQt6.QtCore import QEventLoop
+
+    app.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+
+def sleep_with_events(duration_sec: float, *, step_sec: float = 0.05) -> None:
+    deadline = time.monotonic() + max(0.0, duration_sec)
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        pump_qt_events()
+        time.sleep(min(step_sec, remaining))
+
+
+def _wait_for_qprocess_call(
+    process: Any,
+    method_name: str,
+    timeout_ms: int,
+    *,
+    slice_ms: int = 50,
+) -> bool:
+    remaining = max(0, int(timeout_ms))
+    waiter = getattr(process, method_name)
+
+    while remaining > 0:
+        step = min(slice_ms, remaining)
+        if waiter(step):
+            return True
+        pump_qt_events()
+        remaining -= step
+
+    pump_qt_events()
+    return False
+
+
+def wait_for_qprocess_started(process: Any, timeout_ms: int) -> bool:
+    return _wait_for_qprocess_call(process, "waitForStarted", timeout_ms)
+
+
+def wait_for_qprocess_finished(process: Any, timeout_ms: int) -> bool:
+    return _wait_for_qprocess_call(process, "waitForFinished", timeout_ms)
+
+
+def wait_for_qprocess_ready_read(process: Any, timeout_ms: int) -> bool:
+    return _wait_for_qprocess_call(process, "waitForReadyRead", timeout_ms)
+
+
+def wait_for_future_with_events(future: Any, timeout_sec: float, *, slice_sec: float = 0.05) -> Any:
+    deadline = time.monotonic() + max(0.0, float(timeout_sec))
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Future did not complete before timeout")
+        try:
+            return future.result(timeout=min(slice_sec, remaining))
+        except FutureTimeoutError:
+            pump_qt_events()
+
+
+def run_text_pumped(
+    command: list[str],
+    *,
+    timeout: float,
+    check: bool = False,
+    creationflags: int | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    if _qt_app_on_current_thread() is None:
+        return run_text(
+            command,
+            timeout=timeout,
+            check=check,
+            creationflags=creationflags,
+        )
+    future = _SUBPROCESS_EXECUTOR.submit(
+        run_text,
+        command,
+        timeout=timeout,
+        check=check,
+        creationflags=creationflags,
+    )
+    return wait_for_future_with_events(future, timeout + 0.5)
+
+
+def is_same_path(left: str | Path | None, right: str | Path | None) -> bool:
+    if not left or not right:
+        return False
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except Exception:
+        return False
+
+
+def kill_processes_by_path(process_name: str, executable_path: str | Path, *, timeout: float = 5.0) -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        target = Path(executable_path).resolve()
+    except Exception:
+        target = Path(executable_path)
+    target_text = str(target).replace("/", "\\").replace("'", "''")
+    script = (
+        "$matches = @(Get-CimInstance Win32_Process | "
+        f"Where-Object {{ $_.Name -eq '{process_name}' -and ($_.ExecutablePath -replace '/', '\\') -eq '{target_text}' }}); "
+        "$matches | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; "
+        "Write-Output $matches.Count"
+    )
+    result = run_text_pumped(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        timeout=timeout,
+        creationflags=CREATE_NO_WINDOW,
+    )
+    if result.returncode != 0:
+        return False
+    return result_output_text(result).strip() not in {"", "0"}

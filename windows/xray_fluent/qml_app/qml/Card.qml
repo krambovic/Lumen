@@ -1,0 +1,78 @@
+pragma ComponentBehavior: Bound
+import QtQuick
+import QtQuick.Effects
+import "."
+
+Item {
+    id: root
+    default property alias content: container.data
+    property int padding: Theme.spacingLarge
+    property color color: Theme.card
+    property bool hoverable: true
+    property alias radius: bg.radius
+    property real elevation: 0
+    readonly property Item _contentItem: container.children.length > 0 ? container.children[0] : null
+    implicitWidth: (_contentItem ? _contentItem.implicitWidth : 0) + padding * 2
+    implicitHeight: (_contentItem ? _contentItem.implicitHeight : 0) + padding * 2
+
+    readonly property bool _hot: root.hoverable && hover.hovered
+
+    Rectangle {
+        id: bg
+        antialiasing: true
+        anchors.fill: parent
+        radius: Theme.radius
+        color: root.color
+        border.width: 1
+        border.color: root._hot && root.hoverable ? Theme.divider : Theme.borderSolid
+        Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+        layer.enabled: root.elevation > 0
+        layer.effect: MultiEffect {
+            shadowEnabled: true
+            shadowColor: Theme.shadowColor
+            shadowOpacity: Theme.shadowOpacity * (root.elevation > 0 ? (root._hot ? 1.4 : 1.0) : (root._hot ? 0.6 : 0.0)) * (root.elevation > 0 ? Math.min(1, root.elevation) : 1.0)
+            shadowBlur: Theme.shadowBlur
+            shadowVerticalOffset: root.elevation > 0 ? (Theme.shadowVOffset + (root._hot ? 2 : 0)) : (root._hot ? 3 : 0)
+            autoPaddingEnabled: true
+            Behavior on shadowOpacity { NumberAnimation { duration: Theme.animFast } }
+            Behavior on shadowVerticalOffset { NumberAnimation { duration: Theme.animFast } }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 1
+            radius: Math.max(0, parent.radius - 1)
+            color: Theme.dark ? Qt.rgba(1, 1, 1, 0.017) : Qt.rgba(0, 0, 0, 0.015)
+            opacity: root._hot ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: Theme.animFast } }
+        }
+
+        Item {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: bg.radius + 1
+            clip: true
+            visible: !Theme.dark && root.elevation > 0
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: bg.height
+                radius: bg.radius
+                color: "transparent"
+                border.width: 1
+                border.color: Theme.borderBottom
+            }
+        }
+
+        HoverHandler { id: hover; enabled: root.hoverable }
+    }
+
+    Item {
+        id: container
+        anchors.fill: parent
+        anchors.margins: root.padding
+    }
+}

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lumen</string>
+    <string name="connect">иїћжЋҐ</string>
+    <string name="disconnect">ж–­ејЂиїћжЋҐ</string>
+    <string name="connected">е·ІиїћжЋҐ</string>
+    <string name="connecting">ж­ЈењЁиїћжЋҐ...</string>
+    <string name="disconnected">е·Іж–­ејЂ</string>
+    <string name="error">й”™иЇЇ</string>
+    <string name="servers">жњЌеЉЎе™Ё</string>
+    <string name="subscriptions">и®ўй…</string>
+    <string name="routing">и·Їз”±</string>
+    <string name="settings">и®ѕзЅ®</string>
+    <string name="logs">ж—Ґеї—</string>
+    <string name="add_subscription">ж·»еЉ и®ўй…</string>
+    <string name="auto_select">и‡ЄеЉЁйЂ‰ж‹©</string>
+    <string name="ping_all">жµ‹иЇ•ж‰Ђжњ‰е»¶иїџ</string>
+    <string name="speed_test">жµ‹йЂџ</string>
+    <string name="protocol_vless">VLESS</string>
+    <string name="protocol_vmess">VMess</string>
+    <string name="protocol_trojan">Trojan</string>
+    <string name="protocol_ss">Shadowsocks</string>
+    <string name="protocol_hy2">Hysteria 2</string>
+    <string name="protocol_tuic">TUIC</string>
+    <string name="protocol_wg">WireGuard</string>
+    <string name="protocol_awg">AmneziaWG</string>
+    <string name="protocol_openvpn">OpenVPN</string>
+    <string name="engine_singbox">sing-box</string>
+    <string name="split_tunneling">е€†жµЃ</string>
+    <string name="per_app_vpn">еє”з”Ёд»Јзђ†</string>
+    <string name="node_editor_title">зј–иѕ‘иЉ‚з‚№</string>
+    <string name="server_address">жњЌеЉЎе™Ёењ°еќЂ</string>
+    <string name="server_port">з«ЇеЏЈ</string>
+    <string name="uuid_password">UUID / еЇ†з Ѓ</string>
+    <string name="sni">SNI</string>
+    <string name="flow">Flow</string>
+    <string name="alpn">ALPN</string>
+    <string name="fingerprint">жЊ‡зє№ (Fingerprint)</string>
+    <string name="public_key">е…¬й’Ґ</string>
+    <string name="short_id">Short ID</string>
+    <string name="awg_junk_params">AWG дјЄиЈ…еЏ‚ж•°</string>
+</resources>

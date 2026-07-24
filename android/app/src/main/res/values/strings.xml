@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lumen</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="connected">Connected</string>
+    <string name="connecting">Connecting...</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="error">Error</string>
+    <string name="servers">Servers</string>
+    <string name="subscriptions">Subscriptions</string>
+    <string name="routing">Routing</string>
+    <string name="settings">Settings</string>
+    <string name="logs">Logs</string>
+    <string name="add_subscription">Add Subscription</string>
+    <string name="auto_select">Auto Select</string>
+    <string name="ping_all">Ping All</string>
+    <string name="speed_test">Speed Test</string>
+    <string name="protocol_vless">VLESS</string>
+    <string name="protocol_vmess">VMess</string>
+    <string name="protocol_trojan">Trojan</string>
+    <string name="protocol_ss">Shadowsocks</string>
+    <string name="protocol_hy2">Hysteria 2</string>
+    <string name="protocol_tuic">TUIC</string>
+    <string name="protocol_wg">WireGuard</string>
+    <string name="protocol_awg">AmneziaWG</string>
+    <string name="protocol_openvpn">OpenVPN</string>
+    <string name="engine_singbox">sing-box</string>
+    <string name="split_tunneling">Split Tunneling</string>
+    <string name="per_app_vpn">Per-App Proxy</string>
+    <string name="node_editor_title">Edit Node</string>
+    <string name="server_address">Server Address</string>
+    <string name="server_port">Port</string>
+    <string name="uuid_password">UUID / Password</string>
+    <string name="sni">SNI</string>
+    <string name="flow">Flow</string>
+    <string name="alpn">ALPN</string>
+    <string name="fingerprint">Fingerprint</string>
+    <string name="public_key">Public Key</string>
+    <string name="short_id">Short ID</string>
+    <string name="awg_junk_params">AWG Junk Parameters</string>
+</resources>

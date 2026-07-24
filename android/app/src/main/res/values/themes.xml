@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Lumen" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF0F1117</item>
+        <item name="android:statusBarColor">#FF0F1117</item>
+        <item name="android:navigationBarColor">#FF0F1117</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

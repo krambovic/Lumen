@@ -1,9 +1,6 @@
 # Python
 __pycache__/
 *.pyc
-# Python
-__pycache__/
-*.pyc
 *.pyo
 .venv/
 
@@ -12,9 +9,11 @@ build/
 dist/
 *.spec
 !Lumen-qml.spec
+!windows/Lumen-qml.spec
 
 # Core binaries (downloaded by CI)
 core/
+windows/core/
 
 # App data
 data/*
@@ -24,6 +23,16 @@ data/*
 data/external/*
 !data/external/droute/
 !data/external/droute/**
+
+# Android
+.gradle/
+android/.gradle/
+android/**/.gradle/
+android/build/
+android/**/build/
+android/.idea/
+*.apk
+*.aar
 
 # IDE
 .idea/
@@ -46,11 +55,7 @@ desktop.ini
 /.agent
 /.codex
 /.codegraph
-CLAUDE.md
-AGENTS.md
-HANDOFF*.md
-sing-box.md
+/graphify-out
 
 # Worktrees
 .worktrees/
-

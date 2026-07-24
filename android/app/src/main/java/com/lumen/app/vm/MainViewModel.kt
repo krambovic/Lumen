@@ -1,0 +1,1182 @@
+package com.lumen.app.vm
+
+import android.app.Application
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.room.Room
+import androidx.room.withTransaction
+import com.lumen.app.subscription.ImportClassification
+import com.lumen.app.subscription.ImportClassifier
+import com.lumen.app.subscription.ImportKind
+import com.lumen.app.subscription.SubscriptionClient
+import com.lumen.app.util.NodeDraftMapper
+import com.lumen.core.config.builder.SingboxConfigBuilder
+import com.lumen.core.config.builder.SingboxConfigOptions
+import com.lumen.core.config.parser.LinkParser
+import com.lumen.core.config.parser.ParsedNode
+import org.json.JSONObject
+import com.lumen.core.database.AppDatabase
+import com.lumen.core.database.model.NodeEntity
+import com.lumen.core.database.model.SubscriptionEntity
+import com.lumen.core.vpn.LumenVpnService
+import com.lumen.core.vpn.VpnLogBus
+import com.lumen.ui.components.ConnectionState
+import com.lumen.ui.components.CountryFlagHelper
+import com.lumen.ui.screens.AppEntryUiModel
+import com.lumen.ui.screens.GeoResourceUiModel
+import com.lumen.ui.screens.ImportKindUi
+import com.lumen.ui.screens.ImportPhaseUi
+import com.lumen.ui.screens.ImportUiState
+import com.lumen.ui.screens.NodeDraft
+import com.lumen.ui.screens.NodeUiModel
+import com.lumen.ui.screens.SettingsUiState
+import com.lumen.ui.screens.SplitModeUi
+import com.lumen.ui.screens.SubscriptionUiModel
+import com.lumen.ui.screens.ThemeMode
+import com.lumen.ui.screens.ThemePreset
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+
+class MainViewModel(app: Application) : AndroidViewModel(app) {
+
+    private val db = Room.databaseBuilder(app, AppDatabase::class.java, "lumen.db")
+        .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+        .fallbackToDestructiveMigration()
+        .build()
+    private val nodeDao = db.nodeDao()
+    private val subscriptionDao = db.subscriptionDao()
+    private val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val subscriptionHwid: String by lazy {
+        prefs.getString("subscription_hwid", null)?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString().also {
+            prefs.edit().putString("subscription_hwid", it).apply()
+        }
+    }
+
+    // ---------- Logs ----------
+    val logs: StateFlow<List<String>> = VpnLogBus.entries
+        .map { entries ->
+            entries.map { entry ->
+                "[${entry.formattedTime}] [${entry.level.name}] [${entry.component}] ${entry.message}"
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun log(message: String) = VpnLogBus.info("APP", message)
+
+    fun clearLogs() = VpnLogBus.clear()
+
+    fun exportLogs(context: Context) {
+        val text = logs.value.joinToString("\n")
+        if (text.isBlank()) return
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Lumen logs")
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        context.startActivity(
+            Intent.createChooser(intent, "Export logs").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+
+    // ---------- Settings ----------
+    private val _settings = MutableStateFlow(loadSettings())
+    val settings: StateFlow<SettingsUiState> = _settings
+
+    private fun loadSettings() = SettingsUiState(
+        engine = "SINGBOX",
+        muxEnabled = prefs.getBoolean("mux_enabled", false),
+        muxConcurrency = prefs.getInt("mux_concurrency", 8),
+        fragmentEnabled = prefs.getBoolean("fragment_enabled", false),
+        fragmentPackets = prefs.getString("fragment_packets", "tlshello") ?: "tlshello",
+        fragmentLength = prefs.getString("fragment_length", "50-100") ?: "50-100",
+        fragmentDelay = prefs.getString("fragment_delay", "10-20") ?: "10-20",
+        localInboundEnabled = prefs.getBoolean("local_inbound", true),
+        localSocksPort = prefs.getInt("local_socks_port", 10808),
+        localHttpPort = prefs.getInt("local_http_port", 10809),
+        lanSharingEnabled = prefs.getBoolean("lan_sharing", false),
+        autoConnectOnBoot = prefs.getBoolean("boot_auto_connect", false),
+        preferIpv6 = prefs.getBoolean("prefer_ipv6", false),
+        blockQuic = prefs.getBoolean("block_quic", false),
+        sniffRouteOnly = prefs.getBoolean("sniff_route_only", false),
+        mtu = prefs.getInt("mtu", 1500),
+        directDomains = prefs.getString("routing_direct_domains", "") ?: "",
+        directIpCidrs = prefs.getString("routing_direct_ip_cidrs", "") ?: "",
+        geoResourceSource = prefs.getString(
+            "geo_resource_source",
+            "https://github.com/runetfreedom/russia-v2ray-rules-dat/"
+        ) ?: "https://github.com/runetfreedom/russia-v2ray-rules-dat/",
+        proxyDnsServer = prefs.getString("proxy_dns", "1.1.1.1") ?: "1.1.1.1",
+        directDnsServer = prefs.getString("direct_dns", "1.1.1.1") ?: "1.1.1.1",
+        urlTestUrl = prefs.getString("url_test_url", "https://www.gstatic.com/generate_204")
+            ?: "https://www.gstatic.com/generate_204",
+        urlTestIntervalMinutes = prefs.getInt("url_test_interval_minutes", 3),
+        urlTestToleranceMs = prefs.getInt("url_test_tolerance_ms", 50),
+        subscriptionUserAgent = prefs.getString("subscription_user_agent", "Happ/2.18.3/Windows/2606241603601")
+            ?: "Happ/2.18.3/Windows/2606241603601",
+        subscriptionHwid = prefs.getString("subscription_hwid", subscriptionHwid) ?: subscriptionHwid,
+        subscriptionSendHwid = prefs.getBoolean("subscription_send_hwid", true),
+        subscriptionDirect = prefs.getBoolean("subscription_direct", true),
+        allowSubscriptionOverrides = prefs.getBoolean("allow_subscription_overrides", true),
+        logLevel = "debug",
+        language = prefs.getString("language", "en")?.takeIf { it in setOf("en", "ru", "fa", "zh") } ?: "en",
+        themeMode = runCatching {
+            ThemeMode.valueOf(prefs.getString("theme_mode", ThemeMode.DARK.name) ?: ThemeMode.DARK.name)
+        }.getOrDefault(ThemeMode.DARK),
+        themePreset = runCatching {
+            ThemePreset.valueOf(prefs.getString("theme_preset", ThemePreset.DARK.name) ?: ThemePreset.DARK.name)
+        }.getOrDefault(ThemePreset.DARK),
+        useMaterialYou = prefs.getBoolean("use_material_you", false),
+        useAmoledBlack = prefs.getBoolean("use_amoled_black", false)
+    )
+
+    fun updateSettings(s: SettingsUiState) {
+        _settings.value = s
+        prefs.edit()
+            .putString("engine_type", s.engine)
+            .putBoolean("mux_enabled", s.muxEnabled)
+            .putInt("mux_concurrency", s.muxConcurrency)
+            .putBoolean("fragment_enabled", s.fragmentEnabled)
+            .putString("fragment_packets", s.fragmentPackets)
+            .putString("fragment_length", s.fragmentLength)
+            .putString("fragment_delay", s.fragmentDelay)
+            .putBoolean("local_inbound", s.localInboundEnabled)
+            .putInt("local_socks_port", s.localSocksPort.coerceIn(1024, 65535))
+            .putInt("local_http_port", s.localHttpPort.coerceIn(1024, 65535))
+            .putBoolean("lan_sharing", s.lanSharingEnabled)
+            .putBoolean("boot_auto_connect", s.autoConnectOnBoot)
+            .putBoolean("prefer_ipv6", s.preferIpv6)
+            .putBoolean("block_quic", s.blockQuic)
+            .putBoolean("sniff_route_only", s.sniffRouteOnly)
+            .putInt("mtu", s.mtu.coerceIn(1280, 9000))
+            .putString("routing_direct_domains", s.directDomains)
+            .putString("routing_direct_ip_cidrs", s.directIpCidrs)
+            .putString("geo_resource_source", s.geoResourceSource)
+            .putString("proxy_dns", s.proxyDnsServer.trim().take(253))
+            .putString("direct_dns", s.directDnsServer.trim().take(253))
+            .putString("url_test_url", s.urlTestUrl.trim().take(512))
+            .putInt("url_test_interval_minutes", s.urlTestIntervalMinutes.coerceIn(1, 1440))
+            .putInt("url_test_tolerance_ms", s.urlTestToleranceMs.coerceIn(0, 5000))
+            .putString("subscription_user_agent", s.subscriptionUserAgent.trim().take(256))
+            .putString("subscription_hwid", s.subscriptionHwid.trim().take(256))
+            .putBoolean("subscription_send_hwid", s.subscriptionSendHwid)
+            .putBoolean("subscription_direct", s.subscriptionDirect)
+            .putBoolean("allow_subscription_overrides", s.allowSubscriptionOverrides)
+            .putString("engine_log_level", "debug")
+            .putString("language", s.language)
+            .putString("theme_mode", s.themeMode.name)
+            .putString("theme_preset", s.themePreset.name)
+            .putBoolean("use_material_you", s.useMaterialYou)
+            .putBoolean("use_amoled_black", s.useAmoledBlack)
+            .apply()
+    }
+
+    // ---------- Geo resources ----------
+    private val geoResourcesDir = File(app.filesDir, "georesources").apply { mkdirs() }
+    private val _geoResources = MutableStateFlow(scanGeoResources())
+    val geoResources: StateFlow<List<GeoResourceUiModel>> = _geoResources
+    private val _isUpdatingGeoResources = MutableStateFlow(false)
+    val isUpdatingGeoResources: StateFlow<Boolean> = _isUpdatingGeoResources
+
+    private fun scanGeoResources(): List<GeoResourceUiModel> =
+        listOf("geosite.dat", "geoip.dat").mapNotNull { name ->
+            File(geoResourcesDir, name).takeIf { it.isFile }?.let {
+                GeoResourceUiModel(name, it.length(), it.lastModified())
+            }
+        }
+
+    fun refreshGeoResources() {
+        _geoResources.value = scanGeoResources()
+    }
+
+    fun downloadGeoResources() {
+        if (_isUpdatingGeoResources.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _isUpdatingGeoResources.value = true
+            try {
+                val source = _settings.value.geoResourceSource.lowercase(Locale.US)
+                val repository = when {
+                    "loyalsoldier" in source -> "Loyalsoldier/v2ray-rules-dat"
+                    "chocolate4u" in source -> "Chocolate4U/Iran-v2ray-rules"
+                    else -> "runetfreedom/russia-v2ray-rules-dat"
+                }
+                listOf("geosite.dat", "geoip.dat").forEach { name ->
+                    val target = File(geoResourcesDir, name)
+                    val temporary = File(geoResourcesDir, "$name.download")
+                    val url = URL("https://github.com/$repository/releases/latest/download/$name")
+                    val connection = url.openConnection() as HttpURLConnection
+                    connection.connectTimeout = 20_000
+                    connection.readTimeout = 120_000
+                    connection.instanceFollowRedirects = true
+                    connection.setRequestProperty("User-Agent", "Lumen/0.2.0")
+                    try {
+                        if (connection.responseCode !in 200..299) {
+                            error("$name: HTTP ${connection.responseCode}")
+                        }
+                        connection.inputStream.use { input ->
+                            temporary.outputStream().use { output ->
+                                val copied = input.copyTo(output)
+                                if (copied < 1024L) error("$name: файл слишком мал")
+                                if (copied > 256L * 1024 * 1024) error("$name: превышен лимит 256 МБ")
+                            }
+                        }
+                        if (target.exists()) target.delete()
+                        check(temporary.renameTo(target)) { "$name: не удалось сохранить файл" }
+                        log("Geo resource updated: $name (${target.length()} bytes)")
+                    } finally {
+                        connection.disconnect()
+                        if (temporary.exists()) temporary.delete()
+                    }
+                }
+                refreshGeoResources()
+            } catch (e: Exception) {
+                log("Geo resources update failed: ${e.message}")
+            } finally {
+                _isUpdatingGeoResources.value = false
+            }
+        }
+    }
+
+    // ---------- Split tunneling ----------
+    private val _splitMode = MutableStateFlow(
+        runCatching { SplitModeUi.valueOf(prefs.getString("split_mode", "DISABLED") ?: "DISABLED") }
+            .getOrDefault(SplitModeUi.DISABLED)
+    )
+    val splitMode: StateFlow<SplitModeUi> = _splitMode
+
+    private val _splitPackages = MutableStateFlow(
+        prefs.getStringSet("split_packages", emptySet())?.toSet() ?: emptySet()
+    )
+
+    private val _installedApps = MutableStateFlow<List<AppEntryUiModel>>(emptyList())
+    private val _isLoadingApps = MutableStateFlow(false)
+    val isLoadingApps: StateFlow<Boolean> = _isLoadingApps
+
+    val apps: StateFlow<List<AppEntryUiModel>> =
+        combine(_installedApps, _splitPackages) { list, selected ->
+            list.map { it.copy(isSelected = it.packageName in selected) }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun setSplitMode(mode: SplitModeUi) {
+        _splitMode.value = mode
+        prefs.edit().putString("split_mode", mode.name).apply()
+        if (mode != SplitModeUi.DISABLED) loadInstalledApps()
+    }
+
+    fun toggleApp(app: AppEntryUiModel) {
+        val next = _splitPackages.value.toMutableSet()
+        if (!next.add(app.packageName)) next.remove(app.packageName)
+        _splitPackages.value = next
+        prefs.edit().putStringSet("split_packages", next).apply()
+    }
+
+    fun autoSelectApps() {
+        val selected = _installedApps.value
+            .asSequence()
+            .filterNot { it.isSystem }
+            .map { it.packageName }
+            .toSet()
+        _splitPackages.value = selected
+        prefs.edit().putStringSet("split_packages", selected).apply()
+    }
+
+    fun clearAppSelection() {
+        _splitPackages.value = emptySet()
+        prefs.edit().putStringSet("split_packages", emptySet()).apply()
+    }
+
+    fun loadInstalledApps() {
+        if (_isLoadingApps.value) return
+        _isLoadingApps.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val application = getApplication<Application>()
+                val pm = application.packageManager
+                val list = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                    .asSequence()
+                    .filter { it.packageName != application.packageName && it.enabled }
+                    .filter {
+                        pm.checkPermission(
+                            android.Manifest.permission.INTERNET,
+                            it.packageName
+                        ) == PackageManager.PERMISSION_GRANTED
+                    }
+                    .map {
+                        AppEntryUiModel(
+                            packageName = it.packageName,
+                            label = pm.getApplicationLabel(it).toString(),
+                            icon = runCatching {
+                                pm.getApplicationIcon(it).toBitmap(width = 48, height = 48).asImageBitmap()
+                            }.getOrNull(),
+                            isSystem = it.flags and ApplicationInfo.FLAG_SYSTEM != 0
+                        )
+                    }
+                    .sortedBy { it.label.lowercase(Locale.getDefault()) }
+                    .toList()
+                _installedApps.value = list
+                log("Found ${list.size} network-capable apps")
+            } catch (e: Exception) {
+                log("Failed to list apps: ${e.message}")
+            } finally {
+                _isLoadingApps.value = false
+            }
+        }
+    }
+
+    // ---------- Nodes ----------
+    private val _selectedNodeId = MutableStateFlow(prefs.getString("selected_node_id", null))
+
+    private val nodeEntities: StateFlow<List<NodeEntity>> = nodeDao.getNodes()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // Cache of expensive per-node computations (flag stripping, country detection,
+    // display-protocol extraction). Keyed by node id + content fingerprint so ping
+    // updates or selection changes don't recompute regex/uppercase work per node.
+    private data class NodeUiCacheEntry(val fingerprint: Int, val base: NodeUiModel)
+    private val nodeUiCache = java.util.concurrent.ConcurrentHashMap<String, NodeUiCacheEntry>()
+
+    val nodes: StateFlow<List<NodeUiModel>> =
+        combine(nodeEntities, _selectedNodeId) { list, selectedId ->
+            val liveIds = HashSet<String>(list.size * 2)
+            val mapped = list.mapNotNull { e ->
+                runCatching {
+                    liveIds.add(e.id)
+                    val fingerprint = 31 * (31 * (31 * e.name.hashCode() + e.server.hashCode()) +
+                        e.protocol.hashCode()) + (e.outboundJson.hashCode() xor e.link.hashCode())
+                    val cached = nodeUiCache[e.id]
+                    val base = if (cached != null && cached.fingerprint == fingerprint) {
+                        cached.base
+                    } else {
+                        val sourceName = e.name.ifBlank { e.server.ifBlank { "Server" } }
+                        val safeName = stripFlagEmoji(sourceName).ifBlank { e.server.ifBlank { "Server" } }
+                        val safeServer = e.server
+                        val safeProtocol = e.protocol.ifBlank { "vless" }
+                        val displayProto = extractDisplayProtocol(safeProtocol, e.outboundJson, e.link)
+                        NodeUiModel(
+                            id = e.id,
+                            name = safeName,
+                            protocol = safeProtocol,
+                            server = safeServer,
+                            port = e.port,
+                            pingMs = null,
+                            countryCode = runCatching { CountryFlagHelper.detectCountry(sourceName, safeServer) }.getOrDefault(""),
+                            isAutoNode = e.isAutoNode,
+                            isSelected = false,
+                            subscriptionId = e.subscriptionId,
+                            displayProtocol = displayProto
+                        ).also { nodeUiCache[e.id] = NodeUiCacheEntry(fingerprint, it) }
+                    }
+                    base.copy(
+                        port = e.port,
+                        pingMs = e.pingMs,
+                        isAutoNode = e.isAutoNode,
+                        subscriptionId = e.subscriptionId,
+                        isSelected = e.id == selectedId
+                    )
+                }.getOrNull()
+            }
+            nodeUiCache.keys.retainAll(liveIds)
+            mapped
+        }.flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val activeNode: StateFlow<NodeUiModel?> = nodes
+        .map { list -> list.firstOrNull { it.isSelected } ?: list.firstOrNull() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun selectNode(node: NodeUiModel) {
+        _selectedNodeId.value = node.id
+        prefs.edit().putString("selected_node_id", node.id).apply()
+        log("Selected ${node.name}")
+    }
+
+    fun deleteNode(node: NodeUiModel) {
+        viewModelScope.launch(Dispatchers.IO) {
+            nodeDao.deleteNodeById(node.id)
+            log("Deleted node ${node.name}")
+        }
+    }
+
+    fun draftForNode(node: NodeUiModel): NodeDraft =
+        NodeDraftMapper.draftFromEntity(nodeEntities.value.firstOrNull { it.id == node.id })
+            ?: NodeDraft()
+
+    fun saveDraft(draft: NodeDraft) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val entity = NodeDraftMapper.entityFromDraft(draft)
+                if (draft.id != null) nodeDao.updateNode(entity) else nodeDao.insertNode(entity)
+                log("Saved node ${entity.name}")
+            } catch (e: Exception) {
+                log("Failed to save node: ${e.message}")
+            }
+        }
+    }
+
+    private val _importState = MutableStateFlow(ImportUiState())
+    val importState: StateFlow<ImportUiState> = _importState
+
+    fun prepareImportText(text: String?) {
+        _importState.value = when (val classification = ImportClassifier.classify(text)) {
+            is ImportClassification.Rejected -> ImportUiState(
+                phase = ImportPhaseUi.ERROR,
+                title = "Nothing to import",
+                message = classification.message
+            )
+            is ImportClassification.Ready -> ImportUiState(
+                phase = ImportPhaseUi.AWAITING,
+                kind = if (classification.kind == ImportKind.SUBSCRIPTION) {
+                    ImportKindUi.SUBSCRIPTION
+                } else ImportKindUi.CONFIG,
+                raw = classification.normalized,
+                title = if (classification.kind == ImportKind.SUBSCRIPTION) {
+                    "Import subscription?"
+                } else "Import server config?",
+                message = if (classification.kind == ImportKind.SUBSCRIPTION) {
+                    "The link will be downloaded and added as a subscription."
+                } else "Supported servers will be added to Default."
+            )
+        }
+    }
+
+    fun dismissImport() {
+        if (_importState.value.phase != ImportPhaseUi.IMPORTING) {
+            _importState.value = ImportUiState()
+        }
+    }
+
+    fun confirmImport() {
+        val pending = _importState.value
+        if (pending.phase != ImportPhaseUi.AWAITING || pending.kind == null) return
+        _importState.value = pending.copy(phase = ImportPhaseUi.IMPORTING, message = "Importing…")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                when (pending.kind) {
+                    ImportKindUi.SUBSCRIPTION -> {
+                        val url = (ImportClassifier.classify(pending.raw) as? ImportClassification.Ready)
+                            ?.takeIf { it.kind == ImportKind.SUBSCRIPTION }?.normalized
+                            ?: error("Invalid subscription URL")
+                        val sub = SubscriptionEntity(
+                            name = url.substringAfter("://").substringBefore('/').take(80),
+                            url = url
+                        )
+                        subscriptionDao.insertSubscription(sub)
+                        val imported = try {
+                            refreshSubscriptionInternal(sub, rethrow = true)
+                        } catch (error: Exception) {
+                            nodeDao.deleteNodesBySubscription(sub.id)
+                            subscriptionDao.deleteSubscriptionById(sub.id)
+                            throw error
+                        }
+                        if (imported <= 0) {
+                            nodeDao.deleteNodesBySubscription(sub.id)
+                            subscriptionDao.deleteSubscriptionById(sub.id)
+                            error("Subscription contains no supported servers")
+                        }
+                        _importState.value = ImportUiState(
+                            phase = ImportPhaseUi.SUCCESS,
+                            title = "Subscription imported",
+                            message = "$imported server(s) added"
+                        )
+                    }
+                    ImportKindUi.CONFIG -> {
+                        val (parsed, errors) = LinkParser.parseLinksText(pending.raw)
+                        errors.take(3).forEach { log("Import warning: $it") }
+                        val valid = parsed.filter {
+                            it.name.length <= 512 && it.server.length <= 512 &&
+                                (it.scheme == "auto" || it.server.isNotBlank()) &&
+                                (it.scheme == "auto" || it.port in 1..65535) && it.link.length <= 65_536
+                        }.take(LinkParser.MAX_IMPORT_NODES)
+                        if (valid.isEmpty()) error("No supported server configs found")
+                        db.withTransaction { nodeDao.insertNodes(valid.map { it.toEntity(null) }) }
+                        _importState.value = ImportUiState(
+                            phase = ImportPhaseUi.SUCCESS,
+                            title = "Import complete",
+                            message = "${valid.size} server(s) added to Default"
+                        )
+                        log("Imported ${valid.size} node(s)")
+                    }
+                    null -> error("Import request expired")
+                }
+            } catch (e: Exception) {
+                val reason = e.message?.take(240) ?: "Unknown import error"
+                _importState.value = ImportUiState(
+                    phase = ImportPhaseUi.ERROR,
+                    title = "Import failed",
+                    message = reason
+                )
+                log("Import failed: $reason")
+            }
+        }
+    }
+
+    @Deprecated("Use prepareImportText so untrusted input requires confirmation")
+    fun importText(text: String) = prepareImportText(text)
+
+    private fun ParsedNode.toEntity(subscriptionId: String?) = NodeEntity(
+        name = name.ifBlank { server },
+        protocol = scheme,
+        server = server,
+        port = port,
+        link = link,
+        outboundJson = if (outbound.isNotEmpty()) LinkParser.toJsonString(outbound) else "",
+        subscriptionId = subscriptionId,
+        isAutoNode = scheme == "auto"
+    )
+
+    // ---------- Subscriptions ----------
+    private val subEntities: StateFlow<List<SubscriptionEntity>> = subscriptionDao.getSubscriptions()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    private val _subscriptionPremium = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
+    private val _subscriptionTraffic = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val _subscriptionExpiry = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    val subscriptions: StateFlow<List<SubscriptionUiModel>> =
+        combine(subEntities, nodeEntities, _subscriptionPremium, _subscriptionTraffic, _subscriptionExpiry) { subs, allNodes, premium, traffic, expiry ->
+            subs.map { s ->
+                SubscriptionUiModel(
+                    id = s.id,
+                    name = s.name,
+                    url = s.url,
+                    lastUpdated = s.lastUpdated,
+                    nodeCount = allNodes.count { it.subscriptionId == s.id },
+                    autoUpdateEnabled = s.autoUpdateEnabled,
+                    premiumFeatureCount = premium[s.id]?.size ?: 0,
+                    trafficSummary = traffic[s.id],
+                    expiryDaysLeft = expiry[s.id]?.let { expireEpochSec ->
+                        val daysLeft = ((expireEpochSec * 1000L - System.currentTimeMillis()) / 86_400_000L).toInt()
+                        daysLeft.coerceAtLeast(0)
+                    }
+                )
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _refreshingIds = MutableStateFlow<Set<String>>(emptySet())
+    val refreshingIds: StateFlow<Set<String>> = _refreshingIds
+
+    fun addSubscription(name: String, url: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val sub = SubscriptionEntity(
+                name = name.ifBlank { url.substringAfter("://").take(40) },
+                url = url
+            )
+            subscriptionDao.insertSubscription(sub)
+            log("Added subscription ${sub.name}")
+            refreshSubscriptionInternal(sub)
+        }
+    }
+
+    fun refreshSubscription(model: SubscriptionUiModel) {
+        viewModelScope.launch(Dispatchers.IO) {
+            subEntities.value.firstOrNull { it.id == model.id }?.let {
+                refreshSubscriptionInternal(it)
+            }
+        }
+    }
+
+    fun refreshSubscription(subscriptionId: String) {
+        val model = subscriptions.value.firstOrNull { it.id == subscriptionId } ?: return
+        refreshSubscription(model)
+    }
+
+    private suspend fun refreshSubscriptionInternal(
+        sub: SubscriptionEntity,
+        rethrow: Boolean = false
+    ): Int {
+        _refreshingIds.value = _refreshingIds.value + sub.id
+        var importedCount = 0
+        try {
+            val subscriptionSettings = _settings.value
+            val payload = SubscriptionClient.fetch(
+                rawUrl = sub.url,
+                hwid = subscriptionSettings.subscriptionHwid.trim()
+                    .takeIf { subscriptionSettings.subscriptionSendHwid && it.isNotBlank() },
+                customUserAgent = subscriptionSettings.subscriptionUserAgent.trim().ifBlank { null },
+                direct = subscriptionSettings.subscriptionDirect
+            )
+            val (parsed, errors) = LinkParser.parseLinksText(payload.body)
+            errors.take(3).forEach { log("Subscription warning: $it") }
+            val valid = parsed.filter {
+                it.name.length <= 512 && it.server.length <= 512 &&
+                    (it.scheme == "auto" || it.server.isNotBlank()) &&
+                    (it.scheme == "auto" || it.port in 1..65535) && it.link.length <= 65_536
+            }.take(LinkParser.MAX_IMPORT_NODES)
+            if (valid.isNotEmpty()) {
+                db.withTransaction {
+                    nodeDao.deleteNodesBySubscription(sub.id)
+                    nodeDao.insertNodes(valid.map { it.toEntity(sub.id) })
+                }
+                importedCount = valid.size
+                _subscriptionPremium.value = _subscriptionPremium.value + (sub.id to payload.premiumFeatures)
+                payload.userInfo.takeIf { it.isNotEmpty() }?.let { info ->
+                    _subscriptionTraffic.value = _subscriptionTraffic.value + (sub.id to formatSubscriptionTraffic(info))
+                    val expireEpochSec = info["expire"] ?: 0L
+                    _subscriptionExpiry.value = if (expireEpochSec > 0L) {
+                        _subscriptionExpiry.value + (sub.id to expireEpochSec)
+                    } else {
+                        _subscriptionExpiry.value - sub.id
+                    }
+                }
+                val premiumApplied = applyCompatiblePremiumFeatures(payload.premiumFeatures)
+                val replacementUrl = payload.effectiveUrl
+                    ?: SubscriptionClient.replaceDomain(sub.url, payload.premiumFeatures["new-domain"])
+                val autoUpdate = payload.premiumFeatures["subscription-auto-update-enable"]
+                    ?.let(::premiumEnabled) ?: sub.autoUpdateEnabled
+                subscriptionDao.updateSubscription(
+                    sub.copy(
+                        name = payload.profileTitle?.take(160)?.ifBlank { sub.name } ?: sub.name,
+                        url = replacementUrl ?: sub.url,
+                        lastUpdated = System.currentTimeMillis(),
+                        autoUpdateEnabled = autoUpdate
+                    )
+                )
+                log("Subscription ${sub.name}: ${parsed.size} node(s), profile ${payload.clientProfile}")
+                if (premiumApplied.isNotEmpty()) log("Applied premium settings: ${premiumApplied.joinToString()}")
+            } else {
+                log("Subscription ${sub.name}: no nodes found")
+            }
+        } catch (e: Exception) {
+            log("Subscription refresh failed: ${e.message}")
+            if (rethrow) throw e
+        } finally {
+            _refreshingIds.value = _refreshingIds.value - sub.id
+        }
+        return importedCount
+    }
+
+    fun deleteSubscription(model: SubscriptionUiModel) {
+        viewModelScope.launch(Dispatchers.IO) {
+            nodeDao.deleteNodesBySubscription(model.id)
+            subscriptionDao.deleteSubscriptionById(model.id)
+            log("Deleted subscription ${model.name}")
+        }
+    }
+
+    fun deleteSubscription(subscriptionId: String) {
+        val model = subscriptions.value.firstOrNull { it.id == subscriptionId } ?: return
+        deleteSubscription(model)
+    }
+
+    fun toggleAutoUpdate(model: SubscriptionUiModel, enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            subEntities.value.firstOrNull { it.id == model.id }?.let {
+                subscriptionDao.updateSubscription(it.copy(autoUpdateEnabled = enabled))
+            }
+        }
+    }
+
+    private fun premiumEnabled(value: String): Boolean =
+        value.trim().lowercase(Locale.US) in setOf("1", "true", "yes", "on", "enabled")
+
+    private fun applyCompatiblePremiumFeatures(premium: Map<String, String>): List<String> {
+        if (premium.isEmpty() || !_settings.value.allowSubscriptionOverrides) return emptyList()
+        val applied = mutableListOf<String>()
+        var next = _settings.value
+
+        premium["subscription-autoconnect"]?.let {
+            next = next.copy(autoConnectOnBoot = premiumEnabled(it))
+            applied += "subscription-autoconnect"
+        }
+        premium["fragmentation-enable"]?.let {
+            next = next.copy(fragmentEnabled = premiumEnabled(it))
+            applied += "fragmentation-enable"
+        }
+        premium["fragmentation-packets"]?.takeIf { it.isNotBlank() }?.let {
+            next = next.copy(fragmentPackets = it.take(64)); applied += "fragmentation-packets"
+        }
+        premium["fragmentation-length"]?.takeIf { it.isNotBlank() }?.let {
+            next = next.copy(fragmentLength = it.take(32)); applied += "fragmentation-length"
+        }
+        premium["fragmentation-interval"]?.takeIf { it.isNotBlank() }?.let {
+            next = next.copy(fragmentDelay = it.take(32)); applied += "fragmentation-interval"
+        }
+        premium["mux-enable"]?.let {
+            next = next.copy(muxEnabled = premiumEnabled(it)); applied += "mux-enable"
+        }
+        premium["mux-tcp-connections"]?.toIntOrNull()?.coerceIn(-1, 1024)?.let {
+            next = next.copy(muxConcurrency = it); applied += "mux-tcp-connections"
+        }
+        if (next != _settings.value) updateSettings(next)
+
+        premium["change-user-agent"]?.trim()?.takeIf {
+            it.isNotBlank() && it.length <= 256 && '\r' !in it && '\n' !in it
+        }?.let {
+            prefs.edit().putString("subscription_user_agent", it).apply()
+            applied += "change-user-agent"
+        }
+        premium["ping-type"]?.trim()?.takeIf { it.isNotBlank() }?.let {
+            prefs.edit().putString("server_speed_test_type", it.take(32)).apply()
+            applied += "ping-type"
+        }
+        premium["per-app-proxy-mode"]?.trim()?.lowercase(Locale.US)?.let { mode ->
+            val mapped = when (mode) {
+                "allow", "allow-list", "include", "whitelist", "1" -> SplitModeUi.ALLOW_LIST
+                "disallow", "disallow-list", "exclude", "blacklist", "2" -> SplitModeUi.DISALLOW_LIST
+                "off", "disabled", "0" -> SplitModeUi.DISABLED
+                else -> null
+            }
+            if (mapped != null) {
+                setSplitMode(mapped)
+                applied += "per-app-proxy-mode"
+            }
+        }
+        premium["per-app-proxy-list"]?.let { raw ->
+            val packages = raw.split(Regex("[\\s,;]+"))
+                .map { it.trim() }
+                .filter { it.matches(Regex("[A-Za-z0-9_.]+")) }
+                .take(500)
+                .toSet()
+            if (packages.isNotEmpty()) {
+                _splitPackages.value = packages
+                prefs.edit().putStringSet("split_packages", packages).apply()
+                applied += "per-app-proxy-list"
+            }
+        }
+        return applied
+    }
+
+    private fun formatSubscriptionTraffic(info: Map<String, Long>): String {
+        val used = (info["upload"] ?: 0L) + (info["download"] ?: 0L)
+        val total = info["total"] ?: 0L
+        return if (total > 0L) "${formatBytes(used)} / ${formatBytes(total)}" else formatBytes(used)
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val units = arrayOf("KB", "MB", "GB", "TB")
+        var value = bytes.toDouble()
+        var index = -1
+        while (value >= 1024 && index < units.lastIndex) {
+            value /= 1024.0
+            index++
+        }
+        return String.format(Locale.US, "%.1f %s", value, units[index.coerceAtLeast(0)])
+    }
+
+    // ---------- Ping ----------
+    private val _isPinging = MutableStateFlow(false)
+    val isPinging: StateFlow<Boolean> = _isPinging
+    private val _testingNodeId = MutableStateFlow<String?>(null)
+    val testingNodeId: StateFlow<String?> = _testingNodeId
+    private val _serverTestResults = MutableStateFlow<Map<String, String>>(emptyMap())
+    val serverTestResults: StateFlow<Map<String, String>> = _serverTestResults
+
+    fun pingAll() {
+        val targets = nodeEntities.value.filter { !it.isAutoNode }
+        pingNodeListInternal(targets)
+    }
+
+    fun pingGroup(subscriptionId: String?) {
+        val targets = nodeEntities.value.filter { !it.isAutoNode && it.subscriptionId == subscriptionId }
+        pingNodeListInternal(targets)
+    }
+
+    fun pingGroupUdp(subscriptionId: String?) {
+        val targets = nodeEntities.value.filter { !it.isAutoNode && it.subscriptionId == subscriptionId }
+        pingNodeListInternal(targets, useUdp = true)
+    }
+
+    fun pingNodes(nodes: List<NodeUiModel>) {
+        val nodeIds = nodes.map { it.id }.toSet()
+        val targets = nodeEntities.value.filter { it.id in nodeIds }
+        pingNodeListInternal(targets)
+    }
+
+    private fun pingNodeListInternal(targets: List<NodeEntity>, useUdp: Boolean = false) {
+        if (_isPinging.value || targets.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _isPinging.value = true
+            log("Pinging ${targets.size} node(s) in parallel${if (useUdp) " (UDP)" else ""}…")
+            val semaphore = kotlinx.coroutines.sync.Semaphore(25)
+            val results = java.util.Collections.synchronizedList(mutableListOf<Pair<String, Int?>>())
+            val jobs = targets.map { node ->
+                async {
+                    semaphore.withPermit {
+                        val ping = if (useUdp) udpPing(node.server, node.port) else tcpPing(node.server, node.port)
+                        results.add(Pair(node.id, if (ping >= 0) ping else null))
+                    }
+                }
+            }
+            jobs.awaitAll()
+            nodeDao.updatePingsBatch(results)
+            _isPinging.value = false
+            log("Ping finished for ${results.size} node(s)")
+        }
+    }
+
+    fun pingNode(node: NodeUiModel) {
+        if (_testingNodeId.value != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _testingNodeId.value = node.id
+            val ping = tcpPing(node.server, node.port)
+            nodeDao.updatePing(node.id, ping.takeIf { it >= 0 })
+            val result = if (ping >= 0) "$ping ms" else "Timeout"
+            _serverTestResults.value = _serverTestResults.value + (node.id to result)
+            log("Ping ${node.name}: $result")
+            _testingNodeId.value = null
+        }
+    }
+
+    fun exportNodesText(nodeIds: Set<String>): String {
+        val allEntities = nodeEntities.value.associateBy { it.id }
+        return nodeIds.mapNotNull { id -> allEntities[id]?.link?.takeIf { it.isNotBlank() } }
+            .joinToString("\n")
+    }
+
+    fun exportSubscriptionText(subscriptionId: String?): String {
+        val targets = nodeEntities.value.filter { it.subscriptionId == subscriptionId }
+        return targets.mapNotNull { it.link.takeIf { l -> l.isNotBlank() } }.joinToString("\n")
+    }
+
+    private fun tcpPing(host: String, port: Int): Int = try {
+        val start = System.nanoTime()
+        Socket().use { it.connect(InetSocketAddress(host, port), 3000) }
+        ((System.nanoTime() - start) / 1_000_000).toInt()
+    } catch (e: Exception) {
+        -1
+    }
+
+    /**
+     * UDP "ping": sends a small probe to the server port and waits for any reply.
+     * Many VPN servers don't answer garbage datagrams, so on timeout we fall back
+     * to an ICMP echo to the host to still get a latency estimate.
+     */
+    private fun udpPing(host: String, port: Int): Int = try {
+        val address = java.net.InetAddress.getByName(host)
+        var latency = -1
+        java.net.DatagramSocket().use { socket ->
+            socket.soTimeout = 1500
+            socket.connect(address, port)
+            val payload = ByteArray(8)
+            val buffer = ByteArray(128)
+            val start = System.nanoTime()
+            latency = try {
+                socket.send(java.net.DatagramPacket(payload, payload.size))
+                socket.receive(java.net.DatagramPacket(buffer, buffer.size))
+                ((System.nanoTime() - start) / 1_000_000).toInt()
+            } catch (e: java.net.PortUnreachableException) {
+                -1
+            } catch (e: java.net.SocketTimeoutException) {
+                val icmpStart = System.nanoTime()
+                if (address.isReachable(1500)) {
+                    ((System.nanoTime() - icmpStart) / 1_000_000).toInt()
+                } else {
+                    -1
+                }
+            }
+        }
+        latency
+    } catch (e: Exception) {
+        -1
+    }
+
+    // ---------- Connection ----------
+    private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
+    val connectionState: StateFlow<ConnectionState> = _connectionState
+
+    private val _uploadHistory = MutableStateFlow<List<Float>>(emptyList())
+    val uploadHistory: StateFlow<List<Float>> = _uploadHistory
+    private val _downloadHistory = MutableStateFlow<List<Float>>(emptyList())
+    val downloadHistory: StateFlow<List<Float>> = _downloadHistory
+
+    init {
+        viewModelScope.launch {
+            LumenVpnService.isRunning.collect { running ->
+                _connectionState.value = when {
+                    running -> ConnectionState.Connected
+                    VpnLogBus.lastError.value != null -> ConnectionState.Error
+                    else -> ConnectionState.Disconnected
+                }
+            }
+        }
+        viewModelScope.launch {
+            VpnLogBus.lastError.collect { error ->
+                if (error != null) _connectionState.value = ConnectionState.Error
+            }
+        }
+    }
+
+    fun markConnecting() {
+        VpnLogBus.clearLastError()
+        _connectionState.value = ConnectionState.Connecting
+        viewModelScope.launch {
+            delay(20_000)
+            if (!LumenVpnService.isRunning.value &&
+                _connectionState.value == ConnectionState.Connecting
+            ) {
+                _connectionState.value = ConnectionState.Error
+                log("Connection attempt timed out")
+            }
+        }
+    }
+
+    fun buildStartIntent(context: Context): Intent? {
+        if (nodes.value.isEmpty() || activeNode.value == null) {
+            log("No active servers available to connect")
+            return null
+        }
+        val entities = nodeEntities.value
+        if (entities.isEmpty()) {
+            log("No servers configured in database")
+            return null
+        }
+        val selected = entities.firstOrNull { it.id == _selectedNodeId.value } ?: entities.first()
+        val parsedSelected = parseEntity(selected)
+        val s = _settings.value.copy(engine = "SINGBOX")
+        val configJson = try {
+            run {
+                val pool = entities.map { parseEntity(it) }
+                SingboxConfigBuilder.buildConfig(
+                    pool,
+                    parsedSelected,
+                    SingboxConfigOptions(
+                        tunMode = false,
+                        tunMtu = s.mtu.coerceIn(1280, 9000),
+                        localSocksPort = s.localSocksPort.coerceIn(1024, 65535),
+                        localHttpPort = if (s.localInboundEnabled) s.localHttpPort.coerceIn(1024, 65535) else 0,
+                        multiplexEnabled = s.muxEnabled,
+                        multiplexConcurrency = s.muxConcurrency,
+                        enableFinalFragment = s.fragmentEnabled,
+                        fragmentPackets = s.fragmentPackets,
+                        fragmentLength = s.fragmentLength,
+                        fragmentDelay = s.fragmentDelay,
+                        preferIpv6 = s.preferIpv6,
+                        blockQuic = s.blockQuic,
+                        sniffRouteOnly = s.sniffRouteOnly,
+                        proxyDnsServer = s.proxyDnsServer.ifBlank { "1.1.1.1" },
+                        directDnsServer = s.directDnsServer.ifBlank { "1.1.1.1" },
+                        logLevel = "debug",
+                        urlTestUrl = s.urlTestUrl.ifBlank { "https://www.gstatic.com/generate_204" },
+                        urlTestIntervalMinutes = s.urlTestIntervalMinutes.coerceIn(1, 1440),
+                        urlTestToleranceMs = s.urlTestToleranceMs.coerceIn(0, 5000),
+                        directDomains = s.directDomains.split(Regex("[\\n,;]+")).map { it.trim() }.filter { it.isNotEmpty() },
+                        directIpCidrs = s.directIpCidrs.split(Regex("[\\n,;]+")).map { it.trim() }.filter { it.isNotEmpty() }
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            log("Config build failed: ${e.message}")
+            return null
+        }
+        prefs.edit()
+            .putString("active_config_json", configJson)
+            .putString("engine_type", s.engine)
+            .putString("split_mode", _splitMode.value.name)
+            .putStringSet("split_packages", _splitPackages.value)
+            .putInt("mtu", s.mtu)
+            .apply()
+        VpnLogBus.clearLastError()
+        log("Starting sing-box extended \u2192 ${selected.name}")
+        return Intent(context, LumenVpnService::class.java).apply {
+            action = LumenVpnService.ACTION_START_VPN
+            putExtra(LumenVpnService.EXTRA_ENGINE_TYPE, s.engine)
+            putExtra(LumenVpnService.EXTRA_CONFIG_JSON, configJson)
+            putExtra(LumenVpnService.EXTRA_SPLIT_MODE, _splitMode.value.name)
+            putStringArrayListExtra(
+                LumenVpnService.EXTRA_SPLIT_PACKAGES,
+                ArrayList(_splitPackages.value)
+            )
+            putExtra(LumenVpnService.EXTRA_MTU, s.mtu.coerceIn(1280, 9000))
+            putExtra(LumenVpnService.EXTRA_LOCAL_SOCKS_PORT, s.localSocksPort.coerceIn(1024, 65535))
+        }
+    }
+
+    fun buildStopIntent(context: Context): Intent =
+        Intent(context, LumenVpnService::class.java).apply {
+            action = LumenVpnService.ACTION_STOP_VPN
+        }
+
+    private fun parseEntity(entity: NodeEntity): ParsedNode {
+        try {
+            if (entity.isAutoNode || entity.protocol == "auto") {
+                return ParsedNode(
+                    name = entity.name,
+                    scheme = "auto",
+                    server = "",
+                    port = 0,
+                    link = entity.link,
+                    outbound = emptyMap()
+                )
+            }
+
+            var parsed: ParsedNode? = null
+
+            val linkText = entity.link.trim()
+
+            // AWG/WireGuard: the stored outbound JSON (with the singbox endpoint map)
+            // is authoritative — re-parsing the link can lose the private key when it
+            // contains base64 characters. Fixes "missing private key" on connect.
+            if (entity.protocol.lowercase(Locale.US) in setOf("awg", "wireguard", "wg")) {
+                val storedJson = entity.outboundJson.trim()
+                if (storedJson.startsWith("{") && storedJson.contains("singbox")) {
+                    try {
+                        val outboundMap = LinkParser.jsonToMap(JSONObject(storedJson))
+                        if (outboundMap.containsKey("singbox")) {
+                            parsed = ParsedNode(
+                                name = entity.name.ifBlank { entity.server },
+                                scheme = entity.protocol,
+                                server = entity.server,
+                                port = entity.port,
+                                link = entity.link,
+                                outbound = outboundMap
+                            )
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            if (parsed == null && linkText.isNotBlank() && !linkText.startsWith("{") && !linkText.startsWith("[")) {
+                try {
+                    val (nodes, _) = LinkParser.parseLinksText(linkText)
+                    parsed = nodes.firstOrNull()
+                } catch (_: Exception) {}
+            }
+
+            if (parsed == null) {
+                val jsonCandidate = when {
+                    linkText.startsWith("{") -> linkText
+                    entity.outboundJson.trim().startsWith("{") -> entity.outboundJson.trim()
+                    else -> ""
+                }
+                if (jsonCandidate.isNotEmpty()) {
+                    try {
+                        val json = JSONObject(jsonCandidate)
+                        parsed = LinkParser.parseJsonObjectOutbound(json)
+                    } catch (_: Exception) {}
+                }
+            }
+
+            if (parsed == null) {
+                var outboundMap: Map<String, Any?> = emptyMap()
+                if (entity.outboundJson.trim().startsWith("{")) {
+                    try {
+                        outboundMap = LinkParser.jsonToMap(JSONObject(entity.outboundJson.trim()))
+                    } catch (_: Exception) {}
+                }
+                parsed = ParsedNode(
+                    name = entity.name.ifBlank { entity.server },
+                    scheme = entity.protocol.ifBlank { "unknown" },
+                    server = entity.server,
+                    port = entity.port,
+                    link = entity.link,
+                    outbound = outboundMap
+                )
+            }
+
+            if (parsed.name.isBlank()) parsed.name = entity.name
+            if (parsed.server.isBlank()) parsed.server = entity.server
+            if (parsed.port <= 0) parsed.port = entity.port
+
+            return parsed
+        } catch (e: Exception) {
+            log("Parse error for ${entity.name}: ${e.message}")
+            return ParsedNode(
+                name = entity.name.ifBlank { "Node" },
+                scheme = entity.protocol.ifBlank { "unknown" },
+                server = entity.server,
+                port = entity.port,
+                link = entity.link,
+                outbound = emptyMap()
+            )
+        }
+    }
+
+    private fun extractDisplayProtocol(rawProtocol: String, outboundJson: String?, link: String?): String {
+        val jsonUpper = outboundJson?.uppercase() ?: ""
+        val linkUpper = link?.uppercase() ?: ""
+
+        val isAwg = rawProtocol.equals("awg", ignoreCase = true) ||
+                rawProtocol.equals("amneziawg", ignoreCase = true) ||
+                jsonUpper.contains("\"AMNEZIA\"") ||
+                jsonUpper.contains("\"JC\"") ||
+                jsonUpper.contains("\"JMIN\"") ||
+                jsonUpper.contains("\"H1\"") ||
+                jsonUpper.contains("\"S1\"") ||
+                linkUpper.contains("AWG://") ||
+                linkUpper.contains("AMNEZIA-WG") ||
+                linkUpper.contains("JC=") ||
+                linkUpper.contains("H1=") ||
+                linkUpper.contains("S1=")
+
+        val proto = when {
+            isAwg -> "AWG"
+            rawProtocol.equals("wireguard", ignoreCase = true) || rawProtocol.equals("wg", ignoreCase = true) -> "WireGuard"
+            rawProtocol.equals("openvpn", ignoreCase = true) -> "OpenVPN"
+            rawProtocol.equals("hysteria2", ignoreCase = true) || rawProtocol.equals("hy2", ignoreCase = true) -> "Hysteria2"
+            rawProtocol.equals("tuic", ignoreCase = true) -> "TUIC"
+            rawProtocol.equals("shadowsocks", ignoreCase = true) || rawProtocol.equals("ss", ignoreCase = true) -> "Shadowsocks"
+            else -> rawProtocol.trim().uppercase()
+        }
+
+        if (proto == "AWG" || proto == "WireGuard" || proto == "OpenVPN" || proto == "Hysteria2" || proto == "TUIC" || proto == "Shadowsocks") {
+            return proto
+        }
+
+        val security = when {
+            jsonUpper.contains("\"REALITY\"") || linkUpper.contains("SECURITY=REALITY") || linkUpper.contains("PBK=") -> "REALITY"
+            jsonUpper.contains("\"TLS\"") || linkUpper.contains("SECURITY=TLS") -> "TLS"
+            else -> ""
+        }
+
+        val network = when {
+            jsonUpper.contains("\"XHTTP\"") || linkUpper.contains("TYPE=XHTTP") || linkUpper.contains("HEADER=XHTTP") -> "XHTTP"
+            jsonUpper.contains("\"HTTPUPGRADE\"") || linkUpper.contains("TYPE=HTTPUPGRADE") -> "HTTPUpgrade"
+            jsonUpper.contains("\"GRPC\"") || linkUpper.contains("TYPE=GRPC") -> "gRPC"
+            jsonUpper.contains("\"WS\"") || linkUpper.contains("TYPE=WS") -> "WS"
+            jsonUpper.contains("\"H2\"") || linkUpper.contains("TYPE=H2") -> "H2"
+            else -> ""
+        }
+
+        val subType = when {
+            security == "REALITY" -> "REALITY"
+            network.isNotEmpty() && security.isNotEmpty() -> "$security/$network"
+            network.isNotEmpty() -> network
+            security.isNotEmpty() -> security
+            else -> ""
+        }
+
+        return if (subType.isNotEmpty()) "$proto/$subType" else proto
+    }
+
+    private fun stripFlagEmoji(value: String): String {
+        val result = StringBuilder()
+        value.codePoints().forEach { codePoint ->
+            if (codePoint !in 0x1F1E6..0x1F1FF && codePoint != 0xFE0F) {
+                result.appendCodePoint(codePoint)
+            }
+        }
+        return result.toString()
+            .replace(Regex("^[\\s|•·:—–-]+|[\\s|•·:—–-]+$"), "")
+            .replace(Regex("\\s{2,}"), " ")
+            .trim()
+    }
+
+    companion object {
+        const val PREFS_NAME = "lumen_prefs"
+    }
+}
