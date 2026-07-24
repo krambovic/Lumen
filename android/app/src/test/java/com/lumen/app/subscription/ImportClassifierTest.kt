@@ -23,4 +23,21 @@ class ImportClassifierTest {
     fun arbitraryTextIsRejected() {
         assertTrue(ImportClassifier.classify("just some text") is ImportClassification.Rejected)
     }
+
+    @Test
+    fun extendedProtocolLinksAreConfig() {
+        val links = listOf(
+            "naive+https://user:pass@example.com:443#N",
+            "quic://user:pass@example.com:443#N",
+            "mieru://user:pass@example.com:2027#M",
+            "masque://token@profile-id#W",
+            "hysteria://auth@example.com:443#H1",
+            "warp://?id=abc#WARP"
+        )
+        for (link in links) {
+            val result = ImportClassifier.classify(link)
+            assertTrue("$link should be CONFIG", result is ImportClassification.Ready)
+            assertEquals(ImportKind.CONFIG, (result as ImportClassification.Ready).kind)
+        }
+    }
 }

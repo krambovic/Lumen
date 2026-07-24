@@ -11,8 +11,8 @@ dist/
 !Lumen-qml.spec
 !windows/Lumen-qml.spec
 
-# Core binaries (downloaded by CI)
-core/
+# Core binaries (downloaded by CI) — only the repo-root core/, not android/core
+/core/
 windows/core/
 
 # App data

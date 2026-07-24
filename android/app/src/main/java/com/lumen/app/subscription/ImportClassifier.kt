@@ -14,8 +14,10 @@ internal object ImportClassifier {
     const val MAX_CLIPBOARD_CHARS = 1_048_576
 
     private val configSchemes = setOf(
-        "vless", "vmess", "ss", "trojan", "tuic", "hysteria2", "hy2",
-        "hysteria", "wireguard", "awg", "socks", "socks5", "http", "https"
+        "vless", "vmess", "ss", "shadowsocks", "trojan", "tuic", "hysteria2", "hy2",
+        "hysteria", "hy", "wireguard", "wg", "awg", "amneziawg", "warp",
+        "naive", "naive+https", "naive+quic", "quic", "mieru", "mierus", "masque",
+        "socks", "socks5", "http", "https"
     )
 
     fun classify(raw: String?): ImportClassification {

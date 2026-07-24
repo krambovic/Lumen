@@ -35,6 +35,27 @@ internal object SubscriptionClient {
         "mux-xudp-connections", "mux-quic", "exclude-routes"
     )
 
+    private val placeholderMarkers = listOf(
+        "client not supported", "unsupported client", "client is not supported",
+        "update your app", "use another client",
+        "\u043a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044f",
+        "\u043d\u0435\u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u043c\u044b\u0439 \u043a\u043b\u0438\u0435\u043d\u0442",
+        "\u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435"
+    )
+
+    /**
+     * Detects "stub" responses that panels return to unknown clients
+     * (for example, a single fake node named "client not supported").
+     */
+    private fun looksLikePlaceholder(body: String): Boolean {
+        if (body.isBlank()) return true
+        val decoded = runCatching {
+            java.net.URLDecoder.decode(body, "UTF-8")
+        }.getOrDefault(body)
+        val haystack = (body + "\n" + decoded).lowercase(Locale.US)
+        return placeholderMarkers.any { haystack.contains(it) }
+    }
+
     fun fetch(
         rawUrl: String,
         hwid: String?,
@@ -56,12 +77,15 @@ internal object SubscriptionClient {
         }
         require(target.startsWith("http://") || target.startsWith("https://")) { "Subscription URL must use HTTP(S)" }
 
+        // User-Agent fallback order: try the Lumen UA first; if the panel replies
+        // with a stub ("client not supported") or fails, retry with the Happ UA,
+        // then the remaining compatible profiles.
         val profiles = buildList {
             if (!customUserAgent.isNullOrBlank()) add("Custom" to customUserAgent)
             add("Lumen Android" to "Lumen-Subscription/Android-1.0")
+            add("Happ compatible" to "Happ/2.18.3/Windows/2606241603601")
             add("SFA" to "SFA/1.11.0")
             add("Clash Meta" to "clash.meta")
-            add("Happ compatible" to "Happ/2.18.3/Windows/2606241603601")
         }
         var lastError: Throwable? = null
         for ((profile, userAgent) in profiles) {
@@ -111,8 +135,12 @@ internal object SubscriptionClient {
                     val normalized = normalize(body, headers).copy(clientProfile = profile)
                     val (nodes, _) = runCatching { LinkParser.parseLinksText(normalized.body) }
                         .getOrDefault(Pair(emptyList(), emptyList()))
-                    if (nodes.isNotEmpty()) return normalized
-                    throw IOException("No supported servers in response")
+                    if (nodes.isEmpty()) throw IOException("No supported servers in response")
+                    if (nodes.size <= 2 && looksLikePlaceholder(normalized.body)) {
+                        // The panel answered with a stub for this client profile; try the next User-Agent.
+                        throw IOException("Subscription returned a placeholder for the \"$profile\" profile")
+                    }
+                    return normalized
                 } finally {
                     conn.disconnect()
                 }
