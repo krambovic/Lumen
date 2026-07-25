@@ -93,6 +93,14 @@ data class ImportUiState(
     val message: String = ""
 )
 
+val DEFAULT_DIRECT_DOMAINS: String = """
+direct:10.0.0.0/8
+direct:172.16.0.0/12
+direct:192.168.0.0/16
+direct:127.0.0.0/8
+direct:fc00::/7
+""".trimIndent()
+
 data class SettingsUiState(
     val engine: String = "SINGBOX",
     val muxEnabled: Boolean = false,
@@ -106,11 +114,12 @@ data class SettingsUiState(
     val localHttpPort: Int = 10809,
     val lanSharingEnabled: Boolean = false,
     val autoConnectOnBoot: Boolean = false,
+    val enableSpeedStats: Boolean = true,
     val preferIpv6: Boolean = false,
     val blockQuic: Boolean = false,
     val sniffRouteOnly: Boolean = false,
     val mtu: Int = 1500,
-    val directDomains: String = "",
+    val directDomains: String = DEFAULT_DIRECT_DOMAINS,
     val directIpCidrs: String = "",
     val geoResourceSource: String = "https://github.com/runetfreedom/russia-v2ray-rules-dat/",
     // Legacy single-server fields are kept for preference migration.
@@ -231,7 +240,7 @@ data class NodeDraft(
 
 val SUPPORTED_PROTOCOLS: List<String> = listOf(
     "vless", "vmess", "trojan", "ss", "hysteria2", "tuic",
-    "wireguard", "awg", "openvpn", "socks", "http", "auto"
+    "wireguard", "awg", "masque", "openvpn", "socks", "http", "auto"
 )
 
 val NETWORK_TRANSPORTS: List<String> = listOf("tcp", "ws", "grpc", "xhttp", "http")

@@ -111,6 +111,7 @@ class LumenVpnService : VpnService() {
                     .addRoute("0.0.0.0", 0)
                     .addRoute("::", 0)
                     .setSession("Lumen VPN")
+                    .setBlocking(true)
                 val vpnDnsServers = if (dnsMode.lowercase() in setOf("android", "system")) {
                     currentNetworkDnsServers()
                 } else {
@@ -308,7 +309,8 @@ misc:
                     is EngineState.Running -> {
                         val prefs = getSharedPreferences("lumen_prefs", MODE_PRIVATE)
                         val showNotif = prefs.getBoolean("show_notification", true)
-                        val showSpeed = prefs.getBoolean("show_notification_speed", true)
+                        val speedStatsEnabled = prefs.getBoolean("enable_speed_stats", true)
+                        val showSpeed = speedStatsEnabled && prefs.getBoolean("show_notification_speed", true)
                         if (!showNotif) {
                             (getSystemService(NOTIFICATION_SERVICE) as? android.app.NotificationManager)?.cancel(NotificationHelper.NOTIFICATION_ID)
                         } else {

@@ -133,13 +133,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         localHttpPort = prefs.getInt("local_http_port", 10809),
         lanSharingEnabled = prefs.getBoolean("lan_sharing", false),
         autoConnectOnBoot = prefs.getBoolean("boot_auto_connect", false),
+        enableSpeedStats = prefs.getBoolean("enable_speed_stats", true),
         showNotification = prefs.getBoolean("show_notification", true),
         showNotificationSpeed = prefs.getBoolean("show_notification_speed", true),
         preferIpv6 = prefs.getBoolean("prefer_ipv6", false),
         blockQuic = prefs.getBoolean("block_quic", false),
         sniffRouteOnly = prefs.getBoolean("sniff_route_only", false),
         mtu = prefs.getInt("mtu", 1500),
-        directDomains = prefs.getString("routing_direct_domains", "") ?: "",
+        directDomains = prefs.getString("routing_direct_domains", null)?.takeIf { it.isNotBlank() } ?: com.lumen.ui.screens.DEFAULT_DIRECT_DOMAINS,
         directIpCidrs = prefs.getString("routing_direct_ip_cidrs", "") ?: "",
         geoResourceSource = prefs.getString(
             "geo_resource_source",
@@ -223,6 +224,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("local_http_port", s.localHttpPort.coerceIn(1024, 65535))
             .putBoolean("lan_sharing", s.lanSharingEnabled)
             .putBoolean("boot_auto_connect", s.autoConnectOnBoot)
+            .putBoolean("enable_speed_stats", s.enableSpeedStats)
             .putBoolean("show_notification", s.showNotification)
             .putBoolean("show_notification_speed", s.showNotificationSpeed)
             .putBoolean("prefer_ipv6", s.preferIpv6)

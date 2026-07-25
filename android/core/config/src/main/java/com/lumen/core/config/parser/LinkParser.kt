@@ -39,7 +39,7 @@ object LinkParser {
     const val MAX_IMPORT_LINES = 20000
     const val MAX_IMPORT_NODES = 20000
 
-    private val AUTO_GROUP_TYPES = setOf("urltest", "url-test", "selector")
+    private val AUTO_GROUP_TYPES = setOf("urltest", "url-test", "selector", "select", "fallback", "load-balance", "auto")
 
     /** Packs a urltest/selector pool into one AUTO node (parity with desktop Lumen). */
     private fun autoNodeFromMembers(name: String, members: List<ParsedNode>): ParsedNode {
@@ -1433,10 +1433,10 @@ object LinkParser {
         for (group in proxyGroups) {
             val groupMap = group as? Map<*, *> ?: continue
             val groupType = groupMap["type"]?.toString()?.trim()?.lowercase() ?: ""
-            if (groupType !in AUTO_GROUP_TYPES) continue
+            if (groupType.isNotEmpty() && groupType !in AUTO_GROUP_TYPES) continue
             val memberNames = (groupMap["proxies"] as? List<*>)?.mapNotNull { it?.toString()?.trim() }.orEmpty()
             val members = memberNames.mapNotNull { memberName ->
-                nodes.firstOrNull { it.name.equals(memberName, ignoreCase = true) }
+                nodes.firstOrNull { it.name.trim().equals(memberName, ignoreCase = true) }
             }.distinct()
             if (members.size < 2) continue
             val groupName = groupMap["name"]?.toString()?.trim().orEmpty().ifEmpty { "AUTO" }
@@ -1445,9 +1445,8 @@ object LinkParser {
         }
         if (autoNodes.isNotEmpty()) {
             val remaining = nodes.filterNot { node -> consumed.any { it === node } }
-            return Pair(remaining + autoNodes, errors)
+            return Pair(autoNodes + remaining, errors)
         }
-
         return Pair(nodes, errors)
     }
 
@@ -1950,7 +1949,7 @@ object LinkParser {
                 if (autoNodes.isNotEmpty()) {
                     // Pool members live inside the AUTO node, never as separate servers.
                     val remaining = nodes.filterNot { node -> consumed.any { it === node } }
-                    return Pair(remaining + autoNodes, errors)
+                    return Pair(autoNodes + remaining, errors)
                 }
             }
             for (arrayKey in listOf("proxies", "servers", "nodes", "configs", "links", "subs")) {

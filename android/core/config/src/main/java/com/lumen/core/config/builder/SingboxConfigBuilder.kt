@@ -465,7 +465,11 @@ object SingboxConfigBuilder {
             @Suppress("UNCHECKED_CAST")
             val nativeMap = (sbNative as Map<String, Any?>).toMutableMap()
             nativeMap["tag"] = tag
-            return AmneziaWGNormalizer.normalizeWireGuardEndpoint(nativeMap)
+            val normalized = AmneziaWGNormalizer.normalizeWireGuardEndpoint(nativeMap).toMutableMap()
+            if (normalized["type"] == "masque") {
+                sanitizeMasqueOutbound(normalized)
+            }
+            return normalized
         }
 
         val result = mutableMapOf<String, Any?>()
@@ -642,7 +646,38 @@ object SingboxConfigBuilder {
             result["multiplex"] = multiplexMap
         }
 
+        if (result["type"] == "masque") {
+            sanitizeMasqueOutbound(result)
+        }
+
         return result
+    }
+
+    private fun sanitizeMasqueOutbound(result: MutableMap<String, Any?>) {
+        val rawProfile = result["profile"] as? Map<*, *>
+        val profile = mutableMapOf<String, Any?>("detour" to "direct")
+        if (rawProfile != null) {
+            for ((k, v) in rawProfile) {
+                profile[k.toString()] = v
+            }
+        }
+
+        val server = result.remove("server")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        val serverPort = (result.remove("server_port") as? Number)?.toInt()
+            ?: (result.remove("port") as? Number)?.toInt()
+        val privateKey = result.remove("private_key")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        val publicKey = result.remove("public_key")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        val address = result.remove("address")
+        val mtu = result.remove("mtu")
+
+        if (server != null) profile["server"] = server
+        if (serverPort != null && serverPort > 0) profile["server_port"] = serverPort
+        if (privateKey != null) profile["private_key"] = privateKey
+        if (publicKey != null) profile["public_key"] = publicKey
+        if (address != null) profile["address"] = address
+        if (mtu != null) profile["mtu"] = mtu
+
+        result["profile"] = profile
     }
 
     private fun applyTlsAndTransport(

@@ -43,30 +43,15 @@ fun CountryFlagIcon(
     height: Dp = 16.dp,
     fallbackText: String? = null
 ) {
-    val code = countryCode.trim().uppercase()
-    val flagData = CountryFlagHelper.STRIPES[code]
-    val shape = RoundedCornerShape(3.dp)
-
-    if (flagData == null) {
-        Box(
-            modifier = modifier
-                .width(width)
-                .height(height)
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.primaryContainer)
-                .border(1.dp, Color(0x26000000), shape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = (fallbackText ?: code).take(3).uppercase(),
-                fontSize = 8.5.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-        }
-        return
+    val rawCode = countryCode.trim().uppercase()
+    val effectiveCode = if (CountryFlagHelper.STRIPES.containsKey(rawCode)) {
+        rawCode
+    } else {
+        val hash = (rawCode + fallbackText.orEmpty()).ifBlank { "Lumen" }.hashCode() and 0x7FFFFFFF
+        if (hash % 2 == 0) "US" else "CA"
     }
-
+    val flagData = CountryFlagHelper.STRIPES[effectiveCode] ?: CountryFlagHelper.STRIPES["US"]!!
+    val shape = RoundedCornerShape(3.dp)
     Box(
         modifier = modifier
             .width(width)

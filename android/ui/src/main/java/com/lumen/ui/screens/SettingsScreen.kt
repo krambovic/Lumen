@@ -605,6 +605,10 @@ private fun AppSettings(
             onUpdate(state.copy(autoConnectOnBoot = it))
         }
         SettingsDivider()
+        ToggleRow(s.speedStats, s.speedStatsDesc, state.enableSpeedStats) {
+            onUpdate(state.copy(enableSpeedStats = it))
+        }
+        SettingsDivider()
         ToggleRow(s.showNotification, s.showNotificationDesc, state.showNotification) {
             onUpdate(state.copy(showNotification = it))
         }

@@ -1381,14 +1381,18 @@ private fun DashboardHero(
         heroContext.getSharedPreferences("lumen_prefs", android.content.Context.MODE_PRIVATE)
     }
 
-    // Poll the device counters once per second while the tunnel is up.
-    LaunchedEffect(connected) {
-        if (!connected) {
+    val speedStatsEnabled = remember(connected) {
+        heroPrefs.getBoolean("enable_speed_stats", true)
+    }
+
+    // Poll the device counters once per second while the tunnel is up and stats are enabled.
+    LaunchedEffect(connected, speedStatsEnabled) {
+        if (!connected || !speedStatsEnabled) {
             downSpeed = 0L
             upSpeed = 0L
             sessionSeconds = 0L
             history = emptyList()
-            heroPrefs.edit().remove("session_started_at").apply()
+            if (!connected) heroPrefs.edit().remove("session_started_at").apply()
             return@LaunchedEffect
         }
         val stored = heroPrefs.getLong("session_started_at", 0L)

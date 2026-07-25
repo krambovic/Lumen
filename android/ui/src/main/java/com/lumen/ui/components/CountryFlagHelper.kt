@@ -286,7 +286,10 @@ object CountryFlagHelper {
         val serverCodeResult = detectCode(safeServer)
         if (serverCodeResult.isNotEmpty()) return serverCodeResult
 
-        return ""
+        // Deterministic fallback matching desktop Lumen: US or CA
+        val key = "$safeName $safeServer".ifBlank { "Lumen" }
+        val hash = key.hashCode() and 0x7FFFFFFF
+        return if (hash % 2 == 0) "US" else "CA"
     }
 
     fun detectEmoji(text: String): String {
@@ -355,6 +358,4 @@ object CountryFlagHelper {
 
         return ""
     }
-
-
 }

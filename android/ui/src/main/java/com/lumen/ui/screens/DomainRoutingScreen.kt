@@ -234,19 +234,6 @@ fun DomainRoutingScreen(
                     PresetChip(s.presetLan, Modifier.weight(1f), active = isPresetActive(LAN_PRESET)) { togglePreset(LAN_PRESET) }
                     PresetChip(s.presetAds, Modifier.weight(1f), active = isPresetActive(ADS_PRESET)) { togglePreset(ADS_PRESET) }
                 }
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    PresetChip(s.presetRu, Modifier.weight(1f), active = isPresetActive(ruPreset())) { togglePreset(ruPreset()) }
-                    PresetChip(s.presetCn, Modifier.weight(1f), active = isPresetActive(regionPreset("cn"))) { togglePreset(regionPreset("cn")) }
-                    PresetChip(s.presetIr, Modifier.weight(1f), active = isPresetActive(regionPreset("ir"))) { togglePreset(regionPreset("ir")) }
-                }
-                Spacer(Modifier.height(8.dp))
-                PresetChip(s.presetGlobalProxy, Modifier.fillMaxWidth(), destructive = true) {
-                    updateRules(emptyList())
-                }
             }
         }
 

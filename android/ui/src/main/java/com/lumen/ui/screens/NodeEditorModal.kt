@@ -133,6 +133,7 @@ private fun protocolLabel(p: String): String = when (p) {
     "tuic" -> "TUIC v5"
     "wireguard" -> "WireGuard"
     "awg" -> "AmneziaWG"
+    "masque" -> "MASQUE"
     "openvpn" -> "OpenVPN"
     "socks" -> "SOCKS5"
     "http" -> "HTTP proxy"
@@ -142,6 +143,7 @@ private fun protocolLabel(p: String): String = when (p) {
 
 private fun isDraftValid(d: NodeDraft): Boolean = when (d.protocol) {
     "auto" -> d.name.isNotBlank()
+    "masque" -> d.name.isNotBlank() || d.server.isNotBlank()
     "openvpn" -> d.server.isNotBlank() && d.port.toIntOrNull() != null && d.ovpnCa.isNotBlank()
     else -> d.server.isNotBlank() && d.port.toIntOrNull() != null
 }
