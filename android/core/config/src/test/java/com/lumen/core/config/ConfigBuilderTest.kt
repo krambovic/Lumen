@@ -268,4 +268,40 @@ class ConfigBuilderTest {
             rule.optInt("port") == 53 && rule.optString("outbound") == "direct"
         })
     }
+
+    @Test
+    fun testSingboxMasqueOutboundKeepsServerAtTopLevel() {
+        val node = ParsedNode(
+            name = "WARP Masque",
+            scheme = "masque",
+            server = "162.159.193.1",
+            port = 2408,
+            link = "clash-masque",
+            outbound = mapOf(
+                "type" to "masque",
+                "server" to "162.159.193.1",
+                "server_port" to 2408,
+                "private_key" to "private_key_xyz",
+                "public_key" to "public_key_abc",
+                "address" to listOf("172.16.0.2/32"),
+                "mtu" to 1280,
+                "profile" to mapOf("detour" to "direct")
+            )
+        )
+        val json = JSONObject(SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions()))
+        val proxyOb = json.getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("masque", proxyOb.getString("type"))
+        assertEquals("162.159.193.1", proxyOb.getString("server"))
+        assertEquals(2408, proxyOb.getInt("server_port"))
+        assertEquals("private_key_xyz", proxyOb.getString("private_key"))
+        assertEquals("public_key_abc", proxyOb.getString("public_key"))
+        assertEquals("172.16.0.2/32", proxyOb.getJSONArray("address").getString(0))
+        assertEquals(1280, proxyOb.getInt("mtu"))
+        val profile = proxyOb.getJSONObject("profile")
+        assertEquals("direct", profile.getString("detour"))
+        assertTrue(!profile.has("server"))
+        assertTrue(!profile.has("server_port"))
+        assertTrue(!profile.has("private_key"))
+        assertTrue(!profile.has("public_key"))
+    }
 }

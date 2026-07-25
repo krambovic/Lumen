@@ -658,24 +658,23 @@ object SingboxConfigBuilder {
         val profile = mutableMapOf<String, Any?>("detour" to "direct")
         if (rawProfile != null) {
             for ((k, v) in rawProfile) {
-                profile[k.toString()] = v
+                val key = k.toString()
+                if (key in setOf("server", "server_port", "port", "private_key", "public_key", "address", "mtu")) {
+                    if (key == "port" && !result.containsKey("server_port")) {
+                        result["server_port"] = (v as? Number)?.toInt() ?: v
+                    } else if (key != "port" && !result.containsKey(key)) {
+                        result[key] = v
+                    }
+                } else {
+                    profile[key] = v
+                }
             }
         }
 
-        val server = result.remove("server")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
-        val serverPort = (result.remove("server_port") as? Number)?.toInt()
-            ?: (result.remove("port") as? Number)?.toInt()
-        val privateKey = result.remove("private_key")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
-        val publicKey = result.remove("public_key")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
-        val address = result.remove("address")
-        val mtu = result.remove("mtu")
-
-        if (server != null) profile["server"] = server
-        if (serverPort != null && serverPort > 0) profile["server_port"] = serverPort
-        if (privateKey != null) profile["private_key"] = privateKey
-        if (publicKey != null) profile["public_key"] = publicKey
-        if (address != null) profile["address"] = address
-        if (mtu != null) profile["mtu"] = mtu
+        val portNum = (result.remove("port") as? Number)?.toInt()
+        if (portNum != null && portNum > 0 && !result.containsKey("server_port")) {
+            result["server_port"] = portNum
+        }
 
         result["profile"] = profile
     }
