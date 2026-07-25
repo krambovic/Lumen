@@ -79,33 +79,25 @@ fun RoutingScreen(
                         IconButton(onClick = { showOptions = true }) {
                             Icon(Icons.Filled.MoreVert, contentDescription = strings.settings, tint = MaterialTheme.colorScheme.primary)
                         }
-                        val menuShape = RoundedCornerShape(4.dp)
-                        DropdownMenu(
+                        LumenMenu(
                             expanded = showOptions,
-                            onDismissRequest = { showOptions = false },
-                            modifier = Modifier
-                                .widthIn(min = 220.dp)
-                                .clip(menuShape)
-                                .background(MaterialTheme.colorScheme.surface)
-                                .border(androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                            onDismissRequest = { showOptions = false }
                         ) {
-                            Column(Modifier.padding(vertical = 4.dp)) {
-                                DropdownMenuItem(
-                                    text = { Text(strings.hideSystem) },
-                                    trailingIcon = {
-                                        LumenSwitch(checked = hideSystem, onCheckedChange = { hideSystem = it })
-                                    },
-                                    onClick = { hideSystem = !hideSystem }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(strings.autoSelect) },
-                                    onClick = { showOptions = false; onAutoSelect() }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(strings.clear) },
-                                    onClick = { showOptions = false; onClearSelection() }
-                                )
-                            }
+                            DropdownMenuItem(
+                                text = { Text(strings.hideSystem) },
+                                trailingIcon = {
+                                    LumenSwitch(checked = hideSystem, onCheckedChange = { hideSystem = it })
+                                },
+                                onClick = { hideSystem = !hideSystem }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(strings.autoSelect) },
+                                onClick = { showOptions = false; onAutoSelect() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(strings.clear) },
+                                onClick = { showOptions = false; onClearSelection() }
+                            )
                         }
                     }
                 }

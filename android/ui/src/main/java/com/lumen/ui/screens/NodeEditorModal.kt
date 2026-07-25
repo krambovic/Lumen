@@ -96,12 +96,7 @@ fun NodeEditorModal(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        "openvpn" -> Field(
-                            s.openvpnConfigLabel,
-                            draft.rawConfig,
-                            singleLine = false,
-                            minLines = 12
-                        ) { draft = draft.copy(rawConfig = it) }
+                        "openvpn" -> OpenVpnFields(draft = draft, onChange = { draft = it })
                         "wireguard", "awg" -> WireGuardFields(
                             draft = draft,
                             isAwg = draft.protocol == "awg",
@@ -147,7 +142,7 @@ private fun protocolLabel(p: String): String = when (p) {
 
 private fun isDraftValid(d: NodeDraft): Boolean = when (d.protocol) {
     "auto" -> d.name.isNotBlank()
-    "openvpn" -> d.rawConfig.isNotBlank()
+    "openvpn" -> d.server.isNotBlank() && d.port.toIntOrNull() != null && d.ovpnCa.isNotBlank()
     else -> d.server.isNotBlank() && d.port.toIntOrNull() != null
 }
 
@@ -337,6 +332,21 @@ private fun WireGuardFields(
     Field(s.presharedKeyLabel, draft.presharedKey) { onChange(draft.copy(presharedKey = it)) }
     Field(s.allowedIpsLabel, draft.allowedIps) { onChange(draft.copy(allowedIps = it)) }
     Field(s.reservedLabel, draft.reserved) { onChange(draft.copy(reserved = it)) }
+    if (!isAwg) {
+        // wg -> awg with the Amnezia defaults, same as desktop Lumen / wgtunnel.
+        OutlinedButton(
+            onClick = { onChange(amneziaCompatible(draft)) },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+        ) {
+            Text(s.amneziaCompatible)
+        }
+        Text(
+            s.amneziaCompatibleDesc,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    }
     if (isAwg) {
         SectionHeader(s.awgJunkParamsLabel)
         Row(Modifier.fillMaxWidth()) {
@@ -399,3 +409,135 @@ private fun WireGuardFields(
         }
     }
 }
+
+/**
+ * Structured OpenVPN editor, same field set as the desktop Lumen node editor.
+ * The .ovpn text stays available as an import shortcut that fills the fields.
+ */
+@Composable
+private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
+    val s = LocalStrings.current
+    var pasteOpen by remember { mutableStateOf(draft.ovpnCa.isBlank()) }
+    var pasteText by remember { mutableStateOf(draft.rawConfig) }
+
+    ServerPortRow(draft, onChange)
+    LumenDropdown(
+        label = "Protocol",
+        options = OPENVPN_PROTOCOLS,
+        selected = draft.ovpnProto.ifBlank { "udp" },
+        onSelected = { onChange(draft.copy(ovpnProto = it)) }
+    )
+    Spacer(Modifier.height(4.dp))
+    Field("Additional remotes (host port per line)", draft.ovpnExtraRemotes, singleLine = false, minLines = 2) {
+        onChange(draft.copy(ovpnExtraRemotes = it))
+    }
+
+    SectionHeader("Encryption")
+    LumenDropdown(
+        label = "Cipher",
+        options = OPENVPN_CIPHERS,
+        selected = draft.ovpnCipher,
+        onSelected = { onChange(draft.copy(ovpnCipher = it)) },
+        optionLabel = { it.ifEmpty { s.noneOption } }
+    )
+    Spacer(Modifier.height(4.dp))
+    LumenDropdown(
+        label = "Auth digest",
+        options = OPENVPN_AUTH_DIGESTS,
+        selected = draft.ovpnAuth,
+        onSelected = { onChange(draft.copy(ovpnAuth = it)) },
+        optionLabel = { it.ifEmpty { s.noneOption } }
+    )
+    Spacer(Modifier.height(4.dp))
+
+    SectionHeader("Credentials")
+    Field("Username", draft.ovpnUsername) { onChange(draft.copy(ovpnUsername = it)) }
+    Field("Password", draft.ovpnPassword) { onChange(draft.copy(ovpnPassword = it)) }
+
+    SectionHeader("Certificates")
+    Field("CA certificate", draft.ovpnCa, singleLine = false, minLines = 4) { onChange(draft.copy(ovpnCa = it)) }
+    Field("Client certificate", draft.ovpnCert, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnCert = it)) }
+    Field("Private key", draft.ovpnKey, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnKey = it)) }
+    Field("tls-crypt key", draft.ovpnTlsCrypt, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnTlsCrypt = it)) }
+    ToggleField("tls-crypt-v2", draft.ovpnTlsCryptV2) { onChange(draft.copy(ovpnTlsCryptV2 = it)) }
+    Field("tls-auth key", draft.ovpnTlsAuth, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnTlsAuth = it)) }
+    LumenDropdown(
+        label = "Key direction",
+        options = OPENVPN_KEY_DIRECTIONS,
+        selected = draft.ovpnKeyDirection,
+        onSelected = { onChange(draft.copy(ovpnKeyDirection = it)) },
+        optionLabel = { it.ifEmpty { s.noneOption } }
+    )
+    Spacer(Modifier.height(4.dp))
+    Field("TLS cipher suites", draft.ovpnTlsCipherSuites) { onChange(draft.copy(ovpnTlsCipherSuites = it)) }
+    Field("verify-x509-name", draft.ovpnVerifyX509Name) { onChange(draft.copy(ovpnVerifyX509Name = it)) }
+    LumenDropdown(
+        label = "verify-x509-name mode",
+        options = OPENVPN_X509_MODES,
+        selected = draft.ovpnVerifyX509Mode,
+        onSelected = { onChange(draft.copy(ovpnVerifyX509Mode = it)) },
+        optionLabel = { it.ifEmpty { s.noneOption } }
+    )
+    Spacer(Modifier.height(4.dp))
+
+    SectionHeader("Connection")
+    Row(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = draft.ovpnReconnectDelay,
+            onValueChange = { onChange(draft.copy(ovpnReconnectDelay = it)) },
+            label = { Text("Reconnect, s") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.weight(1f).padding(vertical = 4.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        OutlinedTextField(
+            value = draft.ovpnPingInterval,
+            onValueChange = { onChange(draft.copy(ovpnPingInterval = it)) },
+            label = { Text("Ping, s") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.weight(1f).padding(vertical = 4.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        OutlinedTextField(
+            value = draft.ovpnPingRestart,
+            onValueChange = { onChange(draft.copy(ovpnPingRestart = it)) },
+            label = { Text("Ping restart, s") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.weight(1f).padding(vertical = 4.dp)
+        )
+    }
+    Field("DNS servers (one per line)", draft.ovpnDns, singleLine = false, minLines = 2) {
+        onChange(draft.copy(ovpnDns = it))
+    }
+
+    SectionHeader(s.openvpnConfigLabel)
+    OutlinedButton(
+        onClick = { pasteOpen = !pasteOpen },
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+    ) {
+        Text(if (pasteOpen) s.close else s.importAction)
+    }
+    if (pasteOpen) {
+        Field(s.openvpnConfigLabel, pasteText, singleLine = false, minLines = 8) { pasteText = it }
+        OutlinedButton(
+            onClick = { onChange(openVpnDraftFromProfile(draft, pasteText)) },
+            enabled = pasteText.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+        ) {
+            Text(s.importAction)
+        }
+    }
+}
+
+/** Amnezia defaults (Jc/Jmin/Jmax + S1/S2), same values as desktop Lumen and wgtunnel. */
+private fun amneziaCompatible(d: NodeDraft): NodeDraft = d.copy(
+    protocol = "awg",
+    jc = d.jc.ifBlank { "4" },
+    jmin = d.jmin.ifBlank { "40" },
+    jmax = d.jmax.ifBlank { "70" },
+    s1 = d.s1.ifBlank { "0" },
+    s2 = d.s2.ifBlank { "0" }
+)

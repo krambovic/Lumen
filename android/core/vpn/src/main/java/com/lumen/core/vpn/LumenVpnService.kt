@@ -10,6 +10,7 @@ import com.lumen.core.engine.EngineManager
 import com.lumen.core.engine.EngineState
 import com.lumen.core.engine.EngineType
 import com.lumen.core.engine.ProcessEngine
+import com.lumen.core.engine.TrafficStats
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -183,7 +184,7 @@ misc:
                 // CONNECT exercises bootstrap DNS, managed DNS and the selected proxy.
                 verifyProxyDataPath(localSocksPort)
                 _isRunning.value = true
-                sendBroadcast(Intent("com.lumen.app.widget.ACTION_UPDATE_STATE"))
+                notifyWidgets()
                 TelemetryManager.startHeartbeatLoop(this@LumenVpnService, serviceScope)
                 observeEngineState()
                 VpnLogBus.info("VPN", "Connected (${engineType.name}); traffic is handled by sing-box + tun2socks")
@@ -304,9 +305,20 @@ misc:
         stateJob = serviceScope.launch {
             engineManager.state.collect { state ->
                 when (state) {
-                    is EngineState.Running -> NotificationHelper.updateNotification(
-                        this@LumenVpnService, state.stats, true
-                    )
+                    is EngineState.Running -> {
+                        val prefs = getSharedPreferences("lumen_prefs", MODE_PRIVATE)
+                        val showNotif = prefs.getBoolean("show_notification", true)
+                        val showSpeed = prefs.getBoolean("show_notification_speed", true)
+                        if (!showNotif) {
+                            (getSystemService(NOTIFICATION_SERVICE) as? android.app.NotificationManager)?.cancel(NotificationHelper.NOTIFICATION_ID)
+                        } else {
+                            NotificationHelper.updateNotification(
+                                this@LumenVpnService,
+                                if (showSpeed) state.stats else TrafficStats(),
+                                true
+                            )
+                        }
+                    }
                     is EngineState.Error -> {
                         Log.e(TAG, "Engine error: ${state.message}")
                         VpnLogBus.error("CORE", state.message)
@@ -344,7 +356,20 @@ misc:
         }
         _isRunning.value = false
         TelemetryManager.stopHeartbeatLoop()
-        sendBroadcast(Intent("com.lumen.app.widget.ACTION_UPDATE_STATE"))
+        notifyWidgets()
+    }
+
+    /**
+     * Home screen widgets only refresh when they are told to. The broadcast has
+     * to be explicit (setPackage), otherwise Android 8+ drops it before it ever
+     * reaches the manifest-declared receiver.
+     */
+    private fun notifyWidgets() {
+        runCatching {
+            sendBroadcast(
+                Intent(WIDGET_UPDATE_ACTION).setPackage(packageName)
+            )
+        }
     }
 
     override fun onDestroy() {
@@ -359,6 +384,7 @@ misc:
         runCatching { vpnInterface?.close() }
         vpnInterface = null
         _isRunning.value = false
+        notifyWidgets()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -378,6 +404,9 @@ misc:
         private const val TAG = "LumenVpnService"
         private const val LOCAL_SOCKS_PORT = 10808
         private const val PROXY_PROBE_TIMEOUT_MS = 8_000
+        // Kept as a literal (and not a reference to the app module) because
+        // :core:vpn must not depend on :app.
+        const val WIDGET_UPDATE_ACTION = "com.lumen.app.widget.ACTION_UPDATE_STATE"
         const val ACTION_START_VPN = "com.lumen.core.vpn.START_VPN"
         const val ACTION_STOP_VPN = "com.lumen.core.vpn.STOP_VPN"
         const val EXTRA_ENGINE_TYPE = "extra_engine_type"

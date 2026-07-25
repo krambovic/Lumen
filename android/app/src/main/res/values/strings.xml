@@ -39,4 +39,6 @@
     <string name="public_key">Public Key</string>
     <string name="short_id">Short ID</string>
     <string name="awg_junk_params">AWG Junk Parameters</string>
+    <string name="widget_description">Quick connect toggle with the selected server</string>
+    <string name="widget_compact_description">Compact 1x1 power button</string>
 </resources>

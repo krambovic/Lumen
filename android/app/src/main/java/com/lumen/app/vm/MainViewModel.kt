@@ -29,6 +29,7 @@ import com.lumen.core.vpn.VpnLogBus
 import com.lumen.ui.components.ConnectionState
 import com.lumen.ui.components.CountryFlagHelper
 import com.lumen.ui.screens.AppEntryUiModel
+import com.lumen.ui.screens.DashboardStyle
 import com.lumen.ui.screens.GeoResourceUiModel
 import com.lumen.ui.screens.ImportKindUi
 import com.lumen.ui.screens.ImportPhaseUi
@@ -82,6 +83,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Single source of truth for the version shown in the UI and sent in headers.
         com.lumen.ui.screens.LumenVersion.appVersion = net.kramb.lumen.BuildConfig.VERSION_NAME
         com.lumen.core.vpn.TelemetryManager.appVersion = net.kramb.lumen.BuildConfig.VERSION_NAME
+        // Heartbeat on every launch: relying on the VPN service alone missed most users.
+        com.lumen.core.vpn.TelemetryManager.sendStartupHeartbeat(app, viewModelScope)
     }
 
     // ---------- Logs ----------
@@ -130,6 +133,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         localHttpPort = prefs.getInt("local_http_port", 10809),
         lanSharingEnabled = prefs.getBoolean("lan_sharing", false),
         autoConnectOnBoot = prefs.getBoolean("boot_auto_connect", false),
+        showNotification = prefs.getBoolean("show_notification", true),
+        showNotificationSpeed = prefs.getBoolean("show_notification_speed", true),
         preferIpv6 = prefs.getBoolean("prefer_ipv6", false),
         blockQuic = prefs.getBoolean("block_quic", false),
         sniffRouteOnly = prefs.getBoolean("sniff_route_only", false),
@@ -196,8 +201,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pingConcurrency = prefs.getInt("ping_concurrency", 15),
         pingUrl = prefs.getString("ping_url", "https://www.gstatic.com/generate_204")
             ?: "https://www.gstatic.com/generate_204",
-        pingOnOpen = prefs.getBoolean("ping_on_open", false),
-        pingSortAfter = prefs.getBoolean("ping_sort_after", false)
+        pingSortAfter = prefs.getBoolean("ping_sort_after", false),
+        dashboardStyle = runCatching {
+            DashboardStyle.valueOf(prefs.getString("dashboard_style", DashboardStyle.DEFAULT.name) ?: DashboardStyle.DEFAULT.name)
+        }.getOrDefault(DashboardStyle.DEFAULT)
     )
 
     fun updateSettings(s: SettingsUiState) {
@@ -216,6 +223,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("local_http_port", s.localHttpPort.coerceIn(1024, 65535))
             .putBoolean("lan_sharing", s.lanSharingEnabled)
             .putBoolean("boot_auto_connect", s.autoConnectOnBoot)
+            .putBoolean("show_notification", s.showNotification)
+            .putBoolean("show_notification_speed", s.showNotificationSpeed)
             .putBoolean("prefer_ipv6", s.preferIpv6)
             .putBoolean("block_quic", s.blockQuic)
             .putBoolean("sniff_route_only", s.sniffRouteOnly)
@@ -267,8 +276,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("ping_timeout_ms", s.pingTimeoutMs.coerceIn(500, 20000))
             .putInt("ping_concurrency", s.pingConcurrency.coerceIn(1, 32))
             .putString("ping_url", s.pingUrl.trim().take(512))
-            .putBoolean("ping_on_open", s.pingOnOpen)
             .putBoolean("ping_sort_after", s.pingSortAfter)
+            .putString("dashboard_style", s.dashboardStyle.name)
             .apply()
     }
 
@@ -330,11 +339,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 refreshGeoResources()
+                autoImportGeoRules(repository)
             } catch (e: Exception) {
                 log("Geo resources update failed: ${e.message}")
             } finally {
                 _isUpdatingGeoResources.value = false
             }
+        }
+    }
+
+    // Region bypass rules follow the downloaded geo database, so they always match it.
+    private fun autoImportGeoRules(repository: String) {
+        val code = when {
+            repository.startsWith("Loyalsoldier", true) -> "cn"
+            repository.startsWith("Chocolate4U", true) -> "ir"
+            else -> "ru"
+        }
+        val siteTag = if (code == "ru") "geosite:category-ru" else "geosite:$code"
+        val wanted = listOf(siteTag, "geoip:$code")
+        val current = _settings.value.directDomains
+        val existing = current.split(Regex("[\\n,;]+"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        val stripPrefix = { value: String ->
+            val prefix = listOf("proxy:", "block:", "reject:", "direct:")
+                .firstOrNull { value.startsWith(it, true) }
+            if (prefix != null) value.substring(prefix.length).trim() else value
+        }
+        val known = existing.map { stripPrefix(it).lowercase(Locale.US) }.toSet()
+        val additions = wanted.filter { it.lowercase(Locale.US) !in known }.map { "direct:$it" }
+        if (additions.isEmpty()) return
+        val merged = (existing + additions).joinToString("\n")
+        viewModelScope.launch(Dispatchers.Main) {
+            updateSettings(_settings.value.copy(directDomains = merged))
+            log("Auto-imported geo bypass rules for $code")
         }
     }
 
@@ -439,6 +477,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // Set after a ping run when "sort after ping" is enabled; reset on any list change source.
     private val _sortByPing = MutableStateFlow(false)
 
+    // Screens read this to override their own sort order once a ping run finished.
+    val sortByPing: StateFlow<Boolean> = _sortByPing
+
     val nodes: StateFlow<List<NodeUiModel>> =
         combine(nodeEntities, _selectedNodeId, _sortByPing) { list, selectedId, sortByPing ->
             val liveIds = HashSet<String>(list.size * 2)
@@ -497,7 +538,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectNode(node: NodeUiModel) {
         _selectedNodeId.value = node.id
-        prefs.edit().putString("selected_node_id", node.id).apply()
+        // The name is mirrored into prefs so the home screen widget can label
+        // itself without opening the database.
+        // Base64 of the UTF-8 bytes avoids any charset mangling between the app
+        // process and the widget process.
+        val nameB64 = android.util.Base64.encodeToString(
+            node.name.toByteArray(Charsets.UTF_8),
+            android.util.Base64.NO_WRAP
+        )
+        prefs.edit()
+            .putString("selected_node_id", node.id)
+            .putString("selected_node_name", node.name)
+            .putString("selected_node_name_b64", nameB64)
+            .apply()
+        com.lumen.app.widget.LumenWidgetProvider.sendUpdateBroadcast(getApplication())
         log("Selected ${node.name}")
     }
 
@@ -505,6 +559,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             nodeDao.deleteNodeById(node.id)
             log("Deleted node ${node.name}")
+        }
+    }
+
+    // Deletes servers belonging to the default / manual group only.
+    fun deleteAllNodes() {
+        viewModelScope.launch(Dispatchers.IO) {
+            nodeDao.deleteManualNodes()
+            log("Deleted all manual nodes")
         }
     }
 
@@ -597,7 +659,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             it.name.length <= 512 && it.server.length <= 512 &&
                                 (it.scheme == "auto" || it.server.isNotBlank()) &&
                                 (it.scheme == "auto" || it.port in 1..65535) && it.link.length <= 65_536
-                        }.take(LinkParser.MAX_IMPORT_NODES)
+                        }.take(LinkParser.MAX_IMPORT_NODES).let { collapseAutoNodes(it) }
                         if (valid.isEmpty()) error("No supported server configs found")
                         db.withTransaction { nodeDao.insertNodes(valid.map { it.toEntity(null) }) }
                         _importState.value = ImportUiState(
@@ -623,6 +685,82 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     @Deprecated("Use prepareImportText so untrusted input requires confirmation")
     fun importText(text: String) = prepareImportText(text)
+
+    /**
+     * Like [prepareImportText] but for files: bypasses the clipboard-size limit,
+     * reads charset-safe bytes, and skips the 1 MiB ImportClassifier gate.
+     * For files we trust the user selected them intentionally, so we go straight
+     * to the parser and show a confirmation dialog with the result count.
+     */
+    fun prepareImportFileContent(content: String?) {
+        if (content.isNullOrBlank()) {
+            _importState.value = ImportUiState(
+                phase = ImportPhaseUi.ERROR,
+                title = "Nothing to import",
+                message = "The file is empty"
+            )
+            return
+        }
+        val bytes = content.toByteArray(Charsets.UTF_8)
+        if (bytes.size > LinkParser.MAX_IMPORT_BYTES) {
+            _importState.value = ImportUiState(
+                phase = ImportPhaseUi.ERROR,
+                title = "File too large",
+                message = "File exceeds the ${LinkParser.MAX_IMPORT_BYTES / 1024 / 1024} MiB import limit"
+            )
+            return
+        }
+        // Quick-check: if it's a bare http/https URL treat it as a subscription URL.
+        val trimmed = content.trim()
+        if (!trimmed.contains('\n') && (trimmed.startsWith("http://") || trimmed.startsWith("https://"))) {
+            prepareImportText(trimmed)
+            return
+        }
+        // Pre-parse so we can show a meaningful summary before the user confirms.
+        val (parsed, parseErrors) = try {
+            LinkParser.parseLinksText(content)
+        } catch (e: Exception) {
+            _importState.value = ImportUiState(
+                phase = ImportPhaseUi.ERROR,
+                title = "File parse error",
+                message = e.message?.take(240) ?: "Unknown error"
+            )
+            return
+        }
+        val valid = parsed.filter {
+            it.name.length <= 512 && it.server.length <= 512 &&
+                (it.scheme == "auto" || it.server.isNotBlank()) &&
+                (it.scheme == "auto" || it.port in 1..65535) && it.link.length <= 65_536
+        }.take(LinkParser.MAX_IMPORT_NODES).let { collapseAutoNodes(it) }
+        if (valid.isEmpty()) {
+            _importState.value = ImportUiState(
+                phase = ImportPhaseUi.ERROR,
+                title = "No supported servers",
+                message = if (parseErrors.isNotEmpty()) parseErrors.take(3).joinToString("\n") else "No recognised server configs found in file"
+            )
+            return
+        }
+        _importState.value = ImportUiState(
+            phase = ImportPhaseUi.AWAITING,
+            kind = ImportKindUi.CONFIG,
+            raw = content,
+            title = "Import from file?",
+            message = "${valid.size} server(s) found. They will be added to Default."
+        )
+    }
+
+    /**
+     * Providers often ship a whole pool of "auto"/URLTest entries. Desktop Lumen
+     * keeps a single AUTO server, so the mobile import does the same: only the
+     * first auto entry survives and the rest are dropped.
+     */
+    private fun collapseAutoNodes(list: List<ParsedNode>): List<ParsedNode> {
+        var autoSeen = false
+        return list.filter { node ->
+            val isAuto = node.scheme.equals("auto", ignoreCase = true)
+            if (!isAuto) true else if (autoSeen) false else { autoSeen = true; true }
+        }
+    }
 
     private fun ParsedNode.toEntity(subscriptionId: String?) = NodeEntity(
         name = name.ifBlank { server },
@@ -675,6 +813,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _refreshingIds = MutableStateFlow<Set<String>>(emptySet())
     val refreshingIds: StateFlow<Set<String>> = _refreshingIds
 
+    // Declared here (not in the top init block) so every field the loop touches exists.
+    init { startSubscriptionAutoUpdate() }
+
     fun addSubscription(name: String, url: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val sub = SubscriptionEntity(
@@ -721,7 +862,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 it.name.length <= 512 && it.server.length <= 512 &&
                     (it.scheme == "auto" || it.server.isNotBlank()) &&
                     (it.scheme == "auto" || it.port in 1..65535) && it.link.length <= 65_536
-            }.take(LinkParser.MAX_IMPORT_NODES)
+            }.take(LinkParser.MAX_IMPORT_NODES).let { collapseAutoNodes(it) }
             if (valid.isNotEmpty()) {
                 db.withTransaction {
                     nodeDao.deleteNodesBySubscription(sub.id)
@@ -786,10 +927,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         deleteSubscription(model)
     }
 
-    fun toggleAutoUpdate(model: SubscriptionUiModel, enabled: Boolean) {
+    // Subscriptions always auto-update; there is no per-subscription switch anymore.
+    // Cadence priority: interval requested by the provider (profile-update-interval),
+    // otherwise the interval configured in app settings.
+    private fun startSubscriptionAutoUpdate() {
         viewModelScope.launch(Dispatchers.IO) {
-            subEntities.value.firstOrNull { it.id == model.id }?.let {
-                subscriptionDao.updateSubscription(it.copy(autoUpdateEnabled = enabled))
+            while (true) {
+                kotlinx.coroutines.delay(60_000L)
+                val configuredMinutes = _settings.value.subscriptionAutoUpdateMinutes
+                    .takeIf { it > 0 } ?: 240
+                val now = System.currentTimeMillis()
+                subEntities.value.forEach { sub ->
+                    val providerMinutes = _subscriptionTraffic.value[sub.id]?.intervalHours?.times(60)
+                    val intervalMinutes = providerMinutes ?: configuredMinutes
+                    val due = now - sub.lastUpdated >= intervalMinutes * 60_000L
+                    if (due && sub.id !in _refreshingIds.value) {
+                        runCatching { refreshSubscriptionInternal(sub) }
+                    }
+                }
             }
         }
     }
@@ -900,6 +1055,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pingNodeListInternal(targets)
     }
 
+    /** "Check all" with the UDP probe instead of TCP. */
+    fun pingAllUdp() {
+        val targets = nodeEntities.value.filter { !it.isAutoNode }
+        pingNodeListInternal(targets, useUdp = true)
+    }
+
+    /** Single-node UDP probe, used by the server row menu. */
+    fun pingNodeUdp(node: NodeUiModel) {
+        val target = nodeEntities.value.filter { it.id == node.id }
+        pingNodeListInternal(target, useUdp = true)
+    }
+
     fun pingGroup(subscriptionId: String?) {
         val targets = nodeEntities.value.filter { !it.isAutoNode && it.subscriptionId == subscriptionId }
         pingNodeListInternal(targets)
@@ -908,12 +1075,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun pingGroupUdp(subscriptionId: String?) {
         val targets = nodeEntities.value.filter { !it.isAutoNode && it.subscriptionId == subscriptionId }
         pingNodeListInternal(targets, useUdp = true)
-    }
-
-    /** Called when the server list is opened; pings everything once if the setting is on. */
-    fun pingOnOpenIfEnabled() {
-        if (!_settings.value.pingOnOpen || _isPinging.value) return
-        pingNodeListInternal(nodeEntities.value.filter { !it.isAutoNode })
     }
 
     fun pingNodes(nodes: List<NodeUiModel>) {
@@ -1201,13 +1362,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun parseEntity(entity: NodeEntity): ParsedNode {
         try {
             if (entity.isAutoNode || entity.protocol.equals("auto", true) || entity.link.trim().equals("auto", true)) {
+                // An imported AUTO group stores its server pool in outboundJson.
+                val storedAuto = entity.outboundJson.trim()
+                val autoOutbound = if (storedAuto.startsWith("{")) {
+                    runCatching { LinkParser.jsonToMap(JSONObject(storedAuto)) }.getOrDefault(emptyMap())
+                } else emptyMap()
                 return ParsedNode(
                     name = entity.name,
                     scheme = "auto",
                     server = "",
                     port = 0,
                     link = entity.link,
-                    outbound = emptyMap()
+                    outbound = autoOutbound
                 )
             }
 

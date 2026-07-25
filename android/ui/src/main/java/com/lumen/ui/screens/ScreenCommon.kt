@@ -58,7 +58,7 @@ fun LumenDropdown(
     optionLabel: (String) -> String = { it }
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val menuShape = RoundedCornerShape(4.dp)
+    val menuShape = RoundedCornerShape(20.dp)
 
     Column(modifier) {
         if (label.isNotEmpty()) {
@@ -82,13 +82,14 @@ fun LumenDropdown(
                 Text(optionLabel(selected), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 Text("\u25BE", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
             }
+            // Rounding comes from the theme shape: clipping the popup content left a
+            // second square outline around the menu.
+            MaterialTheme(shapes = MaterialTheme.shapes.copy(extraSmall = menuShape)) {
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
                 modifier = Modifier
                     .widthIn(min = 220.dp)
-                    .clip(menuShape)
-                    .background(MaterialTheme.colorScheme.surface)
                     .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
             ) {
                 Column(Modifier.padding(vertical = 6.dp)) {
@@ -114,6 +115,38 @@ fun LumenDropdown(
                     }
                 }
             }
+            }
+        }
+    }
+}
+
+/**
+ * Single Material Design 3 menu container used by every dropdown in the app:
+ * 20dp rounded corners, surface colour, hairline accent outline and 6dp of
+ * vertical padding around the items.
+ */
+@Composable
+fun LumenMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val shape = RoundedCornerShape(20.dp)
+    // The popup surface draws its own container, so the rounding is set through the
+    // theme shape; an extra clip/background here produced a second, square outline.
+    MaterialTheme(shapes = MaterialTheme.shapes.copy(extraSmall = shape)) {
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = onDismissRequest,
+            modifier = modifier
+                .widthIn(min = 220.dp)
+                .border(
+                    BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                    shape
+                )
+        ) {
+            Column(Modifier.padding(vertical = 6.dp)) { content() }
         }
     }
 }
@@ -179,6 +212,20 @@ fun pingColor(ping: Int): Color = when {
     else -> ConnectionDanger
 }
 
+/** Badge colour per protocol family; VLESS/VMess/Trojan intentionally share one. */
+fun protocolColor(protocol: String): Color = when (protocol.trim().lowercase()) {
+    "vless", "vmess", "trojan" -> Color(0xFF00C8E8)
+    "ss", "shadowsocks", "ssr" -> Color(0xFF8B7BFF)
+    "hysteria", "hysteria2", "hy2" -> Color(0xFFFF8A3D)
+    "tuic" -> Color(0xFFFFC53D)
+    "wireguard", "wg" -> Color(0xFF34D399)
+    "awg", "amneziawg" -> Color(0xFF16A97A)
+    "openvpn", "ovpn" -> Color(0xFFFF6B81)
+    "socks", "socks5", "http", "https" -> Color(0xFF9AA6B8)
+    "auto", "urltest", "url-test" -> Color(0xFFC08CFF)
+    else -> Color(0xFF9AA6B8)
+}
+
 @Composable
 fun LumenScreenHeader(
     title: String,
@@ -230,6 +277,107 @@ fun LumenScreenHeader(
         }
         if (actions != null) {
             actions()
+        }
+    }
+}
+
+/** Compose haptic tick, muted while the vibration setting is off. */
+@Composable
+fun rememberHapticTick(): (androidx.compose.ui.hapticfeedback.HapticFeedbackType) -> Unit {
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val enabled = LocalHapticsEnabled.current
+    return remember(enabled, haptics) {
+        { type: androidx.compose.ui.hapticfeedback.HapticFeedbackType ->
+            if (enabled) runCatching { haptics.performHapticFeedback(type) }
+        }
+    }
+}
+
+/** Compact selectable chip used by the server filters. */
+@Composable
+fun LumenFilterChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    badge: String? = null,
+    leading: String? = null
+) {
+    val shape = RoundedCornerShape(12.dp)
+    val tick = rememberHapticTick()
+    val bg by androidx.compose.animation.animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+            else MaterialTheme.colorScheme.surfaceVariant,
+        label = "chip_bg"
+    )
+    val borderColor by androidx.compose.animation.animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        label = "chip_border"
+    )
+    val fg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(bg)
+            .border(1.dp, borderColor, shape)
+            .clickable {
+                tick(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (!leading.isNullOrBlank()) {
+            Text(leading, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = fg,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+        )
+        if (!badge.isNullOrBlank()) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = badge,
+                style = MaterialTheme.typography.labelSmall,
+                color = fg.copy(alpha = 0.75f),
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+/**
+ * Small UI-scoped preference holder backed by the app's SharedPreferences.
+ * Screens use it to remember their last used filters, groups and tabs across
+ * process restarts without plumbing every value through the ViewModel.
+ */
+@Composable
+fun rememberUiPreference(
+    key: String,
+    default: String
+): androidx.compose.runtime.MutableState<String> {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember(context) {
+        context.getSharedPreferences("lumen_prefs", android.content.Context.MODE_PRIVATE)
+    }
+    val backing = remember(key) { mutableStateOf(prefs.getString(key, default) ?: default) }
+    return remember(key) {
+        object : androidx.compose.runtime.MutableState<String> {
+            override var value: String
+                get() = backing.value
+                set(newValue) {
+                    if (backing.value != newValue) {
+                        backing.value = newValue
+                        prefs.edit().putString(key, newValue).apply()
+                    }
+                }
+
+            override fun component1(): String = value
+            override fun component2(): (String) -> Unit = { value = it }
         }
     }
 }

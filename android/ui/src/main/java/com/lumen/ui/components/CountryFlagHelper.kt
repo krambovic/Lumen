@@ -8,7 +8,15 @@ enum class StripeStyle {
     Horizontal,
     Vertical,
     Nordic,
-    Cross
+    Cross,
+    // Detailed flags: plain stripes cannot represent these at all.
+    UsStars,
+    UnionJack,
+    Disc,
+    CnStars,
+    Crescent,
+    MapleLeaf,
+    Taegeuk
 }
 
 data class FlagStripeData(
@@ -79,15 +87,17 @@ object CountryFlagHelper {
         "GR" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF0D5EAF), Color(0xFFFFFFFF), Color(0xFF0D5EAF))),
         "GE" to FlagStripeData(StripeStyle.Cross, listOf(Color(0xFFFFFFFF), Color(0xFFFF0000))),
 
-        // Simplified complex flags
-        "US" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF3C3B6E), Color(0xFFFFFFFF), Color(0xFFB22234))),
-        "GB" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF012169), Color(0xFFFFFFFF), Color(0xFFC8102E))),
-        "JP" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFFFFFF), Color(0xFFBC002D), Color(0xFFFFFFFF))),
-        "CN" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFDE2910), Color(0xFFDE2910), Color(0xFFFFDE00))),
+        // Detailed flags: drawn with dedicated painters, not stripe fallbacks.
+        "US" to FlagStripeData(StripeStyle.UsStars, listOf(Color(0xFFB22234), Color(0xFFFFFFFF), Color(0xFF3C3B6E))),
+        "GB" to FlagStripeData(StripeStyle.UnionJack, listOf(Color(0xFF012169), Color(0xFFFFFFFF), Color(0xFFC8102E))),
+        "JP" to FlagStripeData(StripeStyle.Disc, listOf(Color(0xFFFFFFFF), Color(0xFFBC002D))),
+        "BD" to FlagStripeData(StripeStyle.Disc, listOf(Color(0xFF006A4E), Color(0xFFF42A41))),
+        "CN" to FlagStripeData(StripeStyle.CnStars, listOf(Color(0xFFDE2910), Color(0xFFFFDE00))),
         "TW" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF000095), Color(0xFFFE0000), Color(0xFFFE0000))),
         "HK" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFDE2910), Color(0xFFFFFFFF), Color(0xFFDE2910))),
-        "KR" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFFFFFF), Color(0xFFCD2E3A), Color(0xFF003478))),
-        "TR" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFE30A17), Color(0xFFFFFFFF), Color(0xFFE30A17))),
+        "KR" to FlagStripeData(StripeStyle.Taegeuk, listOf(Color(0xFFFFFFFF), Color(0xFFCD2E3A), Color(0xFF003478))),
+        "TR" to FlagStripeData(StripeStyle.Crescent, listOf(Color(0xFFE30A17), Color(0xFFFFFFFF))),
+        "TN" to FlagStripeData(StripeStyle.Crescent, listOf(Color(0xFFE70013), Color(0xFFFFFFFF))),
         "IL" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFFFFFF), Color(0xFF0038B8), Color(0xFFFFFFFF))),
         "BR" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF009C3B), Color(0xFFFFDF00), Color(0xFF009C3B))),
         "AU" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF012169), Color(0xFFFFFFFF), Color(0xFF012169))),

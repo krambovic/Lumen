@@ -42,6 +42,18 @@ object TelemetryManager {
         }
     }
 
+    /** App-start ping: the VPN loop alone never fires for users who rarely connect. */
+    fun sendStartupHeartbeat(context: Context, scope: CoroutineScope) {
+        val appContext = context.applicationContext
+        scope.launch(Dispatchers.IO) {
+            val prefs = appContext.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
+            val last = prefs.getLong("telemetry_last_heartbeat", 0L)
+            val now = System.currentTimeMillis()
+            if (last != 0L && now - last < HEARTBEAT_INTERVAL_MS) return@launch
+            sendHeartbeat(appContext)
+        }
+    }
+
     fun stopHeartbeatLoop() {
         heartbeatJob?.cancel()
         heartbeatJob = null
@@ -73,8 +85,14 @@ object TelemetryManager {
 
             val responseCode = connection.responseCode
             connection.disconnect()
-        } catch (_: Exception) {
-            // Best effort anonymous ping: ignore network or server exceptions
+            if (responseCode in 200..299) {
+                context.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
+                    .edit().putLong("telemetry_last_heartbeat", System.currentTimeMillis()).apply()
+            }
+            VpnLogBus.info("TELEMETRY", "heartbeat sent, response $responseCode")
+        } catch (e: Exception) {
+            // Best effort anonymous ping: log the reason so failures are diagnosable
+            VpnLogBus.info("TELEMETRY", "heartbeat failed: ${e.message}")
         }
     }
 }

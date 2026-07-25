@@ -183,50 +183,26 @@ fun HeroConnectButton(
                     val center = Offset(size.width / 2f, size.height / 2f)
                     val radius = size.width / 2f
 
-                    // Outer container background
-                    val bgBrush = when (state) {
-                        ConnectionState.Connected -> Brush.radialGradient(
-                            colors = listOf(primaryColor.copy(alpha = 0.18f), cardBg.copy(alpha = 0.88f)),
-                            center = center,
-                            radius = radius * 1.2f
-                        )
-                        ConnectionState.Connecting -> Brush.radialGradient(
-                            colors = listOf(ConnectionConnecting.copy(alpha = 0.16f), cardBg.copy(alpha = 0.88f)),
-                            center = center,
-                            radius = radius
-                        )
-                        ConnectionState.Error -> Brush.radialGradient(
-                            colors = listOf(ConnectionDanger.copy(alpha = 0.16f), cardBg.copy(alpha = 0.88f)),
-                            center = center,
-                            radius = radius
-                        )
-                        ConnectionState.Disconnected -> Brush.radialGradient(
-                            colors = listOf(surfaceVariantBg.copy(alpha = 0.5f), cardBg.copy(alpha = 0.85f)),
-                            center = center,
-                            radius = radius
-                        )
+                    // Flat container background (no gradient by request)
+                    val bgColor = when (state) {
+                        ConnectionState.Connected -> cardBg.copy(alpha = 0.92f)
+                        ConnectionState.Connecting -> cardBg.copy(alpha = 0.92f)
+                        ConnectionState.Error -> cardBg.copy(alpha = 0.92f)
+                        ConnectionState.Disconnected -> surfaceVariantBg.copy(alpha = 0.55f)
                     }
 
                     drawCircle(
-                        brush = bgBrush,
+                        color = bgColor,
                         radius = radius - 8.dp.toPx(),
                         center = center
                     )
 
-                    // Liquid Glass outer stroke border
+                    // Flat single-colour outer stroke
                     val strokeWidth = 2.5.dp.toPx()
                     val strokeRadius = radius - 8.dp.toPx() - (strokeWidth / 2f)
 
-                    val glassBorder = Brush.verticalGradient(
-                        colors = listOf(
-                            animatedColor.copy(alpha = 0.90f),
-                            secondaryColor.copy(alpha = 0.50f),
-                            animatedColor.copy(alpha = 0.25f)
-                        )
-                    )
-
                     drawCircle(
-                        brush = glassBorder,
+                        color = animatedColor.copy(alpha = 0.85f),
                         radius = strokeRadius,
                         center = center,
                         style = Stroke(width = strokeWidth)

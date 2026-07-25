@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -60,6 +61,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +74,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -83,7 +86,30 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Surface
 import com.lumen.ui.components.ConnectionSliderBar
 import com.lumen.ui.components.ConnectionState
+import com.lumen.ui.components.HeroConnectButton
 import com.lumen.ui.components.CountryFlagIcon
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.draw.scale
+import kotlinx.coroutines.delay
 
 @Composable
 fun DashboardScreen(
@@ -91,6 +117,8 @@ fun DashboardScreen(
     nodes: List<NodeUiModel>,
     subscriptions: List<SubscriptionUiModel>,
     pingingNodeIds: Set<String> = emptySet(),
+    sortByPingOverride: Boolean = false,
+    dashboardStyle: DashboardStyle = DashboardStyle.DEFAULT,
     onToggleConnection: () -> Unit,
     onSelectNode: (NodeUiModel) -> Unit,
     onImportClipboard: () -> Unit,
@@ -100,10 +128,12 @@ fun DashboardScreen(
     onRefreshSubscription: (String) -> Unit = {},
     onDeleteSubscription: (String) -> Unit = {},
     onPingAll: () -> Unit = {},
+    onUdpPingAll: () -> Unit = {},
     onPingGroup: (String?) -> Unit = {},
     onUdpPingGroup: (String?) -> Unit = {},
     onEditNode: (NodeUiModel) -> Unit = {},
     onPingNode: (NodeUiModel) -> Unit = {},
+    onUdpPingNode: (NodeUiModel) -> Unit = {},
     onCopyNodeLink: (NodeUiModel) -> Unit = {},
     onExportQrCode: (NodeUiModel) -> Unit = {},
     onDeleteNode: (NodeUiModel) -> Unit = {},
@@ -117,6 +147,7 @@ fun DashboardScreen(
     val strings = LocalStrings.current
     var showImportMenu by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showPingAllMenu by remember { mutableStateOf(false) }
     var sortByPing by remember { mutableStateOf(false) }
 
     // Multi-selection state
@@ -140,10 +171,12 @@ fun DashboardScreen(
 
     // One grouping pass + allocation-free name comparator: ping refreshes rebuild this
     // list on every update, so it must not scan the node list once per subscription.
-    val groups = remember(nodes, subscriptions, strings.manual, sortByPing) {
+    // "Sort after ping" from settings overrides the local sort choice.
+    val effectiveSortByPing = sortByPing || sortByPingOverride
+    val groups = remember(nodes, subscriptions, strings.manual, effectiveSortByPing) {
         val byName = compareBy(String.CASE_INSENSITIVE_ORDER, NodeUiModel::name)
         val byPing = compareBy<NodeUiModel> { it.pingMs?.takeIf { p -> p >= 0 } ?: Int.MAX_VALUE }
-        val comparator = if (sortByPing) byPing else byName
+        val comparator = if (effectiveSortByPing) byPing else byName
         val bySubscription = nodes.filterNot { it.isAutoNode }.groupBy { it.subscriptionId }
         buildList {
             bySubscription[null]?.takeIf { it.isNotEmpty() }?.let {
@@ -161,6 +194,26 @@ fun DashboardScreen(
     // rebuild `groups` but keep ids) no longer reset the user's collapse state.
     val groupIds = remember(groups) { groups.map { it.id } }
     var expandedGroups by remember(groupIds) { mutableStateOf(groupIds.toSet()) }
+
+    // Dashboard shows only the group (manual list or subscription) that owns the
+    // currently selected server. Full list stays available on the Servers tab.
+    // Group of the currently selected server, remembered across restarts so the
+    // dashboard reopens on the same subscription/manual list even before nodes load.
+    // Both tabs read the same preference, so the group chosen on the Servers tab
+    // is exactly what the dashboard shows ("all", "manual" or a subscription id).
+    val serversGroupPref by rememberUiPreference("servers_last_group", "all")
+    val activeGroupId = remember(nodes) {
+        nodes.firstOrNull { it.isSelected && !it.isAutoNode }?.let { it.subscriptionId ?: "manual" }
+    }
+    val visibleGroups = remember(groups, serversGroupPref, activeGroupId) {
+        if (serversGroupPref.isBlank() || serversGroupPref == "all") {
+            groups.filter { it.id == activeGroupId }.ifEmpty { groups }
+        } else {
+            groups.filter { it.id == serversGroupPref }
+                .ifEmpty { groups.filter { it.id == activeGroupId } }
+                .ifEmpty { groups }
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         // Selection mode top bar
@@ -185,31 +238,54 @@ fun DashboardScreen(
                 IconButton(onClick = { uriHandler.openUri("https://github.com/krambovic/Lumen") }) {
                     Icon(Icons.Filled.Code, contentDescription = "GitHub")
                 }
-                IconButton(onClick = { showDonateDialog = true }) {
-                    Icon(Icons.Filled.Favorite, contentDescription = "Donate")
-                }
-                if (showDonateDialog) {
-                    AlertDialog(onDismissRequest = { showDonateDialog = false },
-                        title = { Text("Поддержать") },
-                        text = { Text("Выберите способ поддержки") },
-                        confirmButton = {
-                            TextButton(onClick = { uriHandler.openUri("https://www.donationalerts.com/r/studiobebraedition"); showDonateDialog = false }) { Text("DonationAlerts") }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showUsdtDialog = true; showDonateDialog = false }) { Text("USDT TRC20") }
-                        })
+                Box {
+                    IconButton(onClick = { showDonateDialog = true }) {
+                        Icon(Icons.Filled.Favorite, contentDescription = "Donate")
+                    }
+                    LumenMenu(
+                        expanded = showDonateDialog,
+                        onDismissRequest = { showDonateDialog = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("DonationAlerts") },
+                            onClick = {
+                                uriHandler.openUri("https://www.donationalerts.com/r/studiobebraedition")
+                                showDonateDialog = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("USDT TRC20") },
+                            onClick = {
+                                showUsdtDialog = true
+                                showDonateDialog = false
+                            }
+                        )
+                    }
                 }
                 if (showUsdtDialog) {
-                    AlertDialog(onDismissRequest = { showUsdtDialog = false },
-                        title = { Text("USDT TRC20") },
-                        text = {
-                            Column {
-                                Text("TWHsuUDru4pXBcGpfeKfzymbkfajyFnb2s")
-                                Spacer(Modifier.height(8.dp))
-                                TextButton(onClick = { clipboard.setText(AnnotatedString("TWHsuUDru4pXBcGpfeKfzymbkfajyFnb2s")); showUsdtDialog = false }) { Text("Скопировать") }
-                            }
+                    com.lumen.ui.components.LumenDialog(
+                        title = "USDT TRC20",
+                        onDismissRequest = { showUsdtDialog = false },
+                        confirmText = "Скопировать",
+                        onConfirm = {
+                            clipboard.setText(AnnotatedString("TWHsuUDru4pXBcGpfeKfzymbkfajyFnb2s"))
+                            showUsdtDialog = false
                         },
-                        confirmButton = { TextButton(onClick = { showUsdtDialog = false }) { Text("Закрыть") } })
+                        dismissText = "Закрыть",
+                        onDismiss = { showUsdtDialog = false }
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "TWHsuUDru4pXBcGpfeKfzymbkfajyFnb2s",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
                 }
             })
         }
@@ -225,12 +301,30 @@ fun DashboardScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
-                // Extra bottom room so the last tiles can be scrolled clear of the bars.
-                contentPadding = PaddingValues(bottom = 96.dp),
+                // Extra bottom room so the last tiles never blend into the nav bar.
+                contentPadding = PaddingValues(bottom = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 item(key = "header_spacer") { Spacer(Modifier.height(4.dp)) }
+
+                // Hero block: connect button, live speed and session tiles.
+                if (!isSelectionMode) {
+                    item(key = "hero_connect") {
+                        val heroNode = nodes.firstOrNull { it.isSelected } ?: nodes.firstOrNull()
+                        DashboardHero(
+                            connectionState = connectionState,
+                            style = dashboardStyle,
+                            serverName = heroNode?.name,
+                            serverCountryCode = heroNode?.countryCode,
+                            serverProtocol = heroNode?.displayProtocol ?: heroNode?.protocol,
+                            onToggleConnection = {
+                                if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onToggleConnection()
+                            }
+                        )
+                    }
+                }
 
                 // Sort selector + ping-all row (above all groups)
                 if (groups.isNotEmpty() && !isSelectionMode) {
@@ -255,17 +349,11 @@ fun DashboardScreen(
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.clickable { showSortMenu = true }
                                     )
-                                    val menuShape = RoundedCornerShape(4.dp)
-                                    DropdownMenu(
+                                    LumenMenu(
                                         expanded = showSortMenu,
-                                        onDismissRequest = { showSortMenu = false },
-                                        modifier = Modifier
-                                            .widthIn(min = 220.dp)
-                                            .clip(menuShape)
-                                            .background(MaterialTheme.colorScheme.surface)
-                                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                                        onDismissRequest = { showSortMenu = false }
                                     ) {
-                                        Column(Modifier.padding(vertical = 6.dp)) {
+                                        Column {
                                             DropdownMenuItem(
                                                 text = { Text(strings.sortByName, color = MaterialTheme.colorScheme.onSurface) },
                                                 trailingIcon = if (!sortByPing) {
@@ -290,13 +378,36 @@ fun DashboardScreen(
                                     }
                                 }
                             }
-                            Text(
-                                text = strings.pingAll,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.clickable(onClick = onPingAll)
-                            )
+                            // Icon-only check-all button, same as the Servers tab,
+                            // with a Ping / Ping UDP choice.
+                            Box {
+                                IconButton(
+                                    onClick = { showPingAllMenu = true },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.NetworkCheck,
+                                        contentDescription = strings.pingAll,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                LumenMenu(
+                                    expanded = showPingAllMenu,
+                                    onDismissRequest = { showPingAllMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Ping", color = MaterialTheme.colorScheme.onSurface) },
+                                        trailingIcon = { Icon(Icons.Filled.NetworkCheck, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
+                                        onClick = { showPingAllMenu = false; onPingAll() }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Ping UDP", color = MaterialTheme.colorScheme.onSurface) },
+                                        trailingIcon = { Icon(Icons.Filled.NetworkCheck, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
+                                        onClick = { showPingAllMenu = false; onUdpPingAll() }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -309,7 +420,7 @@ fun DashboardScreen(
                         }
                     }
                 } else {
-                    groups.forEach { group ->
+                    visibleGroups.forEach { group ->
                         val isExpanded = group.id in expandedGroups
 
                         // Group Header Tile
@@ -332,44 +443,103 @@ fun DashboardScreen(
                             )
                         }
 
-                        // Expanded Info Bar & Node Items (Fully Virtualized in LazyColumn)
-                        if (isExpanded) {
-                            if (group.isSubscription && group.subscription != null) {
-                                item(key = "group_info_${group.id}") {
-                                    SubscriptionInfoBar(sub = group.subscription)
-                                }
-                            }
-
-                            items(
-                                items = group.nodes,
-                                key = { node -> "node_${node.id}" }
-                            ) { node ->
-                                ServerTileRow(
-                                    node = node,
-                                    isSelectionMode = isSelectionMode,
-                                    isNodeSelected = node.id in selectedNodeIds,
-                                    isPinging = node.id in pingingNodeIds,
-                                    modern = true,
-                                    onClick = {
-                                        if (isSelectionMode) {
-                                            val newSet = if (node.id in selectedNodeIds) selectedNodeIds - node.id else selectedNodeIds + node.id
-                                            selectedNodeIds = newSet
-                                            if (newSet.isEmpty()) isSelectionMode = false
-                                        } else {
-                                            onSelectNode(node)
-                                        }
-                                    },
-                                    onLongClick = {
-                                        if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        isSelectionMode = true
-                                        selectedNodeIds = setOf(node.id)
-                                    },
-                                    onEditNode = { onEditNode(node) },
-                                    onPingNode = { onPingNode(node) },
-                                    onCopyLink = { onCopyNodeLink(node) },
-                                    onExportQr = { onExportQrCode(node) },
-                                    onDeleteNode = { onDeleteNode(node) }
+                        // Traffic + premium summary belongs to the opened group:
+                        // a collapsed row stays a single clean line.
+                        if (group.isSubscription && group.subscription != null && isExpanded) {
+                            item(key = "group_info_${group.id}") {
+                                // With rows below the bar must stay square and cover the 6.dp list gap.
+                                SubscriptionInfoBar(
+                                    sub = group.subscription,
+                                    roundedBottom = group.nodes.isEmpty(),
+                                    extraBottom = if (group.nodes.isEmpty()) 0.dp else 6.dp
                                 )
+                            }
+                        }
+
+                        // Nodes stay virtualized: a subscription with hundreds of
+                        // servers opens instantly because only visible rows compose.
+                        // The rail background is painted per row, so the header,
+                        // the traffic bar and the list still read as one card.
+                        if (isExpanded) {
+                            if (group.nodes.isEmpty()) {
+                                item(key = "empty_group_${group.id}") {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .offset(y = (-6).dp)
+                                            .clip(RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f))
+                                            .padding(16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = strings.noServers,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            } else {
+                                items(
+                                    count = group.nodes.size,
+                                    key = { index -> "node_${group.id}_${group.nodes[index].id}" }
+                                ) { index ->
+                                    val node = group.nodes[index]
+                                    val isLast = index == group.nodes.lastIndex
+                                    var appeared by remember(group.id) { mutableStateOf(false) }
+                                    LaunchedEffect(group.id) { appeared = true }
+                                    val appearAlpha by animateFloatAsState(
+                                        targetValue = if (appeared) 1f else 0f,
+                                        animationSpec = tween(220, easing = FastOutSlowInEasing),
+                                        label = "node_appear"
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .offset(y = (-6).dp)
+                                            .then(
+                                                if (isLast) Modifier.clip(RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)) else Modifier
+                                            )
+                                            .background(
+                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)
+                                            )
+                                            .padding(
+                                                start = 10.dp,
+                                                end = 10.dp,
+                                                top = if (index == 0) 10.dp else 3.dp,
+                                                bottom = if (isLast) 10.dp else 3.dp
+                                            )
+                                            .alpha(appearAlpha)
+                                    ) {
+                                        ServerTileRow(
+                                            node = node,
+                                            isSelectionMode = isSelectionMode,
+                                            isNodeSelected = node.id in selectedNodeIds,
+                                            isPinging = node.id in pingingNodeIds,
+                                            modern = true,
+                                            onClick = {
+                                                if (isSelectionMode) {
+                                                    val newSet = if (node.id in selectedNodeIds) selectedNodeIds - node.id else selectedNodeIds + node.id
+                                                    selectedNodeIds = newSet
+                                                    if (newSet.isEmpty()) isSelectionMode = false
+                                                } else {
+                                                    onSelectNode(node)
+                                                }
+                                            },
+                                            onLongClick = {
+                                                if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                isSelectionMode = true
+                                                selectedNodeIds = setOf(node.id)
+                                            },
+                                            onEditNode = { onEditNode(node) },
+                                            onPingNode = { onPingNode(node) },
+                                            onUdpPingNode = { onUdpPingNode(node) },
+                                            onCopyLink = { onCopyNodeLink(node) },
+                                            onExportQr = { onExportQrCode(node) },
+                                            onDeleteNode = { onDeleteNode(node) }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -417,17 +587,11 @@ fun DashboardScreen(
                                     }
                                 }
 
-                                val menuShape = RoundedCornerShape(4.dp)
-                                DropdownMenu(
+                                LumenMenu(
                                     expanded = showImportMenu,
-                                    onDismissRequest = { showImportMenu = false },
-                                    modifier = Modifier
-                                        .widthIn(min = 220.dp)
-                                        .clip(menuShape)
-                                        .background(MaterialTheme.colorScheme.surface)
-                                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                                    onDismissRequest = { showImportMenu = false }
                                 ) {
-                                    Column(Modifier.padding(vertical = 4.dp)) {
+                                    Column {
                                         DropdownMenuItem(
                                             text = { Text(strings.importQrCode, color = MaterialTheme.colorScheme.onSurface) },
                                             trailingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
@@ -495,20 +659,7 @@ fun DashboardScreen(
             }
         }
 
-        // Bottom connection bar (Шкала подключения)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-        ) {
-            ConnectionSliderBar(
-                connectionState = connectionState,
-                onToggleConnection = {
-                    if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onToggleConnection()
-                }
-            )
-        }
+        // Slide-to-connect moved to the Servers tab; the hero button handles it here.
     }
 
     // Subscription properties dialog
@@ -573,7 +724,7 @@ private fun SelectionTopBar(
 }
 
 @Composable
-private fun SubscriptionPropertiesDialog(
+fun SubscriptionPropertiesDialog(
     sub: SubscriptionUiModel,
     onDismiss: () -> Unit,
     onCopyUrl: () -> Unit
@@ -661,8 +812,9 @@ private fun SubscriptionPropertiesDialog(
     }
 }
 
+/** Shared group header: used by the dashboard and by the Servers tab. */
 @Composable
-private fun SubscriptionHeaderTile(
+fun SubscriptionHeaderTile(
     group: HomeServerGroup,
     isExpanded: Boolean,
     onToggleExpand: () -> Unit,
@@ -676,7 +828,13 @@ private fun SubscriptionHeaderTile(
     val strings = LocalStrings.current
     var showMenu by remember { mutableStateOf(false) }
     var showPingMenu by remember { mutableStateOf(false) }
-    val tileShape = if (isExpanded) RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp) else RoundedCornerShape(18.dp)
+    // Subscriptions always carry the traffic block underneath, so their title
+    // tile keeps square bottom corners and the two read as one card.
+    val tileShape = if (isExpanded || group.isSubscription) {
+        RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
+    } else {
+        RoundedCornerShape(18.dp)
+    }
     val primaryColor = MaterialTheme.colorScheme.primary
 
     Surface(
@@ -738,14 +896,9 @@ private fun SubscriptionHeaderTile(
                             modifier = Modifier.size(20.dp)
                         )
                     }
-                    val pingMenuShape = RoundedCornerShape(4.dp)
-                    DropdownMenu(
+                    LumenMenu(
                         expanded = showPingMenu,
-                        onDismissRequest = { showPingMenu = false },
-                        modifier = Modifier
-                            .clip(pingMenuShape)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), pingMenuShape)
+                        onDismissRequest = { showPingMenu = false }
                     ) {
                         DropdownMenuItem(text = { Text("Ping") }, onClick = { onPingGroup(); showPingMenu = false })
                         DropdownMenuItem(text = { Text("UDP Ping") }, onClick = { onUdpPingGroup(); showPingMenu = false })
@@ -777,17 +930,11 @@ private fun SubscriptionHeaderTile(
                         )
                     }
 
-                    val menuShape = RoundedCornerShape(4.dp)
-                    DropdownMenu(
+                    LumenMenu(
                         expanded = showMenu,
-                        onDismissRequest = { showMenu = false },
-                        modifier = Modifier
-                            .widthIn(min = 220.dp)
-                            .clip(menuShape)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                        onDismissRequest = { showMenu = false }
                     ) {
-                        Column(Modifier.padding(vertical = 6.dp)) {
+                        Column {
                             if (group.isSubscription) {
                                 // Subscription menu: Properties, Export all, Delete
                                 DropdownMenuItem(
@@ -841,16 +988,30 @@ private fun SubscriptionHeaderTile(
     }
 }
 
+/** Shared traffic/premium bar: used by the dashboard and by the Servers tab. */
 @Composable
-private fun SubscriptionInfoBar(sub: SubscriptionUiModel) {
+fun SubscriptionInfoBar(
+    sub: SubscriptionUiModel,
+    // Cancels the list spacing above so the bar sticks to the title tile.
+    pullUp: androidx.compose.ui.unit.Dp = 6.dp,
+    roundedBottom: Boolean = true,
+    // Covers the list spacing below so the rows continue the same tile.
+    extraBottom: androidx.compose.ui.unit.Dp = 0.dp
+) {
     val strings = LocalStrings.current
     val primaryColor = MaterialTheme.colorScheme.primary
+    val infoShape = if (roundedBottom) {
+        RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
+    } else {
+        RoundedCornerShape(0.dp)
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-            .padding(12.dp)
+            .offset(y = -pullUp)
+            .clip(infoShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+            .padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 12.dp + extraBottom)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -921,6 +1082,7 @@ private fun ServerTileRow(
     onLongClick: () -> Unit,
     onEditNode: () -> Unit,
     onPingNode: () -> Unit,
+    onUdpPingNode: () -> Unit = {},
     onCopyLink: () -> Unit,
     onExportQr: () -> Unit,
     onDeleteNode: () -> Unit
@@ -1007,16 +1169,18 @@ private fun ServerTileRow(
                 if (modern) {
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Per-protocol badge colour, shared with the Servers tab.
+                        val badgeColor = protocolColor(node.protocol)
                         Box(
                             Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(primaryColor.copy(alpha = 0.14f))
+                                .background(badgeColor.copy(alpha = 0.14f))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
                                 text = node.displayProtocol.uppercase(),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = primaryColor,
+                                color = badgeColor,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -1078,7 +1242,7 @@ private fun ServerTileRow(
                 }
             }
 
-            // Trailing ">" action button with dropdown menu
+            // Trailing overflow button: same three-dot menu as the Servers tab.
             if (!isSelectionMode) {
                 Box {
                     IconButton(
@@ -1086,26 +1250,28 @@ private fun ServerTileRow(
                         modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            imageVector = Icons.Filled.MoreVert,
                             contentDescription = null,
-                            tint = if (selected) primaryColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            tint = if (selected) primaryColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                             modifier = Modifier.size(20.dp)
                         )
                     }
-                    val menuShape = RoundedCornerShape(4.dp)
-                    DropdownMenu(
+                    LumenMenu(
                         expanded = showActionMenu,
-                        onDismissRequest = { showActionMenu = false },
-                        modifier = Modifier
-                            .widthIn(min = 200.dp)
-                            .clip(menuShape)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                        onDismissRequest = { showActionMenu = false }
                     ) {
-                        Column(Modifier.padding(vertical = 4.dp)) {
+                        Column {
+                            DropdownMenuItem(
+                                text = { Text(strings.edit, color = MaterialTheme.colorScheme.onSurface) },
+                                trailingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onEditNode()
+                                }
+                            )
                             DropdownMenuItem(
                                 text = { Text(strings.copyLink, color = MaterialTheme.colorScheme.onSurface) },
-                                trailingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
+                                trailingIcon = { Icon(Icons.Filled.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
                                 onClick = {
                                     showActionMenu = false
                                     onCopyLink()
@@ -1120,19 +1286,27 @@ private fun ServerTileRow(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text(strings.edit, color = MaterialTheme.colorScheme.onSurface) },
-                                trailingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
-                                onClick = {
-                                    showActionMenu = false
-                                    onEditNode()
-                                }
-                            )
-                            DropdownMenuItem(
                                 text = { Text(strings.ping, color = MaterialTheme.colorScheme.onSurface) },
-                                trailingIcon = { Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
+                                trailingIcon = { Icon(Icons.Filled.NetworkCheck, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
                                 onClick = {
                                     showActionMenu = false
                                     onPingNode()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Ping UDP", color = MaterialTheme.colorScheme.onSurface) },
+                                trailingIcon = { Icon(Icons.Filled.NetworkCheck, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onUdpPingNode()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(strings.delete, color = MaterialTheme.colorScheme.error) },
+                                trailingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp)) },
+                                onClick = {
+                                    showActionMenu = false
+                                    onDeleteNode()
                                 }
                             )
                         }
@@ -1140,5 +1314,438 @@ private fun ServerTileRow(
                 }
             }
         }
+    }
+}
+/** Compact human readable speed, e.g. "637.8 KB/s". */
+private fun formatHeroSpeed(bytesPerSecond: Long): String {
+    val kb = bytesPerSecond / 1024.0
+    return when {
+        kb < 1.0 -> "0 KB/s"
+        kb < 1024.0 -> String.format(java.util.Locale.US, "%.1f KB/s", kb)
+        else -> String.format(java.util.Locale.US, "%.2f MB/s", kb / 1024.0)
+    }
+}
+
+private fun formatHeroDuration(seconds: Long): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    return if (hours > 0) {
+        String.format(java.util.Locale.US, "%02d:%02d:%02d", hours, minutes, secs)
+    } else {
+        String.format(java.util.Locale.US, "%02d:%02d", minutes, secs)
+    }
+}
+
+/** Server tile caption: region only, without the transport type. */
+private fun heroServerLabel(countryCode: String?, protocol: String?, fallbackName: String?): String {
+    val region = countryCode
+        ?.takeIf { it.length == 2 }
+        ?.let { code ->
+            java.util.Locale("", code.uppercase(java.util.Locale.US))
+                .getDisplayCountry(java.util.Locale.getDefault())
+                .takeIf { it.isNotBlank() }
+        }
+        ?: fallbackName?.trim()?.takeIf { it.isNotBlank() }
+    return region?.takeIf { it.isNotBlank() } ?: "\u2014"
+}
+
+/**
+ * Dashboard hero: round connect button, live throughput with a sparkline and
+ * the server/session tiles. Replaces the old slide bar, which now lives on the
+ * Servers tab.
+ */
+@Composable
+private fun DashboardHero(
+    connectionState: ConnectionState,
+    style: DashboardStyle = DashboardStyle.DEFAULT,
+    serverName: String?,
+    serverCountryCode: String?,
+    serverProtocol: String?,
+    onToggleConnection: () -> Unit
+) {
+    val s = LocalStrings.current
+    val accent = MaterialTheme.colorScheme.primary
+    val connected = connectionState == ConnectionState.Connected
+    val connecting = connectionState == ConnectionState.Connecting
+
+    var downSpeed by remember { mutableStateOf(0L) }
+    var upSpeed by remember { mutableStateOf(0L) }
+    var history by remember { mutableStateOf(listOf<Float>()) }
+    var sessionSeconds by remember { mutableStateOf(0L) }
+
+    // The session start timestamp is persisted, so reopening the tab or even
+    // the whole app keeps counting from the real connection time.
+    val heroContext = androidx.compose.ui.platform.LocalContext.current
+    val heroPrefs = remember {
+        heroContext.getSharedPreferences("lumen_prefs", android.content.Context.MODE_PRIVATE)
+    }
+
+    // Poll the device counters once per second while the tunnel is up.
+    LaunchedEffect(connected) {
+        if (!connected) {
+            downSpeed = 0L
+            upSpeed = 0L
+            sessionSeconds = 0L
+            history = emptyList()
+            heroPrefs.edit().remove("session_started_at").apply()
+            return@LaunchedEffect
+        }
+        val stored = heroPrefs.getLong("session_started_at", 0L)
+        val startedAt = if (stored > 0L) stored else System.currentTimeMillis().also {
+            heroPrefs.edit().putLong("session_started_at", it).apply()
+        }
+        sessionSeconds = ((System.currentTimeMillis() - startedAt) / 1000L).coerceAtLeast(0L)
+        var lastRx = android.net.TrafficStats.getTotalRxBytes()
+        var lastTx = android.net.TrafficStats.getTotalTxBytes()
+        while (true) {
+            delay(1000)
+            val rx = android.net.TrafficStats.getTotalRxBytes()
+            val tx = android.net.TrafficStats.getTotalTxBytes()
+            downSpeed = (rx - lastRx).coerceAtLeast(0L)
+            upSpeed = (tx - lastTx).coerceAtLeast(0L)
+            lastRx = rx
+            lastTx = tx
+            history = (history + downSpeed.toFloat()).takeLast(36)
+            sessionSeconds = ((System.currentTimeMillis() - startedAt) / 1000L).coerceAtLeast(0L)
+        }
+    }
+
+    val pulse by rememberInfiniteTransition(label = "hero_pulse").animateFloat(
+        initialValue = 1f,
+        targetValue = if (connected || connecting) 1.06f else 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1600, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "hero_pulse_value"
+    )
+
+    // Alternative dashboard layouts reuse the same live data; only the connect
+    // control and its placement differ.
+    if (style != DashboardStyle.DEFAULT) {
+        val statusText = when (connectionState) {
+            ConnectionState.Connected -> s.protectedStatus
+            ConnectionState.Connecting -> s.connectingStatus
+            ConnectionState.Error -> s.connectionError
+            else -> s.unprotectedStatus
+        }
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (style == DashboardStyle.CENTERED) {
+                HeroConnectButton(
+                    state = connectionState,
+                    onConnectClick = onToggleConnection,
+                    buttonSize = 208.dp,
+                    statusText = statusText
+                )
+                Spacer(Modifier.height(14.dp))
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                HeroStatTile(
+                    label = s.serverLabel,
+                    value = heroServerLabel(serverCountryCode, serverProtocol, serverName),
+                    modifier = Modifier.weight(1f)
+                )
+                HeroStatTile(
+                    label = s.sessionLabel,
+                    value = formatHeroDuration(sessionSeconds),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (style == DashboardStyle.SLIDER) {
+                Spacer(Modifier.height(14.dp))
+                ConnectionSliderBar(
+                    connectionState = connectionState,
+                    onToggleConnection = onToggleConnection,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            if (connectionState == ConnectionState.Error) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = s.connectionError,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+        return
+    }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.size(136.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(136.dp)
+                        .scale(pulse)
+                        .clip(CircleShape)
+                        .background(accent.copy(alpha = if (connected) 0.16f else 0.08f))
+                )
+
+                // Premium start-up animation: two counter-rotating arcs while
+                // the tunnel is coming up.
+                if (connecting) {
+                    val spinner = rememberInfiniteTransition(label = "hero_spinner")
+                    val angleFast by spinner.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1100, easing = LinearEasing)
+                        ),
+                        label = "hero_spinner_fast"
+                    )
+                    val angleSlow by spinner.animateFloat(
+                        initialValue = 360f,
+                        targetValue = 0f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(2200, easing = LinearEasing)
+                        ),
+                        label = "hero_spinner_slow"
+                    )
+                    Canvas(modifier = Modifier.size(128.dp)) {
+                        drawArc(
+                            color = accent,
+                            startAngle = angleFast,
+                            sweepAngle = 96f,
+                            useCenter = false,
+                            style = Stroke(width = 7f, cap = StrokeCap.Round)
+                        )
+                        drawArc(
+                            color = accent.copy(alpha = 0.4f),
+                            startAngle = angleSlow,
+                            sweepAngle = 42f,
+                            useCenter = false,
+                            style = Stroke(width = 4f, cap = StrokeCap.Round)
+                        )
+                    }
+                }
+                // Empty ring while idle; while connecting the accent "water"
+                // pours in from the top-left and levels out when connected.
+                val fillTarget = when {
+                    connected -> 1f
+                    connecting -> 0.62f
+                    else -> 0f
+                }
+                val fillProgress by animateFloatAsState(
+                    targetValue = fillTarget,
+                    animationSpec = tween(
+                        durationMillis = if (connected) 900 else 1500,
+                        easing = FastOutSlowInEasing
+                    ),
+                    label = "hero_fill"
+                )
+                val waveShift by rememberInfiniteTransition(label = "hero_wave").animateFloat(
+                    initialValue = 0f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(2600, easing = LinearEasing)
+                    ),
+                    label = "hero_wave_shift"
+                )
+                Box(
+                    modifier = Modifier
+                        .size(112.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                        .border(
+                            2.dp,
+                            accent.copy(alpha = if (connected) 0f else 0.55f),
+                            CircleShape
+                        )
+                        .clickable(onClick = onToggleConnection),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (fillProgress > 0.001f) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val w = size.width
+                            val h = size.height
+                            val level = h * (1f - fillProgress)
+                            // Slanted surface: the left edge fills first.
+                            val tilt = h * 0.16f * (1f - fillProgress)
+                            val amp = h * 0.035f * (1f - fillProgress).coerceAtLeast(0.12f)
+                            val twoPi = 6.2831855f
+                            val phase = waveShift * twoPi
+                            val path = Path()
+                            path.moveTo(0f, level - tilt)
+                            var x = 0f
+                            while (x <= w) {
+                                val t = x / w
+                                val y = level - tilt * (1f - 2f * t) +
+                                    amp * kotlin.math.sin(phase + t * twoPi * 1.4f)
+                                path.lineTo(x, y)
+                                x += 3f
+                            }
+                            path.lineTo(w, h)
+                            path.lineTo(0f, h)
+                            path.close()
+                            drawPath(
+                                path = path,
+                                color = accent.copy(alpha = if (connected) 1f else 0.85f)
+                            )
+                        }
+                    }
+                    Column {
+                        AnimatedVisibility(
+                            visible = connected,
+                            enter = fadeIn(animationSpec = tween(520, easing = FastOutSlowInEasing)) +
+                                scaleIn(
+                                    animationSpec = tween(520, easing = FastOutSlowInEasing),
+                                    initialScale = 0.7f
+                                ),
+                            exit = fadeOut(animationSpec = tween(180))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(48.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = s.speedLabel.uppercase(java.util.Locale.getDefault()),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = formatHeroSpeed(downSpeed),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(6.dp))
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(34.dp)
+                ) {
+                    val points = history
+                    if (points.size >= 2) {
+                        val maxValue = (points.maxOrNull() ?: 1f).coerceAtLeast(1f)
+                        val stepX = size.width / (points.size - 1)
+                        val path = Path()
+                        points.forEachIndexed { index, value ->
+                            val x = index * stepX
+                            val y = size.height - (value / maxValue) * size.height * 0.9f
+                            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        }
+                        drawPath(
+                            path = path,
+                            color = accent,
+                            style = Stroke(width = 3f, cap = StrokeCap.Round)
+                        )
+                    } else {
+                        drawLine(
+                            color = accent.copy(alpha = 0.25f),
+                            start = Offset(0f, size.height - 2f),
+                            end = Offset(size.width, size.height - 2f),
+                            strokeWidth = 3f,
+                            cap = StrokeCap.Round
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "\u2193 " + formatHeroSpeed(downSpeed),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "\u2191 " + formatHeroSpeed(upSpeed),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // Only a hard error is worth a caption; "Connecting" and the
+        // "protecting your data" line are noise, the button already says it.
+        if (connectionState == ConnectionState.Error) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = s.connectionError,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            HeroStatTile(
+                label = s.serverLabel,
+                value = heroServerLabel(serverCountryCode, serverProtocol, serverName),
+                modifier = Modifier.weight(1f)
+            )
+            HeroStatTile(
+                label = s.sessionLabel,
+                value = formatHeroDuration(sessionSeconds),
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun HeroStatTile(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(18.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), shape)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

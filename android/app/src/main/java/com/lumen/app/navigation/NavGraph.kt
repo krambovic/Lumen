@@ -1,6 +1,8 @@
 package com.lumen.app.navigation
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.runtime.mutableStateListOf
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -75,6 +77,11 @@ import androidx.navigation.compose.rememberNavController
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import com.google.zxing.BarcodeFormat
 import com.journeyapps.barcodescanner.BarcodeEncoder
 import com.journeyapps.barcodescanner.ScanContract
@@ -82,6 +89,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 import com.lumen.app.PortraitCaptureActivity
 import com.lumen.core.vpn.LumenVpnService
 import com.lumen.app.vm.MainViewModel
+import com.lumen.ui.components.LumenDialog
 import com.lumen.ui.screens.DashboardScreen
 import com.lumen.ui.screens.DomainRoutingScreen
 import com.lumen.ui.screens.GeoResourcesScreen
@@ -134,10 +142,13 @@ fun LumenApp(
     ) { uri ->
         uri?.let {
             val content = context.contentResolver.openInputStream(it)?.use { stream ->
-                stream.bufferedReader().readText()
+                // Read raw bytes then decode as UTF-8 (handles BOM + non-ASCII)
+                stream.readBytes().toString(Charsets.UTF_8)
             }
             if (!content.isNullOrBlank()) {
-                viewModel.prepareImportText(content)
+                // File imports bypass the 1 MiB clipboard size gate so that
+                // large .yaml / .json / .txt subscription files work correctly.
+                viewModel.prepareImportFileContent(content)
             }
         }
     }
@@ -147,6 +158,26 @@ fun LumenApp(
     }
 
     var settingsResetSignal by remember { mutableIntStateOf(0) }
+
+    val mainTabRoutes = remember { listOf("dashboard", "servers", "settings") }
+    val activity = context as? android.app.Activity
+    fun openTab(route: String) {
+        val current = navController.currentDestination?.route
+        if (current == route) return
+        navController.navigate(route) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+    BackHandler {
+        val current = navController.currentDestination?.route
+        when {
+            current != null && current !in mainTabRoutes -> navController.popBackStack()
+            current == "dashboard" -> activity?.finish()
+            else -> openTab("dashboard")
+        }
+    }
 
     CompositionLocalProvider(
         LocalStrings provides strings,
@@ -160,7 +191,8 @@ fun LumenApp(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(bottom = 12.dp),
+                        // Extra breathing room so page content never touches the pill.
+                        .padding(top = 10.dp, bottom = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     val pillShape = RoundedCornerShape(26.dp)
@@ -169,8 +201,13 @@ fun LumenApp(
                     val pillBorderColor = primaryPaletteColor.copy(alpha = 0.35f)
                     val backStack by navController.currentBackStackEntryAsState()
                     val currentRoute = backStack?.destination?.route
+                    val effectiveRoute = when {
+                        currentRoute == null -> "dashboard"
+                        currentRoute.startsWith("routing") || currentRoute.startsWith("logs") -> "settings"
+                        else -> currentRoute
+                    }
                     val slotWidth = 100.dp
-                    val selectedIndex = DESTINATIONS.indexOfFirst { it.route == currentRoute }
+                    val selectedIndex = DESTINATIONS.indexOfFirst { it.route == effectiveRoute }
                     // Sub-screens keep the pill on the tab they were opened from.
                     val lastTabIndex = remember { mutableIntStateOf(0) }
                     LaunchedEffect(selectedIndex) {
@@ -210,8 +247,9 @@ fun LumenApp(
                             modifier = Modifier.fillMaxSize(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val navHaptics = androidx.compose.ui.platform.LocalHapticFeedback.current
                             DESTINATIONS.forEach { dest ->
-                                val selected = currentRoute == dest.route
+                                val selected = dest.route == effectiveRoute
                                 val label = when (dest.route) {
                                     "dashboard" -> strings.home
                                     "servers" -> strings.servers
@@ -239,17 +277,17 @@ fun LumenApp(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = null
                                         ) {
+                                            // Haptic tick when switching between the three main tabs.
+                                            if (settings.hapticsEnabled) {
+                                                navHaptics.performHapticFeedback(
+                                                    androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+                                                )
+                                            }
                                             if (dest.route == "settings") {
                                                 settingsResetSignal++
-                                                if (currentRoute != "settings") {
-                                                    navController.navigate("settings") {
-                                                        launchSingleTop = true
-                                                    }
-                                                }
+                                                openTab("settings")
                                             } else if (!selected) {
-                                                navController.navigate(dest.route) {
-                                                    launchSingleTop = true
-                                                }
+                                                openTab(dest.route)
                                             }
                                         },
                                     contentAlignment = Alignment.Center
@@ -284,10 +322,10 @@ fun LumenApp(
             NavHost(
                 navController = navController,
                 startDestination = "dashboard",
-                // Bottom bar only floats over content in settings; other tabs reserve room for it.
+                // Every tab reserves room for the bar so nothing scrolls underneath it.
                 modifier = Modifier.padding(
                     top = padding.calculateTopPadding(),
-                    bottom = if (currentNavRoute == "settings") 0.dp else padding.calculateBottomPadding()
+                    bottom = padding.calculateBottomPadding()
                 ),
                 enterTransition = {
                     val dir = if (isTabForward(initialState.destination.route, targetState.destination.route)) 1 else -1
@@ -317,13 +355,14 @@ fun LumenApp(
                     val nodes by viewModel.nodes.collectAsStateWithLifecycle()
                     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
                     val pingingNodeIds by viewModel.pingingNodeIds.collectAsStateWithLifecycle()
-                    // "Ping on open" setting: one automatic sweep per screen entry.
-                    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.pingOnOpenIfEnabled() }
+                    val sortByPingAfterRun by viewModel.sortByPing.collectAsStateWithLifecycle()
                     DashboardScreen(
                         connectionState = connectionState,
                         nodes = nodes,
                         subscriptions = subscriptions,
                         pingingNodeIds = pingingNodeIds,
+                        sortByPingOverride = sortByPingAfterRun,
+                        dashboardStyle = settings.dashboardStyle,
                         onToggleConnection = onToggleConnection,
                         onSelectNode = { node ->
                             val wasSelected = node.isSelected
@@ -337,6 +376,7 @@ fun LumenApp(
                         onImportQr = {
                             qrScanner.launch(
                                 ScanOptions()
+                                    .setCaptureActivity(com.lumen.app.PortraitCaptureActivity::class.java)
                                     .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                                     .setBeepEnabled(false)
                                     .setOrientationLocked(true)
@@ -347,10 +387,12 @@ fun LumenApp(
                         onRefreshSubscription = viewModel::refreshSubscription,
                         onDeleteSubscription = viewModel::deleteSubscription,
                         onPingAll = viewModel::pingAll,
+                        onUdpPingAll = viewModel::pingAllUdp,
                         onPingGroup = viewModel::pingGroup,
                         onUdpPingGroup = viewModel::pingGroupUdp,
                         onEditNode = { node -> editorDraft = viewModel.draftForNode(node) },
                         onPingNode = viewModel::pingNode,
+                        onUdpPingNode = viewModel::pingNodeUdp,
                         onCopyNodeLink = { node ->
                             val link = viewModel.exportNodesText(setOf(node.id))
                             if (link.isNotBlank()) {
@@ -386,13 +428,20 @@ fun LumenApp(
                     val isPinging by viewModel.isPinging.collectAsStateWithLifecycle()
                     val testingNodeId by viewModel.testingNodeId.collectAsStateWithLifecycle()
                     val serverTestResults by viewModel.serverTestResults.collectAsStateWithLifecycle()
+                    val serversConnectionState by viewModel.connectionState.collectAsStateWithLifecycle()
+                    val serversPingingIds by viewModel.pingingNodeIds.collectAsStateWithLifecycle()
+                    val serversSortByPing by viewModel.sortByPing.collectAsStateWithLifecycle()
                     ServerListScreen(
                         nodes = nodes,
                         subscriptions = subscriptions,
                         refreshingIds = refreshingIds,
                         isPinging = isPinging,
+                        pingingNodeIds = serversPingingIds,
+                        pingSortActive = serversSortByPing,
                         testingNodeId = testingNodeId,
                         serverTestResults = serverTestResults,
+                        connectionState = serversConnectionState,
+                        onToggleConnection = onToggleConnection,
                         onSelectNode = { node ->
                             val wasSelected = node.isSelected
                             viewModel.selectNode(node)
@@ -400,16 +449,54 @@ fun LumenApp(
                         },
                         onEditNode = { node -> editorDraft = viewModel.draftForNode(node) },
                         onDeleteNode = viewModel::deleteNode,
+                        onDeleteAllNodes = viewModel::deleteAllNodes,
                         onAddNode = { editorDraft = NodeDraft() },
                         onPingAll = viewModel::pingAll,
+                        onUdpPingAll = viewModel::pingAllUdp,
                         onPingNode = viewModel::pingNode,
+                        onUdpPingNode = viewModel::pingNodeUdp,
+                        onCopyNodeLink = { node ->
+                            val link = viewModel.exportNodesText(setOf(node.id))
+                            if (link.isNotBlank()) {
+                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(link))
+                            }
+                        },
+                        onExportQrCode = { node ->
+                            val link = viewModel.exportNodesText(setOf(node.id))
+                            if (link.isNotBlank()) {
+                                qrExportLink = link
+                            }
+                        },
                         onImportClipboard = {
                             viewModel.prepareImportText(clipboard.getText()?.text)
+                        },
+                        onImportFile = { filePicker.launch("*/*") },
+                        onImportQr = {
+                            qrScanner.launch(
+                                ScanOptions()
+                                    .setCaptureActivity(com.lumen.app.PortraitCaptureActivity::class.java)
+                                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                    .setBeepEnabled(false)
+                                    .setOrientationLocked(true)
+                                    .setPrompt("")
+                            )
                         },
                         onAddSubscription = viewModel::addSubscription,
                         onRefreshSubscription = viewModel::refreshSubscription,
                         onDeleteSubscription = viewModel::deleteSubscription,
-                        onToggleAutoUpdate = viewModel::toggleAutoUpdate
+                        onPingGroup = viewModel::pingGroup,
+                        onUdpPingGroup = viewModel::pingGroupUdp,
+                        onExportSubscriptionText = viewModel::exportSubscriptionText,
+                        onCopyText = { text ->
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
+                        },
+                        onShareText = { text ->
+                            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(android.content.Intent.EXTRA_TEXT, text)
+                            }
+                            context.startActivity(android.content.Intent.createChooser(shareIntent, "Export"))
+                        }
                     )
                 }
                 composable("routing") {
@@ -486,48 +573,69 @@ fun LumenApp(
 
         if (importState.phase != ImportPhaseUi.HIDDEN) {
             val busy = importState.phase == ImportPhaseUi.IMPORTING
-            AlertDialog(
+            val awaiting = importState.phase == ImportPhaseUi.AWAITING
+            LumenDialog(
+                title = importState.title,
+                message = importState.message,
+                busy = busy,
                 onDismissRequest = { if (!busy) viewModel.dismissImport() },
-                title = { Text(importState.title) },
-                text = {
-                    if (busy) CircularProgressIndicator()
-                    else Text(importState.message)
-                },
-                confirmButton = {
-                    if (importState.phase == ImportPhaseUi.AWAITING) {
-                        Button(onClick = viewModel::confirmImport) { Text("Import") }
-                    } else if (!busy) {
-                        Button(onClick = viewModel::dismissImport) { Text("OK") }
-                    }
-                },
-                dismissButton = {
-                    if (importState.phase == ImportPhaseUi.AWAITING) {
-                        TextButton(onClick = viewModel::dismissImport) { Text(strings.cancel) }
-                    }
-                }
+                confirmText = if (awaiting) strings.importAction else "OK",
+                onConfirm = { if (awaiting) viewModel.confirmImport() else viewModel.dismissImport() },
+                dismissText = if (awaiting) strings.cancel else null,
+                onDismiss = { viewModel.dismissImport() }
             )
         }
 
         qrExportLink?.let { link ->
-            Dialog(onDismissRequest = { qrExportLink = null }) {
-                Surface(shape = RoundedCornerShape(24.dp), color = Color.White) {
+            // Plain portrait card: no elevation, glow or scaling effects around the code.
+            Dialog(
+                onDismissRequest = { qrExportLink = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                    modifier = Modifier.fillMaxWidth(0.88f)
+                ) {
                     val qrBitmap = remember(link) {
                         runCatching {
                             BarcodeEncoder().encodeBitmap(link, BarcodeFormat.QR_CODE, 720, 720)
                         }.getOrNull()
                     }
-                    if (qrBitmap != null) {
-                        Image(
-                            bitmap = qrBitmap.asImageBitmap(),
-                            contentDescription = "QR",
-                            modifier = Modifier.padding(20.dp).size(280.dp)
-                        )
-                    } else {
-                        Text(
-                            text = "QR error",
-                            color = Color.Black,
-                            modifier = Modifier.padding(24.dp)
-                        )
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (qrBitmap != null) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = Color.White,
+                                tonalElevation = 0.dp,
+                                shadowElevation = 0.dp
+                            ) {
+                                Image(
+                                    bitmap = qrBitmap.asImageBitmap(),
+                                    contentDescription = "QR",
+                                    modifier = Modifier.padding(14.dp).fillMaxWidth().aspectRatio(1f)
+                                )
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                text = link,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 3,
+                                textAlign = TextAlign.Center
+                            )
+                        } else {
+                            Text(
+                                text = "QR error",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(24.dp)
+                            )
+                        }
                     }
                 }
             }

@@ -4,27 +4,65 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_tile_bg"
-    android:padding="8dp">
+    android:padding="10dp">
 
-    <RelativeLayout
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:gravity="center">
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
 
-        <!-- Central Circle Button Background -->
-        <ImageView
-            android:id="@+id/widget_button_bg"
-            android:layout_width="64dp"
-            android:layout_height="64dp"
-            android:layout_centerInParent="true"
-            android:src="@drawable/widget_circle_btn" />
+        <!-- Central Circle Button -->
+        <FrameLayout
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_gravity="center">
 
-        <!-- Button Icon inside Circle -->
-        <ImageView
-            android:id="@+id/widget_button_icon"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_centerInParent="true"
-            android:src="@drawable/ic_power" />
-    </RelativeLayout>
+            <ImageView
+                android:id="@+id/widget_button_bg"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:contentDescription="@string/app_name"
+                android:src="@drawable/widget_circle_btn" />
+
+            <ImageView
+                android:id="@+id/widget_button_icon"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_gravity="center"
+                android:contentDescription="@string/app_name"
+                android:src="@drawable/ic_power" />
+        </FrameLayout>
+
+        <!-- State label + selected server. Collapses away on a 1x1 tile. -->
+        <LinearLayout
+            android:id="@+id/widget_text_column"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="10dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/widget_state_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:text="Lumen" />
+
+            <TextView
+                android:id="@+id/widget_server_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textSize="11sp"
+                android:textColor="#A0A0AA"
+                android:text="" />
+        </LinearLayout>
+    </LinearLayout>
 </FrameLayout>

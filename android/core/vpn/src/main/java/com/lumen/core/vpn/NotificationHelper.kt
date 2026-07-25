@@ -43,12 +43,18 @@ object NotificationHelper {
         createNotificationChannel(context)
 
         val title = if (isConnected) "Lumen VPN Connected" else "Lumen VPN Disconnected"
+        val showSpeed = context.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
+            .getBoolean("show_notification_speed", true)
         val contentText = if (isConnected) {
-            val upSpeed = formatSpeed(stats.uploadSpeed)
-            val downSpeed = formatSpeed(stats.downloadSpeed)
-            val totalUp = formatBytes(stats.totalUploaded)
-            val totalDown = formatBytes(stats.totalDownloaded)
-            "↑ $upSpeed  ↓ $downSpeed | Total: ↑ $totalUp  ↓ $totalDown"
+            if (showSpeed) {
+                val upSpeed = formatSpeed(stats.uploadSpeed)
+                val downSpeed = formatSpeed(stats.downloadSpeed)
+                val totalUp = formatBytes(stats.totalUploaded)
+                val totalDown = formatBytes(stats.totalDownloaded)
+                "↑ $upSpeed  ↓ $downSpeed | Total: ↑ $totalUp  ↓ $totalDown"
+            } else {
+                "Lumen is protecting your data"
+            }
         } else {
             "Tap to connect"
         }
@@ -93,7 +99,13 @@ object NotificationHelper {
         isConnected: Boolean = true
     ) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification(context, stats, isConnected))
+        val showNotification = context.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
+            .getBoolean("show_notification", true)
+        if (!showNotification && isConnected) {
+            manager.cancel(NOTIFICATION_ID)
+        } else {
+            manager.notify(NOTIFICATION_ID, buildNotification(context, stats, isConnected))
+        }
     }
 
     fun formatSpeed(bytesPerSec: Long): String {

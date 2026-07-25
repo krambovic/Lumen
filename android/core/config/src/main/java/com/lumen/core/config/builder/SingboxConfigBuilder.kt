@@ -1,6 +1,7 @@
 package com.lumen.core.config.builder
 
 import com.lumen.core.config.normalizer.AmneziaWGNormalizer
+import com.lumen.core.config.parser.LinkParser
 import com.lumen.core.config.parser.ParsedNode
 import org.json.JSONArray
 import org.json.JSONObject
@@ -120,8 +121,10 @@ object SingboxConfigBuilder {
 
         if (activeNode != null) {
             if (activeNode.scheme.equals("auto", true) || activeNode.outbound["type"] == "urltest" || activeNode.outbound["type"] == "selector") {
-                // Auto Virtual Node
-                val poolNodes = nodes.filterNot { it.scheme.equals("auto", true) }
+                // Auto Virtual Node: an imported AUTO group carries its own pool of
+                // servers; a manually created one falls back to every other server.
+                val poolNodes = LinkParser.autoMembers(activeNode.outbound)
+                    .ifEmpty { nodes.filterNot { it.scheme.equals("auto", true) } }
                 val poolTags = mutableListOf<String>()
 
                 for (poolNode in poolNodes) {
@@ -224,11 +227,17 @@ object SingboxConfigBuilder {
         if (options.dnsGeoCheck && directDnsDomains.isNotEmpty()) {
             dnsRules += mapOf("domain_suffix" to directDnsDomains, "server" to "dns-direct-1")
         }
+        // DNS pushed by the profile itself (OpenVPN dhcp-option DNS, WireGuard DNS=).
+        val profileDns = (activeNode?.outbound?.get("_dns") as? List<*>)
+            ?.mapNotNull { it?.toString()?.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        profileDns.forEachIndexed { index, server ->
+            dnsServers += dnsServer("dns-vpn-${index + 1}", server, "udp", "proxy", options.dnsProxyStrategy)
+        }
         val useAndroidDns = options.dnsMode.lowercase() in setOf("android", "system")
         root["dns"] = mapOf(
             "servers" to dnsServers,
             "rules" to dnsRules,
-            "final" to if (useAndroidDns) "dns-direct-1" else if (options.dnsFakeIpEnabled) "dns-fake" else "dns-proxy-1",
+            "final" to if (useAndroidDns) "dns-direct-1" else if (options.dnsFakeIpEnabled) "dns-fake" else if (profileDns.isNotEmpty()) "dns-vpn-1" else "dns-proxy-1",
             "strategy" to if (useAndroidDns) options.dnsDirectStrategy else options.dnsProxyStrategy,
             "independent_cache" to true,
             "reverse_mapping" to true,
@@ -249,6 +258,7 @@ object SingboxConfigBuilder {
         val proxyIpCidrs = mutableListOf<String>()
         val blockIpCidrs = mutableListOf<String>()
         val geositeRules = mutableListOf<Pair<String, String>>() // code to action
+        val geoipRules = mutableListOf<Pair<String, String>>() // country code to action
 
         fun processRuleItem(item: String) {
             val trimmed = item.trim()
@@ -259,13 +269,21 @@ object SingboxConfigBuilder {
                 trimmed.startsWith("direct:", true) -> "direct"
                 else -> "direct"
             }
-            val rawPattern = trimmed.substringAfter(":").trim().ifEmpty { trimmed }
+            // Only strip a leading action prefix, so bare "geosite:ru" keeps its kind.
+            val rawPattern = listOf("proxy:", "block:", "reject:", "direct:")
+                .firstOrNull { trimmed.startsWith(it, true) }
+                ?.let { trimmed.substring(it.length).trim() }
+                ?.ifEmpty { trimmed }
+                ?: trimmed
 
-            val isIp = rawPattern.contains("/") || rawPattern.all { it.isDigit() || it == '.' || it == ':' }
             val isGeosite = rawPattern.startsWith("geosite:", true)
+            val isGeoip = rawPattern.startsWith("geoip:", true)
+            val isIp = !isGeosite && !isGeoip &&
+                (rawPattern.contains("/") || rawPattern.all { it.isDigit() || it == '.' || it == ':' })
 
             when {
-                isGeosite -> geositeRules.add(rawPattern.removePrefix("geosite:").removePrefix("GEOSITE:") to action)
+                isGeoip -> geoipRules.add(rawPattern.substring("geoip:".length).trim().lowercase() to action)
+                isGeosite -> geositeRules.add(rawPattern.substring("geosite:".length).trim().lowercase() to action)
                 isIp -> when (action) {
                     "proxy" -> proxyIpCidrs.add(rawPattern)
                     "block" -> blockIpCidrs.add(rawPattern)
@@ -302,6 +320,26 @@ object SingboxConfigBuilder {
                         "tag" to tag,
                         "format" to "binary",
                         "url" to "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/$tag.srs",
+                        "download_detour" to "direct"
+                    )
+                )
+            }
+            if (action == "block") {
+                routeRules.add(0, mapOf("rule_set" to listOf(tag), "action" to "reject"))
+            } else {
+                routeRules.add(0, mapOf("rule_set" to listOf(tag), "outbound" to action))
+            }
+        }
+        // geoip:<code> maps to the sing-geoip remote rule-sets.
+        geoipRules.forEach { (code, action) ->
+            val tag = "geoip-$code"
+            if (ruleSets.none { it["tag"] == tag }) {
+                ruleSets.add(
+                    mapOf(
+                        "type" to "remote",
+                        "tag" to tag,
+                        "format" to "binary",
+                        "url" to "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/$tag.srs",
                         "download_detour" to "direct"
                     )
                 )
@@ -368,7 +406,7 @@ object SingboxConfigBuilder {
         val nonSingboxKeys = mutableSetOf(
             "config_str", "original_link", "happ_id", "happ_token", "display_protocol",
             "protocol", "singbox", "streamSettings", "settings", "v", "ps", "add", "scy",
-            "net", "host", "path", "user", "pass",
+            "net", "host", "path", "user", "pass", "clash", "_dns",
             // sing-box extended 2.5.1+ rejects "reserved" on every outbound/endpoint type:
             // WARP endpoints derive the reserved bytes from their profile instead.
             "reserved"
@@ -550,11 +588,28 @@ object SingboxConfigBuilder {
                 }
             }
             "openvpn" -> {
+                // Legacy nodes without a native "singbox" block: re-derive the whole
+                // profile from the stored config, otherwise ca/tls/cipher are lost
+                // and the core rejects the outbound.
+                val reparsed = runCatching { LinkParser.parseOpenVpnConfig(node.link) }
+                    .getOrNull()?.outbound?.get("singbox") as? Map<*, *>
+                if (reparsed != null) {
+                    @Suppress("UNCHECKED_CAST")
+                    val nativeMap = (reparsed as Map<String, Any?>).toMutableMap()
+                    nativeMap["tag"] = tag
+                    return nativeMap
+                }
                 result["type"] = "openvpn"
-                result["server"] = node.server
-                result["server_port"] = node.port
-                result["username"] = outbound["username"]?.toString() ?: ""
-                result["password"] = outbound["password"]?.toString() ?: ""
+                result["system"] = false
+                result["name"] = "openvpn0"
+                result["servers"] = listOf(mapOf("server" to node.server, "server_port" to node.port))
+                for (key in listOf(
+                    "proto", "cipher", "auth", "tls", "tls_auth", "tls_crypt", "tls_crypt_v2",
+                    "key_direction", "username", "password", "reconnect_delay",
+                    "ping_interval", "ping_restart"
+                )) {
+                    outbound[key]?.let { result[key] = it }
+                }
             }
             "socks", "http" -> {
                 result["type"] = scheme

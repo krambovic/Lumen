@@ -8,8 +8,11 @@ object AmneziaWGNormalizer {
     private val IPV4_REGEX = Pattern.compile("^([0-9]{1,3}\\.){3}[0-9]{1,3}$")
     private val IPV6_REGEX = Pattern.compile("^[0-9a-fA-F:]+$")
     private val SPLIT_DELIMITER_REGEX = Regex("[\\s,;]+")
+    // Must stay in sync with LinkParser.AMNEZIA_JUNK_KEYS, otherwise parsed
+    // AmneziaWG 1.5 parameters are dropped before reaching the core.
     private val AMNEZIA_JUNK_KEYS = listOf(
-        "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5"
+        "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",
+        "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3", "itime"
     )
     private val WARP_IP_PREFIXES = listOf(
         "162.159.192.", "162.159.193.", "188.114.",
@@ -143,9 +146,11 @@ object AmneziaWGNormalizer {
                     "address" to legacyServer,
                     "port" to legacyPort,
                     "public_key" to legacyPublicKey,
-                    "pre_shared_key" to legacyPreSharedKey,
-                    "allowed_ips" to (legacyAllowedIps ?: listOf("0.0.0.0/0", "::/0"))
+                    "allowed_ips" to normalizeIpPrefixes(legacyAllowedIps ?: listOf("0.0.0.0/0", "::/0"))
                 )
+                // Only send pre_shared_key when there really is one.
+                if (legacyPreSharedKey.isNotEmpty()) singlePeer["pre_shared_key"] = legacyPreSharedKey
+                if (legacyReserved.isNotEmpty()) singlePeer["reserved"] = legacyReserved
                 peersList.add(singlePeer)
             }
         } else {
@@ -175,8 +180,10 @@ object AmneziaWGNormalizer {
                 peerMap["allowed_ips"] = normalizeIpPrefixes(allowedIps)
 
                 val peerReserved = parseReservedBytes(peerMap.remove("reserved"))
-                if (peerReserved.isNotEmpty() && legacyReserved.isEmpty()) {
-                    result["_peer_reserved"] = peerReserved
+                if (peerReserved.isNotEmpty()) {
+                    // Only the endpoint root rejects "reserved"; on a peer it is valid.
+                    peerMap["reserved"] = peerReserved
+                    if (legacyReserved.isEmpty()) result["_peer_reserved"] = peerReserved
                 }
 
                 peersList.add(peerMap)
@@ -256,11 +263,9 @@ object AmneziaWGNormalizer {
             return warpEndpoint
         }
 
-        // For non-warp wireguard/awg outbounds, ensure reserved is 100% stripped from result and peers
+        // Only the endpoint root rejects "reserved"; per-peer reserved bytes are
+        // valid and some providers require them, so peers keep their value.
         result.remove("reserved")
-        for (p in peersList) {
-            (p as? MutableMap<*, *>)?.remove("reserved")
-        }
         // Borrowed from ZapretKVN-android: conservative default MTU for userspace
         // (Amnezia)WireGuard on Android to avoid fragmentation stalls inside TUN.
         if (result["mtu"] == null) {

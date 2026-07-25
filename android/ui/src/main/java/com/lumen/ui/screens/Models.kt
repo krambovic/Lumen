@@ -154,13 +154,18 @@ data class SettingsUiState(
     val useMaterialYou: Boolean = false,
     val useAmoledBlack: Boolean = false,
     val hapticsEnabled: Boolean = true,
+    val showNotification: Boolean = true,
+    val showNotificationSpeed: Boolean = true,
     val pingType: String = "tcp",
     val pingTimeoutMs: Int = 3000,
     val pingConcurrency: Int = 15,
     val pingUrl: String = "https://www.gstatic.com/generate_204",
-    val pingOnOpen: Boolean = false,
-    val pingSortAfter: Boolean = false
+    val pingSortAfter: Boolean = false,
+    val dashboardStyle: DashboardStyle = DashboardStyle.DEFAULT
 )
+
+/** Dashboard layouts offered in Customization. */
+enum class DashboardStyle { DEFAULT, SLIDER, CENTERED }
 
 /**
  * Editable node draft used by [NodeEditorModal]. [secret] holds the
@@ -200,7 +205,28 @@ data class NodeDraft(
     val obfsPassword: String = "",
     val congestionControl: String = "bbr",
     val insecure: Boolean = false,
-    val rawConfig: String = ""
+    val rawConfig: String = "",
+    // OpenVPN editor fields (parity with desktop Lumen node editor).
+    val ovpnProto: String = "udp",
+    val ovpnCipher: String = "",
+    val ovpnAuth: String = "",
+    val ovpnUsername: String = "",
+    val ovpnPassword: String = "",
+    val ovpnCa: String = "",
+    val ovpnCert: String = "",
+    val ovpnKey: String = "",
+    val ovpnTlsCrypt: String = "",
+    val ovpnTlsCryptV2: Boolean = false,
+    val ovpnTlsAuth: String = "",
+    val ovpnKeyDirection: String = "",
+    val ovpnTlsCipherSuites: String = "",
+    val ovpnVerifyX509Name: String = "",
+    val ovpnVerifyX509Mode: String = "",
+    val ovpnExtraRemotes: String = "",
+    val ovpnReconnectDelay: String = "",
+    val ovpnPingInterval: String = "",
+    val ovpnPingRestart: String = "",
+    val ovpnDns: String = ""
 )
 
 val SUPPORTED_PROTOCOLS: List<String> = listOf(

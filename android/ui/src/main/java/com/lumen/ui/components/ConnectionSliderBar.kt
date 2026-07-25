@@ -83,16 +83,16 @@ fun ConnectionSliderBar(
         ConnectionState.Error -> s.connectionError
     }
 
-    val shape = RoundedCornerShape(28.dp)
+    val shape = RoundedCornerShape(32.dp)
     val interactionSource = remember { MutableInteractionSource() }
 
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .height(56.dp)
+            .height(64.dp)
             .clip(shape)
             .background(trackBgColor)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), shape)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), shape)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -101,7 +101,7 @@ fun ConnectionSliderBar(
             .padding(4.dp)
     ) {
         val density = LocalDensity.current
-        val knobSizePx = with(density) { 48.dp.toPx() }
+        val knobSizePx = with(density) { 52.dp.toPx() }
         val maxOffsetPx = (constraints.maxWidth.toFloat() - knobSizePx).coerceAtLeast(0f)
 
         var isDragging by remember { mutableStateOf(false) }
@@ -154,10 +154,10 @@ fun ConnectionSliderBar(
         ) {
             Text(
                 text = labelText,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
                 color = if (effectiveOffsetPx > maxOffsetPx * 0.5f) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp,
+                fontSize = 17.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 44.dp)
             )
@@ -167,7 +167,7 @@ fun ConnectionSliderBar(
         Box(
             modifier = Modifier
                 .offset { IntOffset(effectiveOffsetPx.roundToInt(), 0) }
-                .size(48.dp)
+                .size(52.dp)
                 .clip(CircleShape)
                 .background(animatedKnobBg)
                 .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)

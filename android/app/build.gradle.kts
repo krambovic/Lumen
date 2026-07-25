@@ -22,8 +22,8 @@ android {
         applicationId = "net.kramb.lumen"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.7.0"
+        versionCode = 14
+        versionName = "0.8.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

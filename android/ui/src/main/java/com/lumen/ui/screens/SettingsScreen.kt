@@ -103,16 +103,6 @@ fun SettingsScreen(
         }
     }
 
-    if (page == SettingsPage.THEME) {
-        ThemeSettingsScreen(
-            state = state,
-            onUpdate = onUpdate,
-            onBack = { page = SettingsPage.HUB },
-            modifier = modifier
-        )
-        return
-    }
-
     AnimatedContent(
         targetState = page,
         transitionSpec = {
@@ -128,6 +118,17 @@ fun SettingsScreen(
         },
         label = "settings_page_transition"
     ) { currentPage ->
+        // The customization page brings its own scroll container, so it renders
+        // outside the shared Column but still inside the page animation.
+        if (currentPage == SettingsPage.THEME) {
+            ThemeSettingsScreen(
+                state = state,
+                onUpdate = onUpdate,
+                onBack = { page = SettingsPage.HUB },
+                modifier = modifier
+            )
+            return@AnimatedContent
+        }
         Column(
             modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
         ) {
@@ -165,7 +166,9 @@ fun SettingsScreen(
                 }
                 SettingsPage.THEME -> Unit
             }
-            Spacer(Modifier.height(140.dp))
+            // The scaffold already reserves the nav pill height, so only a small
+            // breathing gap is needed; 140dp let the page scroll into emptiness.
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
@@ -241,11 +244,6 @@ private fun SubscriptionSettings(state: SettingsUiState, onUpdate: (SettingsUiSt
         selected = state.subscriptionUserAgent,
         onSelected = { onUpdate(state.copy(subscriptionUserAgent = it)) }
     )
-    ToggleRow(
-        s.directLoad,
-        s.directLoadDesc,
-        state.subscriptionDirect
-    ) { onUpdate(state.copy(subscriptionDirect = it)) }
     ToggleRow(
         s.sendHwid,
         s.sendHwidDesc,
@@ -559,10 +557,6 @@ private fun PingSettings(
     SectionHeader(s.behavior)
     SettingsCard {
         Spacer(Modifier.height(4.dp))
-        ToggleRow(s.pingAutoOnOpen, s.pingAutoOnOpenDesc, state.pingOnOpen) {
-            onUpdate(state.copy(pingOnOpen = it))
-        }
-        SettingsDivider()
         ToggleRow(s.pingSortAfter, s.pingSortAfterDesc, state.pingSortAfter) {
             onUpdate(state.copy(pingSortAfter = it))
         }
@@ -609,6 +603,16 @@ private fun AppSettings(
         SettingsDivider()
         ToggleRow(s.autoConnect, s.autoConnectDescription, state.autoConnectOnBoot) {
             onUpdate(state.copy(autoConnectOnBoot = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.showNotification, s.showNotificationDesc, state.showNotification) {
+            onUpdate(state.copy(showNotification = it))
+        }
+        if (state.showNotification) {
+            SettingsDivider()
+            ToggleRow(s.notificationSpeed, s.notificationSpeedDesc, state.showNotificationSpeed) {
+                onUpdate(state.copy(showNotificationSpeed = it))
+            }
         }
         Spacer(Modifier.height(4.dp))
     }

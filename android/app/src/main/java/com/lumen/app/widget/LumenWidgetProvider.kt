@@ -24,27 +24,57 @@ class LumenWidgetProvider : AppWidgetProvider() {
         }
     }
 
+    override fun onEnabled(context: Context) {
+        super.onEnabled(context)
+        // The very first tile has just been placed: paint it immediately instead
+        // of waiting for the first periodic update.
+        refreshAll(context)
+    }
+
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle
+    ) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        updateWidget(context, appWidgetManager, appWidgetId)
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
-        if (intent.action == ACTION_TOGGLE_VPN || intent.action == ACTION_UPDATE_STATE) {
-            if (intent.action == ACTION_TOGGLE_VPN) {
+        when (intent.action) {
+            ACTION_TOGGLE_VPN -> {
                 toggleVpn(context)
+                refreshAll(context)
             }
-            val appWidgetManager = AppWidgetManager.getInstance(context)
-            val componentName = ComponentName(context, LumenWidgetProvider::class.java)
-            val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
-            for (appWidgetId in appWidgetIds) {
-                updateWidget(context, appWidgetManager, appWidgetId)
-            }
+            ACTION_UPDATE_STATE -> refreshAll(context)
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_MY_PACKAGE_REPLACED -> refreshAll(context)
         }
     }
 
     private fun toggleVpn(context: Context) {
         val isRunning = LumenVpnService.isRunning.value
+        val prefs = context.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
+
+        if (!isRunning) {
+            // Starting a tunnel needs the VPN consent dialog on first use and a
+            // config that actually exists; both are only available in the app, so
+            // fall back to opening it instead of silently doing nothing.
+            val configJson = prefs.getString("active_config_json", null)
+                ?: prefs.getString("config_json", null)
+            if (configJson.isNullOrBlank() || configJson == "{}" ||
+                android.net.VpnService.prepare(context) != null
+            ) {
+                openApp(context)
+                return
+            }
+        }
+
         val intent = Intent(context, LumenVpnService::class.java).apply {
             action = if (isRunning) LumenVpnService.ACTION_STOP_VPN else LumenVpnService.ACTION_START_VPN
             if (!isRunning) {
-                val prefs = context.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
                 val configJson = prefs.getString("active_config_json", null)
                     ?: prefs.getString("config_json", null) ?: "{}"
                 val engineType = prefs.getString("engine_type", null) ?: "SINGBOX"
@@ -60,16 +90,78 @@ class LumenWidgetProvider : AppWidgetProvider() {
             }
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
-        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }.onFailure { openApp(context) }
+    }
+
+    private fun openApp(context: Context) {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ?: return
+        runCatching { context.startActivity(launch) }
     }
 
     companion object {
         const val ACTION_TOGGLE_VPN = "com.lumen.app.widget.ACTION_TOGGLE_VPN"
         const val ACTION_UPDATE_STATE = "com.lumen.app.widget.ACTION_UPDATE_STATE"
+
+        private fun refreshAll(context: Context) {
+            val appWidgetManager = AppWidgetManager.getInstance(context) ?: return
+            val componentName = ComponentName(context, LumenWidgetProvider::class.java)
+            for (appWidgetId in appWidgetManager.getAppWidgetIds(componentName)) {
+                updateWidget(context, appWidgetManager, appWidgetId)
+            }
+        }
+
+        /**
+         * Accent colour per palette. Keys match ThemePreset entries written to
+         * prefs under "theme_preset" by the settings screen.
+         */
+        /**
+         * Server names used to be mirrored into prefs by builds that decoded
+         * them as Latin-1, which reaches the widget as mojibake. Re-decode those
+         * back to UTF-8 and strip anything still unprintable so RemoteViews never
+         * renders garbage.
+         */
+        private fun repairName(raw: String?): String? {
+            val name = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
+            val looksMojibake = name.any { it in '\u0080'..'\u00FF' } &&
+                name.none { it in '\u0400'..'\u04FF' }
+            val fixed = if (looksMojibake) {
+                runCatching { String(name.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8) }
+                    .getOrDefault(name)
+            } else {
+                name
+            }
+            val cleaned = fixed
+                .replace("\uFFFD", "")
+                .filter { it == ' ' || !Character.isISOControl(it) }
+                .trim()
+            return cleaned.takeIf { it.isNotBlank() }
+        }
+
+        /** Public alias so the 1x1 widget can reuse the same palette. */
+        fun accentColorFor(preset: String): Int = accentFor(preset)
+
+        private fun accentFor(preset: String): Int = when (preset) {
+            "LIGHT" -> Color.parseColor("#0A84FF")
+            "DARK" -> Color.parseColor("#4C8DFF")
+            "DRACULA" -> Color.parseColor("#BD93F9")
+            "CATPPUCCIN" -> Color.parseColor("#CBA6F7")
+            "NORD" -> Color.parseColor("#88C0D0")
+            "GITHUB" -> Color.parseColor("#58A6FF")
+            "GRUVBOX" -> Color.parseColor("#FE8019")
+            "TOKYO_NIGHT" -> Color.parseColor("#7AA2F7")
+            "MONOKAI" -> Color.parseColor("#A6E22E")
+            "MATERIAL" -> Color.parseColor("#6750A4")
+            "SOLARIZED" -> Color.parseColor("#2AA198")
+            else -> Color.parseColor("#4C8DFF")
+        }
 
         fun updateWidget(
             context: Context,
@@ -82,6 +174,7 @@ class LumenWidgetProvider : AppWidgetProvider() {
 
             val toggleIntent = Intent(context, LumenWidgetProvider::class.java).apply {
                 action = ACTION_TOGGLE_VPN
+                setPackage(context.packageName)
             }
             val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -96,29 +189,46 @@ class LumenWidgetProvider : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.widget_button_bg, pendingIntent)
             views.setOnClickPendingIntent(R.id.widget_button_icon, pendingIntent)
 
-            val themePalette = prefs.getString("theme_palette", "DEFAULT") ?: "DEFAULT"
-            val palettePrimaryColor = when (themePalette) {
-                "ROSE_PINE" -> Color.parseColor("#EB6F92")
-                "TOKYO_NIGHT" -> Color.parseColor("#7AA2F7")
-                "NORD" -> Color.parseColor("#88C0D0")
-                "CYBERPUNK" -> Color.parseColor("#FF007F")
-                "EMERALD" -> Color.parseColor("#10B981")
-                "SUNSET" -> Color.parseColor("#F59E0B")
-                "DRACULA" -> Color.parseColor("#BD93F9")
-                "MONOKAI" -> Color.parseColor("#A6E22E")
-                "MATERIAL_YOU" -> Color.parseColor("#3B82F6")
-                else -> Color.parseColor("#0088FF") // Standard Blue / Cyan
-            }
+            // "theme_preset" and "use_amoled_black" are the keys the app really
+            // writes; the widget used to read a key that never existed.
+            val preset = prefs.getString("theme_preset", "DARK") ?: "DARK"
+            val amoled = prefs.getBoolean("use_amoled_black", false)
+            val accent = accentFor(preset)
+            val connectedColor = Color.parseColor("#00E676")
+
+            views.setInt(
+                R.id.widget_container,
+                "setBackgroundResource",
+                if (amoled) R.drawable.widget_tile_bg_amoled else R.drawable.widget_tile_bg
+            )
 
             if (isRunning) {
-                // Connected: Bright Green circle, Pause icon
-                views.setInt(R.id.widget_button_bg, "setColorFilter", Color.parseColor("#00E676"))
+                views.setInt(R.id.widget_button_bg, "setColorFilter", connectedColor)
                 views.setImageViewResource(R.id.widget_button_icon, R.drawable.ic_pause)
+                views.setTextViewText(R.id.widget_state_text, context.getString(R.string.connected))
+                views.setTextColor(R.id.widget_state_text, connectedColor)
             } else {
-                // Disconnected: Theme Palette primary color, Power icon
-                views.setInt(R.id.widget_button_bg, "setColorFilter", palettePrimaryColor)
+                views.setInt(R.id.widget_button_bg, "setColorFilter", accent)
                 views.setImageViewResource(R.id.widget_button_icon, R.drawable.ic_power)
+                views.setTextViewText(R.id.widget_state_text, context.getString(R.string.disconnected))
+                views.setTextColor(R.id.widget_state_text, if (amoled) Color.WHITE else Color.parseColor("#E6E6EC"))
             }
+
+            // Prefer the Base64/UTF-8 mirror: plain prefs strings can arrive
+            // mangled in the widget process on some ROMs.
+            val nameFromB64 = prefs.getString("selected_node_name_b64", null)?.let { encoded ->
+                runCatching {
+                    String(android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP), Charsets.UTF_8)
+                }.getOrNull()
+            }?.takeIf { it.isNotBlank() }
+            val serverName = nameFromB64
+                ?: repairName(prefs.getString("selected_node_name", null))
+                ?: context.getString(R.string.app_name)
+            views.setTextViewText(R.id.widget_server_text, serverName)
+            views.setTextColor(
+                R.id.widget_server_text,
+                if (amoled) Color.parseColor("#8E8E96") else Color.parseColor("#A0A0AA")
+            )
 
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }
@@ -127,7 +237,7 @@ class LumenWidgetProvider : AppWidgetProvider() {
             val intent = Intent(context, LumenWidgetProvider::class.java).apply {
                 action = ACTION_UPDATE_STATE
             }
-            context.sendBroadcast(intent)
+            runCatching { context.sendBroadcast(intent) }
         }
     }
 }

@@ -64,8 +64,11 @@ private fun parseRulesString(raw: String): List<DomainRuleItem> {
                 trimmed.startsWith("direct:", true) -> "direct"
                 else -> "direct"
             }
-            val addr = if (trimmed.contains(":")) trimmed.substringAfter(":") else trimmed
-            DomainRuleItem(addr.trim(), action)
+            // Only a real action prefix is stripped, so geosite:/geoip:/IPv6 survive intact.
+            val prefix = listOf("proxy:", "block:", "reject:", "direct:")
+                .firstOrNull { trimmed.startsWith(it, true) }
+            val addr = if (prefix != null) trimmed.substring(prefix.length).trim() else trimmed
+            DomainRuleItem(addr.ifEmpty { trimmed }, action)
         }
     }
 }
@@ -76,6 +79,73 @@ private fun serializeRules(rules: List<DomainRuleItem>): String {
             "proxy" -> "proxy:${rule.address}"
             "block" -> "block:${rule.address}"
             else -> "direct:${rule.address}"
+        }
+    }
+}
+
+// Default rule bundles, mirroring the v2rayNG presets.
+private val LAN_PRESET = listOf(
+    DomainRuleItem("10.0.0.0/8", "direct"),
+    DomainRuleItem("172.16.0.0/12", "direct"),
+    DomainRuleItem("192.168.0.0/16", "direct"),
+    DomainRuleItem("127.0.0.0/8", "direct"),
+    DomainRuleItem("fc00::/7", "direct")
+)
+
+private val ADS_PRESET = listOf(
+    DomainRuleItem("geosite:category-ads-all", "block")
+)
+
+private fun regionPreset(code: String) = listOf(
+    DomainRuleItem("geosite:$code", "direct"),
+    DomainRuleItem("geoip:$code", "direct")
+)
+
+private fun ruPreset() = listOf(
+    DomainRuleItem("geosite:category-ru", "direct"),
+    DomainRuleItem("geoip:ru", "direct")
+)
+
+@Composable
+private fun PresetChip(
+    label: String,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    destructive: Boolean = false,
+    onClick: () -> Unit
+) {
+    val tint = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        modifier = modifier
+            .clip(shape)
+            .border(1.dp, tint.copy(alpha = if (active) 0.9f else 0.35f), shape)
+            .clickable { onClick() },
+        color = if (active) tint.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = shape
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (active) {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = tint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -100,6 +170,18 @@ fun DomainRoutingScreen(
         onDirectRulesChange(serializeRules(newRules), directIpCidrs)
     }
 
+    fun isPresetActive(preset: List<DomainRuleItem>): Boolean =
+        preset.isNotEmpty() && preset.all { wanted ->
+            rules.any { it.address.equals(wanted.address, true) && it.action == wanted.action }
+        }
+
+    // Tapping a preset adds its rules, tapping it again removes them.
+    fun togglePreset(preset: List<DomainRuleItem>) {
+        val presetAddresses = preset.map { it.address.lowercase() }.toSet()
+        val without = rules.filterNot { it.address.lowercase() in presetAddresses }
+        updateRules(if (isPresetActive(preset)) without else without + preset)
+    }
+
     fun addRule(address: String, action: String) {
         val trimmed = address.trim()
         if (trimmed.isNotBlank()) {
@@ -121,6 +203,61 @@ fun DomainRoutingScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 12.dp)
+        )
+
+        // v2rayNG-style presets built on geoip/geosite rule-sets.
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(16.dp)),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                Text(
+                    s.routingPresets,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    s.routingPresetsDesc,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PresetChip(s.presetLan, Modifier.weight(1f), active = isPresetActive(LAN_PRESET)) { togglePreset(LAN_PRESET) }
+                    PresetChip(s.presetAds, Modifier.weight(1f), active = isPresetActive(ADS_PRESET)) { togglePreset(ADS_PRESET) }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PresetChip(s.presetRu, Modifier.weight(1f), active = isPresetActive(ruPreset())) { togglePreset(ruPreset()) }
+                    PresetChip(s.presetCn, Modifier.weight(1f), active = isPresetActive(regionPreset("cn"))) { togglePreset(regionPreset("cn")) }
+                    PresetChip(s.presetIr, Modifier.weight(1f), active = isPresetActive(regionPreset("ir"))) { togglePreset(regionPreset("ir")) }
+                }
+                Spacer(Modifier.height(8.dp))
+                PresetChip(s.presetGlobalProxy, Modifier.fillMaxWidth(), destructive = true) {
+                    updateRules(emptyList())
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            s.customRules,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(bottom = 8.dp)
         )
 
         // Quick Input Row (+ Add bar)
@@ -175,15 +312,9 @@ fun DomainRoutingScreen(
                             }
                         }
 
-                        val menuShape = RoundedCornerShape(4.dp)
-                        DropdownMenu(
+                        LumenMenu(
                             expanded = showActionMenu,
-                            onDismissRequest = { showActionMenu = false },
-                            modifier = Modifier
-                                .widthIn(min = 180.dp)
-                                .clip(menuShape)
-                                .background(MaterialTheme.colorScheme.surface)
-                                .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                            onDismissRequest = { showActionMenu = false }
                         ) {
                             DropdownMenuItem(
                                 text = { Text(s.directAction, color = MaterialTheme.colorScheme.onSurface) },
@@ -415,15 +546,9 @@ private fun RuleRowItem(
                 }
             }
 
-            val menuShape = RoundedCornerShape(4.dp)
-            DropdownMenu(
+            LumenMenu(
                 expanded = showMenu,
-                onDismissRequest = { showMenu = false },
-                modifier = Modifier
-                    .widthIn(min = 150.dp)
-                    .clip(menuShape)
-                    .background(MaterialTheme.colorScheme.surface)
-                    .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                onDismissRequest = { showMenu = false }
             ) {
                 DropdownMenuItem(
                     text = { Text(s.directAction, color = MaterialTheme.colorScheme.onSurface) },

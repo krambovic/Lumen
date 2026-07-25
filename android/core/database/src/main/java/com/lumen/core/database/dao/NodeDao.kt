@@ -48,6 +48,9 @@ interface NodeDao {
     @Query("DELETE FROM nodes WHERE subscriptionId = :subscriptionId")
     suspend fun deleteNodesBySubscription(subscriptionId: String)
 
+    @Query("DELETE FROM nodes WHERE subscriptionId IS NULL")
+    suspend fun deleteManualNodes()
+
     @Query("DELETE FROM nodes")
     suspend fun clearAllNodes()
 }

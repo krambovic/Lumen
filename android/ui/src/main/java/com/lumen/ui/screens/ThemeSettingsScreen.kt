@@ -81,7 +81,7 @@ fun ThemeSettingsScreen(
         ThemeOptionUi(
             preset = ThemePreset.DRACULA,
             title = "Dracula",
-            subtitle = "Dracula dark purple palette",
+            subtitle = "Dracula Dark Purple Palette",
             iconBg = Color(0xFF343746),
             iconTint = Color(0xFFBD93F9),
             dots = listOf(Color(0xFF282A36), Color(0xFF343746), Color(0xFFBD93F9))
@@ -89,7 +89,7 @@ fun ThemeSettingsScreen(
         ThemeOptionUi(
             preset = ThemePreset.CATPPUCCIN,
             title = "Catppuccin",
-            subtitle = "Catppuccin Mocha pastel accent",
+            subtitle = "Catppuccin Mocha Pastel Accent",
             iconBg = Color(0xFF1E1E2E),
             iconTint = Color(0xFFCBA6F7),
             dots = listOf(Color(0xFF11111B), Color(0xFF1E1E2E), Color(0xFFCBA6F7))
@@ -97,7 +97,7 @@ fun ThemeSettingsScreen(
         ThemeOptionUi(
             preset = ThemePreset.NORD,
             title = "Nord",
-            subtitle = "Arctic blue nord palette",
+            subtitle = "Arctic Blue Nord Palette",
             iconBg = Color(0xFF3B4252),
             iconTint = Color(0xFF88C0D0),
             dots = listOf(Color(0xFF2E3440), Color(0xFF3B4252), Color(0xFF88C0D0))
@@ -105,7 +105,7 @@ fun ThemeSettingsScreen(
         ThemeOptionUi(
             preset = ThemePreset.GITHUB,
             title = "GitHub Dark",
-            subtitle = "GitHub official dark theme",
+            subtitle = "GitHub Official Dark Theme",
             iconBg = Color(0xFF161B22),
             iconTint = Color(0xFF58A6FF),
             dots = listOf(Color(0xFF0D1117), Color(0xFF161B22), Color(0xFF58A6FF))
@@ -113,7 +113,7 @@ fun ThemeSettingsScreen(
         ThemeOptionUi(
             preset = ThemePreset.GRUVBOX,
             title = "Gruvbox",
-            subtitle = "Retro warm dark gruvbox",
+            subtitle = "Retro Warm Dark Gruvbox",
             iconBg = Color(0xFF32302F),
             iconTint = Color(0xFFFABD2F),
             dots = listOf(Color(0xFF1D2021), Color(0xFF32302F), Color(0xFFFABD2F))
@@ -121,7 +121,7 @@ fun ThemeSettingsScreen(
         ThemeOptionUi(
             preset = ThemePreset.TOKYO_NIGHT,
             title = "Tokyo Night",
-            subtitle = "Tokyo neon night theme",
+            subtitle = "Tokyo Neon Night Theme",
             iconBg = Color(0xFF24283B),
             iconTint = Color(0xFF7AA2F7),
             dots = listOf(Color(0xFF16161E), Color(0xFF24283B), Color(0xFF7AA2F7))
@@ -129,7 +129,7 @@ fun ThemeSettingsScreen(
         ThemeOptionUi(
             preset = ThemePreset.MONOKAI,
             title = "Monokai",
-            subtitle = "Classic monokai dark",
+            subtitle = "Classic Monokai Dark",
             iconBg = Color(0xFF272822),
             iconTint = Color(0xFFF92672),
             dots = listOf(Color(0xFF1E1F1C), Color(0xFF272822), Color(0xFFF92672))
@@ -137,7 +137,7 @@ fun ThemeSettingsScreen(
         ThemeOptionUi(
             preset = ThemePreset.MATERIAL,
             title = "Material Dark",
-            subtitle = "Sleek material palette",
+            subtitle = "Sleek Material Palette",
             iconBg = Color(0xFF202331),
             iconTint = Color(0xFF80CBC4),
             dots = listOf(Color(0xFF0F111A), Color(0xFF202331), Color(0xFF80CBC4))
@@ -145,7 +145,7 @@ fun ThemeSettingsScreen(
         ThemeOptionUi(
             preset = ThemePreset.SOLARIZED,
             title = "Solarized",
-            subtitle = "Solarized dark cyan",
+            subtitle = "Solarized Dark Cyan",
             iconBg = Color(0xFF0A3A46),
             iconTint = Color(0xFF268BD2),
             dots = listOf(Color(0xFF002B36), Color(0xFF0A3A46), Color(0xFF268BD2))
@@ -222,7 +222,147 @@ fun ThemeSettingsScreen(
             ) { onUpdate(state.copy(useAmoledBlack = it)) }
         }
 
-        Spacer(Modifier.height(140.dp))
+        Spacer(Modifier.height(20.dp))
+
+        Text(
+            text = s.dashboardStyle,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            DashboardStyleCard(
+                title = s.dashboardStyleDefault,
+                style = DashboardStyle.DEFAULT,
+                isSelected = state.dashboardStyle == DashboardStyle.DEFAULT,
+                modifier = Modifier.weight(1f)
+            ) { onUpdate(state.copy(dashboardStyle = DashboardStyle.DEFAULT)) }
+            DashboardStyleCard(
+                title = s.dashboardStyleSlider,
+                style = DashboardStyle.SLIDER,
+                isSelected = state.dashboardStyle == DashboardStyle.SLIDER,
+                modifier = Modifier.weight(1f)
+            ) { onUpdate(state.copy(dashboardStyle = DashboardStyle.SLIDER)) }
+            DashboardStyleCard(
+                title = s.dashboardStyleCentered,
+                style = DashboardStyle.CENTERED,
+                isSelected = state.dashboardStyle == DashboardStyle.CENTERED,
+                modifier = Modifier.weight(1f)
+            ) { onUpdate(state.copy(dashboardStyle = DashboardStyle.CENTERED)) }
+        }
+
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+// Miniature dashboard mock-up so the layout choice is understandable at a glance.
+@Composable
+private fun DashboardStyleCard(
+    title: String,
+    style: DashboardStyle,
+    isSelected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    val accent = MaterialTheme.colorScheme.primary
+    val border = if (isSelected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(if (isSelected) 2.dp else 1.dp, border, shape)
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(84.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(8.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                when (style) {
+                    DashboardStyle.DEFAULT -> {
+                        Box(
+                            Modifier.fillMaxWidth().height(10.dp)
+                                .clip(RoundedCornerShape(4.dp)).background(muted)
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Box(Modifier.size(26.dp).clip(CircleShape).background(accent))
+                        Spacer(Modifier.height(6.dp))
+                        Box(
+                            Modifier.fillMaxWidth().height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)).background(muted)
+                        )
+                    }
+                    DashboardStyle.SLIDER -> {
+                        Box(
+                            Modifier.fillMaxWidth().height(10.dp)
+                                .clip(RoundedCornerShape(4.dp)).background(muted)
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Box(
+                            Modifier.fillMaxWidth().height(18.dp)
+                                .clip(RoundedCornerShape(6.dp)).background(muted)
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Box(
+                            Modifier.fillMaxWidth().height(16.dp)
+                                .clip(RoundedCornerShape(8.dp)).background(accent)
+                        )
+                    }
+                    DashboardStyle.CENTERED -> {
+                        Box(
+                            Modifier.fillMaxWidth().height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)).background(muted)
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Box(Modifier.size(34.dp).clip(CircleShape).background(accent))
+                        Spacer(Modifier.weight(1f))
+                        Box(
+                            Modifier.fillMaxWidth().height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)).background(muted)
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (isSelected) {
+                Spacer(Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier.size(16.dp).clip(CircleShape).background(accent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(11.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -243,13 +383,9 @@ private fun ThemeToggleTile(
         modifier = modifier
             .height(158.dp)
             .clip(shape)
-            .background(
-                if (checked) Brush.verticalGradient(
-                    listOf(accent.copy(alpha = 0.22f), MaterialTheme.colorScheme.surfaceVariant)
-                ) else Brush.verticalGradient(
-                    listOf(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.surfaceVariant)
-                )
-            )
+            // Flat fill (no gradient): selection is conveyed by the border and check mark,
+            // which keeps AMOLED and Material You surfaces perfectly uniform.
+            .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(if (checked) 2.dp else 1.dp, border, shape)
             .clickable { onChange(!checked) }
             .padding(14.dp)

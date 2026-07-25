@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1x1 widget: just the power button, no labels. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_tile_bg"
+    android:padding="6dp">
+
+    <FrameLayout
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_gravity="center">
+
+        <ImageView
+            android:id="@+id/widget_button_bg"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/widget_circle_btn" />
+
+        <ImageView
+            android:id="@+id/widget_button_icon"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:layout_gravity="center"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/ic_power" />
+    </FrameLayout>
+</FrameLayout>

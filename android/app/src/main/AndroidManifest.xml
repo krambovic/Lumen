@@ -7,10 +7,13 @@
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Lets the home screen widget repaint itself after a reboot or update. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="false"
-        android:icon="@drawable/ic_launcher"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Lumen">
@@ -107,17 +110,35 @@
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="com.lumen.app.widget.ACTION_TOGGLE_VPN" />
                 <action android:name="com.lumen.app.widget.ACTION_UPDATE_STATE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/lumen_widget_info" />
         </receiver>
 
+        <!-- Compact 1x1 AppWidget: power button only -->
+        <receiver
+            android:name="com.lumen.app.widget.LumenCompactWidgetProvider"
+            android:exported="true"
+            android:label="Lumen VPN 1x1">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.lumen.app.widget.ACTION_UPDATE_STATE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/lumen_widget_compact_info" />
+        </receiver>
+
         <!-- Quick Settings Tile (Nothing OS / Android Quick Settings shade) -->
         <service
             android:name="com.lumen.core.vpn.LumenTileService"
             android:exported="true"
-            android:icon="@drawable/ic_launcher"
+            android:icon="@drawable/ic_qs_lumen"
             tools:replace="android:icon"
             android:label="Lumen VPN"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">

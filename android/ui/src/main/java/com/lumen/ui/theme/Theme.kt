@@ -201,8 +201,38 @@ fun LumenTheme(
         outlineVariant = outlineBase.copy(alpha = 0.30f).compositeOver(baseScheme.surfaceVariant)
     )
 
+    // True AMOLED: pull every surface role down to (near) pure black instead of only
+    // the window background, so cards, sheets, menus and containers go dark too.
+    // Accent hues stay palette-specific, so this works with every preset and
+    // with Material You dynamic colors.
     val finalScheme = if (useAmoledBlack && themePreset != ThemePreset.LIGHT) {
-        readableScheme.copy(background = Color.Black, surface = Color(0xFF0F0F0F))
+        val accent = readableScheme.primary
+        val onSurface = readableScheme.onSurface
+        fun onBlack(color: Color, alpha: Float) = color.copy(alpha = alpha).compositeOver(Color.Black)
+        val lowTint = onBlack(accent, 0.045f)
+        val midTint = onBlack(accent, 0.075f)
+        val highTint = onBlack(accent, 0.11f)
+        readableScheme.copy(
+            background = Color.Black,
+            surface = Color.Black,
+            surfaceVariant = midTint,
+            surfaceTint = accent,
+            surfaceDim = Color.Black,
+            surfaceBright = highTint,
+            surfaceContainerLowest = Color.Black,
+            surfaceContainerLow = lowTint,
+            surfaceContainer = midTint,
+            surfaceContainerHigh = highTint,
+            surfaceContainerHighest = highTint,
+            primaryContainer = onBlack(accent, 0.20f),
+            secondaryContainer = onBlack(readableScheme.secondary, 0.18f),
+            tertiaryContainer = onBlack(readableScheme.tertiary, 0.16f),
+            errorContainer = onBlack(readableScheme.error, 0.18f),
+            onSurfaceVariant = onBlack(onSurface, 0.72f),
+            outline = onBlack(onSurface, 0.34f),
+            outlineVariant = onBlack(onSurface, 0.18f),
+            scrim = Color.Black
+        )
     } else {
         readableScheme
     }

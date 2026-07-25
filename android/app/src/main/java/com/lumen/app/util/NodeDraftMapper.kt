@@ -3,6 +3,8 @@ package com.lumen.app.util
 import com.lumen.core.config.parser.LinkParser
 import com.lumen.core.database.model.NodeEntity
 import com.lumen.ui.screens.NodeDraft
+import com.lumen.ui.screens.openVpnDraftFromProfile
+import com.lumen.ui.screens.openVpnProfileFromDraft
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.Base64
@@ -34,7 +36,7 @@ object NodeDraftMapper {
         if (raw.isBlank() || raw == "auto") return base
         return when (base.protocol) {
             "wireguard", "awg" -> fillWireGuard(base, raw)
-            "openvpn" -> base
+            "openvpn" -> openVpnDraftFromProfile(base, raw)
             "vmess" -> fillVmess(base, raw)
             "ss" -> fillShadowsocks(base, raw)
             else -> fillUri(base, raw)
@@ -245,7 +247,10 @@ object NodeDraftMapper {
                 "${d.protocol}://$userinfo${d.server.trim()}:${d.port.trim()}#$name"
             }
             "wireguard", "awg" -> buildWireGuardConf(d)
-            "openvpn" -> d.rawConfig
+            // Structured fields win; the pasted profile is the fallback.
+            "openvpn" -> if (d.ovpnCa.isNotBlank()) openVpnProfileFromDraft(d) else d.rawConfig.ifBlank {
+                throw IllegalArgumentException("OpenVPN profile is empty; paste the .ovpn config")
+            }
             else -> throw IllegalArgumentException("Unsupported protocol: ${d.protocol}")
         }
     }

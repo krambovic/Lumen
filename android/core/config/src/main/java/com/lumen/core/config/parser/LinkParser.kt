@@ -39,6 +39,49 @@ object LinkParser {
     const val MAX_IMPORT_LINES = 20000
     const val MAX_IMPORT_NODES = 20000
 
+    private val AUTO_GROUP_TYPES = setOf("urltest", "url-test", "selector")
+
+    /** Packs a urltest/selector pool into one AUTO node (parity with desktop Lumen). */
+    private fun autoNodeFromMembers(name: String, members: List<ParsedNode>): ParsedNode {
+        val packed = members.map { member ->
+            mapOf(
+                "name" to member.name,
+                "scheme" to member.scheme,
+                "server" to member.server,
+                "port" to member.port,
+                "link" to member.link,
+                "outbound" to member.outbound
+            )
+        }
+        return ParsedNode(
+            name = name,
+            scheme = "auto",
+            server = "",
+            port = 0,
+            link = "auto",
+            outbound = mapOf("protocol" to "auto", "auto_members" to packed)
+        )
+    }
+
+    /** Restores the servers packed into an AUTO node by [autoNodeFromMembers]. */
+    fun autoMembers(outbound: Map<String, Any?>): List<ParsedNode> {
+        val packed = outbound["auto_members"] as? List<*> ?: return emptyList()
+        return packed.mapNotNull { item ->
+            val map = item as? Map<*, *> ?: return@mapNotNull null
+            @Suppress("UNCHECKED_CAST")
+            val memberOutbound = (map["outbound"] as? Map<String, Any?>) ?: emptyMap()
+            val port = (map["port"] as? Number)?.toInt() ?: map["port"]?.toString()?.toIntOrNull() ?: 0
+            ParsedNode(
+                name = map["name"]?.toString().orEmpty(),
+                scheme = map["scheme"]?.toString().orEmpty(),
+                server = map["server"]?.toString().orEmpty(),
+                port = port,
+                link = map["link"]?.toString().orEmpty(),
+                outbound = memberOutbound
+            )
+        }
+    }
+
     fun parseLinksText(text: String): Pair<List<ParsedNode>, List<String>> {
         val bytes = text.toByteArray(Charsets.UTF_8)
         if (bytes.size > MAX_IMPORT_BYTES) {
@@ -58,7 +101,13 @@ object LinkParser {
             try {
                 return parseJsonNodesText(stripped)
             } catch (e: Exception) {
-                // Ignore and fall through to text lines
+                // If the top-level JSON parse failed and input starts with '{',
+                // try NDJSON (newline-delimited JSON objects, one per line).
+                if (stripped.startsWith("{")) {
+                    val ndjson = tryParseJsonLines(stripped)
+                    if (ndjson != null) return ndjson
+                }
+                // Fall through to text lines
             }
         }
 
@@ -885,12 +934,33 @@ object LinkParser {
         val address = addressStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
         val amneziaMap = mutableMapOf<String, Any?>()
-        for (junkKey in listOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5", "itime")) {
+        for (junkKey in AMNEZIA_JUNK_KEYS) {
             params[junkKey]?.let { valStr ->
                 valStr.toIntOrNull()?.let { amneziaMap[junkKey] = it } ?: run { amneziaMap[junkKey] = valStr }
             }
         }
         val isAwg = link.lowercase().startsWith("awg://") || link.lowercase().startsWith("amneziawg://") || amneziaMap.isNotEmpty()
+
+        // Optional peer/interface parameters: dropping them silently broke
+        // split-tunnel AllowedIPs, PSK peers and Warp-like reserved bytes.
+        val allowedIps = (params["allowedips"] ?: params["allowed_ips"] ?: params["allowed-ips"] ?: "")
+            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            .ifEmpty { listOf("0.0.0.0/0", "::/0") }
+        val preSharedKey = (params["presharedkey"] ?: params["pre_shared_key"] ?: params["pre-shared-key"] ?: params["psk"] ?: "").trim()
+        val keepalive = (params["persistentkeepalive"] ?: params["persistent_keepalive"] ?: params["keepalive"])?.trim()?.toIntOrNull()
+        val reservedParam = (params["reserved"] ?: "").trim()
+        val mtuParam = params["mtu"]?.trim()?.toIntOrNull()
+        val dnsServers = (params["dns"] ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
+        val peer = mutableMapOf<String, Any?>(
+            "public_key" to publicKey,
+            "server" to server,
+            "server_port" to port,
+            "allowed_ips" to allowedIps
+        )
+        if (preSharedKey.isNotEmpty()) peer["pre_shared_key"] = preSharedKey
+        if (keepalive != null && keepalive > 0) peer["persistent_keepalive_interval"] = keepalive
+        if (reservedParam.isNotEmpty()) peer["reserved"] = reservedParam
 
         val singbox = mutableMapOf<String, Any?>(
             "type" to if (isAwg) "awg" else "wireguard",
@@ -898,23 +968,18 @@ object LinkParser {
             "server_port" to port,
             "private_key" to privateKey,
             "address" to address,
-            "peers" to listOf(
-                mapOf(
-                    "public_key" to publicKey,
-                    "server" to server,
-                    "server_port" to port,
-                    "allowed_ips" to listOf("0.0.0.0/0", "::/0")
-                )
-            )
+            "peers" to listOf(peer)
         )
+        if (mtuParam != null && mtuParam > 0) singbox["mtu"] = mtuParam
         if (amneziaMap.isNotEmpty()) {
             singbox["amnezia"] = amneziaMap
         }
 
-        val outbound = mapOf<String, Any?>(
+        val outbound = mutableMapOf<String, Any?>(
             "protocol" to if (isAwg) "awg" else "wireguard",
             "singbox" to singbox
         )
+        if (dnsServers.isNotEmpty()) outbound["_dns"] = dnsServers
         val scheme = if (isAwg) "awg" else "wireguard"
         val fragment = if (fragmentIdx != -1) percentDecodeKeepPlus(trimmed.substring(fragmentIdx + 1)) else null
         val name = cleanName(fragment, if (isAwg) "awg-$server:$port" else "wg-$server:$port")
@@ -928,6 +993,13 @@ object LinkParser {
         var endpointHost = ""
         var endpointPort = 51820
         var currentSection = ""
+        // [Interface]/[Peer] extras that used to be dropped by this parser.
+        var mtu = 0
+        val dnsList = mutableListOf<String>()
+        var preSharedKey = ""
+        var keepalive = 0
+        var reserved = ""
+        val allowedIpsList = mutableListOf<String>()
 
         val amneziaMap = mutableMapOf<String, Any?>()
 
@@ -948,8 +1020,10 @@ object LinkParser {
                 when (key) {
                     "privatekey" -> privateKey = value
                     "address" -> addressList.addAll(value.split(",").map { it.trim() }.filter { it.isNotEmpty() })
-                    "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime" -> {
-                        value.toIntOrNull()?.let { amneziaMap[key] = it }
+                    "mtu" -> mtu = value.toIntOrNull() ?: 0
+                    "dns" -> dnsList.addAll(value.split(",").map { it.trim() }.filter { it.isNotEmpty() })
+                    "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3", "itime" -> {
+                        value.toIntOrNull()?.let { amneziaMap[key] = it } ?: run { amneziaMap[key] = value }
                     }
                     "h1", "h2", "h3", "h4" -> {
                         amneziaMap[key] = value
@@ -958,6 +1032,10 @@ object LinkParser {
             } else if (currentSection == "peer") {
                 when (key) {
                     "publickey" -> publicKey = value
+                    "presharedkey" -> preSharedKey = value
+                    "persistentkeepalive" -> keepalive = value.toIntOrNull() ?: 0
+                    "reserved" -> reserved = value
+                    "allowedips" -> allowedIpsList.addAll(value.split(",").map { it.trim() }.filter { it.isNotEmpty() })
                     "endpoint" -> {
                         val hostPort = value.split(":")
                         if (hostPort.size >= 2) {
@@ -977,30 +1055,35 @@ object LinkParser {
 
         val isAwg = amneziaMap.isNotEmpty()
         val scheme = if (isAwg) "awg" else "wireguard"
+        val peer = mutableMapOf<String, Any?>(
+            "public_key" to publicKey,
+            "server" to endpointHost,
+            "server_port" to endpointPort,
+            "allowed_ips" to allowedIpsList.ifEmpty { listOf("0.0.0.0/0", "::/0") }
+        )
+        if (preSharedKey.isNotEmpty()) peer["pre_shared_key"] = preSharedKey
+        if (keepalive > 0) peer["persistent_keepalive_interval"] = keepalive
+        if (reserved.isNotEmpty()) peer["reserved"] = reserved
+
         val singbox = mutableMapOf<String, Any?>(
             "type" to scheme,
             "server" to endpointHost,
             "server_port" to endpointPort,
             "private_key" to privateKey,
             "address" to addressList,
-            "peers" to listOf(
-                mapOf(
-                    "public_key" to publicKey,
-                    "server" to endpointHost,
-                    "server_port" to endpointPort,
-                    "allowed_ips" to listOf("0.0.0.0/0", "::/0")
-                )
-            )
+            "peers" to listOf(peer)
         )
+        if (mtu > 0) singbox["mtu"] = mtu
 
         if (amneziaMap.isNotEmpty()) {
             singbox["amnezia"] = amneziaMap
         }
 
-        val outbound = mapOf<String, Any?>(
+        val outbound = mutableMapOf<String, Any?>(
             "protocol" to scheme,
             "singbox" to singbox
         )
+        if (dnsList.isNotEmpty()) outbound["_dns"] = dnsList
 
         return ParsedNode(name = if (isAwg) "AmneziaWG-$endpointHost" else "WireGuard-$endpointHost", scheme = scheme, server = endpointHost, port = endpointPort, link = text, outbound = outbound)
     }
@@ -1264,7 +1347,8 @@ object LinkParser {
     }
 
     private fun sanitizeYamlText(text: String): String {
-        var cleaned = text.lines()
+        var cleaned = text.replace("\t", "  ")
+        cleaned = cleaned.lines()
             .filterNot { it.trimStart().startsWith("%") }
             .joinToString("\n")
         // Strip custom Mihomo / Clash tags like !vless, !select, !<tag> that break SnakeYAML
@@ -1278,7 +1362,9 @@ object LinkParser {
         fun processMap(map: Map<*, *>) {
             val type = map["type"]?.toString()
             val server = map["server"]?.toString() ?: map["address"]?.toString() ?: map["host"]?.toString()
-            if (!type.isNullOrBlank() && !server.isNullOrBlank()) {
+            // WARP MASQUE entries may be profile-only, so they have no server field.
+            val serverless = type?.lowercase() == "masque"
+            if (!type.isNullOrBlank() && (!server.isNullOrBlank() || serverless)) {
                 val stringKeyMap = map.entries.associate { (it.key?.toString() ?: "") to it.value }
                 result.add(stringKeyMap)
                 return
@@ -1336,6 +1422,30 @@ object LinkParser {
             } catch (e: Exception) {
                 errors.add("Proxy ${idx + 1}: ${e.message}")
             }
+        }
+
+        // Every Clash url-test/selector group collapses into a single AUTO node and its
+        // members are removed from the flat list, exactly like desktop Lumen shows them.
+        val proxyGroups = (((data as? Map<*, *>)?.get("proxy-groups")
+            ?: (data as? Map<*, *>)?.get("proxy_groups")) as? List<*>).orEmpty()
+        val autoNodes = mutableListOf<ParsedNode>()
+        val consumed = mutableListOf<ParsedNode>()
+        for (group in proxyGroups) {
+            val groupMap = group as? Map<*, *> ?: continue
+            val groupType = groupMap["type"]?.toString()?.trim()?.lowercase() ?: ""
+            if (groupType !in AUTO_GROUP_TYPES) continue
+            val memberNames = (groupMap["proxies"] as? List<*>)?.mapNotNull { it?.toString()?.trim() }.orEmpty()
+            val members = memberNames.mapNotNull { memberName ->
+                nodes.firstOrNull { it.name.equals(memberName, ignoreCase = true) }
+            }.distinct()
+            if (members.size < 2) continue
+            val groupName = groupMap["name"]?.toString()?.trim().orEmpty().ifEmpty { "AUTO" }
+            autoNodes.add(autoNodeFromMembers(groupName, members))
+            consumed.addAll(members)
+        }
+        if (autoNodes.isNotEmpty()) {
+            val remaining = nodes.filterNot { node -> consumed.any { it === node } }
+            return Pair(remaining + autoNodes, errors)
         }
 
         return Pair(nodes, errors)
@@ -1777,6 +1887,8 @@ object LinkParser {
             }
             val skipProtocols = setOf("freedom", "blackhole", "dns", "direct", "block", "selector", "urltest", "url-test", "loopback")
             var handled = false
+            val nodesByTag = mutableMapOf<String, ParsedNode>()
+            val autoGroupDefs = mutableListOf<Pair<String, List<String>>>()
             for (arrayKey in listOf("outbounds", "endpoints")) {
                 if (!json.has(arrayKey)) continue
                 handled = true
@@ -1791,13 +1903,54 @@ object LinkParser {
                     }
                     val item = raw as? JSONObject ?: continue
                     val protocol = item.optString("protocol", item.optString("type"))
-                    if (protocol.lowercase() in skipProtocols) continue
+                    if (protocol.lowercase() in skipProtocols) {
+                        // Every urltest/selector group is imported as one AUTO node
+                        // instead of loose servers.
+                        if (protocol.lowercase() in AUTO_GROUP_TYPES) {
+                            val memberTagList = mutableListOf<String>()
+                            item.optJSONArray("outbounds")?.let { memberTags ->
+                                for (m in 0 until memberTags.length()) {
+                                    val memberTag = memberTags.optString(m).trim()
+                                    if (memberTag.isNotEmpty()) memberTagList.add(memberTag)
+                                }
+                            }
+                            if (memberTagList.isNotEmpty()) {
+                                autoGroupDefs.add(item.optString("tag").trim() to memberTagList)
+                            }
+                        }
+                        continue
+                    }
                     if (protocol.isEmpty() && item.optString("server").isEmpty()) continue
                     try {
-                        nodes.add(parseJsonItem(item))
+                        val parsedItem = parseJsonItem(item)
+                        nodes.add(parsedItem)
+                        val itemTag = item.optString("tag").trim()
+                        if (itemTag.isNotEmpty()) nodesByTag[itemTag] = parsedItem
                     } catch (e: Exception) {
                         errors.add("Outbound ${i + 1}: ${e.message}")
                     }
+                }
+            }
+            if (autoGroupDefs.isNotEmpty()) {
+                val profileLabel = listOf("remarks", "profile_title", "profileTitle")
+                    .firstNotNullOfOrNull { key -> json.optString(key).takeIf { it.isNotBlank() } }
+                val autoNodes = mutableListOf<ParsedNode>()
+                val consumed = mutableListOf<ParsedNode>()
+                for ((groupTag, memberTags) in autoGroupDefs) {
+                    val members = memberTags.mapNotNull { nodesByTag[it] }.distinct()
+                    if (members.size < 2) continue
+                    val label = if (autoGroupDefs.size == 1) {
+                        profileLabel ?: groupTag.ifEmpty { "AUTO" }
+                    } else {
+                        groupTag.ifEmpty { "AUTO" }
+                    }
+                    autoNodes.add(autoNodeFromMembers(label, members))
+                    consumed.addAll(members)
+                }
+                if (autoNodes.isNotEmpty()) {
+                    // Pool members live inside the AUTO node, never as separate servers.
+                    val remaining = nodes.filterNot { node -> consumed.any { it === node } }
+                    return Pair(remaining + autoNodes, errors)
                 }
             }
             for (arrayKey in listOf("proxies", "servers", "nodes", "configs", "links", "subs")) {
@@ -1824,6 +1977,28 @@ object LinkParser {
         // Fall back to the other formats instead of reporting an empty import.
         if (nodes.isEmpty()) throw LinkParseError("No servers found in JSON payload")
 
+        return Pair(nodes, errors)
+    }
+
+    /**
+     * NDJSON: each line is a self-contained JSON object (one outbound per line).
+     * Used by some export tools and panel APIs.
+     * Returns null if the text does not look like NDJSON (prevents false positives).
+     */
+    private fun tryParseJsonLines(text: String): Pair<List<ParsedNode>, List<String>>? {
+        val jsonLines = text.lines().map { it.trim() }.filter { it.startsWith("{") && it.endsWith("}") }
+        if (jsonLines.isEmpty()) return null
+        val nodes = mutableListOf<ParsedNode>()
+        val errors = mutableListOf<String>()
+        for ((i, line) in jsonLines.withIndex()) {
+            try {
+                val obj = JSONObject(line)
+                nodes.add(parseJsonItem(obj))
+            } catch (e: Exception) {
+                errors.add("NDJSON line ${i + 1}: ${e.message}")
+            }
+        }
+        if (nodes.isEmpty()) return null
         return Pair(nodes, errors)
     }
 
