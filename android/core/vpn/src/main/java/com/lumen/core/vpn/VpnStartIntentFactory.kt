@@ -158,6 +158,8 @@ object VpnConfigStore {
  */
 object LocalSocksPort {
     private const val INBOUND_TAG = "socks-in"
+    /** The optional local HTTP inbound races for its port exactly like the SOCKS one. */
+    const val HTTP_INBOUND_TAG = "http-in"
     private const val MIN_PORT = 1024
     private const val MAX_PORT = 65535
     private const val ALTERNATIVE_ATTEMPTS = 8
@@ -188,15 +190,35 @@ object LocalSocksPort {
     }
 
     /**
-     * Rewrites the socks inbound's listen_port in a generated config. Returns the
-     * config unchanged when it carries no such inbound.
+     * The port an inbound is configured to listen on, or null when the config
+     * carries no such inbound. Lets a caller conflict-check a port it was never
+     * told about, like the optional local HTTP one.
      */
-    fun applyToConfig(configJson: String, port: Int): String {
+    fun portOf(configJson: String, tag: String = INBOUND_TAG): Int? {
         var searchFrom = 0
         while (true) {
-            val tagAt = configJson.indexOf("\"$INBOUND_TAG\"", searchFrom)
+            val tagAt = configJson.indexOf("\"$tag\"", searchFrom)
+            if (tagAt < 0) return null
+            searchFrom = tagAt + tag.length
+            val start = configJson.lastIndexOf('{', tagAt)
+            val end = configJson.indexOf('}', tagAt)
+            if (start < 0 || end < 0) continue
+            LISTEN_PORT.find(configJson.substring(start, end))
+                ?.value?.substringAfterLast(':')?.trim()?.toIntOrNull()
+                ?.let { return it }
+        }
+    }
+
+    /**
+     * Rewrites an inbound's listen_port in a generated config. Returns the config
+     * unchanged when it carries no such inbound.
+     */
+    fun applyToConfig(configJson: String, port: Int, tag: String = INBOUND_TAG): String {
+        var searchFrom = 0
+        while (true) {
+            val tagAt = configJson.indexOf("\"$tag\"", searchFrom)
             if (tagAt < 0) return configJson
-            searchFrom = tagAt + INBOUND_TAG.length
+            searchFrom = tagAt + tag.length
             val start = configJson.lastIndexOf('{', tagAt)
             val end = configJson.indexOf('}', tagAt)
             if (start < 0 || end < 0) continue

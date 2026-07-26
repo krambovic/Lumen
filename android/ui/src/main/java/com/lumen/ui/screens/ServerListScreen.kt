@@ -24,10 +24,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.DeleteSweep
 import com.lumen.ui.components.LumenDialog
+import com.lumen.ui.components.SubscriptionDetailsDialog
+import com.lumen.ui.components.SubscriptionProviderCard
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Link
@@ -125,6 +128,7 @@ private data class CountrySection(
 fun ServerListScreen(
     nodes: List<NodeUiModel>,
     subscriptions: List<SubscriptionUiModel>,
+    serverGroups: List<ServerGroupUiModel> = emptyList(),
     refreshingIds: Set<String>,
     isPinging: Boolean,
     pingingNodeIds: Set<String> = emptySet(),
@@ -152,10 +156,17 @@ fun ServerListScreen(
     onImportFile: () -> Unit = {},
     onImportQr: () -> Unit = {},
     onPingGroup: (String?) -> Unit = {},
+    onCreateGroup: (String) -> Unit = {},
+    onRenameGroup: (String, String) -> Unit = { _, _ -> },
+    onDeleteGroup: (String) -> Unit = {},
+    // Null group id clears the assignment, sending the servers back to their default bucket.
+    onAssignNodesToGroup: (List<NodeUiModel>, String?) -> Unit = { _, _ -> },
     onExportNodesText: (Set<String>) -> String = { "" },
     onExportSubscriptionText: (String?) -> String = { "" },
     onShareText: (String) -> Unit = {},
     onCopyText: (String) -> Unit = {},
+    // Provider links (support, website, banner…) leave the app through the platform browser.
+    onOpenUrl: (String) -> Unit = {},
     onOpen: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -194,6 +205,16 @@ fun ServerListScreen(
     var showFiltersMenu by remember { mutableStateOf(false) }
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
     var propertiesSub by remember { mutableStateOf<SubscriptionUiModel?>(null) }
+    // Group management: create/rename share one name dialog, delete asks first, and the
+    // picker serves both the row menu and the multi-select bar.
+    var showCreateGroup by remember { mutableStateOf(false) }
+    var renamingGroup by remember { mutableStateOf<ServerGroupUiModel?>(null) }
+    var deletingGroup by remember { mutableStateOf<ServerGroupUiModel?>(null) }
+    var assigningNodes by remember { mutableStateOf<List<NodeUiModel>>(emptyList()) }
+    // A new group is written through the view model, so it only reaches this screen on
+    // the next state update. Remember what the creation was for and finish there.
+    var pendingGroupName by remember { mutableStateOf<String?>(null) }
+    var pendingAssignment by remember { mutableStateOf<List<NodeUiModel>>(emptyList()) }
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedNodeIds by remember { mutableStateOf(setOf<String>()) }
     // Groups collapse here just like on the dashboard.
@@ -208,31 +229,41 @@ fun ServerListScreen(
         if (selectedNodeIds.isEmpty()) isSelectionMode = false
     }
 
-    val groups = remember(subscriptions) {
-        buildList {
-            add(GROUP_ALL)
-            // Default is a real destination for manual imports and must stay selectable
-            // before its first node is added.
-            add(GROUP_MANUAL)
-            subscriptions.forEach { add(it.id) }
-        }
+    val groups = remember(subscriptions, serverGroups) {
+        serverGroupIds(serverGroups, subscriptions)
     }
     // Only drop a remembered group once real data is loaded, otherwise the first
     // (still empty) composition would wipe the persisted choice. "all" and "manual"
     // are always present, so the list size says nothing about the subscriptions.
     LaunchedEffect(groups) {
-        if (subscriptions.isNotEmpty() && group !in groups) group = GROUP_ALL
+        if ((subscriptions.isNotEmpty() || serverGroups.isNotEmpty()) && group !in groups) {
+            group = GROUP_ALL
+        }
     }
     val selectedSubscription = subscriptions.firstOrNull { it.id == group }
+    val selectedCustomGroup = serverGroups.firstOrNull { it.id == group }
+    // Once the group exists: move whatever the user was assigning into it and open it.
+    LaunchedEffect(serverGroups, pendingGroupName) {
+        val wanted = pendingGroupName ?: return@LaunchedEffect
+        val created = serverGroups.lastOrNull { it.name == wanted } ?: return@LaunchedEffect
+        val targets = pendingAssignment
+        if (targets.isNotEmpty()) onAssignNodesToGroup(targets, created.id)
+        group = created.id
+        protocol = PROTOCOL_ALL
+        // Cleared last: these keys restart this effect.
+        pendingAssignment = emptyList()
+        pendingGroupName = null
+    }
 
     // Nodes of the active group, before protocol/search narrowing.
-    val groupNodes = remember(nodes, group) {
-        nodes.filter { node ->
-            when (group) {
-                GROUP_ALL -> true
-                GROUP_MANUAL -> node.subscriptionId == null
-                else -> node.subscriptionId == group
-            }
+    val groupNodes = remember(nodes, group) { nodesInGroup(nodes, group) }
+    val groupLabelOf: (String) -> String = { id ->
+        when (id) {
+            GROUP_ALL -> s.allGroups
+            GROUP_MANUAL -> s.groupDefault.ifBlank { s.manual }
+            else -> serverGroups.firstOrNull { it.id == id }?.name
+                ?: subscriptions.firstOrNull { it.id == id }?.name
+                ?: s.subscriptions
         }
     }
 
@@ -299,7 +330,7 @@ fun ServerListScreen(
     val activeFilterCount = (if (protocol != PROTOCOL_ALL) 1 else 0) +
         (if (onlyReachable) 1 else 0) + (if (maxPing > 0) 1 else 0)
 
-    val groupCount = subscriptions.size + 1
+    val groupCount = subscriptions.size + serverGroups.size + 1
     val countsSubtitle = "$groupCount ${s.groupsWord} \u2022 ${nodes.size} ${s.serversWord}"
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -317,6 +348,10 @@ fun ServerListScreen(
                 onPingSelected = {
                     val selectedNodes = nodes.filter { it.id in selectedNodeIds }
                     if (selectedNodes.isNotEmpty()) onPingNodes(selectedNodes)
+                },
+                onMoveSelected = {
+                    val selectedNodes = nodes.filter { it.id in selectedNodeIds }
+                    if (selectedNodes.isNotEmpty()) assigningNodes = selectedNodes
                 }
             )
         } else {
@@ -416,13 +451,8 @@ fun ServerListScreen(
             // Subscription/server group comes first, protocol filter second. Both
             // controls always display their current selection, including "All".
             Box(modifier = Modifier.weight(1.15f)) {
-                val groupLabel = when (group) {
-                    GROUP_ALL -> s.allGroups
-                    GROUP_MANUAL -> s.groupDefault.ifBlank { s.manual }
-                    else -> subscriptions.firstOrNull { it.id == group }?.name ?: s.subscriptions
-                }
                 LumenFilterChip(
-                    label = groupLabel,
+                    label = groupLabelOf(group),
                     selected = true,
                     badge = groupNodes.size.toString(),
                     modifier = Modifier.fillMaxWidth(),
@@ -433,16 +463,8 @@ fun ServerListScreen(
                     onDismissRequest = { showGroupMenu = false }
                 ) {
                     groups.forEach { id ->
-                        val label = when (id) {
-                            GROUP_ALL -> s.allGroups
-                            GROUP_MANUAL -> s.groupDefault.ifBlank { s.manual }
-                            else -> subscriptions.firstOrNull { it.id == id }?.name ?: s.subscriptions
-                        }
-                        val count = when (id) {
-                            GROUP_ALL -> nodes.size
-                            GROUP_MANUAL -> nodes.count { it.subscriptionId == null }
-                            else -> nodes.count { it.subscriptionId == id }
-                        }
+                        val label = groupLabelOf(id)
+                        val count = nodes.count { nodeInGroup(it, id) }
                         DropdownMenuItem(
                             text = { Text("$label  $count", color = MaterialTheme.colorScheme.onSurface) },
                             trailingIcon = if (group == id) {
@@ -455,6 +477,21 @@ fun ServerListScreen(
                             }
                         )
                     }
+                    DropdownMenuItem(
+                        text = { Text(s.newGroup, color = MaterialTheme.colorScheme.primary) },
+                        trailingIcon = {
+                            Icon(
+                                Icons.Filled.CreateNewFolder,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        onClick = {
+                            showGroupMenu = false
+                            showCreateGroup = true
+                        }
+                    )
                 }
             }
             // Protocol filter stays on the right.
@@ -676,15 +713,49 @@ fun ServerListScreen(
                 if (groupExpanded) {
                     item(key = "sub_info_" + selectedSubscription.id) {
                         // No rounding and no gap: the rows below continue the same tile.
+                        // The bar itself no longer draws the announcement; the provider
+                        // card below lays it out where it can wrap over several lines.
                         SubscriptionInfoBar(
                             sub = selectedSubscription,
                             pullUp = 0.dp,
                             roundedBottom = false
                         )
                     }
+                    item(key = "sub_provider_" + selectedSubscription.id) {
+                        // Renders nothing when the provider sent no announcement, banner
+                        // or links, so a plain subscription keeps the card it always had.
+                        SubscriptionProviderCard(
+                            sub = selectedSubscription,
+                            onOpenUrl = onOpenUrl
+                        )
+                    }
+                }
+            } else if (selectedCustomGroup != null) {
+                // Same header as a subscription, minus the traffic block: ping, export,
+                // rename and delete for a group the user made.
+                item(key = "custom_head_" + selectedCustomGroup.id) {
+                    SubscriptionHeaderTile(
+                        group = HomeServerGroup(
+                            id = selectedCustomGroup.id,
+                            title = selectedCustomGroup.name,
+                            nodes = groupNodes,
+                            isCustom = true
+                        ),
+                        isExpanded = groupExpanded,
+                        onToggleExpand = { groupExpanded = !groupExpanded },
+                        onRefreshSubscription = {},
+                        onDeleteSubscription = {},
+                        onPingGroup = { if (groupNodes.isNotEmpty()) onPingNodes(groupNodes) },
+                        onExportAll = {
+                            val text = onExportNodesText(groupNodes.mapTo(mutableSetOf()) { it.id })
+                            if (text.isNotBlank()) onShareText(text)
+                        },
+                        onRenameGroup = { renamingGroup = selectedCustomGroup },
+                        onDeleteGroup = { deletingGroup = selectedCustomGroup }
+                    )
                 }
             }
-            val showRows = selectedSubscription == null || groupExpanded
+            val showRows = (selectedSubscription == null && selectedCustomGroup == null) || groupExpanded
             if (filtered.isEmpty() && showRows) {
                 item(key = "empty") {
                     EmptyState(text = if (groupNodes.isEmpty()) s.noServers else s.nothingFound)
@@ -713,10 +784,15 @@ fun ServerListScreen(
                             // dashboard style.
                             val isFirst = entry.id == firstVisibleNodeId
                             val isLast = index == rowItems.lastIndex
+                            // A subscription and a custom group both put a header tile
+                            // above the rail, so the rows continue it instead of opening
+                            // their own rounded card.
+                            val hasGroupHeader =
+                                selectedSubscription != null || selectedCustomGroup != null
                             val railShape = when {
-                                selectedSubscription != null && isLast ->
+                                hasGroupHeader && isLast ->
                                     RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
-                                selectedSubscription != null -> RoundedCornerShape(0.dp)
+                                hasGroupHeader -> RoundedCornerShape(0.dp)
                                 isFirst && entry.id == lastVisibleNodeId -> RoundedCornerShape(18.dp)
                                 isFirst -> RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
                                 entry.id == lastVisibleNodeId ->
@@ -731,7 +807,7 @@ fun ServerListScreen(
                                     .padding(
                                         start = 8.dp,
                                         end = 8.dp,
-                                        top = if (isFirst && selectedSubscription == null) 10.dp else 4.dp,
+                                        top = if (isFirst && !hasGroupHeader) 10.dp else 4.dp,
                                         bottom = if (entry.id == lastVisibleNodeId) 10.dp else 4.dp
                                     )
                             ) {
@@ -763,7 +839,8 @@ fun ServerListScreen(
                                     onDeleteNode = { onDeleteNode(entry) },
                                     onPingNode = { onPingNode(entry) },
                                     onCopyLink = { onCopyNodeLink(entry) },
-                                    onExportQr = { onExportQrCode(entry) }
+                                    onExportQr = { onExportQrCode(entry) },
+                                    onMoveToGroup = { assigningNodes = listOf(entry) }
                                 )
                             }
                         }
@@ -782,6 +859,219 @@ fun ServerListScreen(
                 showAddSubscription = false
             }
         )
+    }
+
+    if (showCreateGroup) {
+        GroupNameDialog(
+            title = s.newGroup,
+            confirmText = s.createAction,
+            initialName = "",
+            onDismiss = {
+                showCreateGroup = false
+                pendingAssignment = emptyList()
+            },
+            onConfirm = { name ->
+                showCreateGroup = false
+                // Same normalisation the view model applies, so the new group is
+                // recognised when it comes back.
+                pendingGroupName = name.trim().take(64)
+                onCreateGroup(name)
+            }
+        )
+    }
+
+    renamingGroup?.let { target ->
+        GroupNameDialog(
+            title = s.renameGroup,
+            confirmText = s.saveAction,
+            initialName = target.name,
+            onDismiss = { renamingGroup = null },
+            onConfirm = { name ->
+                renamingGroup = null
+                onRenameGroup(target.id, name)
+            }
+        )
+    }
+
+    deletingGroup?.let { target ->
+        LumenDialog(
+            title = "${s.deleteGroup}: ${target.name}",
+            // Spelled out because the wording is the whole point: the servers stay.
+            message = s.deleteGroupConfirm,
+            onDismissRequest = { deletingGroup = null },
+            confirmText = s.delete,
+            destructive = true,
+            onConfirm = {
+                deletingGroup = null
+                if (group == target.id) group = GROUP_ALL
+                onDeleteGroup(target.id)
+            },
+            dismissText = s.cancel,
+            onDismiss = { deletingGroup = null }
+        )
+    }
+
+    if (assigningNodes.isNotEmpty()) {
+        val targets = assigningNodes
+        GroupPickerDialog(
+            groups = serverGroups,
+            // Only meaningful for a single server; a mixed selection shows no tick.
+            currentGroupId = targets.singleOrNull()?.groupId,
+            onDismiss = { assigningNodes = emptyList() },
+            onCreateGroup = {
+                assigningNodes = emptyList()
+                // Carried through the creation so the servers land in the new group.
+                pendingAssignment = targets
+                isSelectionMode = false
+                selectedNodeIds = emptySet()
+                showCreateGroup = true
+            },
+            onPick = { groupId ->
+                assigningNodes = emptyList()
+                isSelectionMode = false
+                selectedNodeIds = emptySet()
+                onAssignNodesToGroup(targets, groupId)
+            }
+        )
+    }
+
+    // "Subscription properties" from the header menu; the URL row is left out when the
+    // provider asked for it with hide-url.
+    propertiesSub?.let { sub ->
+        SubscriptionDetailsDialog(
+            sub = sub,
+            onDismiss = { propertiesSub = null },
+            onCopyUrl = onCopyText,
+            onOpenUrl = onOpenUrl
+        )
+    }
+}
+
+/** Create / rename dialog for a custom group. */
+@Composable
+private fun GroupNameDialog(
+    title: String,
+    confirmText: String,
+    initialName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val s = LocalStrings.current
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(14.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(s.groupNameLabel) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text(s.cancel) }
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = { onConfirm(name.trim()) },
+                        enabled = name.isNotBlank()
+                    ) { Text(confirmText) }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Group chooser for one server or for the whole selection. "No group" clears the
+ * assignment, which returns the servers to Default, or to their subscription when
+ * they came from one.
+ */
+@Composable
+private fun GroupPickerDialog(
+    groups: List<ServerGroupUiModel>,
+    currentGroupId: String?,
+    onDismiss: () -> Unit,
+    onCreateGroup: () -> Unit,
+    onPick: (String?) -> Unit
+) {
+    val s = LocalStrings.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 18.dp)
+            ) {
+                Text(
+                    text = s.moveToGroup,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                DropdownMenuItem(
+                    text = { Text(s.groupNoGroup, color = MaterialTheme.colorScheme.onSurface) },
+                    trailingIcon = if (currentGroupId == null) {
+                        { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+                    } else null,
+                    onClick = { onPick(null) }
+                )
+                groups.forEach { entry ->
+                    DropdownMenuItem(
+                        text = { Text(entry.name, color = MaterialTheme.colorScheme.onSurface) },
+                        trailingIcon = if (currentGroupId == entry.id) {
+                            { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+                        } else null,
+                        onClick = { onPick(entry.id) }
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text(s.newGroup, color = MaterialTheme.colorScheme.primary) },
+                    trailingIcon = {
+                        Icon(
+                            Icons.Filled.CreateNewFolder,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    onClick = onCreateGroup
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) { Text(s.cancel) }
+                }
+            }
+        }
     }
 }
 

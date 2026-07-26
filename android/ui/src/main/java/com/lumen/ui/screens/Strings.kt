@@ -46,6 +46,7 @@ class LumenStrings {
     var groupDefault = ""; var importAction = ""
     var themeSettings = ""; var done = ""; var greenTheme = ""; var greenThemeDesc = ""
     var dashboardStyle = ""; var dashboardStyleDefault = ""; var dashboardStyleSlider = ""; var dashboardStyleCentered = ""
+    var launcherIcon = ""; var launcherIconDesc = ""; var launcherIconSystem = ""; var launcherIconLight = ""; var launcherIconDark = ""
     var deleteAllServers = ""; var deleteAllServersConfirm = ""
     var routingPresets = ""; var routingPresetsDesc = ""; var presetLan = ""; var presetAds = ""; var presetRu = ""; var presetCn = ""; var presetIr = ""; var presetGlobalProxy = ""; var customRules = ""
     var lightTheme = ""; var lightThemeDesc = ""; var darkTheme = ""; var darkThemeDesc = ""
@@ -182,6 +183,23 @@ class LumenStrings {
     var cameraPermissionBlocked =
         "Camera access is turned off for Lumen, so the QR scanner cannot start. Allow the camera in the app settings and try again."
     var openAppSettings = "Open settings"
+    // Custom server groups. Falls back to English when a locale does not translate it.
+    var newGroup = "New group"
+    var groupNameLabel = "Group name"
+    var createAction = "Create"
+    var renameGroup = "Rename group"
+    var deleteGroup = "Delete group"
+    var deleteGroupConfirm =
+        "Only the group is removed. Its servers are kept and move back to Default."
+    var moveToGroup = "Move to group"
+    var groupNoGroup = "No group"
+    // Provider metadata of a subscription. Falls back to English when a locale does not translate it.
+    var providerAnnouncement = "Announcement"
+    var providerChannel = "Channel"
+    var providerSupport = "Support"
+    var providerEmail = "Email"
+    var providerWebsite = "Website"
+    var providerPremium = "Premium"
 
     fun copyFrom(src: LumenStrings): LumenStrings = apply {
         src.javaClass.declaredFields.forEach { f ->
@@ -250,6 +268,9 @@ private val EN = LumenStrings().apply {
     groupDefault="Default"; importAction="Import"
     themeSettings="Customization"; done="Done";
     dashboardStyle="Dashboard style"; dashboardStyleDefault="Default"; dashboardStyleSlider="Slide to connect"; dashboardStyleCentered="Centered button"; greenTheme="Green"; greenThemeDesc="Dark forest with green accent"
+    launcherIcon="App icon"
+    launcherIconDesc="The icon may briefly disappear and come back while the launcher reloads it, and some launchers move it to the end of the home screen."
+    launcherIconSystem="Follow system"; launcherIconLight="Light"; launcherIconDark="Dark"
     routingPresets="Default rules"; routingPresetsDesc="Ready-made rule sets based on geoip/geosite, like in v2rayNG."
     presetLan="Bypass LAN"; presetAds="Block ads"; presetRu="Bypass Russia"; presetCn="Bypass China"; presetIr="Bypass Iran"; presetGlobalProxy="Global proxy"; customRules="Custom rules"
     deleteAllServers="Delete all servers"; deleteAllServersConfirm="All servers will be removed from the list. Subscriptions stay and can be refreshed again."
@@ -319,6 +340,12 @@ private val EN = LumenStrings().apply {
     addServerOrSubscription="Add server or subscription"; subscriptionLink="Subscription link"
     sortDefaultLabel="Default"; resetFilters="Reset"; nothingFound="Nothing matches the filters"
     groupsAndServers="Groups and servers"
+    newGroup="New group"; groupNameLabel="Group name"; createAction="Create"
+    renameGroup="Rename group"; deleteGroup="Delete group"
+    deleteGroupConfirm="Only the group is removed. Its servers are kept and move back to Default."
+    moveToGroup="Move to group"; groupNoGroup="No group"
+    providerAnnouncement="Announcement"; providerChannel="Channel"; providerSupport="Support"; providerEmail="Email"
+    providerWebsite="Website"; providerPremium="Premium"
 }
 
 private val RU = LumenStrings().apply {
@@ -379,6 +406,9 @@ private val RU = LumenStrings().apply {
     groupDefault="Default"; importAction="Импорт"
     themeSettings="Персонализация"; done="Готово";
     dashboardStyle="Стиль дашборда"; dashboardStyleDefault="По умолчанию"; dashboardStyleSlider="Слайдер подключения"; dashboardStyleCentered="Кнопка по центру"; greenTheme="Зелёная"; greenThemeDesc="Тёмный лес с зелёным акцентом"
+    launcherIcon="Значок приложения"
+    launcherIconDesc="Значок может ненадолго исчезнуть и появиться снова, пока лаунчер его перезагружает, а некоторые лаунчеры перенесут его в конец рабочего стола."
+    launcherIconSystem="Как в системе"; launcherIconLight="Светлый"; launcherIconDark="Тёмный"
     routingPresets="Правила по умолчанию"; routingPresetsDesc="Готовые наборы правил на основе geoip/geosite, как в v2rayNG."
     presetLan="Обход локальной сети"; presetAds="Блокировать рекламу"; presetRu="Обход России"; presetCn="Обход Китая"; presetIr="Обход Ирана"; presetGlobalProxy="Глобальный прокси"; customRules="Свои правила"
     deleteAllServers="Удалить все серверы"; deleteAllServersConfirm="Все серверы будут удалены из списка. Подписки останутся и их можно будет обновить заново."
@@ -489,6 +519,12 @@ private val RU = LumenStrings().apply {
     cameraPermissionMessage="Для сканирования QR-кода нужна камера. Lumen использует её только пока открыт сканер."
     cameraPermissionBlocked="Доступ к камере для Lumen отключён, поэтому сканер QR-кодов не запускается. Разрешите камеру в настройках приложения и повторите."
     openAppSettings="Открыть настройки"
+    newGroup="Новая группа"; groupNameLabel="Название группы"; createAction="Создать"
+    renameGroup="Переименовать группу"; deleteGroup="Удалить группу"
+    deleteGroupConfirm="Удалится только группа. Её серверы останутся и вернутся в «По умолчанию»."
+    moveToGroup="Переместить в группу"; groupNoGroup="Без группы"
+    providerAnnouncement="Объявление"; providerChannel="Канал"; providerSupport="Поддержка"; providerEmail="Почта"
+    providerWebsite="Сайт"; providerPremium="Премиум"
 }
 
 private val ZH = LumenStrings().copyFrom(EN).apply {
@@ -529,6 +565,9 @@ private val ZH = LumenStrings().copyFrom(EN).apply {
     groupDefault="默认"; importAction="导入"
     themeSettings="个性化"; done="完成";
     dashboardStyle="仪表盘样式"; dashboardStyleDefault="默认"; dashboardStyleSlider="滑动连接"; dashboardStyleCentered="居中按钮"; greenTheme="绿色"; greenThemeDesc="带绿色点缀的深色森林"
+    launcherIcon="应用图标"
+    launcherIconDesc="启动器重新加载图标时，图标可能会短暂消失后再出现；部分启动器会把它移到桌面末尾。"
+    launcherIconSystem="跟随系统"; launcherIconLight="浅色"; launcherIconDark="深色"
     routingPresets="默认规则"; routingPresetsDesc="基于 geoip/geosite 的现成规则集，类似 v2rayNG。"
     presetLan="绕过局域网"; presetAds="拦截广告"; presetRu="绕过俄罗斯"; presetCn="绕过中国"; presetIr="绕过伊朗"; presetGlobalProxy="全局代理"; customRules="自定义规则"
     deleteAllServers="删除所有服务器"; deleteAllServersConfirm="列表中的所有服务器将被删除。订阅会保留，可以重新更新。"
@@ -653,6 +692,12 @@ private val ZH = LumenStrings().copyFrom(EN).apply {
     cameraPermissionMessage="扫描二维码需要使用相机。Lumen 仅在扫描器打开时使用它。"
     cameraPermissionBlocked="Lumen 的相机权限已被关闭，无法启动二维码扫描器。请在应用设置中允许相机权限后重试。"
     openAppSettings="打开设置"
+    newGroup="新建分组"; groupNameLabel="分组名称"; createAction="创建"
+    renameGroup="重命名分组"; deleteGroup="删除分组"
+    deleteGroupConfirm="仅删除该分组。其中的服务器会保留并回到「默认」分组。"
+    moveToGroup="移动到分组"; groupNoGroup="不属于任何分组"
+    providerAnnouncement="公告"; providerChannel="频道"; providerSupport="支持"; providerEmail="邮箱"
+    providerWebsite="官网"; providerPremium="会员"
 }
 
 private val FA = LumenStrings().apply {
@@ -693,6 +738,9 @@ private val FA = LumenStrings().apply {
     groupDefault="پیش‌فرض"; importAction="وارد کردن"
     themeSettings="شخصی‌سازی"; done="انجام شد";
     dashboardStyle="سبک داشبورد"; dashboardStyleDefault="پیش‌فرض"; dashboardStyleSlider="لغزش برای اتصال"; dashboardStyleCentered="دکمه وسط"; greenTheme="سبز"; greenThemeDesc="جنگل تاریک با رنگ سبز"
+    launcherIcon="نماد برنامه"
+    launcherIconDesc="ممکن است نماد هنگام بارگذاری دوباره توسط لانچر برای لحظه‌ای ناپدید و دوباره ظاهر شود و برخی لانچرها آن را به انتهای صفحه اصلی منتقل می‌کنند."
+    launcherIconSystem="مطابق سیستم"; launcherIconLight="روشن"; launcherIconDark="تیره"
     routingPresets="قوانین پیش‌فرض"; routingPresetsDesc="مجموعه‌های آماده بر پایه geoip/geosite، مانند v2rayNG."
     presetLan="دور زدن شبکه محلی"; presetAds="مسدود کردن تبلیغات"; presetRu="دور زدن روسیه"; presetCn="دور زدن چین"; presetIr="دور زدن ایران"; presetGlobalProxy="پروکسی سراسری"; customRules="قوانین سفارشی"
     deleteAllServers="حذف همه سرورها"; deleteAllServersConfirm="همه سرورها از فهرست حذف می‌شوند. اشتراک‌ها باقی می‌مانند و دوباره قابل به‌روزرسانی هستند."
@@ -822,6 +870,12 @@ private val FA = LumenStrings().apply {
     cameraPermissionMessage="برای اسکن کد QR به دوربین نیاز است. Lumen فقط تا زمانی که اسکنر باز است از آن استفاده می‌کند."
     cameraPermissionBlocked="دسترسی دوربین برای Lumen خاموش است، بنابراین اسکنر کد QR اجرا نمی‌شود. در تنظیمات برنامه دوربین را مجاز کنید و دوباره تلاش کنید."
     openAppSettings="باز کردن تنظیمات"
+    newGroup="گروه جدید"; groupNameLabel="نام گروه"; createAction="ایجاد"
+    renameGroup="تغییر نام گروه"; deleteGroup="حذف گروه"
+    deleteGroupConfirm="فقط گروه حذف می‌شود. سرورهای آن باقی می‌مانند و به «پیش‌فرض» برمی‌گردند."
+    moveToGroup="انتقال به گروه"; groupNoGroup="بدون گروه"
+    providerAnnouncement="اعلان"; providerChannel="کانال"; providerSupport="پشتیبانی"; providerEmail="ایمیل"
+    providerWebsite="وب‌سایت"; providerPremium="ویژه"
 }
 
 val LocalStrings = staticCompositionLocalOf { EN }

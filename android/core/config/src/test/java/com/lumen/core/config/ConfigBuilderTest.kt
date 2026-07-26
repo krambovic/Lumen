@@ -327,6 +327,118 @@ class ConfigBuilderTest {
         })
     }
 
+    /**
+     * A tunnel-internal profile DNS must never become the only resolver: a
+     * placeholder `DNS = 10.x.x.x` that answers nothing then makes every lookup
+     * die on the exchange deadline (`dns: exchange failed ... context deadline
+     * exceeded`) while the tunnel itself is healthy.
+     */
+    @Test
+    fun privateProfileDnsIsRacedAgainstTheProxyResolver() {
+        val node = ParsedNode(
+            "WireGuard private DNS",
+            "wireguard",
+            "162.159.192.1",
+            2408,
+            "",
+            mapOf(
+                "type" to "wireguard",
+                "private_key" to Base64.getEncoder().encodeToString(ByteArray(32) { 1 }),
+                "server" to "162.159.192.1",
+                "server_port" to 2408,
+                "peer_public_key" to Base64.getEncoder().encodeToString(ByteArray(32) { 2 }),
+                "local_address" to listOf("172.16.0.2/32"),
+                "_dns" to listOf("10.2.0.1", "10.2.0.2")
+            )
+        )
+        val dns = JSONObject(SingboxConfigBuilder.buildConfig(node)).getJSONObject("dns")
+        assertEquals("dns-vpn-final", dns.getString("final"))
+        val servers = (0 until dns.getJSONArray("servers").length())
+            .map { dns.getJSONArray("servers").getJSONObject(it) }
+        val vpn = servers.first { it.optString("tag") == "dns-vpn-1" }
+        assertEquals("udp", vpn.getString("type"))
+        assertEquals("10.2.0.1", vpn.getString("server"))
+        assertEquals("proxy", vpn.getString("detour"))
+        val fallback = servers.first { it.optString("tag") == "dns-vpn-final" }
+        assertEquals("fallback", fallback.getString("type"))
+        assertEquals("parallel", fallback.getString("strategy"))
+        val members = fallback.getJSONArray("servers")
+        assertEquals(3, members.length())
+        assertEquals("dns-vpn-1", members.getString(0))
+        assertEquals("dns-vpn-2", members.getString(1))
+        // The proxied resolver keeps the lookup alive when the profile DNS is a
+        // placeholder, and it dials through the same tunnel, so nothing leaks.
+        assertEquals("dns-proxy-1", members.getString(2))
+        val proxy = servers.first { it.optString("tag") == "dns-proxy-1" }
+        assertEquals("proxy", proxy.getString("detour"))
+        // The core resolves fallback members by tag while it walks the list, so
+        // it must be declared after every server it names.
+        val tags = servers.map { it.optString("tag") }
+        assertTrue(tags.indexOf("dns-vpn-final") > tags.indexOf("dns-vpn-2"))
+        assertTrue(tags.indexOf("dns-vpn-final") > tags.indexOf("dns-proxy-1"))
+    }
+
+    private fun systemDnsServerOf(vararg reported: String): JSONObject {
+        val json = SingboxConfigBuilder.buildConfig(
+            simpleNode(),
+            SingboxConfigOptions(tunMode = false, systemDnsServers = reported.toList())
+        )
+        val servers = JSONObject(json).getJSONObject("dns").getJSONArray("servers")
+        return (0 until servers.length())
+            .map { servers.getJSONObject(it) }
+            .first { it.optString("tag") == "dns-system" }
+    }
+
+    /**
+     * Desktop feeds the physical adapter's resolvers into `system-dns`; Android used
+     * to hard-code 1.1.1.1, so on a carrier that blocks or hijacks UDP/53 to it the
+     * bootstrap resolver could not resolve anything at all.
+     */
+    @Test
+    fun theDeviceResolverBootstrapsTheDnsChain() {
+        val system = systemDnsServerOf("192.168.1.1", "8.8.8.8")
+        assertEquals("192.168.1.1", system.getString("server"))
+        assertEquals("udp", system.getString("type"))
+        assertEquals("direct", system.getString("detour"))
+        assertEquals(53, system.getInt("server_port"))
+        // Nothing resolves dns-system itself, so it must not claim a resolver.
+        assertTrue(!system.has("domain_resolver"))
+    }
+
+    /** With nothing reported the public literal stays, exactly as before. */
+    @Test
+    fun theBootstrapResolverFallsBackWhenTheDeviceReportsNothing() {
+        assertEquals("1.1.1.1", systemDnsServerOf().getString("server"))
+    }
+
+    /**
+     * dns-system is resolved by nothing, so anything that cannot be dialled as a bare
+     * literal has to be skipped rather than emitted: a hostname would need a resolver,
+     * and a link-local address reaches us with its scope id already stripped.
+     */
+    @Test
+    fun unusableReportedResolversAreSkipped() {
+        assertEquals("1.1.1.1", systemDnsServerOf("dns.google").getString("server"))
+        assertEquals("1.1.1.1", systemDnsServerOf("fe80::1").getString("server"))
+        assertEquals("1.1.1.1", systemDnsServerOf("169.254.3.4").getString("server"))
+        assertEquals("1.1.1.1", systemDnsServerOf("127.0.0.1").getString("server"))
+        assertEquals("1.1.1.1", systemDnsServerOf("").getString("server"))
+        // The first usable one wins, the junk ahead of it is passed over.
+        assertEquals("10.0.0.1", systemDnsServerOf("fe80::1%wlan0", "10.0.0.1").getString("server"))
+    }
+
+    /**
+     * A hex IPv6 literal contains letters, so the builder's "looks like a hostname"
+     * test fires on it. dns-system must still come out without a resolver rather than
+     * with an empty one, which is a field the core ignores.
+     */
+    @Test
+    fun anIpv6BootstrapResolverGetsNoEmptyDomainResolver() {
+        val system = systemDnsServerOf("fd00::abc")
+        assertEquals("fd00::abc", system.getString("server"))
+        assertTrue(!system.has("domain_resolver"))
+    }
+
     @Test
     fun androidDnsDoesNotHijackPort53() {
         val node = ParsedNode("DNS", "trojan", "1.2.3.4", 443, "", mapOf("password" to "x"))

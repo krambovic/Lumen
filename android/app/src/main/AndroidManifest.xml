@@ -33,10 +33,10 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize">
 
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+            <!-- MAIN/LAUNCHER deliberately lives on the <activity-alias> entries below,
+                 not here: that is the only way the user can pick a launcher icon.
+                 Every other filter must stay on the activity itself or the lumen://
+                 deep links and "open with Lumen" stop resolving. -->
 
             <!-- Proxy link deep links -->
             <intent-filter>
@@ -99,6 +99,66 @@
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
+
+        <!--
+            Launcher icon picker. A launcher icon can only be swapped by enabling one
+            <activity-alias> and disabling the others, so there is one alias per choice
+            and all three point at the same MainActivity.
+
+            Invariants, enforced by LauncherIconManager:
+              * EXACTLY ONE of these is enabled at any moment. Zero enabled removes the
+                app from the launcher entirely and it can no longer be started, so the
+                switch always enables the new alias BEFORE disabling the old one.
+              * These component names are persisted by the system (getComponentEnabledSetting)
+                and are baked into any pinned shortcut, so they must never be renamed.
+              * A fresh install starts from these android:enabled defaults, which is why
+                MainViewModel reconciles the stored preference on every launch.
+
+            "Default" keeps @mipmap/ic_launcher, which auto-themes through the
+            res/drawable-night qualifier. The other two point at qualifier-free
+            artwork so the user's pick survives a system light/dark switch.
+        -->
+        <activity-alias
+            android:name="com.lumen.app.LauncherAliasDefault"
+            android:targetActivity="com.lumen.app.MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name="com.lumen.app.LauncherAliasLight"
+            android:targetActivity="com.lumen.app.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_light"
+            android:roundIcon="@mipmap/ic_launcher_light_round"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name="com.lumen.app.LauncherAliasDark"
+            android:targetActivity="com.lumen.app.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_dark"
+            android:roundIcon="@mipmap/ic_launcher_dark_round"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name="com.lumen.app.PortraitCaptureActivity"

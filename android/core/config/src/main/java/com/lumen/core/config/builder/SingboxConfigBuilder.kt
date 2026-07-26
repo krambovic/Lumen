@@ -43,6 +43,12 @@ data class SingboxConfigOptions(
     val directDnsServer: String = "1.1.1.1",
     val dnsMode: String = "automatic",
     val dnsDirectServers: List<String> = listOf("1.1.1.1", "8.8.8.8"),
+    /**
+     * Resolvers of the physical network, as the OS reports them. Used only for
+     * `dns-system`, the literal bootstrap resolver every other DNS server is
+     * resolved through. Empty keeps the hard-coded public fallback.
+     */
+    val systemDnsServers: List<String> = emptyList(),
     val dnsProxyServers: List<String> = listOf("cloudflare-dns.com", "dns.google"),
     val dnsDirectType: String = "udp",
     val dnsProxyType: String = "https",
@@ -356,7 +362,11 @@ object SingboxConfigBuilder {
                 if (normalizedType == "https") put("server_port", 443)
                 if (normalizedType == "tls") put("server_port", 853)
                 if (normalizedType in setOf("udp", "tcp")) put("server_port", 53)
-                if (server.any { it.isLetter() }) {
+                // A hex IPv6 literal contains letters too, so the letter test alone
+                // would ask the core to resolve an address. dns-system is the one
+                // server with no resolver behind it, and an empty domain_resolver is
+                // a field the core ignores, so it is dropped rather than emitted.
+                if (resolver.isNotEmpty() && server.any { it.isLetter() }) {
                     put("domain_resolver", resolver)
                 }
             }
@@ -364,7 +374,19 @@ object SingboxConfigBuilder {
         val dnsServers = mutableListOf<Map<String, Any?>>()
         // A literal emergency resolver guarantees that even a custom
         // hostname-based bootstrap server can be reached without recursion.
-        dnsServers += dnsServer("dns-system", "1.1.1.1", "udp", "direct", "")
+        // Desktop Lumen feeds the physical adapter's own resolvers in here
+        // (runtime_planner `system_dns_servers`); match that, because a carrier
+        // that blocks or hijacks UDP/53 to 1.1.1.1 otherwise leaves this server
+        // unable to resolve anything - including the tunnel endpoint's hostname.
+        // Only a usable IP literal qualifies: dns-system has no resolver of its
+        // own, so a hostname here would have nothing to resolve it, and a
+        // link-local address arrives without the scope id that would make it
+        // dialable.
+        val systemServer = options.systemDnsServers
+            .map(String::trim)
+            .firstOrNull(::isBootstrapCapableAddress)
+            ?: "1.1.1.1"
+        dnsServers += dnsServer("dns-system", systemServer, "udp", "direct", "")
         dnsServers += dnsServer("dns-bootstrap", directServers.first(), options.dnsDirectType, "direct", "dns-system")
         directServers.forEachIndexed { index, server ->
             dnsServers += dnsServer("dns-direct-${index + 1}", server, options.dnsDirectType, "direct", "dns-system")
@@ -427,6 +449,26 @@ object SingboxConfigBuilder {
         privateProfileDns.forEachIndexed { index, server ->
             dnsServers += dnsServer("dns-vpn-${index + 1}", server, "udp", "proxy", "dns-bootstrap")
         }
+        // The `DNS =` line of a WireGuard/AmneziaWG profile (and OpenVPN's
+        // dhcp-option DNS) is frequently a placeholder that nothing actually
+        // answers on inside the tunnel. As a bare dns.final it has no fallback,
+        // so every single lookup burns the exchange deadline and the core spams
+        // `dns: exchange failed ... context deadline exceeded` while the tunnel
+        // itself is perfectly healthy. Race it against the configured proxy
+        // resolver instead - both run through `proxy`, so nothing leaks and the
+        // exit stays the same. Verified against core/sing-box-lumen.exe: with a
+        // reachable profile DNS the answer comes from it in 2ms, with a dead one
+        // the query completes in ~1s, where dns.final=dns-vpn-1 failed after 10s.
+        // The fallback server resolves its members by tag as the list is
+        // initialized, so it must stay after every server it names.
+        if (privateProfileDns.isNotEmpty()) {
+            dnsServers += mapOf(
+                "type" to "fallback",
+                "tag" to "dns-vpn-final",
+                "servers" to (privateProfileDns.indices.map { "dns-vpn-${it + 1}" } + "dns-proxy-1"),
+                "strategy" to "parallel"
+            )
+        }
         val useAndroidDns = options.dnsMode.lowercase() in setOf("android", "system")
         val resolveStrategy = if (options.preferIpv6) {
             "prefer_ipv6"
@@ -434,7 +476,7 @@ object SingboxConfigBuilder {
         val dnsMap = mutableMapOf<String, Any?>(
             "servers" to dnsServers,
             "rules" to dnsRules,
-            "final" to if (useAndroidDns) "dns-direct-1" else if (privateProfileDns.isNotEmpty()) "dns-vpn-1" else "dns-proxy-1",
+            "final" to if (useAndroidDns) "dns-direct-1" else if (privateProfileDns.isNotEmpty()) "dns-vpn-final" else "dns-proxy-1",
             "strategy" to resolveStrategy,
             "independent_cache" to options.dnsIndependentCache,
             "reverse_mapping" to true,
@@ -737,6 +779,26 @@ object SingboxConfigBuilder {
                 if (value is Map<*, *>) withResolver(value) else value
             }
         }
+    }
+
+    /**
+     * Whether an OS-reported resolver can serve as `dns-system`, the one server in
+     * the chain that is resolved by nothing. It must therefore be an IP literal, and
+     * it must be dialable on its own: a link-local address reaches us with its scope
+     * id already stripped, and an unspecified/loopback address points nowhere useful.
+     */
+    private fun isBootstrapCapableAddress(value: String): Boolean {
+        val host = value.trim().removePrefix("[").removeSuffix("]")
+        if (host.isEmpty() || host.contains('/')) return false
+        if (!isIpPrefix(host)) return false
+        val ipv4 = host.split('.').mapNotNull(String::toIntOrNull)
+        if (ipv4.size == 4) {
+            return ipv4[0] != 0 && ipv4[0] != 127 && !(ipv4[0] == 169 && ipv4[1] == 254)
+        }
+        val lower = host.lowercase()
+        return lower != "::" && lower != "::1" &&
+            !lower.startsWith("fe8") && !lower.startsWith("fe9") &&
+            !lower.startsWith("fea") && !lower.startsWith("feb")
     }
 
     private fun isPrivateDnsAddress(value: String): Boolean {
