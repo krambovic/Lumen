@@ -31,7 +31,7 @@ Windows runs **xray-core** and **sing-box-extended** side by side and adds packe
 | **TUN / VPN** | Full-tunnel mode over sing-box-extended, including AmneziaWG (AWG 2.0) and WireGuard | ✅ | ✅ |
 | **System proxy** | Routes the whole system through xray-core without a tunnel | ✅ | — |
 | **DPI bypass** | zapret / WinDivert — unblocks YouTube, Discord and others at packet level | ✅ | — |
-| **Split tunneling** | Choose exactly which apps go through the VPN | — | ✅ |
+| **Split tunneling** | Choose exactly which apps go through the VPN | ✅ | ✅ |
 | **Routing editor** | Presets plus your own domains, IP rules and per-service behaviour | ✅ | ✅ |
 | **Discord voice** | Sends Discord voice and streams through the proxy without full TUN | ✅ | — |
 | **AUTO server pools** | `urltest` groups pick the fastest server and re-check it on a timer | ✅ | ✅ |
