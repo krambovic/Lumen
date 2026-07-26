@@ -1,5 +1,6 @@
 package com.lumen.ui.screens
 
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,8 +24,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -149,6 +151,14 @@ fun ThemeSettingsScreen(
             iconBg = Color(0xFF0A3A46),
             iconTint = Color(0xFF268BD2),
             dots = listOf(Color(0xFF002B36), Color(0xFF0A3A46), Color(0xFF268BD2))
+        ),
+        ThemeOptionUi(
+            preset = ThemePreset.ROSE_PINE,
+            title = s.rosePineTheme,
+            subtitle = s.rosePineThemeDesc,
+            iconBg = Color(0xFF1F1D2E),
+            iconTint = Color(0xFFC4A7E7),
+            dots = listOf(Color(0xFF191724), Color(0xFF26233A), Color(0xFFC4A7E7))
         )
     )
 
@@ -202,22 +212,37 @@ fun ThemeSettingsScreen(
         Spacer(Modifier.height(8.dp))
 
         // Two square toggle tiles instead of switch rows, matching the preset grid.
+        // Dynamic colour only exists on Android 12+; below that the tile says so
+        // instead of offering a switch that would silently do nothing.
+        val dynamicColorSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             ThemeToggleTile(
                 title = s.materialYou,
-                subtitle = s.materialYouDesc,
-                icon = Icons.Filled.Star,
-                checked = state.useMaterialYou,
+                subtitle = if (dynamicColorSupported) s.materialYouDesc else s.materialYouUnavailable,
+                // Wallpaper, because that is literally where the colours come from.
+                icon = Icons.Filled.Wallpaper,
+                checked = state.useMaterialYou && dynamicColorSupported,
+                enabled = dynamicColorSupported,
+                // Live preview of the scheme currently in effect: on a Material You
+                // device these are the wallpaper-derived roles.
+                dots = listOf(
+                    MaterialTheme.colorScheme.primary,
+                    MaterialTheme.colorScheme.secondary,
+                    MaterialTheme.colorScheme.tertiary
+                ),
                 modifier = Modifier.weight(1f)
             ) { onUpdate(state.copy(useMaterialYou = it)) }
             ThemeToggleTile(
                 title = s.amoledBlack,
                 subtitle = s.amoledBlackDesc,
-                icon = Icons.Filled.Info,
+                icon = Icons.Filled.DarkMode,
+                // Real #000000, not a dark grey: the swatch has to be the thing it promises.
+                swatch = Color(0xFF000000),
                 checked = state.useAmoledBlack,
+                dots = listOf(Color(0xFF000000), Color(0xFF000000), MaterialTheme.colorScheme.primary),
                 modifier = Modifier.weight(1f)
             ) { onUpdate(state.copy(useAmoledBlack = it)) }
         }
@@ -374,20 +399,32 @@ private fun ThemeToggleTile(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     checked: Boolean,
     modifier: Modifier = Modifier,
+    // Forces the icon disc fill; used by AMOLED so the tile shows real #000000.
+    swatch: Color? = null,
+    // Optional three-colour preview, matching the preset cards.
+    dots: List<Color> = emptyList(),
+    enabled: Boolean = true,
     onChange: (Boolean) -> Unit
 ) {
     val shape = RoundedCornerShape(18.dp)
     val accent = MaterialTheme.colorScheme.primary
     val border = if (checked) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+    val discFill = swatch ?: if (checked) accent else MaterialTheme.colorScheme.surface
+    val discTint = when {
+        swatch != null -> accent
+        checked -> MaterialTheme.colorScheme.onPrimary
+        else -> accent
+    }
     Column(
         modifier = modifier
             .height(158.dp)
+            .alpha(if (enabled) 1f else 0.5f)
             .clip(shape)
             // Flat fill (no gradient): selection is conveyed by the border and check mark,
             // which keeps AMOLED and Material You surfaces perfectly uniform.
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(if (checked) 2.dp else 1.dp, border, shape)
-            .clickable { onChange(!checked) }
+            .clickable(enabled = enabled) { onChange(!checked) }
             .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -395,13 +432,14 @@ private fun ThemeToggleTile(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
-                    .background(if (checked) accent else MaterialTheme.colorScheme.surface),
+                    .background(discFill)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = if (checked) MaterialTheme.colorScheme.onPrimary else accent,
+                    tint = discTint,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -420,6 +458,20 @@ private fun ThemeToggleTile(
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+        if (dots.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                dots.forEach { color ->
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(color)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
                     )
                 }
             }

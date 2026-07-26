@@ -30,10 +30,17 @@ object LinkParser {
             "amneziawg|warp|naive\\+https|naive\\+quic|naive|mierus|mieru|masque|socks5|socks|" +
             "https|http|happ|snell|juicity|anytls)://"
     )
-    private val AMNEZIA_JUNK_KEYS = setOf(
-        "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",
-        "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3", "itime"
-    )
+    // The extended core types the AmneziaWG options: jc/jmin/jmax/s1..s4/itime are
+    // integers, h1..h4 are uint32 ranges and the AWG 2.0 packet definitions
+    // i1..i5/j1..j3 must stay strings ("cannot unmarshal number into ... i1").
+    private val AMNEZIA_INT_KEYS = setOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime")
+    private val AMNEZIA_RANGE_KEYS = setOf("h1", "h2", "h3", "h4")
+    private val AMNEZIA_STR_KEYS = setOf("i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3")
+    private val AMNEZIA_JUNK_KEYS = AMNEZIA_INT_KEYS + AMNEZIA_RANGE_KEYS + AMNEZIA_STR_KEYS
+
+    // A happ crypt link may hide a subscription URL instead of a node; it has to
+    // go through the subscription fetch (parity with desktop node_service).
+    const val HAPP_SUBSCRIPTION_ERROR = "Happ link contains a subscription URL, add it as a subscription"
 
     const val MAX_IMPORT_BYTES = 8 * 1024 * 1024
     const val MAX_IMPORT_LINES = 20000
@@ -41,8 +48,32 @@ object LinkParser {
 
     private val AUTO_GROUP_TYPES = setOf("urltest", "url-test", "selector", "select", "fallback", "load-balance", "auto")
 
+    // Keys only a Clash/Mihomo proxy object uses; sing-box and Xray never spell a
+    // field with a dash, so one of these marks a bare JSON proxy as Clash-shaped.
+    private val CLASH_PROXY_MARKER_KEYS = setOf(
+        "private-key", "public-key", "pre-shared-key", "allowed-ips", "persistent-keepalive",
+        "amnezia-wg-option", "amnezia-options", "remote-dns-resolve", "skip-cert-verify",
+        "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "h2-opts", "http-opts",
+        "obfs-opts", "plugin-opts", "udp-over-tcp", "congestion-controller", "ip-version",
+        "auth-str", "hop-interval", "disable-mtu-discovery", "recv-window-conn", "dialer-proxy"
+    )
+
+    private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost", "0.0.0.0", "::1")
+    private val CLOUDFLARE_WARP_PEER_KEYS = setOf(
+        "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="
+    )
+
     /** Packs a urltest/selector pool into one AUTO node (parity with desktop Lumen). */
     private fun autoNodeFromMembers(name: String, members: List<ParsedNode>): ParsedNode {
+        // WARP generators often wrap one endpoint in a selector solely for
+        // compatibility with Clash. It is not an automatic pool and desktop
+        // Lumen exposes it as WARP, so keep the actual protocol on Android too.
+        if (members.size == 1 && isWarpMember(members.first())) {
+            val member = members.first()
+            return member.copy(
+                name = member.name.ifBlank { name.ifBlank { "WARP" } }
+            )
+        }
         val packed = members.map { member ->
             mapOf(
                 "name" to member.name,
@@ -53,14 +84,107 @@ object LinkParser {
                 "outbound" to member.outbound
             )
         }
+        val packedOutbound = mutableMapOf<String, Any?>(
+            "protocol" to "auto",
+            "auto_members" to packed
+        )
+        warpPoolDisplayProtocol(members)?.let { displayProtocol ->
+            // Keep urltest internally so every WARP endpoint remains usable, but
+            // do not expose a Clash compatibility selector as a generic AUTO node.
+            packedOutbound["warp"] = true
+            packedOutbound["display_protocol"] = displayProtocol
+        }
         return ParsedNode(
             name = name,
             scheme = "auto",
             server = "",
             port = 0,
             link = "auto",
-            outbound = mapOf("protocol" to "auto", "auto_members" to packed)
+            outbound = packedOutbound
         )
+    }
+
+    private fun warpPoolDisplayProtocol(members: List<ParsedNode>): String? {
+        if (members.isEmpty() || members.any { !isWarpMember(it) }) return null
+        return when {
+            members.all { it.scheme.equals("masque", true) } -> "MASQUE/WARP"
+            members.any {
+                it.scheme.equals("awg", true) ||
+                    it.outbound.toString().contains("amnezia", ignoreCase = true)
+            } -> "AWG/WARP"
+            members.all {
+                it.scheme.equals("wireguard", true) ||
+                    it.scheme.equals("wg", true) ||
+                    it.scheme.equals("warp", true)
+            } -> "WireGuard/WARP"
+            else -> "WARP"
+        }
+    }
+
+    private fun isWarpMember(node: ParsedNode): Boolean {
+        if (node.scheme.equals("warp", true)) return true
+        val haystack = buildString {
+            append(node.name.lowercase())
+            append(' ')
+            append(node.server.lowercase())
+            append(' ')
+            append(node.link.lowercase())
+            append(' ')
+            append(node.outbound.toString().lowercase())
+        }
+        return "\"warp\":true" in haystack.replace(" ", "") ||
+            "warp" in haystack ||
+            "cloudflareclient.com" in haystack ||
+            listOf(
+                "162.159.192.", "162.159.193.", "162.159.198.", "188.114.",
+                "2606:4700:110:", "2606:4700:d0:", "2606:4700:d1:"
+            )
+                .any { it in haystack }
+    }
+
+    private fun isCloudflareWarpProfile(
+        addresses: List<String>,
+        publicKey: String,
+        server: String
+    ): Boolean {
+        if (publicKey.trim() in CLOUDFLARE_WARP_PEER_KEYS) return true
+        val normalizedAddresses = addresses.map { it.trim().lowercase() }
+        if (normalizedAddresses.any { it.startsWith("2606:4700:110:") }) return true
+        val host = server.trim().lowercase()
+        return normalizedAddresses.any { it.substringBefore('/') == "172.16.0.2" } &&
+            listOf("162.159.192.", "162.159.193.", "162.159.198.", "188.114.")
+                .any { prefix -> host.startsWith(prefix) }
+    }
+
+    /**
+     * Panels ship a first "separator"/header profile that points nowhere
+     * (127.0.0.1:1). Such entries must never become a server row.
+     */
+    private fun isPlaceholderNode(node: ParsedNode): Boolean {
+        val host = node.server.trim().lowercase()
+        if (host in LOOPBACK_HOSTS && node.port == 1) return true
+        // Xray keeps the real address nested under settings.servers/vnext, so the
+        // whole outbound has to be scanned.
+        return hasPlaceholderTarget(node.outbound)
+    }
+
+    private fun hasPlaceholderTarget(value: Any?): Boolean = when (value) {
+        is Map<*, *> -> {
+            val entries = value.entries.associate {
+                it.key?.toString()?.lowercase().orEmpty() to it.value
+            }
+            val separator = entries["password"]?.toString()?.trim()?.equals("separator", true) == true
+            val host = listOf("address", "server", "host")
+                .firstNotNullOfOrNull { entries[it]?.toString()?.trim()?.lowercase() }
+            val port = listOf("port", "server_port")
+                .firstNotNullOfOrNull { entries[it]?.toString()?.trim()?.toIntOrNull() }
+            separator || (host in LOOPBACK_HOSTS && port == 1) ||
+                value.values.any { nested ->
+                    (nested is Map<*, *> || nested is List<*>) && hasPlaceholderTarget(nested)
+                }
+        }
+        is List<*> -> value.any { hasPlaceholderTarget(it) }
+        else -> false
     }
 
     /** Restores the servers packed into an AUTO node by [autoNodeFromMembers]. */
@@ -82,7 +206,7 @@ object LinkParser {
         }
     }
 
-    fun parseLinksText(text: String): Pair<List<ParsedNode>, List<String>> {
+    private fun parseLinksTextInternal(text: String): Pair<List<ParsedNode>, List<String>> {
         val bytes = text.toByteArray(Charsets.UTF_8)
         if (bytes.size > MAX_IMPORT_BYTES) {
             return Pair(emptyList(), listOf("Import data exceeds the $MAX_IMPORT_BYTES-byte limit"))
@@ -94,6 +218,9 @@ object LinkParser {
                 stripped = HappCrypt.decryptHappLink(stripped).trim()
             } catch (e: Exception) {
                 return Pair(emptyList(), listOf("Happ crypt decryption failed: ${e.message}"))
+            }
+            if (isSubscriptionUrl(stripped)) {
+                return Pair(emptyList(), listOf(HAPP_SUBSCRIPTION_ERROR))
             }
         }
 
@@ -143,7 +270,7 @@ object LinkParser {
             try {
                 val decoded = decodeB64(stripped).trim()
                 if (decoded.isNotEmpty() && (decoded.contains("://") || decoded.contains("\n"))) {
-                    return parseLinksText(decoded)
+                    return parseLinksTextInternal(decoded)
                 }
             } catch (e: Exception) {
                 // Ignore base64 decoding failure, fall through to lines
@@ -163,6 +290,7 @@ object LinkParser {
                 var currentLine = line
                 if (HappCrypt.isHappCryptLink(currentLine)) {
                     currentLine = HappCrypt.decryptHappLink(currentLine).trim()
+                    if (isSubscriptionUrl(currentLine)) throw LinkParseError(HAPP_SUBSCRIPTION_ERROR)
                 }
                 val node = parseSingle(currentLine)
                 applyHappServerMetadata(node, currentLine)
@@ -170,7 +298,7 @@ object LinkParser {
             } catch (e: Exception) {
                 // A single entry can itself be base64 (per-line encoded subscriptions).
                 val nested = if (isBase64Blob(line)) {
-                    runCatching { parseLinksText(decodeB64(line)) }.getOrNull()
+                    runCatching { parseLinksTextInternal(decodeB64(line)) }.getOrNull()
                 } else null
                 if (nested != null && nested.first.isNotEmpty()) {
                     nodes.addAll(nested.first)
@@ -184,15 +312,19 @@ object LinkParser {
             // Last resort: the whole payload may be base64 that failed the strict
             // blob checks above (stray characters, percent-encoded padding).
             val candidate = runCatching {
-                decodeB64(URLDecoder.decode(stripped, "UTF-8"))
+                decodeB64(percentDecodeKeepPlus(stripped))
             }.getOrNull() ?: runCatching { decodeB64(stripped) }.getOrNull()
             if (!candidate.isNullOrBlank() && candidate.trim() != stripped) {
-                val salvaged = runCatching { parseLinksText(candidate) }.getOrNull()
+                val salvaged = runCatching { parseLinksTextInternal(candidate) }.getOrNull()
                 if (salvaged != null && salvaged.first.isNotEmpty()) return salvaged
             }
         }
 
         return Pair(nodes, errors)
+    }
+
+    fun parseLinksText(text: String): Pair<List<ParsedNode>, List<String>> {
+        return parseLinksTextInternal(text)
     }
 
     /**
@@ -219,6 +351,14 @@ object LinkParser {
         return result
     }
 
+    /** True when the payload is nothing but a single http(s) subscription URL. */
+    fun isSubscriptionUrl(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.any { it.isWhitespace() }) return false
+        val lowered = trimmed.lowercase()
+        return lowered.startsWith("http://") || lowered.startsWith("https://")
+    }
+
     fun parseSingle(raw: String): ParsedNode {
         val text = raw.trim()
         if (text.isEmpty()) {
@@ -227,6 +367,7 @@ object LinkParser {
 
         if (HappCrypt.isHappCryptLink(text)) {
             val decrypted = HappCrypt.decryptHappLink(text).trim()
+            if (isSubscriptionUrl(decrypted)) throw LinkParseError(HAPP_SUBSCRIPTION_ERROR)
             return parseSingle(decrypted)
         }
 
@@ -248,13 +389,14 @@ object LinkParser {
             "ss" -> parseShadowsocks(text)
             "socks", "socks5" -> parseSocks(text)
             "http", "https" -> parseHttp(text)
-            "wireguard", "wg", "awg", "warp" -> parseWireGuardLink(text)
+            "wireguard", "wg", "awg", "amneziawg", "warp" -> parseWireGuardLink(text)
             "hysteria", "hy" -> parseHysteria1(text)
             "hysteria2", "hy2" -> parseHysteria2(text)
             "tuic" -> parseTuic(text)
             "naive", "naive+https", "naive+quic", "quic" -> parseNaiveLink(text, scheme)
             "mieru", "mierus" -> parseMieru(text)
             "masque" -> parseMasque(text)
+            "anytls" -> parseAnyTls(text)
             else -> throw LinkParseError("Unsupported scheme: ${if (scheme.isEmpty()) "unknown" else scheme}")
         }
     }
@@ -273,7 +415,7 @@ object LinkParser {
 
     private fun extractFragment(link: String): String? {
         val idx = link.indexOf('#')
-        return if (idx != -1) unquote(link.substring(idx + 1).trim()) else null
+        return if (idx != -1) link.substring(idx + 1).trim() else null
     }
 
     private fun isBase64Blob(text: String): Boolean {
@@ -311,14 +453,6 @@ object LinkParser {
         return String(bytes, Charsets.UTF_8)
     }
 
-    private fun unquote(str: String): String {
-        return try {
-            URLDecoder.decode(str, "UTF-8")
-        } catch (e: Exception) {
-            str
-        }
-    }
-
     private fun parseQueryParams(queryString: String?): Map<String, String> {
         if (queryString.isNullOrEmpty()) return emptyMap()
         val params = mutableMapOf<String, String>()
@@ -326,11 +460,11 @@ object LinkParser {
         for (pair in pairs) {
             val idx = pair.indexOf("=")
             if (idx != -1) {
-                val key = unquote(pair.substring(0, idx)).lowercase()
-                val value = unquote(pair.substring(idx + 1))
+                val key = percentDecodeKeepPlus(pair.substring(0, idx)).lowercase()
+                val value = percentDecodeKeepPlus(pair.substring(idx + 1))
                 params[key] = value
             } else if (pair.isNotEmpty()) {
-                params[unquote(pair).lowercase()] = ""
+                params[percentDecodeKeepPlus(pair).lowercase()] = ""
             }
         }
         return params
@@ -338,14 +472,18 @@ object LinkParser {
 
     private fun cleanName(name: String?, fallback: String): String {
         if (name.isNullOrBlank()) return fallback
-        val valUnquoted = unquote(name).split("?")[0].trim()
-        return valUnquoted.ifEmpty { fallback }
+        val decoded = percentDecodeKeepPlus(name.substringBefore("?")).trim()
+        return decoded.ifEmpty { fallback }
     }
+
+    // java.net.URI already percent-decodes getUserInfo(), so the raw component is
+    // the only safe source: decoding twice corrupts '%' and '+' inside secrets.
+    private fun userInfoOf(uri: URI): String? = uri.rawUserInfo?.let { percentDecodeKeepPlus(it) }
 
     private fun parseVless(link: String): ParsedNode {
         val uri = safeCreateUri(link)
         val fragment = extractFragment(link)
-        val userId = uri.userInfo?.let { unquote(it) } ?: throw LinkParseError("Invalid VLESS link: missing UUID")
+        val userId = userInfoOf(uri) ?: throw LinkParseError("Invalid VLESS link: missing UUID")
         val server = uri.host ?: throw LinkParseError("Invalid VLESS link: missing host")
         val port = if (uri.port > 0) uri.port else 443
 
@@ -438,7 +576,7 @@ object LinkParser {
     private fun parseTrojan(link: String): ParsedNode {
         val uri = safeCreateUri(link)
         val fragment = extractFragment(link)
-        val password = uri.userInfo?.let { unquote(it) } ?: throw LinkParseError("Invalid Trojan link: missing password")
+        val password = userInfoOf(uri) ?: throw LinkParseError("Invalid Trojan link: missing password")
         val server = uri.host ?: throw LinkParseError("Invalid Trojan link: missing host")
         val port = if (uri.port > 0) uri.port else 443
 
@@ -467,10 +605,10 @@ object LinkParser {
         val body = link.substringAfter("ss://").trim()
         val fragment = extractFragment(link)
         val mainPart = body.substringBefore("#")
+        val params = parseQueryParams(mainPart.substringAfter("?", ""))
 
-        var userInfo = ""
-        var server = ""
-        var port = 8388
+        val server: String
+        val port: Int
         var method = ""
         var password = ""
 
@@ -479,49 +617,57 @@ object LinkParser {
             val userStr = userAndHost.substringBeforeLast("@")
             val hostStr = userAndHost.substringAfterLast("@")
 
-            server = hostStr.substringBefore(":")
-            port = hostStr.substringAfter(":", "8388").toIntOrNull() ?: 8388
+            // SIP002 puts a '/' between the authority and the plugin query and
+            // allows IPv6 literals, so the authority needs a real splitter.
+            val hostAndPort = splitHostPort(hostStr, 8388, "Shadowsocks")
+            server = hostAndPort.first
+            port = hostAndPort.second
 
             if (userStr.contains(":")) {
-                method = unquote(userStr.substringBefore(":"))
-                password = unquote(userStr.substringAfter(":"))
+                method = percentDecodeKeepPlus(userStr.substringBefore(":"))
+                password = percentDecodeKeepPlus(userStr.substringAfter(":"))
             } else {
                 val decodedUser = try { decodeB64(userStr) } catch (e: Exception) { userStr }
-                if (decodedUser.contains(":")) {
-                    method = decodedUser.substringBefore(":")
-                    password = decodedUser.substringAfter(":")
-                } else {
-                    password = decodedUser
-                }
+                if (!decodedUser.contains(":")) throw LinkParseError("invalid shadowsocks credentials")
+                method = decodedUser.substringBefore(":")
+                password = decodedUser.substringAfter(":")
             }
         } else {
             val decoded = try { decodeB64(mainPart.substringBefore("?")) } catch (e: Exception) { "" }
-            if (decoded.contains("@")) {
+            if (decoded.contains("@") && decoded.contains(":")) {
                 val userStr = decoded.substringBeforeLast("@")
-                val hostStr = decoded.substringAfterLast("@")
-                server = hostStr.substringBefore(":")
-                port = hostStr.substringAfter(":", "8388").toIntOrNull() ?: 8388
-                method = decoded.substringBefore(":")
-                password = userStr.substringAfter(":")
+                val hostAndPort = splitHostPort(decoded.substringAfterLast("@"), 8388, "Shadowsocks")
+                server = hostAndPort.first
+                port = hostAndPort.second
+                method = userStr.substringBefore(":")
+                password = userStr.substringAfter(":", "")
             } else {
                 throw LinkParseError("Invalid Shadowsocks link format")
             }
         }
 
-        if (method.isEmpty()) method = "aes-256-gcm"
+        // The builder accepts an empty password only for the `none` method.
+        if (method.isEmpty() || server.isEmpty() || (password.isEmpty() && method.lowercase() != "none")) {
+            throw LinkParseError("invalid shadowsocks link")
+        }
+
+        val serverMap = mutableMapOf<String, Any?>(
+            "address" to server,
+            "port" to port,
+            "method" to method,
+            "password" to password
+        )
+        // SIP003: the plugin query packs "<name>;<opts>" into one value, while the
+        // core wants the name and the options in separate keys.
+        params["plugin"]?.takeIf { it.isNotEmpty() }?.let { raw ->
+            serverMap["plugin"] = raw.substringBefore(";")
+            val opts = (params["plugin_opts"] ?: params["plugin-opts"] ?: raw.substringAfter(";", ""))
+            if (opts.isNotEmpty()) serverMap["plugin_opts"] = opts
+        }
 
         val outbound = mapOf<String, Any?>(
             "protocol" to "shadowsocks",
-            "settings" to mapOf(
-                "servers" to listOf(
-                    mapOf(
-                        "address" to server,
-                        "port" to port,
-                        "method" to method,
-                        "password" to password
-                    )
-                )
-            )
+            "settings" to mapOf("servers" to listOf(serverMap))
         )
 
         val name = cleanName(fragment, "ss-$server:$port")
@@ -537,7 +683,7 @@ object LinkParser {
         val server = uri.host ?: params["server"] ?: params["address"] ?: params["host"]
             ?: throw LinkParseError("Invalid Hysteria link: missing host")
         val port = if (uri.port > 0) uri.port else params["port"]?.toIntOrNull() ?: 443
-        val auth = uri.userInfo?.let { unquote(it) }?.takeIf { it.isNotEmpty() }
+        val auth = userInfoOf(uri)?.takeIf { it.isNotEmpty() }
             ?: params["auth"] ?: params["auth_str"] ?: params["authstr"] ?: params["password"] ?: ""
         if (auth.isEmpty()) throw LinkParseError("hysteria link must contain server and auth/password")
 
@@ -549,8 +695,8 @@ object LinkParser {
             "auth_str" to auth
         )
         params["protocol"]?.takeIf { it.isNotEmpty() }?.let { singbox["protocol"] = it }
-        (params["upmbps"] ?: params["up_mbps"] ?: params["up"])?.toIntOrNull()?.let { singbox["up_mbps"] = it }
-        (params["downmbps"] ?: params["down_mbps"] ?: params["down"])?.toIntOrNull()?.let { singbox["down_mbps"] = it }
+        speedMbps(params["upmbps"] ?: params["up_mbps"] ?: params["up"])?.let { singbox["up_mbps"] = it }
+        speedMbps(params["downmbps"] ?: params["down_mbps"] ?: params["down"])?.let { singbox["down_mbps"] = it }
 
         val tls = mutableMapOf<String, Any?>("enabled" to true)
         tls["server_name"] = params["sni"] ?: params["peer"] ?: params["server_name"] ?: params["servername"] ?: server
@@ -560,10 +706,7 @@ object LinkParser {
         }
         singbox["tls"] = tls
 
-        val obfsType = params["obfs"] ?: params["obfs_type"] ?: params["obfstype"] ?: ""
-        val obfsPassword = params["obfs-password"] ?: params["obfs_password"] ?: params["obfspassword"]
-            ?: params["obfs-pass"] ?: params["obfspass"] ?: ""
-        if ((obfsType.isNotEmpty() || obfsPassword.isNotEmpty()) && obfsType != "none") {
+        hysteriaObfs(params)?.let { (obfsType, obfsPassword) ->
             // Hysteria v1 expects the obfuscation password as a plain string.
             singbox["obfs"] = obfsPassword.ifEmpty { obfsType }
         }
@@ -580,15 +723,13 @@ object LinkParser {
     private fun parseHysteria2(link: String): ParsedNode {
         val uri = safeCreateUri(link)
         val fragment = extractFragment(link)
-        val auth = uri.userInfo?.let { unquote(it) } ?: ""
+        val auth = userInfoOf(uri) ?: ""
         val server = uri.host ?: throw LinkParseError("Invalid Hysteria2 link: missing host")
         val port = if (uri.port > 0) uri.port else 443
         val params = parseQueryParams(uri.rawQuery)
 
-        val sni = params["sni"] ?: params["peer"] ?: server
-        val insecure = params["insecure"] == "1" || params["insecure"] == "true"
-        val obfs = params["obfs"] ?: ""
-        val obfsPassword = params["obfs-password"] ?: ""
+        val sni = params["sni"] ?: params["peer"] ?: params["server_name"] ?: params["servername"] ?: server
+        val insecure = toBool(params["insecure"]) || toBool(params["allowinsecure"]) || toBool(params["allow_insecure"])
 
         val singbox = mutableMapOf<String, Any?>(
             "type" to "hysteria2",
@@ -602,11 +743,10 @@ object LinkParser {
             )
         )
 
-        if (obfs.isNotEmpty()) {
-            singbox["obfs"] = mapOf(
-                "type" to obfs,
-                "password" to obfsPassword
-            )
+        hysteriaObfs(params)?.let { (obfsType, obfsPassword) ->
+            val obfs = mutableMapOf<String, Any?>("type" to obfsType.ifEmpty { "salamander" })
+            if (obfsPassword.isNotEmpty()) obfs["password"] = obfsPassword
+            singbox["obfs"] = obfs
         }
 
         val outbound = mapOf<String, Any?>(
@@ -621,21 +761,31 @@ object LinkParser {
     private fun parseTuic(link: String): ParsedNode {
         val uri = safeCreateUri(link)
         val fragment = extractFragment(link)
-        val userInfo = uri.userInfo?.let { unquote(it) } ?: ""
+        val userInfo = userInfoOf(uri) ?: ""
         val uuid = userInfo.substringBefore(":")
         val password = userInfo.substringAfter(":", "")
 
         val server = uri.host ?: throw LinkParseError("Invalid TUIC link: missing host")
         val port = if (uri.port > 0) uri.port else 8443
         val params = parseQueryParams(uri.rawQuery)
+        if (uuid.isEmpty()) throw LinkParseError("tuic link must contain server and uuid")
 
-        val sni = params["sni"] ?: server
-        val congestionControl = params["congestion_control"] ?: "bbr"
+        val sni = params["sni"] ?: params["peer"] ?: params["server_name"] ?: params["servername"] ?: server
+        val congestionControl = params["congestion_control"] ?: params["congestion"] ?: params["cc"] ?: "cubic"
         val udpRelayMode = params["udp_relay_mode"] ?: "native"
         val alpnStr = params["alpn"] ?: "h3"
         val alpn = alpnStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
-        val singbox = mapOf<String, Any?>(
+        val tls = mutableMapOf<String, Any?>(
+            "enabled" to true,
+            "server_name" to sni,
+            "alpn" to alpn
+        )
+        if (toBool(params["insecure"]) || toBool(params["allowinsecure"]) || toBool(params["allow_insecure"])) {
+            tls["insecure"] = true
+        }
+
+        val singbox = mutableMapOf<String, Any?>(
             "type" to "tuic",
             "server" to server,
             "server_port" to port,
@@ -643,12 +793,11 @@ object LinkParser {
             "password" to password,
             "congestion_control" to congestionControl,
             "udp_relay_mode" to udpRelayMode,
-            "tls" to mapOf(
-                "enabled" to true,
-                "server_name" to sni,
-                "alpn" to alpn
-            )
+            "tls" to tls
         )
+        if (toBool(params["zero_rtt_handshake"] ?: params["zero_rtt"] ?: params["reduce_rtt"])) {
+            singbox["zero_rtt_handshake"] = true
+        }
 
         val outbound = mapOf<String, Any?>(
             "protocol" to "tuic",
@@ -657,6 +806,66 @@ object LinkParser {
 
         val name = cleanName(fragment, "tuic-$server:$port")
         return ParsedNode(name = name, scheme = "tuic", server = server, port = port, link = link, outbound = outbound)
+    }
+
+    private fun parseAnyTls(link: String): ParsedNode {
+        val uri = safeCreateUri(link)
+        val fragment = extractFragment(link)
+        val params = parseQueryParams(uri.rawQuery)
+        val password = (userInfoOf(uri) ?: "").ifEmpty { params["password"] ?: "" }
+        val server = uri.host ?: throw LinkParseError("Invalid AnyTLS link: missing host")
+        val port = if (uri.port > 0) uri.port else 443
+        if (password.isEmpty()) throw LinkParseError("anytls link must contain server and password")
+
+        val tls = mutableMapOf<String, Any?>(
+            "enabled" to true,
+            "server_name" to (params["sni"] ?: params["peer"] ?: params["server_name"] ?: params["servername"] ?: server)
+        )
+        if (toBool(params["insecure"]) || toBool(params["allowinsecure"]) || toBool(params["allow_insecure"])) {
+            tls["insecure"] = true
+        }
+        params["alpn"]?.takeIf { it.isNotEmpty() }?.let {
+            tls["alpn"] = it.split(",").map { s -> s.trim() }.filter { s -> s.isNotEmpty() }
+        }
+
+        val singbox = mutableMapOf<String, Any?>(
+            "type" to "anytls",
+            "tag" to "proxy",
+            "server" to server,
+            "server_port" to port,
+            "password" to password,
+            "tls" to tls
+        )
+        (params["idle_session_check_interval"] ?: params["idle-session-check-interval"])?.takeIf { it.isNotEmpty() }?.let {
+            singbox["idle_session_check_interval"] = it
+        }
+        (params["idle_session_timeout"] ?: params["idle-session-timeout"])?.takeIf { it.isNotEmpty() }?.let {
+            singbox["idle_session_timeout"] = it
+        }
+        (params["min_idle_session"] ?: params["min-idle-session"])?.toIntOrNull()?.let {
+            singbox["min_idle_session"] = it
+        }
+
+        val outbound = mapOf<String, Any?>("protocol" to "anytls", "singbox" to singbox)
+        val name = cleanName(fragment, "anytls-$server:$port")
+        return ParsedNode(name = name, scheme = "anytls", server = server, port = port, link = link, outbound = outbound)
+    }
+
+    /** Bandwidth values often carry a unit suffix ("200 Mbps"), as in Clash YAML. */
+    private fun speedMbps(value: String?): Int? = value?.filter { it.isDigit() }?.toIntOrNull()
+
+    /**
+     * Shared hysteria v1/v2 obfuscation parameters (parity with desktop
+     * _apply_hysteria_obfs): a link may carry only the password, only the type,
+     * or disable obfuscation with `none`.
+     */
+    private fun hysteriaObfs(params: Map<String, String>): Pair<String, String>? {
+        val obfsType = params["obfs"] ?: params["obfs_type"] ?: params["obfstype"] ?: ""
+        val obfsPassword = params["obfs-password"] ?: params["obfs_password"] ?: params["obfspassword"]
+            ?: params["obfs-pass"] ?: params["obfspass"] ?: ""
+        if (obfsType.isEmpty() && obfsPassword.isEmpty()) return null
+        if (obfsType.equals("none", ignoreCase = true)) return null
+        return Pair(obfsType, obfsPassword)
     }
 
     private fun toBool(value: Any?): Boolean = when (value) {
@@ -685,7 +894,7 @@ object LinkParser {
         val server = uri.host ?: throw LinkParseError("NaiveProxy URI must contain server and port")
         val port = if (uri.port > 0) uri.port else 443
         val params = parseQueryParams(uri.rawQuery)
-        val userInfo = uri.userInfo?.let { unquote(it) } ?: ""
+        val userInfo = userInfoOf(uri) ?: ""
         val username = userInfo.substringBefore(":", userInfo)
         val password = if (userInfo.contains(":")) userInfo.substringAfter(":") else ""
         val serverName = params["sni"] ?: params["server_name"] ?: params["servername"] ?: server
@@ -739,7 +948,7 @@ object LinkParser {
         val params = parseQueryParams(uri.rawQuery)
         val server = uri.host ?: params["server"] ?: params["address"] ?: params["host"] ?: ""
         val port = if (uri.port > 0) uri.port else (params["port"] ?: params["server_port"])?.toIntOrNull() ?: 0
-        val userInfo = uri.userInfo?.let { unquote(it) } ?: ""
+        val userInfo = userInfoOf(uri) ?: ""
         val username = userInfo.substringBefore(":", userInfo).ifEmpty { params["username"] ?: params["user"] ?: "" }
         val password = (if (userInfo.contains(":")) userInfo.substringAfter(":") else "")
             .ifEmpty { params["password"] ?: params["pass"] ?: "" }
@@ -786,7 +995,7 @@ object LinkParser {
         val atIdx = authority.lastIndexOf('@')
         val authToken = (if (atIdx > 0) percentDecodeKeepPlus(authority.substring(0, atIdx)) else "")
             .ifEmpty { params["auth_token"] ?: params["token"] ?: "" }
-        val profileId = unquote((if (atIdx >= 0) authority.substring(atIdx + 1) else authority).trim())
+        val profileId = percentDecodeKeepPlus((if (atIdx >= 0) authority.substring(atIdx + 1) else authority).trim())
             .ifEmpty { params["id"] ?: params["profile_id"] ?: "" }
 
         val profile = mutableMapOf<String, Any?>("detour" to "direct")
@@ -819,7 +1028,7 @@ object LinkParser {
         }
 
         val outbound = mapOf<String, Any?>("protocol" to "masque", "singbox" to singbox)
-        val fragment = if (fragmentIdx != -1) percentDecodeKeepPlus(trimmed.substring(fragmentIdx + 1)) else null
+        val fragment = if (fragmentIdx != -1) trimmed.substring(fragmentIdx + 1) else null
         val name = cleanName(fragment, "MASQUE")
         return ParsedNode(name = name, scheme = "masque", server = profileId, port = 0, link = link, outbound = outbound)
     }
@@ -828,7 +1037,7 @@ object LinkParser {
         val uri = try { URI(link) } catch (e: Exception) { throw LinkParseError("Invalid SOCKS URL: ${e.message}") }
         val server = uri.host ?: throw LinkParseError("Invalid SOCKS link: missing host")
         val port = if (uri.port > 0) uri.port else 1080
-        val userInfo = uri.userInfo?.let { unquote(it) } ?: ""
+        val userInfo = userInfoOf(uri) ?: ""
 
         val serverMap = mutableMapOf<String, Any?>("address" to server, "port" to port)
         if (userInfo.contains(":")) {
@@ -851,7 +1060,7 @@ object LinkParser {
         val uri = try { URI(link) } catch (e: Exception) { throw LinkParseError("Invalid HTTP URL: ${e.message}") }
         val server = uri.host ?: throw LinkParseError("Invalid HTTP link: missing host")
         val port = if (uri.port > 0) uri.port else 8080
-        val userInfo = uri.userInfo?.let { unquote(it) } ?: ""
+        val userInfo = userInfoOf(uri) ?: ""
 
         val serverMap = mutableMapOf<String, Any?>("address" to server, "port" to port)
         if (userInfo.contains(":")) {
@@ -862,12 +1071,48 @@ object LinkParser {
             serverMap["users"] = listOf(user)
         }
 
-        val outbound = mapOf<String, Any?>(
+        val outbound = mutableMapOf<String, Any?>(
             "protocol" to "http",
             "settings" to mapOf("servers" to listOf(serverMap))
         )
+        if (uri.scheme.equals("https", ignoreCase = true)) {
+            outbound["tls"] = mapOf("enabled" to true, "server_name" to server)
+        }
         val name = cleanName(uri.rawFragment, "http-$server:$port")
         return ParsedNode(name = name, scheme = "http", server = server, port = port, link = link, outbound = outbound)
+    }
+
+    /**
+     * Splits an authority into host and port. Handles IPv6 literals and the
+     * trailing '/' SIP002 puts before the plugin query; an explicit port that is
+     * not a valid 1..65535 number is an error instead of a silent default.
+     */
+    private fun splitHostPort(hostPort: String, defaultPort: Int, label: String): Pair<String, Int> {
+        val trimmed = hostPort.trim()
+        val host: String
+        val portToken: String
+        if (trimmed.startsWith("[")) {
+            val close = trimmed.indexOf(']')
+            if (close <= 0) throw LinkParseError("Invalid $label link: missing host")
+            host = trimmed.substring(1, close)
+            val rest = trimmed.substring(close + 1).substringBefore('/')
+            portToken = if (rest.startsWith(":")) rest.substring(1) else ""
+        } else {
+            val authority = trimmed.substringBefore('/')
+            val colonIdx = authority.lastIndexOf(':')
+            if (colonIdx > 0) {
+                host = authority.substring(0, colonIdx)
+                portToken = authority.substring(colonIdx + 1)
+            } else {
+                host = authority
+                portToken = ""
+            }
+        }
+        if (host.isBlank()) throw LinkParseError("Invalid $label link: missing host")
+        if (portToken.isEmpty()) return Pair(host, defaultPort)
+        val port = portToken.toIntOrNull()?.takeIf { it in 1..65535 }
+            ?: throw LinkParseError("Invalid $label link: invalid port `$portToken`")
+        return Pair(host, port)
     }
 
     // Percent-decodes a string WITHOUT treating '+' as a space (base64 keys contain '+').
@@ -879,6 +1124,27 @@ object LinkParser {
             str
         }
     }
+
+    /** Coerces one AmneziaWG option to the type the extended core expects. */
+    private fun amneziaValue(key: String, value: Any?): Any? {
+        val text = value?.toString()?.trim() ?: return null
+        if (text.isEmpty()) return null
+        return when (key) {
+            // i1..i5/j1..j3 are packet definitions, and a uint32 range accepts the
+            // string form too, so h1..h4 never risk an Int overflow.
+            in AMNEZIA_STR_KEYS, in AMNEZIA_RANGE_KEYS -> text
+            else -> text.toIntOrNull() ?: text
+        }
+    }
+
+    // wg-quick/AmneziaWG exports keep the profile name in a leading comment
+    // ("# Name = AWG 🇳🇱 Titan AWG 2.0"), the only label such a file carries.
+    private val WG_CONF_NAME_REGEX = Regex("^[#;]\\s*(?:name|title)\\s*[:=]\\s*(.+)$", RegexOption.IGNORE_CASE)
+
+    /** Clash keeps the AmneziaWG knobs in a nested block; providers vary on its spelling. */
+    private fun clashAmneziaOptions(map: Map<String, Any?>): Map<*, *> =
+        (map["amnezia-wg-option"] ?: map["amnezia_wg_option"] ?: map["amnezia"] ?: map["amnezia-options"])
+            as? Map<*, *> ?: emptyMap<String, Any?>()
 
     private fun parseWireGuardLink(link: String): ParsedNode {
         // Parsed manually: WireGuard/AWG private keys are base64 and may contain
@@ -910,34 +1176,18 @@ object LinkParser {
         }
 
         val hostPort = if (atIdx >= 0) authority.substring(atIdx + 1) else authority
-        val server: String
-        var port = 51820
-        if (hostPort.startsWith("[")) {
-            val close = hostPort.indexOf(']')
-            if (close <= 0) throw LinkParseError("Invalid WireGuard link: missing host")
-            server = hostPort.substring(1, close)
-            val rest = hostPort.substring(close + 1)
-            if (rest.startsWith(":")) port = rest.substring(1).toIntOrNull() ?: 51820
-        } else {
-            val colonIdx = hostPort.lastIndexOf(':')
-            if (colonIdx > 0) {
-                server = hostPort.substring(0, colonIdx)
-                port = hostPort.substring(colonIdx + 1).toIntOrNull() ?: 51820
-            } else {
-                server = hostPort
-            }
-        }
-        if (server.isBlank()) throw LinkParseError("Invalid WireGuard link: missing host")
+        val (server, port) = splitHostPort(hostPort, 51820, "WireGuard")
 
         val publicKey = params["publickey"] ?: params["public_key"] ?: params["public-key"] ?: params["pk"] ?: ""
         val addressStr = params["ip"] ?: params["address"] ?: ""
         val address = addressStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        if (privateKey.isBlank() || publicKey.isBlank() || address.isEmpty()) {
+            throw LinkParseError("wireguard link must contain a private key, a peer public key and an interface address")
+        }
 
         val amneziaMap = mutableMapOf<String, Any?>()
         for (junkKey in AMNEZIA_JUNK_KEYS) {
-            params[junkKey]?.let { valStr ->
-                valStr.toIntOrNull()?.let { amneziaMap[junkKey] = it } ?: run { amneziaMap[junkKey] = valStr }
-            }
+            amneziaValue(junkKey, params[junkKey])?.let { amneziaMap[junkKey] = it }
         }
         val isAwg = link.lowercase().startsWith("awg://") || link.lowercase().startsWith("amneziawg://") || amneziaMap.isNotEmpty()
 
@@ -981,8 +1231,11 @@ object LinkParser {
         )
         if (dnsServers.isNotEmpty()) outbound["_dns"] = dnsServers
         val scheme = if (isAwg) "awg" else "wireguard"
-        val fragment = if (fragmentIdx != -1) percentDecodeKeepPlus(trimmed.substring(fragmentIdx + 1)) else null
-        val name = cleanName(fragment, if (isAwg) "awg-$server:$port" else "wg-$server:$port")
+        val fragment = if (fragmentIdx != -1) trimmed.substring(fragmentIdx + 1) else null
+        // Some providers label the endpoint with a query parameter instead of a
+        // fragment; either way the full provider name must survive the import.
+        val label = fragment?.takeIf { it.isNotBlank() } ?: params["name"] ?: params["remarks"]
+        val name = cleanName(label, if (isAwg) "awg-$server:$port" else "wg-$server:$port")
         return ParsedNode(name = name, scheme = scheme, server = server, port = port, link = link, outbound = outbound)
     }
 
@@ -1000,12 +1253,21 @@ object LinkParser {
         var keepalive = 0
         var reserved = ""
         val allowedIpsList = mutableListOf<String>()
+        // The provider name is the only human readable label a .conf carries.
+        var profileName = ""
 
         val amneziaMap = mutableMapOf<String, Any?>()
 
         for (rawLine in text.lines()) {
             val line = rawLine.trim()
-            if (line.isEmpty() || line.startsWith("#") || line.startsWith(";")) continue
+            if (line.isEmpty()) continue
+            if (line.startsWith("#") || line.startsWith(";")) {
+                if (profileName.isEmpty()) {
+                    WG_CONF_NAME_REGEX.find(line)?.groupValues?.get(1)?.trim()
+                        ?.takeIf { it.isNotEmpty() }?.let { profileName = it }
+                }
+                continue
+            }
             if (line.startsWith("[") && line.endsWith("]")) {
                 currentSection = line.substring(1, line.length - 1).trim().lowercase()
                 continue
@@ -1022,11 +1284,9 @@ object LinkParser {
                     "address" -> addressList.addAll(value.split(",").map { it.trim() }.filter { it.isNotEmpty() })
                     "mtu" -> mtu = value.toIntOrNull() ?: 0
                     "dns" -> dnsList.addAll(value.split(",").map { it.trim() }.filter { it.isNotEmpty() })
-                    "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3", "itime" -> {
-                        value.toIntOrNull()?.let { amneziaMap[key] = it } ?: run { amneziaMap[key] = value }
-                    }
-                    "h1", "h2", "h3", "h4" -> {
-                        amneziaMap[key] = value
+                    "name" -> if (value.isNotEmpty()) profileName = value
+                    in AMNEZIA_JUNK_KEYS -> {
+                        amneziaValue(key, value)?.let { amneziaMap[key] = it }
                     }
                 }
             } else if (currentSection == "peer") {
@@ -1054,6 +1314,7 @@ object LinkParser {
         }
 
         val isAwg = amneziaMap.isNotEmpty()
+        val isWarp = isCloudflareWarpProfile(addressList, publicKey, endpointHost)
         val scheme = if (isAwg) "awg" else "wireguard"
         val peer = mutableMapOf<String, Any?>(
             "public_key" to publicKey,
@@ -1084,8 +1345,20 @@ object LinkParser {
             "singbox" to singbox
         )
         if (dnsList.isNotEmpty()) outbound["_dns"] = dnsList
+        if (isWarp) {
+            outbound["warp"] = true
+            outbound["display_protocol"] = if (isAwg) "AWG/WARP" else "WireGuard/WARP"
+        }
 
-        return ParsedNode(name = if (isAwg) "AmneziaWG-$endpointHost" else "WireGuard-$endpointHost", scheme = scheme, server = endpointHost, port = endpointPort, link = text, outbound = outbound)
+        val name = when {
+            // A provider name always wins: only a nameless config may fall back to
+            // the technical label the UI later replaces with a location.
+            profileName.isNotEmpty() -> profileName
+            isWarp -> "WARP"
+            isAwg -> "AmneziaWG-$endpointHost"
+            else -> "WireGuard-$endpointHost"
+        }
+        return ParsedNode(name = name, scheme = scheme, server = endpointHost, port = endpointPort, link = text, outbound = outbound)
     }
 
     private val OPENVPN_INLINE_BLOCK_REGEX = Regex(
@@ -1096,8 +1369,97 @@ object LinkParser {
         "AES-128-CBC", "AES-192-CBC", "AES-256-CBC", "CHACHA20-POLY1305"
     )
     private val OPENVPN_UNSAFE_DIRECTIVES = setOf(
-        "askpass", "http-proxy", "http-proxy-user-pass", "pkcs12", "secret", "socks-proxy", "socks-proxy-retry"
+        "askpass", "http-proxy-user-pass", "pkcs12", "secret"
     )
+
+    /** "Use proxy" values Lumen understands; obfs variants are terminated in-app. */
+    private val OPENVPN_OBFS_PROXIES = setOf("obfs3", "obfs2", "obfs2-legacy")
+
+    /**
+     * Reads the "Use proxy" setting of an OpenVPN profile: the standard
+     * `http-proxy` / `socks-proxy` directives plus the Lumen comments
+     * `# lumen-proxy <obfs> <host> <port>` and `# lumen-proxy-auth <user> <pass>`.
+     */
+    private fun parseOpenVpnProxy(
+        text: String,
+        byKey: Map<String, List<List<String>>>
+    ): Map<String, Any?>? {
+        fun comment(prefix: String): List<String> = text.lines()
+            .map { it.trim() }
+            .lastOrNull { it.startsWith("# $prefix ") }
+            ?.removePrefix("# $prefix ")
+            ?.split(Regex("\\s+"))
+            ?.filter { it.isNotEmpty() }
+            .orEmpty()
+
+        val obfs = comment("lumen-proxy")
+        val auth = comment("lumen-proxy-auth")
+        val http = byKey["http-proxy"]?.lastOrNull().orEmpty()
+        val socks = byKey["socks-proxy"]?.lastOrNull().orEmpty()
+        val type = when {
+            obfs.firstOrNull() in OPENVPN_OBFS_PROXIES -> obfs[0]
+            http.isNotEmpty() -> "http"
+            socks.isNotEmpty() -> "socks"
+            else -> return null
+        }
+        val endpoint = when (type) {
+            "http" -> http
+            "socks" -> socks
+            else -> obfs.drop(1)
+        }
+        val host = endpoint.getOrNull(0)?.trim().orEmpty()
+        if (host.isEmpty()) throw LinkParseError("OpenVPN proxy `$type` is missing a server address")
+        val port = endpoint.getOrNull(1)?.trim()?.toIntOrNull()?.takeIf { it in 1..65535 }
+            ?: throw LinkParseError("invalid OpenVPN proxy port for `$type`")
+        return buildMap {
+            put("type", type)
+            put("server", host)
+            put("server_port", port)
+            auth.getOrNull(0)?.let { put("username", it) }
+            auth.getOrNull(1)?.let { put("password", it) }
+        }
+    }
+
+    /**
+     * True when the profile logs the user in instead of relying on certificates
+     * alone. `auth-user-pass` arrives either as a bare directive or as an inline
+     * `<auth-user-pass>` block, and the inline blocks are stripped before the
+     * directives are tokenized, so both spellings have to be looked for.
+     * Certificate-only profiles carry neither and need no credentials.
+     */
+    fun openVpnRequiresUserAuth(text: String): Boolean {
+        var inlineAuth = false
+        val inlineBlocks = mutableSetOf<String>()
+        val directivesText = OPENVPN_INLINE_BLOCK_REGEX.replace(text) { match ->
+            val name = match.groupValues[1].lowercase()
+            inlineBlocks += name
+            if (name == "auth-user-pass") inlineAuth = true
+            ""
+        }
+        if (inlineAuth) return true
+        val directives = directivesText.lines().mapNotNull { rawLine ->
+            val line = rawLine.trim()
+            if (line.isEmpty() || line.startsWith("#") || line.startsWith(";")) return@mapNotNull null
+            runCatching { tokenizeOpenVpnLine(line) }.getOrNull()
+                ?.firstOrNull()?.trimStart('-')?.trim()?.lowercase()
+        }.toSet()
+        if ("auth-user-pass" in directives) return true
+        // Only judge a text that is actually a profile. A stored node can carry a
+        // placeholder link instead of its .ovpn, and calling that "needs a login"
+        // would reject a node that has always worked.
+        val looksLikeProfile = OPENVPN_PROFILE_MARKERS.any { it in inlineBlocks || it in directives }
+        if (!looksLikeProfile) return false
+        // A profile with neither a client certificate nor a private key has nothing
+        // to authenticate with on its own, so it needs a login even though it never
+        // says so. `ca` alone verifies the server, not the client. Matches
+        // openVpnRequiresCredentials in the editor, which warns about the same
+        // profile before the node is saved.
+        return OPENVPN_CLIENT_AUTH_KEYS.none { it in inlineBlocks || it in directives }
+    }
+
+    private val OPENVPN_CLIENT_AUTH_KEYS = setOf("cert", "key", "pkcs12")
+    private val OPENVPN_PROFILE_MARKERS =
+        setOf("client", "remote", "dev", "ca", "proto", "tls-crypt", "tls-auth")
 
     // Full structured port of the desktop openvpn_import.py: the extended
     // sing-box core rejects the old {"type":"openvpn","config_str":...} shape,
@@ -1167,6 +1529,11 @@ object LinkParser {
             "servers" to servers,
             "proto" to proto
         )
+
+        // "Use proxy": http-proxy/socks-proxy are standard directives, obfs2/obfs3
+        // travel in a Lumen comment. The builder turns this into a detour outbound
+        // and strips the key, so the core never sees it.
+        parseOpenVpnProxy(text, byKey)?.let { native["lumen_proxy"] = it }
 
         val cipher = selectOpenVpnCipher(byKey)
         if (cipher.isNotEmpty()) native["cipher"] = cipher
@@ -1424,29 +1791,11 @@ object LinkParser {
             }
         }
 
-        // Every Clash url-test/selector group collapses into a single AUTO node and its
-        // members are removed from the flat list, exactly like desktop Lumen shows them.
-        val proxyGroups = (((data as? Map<*, *>)?.get("proxy-groups")
-            ?: (data as? Map<*, *>)?.get("proxy_groups")) as? List<*>).orEmpty()
-        val autoNodes = mutableListOf<ParsedNode>()
-        val consumed = mutableListOf<ParsedNode>()
-        for (group in proxyGroups) {
-            val groupMap = group as? Map<*, *> ?: continue
-            val groupType = groupMap["type"]?.toString()?.trim()?.lowercase() ?: ""
-            if (groupType.isNotEmpty() && groupType !in AUTO_GROUP_TYPES) continue
-            val memberNames = (groupMap["proxies"] as? List<*>)?.mapNotNull { it?.toString()?.trim() }.orEmpty()
-            val members = memberNames.mapNotNull { memberName ->
-                nodes.firstOrNull { it.name.trim().equals(memberName, ignoreCase = true) }
-            }.distinct()
-            if (members.size < 2) continue
-            val groupName = groupMap["name"]?.toString()?.trim().orEmpty().ifEmpty { "AUTO" }
-            autoNodes.add(autoNodeFromMembers(groupName, members))
-            consumed.addAll(members)
-        }
-        if (autoNodes.isNotEmpty()) {
-            val remaining = nodes.filterNot { node -> consumed.any { it === node } }
-            return Pair(autoNodes + remaining, errors)
-        }
+        // Clash/Mihomo proxy-groups are client-side selectors over the physical entries in
+        // `proxies`; they are not portable proxy servers and must never become Lumen AUTO
+        // nodes. In particular, subscriptions commonly contain one all-proxy `select` group
+        // and one `url-test` group, which previously hid every real server behind fake AUTO
+        // rows. Explicit Xray/sing-box balancers are handled by their native JSON parsers.
         return Pair(nodes, errors)
     }
 
@@ -1459,7 +1808,11 @@ object LinkParser {
         val server = serverOrNull ?: ""
         val port = (map["port"] ?: map["server_port"])?.toString()?.toIntOrNull() ?: 443
 
-        val hasAmneziaParams = map.keys.any { it.toString().lowercase() in AMNEZIA_JUNK_KEYS } || map["reserved"] != null
+        // `reserved` is a plain WireGuard/WARP field, not an AmneziaWG obfuscation
+        // parameter, so it must not promote the entry to AWG. Clash keeps the real
+        // obfuscation knobs in the nested `amnezia-wg-option` block.
+        val hasAmneziaParams = map.keys.any { it.toString().lowercase() in AMNEZIA_JUNK_KEYS } ||
+            clashAmneziaOptions(map).keys.any { it?.toString()?.lowercase() in AMNEZIA_JUNK_KEYS }
         val scheme = if (rawType == "awg" || rawType == "amneziawg" || rawType == "amnezia-wg" || (rawType in setOf("wg", "wireguard") && hasAmneziaParams)) "awg" else when (rawType) {
             "shadowsocks" -> "ss"
             "hy2" -> "hysteria2"
@@ -1501,7 +1854,8 @@ object LinkParser {
                 "vless" -> {
                     val uuid = map["uuid"]?.toString() ?: map["id"]?.toString() ?: ""
                     val flow = map["flow"]?.toString() ?: ""
-                    val net = map["network"]?.toString() ?: map["type"]?.toString() ?: "tcp"
+                    // map["type"] is the Clash proxy type ("vless"), never a transport.
+                    val net = map["network"]?.toString() ?: "tcp"
                     val tls = map["tls"] == true || map["tls"]?.toString() == "true"
                     val sni = map["servername"]?.toString() ?: map["sni"]?.toString() ?: server
                     val realityOpts = map["reality-opts"] as? Map<*, *>
@@ -1701,19 +2055,20 @@ object LinkParser {
                         "congestion_controller" to "bbr"
                     )
                     if (privateKey.isNotEmpty() || publicKey.isNotEmpty()) {
-                        // Direct mode: connects straight to the MASQUE endpoint.
+                        // Clash/Mihomo exports a concrete endpoint and key pair here,
+                        // but this bundled sing-box MASQUE implementation manages its
+                        // Cloudflare profile itself. Keep these fields only as WARP
+                        // classification hints; emitting them makes config decoding fail.
                         if (privateKey.isEmpty() || publicKey.isEmpty() || server.isEmpty()) {
                             throw LinkParseError("direct MASQUE proxy must contain server, private-key and public-key")
                         }
                         val address = clashStringList(map["ip"] ?: map["address"]).toMutableList()
                         for (item in clashStringList(map["ipv6"])) if (item !in address) address.add(item)
                         if (address.isEmpty()) throw LinkParseError("direct MASQUE proxy must contain ip, ipv6 or address")
-                        singbox["server"] = server
-                        singbox["server_port"] = port
-                        singbox["private_key"] = privateKey
-                        singbox["public_key"] = publicKey
-                        singbox["address"] = address
-                        singbox["mtu"] = map["mtu"]?.toString()?.toIntOrNull() ?: 1280
+                        if (isCloudflareWarpProfile(address, publicKey, server)) {
+                            outbound["warp"] = true
+                            outbound["display_protocol"] = "MASQUE/WARP"
+                        }
                     } else if (profile["id"] == null && profile["auth_token"] == null && profile["private_key"] == null) {
                         throw LinkParseError("MASQUE proxy must contain profile-id/auth-token or private-key/public-key")
                     }
@@ -1752,26 +2107,36 @@ object LinkParser {
                     val ipStr = (map["ip"] as? List<*>)?.joinToString(",") ?: map["ip"]?.toString() ?: map["address"]?.toString() ?: ""
                     val ips = ipStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
-                    val amneziaOpts = map["amnezia-wg-option"] as? Map<*, *>
-                        ?: map["amnezia_wg_option"] as? Map<*, *>
-                        ?: map["amnezia"] as? Map<*, *>
-                        ?: map["amnezia-options"] as? Map<*, *>
+                    val amneziaOpts = clashAmneziaOptions(map)
 
                     val amneziaMap = mutableMapOf<String, Any?>()
                     for (junkKey in AMNEZIA_JUNK_KEYS) {
-                        val v = map[junkKey] ?: amneziaOpts?.get(junkKey)
-                        if (v != null) {
-                            val intVal = when (v) {
-                                is Number -> v.toInt()
-                                is String -> v.toIntOrNull()
-                                else -> null
-                            }
-                            if (intVal != null) amneziaMap[junkKey] = intVal
-                            else if (v is String && v.isNotEmpty()) amneziaMap[junkKey] = v
+                        amneziaValue(junkKey, map[junkKey] ?: amneziaOpts[junkKey])?.let {
+                            amneziaMap[junkKey] = it
                         }
                     }
                     val isAwg = scheme == "awg" || amneziaMap.isNotEmpty()
                     val actualScheme = if (isAwg) "awg" else "wireguard"
+
+                    // Peer/interface extras Clash spells with dashes; dropping them
+                    // silently broke split-tunnel AllowedIPs, MTU and keepalive.
+                    val allowedIps = clashStringList(map["allowed-ips"] ?: map["allowed_ips"] ?: map["allowedips"])
+                        .ifEmpty { listOf("0.0.0.0/0", "::/0") }
+                    val preSharedKey = (map["pre-shared-key"] ?: map["pre_shared_key"] ?: map["preshared-key"])
+                        ?.toString()?.trim().orEmpty()
+                    val keepalive = (map["persistent-keepalive"] ?: map["persistent_keepalive"] ?: map["keepalive"])
+                        ?.toString()?.trim()?.toIntOrNull()
+                    val mtu = map["mtu"]?.toString()?.trim()?.toIntOrNull()
+                    val dnsServers = clashStringList(map["dns"])
+
+                    val peer = mutableMapOf<String, Any?>(
+                        "public_key" to publicKey,
+                        "server" to server,
+                        "server_port" to port,
+                        "allowed_ips" to allowedIps
+                    )
+                    if (preSharedKey.isNotEmpty()) peer["pre_shared_key"] = preSharedKey
+                    if (keepalive != null && keepalive > 0) peer["persistent_keepalive_interval"] = keepalive
 
                     val singbox = mutableMapOf<String, Any?>(
                         "type" to actualScheme,
@@ -1779,8 +2144,9 @@ object LinkParser {
                         "server_port" to port,
                         "private_key" to privateKey,
                         "address" to ips,
-                        "peers" to listOf(mapOf("public_key" to publicKey, "server" to server, "server_port" to port, "allowed_ips" to listOf("0.0.0.0/0", "::/0")))
+                        "peers" to listOf(peer)
                     )
+                    if (mtu != null && mtu > 0) singbox["mtu"] = mtu
                     if (amneziaMap.isNotEmpty()) {
                         singbox["amnezia"] = amneziaMap
                     }
@@ -1789,9 +2155,40 @@ object LinkParser {
                     }
                     outbound["protocol"] = actualScheme
                     outbound["singbox"] = singbox
+                    if (dnsServers.isNotEmpty()) outbound["_dns"] = dnsServers
 
                     val amneziaQuery = StringBuilder()
-                    for ((junkKey, junkVal) in amneziaMap) amneziaQuery.append("&").append(junkKey).append("=").append(junkVal)
+                    // AWG 2.0 packet definitions carry spaces and angle brackets, so
+                    // they only survive the link as percent-encoded values. The space
+                    // must be %20: the reader keeps '+' literal (base64 keys need it),
+                    // so a form-encoded space would turn "<b 0x..>" into "<b+0x..>".
+                    for ((junkKey, junkVal) in amneziaMap) {
+                        amneziaQuery.append("&").append(junkKey).append("=")
+                            .append(java.net.URLEncoder.encode(junkVal.toString(), "UTF-8").replace("+", "%20"))
+                    }
+                    if (allowedIps != listOf("0.0.0.0/0", "::/0")) {
+                        amneziaQuery.append("&allowedips=")
+                            .append(java.net.URLEncoder.encode(allowedIps.joinToString(","), "UTF-8"))
+                    }
+                    if (preSharedKey.isNotEmpty()) {
+                        amneziaQuery.append("&presharedkey=")
+                            .append(java.net.URLEncoder.encode(preSharedKey, "UTF-8"))
+                    }
+                    if (keepalive != null && keepalive > 0) amneziaQuery.append("&persistentkeepalive=").append(keepalive)
+                    if (mtu != null && mtu > 0) amneziaQuery.append("&mtu=").append(mtu)
+                    if (dnsServers.isNotEmpty()) {
+                        amneziaQuery.append("&dns=")
+                            .append(java.net.URLEncoder.encode(dnsServers.joinToString(","), "UTF-8"))
+                    }
+                    // The reserved bytes belong in the link too, otherwise a WARP
+                    // entry does not survive a round trip through its own URI.
+                    val reserved = clashStringList(map["reserved"]).joinToString(",")
+                    if (reserved.isNotEmpty()) {
+                        amneziaQuery.append("&reserved=").append(java.net.URLEncoder.encode(reserved, "UTF-8"))
+                    }
+                    if (ips.isNotEmpty()) {
+                        amneziaQuery.append("&ip=").append(java.net.URLEncoder.encode(ips.joinToString(","), "UTF-8"))
+                    }
                     "${if (isAwg) "awg" else "wg"}://${java.net.URLEncoder.encode(privateKey, "UTF-8")}@$server:$port?publickey=${java.net.URLEncoder.encode(publicKey, "UTF-8")}$amneziaQuery#$encodedName"
                 }
                 "socks" -> {
@@ -1818,6 +2215,10 @@ object LinkParser {
                     toJsonString(map)
                 }
             }
+        } catch (e: LinkParseError) {
+            // Validation failures must reach the caller: only the link string may
+            // safely fall back to raw JSON, never a half-populated outbound.
+            throw e
         } catch (_: Exception) {
             toJsonString(map)
         }
@@ -1840,9 +2241,15 @@ object LinkParser {
                                 val label = listOf("remarks", "profile_title", "name", "tag")
                                     .firstNotNullOfOrNull { key -> item.optString(key).takeIf { it.isNotBlank() } }
                                     .orEmpty()
-                                nodes += if (label.isEmpty()) inner else inner.map { node ->
-                                    val suffix = node.name.takeIf { it.isNotBlank() && it != label }
-                                    node.copy(name = if (suffix == null) label else "$label · $suffix")
+                                // Drop separator/placeholder profiles shipped by panels.
+                                val usable = inner.filterNot { isPlaceholderNode(it) }
+                                nodes += when {
+                                    usable.isEmpty() -> emptyList()
+                                    label.isEmpty() -> usable
+                                    else -> usable.map { node ->
+                                        val suffix = node.name.takeIf { it.isNotBlank() && it != label }
+                                        node.copy(name = if (suffix == null) label else "$label · $suffix")
+                                    }
                                 }
                                 errors += innerErrors.map { "Config ${i + 1}: $it" }
                             } else {
@@ -1930,6 +2337,26 @@ object LinkParser {
                     }
                 }
             }
+            // Xray represents an explicit automatic pool through routing balancers.
+            // A selector is a tag prefix, so resolve it only after every outbound is parsed.
+            json.optJSONObject("routing")?.optJSONArray("balancers")?.let { balancers ->
+                for (i in 0 until balancers.length()) {
+                    val balancer = balancers.optJSONObject(i) ?: continue
+                    val selectors = mutableListOf<String>()
+                    balancer.optJSONArray("selector")?.let { array ->
+                        for (j in 0 until array.length()) {
+                            array.optString(j).trim().takeIf(String::isNotEmpty)?.let(selectors::add)
+                        }
+                    }
+                    if (selectors.isEmpty()) continue
+                    val matchingTags = nodesByTag.keys.filter { tag ->
+                        selectors.any { selector -> tag == selector || tag.startsWith(selector) }
+                    }
+                    if (matchingTags.isNotEmpty()) {
+                        autoGroupDefs.add(balancer.optString("tag").trim() to matchingTags)
+                    }
+                }
+            }
             if (autoGroupDefs.isNotEmpty()) {
                 val profileLabel = listOf("remarks", "profile_title", "profileTitle")
                     .firstNotNullOfOrNull { key -> json.optString(key).takeIf { it.isNotBlank() } }
@@ -1937,7 +2364,7 @@ object LinkParser {
                 val consumed = mutableListOf<ParsedNode>()
                 for ((groupTag, memberTags) in autoGroupDefs) {
                     val members = memberTags.mapNotNull { nodesByTag[it] }.distinct()
-                    if (members.size < 2) continue
+                    if (members.isEmpty()) continue
                     val label = if (autoGroupDefs.size == 1) {
                         profileLabel ?: groupTag.ifEmpty { "AUTO" }
                     } else {
@@ -2017,7 +2444,24 @@ object LinkParser {
         return parseJsonObjectOutbound(json)
     }
 
+    /**
+     * A Clash/Mihomo proxy is a plain JSON object with a "type" too, so the native
+     * sing-box pass-through would swallow one and emit dashed keys the core rejects
+     * (and lose the port, which Clash calls "port" and sing-box "server_port").
+     * The dashed spellings are the reliable discriminator; a proxy pasted on its
+     * own may carry none of them, and is then recognised by the Clash spelling of
+     * the port (parity with desktop _is_clash_proxy_payload).
+     */
+    private fun isClashProxyJson(json: JSONObject): Boolean {
+        if (json.optString("type").isBlank()) return false
+        if (json.has("protocol") || json.has("settings") || json.has("streamSettings")) return false
+        if (json.keys().asSequence().any { it.lowercase() in CLASH_PROXY_MARKER_KEYS }) return true
+        return json.has("server") && json.has("port") && !json.has("server_port")
+    }
+
     fun parseJsonObjectOutbound(json: JSONObject): ParsedNode {
+        if (isClashProxyJson(json)) return parseClashProxyMap(jsonToMap(json))
+
         val typeValue = json.optString("type")
         val protocolValue = json.optString("protocol")
 
@@ -2069,12 +2513,33 @@ object LinkParser {
         var server = json.optString("server").ifEmpty { json.optString("address") }
         var port = json.optInt("port", json.optInt("server_port", 443))
 
-        if (json.has("settings") && json.getJSONObject("settings").has("vnext")) {
-            val vnext = json.getJSONObject("settings").getJSONArray("vnext")
-            if (vnext.length() > 0) {
-                val target = vnext.getJSONObject(0)
-                server = target.optString("address")
-                port = target.optInt("port", 443)
+        val settings = json.optJSONObject("settings")
+        when (protocol.lowercase()) {
+            "vless", "vmess" -> {
+                val vnext = settings?.optJSONArray("vnext")
+                if (vnext != null && vnext.length() > 0) {
+                    val target = vnext.optJSONObject(0)
+                    if (target != null) {
+                        server = target.optString("address", target.optString("server"))
+                        port = target.optInt("port", target.optInt("server_port", 443))
+                    }
+                }
+            }
+            "trojan", "shadowsocks", "ss", "socks", "http" -> {
+                val servers = settings?.optJSONArray("servers")
+                if (servers != null && servers.length() > 0) {
+                    val target = servers.optJSONObject(0)
+                    if (target != null) {
+                        server = target.optString("address", target.optString("server"))
+                        port = target.optInt("port", target.optInt("server_port", 443))
+                    }
+                }
+            }
+            "hysteria", "hysteria2", "tuic", "mieru", "naive" -> {
+                if (settings != null) {
+                    server = settings.optString("address", settings.optString("server", server))
+                    port = settings.optInt("port", settings.optInt("server_port", port))
+                }
             }
         }
 
@@ -2173,7 +2638,14 @@ object LinkParser {
     }
 
     private fun buildStreamSettings(params: Map<String, String>, defaultNetwork: String, defaultSecurity: String): Map<String, Any?> {
-        val network = (params["type"] ?: params["net"] ?: defaultNetwork).lowercase()
+        val rawNetwork = (params["type"] ?: params["net"] ?: defaultNetwork).lowercase()
+        val network = when (rawNetwork) {
+            "", "raw", "none" -> "tcp"
+            "mkcp" -> "kcp"
+            "gun" -> "grpc"
+            "splithttp" -> "xhttp"
+            else -> rawNetwork
+        }
         var security = (params["security"] ?: defaultSecurity).lowercase()
         if (security == "none" && params["tls"] == "tls") security = "tls"
 
@@ -2217,6 +2689,25 @@ object LinkParser {
                 if (host.isNotEmpty()) httpUpgrade["host"] = host
                 stream["httpupgradeSettings"] = httpUpgrade
             }
+            "kcp" -> {
+                val kcp = mutableMapOf<String, Any?>(
+                    "header" to mapOf("type" to ((params["headertype"] ?: params["header_type"])?.takeIf { it.isNotEmpty() } ?: "none"))
+                )
+                for ((key, snakeKey) in listOf(
+                    "mtu" to "mtu", "tti" to "tti",
+                    "uplinkCapacity" to "uplink_capacity", "downlinkCapacity" to "downlink_capacity",
+                    "readBufferSize" to "read_buffer_size", "writeBufferSize" to "write_buffer_size"
+                )) {
+                    (params[key.lowercase()] ?: params[snakeKey])?.takeIf { it.isNotEmpty() }?.let {
+                        kcp[key] = it.toIntOrNull() ?: it
+                    }
+                }
+                params["seed"]?.takeIf { it.isNotEmpty() }?.let { kcp["seed"] = it }
+                params["congestion"]?.takeIf { it.isNotEmpty() }?.let { kcp["congestion"] = toBool(it) }
+                stream["kcpSettings"] = kcp
+            }
+            "tcp" -> Unit
+            else -> throw LinkParseError("unsupported transport `$rawNetwork`")
         }
 
         if (security == "tls") {
@@ -2224,7 +2715,9 @@ object LinkParser {
             params["sni"]?.let { if (it.isNotEmpty()) tls["serverName"] = it }
             params["alpn"]?.let { if (it.isNotEmpty()) tls["alpn"] = it.split(",").map { s -> s.trim() } }
             params["fp"]?.let { if (it.isNotEmpty()) tls["fingerprint"] = it }
-            if (params["allowinsecure"] == "1" || params["insecure"] == "true") tls["allowInsecure"] = true
+            if (toBool(params["allowinsecure"]) || toBool(params["allow_insecure"]) || toBool(params["insecure"])) {
+                tls["allowInsecure"] = true
+            }
             stream["tlsSettings"] = tls
         } else if (security == "reality") {
             val reality = mutableMapOf<String, Any?>()
@@ -2248,12 +2741,12 @@ object LinkParser {
             val params = parseQueryParams(queryText)
             val desc = params["serverdescription"]
             if (!desc.isNullOrEmpty()) {
-                val decoded = try { decodeB64(unquote(desc)) } catch (e: Exception) { unquote(desc) }
+                val decoded = try { decodeB64(desc) } catch (e: Exception) { desc }
                 node.description = decoded.take(30)
             }
             val title = fragment.substringBefore("?").trim()
             if (title.isNotEmpty()) {
-                node.name = title
+                node.name = cleanName(title, node.name)
             }
         }
     }

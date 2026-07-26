@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.verticalScroll
@@ -58,11 +59,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 
@@ -130,7 +133,12 @@ fun SettingsScreen(
             return@AnimatedContent
         }
         Column(
-            modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
+            // The whole settings page owns the status bar inset: without it the header and
+            // the gear icon slide under the system clock while the page is scrolled.
+            modifier.fillMaxSize()
+                .statusBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
         ) {
             when (currentPage) {
                 SettingsPage.HUB -> SettingsHub(
@@ -145,23 +153,23 @@ fun SettingsScreen(
                     onCommunity = onOpenCommunity
                 )
                 SettingsPage.SUBSCRIPTIONS -> {
-                    LumenScreenHeader(title = s.subscriptionSettings, onBack = { page = SettingsPage.HUB })
+                    LumenScreenHeader(title = s.subscriptionSettings, onBack = { page = SettingsPage.HUB }, applyStatusBarPadding = false)
                     SubscriptionSettings(state, onUpdate)
                 }
                 SettingsPage.TRAFFIC -> {
-                    LumenScreenHeader(title = s.trafficSettings, onBack = { page = SettingsPage.HUB })
+                    LumenScreenHeader(title = s.trafficSettings, onBack = { page = SettingsPage.HUB }, applyStatusBarPadding = false)
                     TrafficSettings(state, onUpdate)
                 }
                 SettingsPage.DNS -> {
-                    LumenScreenHeader(title = s.dnsSettings, onBack = { page = SettingsPage.HUB })
+                    LumenScreenHeader(title = s.dnsSettings, onBack = { page = SettingsPage.HUB }, applyStatusBarPadding = false)
                     DnsSettings(state, onUpdate)
                 }
                 SettingsPage.PING -> {
-                    LumenScreenHeader(title = s.pingSettings, onBack = { page = SettingsPage.HUB })
+                    LumenScreenHeader(title = s.pingSettings, onBack = { page = SettingsPage.HUB }, applyStatusBarPadding = false)
                     PingSettings(state, onUpdate)
                 }
                 SettingsPage.APP -> {
-                    LumenScreenHeader(title = s.appSettings, onBack = { page = SettingsPage.HUB })
+                    LumenScreenHeader(title = s.appSettings, onBack = { page = SettingsPage.HUB }, applyStatusBarPadding = false)
                     AppSettings(state, onUpdate, onLanguageChange)
                 }
                 SettingsPage.THEME -> Unit
@@ -186,7 +194,7 @@ private fun SettingsHub(
     onCommunity: () -> Unit
 ) {
     val s = LocalStrings.current
-    LumenScreenHeader(title = s.settings)
+    LumenScreenHeader(title = s.settings, applyStatusBarPadding = false)
     Spacer(Modifier.height(8.dp))
     SectionHeader(s.categoryAppearance)
     SettingsCard {
@@ -502,17 +510,48 @@ private fun TrafficSettings(
     ToggleRow("Multiplex (MUX)", s.muxDescription, state.muxEnabled) {
         onUpdate(state.copy(muxEnabled = it))
     }
-    if (state.muxEnabled) NumberField(s.muxConcurrency, state.muxConcurrency) {
-        onUpdate(state.copy(muxConcurrency = it.coerceIn(1, 1024)))
+    if (state.muxEnabled) {
+        NumberField(s.muxConcurrency, state.muxConcurrency) {
+            onUpdate(state.copy(muxConcurrency = it.coerceIn(1, 1024)))
+        }
+        NumberField(s.muxMinStreamsLabel, state.multiplexMinStreams) {
+            onUpdate(state.copy(multiplexMinStreams = it.coerceIn(0, 1024)))
+        }
+        LumenDropdown(
+            label = s.muxProtocolLabel,
+            options = MULTIPLEX_PROTOCOLS,
+            selected = state.multiplexProtocol,
+            onSelected = { onUpdate(state.copy(multiplexProtocol = it)) }
+        )
+        ToggleRow(s.muxPadding, s.muxPaddingDesc, state.multiplexPadding) {
+            onUpdate(state.copy(multiplexPadding = it))
+        }
+        ToggleRow(s.muxBrutal, s.muxBrutalDesc, state.multiplexBrutalEnabled) {
+            onUpdate(state.copy(multiplexBrutalEnabled = it))
+        }
+        // Both directions are mandatory: the core aborts the config with
+        // "brutal: invalid download speed" when only one rate is set.
+        if (state.multiplexBrutalEnabled) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) {
+                    NumberField(s.muxBrutalUpLabel, state.multiplexBrutalUpMbps) {
+                        onUpdate(state.copy(multiplexBrutalUpMbps = it.coerceIn(0, 10000)))
+                    }
+                }
+                Box(Modifier.weight(1f)) {
+                    NumberField(s.muxBrutalDownLabel, state.multiplexBrutalDownMbps) {
+                        onUpdate(state.copy(multiplexBrutalDownMbps = it.coerceIn(0, 10000)))
+                    }
+                }
+            }
+        }
     }
     ToggleRow(s.tlsFragmentation, s.tlsDescription, state.fragmentEnabled) {
         onUpdate(state.copy(fragmentEnabled = it))
     }
-    if (state.fragmentEnabled) {
-        TextSettingField(s.fragmentPackets, state.fragmentPackets) { onUpdate(state.copy(fragmentPackets = it)) }
-        TextSettingField(s.fragmentLength, state.fragmentLength) { onUpdate(state.copy(fragmentLength = it)) }
-        TextSettingField(s.fragmentDelay, state.fragmentDelay) { onUpdate(state.copy(fragmentDelay = it)) }
-    }
+    // The packets/length/delay sub-fields are Xray-only: sing-box-extended exposes
+    // just tls_fragment and tls_fragment_fallback_delay, and route-options silently
+    // ignores anything else, so showing them would promise an effect that never happens.
     NumberField(s.tunnelMtu, state.mtu) { onUpdate(state.copy(mtu = it.coerceIn(1280, 9000))) }
     ToggleRow(s.preferIpv6, s.preferIpv6Description, state.preferIpv6) {
         onUpdate(state.copy(preferIpv6 = it))
@@ -520,10 +559,35 @@ private fun TrafficSettings(
     ToggleRow(s.blockQuic, s.blockQuicDescription, state.blockQuic) {
         onUpdate(state.copy(blockQuic = it))
     }
-    ToggleRow(s.sniffRouteOnly, s.sniffRouteOnlyDescription, state.sniffRouteOnly) {
-        onUpdate(state.copy(sniffRouteOnly = it))
-    }
+    // No "sniff route only" row: this core rejects route_only/sniff_override_destination
+    // on a sniff rule, and a bare {"action":"sniff"} already routes without overriding
+    // the destination, so the toggle could only ever have been a no-op.
     Spacer(Modifier.height(4.dp))
+    }
+    // Dial options: the builder stamps these on every outbound and endpoint it emits.
+    SectionHeader(s.outboundSection)
+    SettingsCard {
+        Spacer(Modifier.height(4.dp))
+        ToggleRow(s.tcpFastOpen, s.tcpFastOpenDesc, state.outboundTcpFastOpen) {
+            onUpdate(state.copy(outboundTcpFastOpen = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.tcpMultiPath, s.tcpMultiPathDesc, state.outboundTcpMultiPath) {
+            onUpdate(state.copy(outboundTcpMultiPath = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.udpFragmentLabel, s.udpFragmentDesc, state.outboundUdpFragment) {
+            onUpdate(state.copy(outboundUdpFragment = it))
+        }
+        SettingsDivider()
+        // shadowsocks is the only outbound in this core that carries udp_over_tcp.
+        ToggleRow(s.udpOverTcpLabel, s.udpOverTcpDesc, state.udpOverTcp) {
+            onUpdate(state.copy(udpOverTcp = it))
+        }
+        NumberField(s.connectTimeoutLabel, state.outboundConnectTimeoutSeconds) {
+            onUpdate(state.copy(outboundConnectTimeoutSeconds = it.coerceIn(0, 600)))
+        }
+        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -541,10 +605,26 @@ private fun PingSettings(
             options = PING_TYPES,
             selected = state.pingType,
             onSelected = { onUpdate(state.copy(pingType = it)) },
-            optionLabel = { it.uppercase() }
+            optionLabel = {
+                when (it) {
+                    "tcping" -> "TCPing"
+                    "icmp" -> "ICMP"
+                    "http" -> "HTTP GET"
+                    "real" -> "Real HTTP"
+                    else -> it
+                }
+            }
         )
-        if (state.pingType == "url") {
+        // Both core-backed methods measure against the same endpoint.
+        if (state.pingType == "real" || state.pingType == "http") {
             TextSettingField(s.pingUrlLabel, state.pingUrl) { onUpdate(state.copy(pingUrl = it.take(256))) }
+            // Presets save typing for the endpoints people actually use.
+            LumenDropdown(
+                label = s.pingUrlPresets,
+                options = PING_URL_PRESETS,
+                selected = state.pingUrl.takeIf { it in PING_URL_PRESETS } ?: PING_URL_PRESETS.first(),
+                onSelected = { onUpdate(state.copy(pingUrl = it)) }
+            )
         }
         NumberField(s.pingTimeoutLabel, state.pingTimeoutMs) {
             onUpdate(state.copy(pingTimeoutMs = it.coerceIn(500, 20000)))
@@ -552,13 +632,69 @@ private fun PingSettings(
         NumberField(s.pingConcurrencyLabel, state.pingConcurrency) {
             onUpdate(state.copy(pingConcurrency = it.coerceIn(1, 32)))
         }
+        // Several probes smooth out one-off spikes on mobile networks.
+        NumberField(s.pingAttemptsLabel, state.pingAttempts) {
+            onUpdate(state.copy(pingAttempts = it.coerceIn(1, 10)))
+        }
+        if (state.pingAttempts > 1) {
+            LumenDropdown(
+                label = s.pingAggregateLabel,
+                options = PING_AGGREGATES,
+                selected = state.pingAggregate,
+                onSelected = { onUpdate(state.copy(pingAggregate = it)) },
+                optionLabel = {
+                    when (it) {
+                        "avg" -> s.aggregateAvg
+                        "median" -> s.aggregateMedian
+                        else -> s.aggregateMin
+                    }
+                }
+            )
+            NumberField(s.pingRetryDelayLabel, state.pingRetryDelayMs) {
+                onUpdate(state.copy(pingRetryDelayMs = it.coerceIn(0, 5000)))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+    }
+    SectionHeader(s.pingThresholds)
+    SettingsCard {
+        Spacer(Modifier.height(10.dp))
+        NumberField(s.pingGoodLabel, state.pingGoodMs) {
+            onUpdate(state.copy(pingGoodMs = it.coerceIn(10, 2000)))
+        }
+        NumberField(s.pingFairLabel, state.pingFairMs) {
+            // The "average" threshold must stay above the "good" one.
+            onUpdate(state.copy(pingFairMs = it.coerceIn(state.pingGoodMs + 10, 5000)))
+        }
         Spacer(Modifier.height(6.dp))
     }
     SectionHeader(s.behavior)
     SettingsCard {
         Spacer(Modifier.height(4.dp))
-        ToggleRow(s.pingSortAfter, s.pingSortAfterDesc, state.pingSortAfter) {
-            onUpdate(state.copy(pingSortAfter = it))
+        ToggleRow(s.pingAutoOnOpen, s.pingAutoOnOpenDesc, state.pingAutoOnOpen) {
+            onUpdate(state.copy(pingAutoOnOpen = it))
+        }
+        Spacer(Modifier.height(4.dp))
+        OutlinedButton(
+            onClick = {
+                onUpdate(
+                    state.copy(
+                        pingType = "tcping",
+                        pingTimeoutMs = 2000,
+                        pingConcurrency = 16,
+                        pingUrl = PING_URL_PRESETS.first(),
+                        pingAttempts = 1,
+                        pingAggregate = "min",
+                        pingRetryDelayMs = 200,
+                        pingGoodMs = 150,
+                        pingFairMs = 300,
+                        pingAutoOnOpen = false
+                    )
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(s.resetToDefaults)
         }
         Spacer(Modifier.height(4.dp))
     }
@@ -583,6 +719,13 @@ private fun PingSettings(
         NumberField(s.toleranceMs, state.urlTestToleranceMs) {
             onUpdate(state.copy(urlTestToleranceMs = it.coerceIn(0, 5000)))
         }
+        NumberField(s.urlTestIdleTimeoutLabel, state.urlTestIdleTimeoutMinutes) {
+            onUpdate(state.copy(urlTestIdleTimeoutMinutes = it.coerceIn(0, 1440)))
+        }
+        SettingsDivider()
+        ToggleRow(s.urlTestInterrupt, s.urlTestInterruptDesc, state.urlTestInterruptExistConnections) {
+            onUpdate(state.copy(urlTestInterruptExistConnections = it))
+        }
         Spacer(Modifier.height(6.dp))
     }
 }
@@ -599,6 +742,23 @@ private fun AppSettings(
         Spacer(Modifier.height(4.dp))
         ToggleRow(s.vibration, s.vibrationDesc, state.hapticsEnabled) {
             onUpdate(state.copy(hapticsEnabled = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.telemetryEnabled, s.telemetryEnabledDesc, state.telemetryEnabled) {
+            onUpdate(state.copy(telemetryEnabled = it))
+        }
+        SettingsDivider()
+        // Master switch: off silences the core, the log bus and the persisted store.
+        ToggleRow(s.loggingEnabled, s.loggingEnabledDesc, state.loggingEnabled) {
+            onUpdate(state.copy(loggingEnabled = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.autoReconnectNetwork, s.autoReconnectNetworkDesc, state.reconnectOnNetworkChange) {
+            onUpdate(state.copy(reconnectOnNetworkChange = it))
+        }
+        SettingsDivider()
+        ToggleRow(s.validateProxyDataPath, s.validateProxyDataPathDesc, state.validateProxyDataPath) {
+            onUpdate(state.copy(validateProxyDataPath = it))
         }
         SettingsDivider()
         ToggleRow(s.autoConnect, s.autoConnectDescription, state.autoConnectOnBoot) {
@@ -750,14 +910,29 @@ private fun ToggleRow(title: String, description: String, checked: Boolean, onCh
 
 @Composable
 private fun NumberField(label: String, value: Int, onChange: (Int) -> Unit) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
+    // Call sites clamp what they receive, so committing per keystroke would push the
+    // clamped value straight back into the buffer and make the field untypeable.
+    // The value is committed when the field loses focus or the IME reports Done.
+    var text by remember { mutableStateOf(value.toString()) }
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(value, focused) { if (!focused) text = value.toString() }
     OutlinedTextField(
         value = text,
-        onValueChange = { input -> text = input; input.toIntOrNull()?.let(onChange) },
+        onValueChange = { input -> text = input },
         label = { Text(label) },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Number,
+            imeAction = ImeAction.Done
+        ),
+        keyboardActions = KeyboardActions(onDone = { text.toIntOrNull()?.let(onChange) }),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .onFocusChanged { focusState ->
+                if (focused && !focusState.isFocused) text.toIntOrNull()?.let(onChange)
+                focused = focusState.isFocused
+            }
     )
 }
 

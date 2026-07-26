@@ -166,6 +166,22 @@ private val SolarizedColorScheme = darkColorScheme(
     error = ConnectionDanger
 )
 
+// Rosé Pine (main variant) published palette: base/surface/overlay/highlight-high,
+// text, iris and foam. Matches the Rose Pine theme shipped by the desktop client.
+private val RosePineColorScheme = darkColorScheme(
+    primary = Color(0xFFC4A7E7),
+    onPrimary = Color(0xFF191724),
+    secondary = Color(0xFF9CCFD8),
+    background = Color(0xFF191724),
+    onBackground = Color(0xFFE0DEF4),
+    surface = Color(0xFF1F1D2E),
+    onSurface = Color(0xFFE0DEF4),
+    surfaceVariant = Color(0xFF26233A),
+    onSurfaceVariant = Color(0xFF908CAA),
+    outline = Color(0xFF524F67),
+    error = ConnectionDanger
+)
+
 @Composable
 fun LumenTheme(
     themePreset: ThemePreset = ThemePreset.DARK,
@@ -190,6 +206,7 @@ fun LumenTheme(
         themePreset == ThemePreset.MONOKAI -> MonokaiColorScheme
         themePreset == ThemePreset.MATERIAL -> MaterialColorScheme
         themePreset == ThemePreset.SOLARIZED -> SolarizedColorScheme
+        themePreset == ThemePreset.ROSE_PINE -> RosePineColorScheme
         else -> DarkBlueColorScheme
     }
 

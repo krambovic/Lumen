@@ -1,11 +1,16 @@
 package com.lumen.core.engine
 
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 
 class FakeEngineDriver(
     override val type: EngineType,
@@ -19,10 +24,14 @@ class FakeEngineDriver(
     var lastConfig: String? = null
     var lastTunFd: Int? = null
     var shouldFailStart = false
+    var startDelayMs = 0L
 
     override suspend fun start(configJson: String, tunFd: Int?) {
         if (shouldFailStart) {
             throw IllegalStateException("Simulated engine start failure")
+        }
+        if (startDelayMs > 0L) {
+            delay(startDelayMs)
         }
         startCount++
         lastConfig = configJson
@@ -117,5 +126,55 @@ class EngineManagerTest {
         val runningState = currentState as EngineState.Running
         assertEquals(999L, runningState.stats.uploadSpeed)
         assertEquals(888L, runningState.stats.downloadSpeed)
+    }
+
+    @Test
+    fun testUpdateTrafficStatsDoesNotResurrectStoppedEngine() = runTest {
+        engineManager.startEngine(EngineType.SINGBOX, "{}")
+        engineManager.stopEngine()
+
+        engineManager.updateTrafficStats(TrafficStats(1L, 2L, 3L, 4L))
+
+        assertEquals(EngineState.Idle, engineManager.state.value)
+        assertNull(engineManager.activeEngineType)
+    }
+
+    @Test
+    fun testRefreshTrafficStatsDoesNotResurrectStoppedEngine() = runTest {
+        engineManager.startEngine(EngineType.SINGBOX, "{}")
+        engineManager.stopEngine()
+
+        engineManager.refreshTrafficStats()
+
+        assertEquals(EngineState.Idle, engineManager.state.value)
+    }
+
+    @Test
+    fun testCancellationDuringStartStopsEngineAndDoesNotReportError() = runTest {
+        fakeSingbox.startDelayMs = 1_000L
+        val job = launch { engineManager.startEngine(EngineType.SINGBOX, "{}") }
+        runCurrent()
+
+        val stopsBeforeCancel = fakeSingbox.stopCount
+        job.cancelAndJoin()
+
+        assertEquals(EngineState.Idle, engineManager.state.value)
+        assertTrue(fakeSingbox.stopCount > stopsBeforeCancel)
+        assertEquals(false, fakeSingbox.isRunning)
+    }
+
+    @Test
+    fun testMissingCoreBinaryReportsUserFacingMessage() = runTest {
+        val workDir = File(System.getProperty("java.io.tmpdir"), "lumen-process-engine-test")
+        val engine = ProcessEngine(
+            EngineType.SINGBOX,
+            File(workDir, "libsingbox-missing.so"),
+            workDir
+        )
+
+        val error = runCatching { engine.start("{}", null) }.exceptionOrNull()
+
+        assertTrue(error is MissingCoreBinaryException)
+        assertTrue(error!!.message!!.contains("architecture", ignoreCase = true))
     }
 }

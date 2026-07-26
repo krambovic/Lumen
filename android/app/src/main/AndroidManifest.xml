@@ -7,8 +7,16 @@
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Lets the home screen widget repaint itself after a reboot or update. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- The in-app vibration switch drives the vibrator directly, so it keeps working
+         even when the system "touch feedback" (haptics) switch is turned off. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:allowBackup="false"
@@ -108,7 +116,6 @@
             android:label="Lumen VPN Widget">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="com.lumen.app.widget.ACTION_TOGGLE_VPN" />
                 <action android:name="com.lumen.app.widget.ACTION_UPDATE_STATE" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
@@ -117,6 +124,12 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/lumen_widget_info" />
         </receiver>
+
+        <!-- Tunnel control for both widgets. Never exported: the widget click
+             PendingIntents are explicit, so only this app can toggle the VPN. -->
+        <receiver
+            android:name="com.lumen.app.widget.LumenWidgetControlReceiver"
+            android:exported="false" />
 
         <!-- Compact 1x1 AppWidget: power button only -->
         <receiver

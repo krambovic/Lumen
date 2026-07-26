@@ -1,9 +1,12 @@
 package com.lumen.app
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -31,6 +34,18 @@ import com.lumen.ui.screens.ThemeMode
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
+    private val firstRunVpnPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode != RESULT_OK) {
+            viewModel.log("VPN permission was not granted during first-run setup")
+        }
+    }
+    private val runtimePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        requestFirstRunVpnConsent()
+    }
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -98,15 +113,22 @@ class MainActivity : ComponentActivity() {
                 LumenApp(viewModel, ::toggleConnection, ::restartVpnForNewServer) { recreate() }
             }
         }
+        lifecycleScope.launch {
+            delay(350)
+            requestFirstRunPermissions()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // Without this getIntent() keeps returning the launch intent, so a language
+        // change (recreate) replays the original deep link in onCreate.
+        setIntent(intent)
         handleIntent(intent)
     }
 
     private fun toggleConnection() {
-        if (LumenVpnService.isRunning.value) {
+        if (LumenVpnService.isRunning.value || LumenVpnService.isStarting.value) {
             startService(viewModel.buildStopIntent(this))
         } else {
             if (viewModel.nodes.value.isEmpty()) {
@@ -115,6 +137,35 @@ class MainActivity : ComponentActivity() {
             }
             VpnService.prepare(this)?.let(vpnPermissionLauncher::launch) ?: startVpn()
         }
+    }
+
+    private fun requestFirstRunPermissions() {
+        val prefs = getSharedPreferences(MainViewModel.PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean("first_run_permissions_requested", false)) return
+        prefs.edit().putBoolean("first_run_permissions_requested", true).apply()
+
+        // CAMERA is deliberately absent: a VPN asking for the camera on first launch
+        // looks like spyware. The QR scanner asks for it when it is opened instead
+        // (openQrScanner in NavGraph).
+        val required = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        if (required.isEmpty()) {
+            requestFirstRunVpnConsent()
+        } else {
+            runtimePermissionLauncher.launch(required.toTypedArray())
+        }
+    }
+
+    private fun requestFirstRunVpnConsent() {
+        VpnService.prepare(this)?.let(firstRunVpnPermissionLauncher::launch)
     }
 
     /**
@@ -136,16 +187,31 @@ class MainActivity : ComponentActivity() {
             android.widget.Toast.makeText(this, "No servers available. Please import a server.", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        val intent = viewModel.buildStartIntent(this) ?: run {
-            android.widget.Toast.makeText(this, "No valid server configuration found.", android.widget.Toast.LENGTH_SHORT).show()
-            return
+        lifecycleScope.launch {
+            val intent = viewModel.buildStartIntent(this@MainActivity) ?: run {
+                android.widget.Toast.makeText(this@MainActivity, "No valid server configuration found.", android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            // A very large AUTO pool can parcel past the Binder limit; the config is
+            // already persisted in prefs, so fail with a message instead of crashing.
+            runCatching { ContextCompat.startForegroundService(this@MainActivity, intent) }
+                .onSuccess { viewModel.markConnecting() }
+                .onFailure { error ->
+                    viewModel.log("Failed to start the VPN service: ${error.message}")
+                    android.widget.Toast.makeText(
+                        this@MainActivity,
+                        "Could not start the VPN service.",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
         }
-        viewModel.markConnecting()
-        ContextCompat.startForegroundService(this, intent)
     }
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
+        // Streams are read by the view model on IO with a size bound: shared content
+        // is untrusted and used to be materialised on the UI thread.
+        var streamUri: android.net.Uri? = null
         val importText = runCatching {
             when {
                 intent.action == Intent.ACTION_SEND -> {
@@ -154,17 +220,17 @@ class MainActivity : ComponentActivity() {
                         extraText
                     } else {
                         @Suppress("DEPRECATION")
-                        val streamUri = intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
-                        if (streamUri != null) {
-                            contentResolver.openInputStream(streamUri)?.bufferedReader()?.use { it.readText() }
-                        } else null
+                        val stream = intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+                        streamUri = stream
+                        null
                     }
                 }
                 intent.data != null -> {
                     val uri = intent.data ?: return@runCatching null
                     val scheme = uri.scheme?.lowercase(Locale.ROOT)
                     if (scheme == "content" || scheme == "file") {
-                        contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        streamUri = uri
+                        null
                     } else if (scheme == "lumen") {
                         uri.getQueryParameter("url")?.takeIf { it.isNotBlank() }
                             ?: uri.toString().removePrefix("lumen://add/").removePrefix("lumen://import/")
@@ -174,7 +240,18 @@ class MainActivity : ComponentActivity() {
             }
         }.getOrNull()
 
-        if (!importText.isNullOrBlank()) {
+        // Mark the intent consumed so a recreate() does not re-import it.
+        intent.data = null
+        intent.removeExtra(Intent.EXTRA_TEXT)
+        intent.removeExtra(Intent.EXTRA_STREAM)
+
+        val uri = streamUri
+        if (uri != null) {
+            // A config file opened from outside the app belongs to the manual bucket;
+            // switch there up front so the user does not land on the dashboard.
+            viewModel.focusDefaultServerGroup()
+            viewModel.prepareImportFromUri(this, uri, asFile = true)
+        } else if (!importText.isNullOrBlank()) {
             viewModel.prepareImportText(importText)
         }
     }

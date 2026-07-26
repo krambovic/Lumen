@@ -39,4 +39,6 @@
     <string name="public_key">е…¬й’Ґ</string>
     <string name="short_id">Short ID</string>
     <string name="awg_junk_params">AWG дјЄиЈ…еЏ‚ж•°</string>
+    <string name="widget_description">快速连接到所选服务器</string>
+    <string name="widget_compact_description">紧凑型 1×1 开关按钮</string>
 </resources>

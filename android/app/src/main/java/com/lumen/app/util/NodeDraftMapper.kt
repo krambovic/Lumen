@@ -120,8 +120,16 @@ object NodeDraftMapper {
             address = values["address"] ?: "",
             allowedIps = values["allowedips"] ?: base.allowedIps,
             reserved = values["reserved"] ?: "",
+            mtu = values["mtu"] ?: "",
+            dns = values["dns"] ?: "",
+            persistentKeepalive = values["persistentkeepalive"] ?: "",
             jc = values["jc"] ?: "", jmin = values["jmin"] ?: "", jmax = values["jmax"] ?: "",
-            s1 = values["s1"] ?: "", s2 = values["s2"] ?: "", s3 = values["s3"] ?: "", s4 = values["s4"] ?: ""
+            s1 = values["s1"] ?: "", s2 = values["s2"] ?: "", s3 = values["s3"] ?: "", s4 = values["s4"] ?: "",
+            h1 = values["h1"] ?: "", h2 = values["h2"] ?: "", h3 = values["h3"] ?: "", h4 = values["h4"] ?: "",
+            i1 = values["i1"] ?: "", i2 = values["i2"] ?: "", i3 = values["i3"] ?: "",
+            i4 = values["i4"] ?: "", i5 = values["i5"] ?: "",
+            j1 = values["j1"] ?: "", j2 = values["j2"] ?: "", j3 = values["j3"] ?: "",
+            itime = values["itime"] ?: ""
         )
     }
 
@@ -246,6 +254,19 @@ object NodeDraftMapper {
                 val userinfo = if (d.secret.isBlank()) "" else encUserinfo(d.secret) + "@"
                 "${d.protocol}://$userinfo${d.server.trim()}:${d.port.trim()}#$name"
             }
+            // masque://<auth token>@<profile id>?sni=&insecure=, the shape LinkParser.parseMasque reads.
+            "masque" -> {
+                val params = listOf(
+                    buildParams(
+                        "sni" to d.sni,
+                        "insecure" to if (d.insecure) "1" else null
+                    ),
+                    masqueExtraParams(d.rawConfig)
+                ).filter { it.isNotBlank() }.joinToString("&")
+                val userinfo = if (d.secret.isBlank()) "" else enc(d.secret.trim()) + "@"
+                val query = if (params.isBlank()) "" else "?$params"
+                "masque://$userinfo${d.server.trim()}$query#$name"
+            }
             "wireguard", "awg" -> buildWireGuardConf(d)
             // Structured fields win; the pasted profile is the fallback.
             "openvpn" -> if (d.ovpnCa.isNotBlank()) openVpnProfileFromDraft(d) else d.rawConfig.ifBlank {
@@ -255,12 +276,63 @@ object NodeDraftMapper {
         }
     }
 
+    /** Query keys the masque editor owns; the WARP extras of the imported link survive as-is. */
+    private val MASQUE_MANAGED_PARAMS = setOf(
+        "sni", "server_name", "servername", "insecure", "allowinsecure",
+        "id", "profile_id", "auth_token", "token"
+    )
+
+    private fun masqueExtraParams(rawConfig: String): String {
+        val raw = rawConfig.trim()
+        if (!raw.startsWith("masque://", ignoreCase = true)) return ""
+        val query = raw.substringAfter('?', "").substringBefore('#')
+        if (query.isBlank()) return ""
+        return query.split("&")
+            .filter { it.isNotBlank() && it.substringBefore('=').lowercase() !in MASQUE_MANAGED_PARAMS }
+            .joinToString("&")
+    }
+
+    /** Every directive the editor owns; anything else is copied over from [NodeDraft.rawConfig]. */
+    private val WG_MANAGED_KEYS = setOf(
+        "privatekey", "address", "mtu", "dns",
+        "jc", "jmin", "jmax", "s1", "s2", "s3", "s4",
+        "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3", "itime",
+        "publickey", "presharedkey", "allowedips", "endpoint", "reserved", "persistentkeepalive"
+    )
+
+    /**
+     * [Interface]/[Peer] lines of the imported profile the editor does not model,
+     * so re-saving a node can never drop an unknown directive.
+     */
+    private fun wireGuardExtras(rawConfig: String): Map<String, List<String>> {
+        if (!rawConfig.contains("[Interface]", ignoreCase = true)) return emptyMap()
+        val extras = mutableMapOf<String, MutableList<String>>()
+        var section = ""
+        rawConfig.lines().forEach { rawLine ->
+            val line = rawLine.trim()
+            if (line.isEmpty() || line.startsWith("#") || line.startsWith(";")) return@forEach
+            if (line.startsWith("[") && line.endsWith("]")) {
+                section = line.substring(1, line.length - 1).trim().lowercase()
+                return@forEach
+            }
+            if (section != "interface" && section != "peer") return@forEach
+            if (!line.contains('=')) return@forEach
+            val key = line.substringBefore('=').trim().lowercase()
+            if (key in WG_MANAGED_KEYS) return@forEach
+            extras.getOrPut(section) { mutableListOf() }.add(line)
+        }
+        return extras
+    }
+
     private fun buildWireGuardConf(d: NodeDraft): String {
+        val extras = wireGuardExtras(d.rawConfig)
         val sb = StringBuilder()
         sb.appendLine("# ${d.name.ifBlank { d.server }}")
         sb.appendLine("[Interface]")
         sb.appendLine("PrivateKey = ${d.secret.trim()}")
         if (d.address.isNotBlank()) sb.appendLine("Address = ${d.address.trim()}")
+        if (d.mtu.isNotBlank()) sb.appendLine("MTU = ${d.mtu.trim()}")
+        if (d.dns.isNotBlank()) sb.appendLine("DNS = ${d.dns.trim()}")
         if (d.protocol == "awg") {
             if (d.jc.isNotBlank()) sb.appendLine("Jc = ${d.jc.trim()}")
             if (d.jmin.isNotBlank()) sb.appendLine("Jmin = ${d.jmin.trim()}")
@@ -269,14 +341,30 @@ object NodeDraftMapper {
             if (d.s2.isNotBlank()) sb.appendLine("S2 = ${d.s2.trim()}")
             if (d.s3.isNotBlank()) sb.appendLine("S3 = ${d.s3.trim()}")
             if (d.s4.isNotBlank()) sb.appendLine("S4 = ${d.s4.trim()}")
+            if (d.h1.isNotBlank()) sb.appendLine("H1 = ${d.h1.trim()}")
+            if (d.h2.isNotBlank()) sb.appendLine("H2 = ${d.h2.trim()}")
+            if (d.h3.isNotBlank()) sb.appendLine("H3 = ${d.h3.trim()}")
+            if (d.h4.isNotBlank()) sb.appendLine("H4 = ${d.h4.trim()}")
+            if (d.i1.isNotBlank()) sb.appendLine("I1 = ${d.i1.trim()}")
+            if (d.i2.isNotBlank()) sb.appendLine("I2 = ${d.i2.trim()}")
+            if (d.i3.isNotBlank()) sb.appendLine("I3 = ${d.i3.trim()}")
+            if (d.i4.isNotBlank()) sb.appendLine("I4 = ${d.i4.trim()}")
+            if (d.i5.isNotBlank()) sb.appendLine("I5 = ${d.i5.trim()}")
+            if (d.j1.isNotBlank()) sb.appendLine("J1 = ${d.j1.trim()}")
+            if (d.j2.isNotBlank()) sb.appendLine("J2 = ${d.j2.trim()}")
+            if (d.j3.isNotBlank()) sb.appendLine("J3 = ${d.j3.trim()}")
+            if (d.itime.isNotBlank()) sb.appendLine("Itime = ${d.itime.trim()}")
         }
+        extras["interface"]?.forEach { sb.appendLine(it) }
         sb.appendLine()
         sb.appendLine("[Peer]")
         sb.appendLine("PublicKey = ${d.publicKey.trim()}")
         if (d.presharedKey.isNotBlank()) sb.appendLine("PresharedKey = ${d.presharedKey.trim()}")
         sb.appendLine("AllowedIPs = ${d.allowedIps.ifBlank { "0.0.0.0/0" }}")
         sb.appendLine("Endpoint = ${d.server.trim()}:${d.port.trim()}")
+        if (d.persistentKeepalive.isNotBlank()) sb.appendLine("PersistentKeepalive = ${d.persistentKeepalive.trim()}")
         if (d.reserved.isNotBlank()) sb.appendLine("Reserved = ${d.reserved.trim()}")
+        extras["peer"]?.forEach { sb.appendLine(it) }
         return sb.toString()
     }
 

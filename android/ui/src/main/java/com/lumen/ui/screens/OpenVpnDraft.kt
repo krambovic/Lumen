@@ -24,6 +24,26 @@ val OPENVPN_KEY_DIRECTIONS: List<String> = listOf("", "0", "1", "-1")
 
 val OPENVPN_X509_MODES: List<String> = listOf("", "name", "name-prefix", "subject")
 
+/**
+ * "Use proxy" options for OpenVPN nodes. Http/Socks are handled by sing-box
+ * (a proxy outbound plus a detour), obfs2/obfs3 by the in-app pluggable
+ * transport relay, so no external obfsproxy binary is shipped.
+ */
+val OPENVPN_PROXY_TYPES: List<String> = listOf("", "http", "socks", "obfs3", "obfs2", "obfs2-legacy")
+
+/** obfs variants are terminated locally, everything else is a real proxy server. */
+fun isObfsProxy(type: String): Boolean = type.startsWith("obfs2") || type == "obfs3"
+
+/** Human readable label for the proxy dropdown, matching the desktop client. */
+fun openVpnProxyLabel(type: String): String = when (type) {
+    "http" -> "Http"
+    "socks" -> "Socks"
+    "obfs3" -> "obfsproxy (obfs3)"
+    "obfs2" -> "obfsproxy (obfs2)"
+    "obfs2-legacy" -> "obfsproxy (obfs2-legacy)"
+    else -> "None"
+}
+
 /** Splits a stored .ovpn profile into the editor fields. */
 fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
     if (text.isBlank()) return base
@@ -47,6 +67,34 @@ fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
         value.startsWith("tcp") -> "tcp"
         value.startsWith("udp") -> "udp"
         else -> ""
+    }
+
+    // "Use proxy": http-proxy/socks-proxy are standard OpenVPN directives, while
+    // obfs2/obfs3 and the credentials live in Lumen comments so that other
+    // clients simply ignore them.
+    fun comment(prefix: String): List<String> = text.lines()
+        .map { it.trim() }
+        .lastOrNull { it.startsWith("# $prefix ") }
+        ?.removePrefix("# $prefix ")
+        ?.split(Regex("\\s+"))
+        ?.filter { it.isNotEmpty() }
+        .orEmpty()
+
+    val obfsProxy = comment("lumen-proxy")
+    val proxyAuth = comment("lumen-proxy-auth")
+    val httpProxy = byKey["http-proxy"]?.lastOrNull().orEmpty()
+    val socksProxy = byKey["socks-proxy"]?.lastOrNull().orEmpty()
+    val proxyType = when {
+        obfsProxy.firstOrNull().orEmpty().let { isObfsProxy(it) } -> obfsProxy[0]
+        httpProxy.isNotEmpty() -> "http"
+        socksProxy.isNotEmpty() -> "socks"
+        else -> ""
+    }
+    val proxyEndpoint = when (proxyType) {
+        "" -> emptyList()
+        "http" -> httpProxy
+        "socks" -> socksProxy
+        else -> obfsProxy.drop(1)
     }
 
     val remotes = byKey["remote"].orEmpty().filter { it.isNotEmpty() }
@@ -91,6 +139,11 @@ fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
         ovpnPingInterval = digitsOf(arg("ping")),
         ovpnPingRestart = digitsOf(arg("ping-restart")),
         ovpnDns = dns.joinToString("\n"),
+        ovpnProxyType = proxyType,
+        ovpnProxyServer = proxyEndpoint.getOrNull(0).orEmpty(),
+        ovpnProxyPort = digitsOf(proxyEndpoint.getOrNull(1).orEmpty()),
+        ovpnProxyUsername = proxyAuth.getOrNull(0).orEmpty(),
+        ovpnProxyPassword = proxyAuth.getOrNull(1).orEmpty(),
         rawConfig = text
     )
 }
@@ -129,6 +182,21 @@ fun openVpnProfileFromDraft(d: NodeDraft): String {
         sb.appendLine("dhcp-option DNS $it")
     }
 
+    // "Use proxy". Http/Socks stay standard directives so the profile remains
+    // portable; obfs is a Lumen comment because it is terminated in-app.
+    val proxyHost = d.ovpnProxyServer.trim()
+    val proxyPort = digitsOf(d.ovpnProxyPort)
+    if (d.ovpnProxyType.isNotBlank() && proxyHost.isNotEmpty() && proxyPort.isNotEmpty()) {
+        when (d.ovpnProxyType) {
+            "http" -> sb.appendLine("http-proxy $proxyHost $proxyPort")
+            "socks" -> sb.appendLine("socks-proxy $proxyHost $proxyPort")
+            else -> sb.appendLine("# lumen-proxy ${d.ovpnProxyType} $proxyHost $proxyPort")
+        }
+        if (d.ovpnProxyUsername.isNotBlank()) {
+            sb.appendLine("# lumen-proxy-auth ${d.ovpnProxyUsername.trim()} ${d.ovpnProxyPassword.trim()}")
+        }
+    }
+
     fun block(tag: String, content: String) {
         if (content.isBlank()) return
         sb.appendLine("<$tag>")
@@ -138,6 +206,12 @@ fun openVpnProfileFromDraft(d: NodeDraft): String {
     // Credentials must stay inline: file references are rejected on Android.
     if (d.ovpnUsername.isNotBlank()) {
         block("auth-user-pass", d.ovpnUsername.trim() + "\n" + d.ovpnPassword.trim())
+    } else if (openVpnRequiresCredentials(d)) {
+        // The source profile asked for a login but the fields are still empty. Dropping
+        // the directive would turn the profile into a certificate-only one on the way
+        // out, and the builder's "OpenVPN node requires a username and password" check
+        // — which reads the stored profile — would never fire again.
+        sb.appendLine("auth-user-pass")
     }
     block("ca", d.ovpnCa)
     block("cert", d.ovpnCert)

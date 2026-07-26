@@ -16,7 +16,17 @@ enum class StripeStyle {
     CnStars,
     Crescent,
     MapleLeaf,
-    Taegeuk
+    Taegeuk,
+    Albania,
+    Bauhinia,
+    Spain,
+    India,
+    Kazakhstan,
+    Australia,
+    Malaysia,
+    Macedonia,
+    Czech,
+    EuropeanUnion
 }
 
 data class FlagStripeData(
@@ -46,7 +56,7 @@ object CountryFlagHelper {
         "AZ" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF00B5E2), Color(0xFFDD0000), Color(0xFF00B532))),
         "CO" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFCD116), Color(0xFF003893), Color(0xFFCE1126))),
         "AR" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF74ACDF), Color(0xFFFFFFFF), Color(0xFF74ACDF))),
-        "IN" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFF9933), Color(0xFFFFFFFF), Color(0xFF138808))),
+        "IN" to FlagStripeData(StripeStyle.India, listOf(Color(0xFFFF9933), Color(0xFFFFFFFF), Color(0xFF138808), Color(0xFF000080))),
         "EG" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFCE1126), Color(0xFFFFFFFF), Color(0xFF000000))),
         "IR" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF239F40), Color(0xFFFFFFFF), Color(0xFFDA0000))),
         "BO" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFD52B1E), Color(0xFFF9E300), Color(0xFF007934))),
@@ -74,7 +84,7 @@ object CountryFlagHelper {
         "NG" to FlagStripeData(StripeStyle.Vertical, listOf(Color(0xFF008751), Color(0xFFFFFFFF), Color(0xFF008751))),
         "CI" to FlagStripeData(StripeStyle.Vertical, listOf(Color(0xFFF77F00), Color(0xFFFFFFFF), Color(0xFF009E60))),
         "PE" to FlagStripeData(StripeStyle.Vertical, listOf(Color(0xFFD91023), Color(0xFFFFFFFF), Color(0xFFD91023))),
-        "CA" to FlagStripeData(StripeStyle.Vertical, listOf(Color(0xFFFF0000), Color(0xFFFFFFFF), Color(0xFFFF0000))),
+        "CA" to FlagStripeData(StripeStyle.MapleLeaf, listOf(Color(0xFFFF0000), Color(0xFFFFFFFF))),
         "PT" to FlagStripeData(StripeStyle.Vertical, listOf(Color(0xFF006600), Color(0xFFFF0000), Color(0xFFFF0000))),
 
         // Cross & Nordic flags
@@ -94,23 +104,23 @@ object CountryFlagHelper {
         "BD" to FlagStripeData(StripeStyle.Disc, listOf(Color(0xFF006A4E), Color(0xFFF42A41))),
         "CN" to FlagStripeData(StripeStyle.CnStars, listOf(Color(0xFFDE2910), Color(0xFFFFDE00))),
         "TW" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF000095), Color(0xFFFE0000), Color(0xFFFE0000))),
-        "HK" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFDE2910), Color(0xFFFFFFFF), Color(0xFFDE2910))),
+        "HK" to FlagStripeData(StripeStyle.Bauhinia, listOf(Color(0xFFDE2910), Color(0xFFFFFFFF))),
         "KR" to FlagStripeData(StripeStyle.Taegeuk, listOf(Color(0xFFFFFFFF), Color(0xFFCD2E3A), Color(0xFF003478))),
         "TR" to FlagStripeData(StripeStyle.Crescent, listOf(Color(0xFFE30A17), Color(0xFFFFFFFF))),
         "TN" to FlagStripeData(StripeStyle.Crescent, listOf(Color(0xFFE70013), Color(0xFFFFFFFF))),
         "IL" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFFFFFF), Color(0xFF0038B8), Color(0xFFFFFFFF))),
         "BR" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF009C3B), Color(0xFFFFDF00), Color(0xFF009C3B))),
-        "AU" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF012169), Color(0xFFFFFFFF), Color(0xFF012169))),
+        "AU" to FlagStripeData(StripeStyle.Australia, listOf(Color(0xFF012169), Color(0xFFFFFFFF), Color(0xFFC8102E))),
         "NZ" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF00247D), Color(0xFFCC142B), Color(0xFF00247D))),
         "ZA" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF007749), Color(0xFFFFB81C), Color(0xFFDE3831))),
         "KE" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF000000), Color(0xFFBB0000), Color(0xFF006600))),
-        "KZ" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF00AFCA), Color(0xFFFFD700), Color(0xFF00AFCA))),
+        "KZ" to FlagStripeData(StripeStyle.Kazakhstan, listOf(Color(0xFF00AFCA), Color(0xFFFFD700))),
         "UZ" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF1EB53A), Color(0xFFFFFFFF), Color(0xFF0099B5))),
         "VN" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFDA251D), Color(0xFFFFCD00), Color(0xFFDA251D))),
         "SA" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF006C35), Color(0xFFFFFFFF), Color(0xFF006C35))),
         "AE" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF00732F), Color(0xFFFFFFFF), Color(0xFF000000))),
         "QA" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF8A1538), Color(0xFFFFFFFF), Color(0xFF8A1538))),
-        "MY" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF010066), Color(0xFFCC0001), Color(0xFFFFFFFF))),
+        "MY" to FlagStripeData(StripeStyle.Malaysia, listOf(Color(0xFF010066), Color(0xFFCC0001), Color(0xFFFFFFFF), Color(0xFFFFCC00))),
         "TH" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFA51931), Color(0xFFF4F5F8), Color(0xFF2D2A4A))),
         "PH" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF0038A8), Color(0xFFFFFFFF), Color(0xFFCE1126))),
         "MM" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFECB00), Color(0xFF34B233), Color(0xFFEA2839))),
@@ -119,12 +129,13 @@ object CountryFlagHelper {
         "CL" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFFFFFF), Color(0xFF0039A6), Color(0xFFD52B1E))),
         "PA" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFFFFFF), Color(0xFFDA121A), Color(0xFF003DA5))),
         "CU" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF002A8F), Color(0xFFFFFFFF), Color(0xFFCF142B))),
-        "ES" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFAA151B), Color(0xFFF1BF00), Color(0xFFAA151B))),
-        "CZ" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFFFFFF), Color(0xFF11457E), Color(0xFFD7141A))),
+        "ES" to FlagStripeData(StripeStyle.Spain, listOf(Color(0xFFAA151B), Color(0xFFF1BF00))),
+        "CZ" to FlagStripeData(StripeStyle.Czech, listOf(Color(0xFFFFFFFF), Color(0xFFD7141A), Color(0xFF11457E))),
         "SK" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFFFFFFF), Color(0xFF0B4EA2), Color(0xFFEE1C25))),
         "BA" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFF002395), Color(0xFFFECB00), Color(0xFF002395))),
-        "AL" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFE41E20), Color(0xFF000000), Color(0xFFE41E20))),
-        "MK" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFD20000), Color(0xFFFFE600), Color(0xFFD20000))),
+        "AL" to FlagStripeData(StripeStyle.Albania, listOf(Color(0xFFE41E20), Color(0xFF000000))),
+        "MK" to FlagStripeData(StripeStyle.Macedonia, listOf(Color(0xFFD20000), Color(0xFFFFE600))),
+        "EU" to FlagStripeData(StripeStyle.EuropeanUnion, listOf(Color(0xFF003399), Color(0xFFFFCC00))),
         "ME" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFC40308), Color(0xFFD4AF37), Color(0xFFC40308))),
         "MA" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFC1272D), Color(0xFF006233), Color(0xFFC1272D))),
         "TN" to FlagStripeData(StripeStyle.Horizontal, listOf(Color(0xFFE70013), Color(0xFFFFFFFF), Color(0xFFE70013))),
@@ -135,6 +146,7 @@ object CountryFlagHelper {
 
     // Sorted longest-first name matches
     private val NAME_PAIRS: List<Pair<String, String>> = listOf(
+        "european union" to "EU", "europe" to "EU", "europa" to "EU",
         "united states" to "US", "usa" to "US", "america" to "US",
         "russia" to "RU", "germany" to "DE", "france" to "FR",
         "united kingdom" to "GB", "great britain" to "GB", "england" to "GB",
@@ -164,6 +176,7 @@ object CountryFlagHelper {
         "iraq" to "IQ", "pakistan" to "PK", "bangladesh" to "BD",
         "cambodia" to "KH", "myanmar" to "MM", "mongolia" to "MN",
         // Russian country names
+        "европейский союз" to "EU", "евросоюз" to "EU", "европа" to "EU",
         "россия" to "RU", "германия" to "DE", "франция" to "FR",
         "великобритания" to "GB", "англия" to "GB", "япония" to "JP",
         "китай" to "CN", "корея" to "KR", "тайвань" to "TW",
@@ -263,6 +276,18 @@ object CountryFlagHelper {
     }
 
     fun detectCountry(name: String?, server: String?): String {
+        // Desktop Lumen leaves an unresolved country empty and resolves public
+        // IPs asynchronously. Invented US/CA locations made ordinary AWG nodes
+        // look like WARP placeholders.
+        return detectCountryStrict(name, server)
+    }
+
+    /**
+     * Same detection chain as [detectCountry] but returns an empty string when the location
+     * is genuinely unknown, instead of the deterministic US/CA fallback. Callers that show
+     * the location as text (rather than as a flag) must not invent a country.
+     */
+    fun detectCountryStrict(name: String?, server: String?): String {
         val safeName = name ?: ""
         val safeServer = server ?: ""
 
@@ -286,10 +311,44 @@ object CountryFlagHelper {
         val serverCodeResult = detectCode(safeServer)
         if (serverCodeResult.isNotEmpty()) return serverCodeResult
 
-        // Deterministic fallback matching desktop Lumen: US or CA
-        val key = "$safeName $safeServer".ifBlank { "Lumen" }
-        val hash = key.hashCode() and 0x7FFFFFFF
-        return if (hash % 2 == 0) "US" else "CA"
+        return ""
+    }
+
+    /** Human readable location for an ISO country code, e.g. "DE" -> "Germany". */
+    fun countryDisplayName(code: String?): String {
+        val trimmed = code?.trim()?.uppercase(Locale.US) ?: return ""
+        if (trimmed.length != 2 || !trimmed.all { it in 'A'..'Z' }) return ""
+        if (trimmed == "EU") return "Europe"
+        val display = runCatching {
+            Locale("", trimmed).getDisplayCountry(Locale.ENGLISH)
+        }.getOrDefault("")
+        return if (display.equals(trimmed, ignoreCase = true)) "" else display
+    }
+
+    /**
+     * Removes the flag and a duplicated leading country code from a server row,
+     * matching desktop Lumen (for example "🇳🇴 NO-1" becomes "1").
+     */
+    fun serverDisplayNameWithoutCountryPrefix(name: String?, country: String?): String {
+        val original = name.orEmpty().trim()
+        if (original.isEmpty()) return original
+        var cleaned = original
+        val emoji = getFlagEmoji(country)
+        if (emoji.isNotEmpty() && cleaned.startsWith(emoji)) {
+            cleaned = cleaned.removePrefix(emoji).trim()
+        }
+        val code = country.orEmpty().trim().uppercase(Locale.US)
+        if (code.length == 2) {
+            cleaned = cleaned.replaceFirst(
+                Regex(
+                    "^\\s*[\\[({]?" + Regex.escape(code) +
+                        "[\\])}]?(?:\\s*[-_.|#:]\\s*|\\s+)",
+                    RegexOption.IGNORE_CASE
+                ),
+                ""
+            ).trim()
+        }
+        return cleaned.ifEmpty { original }
     }
 
     fun detectEmoji(text: String): String {
@@ -313,12 +372,31 @@ object CountryFlagHelper {
     fun detectName(name: String): String {
         val lower = name.lowercase(Locale.ROOT)
         for ((pattern, code) in NAME_PAIRS) {
-            val regex = Pattern.compile("\\b" + Pattern.quote(pattern) + "\\b", Pattern.UNICODE_CHARACTER_CLASS or Pattern.CASE_INSENSITIVE)
-            if (regex.matcher(lower).find()) {
+            if (containsDelimitedName(lower, pattern)) {
                 return code
             }
         }
         return ""
+    }
+
+    /**
+     * Android's java.util.regex implementation can reject
+     * Pattern.UNICODE_CHARACTER_CLASS even on recent OS releases. A small
+     * Unicode-aware boundary scan is enough for the fixed country/city list
+     * and also handles Cyrillic names correctly.
+     */
+    private fun containsDelimitedName(text: String, pattern: String): Boolean {
+        var fromIndex = 0
+        while (fromIndex <= text.length - pattern.length) {
+            val index = text.indexOf(pattern, fromIndex)
+            if (index < 0) return false
+            val end = index + pattern.length
+            val beforeBoundary = index == 0 || !text[index - 1].isLetterOrDigit()
+            val afterBoundary = end == text.length || !text[end].isLetterOrDigit()
+            if (beforeBoundary && afterBoundary) return true
+            fromIndex = index + 1
+        }
+        return false
     }
 
     fun detectCode(name: String): String {

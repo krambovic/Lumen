@@ -68,4 +68,17 @@ object SplitTunnelingManager {
 
         return appliedPackages
     }
+
+    /**
+     * Our own package must never end up inside the tunnel: the core's outbound
+     * sockets would be routed back into the TUN they feed. An allow-list keeps us
+     * out implicitly, but only while the framework actually accepted at least one
+     * package - if every allow-listed app is uninstalled no per-app filter is
+     * applied at all and Android captures every UID on the device.
+     *
+     * @param mode The mode that was applied to the builder
+     * @param applied The packages [applySplitTunneling] reported as accepted
+     */
+    fun requiresSelfDisallow(mode: SplitTunnelingMode, applied: List<String>): Boolean =
+        mode != SplitTunnelingMode.ALLOW_LIST || applied.isEmpty()
 }

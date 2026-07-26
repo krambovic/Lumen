@@ -91,7 +91,7 @@ private fun GeoResourceCard(resource: GeoResourceUiModel) {
     }
 }
 
-private fun formatGeoBytes(bytes: Long): String {
+internal fun formatGeoBytes(bytes: Long): String {
     if (bytes < 1024L) return "$bytes B"
     val units = arrayOf("KB", "MB", "GB")
     var value = bytes.toDouble()
@@ -100,5 +100,5 @@ private fun formatGeoBytes(bytes: Long): String {
         value /= 1024.0
         unit++
     }
-    return String.format("%.1f %s", value, units[unit.coerceAtLeast(0)])
+    return String.format(java.util.Locale.US, "%.1f %s", value, units[unit.coerceAtLeast(0)])
 }

@@ -51,6 +51,26 @@ class HappCryptTest {
     }
 
     @Test
+    fun testCrypt51EmbeddedLengthOneModFourStillBuildsCandidates() {
+        // Embedded length n = 9 (n - 1 is a multiple of 4) used to index one past
+        // the end of the url region, aborting candidate generation entirely.
+        val payload = StringBuilder("A".repeat(20 + 9 + 684))
+        payload.setCharAt(18, '0')
+        payload.setCharAt(19, '9')
+
+        var keyUnavailable = false
+        var otherMessage = ""
+        try {
+            HappCrypt.decryptHappLink("happ://crypt5/$payload")
+        } catch (e: HappKeyUnavailableError) {
+            keyUnavailable = true
+        } catch (e: HappDecryptError) {
+            otherMessage = e.message ?: ""
+        }
+        assertTrue("expected key-unavailable error, got: $otherMessage", keyUnavailable)
+    }
+
+    @Test
     fun testCrypt51KeyUnavailableThrowsSpecificException() {
         var unavailableErrorThrown = false
         try {

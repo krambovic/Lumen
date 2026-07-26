@@ -25,6 +25,20 @@ class ImportClassifierTest {
     }
 
     @Test
+    fun anytlsLinkIsConfig() {
+        val result = ImportClassifier.classify("anytls://password@example.com:8443#A")
+        assertTrue(result is ImportClassification.Ready)
+        assertEquals(ImportKind.CONFIG, (result as ImportClassification.Ready).kind)
+    }
+
+    @Test
+    fun undecryptableHappCryptLinkIsRejected() {
+        // The happ branch must fall through instead of throwing when the payload
+        // cannot be decrypted.
+        assertTrue(ImportClassifier.classify("happ://crypt/notreallyapayload") is ImportClassification.Rejected)
+    }
+
+    @Test
     fun extendedProtocolLinksAreConfig() {
         val links = listOf(
             "naive+https://user:pass@example.com:443#N",

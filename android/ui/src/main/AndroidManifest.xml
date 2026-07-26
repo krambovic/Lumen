@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- rememberQrScanRequest asks for this itself, so the module that requests it
+         declares it too; the merger folds it into the app manifest that already has it. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+</manifest>

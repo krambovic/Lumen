@@ -1,5 +1,6 @@
 package com.lumen.app.subscription
 
+import com.lumen.core.config.crypto.HappCrypt
 import com.lumen.core.config.parser.LinkParser
 import java.net.URI
 import java.util.Locale
@@ -18,7 +19,7 @@ internal object ImportClassifier {
         "vless", "vmess", "ss", "shadowsocks", "trojan", "tuic", "hysteria2", "hy2",
         "hysteria", "hy", "wireguard", "wg", "awg", "amneziawg", "warp",
         "naive", "naive+https", "naive+quic", "quic", "mieru", "mierus", "masque",
-        "socks", "socks5", "http", "https"
+        "anytls", "socks", "socks5", "http", "https"
     )
 
     fun classify(raw: String?): ImportClassification {
@@ -26,6 +27,21 @@ internal object ImportClassifier {
         if (text.isEmpty()) return ImportClassification.Rejected("Clipboard is empty")
         if (text.length > MAX_CLIPBOARD_CHARS) {
             return ImportClassification.Rejected("Import data is larger than 1 MiB")
+        }
+
+        // A happ crypt link usually wraps a subscription URL; the parser rejects those,
+        // so route them to the subscription flow instead of failing the paste.
+        if (HappCrypt.isHappCryptLink(text)) {
+            val decrypted = runCatching { HappCrypt.decryptHappLink(text).trim() }.getOrNull()
+            if (!decrypted.isNullOrBlank() && LinkParser.isSubscriptionUrl(decrypted)) {
+                // The wrapped URL is provider supplied and carries the subscriber
+                // token, so it is only accepted over TLS.
+                return if (decrypted.startsWith("https://", ignoreCase = true)) {
+                    ImportClassification.Ready(ImportKind.SUBSCRIPTION, decrypted)
+                } else {
+                    ImportClassification.Rejected("Happ subscription URL must use HTTPS")
+                }
+            }
         }
 
         parseHttpUrl(text)?.let {

@@ -37,17 +37,43 @@ internal object SubscriptionClient {
 
     private val placeholderMarkers = listOf(
         "client not supported", "unsupported client", "client is not supported",
-        "update your app", "use another client",
+        "app not supported", "unsupported app", "application is not supported",
+        "update your app", "update your client", "use another client",
+        // Russian equivalents: "client not supported", "unsupported client",
+        // "app not supported", "update the app", "update the client", "use another client".
         "\u043a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044f",
         "\u043d\u0435\u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u043c\u044b\u0439 \u043a\u043b\u0438\u0435\u043d\u0442",
-        "\u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435"
+        "\u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044f",
+        "\u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435",
+        "\u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u043a\u043b\u0438\u0435\u043d\u0442",
+        "\u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 \u0434\u0440\u0443\u0433\u043e\u0439 \u043a\u043b\u0438\u0435\u043d\u0442"
     )
+
+    /** Lumen's own subscription User-Agent; kept in the same shape as the desktop build. */
+    internal val lumenUserAgent: String
+        get() = "Lumen-Subscription/Android-${net.kramb.lumen.BuildConfig.VERSION_NAME}"
+
+    /**
+     * User-Agent fallback order. A user configured UA always wins; otherwise Lumen
+     * asks as itself first and only falls back to the compatibility profiles when the
+     * panel answers with a stub, no usable servers or a profile dependent status code.
+     */
+    internal fun clientProfiles(customUserAgent: String? = null): List<Pair<String, String>> = buildList {
+        if (!customUserAgent.isNullOrBlank()) add("Custom" to customUserAgent)
+        add("Lumen Android" to lumenUserAgent)
+        add("Happ compatible" to "Happ/2.18.3/Windows/2606241603601")
+        add("v2rayNG" to "v2rayNG/1.9.16")
+        add("SFA" to "SFA/1.11.0")
+        add("Streisand" to "Streisand/1.6.40")
+        add("Clash Meta" to "clash.meta")
+        add("Generic" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36")
+    }
 
     /**
      * Detects "stub" responses that panels return to unknown clients
      * (for example, a single fake node named "client not supported").
      */
-    private fun looksLikePlaceholder(body: String): Boolean {
+    internal fun looksLikePlaceholder(body: String): Boolean {
         if (body.isBlank()) return true
         val decoded = runCatching {
             java.net.URLDecoder.decode(body, "UTF-8")
@@ -69,7 +95,10 @@ internal object SubscriptionClient {
         var target = rawUrl.trim()
         if (HappCrypt.isHappCryptLink(target)) {
             val decrypted = HappCrypt.decryptHappLink(target).trim()
-            if (!decrypted.startsWith("http://") && !decrypted.startsWith("https://")) {
+            // A happ payload is not something the user typed, so it may not point the
+            // subscription (token in the path, X-Hwid header) at a plaintext endpoint.
+            require(!decrypted.startsWith("http://")) { "Happ subscription URL must use HTTPS" }
+            if (!decrypted.startsWith("https://")) {
                 val normalized = normalize(decrypted, emptyMap())
                 return normalized.copy(clientProfile = "Happ crypt")
             }
@@ -77,21 +106,7 @@ internal object SubscriptionClient {
         }
         require(target.startsWith("http://") || target.startsWith("https://")) { "Subscription URL must use HTTP(S)" }
 
-        // User-Agent fallback order: try the Lumen UA first; if the panel replies
-        // with a stub ("client not supported") or fails, retry with the Happ UA,
-        // then the remaining compatible profiles.
-        val profiles = buildList {
-            if (!customUserAgent.isNullOrBlank()) add("Custom" to customUserAgent)
-            // Happ first: panels that gate on the client name recognise it most often,
-            // and this matches what the desktop build sends.
-            add("Happ compatible" to "Happ/2.18.3/Windows/2606241603601")
-            add("v2rayNG" to "v2rayNG/1.9.16")
-            add("Lumen Android" to "Lumen-Subscription/Android-${net.kramb.lumen.BuildConfig.VERSION_NAME}")
-            add("SFA" to "SFA/1.11.0")
-            add("Streisand" to "Streisand/1.6.40")
-            add("Clash Meta" to "clash.meta")
-            add("Generic" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36")
-        }
+        val profiles = clientProfiles(customUserAgent)
         var lastError: Throwable? = null
         for ((profile, userAgent) in profiles) {
             try {
@@ -158,7 +173,7 @@ internal object SubscriptionClient {
         throw IOException(lastError?.message ?: "Subscription download failed", lastError)
     }
 
-    private fun normalize(body: String, headers: Map<String, String>): SubscriptionPayload {
+    internal fun normalize(body: String, headers: Map<String, String>): SubscriptionPayload {
         var linksBody = body.trim()
         val premium = linkedMapOf<String, String>()
         val userInfo = parseUserInfo(headers["subscription-userinfo"].orEmpty()).toMutableMap()
@@ -178,7 +193,14 @@ internal object SubscriptionClient {
                 }
                 json.optJSONObject("user")?.let { user ->
                     listOf("upload", "download", "total", "expire").forEach { key ->
-                        if (user.has(key)) user.optLong(key).takeIf { it > 0 }?.let { userInfo[key] = it }
+                        // takeIf { it > 0 } used to drop the two values a panel sends as a
+                        // deliberate zero: total = 0 (unlimited plan) and expire = 0 (never
+                        // expires). Both have to reach the caller so it can tell them apart
+                        // from a field the panel did not send at all.
+                        if (!user.has(key) || user.isNull(key)) return@forEach
+                        val raw = user.optLong(key, -1L)
+                        if (key == "expire") userInfo[key] = normalizeExpireSeconds(raw)
+                        else if (raw >= 0L) userInfo[key] = raw
                     }
                 }
                 json.optJSONArray("links")?.let { links ->
@@ -217,11 +239,41 @@ internal object SubscriptionClient {
         )
     }
 
-    private fun parseUserInfo(value: String): Map<String, Long> = value.split(';').mapNotNull { part ->
-        val key = part.substringBefore('=', "").trim().lowercase(Locale.US)
-        val number = part.substringAfter('=', "").trim().toLongOrNull()
-        if (key.isBlank() || number == null) null else key to number
-    }.toMap()
+    /** 9999-12-31T23:59:59Z: no plausible expiry in seconds is ever past this. */
+    private const val MAX_EXPIRE_SECONDS = 253_402_300_799L
+
+    /**
+     * `expire` is a UNIX timestamp in **seconds**. Panels that send milliseconds (and the
+     * odd one that sends microseconds) used to render as a date tens of thousands of years
+     * out, so anything that cannot be a seconds timestamp is rescaled until it can be.
+     * Non-positive values mean "never expires" and are normalised to 0.
+     */
+    internal fun normalizeExpireSeconds(value: Long): Long {
+        if (value <= 0L) return 0L
+        var seconds = value
+        while (seconds > MAX_EXPIRE_SECONDS) seconds /= 1000L
+        return seconds
+    }
+
+    /**
+     * Parses `subscription-userinfo`: `upload=..; download=..; total=..; expire=..`.
+     *
+     * A key the panel did not send stays absent from the result — the caller keeps its
+     * last known value for it instead of resetting it to 0 — while a key sent as 0
+     * (unlimited traffic, no expiry) is kept.
+     */
+    internal fun parseUserInfo(value: String): Map<String, Long> =
+        value.split(';', ',').mapNotNull { part ->
+            val key = part.substringBefore('=', "").trim().lowercase(Locale.US)
+            val number = part.substringAfter('=', "").trim().toLongOrNull()
+            if (key.isBlank() || number == null) return@mapNotNull null
+            when {
+                // "expire=-1" is the other spelling of "no expiry".
+                key == "expire" -> key to normalizeExpireSeconds(number)
+                number < 0L -> null
+                else -> key to number
+            }
+        }.toMap()
 
     private fun decodeHeader(value: String?): String? {
         val text = value?.trim().orEmpty()
@@ -234,9 +286,11 @@ internal object SubscriptionClient {
         }.getOrDefault(text)
     }
 
-    private fun premiumUrl(premium: Map<String, String>): String? {
+    // The subscription URL carries the subscriber token and the X-Hwid header, so a
+    // provider supplied replacement is only honoured over TLS.
+    internal fun premiumUrl(premium: Map<String, String>): String? {
         premium["new-url"]?.trim()?.let { replacement ->
-            if (replacement.startsWith("https://") || replacement.startsWith("http://")) return replacement
+            if (replacement.startsWith("https://")) return replacement
         }
         return null
     }

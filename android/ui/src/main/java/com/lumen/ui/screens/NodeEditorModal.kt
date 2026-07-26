@@ -1,5 +1,7 @@
 package com.lumen.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -15,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -39,7 +44,7 @@ import androidx.compose.ui.window.DialogProperties
 /**
  * Full node editor supporting all protocols from the desktop app:
  * VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / WireGuard /
- * AmneziaWG / OpenVPN / SOCKS / HTTP / Auto (url-test).
+ * AmneziaWG / OpenVPN / SOCKS / HTTP.
  */
 @Composable
 fun NodeEditorModal(
@@ -49,6 +54,7 @@ fun NodeEditorModal(
 ) {
     var draft by remember(initial) { mutableStateOf(initial) }
     val s = LocalStrings.current
+    val tick = rememberHapticTick()
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -97,6 +103,7 @@ fun NodeEditorModal(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         "openvpn" -> OpenVpnFields(draft = draft, onChange = { draft = it })
+                        "masque" -> MasqueFields(draft = draft, onChange = { draft = it })
                         "wireguard", "awg" -> WireGuardFields(
                             draft = draft,
                             isAwg = draft.protocol == "awg",
@@ -113,7 +120,11 @@ fun NodeEditorModal(
                     TextButton(onClick = onDismiss) { Text(s.cancel) }
                     Spacer(Modifier.width(8.dp))
                     OutlinedButton(
-                        onClick = { onSave(draft) },
+                        onClick = {
+                            // A saved node is the "server added" moment the user feels.
+                            tick(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onSave(draft)
+                        },
                         enabled = isDraftValid(draft)
                     ) {
                         Text(s.saveAction)
@@ -136,17 +147,42 @@ private fun protocolLabel(p: String): String = when (p) {
     "masque" -> "MASQUE"
     "openvpn" -> "OpenVPN"
     "socks" -> "SOCKS5"
-    "http" -> "HTTP proxy"
+    "http" -> "HTTP"
     "auto" -> "Auto (url-test)"
     else -> p
 }
 
 private fun isDraftValid(d: NodeDraft): Boolean = when (d.protocol) {
     "auto" -> d.name.isNotBlank()
-    "masque" -> d.name.isNotBlank() || d.server.isNotBlank()
-    "openvpn" -> d.server.isNotBlank() && d.port.toIntOrNull() != null && d.ovpnCa.isNotBlank()
+    // The MASQUE link carries a profile id instead of a host:port pair.
+    "masque" -> d.server.isNotBlank()
+    "openvpn" -> d.server.isNotBlank() && d.port.toIntOrNull() != null && d.ovpnCa.isNotBlank() &&
+        !openVpnCredentialsMissing(d)
     else -> d.server.isNotBlank() && d.port.toIntOrNull() != null
 }
+
+/**
+ * True when the profile authenticates the user interactively: either it asks for it
+ * (`auth-user-pass`), or it carries no client certificate at all, which leaves the
+ * username/password as the only credential the server can check. A certificate-only
+ * profile has <cert> and <key> and legitimately needs neither, so it is not flagged.
+ */
+fun openVpnRequiresCredentials(d: NodeDraft): Boolean {
+    if (d.protocol != "openvpn") return false
+    val declared = d.rawConfig.lineSequence().any { line ->
+        val token = line.trim().trimStart('-').lowercase()
+        token == "auth-user-pass" || token == "<auth-user-pass>" ||
+            token.startsWith("auth-user-pass ") || token.startsWith("auth-user-pass\t")
+    }
+    return declared || (d.ovpnCert.isBlank() && d.ovpnKey.isBlank())
+}
+
+/**
+ * The node would be saved looking ready while the core has nothing to authenticate with:
+ * the tunnel then fails with an obscure handshake error instead of a missing password.
+ */
+fun openVpnCredentialsMissing(d: NodeDraft): Boolean =
+    openVpnRequiresCredentials(d) && (d.ovpnUsername.isBlank() || d.ovpnPassword.isBlank())
 
 @Composable
 private fun Field(
@@ -193,6 +229,36 @@ private fun ServerPortRow(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
             modifier = Modifier
                 .weight(0.35f)
                 .padding(vertical = 4.dp)
+        )
+    }
+}
+
+/** Inline blocker: the field above is missing something the node cannot be saved without. */
+@Composable
+private fun EditorWarning(text: String) {
+    val shape = RoundedCornerShape(12.dp)
+    val accent = MaterialTheme.colorScheme.error
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+            .clip(shape)
+            .background(accent.copy(alpha = 0.12f))
+            .border(1.dp, accent.copy(alpha = 0.55f), shape)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.Warning,
+            contentDescription = null,
+            tint = accent,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
 }
@@ -320,6 +386,19 @@ private fun UriProtocolFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
     }
 }
 
+/**
+ * MASQUE nodes are addressed by a WARP profile id and an auth token, so they
+ * have no host/port row.
+ */
+@Composable
+private fun MasqueFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
+    val s = LocalStrings.current
+    Field(s.masqueProfileIdLabel, draft.server) { onChange(draft.copy(server = it)) }
+    Field(s.masqueAuthTokenLabel, draft.secret) { onChange(draft.copy(secret = it)) }
+    Field(s.sniLabel, draft.sni) { onChange(draft.copy(sni = it)) }
+    ToggleField(s.allowInsecureTlsLabel, draft.insecure) { onChange(draft.copy(insecure = it)) }
+}
+
 @Composable
 private fun WireGuardFields(
     draft: NodeDraft,
@@ -334,6 +413,11 @@ private fun WireGuardFields(
     Field(s.presharedKeyLabel, draft.presharedKey) { onChange(draft.copy(presharedKey = it)) }
     Field(s.allowedIpsLabel, draft.allowedIps) { onChange(draft.copy(allowedIps = it)) }
     Field(s.reservedLabel, draft.reserved) { onChange(draft.copy(reserved = it)) }
+    Field(s.wgMtuLabel, draft.mtu, keyboardType = KeyboardType.Number) { onChange(draft.copy(mtu = it)) }
+    Field(s.wgDnsLabel, draft.dns) { onChange(draft.copy(dns = it)) }
+    Field(s.wgKeepaliveLabel, draft.persistentKeepalive, keyboardType = KeyboardType.Number) {
+        onChange(draft.copy(persistentKeepalive = it))
+    }
     if (!isAwg) {
         // wg -> awg with the Amnezia defaults, same as desktop Lumen / wgtunnel.
         OutlinedButton(
@@ -350,6 +434,19 @@ private fun WireGuardFields(
         )
     }
     if (isAwg) {
+        // awg -> wg: drop the obfuscation parameters and go back to plain WireGuard.
+        OutlinedButton(
+            onClick = { onChange(plainWireGuard(draft)) },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+        ) {
+            Text(s.disableAmnezia)
+        }
+        Text(
+            s.disableAmneziaDesc,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp)
+        )
         SectionHeader(s.awgJunkParamsLabel)
         Row(Modifier.fillMaxWidth()) {
             OutlinedTextField(
@@ -409,18 +506,49 @@ private fun WireGuardFields(
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp)
             )
         }
+        SectionHeader(s.awgHeadersLabel)
+        Row(Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = draft.h1,
+                onValueChange = { onChange(draft.copy(h1 = it)) },
+                label = { Text("H1") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).padding(vertical = 4.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            OutlinedTextField(
+                value = draft.h2,
+                onValueChange = { onChange(draft.copy(h2 = it)) },
+                label = { Text("H2") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).padding(vertical = 4.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            OutlinedTextField(
+                value = draft.h3,
+                onValueChange = { onChange(draft.copy(h3 = it)) },
+                label = { Text("H3") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).padding(vertical = 4.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            OutlinedTextField(
+                value = draft.h4,
+                onValueChange = { onChange(draft.copy(h4 = it)) },
+                label = { Text("H4") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).padding(vertical = 4.dp)
+            )
+        }
     }
 }
 
 /**
  * Structured OpenVPN editor, same field set as the desktop Lumen node editor.
- * The .ovpn text stays available as an import shortcut that fills the fields.
  */
 @Composable
 private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
     val s = LocalStrings.current
-    var pasteOpen by remember { mutableStateOf(draft.ovpnCa.isBlank()) }
-    var pasteText by remember { mutableStateOf(draft.rawConfig) }
 
     ServerPortRow(draft, onChange)
     LumenDropdown(
@@ -453,8 +581,18 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
     Spacer(Modifier.height(4.dp))
 
     SectionHeader("Credentials")
+    val credentialsRequired = openVpnRequiresCredentials(draft)
     Field("Username", draft.ovpnUsername) { onChange(draft.copy(ovpnUsername = it)) }
     Field("Password", draft.ovpnPassword) { onChange(draft.copy(ovpnPassword = it)) }
+    if (credentialsRequired && openVpnCredentialsMissing(draft)) {
+        EditorWarning(s.ovpnCredentialsRequired)
+    } else if (!credentialsRequired) {
+        Text(
+            s.ovpnCertificateOnlyHint,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 
     SectionHeader("Certificates")
     Field("CA certificate", draft.ovpnCa, singleLine = false, minLines = 4) { onChange(draft.copy(ovpnCa = it)) }
@@ -515,24 +653,61 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
         onChange(draft.copy(ovpnDns = it))
     }
 
-    SectionHeader(s.openvpnConfigLabel)
-    OutlinedButton(
-        onClick = { pasteOpen = !pasteOpen },
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-    ) {
-        Text(if (pasteOpen) s.close else s.importAction)
-    }
-    if (pasteOpen) {
-        Field(s.openvpnConfigLabel, pasteText, singleLine = false, minLines = 8) { pasteText = it }
-        OutlinedButton(
-            onClick = { onChange(openVpnDraftFromProfile(draft, pasteText)) },
-            enabled = pasteText.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-        ) {
-            Text(s.importAction)
+    SectionHeader(s.useProxyLabel)
+    LumenDropdown(
+        label = s.useProxyLabel,
+        options = OPENVPN_PROXY_TYPES,
+        selected = draft.ovpnProxyType,
+        onSelected = { onChange(draft.copy(ovpnProxyType = it)) },
+        optionLabel = { openVpnProxyLabel(it) }
+    )
+    Spacer(Modifier.height(4.dp))
+    if (draft.ovpnProxyType.isNotBlank()) {
+        Row(Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = draft.ovpnProxyServer,
+                onValueChange = { onChange(draft.copy(ovpnProxyServer = it)) },
+                label = { Text(s.proxyServerLabel) },
+                singleLine = true,
+                modifier = Modifier.weight(2f).padding(vertical = 4.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            OutlinedTextField(
+                value = draft.ovpnProxyPort,
+                onValueChange = { onChange(draft.copy(ovpnProxyPort = it.filter { c -> c.isDigit() })) },
+                label = { Text(s.portLabel) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f).padding(vertical = 4.dp)
+            )
+        }
+        if (!isObfsProxy(draft.ovpnProxyType)) {
+            Field(s.proxyUsernameLabel, draft.ovpnProxyUsername) {
+                onChange(draft.copy(ovpnProxyUsername = it))
+            }
+            Field(s.proxyPasswordLabel, draft.ovpnProxyPassword) {
+                onChange(draft.copy(ovpnProxyPassword = it))
+            }
+        } else {
+            Text(
+                s.obfsProxyHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
+
 }
+
+/** Drops every obfuscation parameter and turns the node back into plain WireGuard. */
+private fun plainWireGuard(d: NodeDraft): NodeDraft = d.copy(
+    protocol = "wireguard",
+    jc = "", jmin = "", jmax = "",
+    s1 = "", s2 = "", s3 = "", s4 = "",
+    h1 = "", h2 = "", h3 = "", h4 = "",
+    i1 = "", i2 = "", i3 = "", i4 = "", i5 = "",
+    j1 = "", j2 = "", j3 = "", itime = ""
+)
 
 /** Amnezia defaults (Jc/Jmin/Jmax + S1/S2), same values as desktop Lumen and wgtunnel. */
 private fun amneziaCompatible(d: NodeDraft): NodeDraft = d.copy(

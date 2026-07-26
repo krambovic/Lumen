@@ -63,9 +63,7 @@ class LumenCompactWidgetProvider : AppWidgetProvider() {
             val prefs = context.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
             val isRunning = LumenVpnService.isRunning.value
 
-            val toggleIntent = Intent(context, LumenWidgetProvider::class.java).apply {
-                action = LumenWidgetProvider.ACTION_TOGGLE_VPN
-            }
+            val toggleIntent = LumenWidgetProvider.toggleIntent(context)
             val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             } else {
