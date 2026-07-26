@@ -300,6 +300,9 @@ internal object SubscriptionClient {
     private val metadataKeys = setOf(
         "profile-title", "subscription-name", "profile-description",
         "announce", "announcement", "announce-url", "announcement-url",
+        // telegram-url is Happ's own, absent from the incy spec: the "Channel / Bot"
+        // button. Without it here the whitelist below drops it before buildMetadata.
+        "telegram-url", "telegram",
         "support-url", "support", "support-email",
         "profile-web-page-url", "homepage", "premium-url",
         "banner-text", "banner-button-text", "banner-button-url",
@@ -333,11 +336,27 @@ internal object SubscriptionClient {
     )
 
     /** Provider supplied links are opened by the user, so only http(s) is accepted. */
+    /**
+     * Desktop stores these links verbatim, so panels get away with sending
+     * `t.me/support` or `tg://resolve?domain=x`. Requiring an explicit http(s)
+     * prefix silently dropped both and left the buttons missing on Android only.
+     * A bare host is promoted to https; anything that is not link-shaped is still
+     * rejected rather than handed to an intent.
+     */
     private fun webUrl(value: String?): String? {
         val text = value?.trim().orEmpty()
         if (text.isBlank() || text.length > 2048) return null
-        if (!text.startsWith("http://", true) && !text.startsWith("https://", true)) return null
-        return text
+        if (text.any(Char::isWhitespace)) return null
+        if (text.startsWith("http://", true) || text.startsWith("https://", true)) return text
+        // Telegram's own scheme: the card opens it with an intent, and the opener
+        // falls back when no app can handle it.
+        if (text.startsWith("tg://", true)) return text
+        if (text.startsWith("@") && text.length > 1) return "https://t.me/${text.drop(1)}"
+        // Scheme-less "host/path": needs a dot and must not look like another scheme.
+        if (text.contains("://") || text.contains('.').not()) return null
+        val host = text.substringBefore('/')
+        if (host.isBlank() || host.startsWith('.') || host.endsWith('.')) return null
+        return "https://$text"
     }
 
     private val hexColorRegex = Regex("^#?([0-9A-Fa-f]{6})$")

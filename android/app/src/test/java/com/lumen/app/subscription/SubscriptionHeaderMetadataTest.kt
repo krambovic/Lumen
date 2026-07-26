@@ -18,6 +18,44 @@ class SubscriptionHeaderMetadataTest {
     private fun metadata(vararg headers: Pair<String, String>): SubscriptionMetadata =
         SubscriptionClient.normalize(body, mapOf(*headers)).metadata
 
+    // ---------- the Channel/Bot and Support buttons ----------
+
+    @Test
+    fun telegramUrlSurvivesTheMetadataWhitelist() {
+        // It reached buildMetadata's `pick` but never got into the source map, because
+        // the whitelist that fills that map had no entry for it — so the Channel / Bot
+        // button was always missing while desktop showed it.
+        assertEquals("https://t.me/maviks", metadata("telegram-url" to "https://t.me/maviks").telegramUrl)
+        assertEquals("https://t.me/maviks", metadata("telegram" to "https://t.me/maviks").telegramUrl)
+    }
+
+    @Test
+    fun telegramUrlIsAlsoReadFromABodyComment() {
+        val withComment = "#telegram-url https://t.me/maviks\n$body"
+        val payload = SubscriptionClient.normalize(withComment, emptyMap())
+        assertEquals("https://t.me/maviks", payload.metadata.telegramUrl)
+        // The directive must not survive as a link line.
+        assertFalse(payload.body.contains("telegram-url"))
+    }
+
+    @Test
+    fun linksWithoutASchemeAreAcceptedTheWayDesktopAcceptsThem() {
+        // Desktop stores these verbatim, so panels send them scheme-less; requiring
+        // http(s) dropped the button on Android only.
+        assertEquals("https://t.me/maviks", metadata("support-url" to "t.me/maviks").supportUrl)
+        assertEquals("https://maviks.app/support", metadata("support-url" to "maviks.app/support").supportUrl)
+        assertEquals("https://t.me/maviks", metadata("support-url" to "@maviks").supportUrl)
+        assertEquals("tg://resolve?domain=maviks", metadata("support-url" to "tg://resolve?domain=maviks").supportUrl)
+    }
+
+    @Test
+    fun valuesThatAreNotLinkShapedAreStillRejected() {
+        assertNull(metadata("support-url" to "call us on monday").supportUrl)
+        assertNull(metadata("support-url" to "support").supportUrl)
+        assertNull(metadata("support-url" to "ftp://example.com/x").supportUrl)
+        assertNull(metadata("support-url" to ".example.com").supportUrl)
+    }
+
     // ---------- decodeHeader ----------
 
     @Test
