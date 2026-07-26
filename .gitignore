@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+AGENTS.md
+CLAUDE.md
 
 # PyInstaller
 build/
@@ -64,3 +66,4 @@ desktop.ini
 
 # Worktrees
 .worktrees/
+/telemetry-site
