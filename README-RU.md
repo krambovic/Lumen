@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Lumen — кроссплатформенный клиент Xray / sing-box extended" width="100%">
+  <img src="windows/assets/banner.png" alt="Lumen — кроссплатформенный клиент Xray / sing-box extended" width="100%">
 </p>
 
 <p align="center">
