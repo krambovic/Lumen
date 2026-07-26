@@ -1,5 +1,7 @@
 package com.lumen.core.config.normalizer
 
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.util.Base64
 import java.util.regex.Pattern
 
@@ -8,18 +10,21 @@ object AmneziaWGNormalizer {
     private val IPV4_REGEX = Pattern.compile("^([0-9]{1,3}\\.){3}[0-9]{1,3}$")
     private val IPV6_REGEX = Pattern.compile("^[0-9a-fA-F:]+$")
     private val SPLIT_DELIMITER_REGEX = Regex("[\\s,;]+")
-    // Must stay in sync with LinkParser.AMNEZIA_JUNK_KEYS, otherwise parsed
+    // Must stay in sync with LinkParser's AMNEZIA_* key sets, otherwise parsed
     // AmneziaWG 1.5 parameters are dropped before reaching the core.
-    private val AMNEZIA_JUNK_KEYS = listOf(
-        "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",
-        "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3", "itime"
+    private val AMNEZIA_INT_KEYS = listOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime")
+    // uint32 in the core schema: values above Int.MAX_VALUE must not be toInt()ed.
+    private val AMNEZIA_RANGE_KEYS = listOf("h1", "h2", "h3", "h4")
+    // AWG 2.0 packet definitions: the core reads these as strings.
+    private val AMNEZIA_STR_KEYS = listOf("i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3")
+    private val AMNEZIA_JUNK_KEYS = AMNEZIA_INT_KEYS + AMNEZIA_RANGE_KEYS + AMNEZIA_STR_KEYS
+    // Cloudflare WARP endpoint networks (parity with the Windows client).
+    private val WARP_IPV4_NETWORKS = listOf(
+        Pair("162.159.192.0", 24),
+        Pair("162.159.193.0", 24),
+        Pair("188.114.96.0", 20)
     )
-    private val WARP_IP_PREFIXES = listOf(
-        "162.159.192.", "162.159.193.", "188.114.",
-        // Cloudflare WARP IPv6 endpoints (parity with the Windows client:
-        // 2606:4700:d0::/48 and 2606:4700:d1::/48)
-        "2606:4700:d0:", "2606:4700:d1:"
-    )
+    private val WARP_IPV6_NETWORKS = listOf("2606:4700:d0::", "2606:4700:d1::")
 
     fun normalize(endpoint: Map<String, Any?>): Map<String, Any?> {
         return normalizeWireGuardEndpoint(endpoint)
@@ -114,7 +119,6 @@ object AmneziaWGNormalizer {
             return result
         }
 
-        result["type"] = "wireguard"
         result["system"] = false
 
         val privateKey = (result["private_key"] ?: result.remove("private-key") ?: result.remove("privateKey") ?: result.remove("secret_key") ?: result.remove("secret-key"))?.toString()?.trim() ?: ""
@@ -138,7 +142,7 @@ object AmneziaWGNormalizer {
         result["address"] = normalizeIpPrefixes(addressInput)
 
         var peersRaw = result["peers"]
-        val peersList = mutableListOf<Map<String, Any?>>()
+        val peersList = mutableListOf<MutableMap<String, Any?>>()
 
         if (peersRaw !is List<*> || peersRaw.isEmpty()) {
             if (legacyServer.isNotEmpty() || legacyPublicKey.isNotEmpty()) {
@@ -180,10 +184,8 @@ object AmneziaWGNormalizer {
                 peerMap["allowed_ips"] = normalizeIpPrefixes(allowedIps)
 
                 val peerReserved = parseReservedBytes(peerMap.remove("reserved"))
-                if (peerReserved.isNotEmpty()) {
-                    // Only the endpoint root rejects "reserved"; on a peer it is valid.
-                    peerMap["reserved"] = peerReserved
-                    if (legacyReserved.isEmpty()) result["_peer_reserved"] = peerReserved
+                if (peerReserved.isNotEmpty() && legacyReserved.isEmpty()) {
+                    result["_peer_reserved"] = peerReserved
                 }
 
                 peersList.add(peerMap)
@@ -198,22 +200,40 @@ object AmneziaWGNormalizer {
             result.remove(junkKey) // Eliminate top-level unknown fields
             val value = endpoint[junkKey] ?: amneziaSubMap[junkKey]
             if (value != null) {
-                val intVal = when (value) {
-                    is Number -> value.toInt()
-                    is String -> value.toIntOrNull()
-                    else -> null
-                }
-                if (intVal != null) {
-                    amneziaSubMap[junkKey] = intVal
-                } else if (value is String && value.isNotEmpty()) {
-                    amneziaSubMap[junkKey] = value
+                when (junkKey) {
+                    // A numeric i1/j1 must stay a string, and an h1 above
+                    // Int.MAX_VALUE must not be truncated: both make the core
+                    // abort while decoding the endpoint.
+                    in AMNEZIA_STR_KEYS -> value.toString()
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { amneziaSubMap[junkKey] = it }
+                    in AMNEZIA_RANGE_KEYS -> if (value !is String || value.isNotEmpty()) {
+                        amneziaSubMap[junkKey] = value
+                    }
+                    else -> {
+                        val intVal = when (value) {
+                            is Number -> value.toInt()
+                            is String -> value.toIntOrNull()
+                            else -> null
+                        }
+                        if (intVal != null) {
+                            amneziaSubMap[junkKey] = intVal
+                        } else if (value is String && value.isNotEmpty()) {
+                            amneziaSubMap[junkKey] = value
+                        }
+                    }
                 }
             }
         }
+        // sing-box-extended follows the current endpoint schema: AmneziaWG is a
+        // WireGuard endpoint carrying the extended "amnezia" options. "awg" is
+        // only an import/display alias; using it as an endpoint type makes the
+        // core abort with `unknown endpoint type: awg`.
         if (amneziaSubMap.isNotEmpty()) {
             @Suppress("UNCHECKED_CAST")
             result["amnezia"] = amneziaSubMap as Map<String, Any?>
         }
+        result["type"] = "wireguard"
 
         @Suppress("UNCHECKED_CAST")
         val peerReserved = parseReservedBytes(result.remove("_peer_reserved"))
@@ -263,8 +283,15 @@ object AmneziaWGNormalizer {
             return warpEndpoint
         }
 
-        // Only the endpoint root rejects "reserved"; per-peer reserved bytes are
-        // valid and some providers require them, so peers keep their value.
+        // The bundled extended core's WireGuardPeer schema has no `reserved`
+        // field. It is reachable only through a WARP profile, so refuse the
+        // combination instead of silently dropping it (parity with Windows).
+        if (reservedBytes.isNotEmpty()) {
+            throw IllegalArgumentException(
+                "sing-box extended 2.5.x supports reserved bytes only for Cloudflare WARP profiles"
+            )
+        }
+        peersList.forEach { it.remove("reserved") }
         result.remove("reserved")
         // Borrowed from ZapretKVN-android: conservative default MTU for userspace
         // (Amnezia)WireGuard on Android to avoid fragmentation stalls inside TUN.
@@ -360,11 +387,47 @@ object AmneziaWGNormalizer {
         return Pair(text, 0)
     }
 
+    private fun parseIpv4(text: String): Int? {
+        val parts = text.split(".")
+        if (parts.size != 4) return null
+        var value = 0
+        for (part in parts) {
+            if (part.isEmpty() || part.length > 3 || part.any { !it.isDigit() }) return null
+            val octet = part.toInt()
+            if (octet > 255) return null
+            value = (value shl 8) or octet
+        }
+        return value
+    }
+
+    private fun ipv6Prefix48(text: String): ByteArray? {
+        if (!text.contains(":") || !IPV6_REGEX.matcher(text).matches()) return null
+        return try {
+            val address = InetAddress.getByName(text)
+            if (address is Inet6Address) address.address.copyOfRange(0, 6) else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun isCloudflareWarpPeer(server: String): Boolean {
-        val host = server.trim().lowercase().trimEnd('.')
+        val host = server.trim().lowercase().trimEnd('.').trim('[', ']')
+        if (host.isEmpty()) return false
         if (host == "engage.cloudflareclient.com" || host.endsWith(".cloudflareclient.com")) {
             return true
         }
-        return WARP_IP_PREFIXES.any { host.startsWith(it) }
+        val ipv4 = parseIpv4(host)
+        if (ipv4 != null) {
+            return WARP_IPV4_NETWORKS.any { (network, bits) ->
+                val networkValue = parseIpv4(network) ?: return@any false
+                val mask = -1 shl (32 - bits)
+                (ipv4 and mask) == (networkValue and mask)
+            }
+        }
+        val prefix = ipv6Prefix48(host) ?: return false
+        return WARP_IPV6_NETWORKS.any { network ->
+            val networkPrefix = ipv6Prefix48(network) ?: return@any false
+            prefix.contentEquals(networkPrefix)
+        }
     }
 }

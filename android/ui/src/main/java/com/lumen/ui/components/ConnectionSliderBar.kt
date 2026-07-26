@@ -13,7 +13,6 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -48,8 +47,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
-import com.lumen.ui.screens.LocalHapticsEnabled
 import com.lumen.ui.screens.LocalStrings
 import kotlin.math.roundToInt
 
@@ -60,10 +57,11 @@ fun ConnectionSliderBar(
     modifier: Modifier = Modifier
 ) {
     val s = LocalStrings.current
-    val haptics = LocalHapticFeedback.current
-    val hapticsEnabled = LocalHapticsEnabled.current
     // Slider gestures buzz on grab and on the toggle that follows the release.
-    fun buzz(type: HapticFeedbackType) { if (hapticsEnabled) haptics.performHapticFeedback(type) }
+    // Routed through the shared tick so the vibrator fires even when the system
+    // touch-feedback switch is off.
+    val tick = com.lumen.ui.screens.rememberHapticTick()
+    fun buzz(type: HapticFeedbackType) { tick(type) }
 
     // Keep primary theme color for ALL states (no changing to green/yellow/red)
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -98,11 +96,16 @@ fun ConnectionSliderBar(
                 indication = null,
                 onClick = onToggleConnection
             )
-            .padding(4.dp)
     ) {
         val density = LocalDensity.current
-        val knobSizePx = with(density) { 52.dp.toPx() }
-        val maxOffsetPx = (constraints.maxWidth.toFloat() - knobSizePx).coerceAtLeast(0f)
+        val insetPx = with(density) { 4.dp.toPx() }
+        val knobSizePx = with(density) { 56.dp.toPx() }
+        // Travel is calculated from the real outer track width. Previously the
+        // parent padding was omitted from this calculation, so the thumb escaped
+        // the track or stopped short depending on screen width.
+        val maxOffsetPx = (
+            constraints.maxWidth.toFloat() - knobSizePx - insetPx * 2f
+        ).coerceAtLeast(0f)
 
         var isDragging by remember { mutableStateOf(false) }
         var dragPx by remember {
@@ -134,14 +137,15 @@ fun ConnectionSliderBar(
         val fillWidthDp = if (effectiveOffsetPx <= 0.5f) {
             0.dp
         } else {
-            with(density) { (effectiveOffsetPx + knobSizePx).toDp() }
+            with(density) { (insetPx + effectiveOffsetPx + knobSizePx).toDp() }
         }
 
         if (fillWidthDp > 0.dp) {
             Box(
                 modifier = Modifier
-                    .fillMaxHeight()
+                    .height(56.dp)
                     .width(fillWidthDp)
+                    .align(Alignment.CenterStart)
                     .clip(RoundedCornerShape(24.dp))
                     .background(animatedKnobBg)
             )
@@ -166,8 +170,13 @@ fun ConnectionSliderBar(
         // Draggable Knob / Thumb
         Box(
             modifier = Modifier
-                .offset { IntOffset(effectiveOffsetPx.roundToInt(), 0) }
-                .size(52.dp)
+                .offset {
+                    IntOffset(
+                        (insetPx + effectiveOffsetPx).roundToInt(),
+                        insetPx.roundToInt()
+                    )
+                }
+                .size(56.dp)
                 .clip(CircleShape)
                 .background(animatedKnobBg)
                 .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)

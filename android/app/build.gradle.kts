@@ -1,3 +1,4 @@
+import com.android.build.api.variant.FilterConfiguration
 import java.util.Properties
 
 plugins {
@@ -14,6 +15,19 @@ val keystoreProps = Properties().apply {
 }
 val hasReleaseKeystore = keystoreProps.getProperty("storeFile") != null
 
+// The sing-box extended core (libsingbox.so) and libhev-socks5-tunnel.so are committed under
+// src/main/jniLibs for these ABIs only. Shipping any other ABI produces an APK that installs
+// but can never start a tunnel, so the split and the packaged ABIs are pinned to this list.
+val supportedAbis = listOf("arm64-v8a", "x86_64")
+val baseVersionCode = 23
+// AGP does not derive per-output version codes; without an offset every split APK would share one.
+val abiVersionCodeOffsets = mapOf(
+    "armeabi-v7a" to 1,
+    "x86" to 2,
+    "arm64-v8a" to 3,
+    "x86_64" to 4
+)
+
 android {
     namespace = "net.kramb.lumen"
     compileSdk = 34
@@ -22,12 +36,15 @@ android {
         applicationId = "net.kramb.lumen"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "0.9.1"
+        versionCode = baseVersionCode
+        versionName = "0.9.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+        ndk {
+            abiFilters += supportedAbis
         }
     }
 
@@ -35,7 +52,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            include(*supportedAbis.toTypedArray())
             isUniversalApk = true
         }
     }
@@ -78,6 +95,23 @@ android {
         }
         jniLibs {
             useLegacyPackaging = true
+        }
+    }
+}
+
+// Portable JDK pin: works off JAVA_HOME or any detected/provisioned JDK 17, so no build
+// script has to name a machine-specific JDK path.
+kotlin {
+    jvmToolchain(17)
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val abi = output.filters.firstOrNull {
+                it.filterType == FilterConfiguration.FilterType.ABI
+            }?.identifier
+            output.versionCode.set(baseVersionCode * 10 + (abiVersionCodeOffsets[abi] ?: 0))
         }
     }
 }

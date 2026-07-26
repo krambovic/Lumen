@@ -37,6 +37,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.lumen.ui.theme.ConnectionDanger
 import com.lumen.ui.theme.ConnectionSuccess
@@ -205,10 +206,19 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * Latency colour thresholds, kept in sync with the ping settings so a user can
+ * decide what counts as a good or an average server.
+ */
+object PingThresholds {
+    var goodMs by androidx.compose.runtime.mutableStateOf(150)
+    var fairMs by androidx.compose.runtime.mutableStateOf(300)
+}
+
 fun pingColor(ping: Int): Color = when {
-    ping < 0 -> ConnectionDanger
-    ping <= 120 -> ConnectionSuccess
-    ping <= 300 -> ConnectionWarning
+    ping <= 0 -> ConnectionDanger
+    ping <= PingThresholds.goodMs -> ConnectionSuccess
+    ping <= PingThresholds.fairMs -> ConnectionWarning
     else -> ConnectionDanger
 }
 
@@ -232,12 +242,15 @@ fun LumenScreenHeader(
     onBack: (() -> Unit)? = null,
     subtitle: String? = null,
     actions: (@Composable () -> Unit)? = null,
+    // Screens that already inset their own scroll container (Settings) pass false so the
+    // status bar gap is not applied twice and the header cannot slide under the clock.
+    applyStatusBarPadding: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .statusBarsPadding()
+            .then(if (applyStatusBarPadding) Modifier.statusBarsPadding() else Modifier)
             .padding(horizontal = 16.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -281,17 +294,113 @@ fun LumenScreenHeader(
     }
 }
 
-/** Compose haptic tick, muted while the vibration setting is off. */
+/**
+ * True while the device itself plays touch feedback.
+ *
+ * Read instead of trusting `View.performHapticFeedback`: the platform routes the tick
+ * through the window session, which returns true as soon as a vibration effect exists for
+ * the constant - the vibrator service drops it afterwards when the user's touch feedback
+ * setting is off. So the return value cannot be used to decide whether to fall back.
+ */
+private fun systemHapticFeedbackEnabled(context: android.content.Context): Boolean = runCatching {
+    val resolver = context.contentResolver
+    val enabled = android.provider.Settings.System.getInt(
+        resolver,
+        android.provider.Settings.System.HAPTIC_FEEDBACK_ENABLED,
+        1
+    ) != 0
+    // Android 12 added a separate per-usage strength; 0 mutes touch feedback while
+    // HAPTIC_FEEDBACK_ENABLED stays at 1. The key is not public API, hence the literal.
+    val intensity = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        android.provider.Settings.System.getInt(resolver, "haptic_feedback_intensity", 2)
+    } else {
+        2
+    }
+    enabled && intensity != 0
+}.getOrDefault(true)
+
+/**
+ * Plain vibration used when system touch feedback is muted. It is played with the default
+ * (unknown) usage on purpose: a TOUCH usage would be suppressed by the very setting this
+ * fallback exists to work around, leaving the in-app switch with nothing to do.
+ */
+private fun vibrateTick(vibrator: android.os.Vibrator, longPress: Boolean) {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        vibrator.vibrate(
+            android.os.VibrationEffect.createPredefined(
+                if (longPress) android.os.VibrationEffect.EFFECT_HEAVY_CLICK
+                else android.os.VibrationEffect.EFFECT_TICK
+            )
+        )
+    } else {
+        vibrator.vibrate(
+            android.os.VibrationEffect.createOneShot(
+                if (longPress) 30L else 14L,
+                android.os.VibrationEffect.DEFAULT_AMPLITUDE
+            )
+        )
+    }
+}
+
+/**
+ * Haptic tick, muted while the in-app vibration setting is off.
+ *
+ * System haptics are preferred while the device plays them: they give the short, tuned
+ * tick the hardware is designed for. When the device's own "touch feedback" switch is off
+ * they are dropped silently, so the plain vibrator is driven directly instead - the in-app
+ * switch is the user asking for feedback, and it has to work on its own.
+ */
 @Composable
 fun rememberHapticTick(): (androidx.compose.ui.hapticfeedback.HapticFeedbackType) -> Unit {
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     val enabled = LocalHapticsEnabled.current
-    return remember(enabled, haptics) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val vibrator = remember(context) {
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                (context.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE)
+                    as? android.os.VibratorManager)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            }
+        }.getOrNull()?.takeIf { runCatching { it.hasVibrator() }.getOrDefault(false) }
+    }
+    val view = androidx.compose.ui.platform.LocalView.current
+    return remember(enabled, haptics, vibrator, view, context) {
         { type: androidx.compose.ui.hapticfeedback.HapticFeedbackType ->
-            if (enabled) runCatching { haptics.performHapticFeedback(type) }
+            if (enabled) {
+                val longPress = type == androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+                // 1. System haptics, but only while the device actually plays them.
+                var played = if (systemHapticFeedbackEnabled(context)) {
+                    runCatching {
+                        view.performHapticFeedback(
+                            if (longPress) android.view.HapticFeedbackConstants.LONG_PRESS
+                            else android.view.HapticFeedbackConstants.VIRTUAL_KEY
+                        )
+                    }.getOrDefault(false)
+                } else {
+                    false
+                }
+                // 2. Plain vibrator so the in-app switch keeps working with system
+                //    touch feedback disabled.
+                if (!played) {
+                    vibrator?.let { vib ->
+                        played = runCatching { vibrateTick(vib, longPress) }.isSuccess
+                    }
+                }
+                // 3. Last resort: whatever Compose can still produce.
+                if (!played) runCatching { haptics.performHapticFeedback(type) }
+            }
         }
     }
 }
+
+/**
+ * Height of a filter chip. Fixed so a long subscription name can never turn the
+ * chip into a tall rectangle next to the 38dp filter icons.
+ */
+private val FilterChipHeight = 38.dp
 
 /** Compact selectable chip used by the server filters. */
 @Composable
@@ -318,6 +427,7 @@ fun LumenFilterChip(
     val fg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         modifier = modifier
+            .height(FilterChipHeight)
             .clip(shape)
             .background(bg)
             .border(1.dp, borderColor, shape)
@@ -325,18 +435,25 @@ fun LumenFilterChip(
                 tick(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                 onClick()
             }
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (!leading.isNullOrBlank()) {
-            Text(leading, style = MaterialTheme.typography.bodySmall)
+            Text(leading, style = MaterialTheme.typography.bodySmall, maxLines = 1)
             Spacer(Modifier.width(6.dp))
         }
+        // Weight without fill: a short label still hugs its text, while a long one
+        // gives the badge the room it needs instead of squeezing it to zero width,
+        // which used to wrap the count onto three lines and blow up the chip.
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
             color = fg,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
         )
         if (!badge.isNullOrBlank()) {
             Spacer(Modifier.width(6.dp))
@@ -344,10 +461,98 @@ fun LumenFilterChip(
                 text = badge,
                 style = MaterialTheme.typography.labelSmall,
                 color = fg.copy(alpha = 0.75f),
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
+}
+
+/** Walks the context wrappers Compose hands out until the hosting activity is found. */
+private fun android.content.Context.findActivity(): android.app.Activity? {
+    var current: android.content.Context = this
+    while (current is android.content.ContextWrapper) {
+        if (current is android.app.Activity) return current
+        current = current.baseContext
+    }
+    return null
+}
+
+/**
+ * Camera permission gate for the QR scanner.
+ *
+ * The scanner library shows its own decade-old "Barcode Scanner / the camera encountered a
+ * problem" dialog when it cannot open the camera, which names a library the user never
+ * installed and blames the device instead of the denied permission. Asking here means the
+ * scanner is only ever launched with the permission in hand, and a refusal is explained in
+ * the app's own words.
+ */
+@Composable
+fun rememberQrScanRequest(onScan: () -> Unit): () -> Unit {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scan = androidx.compose.runtime.rememberUpdatedState(onScan)
+    var deniedPermanently by remember { mutableStateOf<Boolean?>(null) }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            scan.value()
+        } else {
+            // No rationale after a denial means the user chose "don't ask again": the
+            // only way back is the app settings page.
+            deniedPermanently = context.findActivity()?.let {
+                !androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+                    it,
+                    android.Manifest.permission.CAMERA
+                )
+            } ?: true
+        }
+    }
+    // A Dialog draws in its own window, so emitting it here costs the caller no layout.
+    deniedPermanently?.let { permanent ->
+        CameraPermissionDialog(
+            permanentlyDenied = permanent,
+            onDismiss = { deniedPermanently = null },
+            onOpenSettings = {
+                deniedPermanently = null
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.fromParts("package", context.packageName, null)
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            }
+        )
+    }
+    return {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.CAMERA
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) scan.value() else launcher.launch(android.Manifest.permission.CAMERA)
+    }
+}
+
+/** The app's own explanation for a refused camera permission. */
+@Composable
+fun CameraPermissionDialog(
+    permanentlyDenied: Boolean,
+    onDismiss: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val s = LocalStrings.current
+    com.lumen.ui.components.LumenDialog(
+        title = s.cameraPermissionTitle,
+        message = if (permanentlyDenied) s.cameraPermissionBlocked else s.cameraPermissionMessage,
+        onDismissRequest = onDismiss,
+        confirmText = if (permanentlyDenied) s.openAppSettings else "OK",
+        onConfirm = if (permanentlyDenied) onOpenSettings else onDismiss,
+        dismissText = if (permanentlyDenied) s.cancel else null,
+        onDismiss = onDismiss
+    )
 }
 
 /**
@@ -365,6 +570,16 @@ fun rememberUiPreference(
         context.getSharedPreferences("lumen_prefs", android.content.Context.MODE_PRIVATE)
     }
     val backing = remember(key) { mutableStateOf(prefs.getString(key, default) ?: default) }
+    // An import can retarget the selected group from the view model while this screen
+    // is already composed, so the value has to follow external writes too - a plain
+    // remember would keep showing the group the user was on before the import.
+    androidx.compose.runtime.DisposableEffect(prefs, key) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { store, changed ->
+            if (changed == key) backing.value = store.getString(key, default) ?: default
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     return remember(key) {
         object : androidx.compose.runtime.MutableState<String> {
             override var value: String

@@ -1,10 +1,14 @@
 package com.lumen.core.engine
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 enum class EngineType {
     SINGBOX
@@ -30,6 +34,12 @@ sealed interface EngineState {
 interface IEngineDriver {
     val type: EngineType
     val isRunning: Boolean
+
+    /**
+     * The core's own last FATAL/panic line, or its last line of output. A driver
+     * that captures nothing reports an empty string.
+     */
+    val lastFatalLine: String get() = ""
     suspend fun start(configJson: String, tunFd: Int? = null)
     suspend fun stop()
     fun getTrafficStats(): TrafficStats
@@ -40,7 +50,7 @@ interface IEngineDriver {
  * for the sing-box extended driver.
  */
 class EngineManager(
-    val singboxEngine: IEngineDriver = SingboxEngine()
+    val singboxEngine: IEngineDriver
 ) {
     private val _state = MutableStateFlow<EngineState>(EngineState.Idle)
     val state: StateFlow<EngineState> = _state.asStateFlow()
@@ -75,8 +85,14 @@ class EngineManager(
                 engineType = engineType,
                 stats = targetDriver.getTrafficStats()
             )
-        } catch (e: Exception) {
-            stopActiveEngineInternal()
+        } catch (e: Throwable) {
+            // Teardown must survive cancellation, otherwise a Disconnect during startup leaves
+            // the spawned core alive and the state pinned at Starting.
+            withContext(NonCancellable) { runCatching { stopActiveEngineInternal() } }
+            if (e is CancellationException) {
+                _state.value = EngineState.Idle
+                throw e
+            }
             _state.value = EngineState.Error(e.message ?: "Failed to start engine")
         }
     }
@@ -99,19 +115,18 @@ class EngineManager(
     }
 
     fun updateTrafficStats(stats: TrafficStats) {
-        val currentState = _state.value
-        if (currentState is EngineState.Running) {
-            _state.value = currentState.copy(stats = stats)
+        // A stats tick races stopEngine on another thread; a read-then-write would put
+        // Running back after the core was destroyed.
+        _state.update { current ->
+            if (current is EngineState.Running) current.copy(stats = stats) else current
         }
     }
 
     fun refreshTrafficStats() {
-        val currentState = _state.value
-        if (currentState is EngineState.Running) {
-            activeDriver?.let { driver ->
-                val stats = driver.getTrafficStats()
-                _state.value = currentState.copy(stats = stats)
-            }
+        if (_state.value !is EngineState.Running) return
+        val stats = activeDriver?.getTrafficStats() ?: return
+        _state.update { current ->
+            if (current is EngineState.Running) current.copy(stats = stats) else current
         }
     }
 

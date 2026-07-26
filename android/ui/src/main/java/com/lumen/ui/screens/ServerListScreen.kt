@@ -1,5 +1,6 @@
 package com.lumen.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,30 +18,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.NetworkCheck
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import com.lumen.ui.components.LumenDialog
-import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.NetworkPing
 import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.UploadFile
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,24 +58,68 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.lumen.ui.components.CountryFlagIcon
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.lumen.ui.components.CountryFlagHelper
 
-import com.lumen.ui.components.ConnectionSliderBar
 import com.lumen.ui.components.ConnectionState
 
-private enum class ServerSort { DEFAULT, NAME, PING }
+enum class ServerSort { DEFAULT, NAME, NAME_DESC, PING, COUNTRY, PROTOCOL }
 
-private const val GROUP_ALL = "all"
-private const val GROUP_MANUAL = "manual"
+/**
+ * Sort order is a single user choice shared by the dashboard and the Servers tab:
+ * both read and write this preference, so changing it in one place moves the other.
+ */
+const val SERVERS_SORT_PREF = "servers_last_sort"
+
+/** Menu entries, in display order. Kept here so the two screens cannot drift apart. */
+fun serverSortOptions(s: LumenStrings): List<Pair<ServerSort, String>> = listOf(
+    ServerSort.DEFAULT to s.sortDefaultLabel,
+    ServerSort.NAME to s.sortByName,
+    ServerSort.NAME_DESC to s.sortByNameDesc,
+    ServerSort.PING to s.sortByPing,
+    ServerSort.COUNTRY to s.sortByCountry,
+    ServerSort.PROTOCOL to s.sortByProtocol
+)
+
+fun serverSortLabel(sort: ServerSort, s: LumenStrings): String =
+    serverSortOptions(s).firstOrNull { it.first == sort }?.second ?: s.sortDefaultLabel
+
+fun serverSortOf(key: String): ServerSort =
+    runCatching { ServerSort.valueOf(key) }.getOrDefault(ServerSort.DEFAULT)
+
+/** The one comparator both screens sort with; the dashboard applies it per group. */
+fun serverSortComparator(sort: ServerSort): Comparator<NodeUiModel> = when (sort) {
+    ServerSort.NAME -> compareBy<NodeUiModel> { it.name.lowercase() }
+    ServerSort.NAME_DESC -> compareByDescending<NodeUiModel> { it.name.lowercase() }
+    ServerSort.PING -> compareBy<NodeUiModel> { it.pingMs?.takeIf { ping -> ping > 0 } ?: Int.MAX_VALUE }
+    // Unknown countries sink to the bottom instead of leading the list.
+    ServerSort.COUNTRY -> compareBy<NodeUiModel> { countryCodeOf(it).ifEmpty { "zzz" } }
+        .thenBy { it.name.lowercase() }
+    ServerSort.PROTOCOL -> compareBy<NodeUiModel> { protocolKey(it) }
+        .thenBy { it.name.lowercase() }
+    ServerSort.DEFAULT -> compareBy<NodeUiModel> { it.name.lowercase() }
+}
+
 private const val PROTOCOL_ALL = "__all__"
 
+/** Latency ceilings offered by the filter menu; 0 disables the filter. */
+private val MAX_PING_CHOICES = listOf(0, 100, 200, 500)
+
 /** AWG nodes are stored as "wireguard", so facets must use the displayed protocol. */
-private fun protocolKey(node: NodeUiModel): String =
+internal fun protocolKey(node: NodeUiModel): String =
     node.displayProtocol.substringBefore('/').trim().lowercase()
         .ifEmpty { node.protocol.trim().lowercase() }
+
+/** Country of a node, falling back to name/host detection when the code is empty. */
+internal fun countryCodeOf(node: NodeUiModel): String =
+    node.countryCode.trim().ifEmpty { CountryFlagHelper.detectCountryStrict(node.name, node.server) }
+        .uppercase()
+
+/** A header of the "group by country" layout. */
+private data class CountrySection(
+    val code: String,
+    val count: Int,
+    val bestPing: Int?
+)
 
 @Composable
 fun ServerListScreen(
@@ -90,7 +128,8 @@ fun ServerListScreen(
     refreshingIds: Set<String>,
     isPinging: Boolean,
     pingingNodeIds: Set<String> = emptySet(),
-    pingSortActive: Boolean = false,
+    // Starts a check automatically the first time the list is shown.
+    autoPingOnOpen: Boolean = false,
     testingNodeId: String?,
     serverTestResults: Map<String, String>,
     connectionState: ConnectionState,
@@ -101,9 +140,9 @@ fun ServerListScreen(
     onDeleteAllNodes: () -> Unit = {},
     onAddNode: () -> Unit,
     onPingAll: () -> Unit,
-    onUdpPingAll: () -> Unit = {},
+    onStopPing: () -> Unit = {},
+    onPingNodes: (List<NodeUiModel>) -> Unit = {},
     onPingNode: (NodeUiModel) -> Unit,
-    onUdpPingNode: (NodeUiModel) -> Unit = {},
     onCopyNodeLink: (NodeUiModel) -> Unit = {},
     onExportQrCode: (NodeUiModel) -> Unit = {},
     onImportClipboard: () -> Unit,
@@ -113,7 +152,7 @@ fun ServerListScreen(
     onImportFile: () -> Unit = {},
     onImportQr: () -> Unit = {},
     onPingGroup: (String?) -> Unit = {},
-    onUdpPingGroup: (String?) -> Unit = {},
+    onExportNodesText: (Set<String>) -> String = { "" },
     onExportSubscriptionText: (String?) -> String = { "" },
     onShareText: (String) -> Unit = {},
     onCopyText: (String) -> Unit = {},
@@ -123,34 +162,67 @@ fun ServerListScreen(
     LaunchedEffect(Unit) { onOpen() }
     val s = LocalStrings.current
     val tick = rememberHapticTick()
+    // Ask for the camera at the point of use so the scanner never falls back to the
+    // library's own "the camera encountered a problem" dialog.
+    val scanQr = rememberQrScanRequest(onImportQr)
 
     var query by remember { mutableStateOf("") }
     // Group / protocol / sort choices survive app restarts so the tab reopens as it was left.
     var group by rememberUiPreference("servers_last_group", GROUP_ALL)
     var protocol by rememberUiPreference("servers_last_protocol", PROTOCOL_ALL)
-    var sortKey by rememberUiPreference("servers_last_sort", ServerSort.DEFAULT.name)
-    val sort = remember(sortKey) {
-        runCatching { ServerSort.valueOf(sortKey) }.getOrDefault(ServerSort.DEFAULT)
+    var sortKey by rememberUiPreference(SERVERS_SORT_PREF, ServerSort.DEFAULT.name)
+    val sort = remember(sortKey) { serverSortOf(sortKey) }
+    // Optional automatic check when the tab opens; fires once per screen entry.
+    var autoPingStarted by remember { mutableStateOf(false) }
+    LaunchedEffect(autoPingOnOpen, nodes.isEmpty()) {
+        if (autoPingOnOpen && !autoPingStarted && !isPinging && nodes.isNotEmpty()) {
+            autoPingStarted = true
+            onPingAll()
+        }
     }
+    // Country grouping and the reachability/latency filters also survive restarts.
+    var groupByCountryPref by rememberUiPreference("servers_group_by_country", "0")
+    val groupByCountry = groupByCountryPref == "1"
+    var onlyReachablePref by rememberUiPreference("servers_filter_reachable", "0")
+    val onlyReachable = onlyReachablePref == "1"
+    var maxPingPref by rememberUiPreference("servers_filter_max_ping", "0")
+    val maxPing = remember(maxPingPref) { maxPingPref.toIntOrNull()?.coerceAtLeast(0) ?: 0 }
     var showAddSubscription by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
-    var showPingAllMenu by remember { mutableStateOf(false) }
+    var showGroupMenu by remember { mutableStateOf(false) }
+    var showProtocolMenu by remember { mutableStateOf(false) }
+    var showFiltersMenu by remember { mutableStateOf(false) }
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
     var propertiesSub by remember { mutableStateOf<SubscriptionUiModel?>(null) }
+    var isSelectionMode by remember { mutableStateOf(false) }
+    var selectedNodeIds by remember { mutableStateOf(setOf<String>()) }
     // Groups collapse here just like on the dashboard.
     var groupExpanded by remember(group) { mutableStateOf(true) }
 
-    val hasManual = remember(nodes) { nodes.any { it.subscriptionId == null } }
-    val groups = remember(subscriptions, hasManual) {
+    BackHandler(enabled = isSelectionMode) {
+        isSelectionMode = false
+        selectedNodeIds = emptySet()
+    }
+    LaunchedEffect(nodes.map { it.id }) {
+        selectedNodeIds = selectedNodeIds.intersect(nodes.mapTo(mutableSetOf()) { it.id })
+        if (selectedNodeIds.isEmpty()) isSelectionMode = false
+    }
+
+    val groups = remember(subscriptions) {
         buildList {
             add(GROUP_ALL)
-            if (hasManual) add(GROUP_MANUAL)
+            // Default is a real destination for manual imports and must stay selectable
+            // before its first node is added.
+            add(GROUP_MANUAL)
             subscriptions.forEach { add(it.id) }
         }
     }
     // Only drop a remembered group once real data is loaded, otherwise the first
-    // (still empty) composition would wipe the persisted choice.
-    if (groups.size > 1 && group !in groups) group = GROUP_ALL
+    // (still empty) composition would wipe the persisted choice. "all" and "manual"
+    // are always present, so the list size says nothing about the subscriptions.
+    LaunchedEffect(groups) {
+        if (subscriptions.isNotEmpty() && group !in groups) group = GROUP_ALL
+    }
     val selectedSubscription = subscriptions.firstOrNull { it.id == group }
 
     // Nodes of the active group, before protocol/search narrowing.
@@ -166,107 +238,153 @@ fun ServerListScreen(
 
     // Protocol facets are derived from the active group so counts always match.
     val protocolCounts = remember(groupNodes) {
-        groupNodes.filterNot { it.isAutoNode }
-            .groupingBy { protocolKey(it) }
+        groupNodes.groupingBy { protocolKey(it) }
             .eachCount()
             .toList()
             .sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first })
     }
-    if (protocol != PROTOCOL_ALL && protocolCounts.none { it.first == protocol }) protocol = PROTOCOL_ALL
-
-    val filtered = remember(groupNodes, query, protocol, sort, pingSortActive) {
-        val matched = groupNodes.filter { node ->
-            val protocolOk = protocol == PROTOCOL_ALL || node.isAutoNode ||
-                protocolKey(node) == protocol
-            val queryOk = query.isBlank() || node.name.contains(query, true) ||
-                node.server.contains(query, true) || node.protocol.contains(query, true)
-            protocolOk && queryOk
+    LaunchedEffect(protocolCounts) {
+        if (protocol != PROTOCOL_ALL && groupNodes.isNotEmpty() &&
+            protocolCounts.none { it.first == protocol }
+        ) {
+            protocol = PROTOCOL_ALL
         }
-        // "Sort after ping" overrides the manual sort until the list changes again.
-        val comparator = if (pingSortActive) {
-            compareBy<NodeUiModel> { it.pingMs?.takeIf { ping -> ping >= 0 } ?: Int.MAX_VALUE }
-        } else when (sort) {
-            ServerSort.NAME -> compareBy<NodeUiModel> { it.name.lowercase() }
-            ServerSort.PING -> compareBy { it.pingMs?.takeIf { ping -> ping >= 0 } ?: Int.MAX_VALUE }
-            ServerSort.DEFAULT -> compareBy { it.name.lowercase() }
-        }
-        // Auto nodes always stay pinned to the top of the list.
-        matched.sortedWith(compareByDescending<NodeUiModel> { it.isAutoNode }.then(comparator))
     }
 
-    val groupCount = subscriptions.size + if (hasManual) 1 else 0
+    val filtered = remember(groupNodes, query, protocol, sort, onlyReachable, maxPing) {
+        val matched = groupNodes.filter { node ->
+            val protocolOk = protocol == PROTOCOL_ALL || protocolKey(node) == protocol
+            val queryOk = query.isBlank() || node.name.contains(query, true) ||
+                node.server.contains(query, true) || node.protocol.contains(query, true)
+            val ping = node.pingMs?.takeIf { value -> value > 0 }
+            val reachableOk = !onlyReachable || ping != null
+            val latencyOk = maxPing <= 0 || (ping != null && ping <= maxPing)
+            protocolOk && queryOk && reachableOk && latencyOk
+        }
+        matched.sortedWith(serverSortComparator(sort))
+    }
+
+    // With country grouping on, the list is a flat sequence of headers and rows so
+    // the existing LazyColumn keying and rail logic keep working unchanged.
+    val rowItems: List<Any> = remember(filtered, groupByCountry) {
+        if (!groupByCountry) {
+            filtered
+        } else {
+            buildList {
+                filtered.groupBy { countryCodeOf(it) }
+                    .toList()
+                    .sortedBy { it.first.ifEmpty { "zzz" } }
+                    .forEach { (code, sectionNodes) ->
+                        add(
+                            CountrySection(
+                                code = code,
+                                count = sectionNodes.size,
+                                bestPing = sectionNodes.mapNotNull { node ->
+                                    node.pingMs?.takeIf { value -> value > 0 }
+                                }.minOrNull()
+                            )
+                        )
+                        addAll(sectionNodes)
+                    }
+            }
+        }
+    }
+    val firstVisibleNodeId = remember(rowItems) {
+        rowItems.firstNotNullOfOrNull { (it as? NodeUiModel)?.id }
+    }
+    val lastVisibleNodeId = remember(rowItems) {
+        rowItems.asReversed().firstNotNullOfOrNull { (it as? NodeUiModel)?.id }
+    }
+
+    val activeFilterCount = (if (protocol != PROTOCOL_ALL) 1 else 0) +
+        (if (onlyReachable) 1 else 0) + (if (maxPing > 0) 1 else 0)
+
+    val groupCount = subscriptions.size + 1
     val countsSubtitle = "$groupCount ${s.groupsWord} \u2022 ${nodes.size} ${s.serversWord}"
 
     Column(modifier = modifier.fillMaxSize()) {
-        LumenScreenHeader(
-            title = s.servers,
-            subtitle = countsSubtitle,
-            actions = {
+        if (isSelectionMode) {
+            SelectionTopBar(
+                selectedCount = selectedNodeIds.size,
+                onCancel = {
+                    isSelectionMode = false
+                    selectedNodeIds = emptySet()
+                },
+                onExportSelected = {
+                    val text = onExportNodesText(selectedNodeIds)
+                    if (text.isNotBlank()) onShareText(text)
+                },
+                onPingSelected = {
+                    val selectedNodes = nodes.filter { it.id in selectedNodeIds }
+                    if (selectedNodes.isNotEmpty()) onPingNodes(selectedNodes)
+                }
+            )
+        } else {
+            LumenScreenHeader(
+                title = s.servers,
+                subtitle = countsSubtitle,
+                actions = {
+                Box {
+                    val shape = RoundedCornerShape(14.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(shape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f), shape)
+                            .clickable {
+                                tick(HapticFeedbackType.LongPress)
+                                showSortMenu = true
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Sort,
+                            contentDescription = s.sortBy,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(21.dp)
+                        )
+                    }
+                    LumenMenu(
+                        expanded = showSortMenu,
+                        onDismissRequest = { showSortMenu = false }
+                    ) {
+                        serverSortOptions(s).forEach { (value, label) ->
+                            val checked = sort == value
+                            DropdownMenuItem(
+                                text = { Text(label, color = MaterialTheme.colorScheme.onSurface) },
+                                trailingIcon = if (checked) {
+                                    {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                } else null,
+                                onClick = {
+                                    sortKey = value.name
+                                    showSortMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.width(6.dp))
                 AddEntryButton(
                     onImportClipboard = onImportClipboard,
-                    onImportQr = onImportQr,
+                    onImportQr = scanQr,
                     onImportFile = onImportFile,
                     onAddNode = onAddNode,
                     onAddSubscription = { showAddSubscription = true }
                 )
-            }
-        )
-
-        // Group facets: All / Manual / one chip per subscription, each with its node count.
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(groups, key = { it }) { id ->
-                val label = when (id) {
-                    GROUP_ALL -> s.allGroups
-                    GROUP_MANUAL -> s.groupDefault.ifBlank { s.manual }
-                    else -> subscriptions.firstOrNull { it.id == id }?.name ?: s.subscriptions
                 }
-                val count = when (id) {
-                    GROUP_ALL -> nodes.size
-                    GROUP_MANUAL -> nodes.count { it.subscriptionId == null }
-                    else -> nodes.count { it.subscriptionId == id }
-                }
-                LumenFilterChip(
-                    label = label,
-                    selected = group == id,
-                    badge = count.toString(),
-                    onClick = {
-                        group = id
-                        protocol = PROTOCOL_ALL
-                    }
-                )
-            }
+            )
         }
 
-        // Protocol facets, derived from the nodes of the active group.
-        if (protocolCounts.size > 1) {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                item(key = "proto_all") {
-                    LumenFilterChip(
-                        label = s.allProtocols,
-                        selected = protocol == PROTOCOL_ALL,
-                        badge = groupNodes.size.toString(),
-                        onClick = { protocol = PROTOCOL_ALL }
-                    )
-                }
-                items(protocolCounts, key = { it.first }) { entry ->
-                    LumenFilterChip(
-                        label = entry.first.uppercase(),
-                        selected = protocol == entry.first,
-                        badge = entry.second.toString(),
-                        onClick = { protocol = entry.first }
-                    )
-                }
-            }
-        }
-
+        // Group / protocol chip rails were replaced by the compact control row
+        // below the search field, so the screen starts with the search box.
         Spacer(Modifier.height(6.dp))
         OutlinedTextField(
             value = query,
@@ -295,48 +413,174 @@ fun ServerListScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Same "Sort by <value>" control as the dashboard.
-            Text(
-                text = s.sortBy,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Box {
-                val sortLabel = when (sort) {
-                    ServerSort.NAME -> s.sortByName
-                    ServerSort.PING -> s.sortByPing
-                    ServerSort.DEFAULT -> s.sortDefaultLabel
+            // Subscription/server group comes first, protocol filter second. Both
+            // controls always display their current selection, including "All".
+            Box(modifier = Modifier.weight(1.15f)) {
+                val groupLabel = when (group) {
+                    GROUP_ALL -> s.allGroups
+                    GROUP_MANUAL -> s.groupDefault.ifBlank { s.manual }
+                    else -> subscriptions.firstOrNull { it.id == group }?.name ?: s.subscriptions
                 }
-                Text(
-                    text = sortLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable { showSortMenu = true }
+                LumenFilterChip(
+                    label = groupLabel,
+                    selected = true,
+                    badge = groupNodes.size.toString(),
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { showGroupMenu = true }
                 )
                 LumenMenu(
-                    expanded = showSortMenu,
-                    onDismissRequest = { showSortMenu = false }
+                    expanded = showGroupMenu,
+                    onDismissRequest = { showGroupMenu = false }
                 ) {
-                    listOf(
-                        ServerSort.DEFAULT to s.sortDefaultLabel,
-                        ServerSort.NAME to s.sortByName,
-                        ServerSort.PING to s.sortByPing
-                    ).forEach { (value, label) ->
+                    groups.forEach { id ->
+                        val label = when (id) {
+                            GROUP_ALL -> s.allGroups
+                            GROUP_MANUAL -> s.groupDefault.ifBlank { s.manual }
+                            else -> subscriptions.firstOrNull { it.id == id }?.name ?: s.subscriptions
+                        }
+                        val count = when (id) {
+                            GROUP_ALL -> nodes.size
+                            GROUP_MANUAL -> nodes.count { it.subscriptionId == null }
+                            else -> nodes.count { it.subscriptionId == id }
+                        }
                         DropdownMenuItem(
-                            text = { Text(label, color = MaterialTheme.colorScheme.onSurface) },
-                            trailingIcon = if (sort == value) {
+                            text = { Text("$label  $count", color = MaterialTheme.colorScheme.onSurface) },
+                            trailingIcon = if (group == id) {
                                 { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
                             } else null,
                             onClick = {
-                                sortKey = value.name
-                                showSortMenu = false
+                                group = id
+                                protocol = PROTOCOL_ALL
+                                showGroupMenu = false
                             }
                         )
                     }
                 }
             }
-            Spacer(Modifier.weight(1f))
+            // Protocol filter stays on the right.
+            // display their current selection, including the two "All" choices.
+            Box(modifier = Modifier.weight(0.85f)) {
+                val protocolLabel = if (protocol == PROTOCOL_ALL) {
+                    s.allProtocols
+                } else {
+                    protocol.uppercase()
+                }
+                LumenFilterChip(
+                    label = protocolLabel,
+                    selected = protocol != PROTOCOL_ALL,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { showProtocolMenu = true }
+                )
+                LumenMenu(
+                    expanded = showProtocolMenu,
+                    onDismissRequest = { showProtocolMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(s.allProtocols, color = MaterialTheme.colorScheme.onSurface) },
+                        trailingIcon = if (protocol == PROTOCOL_ALL) {
+                            {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        } else null,
+                        onClick = {
+                            protocol = PROTOCOL_ALL
+                            showProtocolMenu = false
+                        }
+                    )
+                    protocolCounts.forEach { (proto, count) ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "${proto.uppercase()}  $count",
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            },
+                            trailingIcon = if (protocol == proto) {
+                                {
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            } else null,
+                            onClick = {
+                                protocol = proto
+                                showProtocolMenu = false
+                            }
+                        )
+                    }
+                }
+            }
+            // Country grouping and the reachability/latency filters live behind this menu.
+            Box {
+                IconButton(
+                    onClick = {
+                        tick(HapticFeedbackType.LongPress)
+                        showFiltersMenu = true
+                    },
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.FilterList,
+                        contentDescription = s.filtersLabel,
+                        tint = if (activeFilterCount > 0) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+                LumenMenu(
+                    expanded = showFiltersMenu,
+                    onDismissRequest = { showFiltersMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(s.groupByCountry, color = MaterialTheme.colorScheme.onSurface) },
+                        trailingIcon = if (groupByCountry) {
+                            { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+                        } else null,
+                        onClick = { groupByCountryPref = if (groupByCountry) "0" else "1" }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(s.onlyReachable, color = MaterialTheme.colorScheme.onSurface) },
+                        trailingIcon = if (onlyReachable) {
+                            { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+                        } else null,
+                        onClick = { onlyReachablePref = if (onlyReachable) "0" else "1" }
+                    )
+                    MAX_PING_CHOICES.forEach { choice ->
+                        val label = if (choice == 0) {
+                            "${s.maxPingLabel}: ${s.offLabel}"
+                        } else {
+                            "${s.maxPingLabel}: $choice ms"
+                        }
+                        DropdownMenuItem(
+                            text = { Text(label, color = MaterialTheme.colorScheme.onSurface) },
+                            trailingIcon = if (maxPing == choice) {
+                                { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+                            } else null,
+                            onClick = { maxPingPref = choice.toString() }
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(s.resetFilters, color = MaterialTheme.colorScheme.primary) },
+                        onClick = {
+                            groupByCountryPref = "0"
+                            onlyReachablePref = "0"
+                            maxPingPref = "0"
+                            protocol = PROTOCOL_ALL
+                            showFiltersMenu = false
+                        }
+                    )
+                }
+            }
             // Wipe-all sitting left of ping button appears only for the default/manual group
             if (group == GROUP_MANUAL) {
                 val hasManualNodes = nodes.any { it.subscriptionId == null }
@@ -371,42 +615,24 @@ fun ServerListScreen(
                     onDismiss = { showDeleteAllConfirm = false }
                 )
             }
-            Box {
-                IconButton(
-                    onClick = {
-                        tick(HapticFeedbackType.LongPress)
-                        showPingAllMenu = true
-                    },
-                    enabled = !isPinging,
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    if (isPinging) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.NetworkCheck,
-                            contentDescription = s.pingAll,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-                LumenMenu(
-                    expanded = showPingAllMenu,
-                    onDismissRequest = { showPingAllMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Ping", color = MaterialTheme.colorScheme.onSurface) },
-                        trailingIcon = { Icon(Icons.Filled.NetworkCheck, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
-                        onClick = { showPingAllMenu = false; onPingAll() }
+            IconButton(
+                onClick = {
+                    tick(HapticFeedbackType.LongPress)
+                    if (isPinging) onStopPing() else onPingAll()
+                },
+                modifier = Modifier.size(38.dp)
+            ) {
+                if (isPinging) {
+                    Icon(
+                        imageVector = Icons.Filled.Stop,
+                        contentDescription = s.cancel,
+                        tint = MaterialTheme.colorScheme.error
                     )
-                    DropdownMenuItem(
-                        text = { Text("Ping UDP", color = MaterialTheme.colorScheme.onSurface) },
-                        trailingIcon = { Icon(Icons.Filled.NetworkCheck, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
-                        onClick = { showPingAllMenu = false; onUdpPingAll() }
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.NetworkCheck,
+                        contentDescription = s.pingAll,
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -440,7 +666,6 @@ fun ServerListScreen(
                             group = GROUP_ALL
                         },
                         onPingGroup = { onPingGroup(selectedSubscription.id) },
-                        onUdpPingGroup = { onUdpPingGroup(selectedSubscription.id) },
                         onShowProperties = { sub -> propertiesSub = sub },
                         onExportAll = { subId ->
                             val text = onExportSubscriptionText(subId)
@@ -465,42 +690,83 @@ fun ServerListScreen(
                     EmptyState(text = if (groupNodes.isEmpty()) s.noServers else s.nothingFound)
                 }
             } else if (showRows) {
-                itemsIndexed(filtered, key = { _, node -> node.id }) { index, node ->
-                    // Under a subscription the rows share the header rail, so the
-                    // whole block reads as a single tile with no gaps.
-                    val railed = selectedSubscription != null
-                    val isLast = index == filtered.lastIndex
-                    Box(
-                        modifier = if (railed) {
-                            Modifier
-                                .fillMaxWidth()
-                                .then(
-                                    if (isLast) Modifier.clip(RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)) else Modifier
-                                )
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f))
-                                .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = if (isLast) 10.dp else 4.dp)
-                        } else {
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
+                // rowItems is either the plain node list or nodes interleaved with
+                // country headers when "group by country" is enabled.
+                itemsIndexed(
+                    rowItems,
+                    key = { _, entry ->
+                        when (entry) {
+                            is NodeUiModel -> entry.id
+                            is CountrySection -> "country_" + entry.code
+                            else -> entry.hashCode()
                         }
-                    ) {
-                        NodeRow(
-                            node = node,
-                            // Group pings mark ids here; the dashboard shows the same spinner.
-                            testing = testingNodeId == node.id || node.id in pingingNodeIds,
-                            testResult = serverTestResults[node.id],
-                            onSelect = {
-                                tick(HapticFeedbackType.LongPress)
-                                onSelectNode(node)
-                            },
-                            onEdit = { onEditNode(node) },
-                            onDelete = { onDeleteNode(node) },
-                            onPing = { onPingNode(node) },
-                            onUdpPing = { onUdpPingNode(node) },
-                            onCopyLink = { onCopyNodeLink(node) },
-                            onExportQr = { onExportQrCode(node) }
+                    }
+                ) { index, entry ->
+                    when (entry) {
+                        is CountrySection -> CountrySectionHeader(
+                            section = entry,
+                            unknownLabel = s.otherLabel
                         )
+                        is NodeUiModel -> {
+                            // The same continuous rail is used for All servers,
+                            // manual servers and subscriptions, matching every
+                            // dashboard style.
+                            val isFirst = entry.id == firstVisibleNodeId
+                            val isLast = index == rowItems.lastIndex
+                            val railShape = when {
+                                selectedSubscription != null && isLast ->
+                                    RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
+                                selectedSubscription != null -> RoundedCornerShape(0.dp)
+                                isFirst && entry.id == lastVisibleNodeId -> RoundedCornerShape(18.dp)
+                                isFirst -> RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
+                                entry.id == lastVisibleNodeId ->
+                                    RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
+                                else -> RoundedCornerShape(0.dp)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(railShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f))
+                                    .padding(
+                                        start = 8.dp,
+                                        end = 8.dp,
+                                        top = if (isFirst && selectedSubscription == null) 10.dp else 4.dp,
+                                        bottom = if (entry.id == lastVisibleNodeId) 10.dp else 4.dp
+                                    )
+                            ) {
+                                ServerTileRow(
+                                    node = entry,
+                                    isSelectionMode = isSelectionMode,
+                                    isNodeSelected = entry.id in selectedNodeIds,
+                                    isPinging = testingNodeId == entry.id || entry.id in pingingNodeIds,
+                                    supportingText = serverTestResults[entry.id],
+                                    onClick = {
+                                        tick(HapticFeedbackType.LongPress)
+                                        if (isSelectionMode) {
+                                            selectedNodeIds = if (entry.id in selectedNodeIds) {
+                                                selectedNodeIds - entry.id
+                                            } else {
+                                                selectedNodeIds + entry.id
+                                            }
+                                            if (selectedNodeIds.isEmpty()) isSelectionMode = false
+                                        } else {
+                                            onSelectNode(entry)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        tick(HapticFeedbackType.LongPress)
+                                        isSelectionMode = true
+                                        selectedNodeIds = selectedNodeIds + entry.id
+                                    },
+                                    onEditNode = { onEditNode(entry) },
+                                    onDeleteNode = { onDeleteNode(entry) },
+                                    onPingNode = { onPingNode(entry) },
+                                    onCopyLink = { onCopyNodeLink(entry) },
+                                    onExportQr = { onExportQrCode(entry) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -559,30 +825,74 @@ private fun AddEntryButton(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
+            // Every entry here starts adding a server, so each one confirms with a tick.
             DropdownMenuItem(
                 text = { Text(s.subscriptionLink) },
                 leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
-                onClick = { expanded = false; onAddSubscription() }
+                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onAddSubscription() }
             )
             DropdownMenuItem(
                 text = { Text(s.importFromClipboard) },
                 leadingIcon = { Icon(Icons.Filled.ContentPaste, contentDescription = null) },
-                onClick = { expanded = false; onImportClipboard() }
+                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onImportClipboard() }
             )
             DropdownMenuItem(
                 text = { Text(s.importQrCode) },
                 leadingIcon = { Icon(Icons.Filled.QrCodeScanner, contentDescription = null) },
-                onClick = { expanded = false; onImportQr() }
+                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onImportQr() }
             )
             DropdownMenuItem(
                 text = { Text(s.importFromFile) },
                 leadingIcon = { Icon(Icons.Filled.UploadFile, contentDescription = null) },
-                onClick = { expanded = false; onImportFile() }
+                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onImportFile() }
             )
             DropdownMenuItem(
                 text = { Text(s.importManually) },
                 leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
-                onClick = { expanded = false; onAddNode() }
+                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onAddNode() }
+            )
+        }
+    }
+}
+
+/** Header of a country bucket: flag, location name, server count and best ping. */
+@Composable
+private fun CountrySectionHeader(section: CountrySection, unknownLabel: String) {
+    val title = when {
+        section.code.isBlank() -> unknownLabel
+        else -> CountryFlagHelper.countryDisplayName(section.code).ifBlank { section.code }
+    }
+    val flag = if (section.code.length == 2) CountryFlagHelper.getFlagEmoji(section.code) else ""
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        if (flag.isNotBlank()) {
+            Text(text = flag, style = MaterialTheme.typography.bodyMedium)
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = section.count.toString(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.weight(1f))
+        val best = section.bestPing
+        if (best != null) {
+            Text(
+                text = "$best ms",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
             )
         }
     }
@@ -596,241 +906,6 @@ private fun EmptyState(text: String) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-    }
-}
-
-@Composable
-private fun SubscriptionCard(
-    sub: SubscriptionUiModel,
-    refreshing: Boolean,
-    onRefresh: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val s = LocalStrings.current
-    val updatedText = remember(sub.lastUpdated) {
-        if (sub.lastUpdated <= 0L) s.never
-        else SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()).format(Date(sub.lastUpdated))
-    }
-    LumenCard {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = sub.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = sub.nodeCount.toString() + " " + s.nodes + " \u2022 " + s.updated + " " + updatedText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = onRefresh, enabled = !refreshing, modifier = Modifier.size(34.dp)) {
-                    if (refreshing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(15.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = s.refreshSubscription,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-                IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
-                    Icon(
-                        imageVector = Icons.Filled.Delete,
-                        contentDescription = s.deleteSubscription,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            if (!sub.trafficSummary.isNullOrBlank() || sub.expiryDaysLeft != null) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = listOfNotNull(
-                        sub.trafficSummary?.takeIf { it.isNotBlank() },
-                        sub.expiryDaysLeft?.let { it.toString() + "d" }
-                    ).joinToString(" \u2022 "),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            // Auto-update is always on now; the card only reports the effective cadence,
-            // which comes from the provider when it sends one, otherwise from settings.
-            Text(
-                text = s.subscriptionAutoUpdate + (sub.updateIntervalHours
-                    ?.let { " \u2022 " + it + "h" } ?: ""),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun NodeRow(
-    node: NodeUiModel,
-    testing: Boolean,
-    testResult: String?,
-    onSelect: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-    onPing: () -> Unit,
-    onUdpPing: () -> Unit = {},
-    onCopyLink: () -> Unit = {},
-    onExportQr: () -> Unit = {}
-) {
-    val s = LocalStrings.current
-    var menu by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(18.dp)
-    val selected = node.isSelected
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(
-                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                else MaterialTheme.colorScheme.surfaceVariant
-            )
-            .border(
-                1.dp,
-                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                shape
-            )
-            .clickable { onSelect() }
-            .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        CountryFlagIcon(
-            countryCode = node.countryCode,
-            width = 26.dp,
-            height = 18.dp,
-            fallbackText = node.displayProtocol.take(2)
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = node.name,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(3.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Per-protocol badge colour, shared with the dashboard.
-                val badgeColor = protocolColor(node.protocol)
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(badgeColor.copy(alpha = 0.14f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = node.displayProtocol,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = badgeColor
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = node.server + ":" + node.port,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (!testResult.isNullOrBlank()) {
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = testResult,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        if (testing) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary
-            )
-        } else {
-            val ping = node.pingMs
-            if (ping != null) {
-                Text(
-                    text = if (ping < 0) "\u2014" else ping.toString() + " ms",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = pingColor(ping)
-                )
-            }
-        }
-        Box {
-            IconButton(onClick = { menu = true }, modifier = Modifier.size(34.dp)) {
-                Icon(
-                    imageVector = Icons.Filled.MoreVert,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            // Same actions and order as the dashboard server menu.
-            LumenMenu(
-                expanded = menu,
-                onDismissRequest = { menu = false }
-            ) {
-                DropdownMenuItem(
-                    text = { Text(s.edit) },
-                    leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
-                    onClick = { menu = false; onEdit() }
-                )
-                DropdownMenuItem(
-                    text = { Text(s.copyLink) },
-                    leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
-                    onClick = { menu = false; onCopyLink() }
-                )
-                DropdownMenuItem(
-                    text = { Text(s.exportQrCode) },
-                    leadingIcon = { Icon(Icons.Filled.QrCode2, contentDescription = null) },
-                    onClick = { menu = false; onExportQr() }
-                )
-                DropdownMenuItem(
-                    text = { Text(s.ping) },
-                    leadingIcon = { Icon(Icons.Filled.NetworkPing, contentDescription = null) },
-                    onClick = { menu = false; onPing() }
-                )
-                DropdownMenuItem(
-                    text = { Text("Ping UDP") },
-                    leadingIcon = { Icon(Icons.Filled.NetworkPing, contentDescription = null) },
-                    onClick = { menu = false; onUdpPing() }
-                )
-                DropdownMenuItem(
-                    text = { Text(s.delete) },
-                    leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                    onClick = { menu = false; onDelete() }
-                )
-            }
-        }
     }
 }
 

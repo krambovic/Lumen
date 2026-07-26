@@ -3,6 +3,7 @@ package com.lumen.core.vpn
 import android.content.pm.PackageManager
 import android.net.VpnService
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.doThrow
@@ -85,5 +86,52 @@ class SplitTunnelingManagerTest {
         assertEquals(validApp, applied[0])
         verify(builder).addAllowedApplication(validApp)
         verify(builder).addAllowedApplication(missingApp)
+    }
+
+    @Test
+    fun `an allow-list that applied at least one package keeps us out implicitly`() {
+        assertFalse(
+            SplitTunnelingManager.requiresSelfDisallow(
+                SplitTunnelingMode.ALLOW_LIST,
+                listOf("com.example.app1")
+            )
+        )
+    }
+
+    @Test
+    fun `an allow-list whose packages are all uninstalled still disallows our own package`() {
+        assertTrue(
+            SplitTunnelingManager.requiresSelfDisallow(SplitTunnelingMode.ALLOW_LIST, emptyList())
+        )
+    }
+
+    @Test
+    fun `DISABLED and DISALLOW_LIST always disallow our own package`() {
+        assertTrue(
+            SplitTunnelingManager.requiresSelfDisallow(SplitTunnelingMode.DISABLED, emptyList())
+        )
+        assertTrue(
+            SplitTunnelingManager.requiresSelfDisallow(
+                SplitTunnelingMode.DISALLOW_LIST,
+                listOf("com.example.app1")
+            )
+        )
+    }
+
+    @Test
+    fun `an allow-list of uninstalled packages leaves the builder without any filter`() {
+        val builder = mock<VpnService.Builder>()
+        val missingApp = "com.example.missing"
+        val config = SplitTunnelingConfig(
+            mode = SplitTunnelingMode.ALLOW_LIST,
+            packages = setOf(missingApp)
+        )
+        doThrow(mock<PackageManager.NameNotFoundException>())
+            .`when`(builder).addAllowedApplication(missingApp)
+
+        val applied = SplitTunnelingManager.applySplitTunneling(builder, config)
+
+        assertTrue(applied.isEmpty())
+        assertTrue(SplitTunnelingManager.requiresSelfDisallow(config.mode, applied))
     }
 }

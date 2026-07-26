@@ -40,6 +40,13 @@ data class SubscriptionUiModel(
     val announce: String? = null
 )
 
+/**
+ * Server group ids shared by the dashboard and the server list: everything else
+ * is a subscription id. Both screens persist the choice under "servers_last_group".
+ */
+internal const val GROUP_ALL = "all"
+internal const val GROUP_MANUAL = "manual"
+
 @Immutable
 data class HomeServerGroup(
     val id: String,
@@ -63,6 +70,31 @@ data class GeoResourceUiModel(
     val modifiedAt: Long = 0L
 )
 
+/**
+ * One line of the app's own log store. The level is a lowercase name rather than the
+ * :core:vpn enum so the :ui module stays independent of it, like every other model here.
+ */
+@Immutable
+data class LogEntryUi(
+    val timestamp: Long,
+    val time: String,
+    val level: String,
+    val component: String,
+    val message: String
+) {
+    /** Rendered form used by copy, export and the plain-text fallback. */
+    fun formatted(): String = "$time ${level.uppercase()} [$component] $message"
+}
+
+/** Severities the app's log store records, least to most severe. */
+val LOG_STORE_LEVELS: List<String> = listOf("debug", "info", "warning", "error")
+
+/** Extra option of the log level filter: keep every severity. */
+const val LOG_FILTER_ALL: String = "all"
+
+/** Rank of a log level, used to filter by minimum severity. Unknown levels sort lowest. */
+fun logLevelRank(level: String): Int = LOG_STORE_LEVELS.indexOf(level.trim().lowercase())
+
 enum class SplitModeUi { DISABLED, ALLOW_LIST, DISALLOW_LIST }
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
@@ -78,7 +110,8 @@ enum class ThemePreset {
     TOKYO_NIGHT,
     MONOKAI,
     MATERIAL,
-    SOLARIZED
+    SOLARIZED,
+    ROSE_PINE
 }
 
 enum class ImportKindUi { SUBSCRIPTION, CONFIG }
@@ -105,10 +138,24 @@ data class SettingsUiState(
     val engine: String = "SINGBOX",
     val muxEnabled: Boolean = false,
     val muxConcurrency: Int = 8,
+    // Named exactly like the SingboxConfigOptions fields they feed, so the app layer
+    // maps them straight through. Defaults match the builder's own defaults.
+    val multiplexProtocol: String = "smux",
+    val multiplexMinStreams: Int = 4,
+    val multiplexPadding: Boolean = true,
+    val multiplexBrutalEnabled: Boolean = false,
+    val multiplexBrutalUpMbps: Int = 0,
+    val multiplexBrutalDownMbps: Int = 0,
     val fragmentEnabled: Boolean = false,
     val fragmentPackets: String = "tlshello",
     val fragmentLength: String = "50-100",
     val fragmentDelay: String = "10-20",
+    // Dial options applied to every outbound / endpoint the builder emits.
+    val outboundTcpFastOpen: Boolean = false,
+    val outboundTcpMultiPath: Boolean = false,
+    val outboundUdpFragment: Boolean = false,
+    val udpOverTcp: Boolean = false,
+    val outboundConnectTimeoutSeconds: Int = 0,
     val localInboundEnabled: Boolean = true,
     val localSocksPort: Int = 10808,
     val localHttpPort: Int = 10809,
@@ -145,6 +192,8 @@ data class SettingsUiState(
     val urlTestUrl: String = "https://www.gstatic.com/generate_204",
     val urlTestIntervalMinutes: Int = 3,
     val urlTestToleranceMs: Int = 50,
+    val urlTestIdleTimeoutMinutes: Int = 0,
+    val urlTestInterruptExistConnections: Boolean = true,
     val subscriptionUserAgent: String = "Happ/2.18.3/Windows/2606241603601",
     val subscriptionHwid: String = "",
     val subscriptionSendHwid: Boolean = true,
@@ -156,20 +205,35 @@ data class SettingsUiState(
     val subscriptionUseProxyTun: Boolean = false,
     val subscriptionConverterEnabled: Boolean = false,
     val subscriptionConverterUrl: String = "",
-    val logLevel: String = "debug",
+    // One switch for the whole logging pipeline: the core's verbosity, the in-app
+    // log bus and the persisted store. Off means nothing is recorded anywhere.
+    val loggingEnabled: Boolean = true,
     val language: String = "en",
     val themeMode: ThemeMode = ThemeMode.DARK,
     val themePreset: ThemePreset = ThemePreset.DARK,
     val useMaterialYou: Boolean = false,
     val useAmoledBlack: Boolean = false,
     val hapticsEnabled: Boolean = true,
+    val telemetryEnabled: Boolean = true,
+    // Rebuild the tunnel on a Wi-Fi <-> mobile switch; applies to every protocol.
+    val reconnectOnNetworkChange: Boolean = true,
+    // Optional end-to-end HTTPS probe through the local SOCKS inbound before TUN setup.
+    val validateProxyDataPath: Boolean = false,
     val showNotification: Boolean = true,
     val showNotificationSpeed: Boolean = true,
-    val pingType: String = "tcp",
-    val pingTimeoutMs: Int = 3000,
-    val pingConcurrency: Int = 15,
-    val pingUrl: String = "https://www.gstatic.com/generate_204",
-    val pingSortAfter: Boolean = false,
+    val pingType: String = "tcping",
+    val pingTimeoutMs: Int = 2000,
+    val pingConcurrency: Int = 16,
+    val pingUrl: String = "https://www.google.com/generate_204",
+    // How many probes are sent per server and how the samples are reduced.
+    val pingAttempts: Int = 1,
+    val pingAggregate: String = "min",
+    val pingRetryDelayMs: Int = 200,
+    // Latency colour thresholds used by the server rows.
+    val pingGoodMs: Int = 150,
+    val pingFairMs: Int = 300,
+    // Start a check automatically when the server list opens.
+    val pingAutoOnOpen: Boolean = false,
     val dashboardStyle: DashboardStyle = DashboardStyle.DEFAULT
 )
 
@@ -203,6 +267,9 @@ data class NodeDraft(
     val presharedKey: String = "",
     val allowedIps: String = "0.0.0.0/0, ::/0",
     val reserved: String = "",
+    val mtu: String = "",
+    val dns: String = "",
+    val persistentKeepalive: String = "",
     val jc: String = "",
     val jmin: String = "",
     val jmax: String = "",
@@ -210,6 +277,21 @@ data class NodeDraft(
     val s2: String = "",
     val s3: String = "",
     val s4: String = "",
+    // AmneziaWG magic headers and the 2.0 junk-packet parameters; the server
+    // matches on them, so the editor must round-trip them untouched.
+    val h1: String = "",
+    val h2: String = "",
+    val h3: String = "",
+    val h4: String = "",
+    val i1: String = "",
+    val i2: String = "",
+    val i3: String = "",
+    val i4: String = "",
+    val i5: String = "",
+    val j1: String = "",
+    val j2: String = "",
+    val j3: String = "",
+    val itime: String = "",
     val obfs: String = "",
     val obfsPassword: String = "",
     val congestionControl: String = "bbr",
@@ -235,12 +317,18 @@ data class NodeDraft(
     val ovpnReconnectDelay: String = "",
     val ovpnPingInterval: String = "",
     val ovpnPingRestart: String = "",
-    val ovpnDns: String = ""
+    val ovpnDns: String = "",
+    // "Use proxy" for OpenVPN: "" (none), "http", "socks", "obfs3", "obfs2", "obfs2-legacy".
+    val ovpnProxyType: String = "",
+    val ovpnProxyServer: String = "",
+    val ovpnProxyPort: String = "",
+    val ovpnProxyUsername: String = "",
+    val ovpnProxyPassword: String = ""
 )
 
 val SUPPORTED_PROTOCOLS: List<String> = listOf(
     "vless", "vmess", "trojan", "ss", "hysteria2", "tuic",
-    "wireguard", "awg", "masque", "openvpn", "socks", "http", "auto"
+    "wireguard", "awg", "masque", "openvpn", "socks", "http"
 )
 
 val NETWORK_TRANSPORTS: List<String> = listOf("tcp", "ws", "grpc", "xhttp", "http")
@@ -254,7 +342,31 @@ val SS_METHODS: List<String> = listOf(
 
 val CONGESTION_OPTIONS: List<String> = listOf("bbr", "cubic", "new_reno")
 
-val PING_TYPES: List<String> = listOf("tcp", "udp", "url")
+/** Multiplex protocols the core accepts; anything else is coerced back to smux. */
+val MULTIPLEX_PROTOCOLS: List<String> = listOf("smux", "yamux", "h2mux")
+
+/**
+ * Log levels the core parses. "none" is deliberately absent: the core rejects it
+ * with "unknown log level: none" and refuses to start.
+ */
+val LOG_LEVELS: List<String> = listOf("trace", "debug", "info", "warning", "error")
+
+/**
+ * Ping methods shared with desktop Lumen. "real" times the whole connect through a
+ * temporary core, "http" times a plain GET through the same node once it is up.
+ */
+val PING_TYPES: List<String> = listOf("tcping", "icmp", "real", "http")
+
+/** How several probes of one server are reduced to a single latency value. */
+val PING_AGGREGATES: List<String> = listOf("min", "avg", "median")
+
+/** Connectivity endpoints used by desktop Lumen and its Android fallback list. */
+val PING_URL_PRESETS: List<String> = listOf(
+    "https://www.google.com/generate_204",
+    "https://www.gstatic.com/generate_204",
+    "https://cp.cloudflare.com/generate_204",
+    "https://connectivitycheck.platform.hicloud.com/generate_204"
+)
 
 /** Global haptics switch so any screen can respect the vibration setting. */
 val LocalHapticsEnabled = androidx.compose.runtime.staticCompositionLocalOf { true }

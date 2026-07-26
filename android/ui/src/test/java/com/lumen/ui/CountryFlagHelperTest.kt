@@ -1,6 +1,7 @@
 package com.lumen.ui
 
 import com.lumen.ui.components.CountryFlagHelper
+import com.lumen.ui.components.StripeStyle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -62,8 +63,8 @@ class CountryFlagHelperTest {
         assertEquals("US", CountryFlagHelper.detectCountry("United States Server", ""))
         assertEquals("RU", CountryFlagHelper.detectCountry("RU - Fast", ""))
         assertEquals("FR", CountryFlagHelper.detectCountry("Unnamed Node", "fr1.vpn.org"))
-        val fallback = CountryFlagHelper.detectCountry("Generic Node", "192.168.1.1")
-        assertTrue(fallback == "US" || fallback == "CA")
+        assertEquals("", CountryFlagHelper.detectCountry("Generic Node", "192.168.1.1"))
+        assertEquals("US", CountryFlagHelper.detectCountry("WARP", "8.47.69.7"))
     }
 
     @Test
@@ -75,5 +76,19 @@ class CountryFlagHelperTest {
         assertTrue(CountryFlagHelper.STRIPES.containsKey("JP"))
         assertTrue(CountryFlagHelper.STRIPES.containsKey("UA"))
         assertTrue(CountryFlagHelper.STRIPES.containsKey("GB"))
+        assertTrue(CountryFlagHelper.STRIPES.containsKey("EU"))
+        assertEquals(StripeStyle.Czech, CountryFlagHelper.STRIPES["CZ"]?.style)
+    }
+
+    @Test
+    fun testEuropeAndCountryPrefixCleanup() {
+        assertEquals("EU", CountryFlagHelper.detectCountry("Europe", ""))
+        assertEquals("RU", CountryFlagHelper.detectName("Сервер Москва"))
+        assertEquals("", CountryFlagHelper.detectName("Moscowville"))
+        assertEquals("1", CountryFlagHelper.serverDisplayNameWithoutCountryPrefix("NO-1", "NO"))
+        assertEquals(
+            "Oslo",
+            CountryFlagHelper.serverDisplayNameWithoutCountryPrefix("NO | Oslo", "NO")
+        )
     }
 }

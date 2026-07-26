@@ -151,6 +151,18 @@ object HappCrypt {
         return cipher.doFinal(ciphertext)
     }
 
+    // The platform providers expose ChaCha20-Poly1305 only from API 28, while this
+    // module ships with minSdk 26. Probe once so crypt5 can fail with a meaningful
+    // message instead of being swallowed by the per-candidate catches below.
+    private val chachaAvailable: Boolean by lazy {
+        try {
+            Cipher.getInstance("ChaCha20-Poly1305")
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private fun chachaDecrypt(key: ByteArray, nonce: ByteArray, ciphertext: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("ChaCha20-Poly1305")
         val keySpec = SecretKeySpec(key, "ChaCha20")
@@ -283,10 +295,15 @@ object HappCrypt {
         if (n > 0 && payload.length >= 20 + n + 684) {
             val urlRegion = payload.substring(20, 20 + n)
             val encRegion = payload.substring(20 + n, 20 + n + 684)
-            val skip = ((n - 1) / 4) * 4 + 1
-            val urlB64 = payload[17] + c51BlockPairSwap(urlRegion, n - 1)
-            val encStr = urlRegion[skip] + c51BlockPairSwap(encRegion, 683)
-            push(urlB64, encStr, true)
+            // Leftover character c51BlockPairSwap(urlRegion, n - 1) did not consume:
+            // on a block boundary it is the boundary itself, otherwise the next slot.
+            val block = ((n - 1) / 4) * 4
+            val skip = if ((n - 1) % 4 == 0) block else block + 1
+            if (skip < urlRegion.length) {
+                val urlB64 = payload[17] + c51BlockPairSwap(urlRegion, n - 1)
+                val encStr = urlRegion[skip] + c51BlockPairSwap(encRegion, 683)
+                push(urlB64, encStr, true)
+            }
         }
 
         for (trailerLen in 4..8) {
@@ -388,6 +405,11 @@ object HappCrypt {
     }
 
     private fun decryptCrypt5(payload: String): String {
+        if (!chachaAvailable) {
+            throw HappDecryptError(
+                "happ://crypt5 links require ChaCha20-Poly1305, unavailable on this device (Android 9+ needed)"
+            )
+        }
         val legacy = tryDecryptCrypt5Legacy(payload)
         if (legacy != null) return legacy
         return decryptCrypt51(payload)

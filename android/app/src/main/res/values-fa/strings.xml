@@ -39,4 +39,6 @@
     <string name="public_key">Ъ©Щ„ЫЊШЇ Ш№Щ…Щ€Щ…ЫЊ</string>
     <string name="short_id">ШґЩ†Ш§ШіЩ‡ Ъ©Щ€ШЄШ§Щ‡ (Short ID)</string>
     <string name="awg_junk_params">ЩѕШ§Ш±Ш§Щ…ШЄШ±Щ‡Ш§ЫЊ AWG Junk</string>
+    <string name="widget_description">اتصال سریع به سرور انتخاب‌شده</string>
+    <string name="widget_compact_description">دکمه فشرده روشن/خاموش ۱×۱</string>
 </resources>

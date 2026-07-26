@@ -67,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -116,8 +117,10 @@ fun DashboardScreen(
     connectionState: ConnectionState,
     nodes: List<NodeUiModel>,
     subscriptions: List<SubscriptionUiModel>,
+    speedStatsEnabled: Boolean = true,
+    downloadSpeed: Long = 0L,
+    uploadSpeed: Long = 0L,
     pingingNodeIds: Set<String> = emptySet(),
-    sortByPingOverride: Boolean = false,
     dashboardStyle: DashboardStyle = DashboardStyle.DEFAULT,
     onToggleConnection: () -> Unit,
     onSelectNode: (NodeUiModel) -> Unit,
@@ -127,13 +130,9 @@ fun DashboardScreen(
     onAddManualNode: () -> Unit,
     onRefreshSubscription: (String) -> Unit = {},
     onDeleteSubscription: (String) -> Unit = {},
-    onPingAll: () -> Unit = {},
-    onUdpPingAll: () -> Unit = {},
     onPingGroup: (String?) -> Unit = {},
-    onUdpPingGroup: (String?) -> Unit = {},
     onEditNode: (NodeUiModel) -> Unit = {},
     onPingNode: (NodeUiModel) -> Unit = {},
-    onUdpPingNode: (NodeUiModel) -> Unit = {},
     onCopyNodeLink: (NodeUiModel) -> Unit = {},
     onExportQrCode: (NodeUiModel) -> Unit = {},
     onDeleteNode: (NodeUiModel) -> Unit = {},
@@ -147,8 +146,9 @@ fun DashboardScreen(
     val strings = LocalStrings.current
     var showImportMenu by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
-    var showPingAllMenu by remember { mutableStateOf(false) }
-    var sortByPing by remember { mutableStateOf(false) }
+    // Same persisted choice as the Servers tab: picking a sort here moves that tab too.
+    var sortKey by rememberUiPreference(SERVERS_SORT_PREF, ServerSort.DEFAULT.name)
+    val sort = remember(sortKey) { serverSortOf(sortKey) }
 
     // Multi-selection state
     var isSelectionMode by remember { mutableStateOf(false) }
@@ -166,22 +166,24 @@ fun DashboardScreen(
     val clipboard = LocalClipboardManager.current
     val haptics = LocalHapticFeedback.current
     val hapticsEnabled = LocalHapticsEnabled.current
+    // Shared tick so long presses vibrate through the same path as the rest of the app.
+    val tick = rememberHapticTick()
+    // Ask for the camera at the point of use so the scanner never falls back to the
+    // library's own "the camera encountered a problem" dialog.
+    val scanQr = rememberQrScanRequest(onImportQr)
     // Subscription properties dialog state
     var propertiesSub by remember { mutableStateOf<SubscriptionUiModel?>(null) }
 
-    // One grouping pass + allocation-free name comparator: ping refreshes rebuild this
-    // list on every update, so it must not scan the node list once per subscription.
-    // "Sort after ping" from settings overrides the local sort choice.
-    val effectiveSortByPing = sortByPing || sortByPingOverride
-    val groups = remember(nodes, subscriptions, strings.manual, effectiveSortByPing) {
-        val byName = compareBy(String.CASE_INSENSITIVE_ORDER, NodeUiModel::name)
-        val byPing = compareBy<NodeUiModel> { it.pingMs?.takeIf { p -> p >= 0 } ?: Int.MAX_VALUE }
-        val comparator = if (effectiveSortByPing) byPing else byName
-        val bySubscription = nodes.filterNot { it.isAutoNode }.groupBy { it.subscriptionId }
+    // One grouping pass: ping refreshes rebuild this list on every update, so it must
+    // not scan the node list once per subscription. The comparator is the shared one,
+    // applied inside each group so every sort option works on the grouped layout.
+    val groups = remember(nodes, subscriptions, strings.manual, sort) {
+        val comparator = serverSortComparator(sort)
+        val bySubscription = nodes.groupBy { it.subscriptionId }
         buildList {
-            bySubscription[null]?.takeIf { it.isNotEmpty() }?.let {
-                add(HomeServerGroup("manual", strings.groupDefault, it.sortedWith(comparator)))
-            }
+            // Keep Default visible even while it is empty so the user can select it and
+            // immediately add/paste the first manual node.
+            add(HomeServerGroup(GROUP_MANUAL, strings.groupDefault, bySubscription[null].orEmpty().sortedWith(comparator)))
             subscriptions.forEach { subscription ->
                 val subscriptionNodes = bySubscription[subscription.id].orEmpty()
                 if (subscriptionNodes.isNotEmpty()) {
@@ -201,12 +203,15 @@ fun DashboardScreen(
     // dashboard reopens on the same subscription/manual list even before nodes load.
     // Both tabs read the same preference, so the group chosen on the Servers tab
     // is exactly what the dashboard shows ("all", "manual" or a subscription id).
-    val serversGroupPref by rememberUiPreference("servers_last_group", "all")
+    val serversGroupPref by rememberUiPreference("servers_last_group", GROUP_ALL)
     val activeGroupId = remember(nodes) {
-        nodes.firstOrNull { it.isSelected && !it.isAutoNode }?.let { it.subscriptionId ?: "manual" }
+        nodes.firstOrNull { it.isSelected }?.let { it.subscriptionId ?: GROUP_MANUAL }
     }
+    // Survives item recycling, so a row scrolled back into view is composed at full
+    // opacity instead of replaying the entrance fade.
+    val appearedGroups = remember { mutableSetOf<String>() }
     val visibleGroups = remember(groups, serversGroupPref, activeGroupId) {
-        if (serversGroupPref.isBlank() || serversGroupPref == "all") {
+        if (serversGroupPref.isBlank() || serversGroupPref == GROUP_ALL) {
             groups.filter { it.id == activeGroupId }.ifEmpty { groups }
         } else {
             groups.filter { it.id == serversGroupPref }
@@ -301,37 +306,49 @@ fun DashboardScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
-                // Extra bottom room so the last tiles never blend into the nav bar.
-                contentPadding = PaddingValues(bottom = 20.dp),
+                // The SLIDER layout owns a fixed bottom control; reserve its full
+                // height so the last server never scrolls underneath it.
+                contentPadding = PaddingValues(
+                    bottom = if (dashboardStyle == DashboardStyle.SLIDER && !isSelectionMode) {
+                        142.dp
+                    } else {
+                        20.dp
+                    }
+                ),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 item(key = "header_spacer") { Spacer(Modifier.height(4.dp)) }
 
-                // Hero block: connect button, live speed and session tiles.
-                if (!isSelectionMode) {
+                // DEFAULT and CENTERED keep their hero in the scrollable header.
+                // SLIDER is fixed above the bottom navigation instead.
+                if (!isSelectionMode && dashboardStyle != DashboardStyle.SLIDER) {
                     item(key = "hero_connect") {
                         val heroNode = nodes.firstOrNull { it.isSelected } ?: nodes.firstOrNull()
                         DashboardHero(
                             connectionState = connectionState,
                             style = dashboardStyle,
+                            speedStatsEnabled = speedStatsEnabled,
+                            downSpeed = downloadSpeed,
+                            upSpeed = uploadSpeed,
                             serverName = heroNode?.name,
                             serverCountryCode = heroNode?.countryCode,
                             serverProtocol = heroNode?.displayProtocol ?: heroNode?.protocol,
                             onToggleConnection = {
-                                if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                tick(HapticFeedbackType.LongPress)
                                 onToggleConnection()
                             }
                         )
                     }
                 }
 
-                // Sort selector + ping-all row (above all groups)
+                // Sorting stays above the groups; ping is available only in
+                // each group header so the action is not duplicated.
                 if (groups.isNotEmpty() && !isSelectionMode) {
                     item(key = "sort_and_ping_row") {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.Start,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -343,7 +360,7 @@ fun DashboardScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Box {
                                     Text(
-                                        text = if (sortByPing) "Ping" else strings.sortByName,
+                                        text = serverSortLabel(sort, strings),
                                         style = MaterialTheme.typography.bodySmall,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary,
@@ -354,58 +371,20 @@ fun DashboardScreen(
                                         onDismissRequest = { showSortMenu = false }
                                     ) {
                                         Column {
-                                            DropdownMenuItem(
-                                                text = { Text(strings.sortByName, color = MaterialTheme.colorScheme.onSurface) },
-                                                trailingIcon = if (!sortByPing) {
-                                                    { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                                                } else null,
-                                                onClick = {
-                                                    sortByPing = false
-                                                    showSortMenu = false
-                                                }
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text("Ping", color = MaterialTheme.colorScheme.onSurface) },
-                                                trailingIcon = if (sortByPing) {
-                                                    { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                                                } else null,
-                                                onClick = {
-                                                    sortByPing = true
-                                                    showSortMenu = false
-                                                }
-                                            )
+                                            serverSortOptions(strings).forEach { (value, label) ->
+                                                DropdownMenuItem(
+                                                    text = { Text(label, color = MaterialTheme.colorScheme.onSurface) },
+                                                    trailingIcon = if (sort == value) {
+                                                        { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+                                                    } else null,
+                                                    onClick = {
+                                                        sortKey = value.name
+                                                        showSortMenu = false
+                                                    }
+                                                )
+                                            }
                                         }
                                     }
-                                }
-                            }
-                            // Icon-only check-all button, same as the Servers tab,
-                            // with a Ping / Ping UDP choice.
-                            Box {
-                                IconButton(
-                                    onClick = { showPingAllMenu = true },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.NetworkCheck,
-                                        contentDescription = strings.pingAll,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                LumenMenu(
-                                    expanded = showPingAllMenu,
-                                    onDismissRequest = { showPingAllMenu = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Ping", color = MaterialTheme.colorScheme.onSurface) },
-                                        trailingIcon = { Icon(Icons.Filled.NetworkCheck, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
-                                        onClick = { showPingAllMenu = false; onPingAll() }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Ping UDP", color = MaterialTheme.colorScheme.onSurface) },
-                                        trailingIcon = { Icon(Icons.Filled.NetworkCheck, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
-                                        onClick = { showPingAllMenu = false; onUdpPingAll() }
-                                    )
                                 }
                             }
                         }
@@ -434,7 +413,6 @@ fun DashboardScreen(
                                 onRefreshSubscription = { onRefreshSubscription(group.id) },
                                 onDeleteSubscription = { onDeleteSubscription(group.id) },
                                 onPingGroup = { onPingGroup(if (group.isSubscription) group.id else null) },
-                                onUdpPingGroup = { onUdpPingGroup(if (group.isSubscription) group.id else null) },
                                 onShowProperties = { sub -> propertiesSub = sub },
                                 onExportAll = { subId ->
                                     val text = onExportSubscriptionText(subId)
@@ -486,8 +464,14 @@ fun DashboardScreen(
                                 ) { index ->
                                     val node = group.nodes[index]
                                     val isLast = index == group.nodes.lastIndex
-                                    var appeared by remember(group.id) { mutableStateOf(false) }
-                                    LaunchedEffect(group.id) { appeared = true }
+                                    var appeared by remember(group.id) {
+                                        mutableStateOf(group.id in appearedGroups)
+                                    }
+                                    LaunchedEffect(group.id) {
+                                        appeared = true
+                                        delay(220)
+                                        appearedGroups.add(group.id)
+                                    }
                                     val appearAlpha by animateFloatAsState(
                                         targetValue = if (appeared) 1f else 0f,
                                         animationSpec = tween(220, easing = FastOutSlowInEasing),
@@ -527,13 +511,12 @@ fun DashboardScreen(
                                                 }
                                             },
                                             onLongClick = {
-                                                if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                tick(HapticFeedbackType.LongPress)
                                                 isSelectionMode = true
                                                 selectedNodeIds = setOf(node.id)
                                             },
                                             onEditNode = { onEditNode(node) },
                                             onPingNode = { onPingNode(node) },
-                                            onUdpPingNode = { onUdpPingNode(node) },
                                             onCopyLink = { onCopyNodeLink(node) },
                                             onExportQr = { onExportQrCode(node) },
                                             onDeleteNode = { onDeleteNode(node) }
@@ -546,7 +529,17 @@ fun DashboardScreen(
                 }
 
                 // 2 Side-by-side action buttons: Equal size "+ Добавить" and separate "📋 Вставить"
-                if (!isSelectionMode) {
+                // Add / paste fill the manual bucket, so they only make sense for
+                // "All servers" and the Default group; a subscription is filled by
+                // its link. The last clause covers a stale group id: when the pref
+                // points at a deleted subscription the dashboard falls back to the
+                // Default group and the buttons must come back with it. The group
+                // itself is always reselectable from the Servers tab.
+                val showImportActions = serversGroupPref.isBlank() ||
+                    serversGroupPref == GROUP_ALL ||
+                    serversGroupPref == GROUP_MANUAL ||
+                    visibleGroups.any { !it.isSubscription }
+                if (!isSelectionMode && showImportActions) {
                     item(key = "import_action_buttons") {
                         Spacer(Modifier.height(4.dp))
                         Row(
@@ -597,7 +590,8 @@ fun DashboardScreen(
                                             trailingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
                                             onClick = {
                                                 showImportMenu = false
-                                                onImportQr()
+                                                tick(HapticFeedbackType.LongPress)
+                                                scanQr()
                                             }
                                         )
                                         DropdownMenuItem(
@@ -605,6 +599,7 @@ fun DashboardScreen(
                                             trailingIcon = { Icon(Icons.Filled.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
                                             onClick = {
                                                 showImportMenu = false
+                                                tick(HapticFeedbackType.LongPress)
                                                 onImportFile()
                                             }
                                         )
@@ -613,6 +608,7 @@ fun DashboardScreen(
                                             trailingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
                                             onClick = {
                                                 showImportMenu = false
+                                                tick(HapticFeedbackType.LongPress)
                                                 onAddManualNode()
                                             }
                                         )
@@ -626,7 +622,10 @@ fun DashboardScreen(
                                     .weight(1f)
                                     .clip(RoundedCornerShape(14.dp))
                                     .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
-                                    .clickable(onClick = onImportClipboard),
+                                    .clickable {
+                                        tick(HapticFeedbackType.LongPress)
+                                        onImportClipboard()
+                                    },
                                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.60f),
                                 shape = RoundedCornerShape(14.dp)
                             ) {
@@ -657,9 +656,34 @@ fun DashboardScreen(
                     }
                 }
             }
+
+            if (!isSelectionMode && dashboardStyle == DashboardStyle.SLIDER) {
+                val heroNode = nodes.firstOrNull { it.isSelected } ?: nodes.firstOrNull()
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(start = 16.dp, end = 16.dp, top = 3.dp, bottom = 2.dp)
+                ) {
+                    DashboardHero(
+                        connectionState = connectionState,
+                        style = DashboardStyle.SLIDER,
+                        speedStatsEnabled = speedStatsEnabled,
+                        downSpeed = downloadSpeed,
+                        upSpeed = uploadSpeed,
+                        serverName = heroNode?.name,
+                        serverCountryCode = heroNode?.countryCode,
+                        serverProtocol = heroNode?.displayProtocol ?: heroNode?.protocol,
+                        onToggleConnection = {
+                            tick(HapticFeedbackType.LongPress)
+                            onToggleConnection()
+                        }
+                    )
+                }
+            }
         }
 
-        // Slide-to-connect moved to the Servers tab; the hero button handles it here.
     }
 
     // Subscription properties dialog
@@ -673,7 +697,7 @@ fun DashboardScreen(
 }
 
 @Composable
-private fun SelectionTopBar(
+internal fun SelectionTopBar(
     selectedCount: Int,
     onCancel: () -> Unit,
     onExportSelected: () -> Unit,
@@ -821,13 +845,11 @@ fun SubscriptionHeaderTile(
     onRefreshSubscription: () -> Unit,
     onDeleteSubscription: () -> Unit,
     onPingGroup: () -> Unit = {},
-    onUdpPingGroup: () -> Unit = {},
     onShowProperties: (SubscriptionUiModel) -> Unit = {},
     onExportAll: (String?) -> Unit = {}
 ) {
     val strings = LocalStrings.current
     var showMenu by remember { mutableStateOf(false) }
-    var showPingMenu by remember { mutableStateOf(false) }
     // Subscriptions always carry the traffic block underneath, so their title
     // tile keeps square bottom corners and the two read as one card.
     val tileShape = if (isExpanded || group.isSubscription) {
@@ -884,25 +906,16 @@ fun SubscriptionHeaderTile(
 
             // Header action buttons
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box {
-                    IconButton(
-                        onClick = { showPingMenu = true },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.NetworkCheck,
-                            contentDescription = "Ping",
-                            tint = primaryColor,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    LumenMenu(
-                        expanded = showPingMenu,
-                        onDismissRequest = { showPingMenu = false }
-                    ) {
-                        DropdownMenuItem(text = { Text("Ping") }, onClick = { onPingGroup(); showPingMenu = false })
-                        DropdownMenuItem(text = { Text("UDP Ping") }, onClick = { onUdpPingGroup(); showPingMenu = false })
-                    }
+                IconButton(
+                    onClick = onPingGroup,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.NetworkCheck,
+                        contentDescription = "Ping",
+                        tint = primaryColor,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
                 if (group.isSubscription) {
                     IconButton(
@@ -1072,17 +1085,17 @@ fun SubscriptionInfoBar(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ServerTileRow(
+internal fun ServerTileRow(
     node: NodeUiModel,
     isSelectionMode: Boolean,
     isNodeSelected: Boolean,
     isPinging: Boolean = false,
+    supportingText: String? = null,
     modern: Boolean = true,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onEditNode: () -> Unit,
     onPingNode: () -> Unit,
-    onUdpPingNode: () -> Unit = {},
     onCopyLink: () -> Unit,
     onExportQr: () -> Unit,
     onDeleteNode: () -> Unit
@@ -1150,7 +1163,7 @@ private fun ServerTileRow(
                 Spacer(Modifier.width(8.dp))
             }
 
-            // Larger flags on the dashboard; unknown codes fall back to the US placeholder.
+            // Larger flags on the dashboard; unresolved countries use a neutral tile.
             CountryFlagIcon(
                 countryCode = node.countryCode,
                 width = 34.dp,
@@ -1187,7 +1200,13 @@ private fun ServerTileRow(
                         }
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (node.isAutoNode) strings.autoSelect else "${node.server}:${node.port}",
+                            text = if (node.isAutoNode && node.displayProtocol.equals("AUTO", true)) {
+                                strings.autoNodeDescriptionLabel
+                            } else if (node.isAutoNode && node.displayProtocol.endsWith("/WARP", true)) {
+                                "WARP"
+                            } else {
+                                "${node.server}:${node.port}"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 11.sp,
@@ -1201,6 +1220,16 @@ private fun ServerTileRow(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp
+                    )
+                }
+                supportingText?.takeIf { it.isNotBlank() }?.let { detail ->
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = primaryColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -1294,14 +1323,6 @@ private fun ServerTileRow(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Ping UDP", color = MaterialTheme.colorScheme.onSurface) },
-                                trailingIcon = { Icon(Icons.Filled.NetworkCheck, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
-                                onClick = {
-                                    showActionMenu = false
-                                    onUdpPingNode()
-                                }
-                            )
-                            DropdownMenuItem(
                                 text = { Text(strings.delete, color = MaterialTheme.colorScheme.error) },
                                 trailingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp)) },
                                 onClick = {
@@ -1351,14 +1372,16 @@ private fun heroServerLabel(countryCode: String?, protocol: String?, fallbackNam
 }
 
 /**
- * Dashboard hero: round connect button, live throughput with a sparkline and
- * the server/session tiles. Replaces the old slide bar, which now lives on the
- * Servers tab.
+ * Dashboard hero: round/centered controls or a bottom slider, live throughput
+ * and the shared server/session tiles.
  */
 @Composable
 private fun DashboardHero(
     connectionState: ConnectionState,
     style: DashboardStyle = DashboardStyle.DEFAULT,
+    speedStatsEnabled: Boolean,
+    downSpeed: Long,
+    upSpeed: Long,
     serverName: String?,
     serverCountryCode: String?,
     serverProtocol: String?,
@@ -1369,8 +1392,6 @@ private fun DashboardHero(
     val connected = connectionState == ConnectionState.Connected
     val connecting = connectionState == ConnectionState.Connecting
 
-    var downSpeed by remember { mutableStateOf(0L) }
-    var upSpeed by remember { mutableStateOf(0L) }
     var history by remember { mutableStateOf(listOf<Float>()) }
     var sessionSeconds by remember { mutableStateOf(0L) }
 
@@ -1381,37 +1402,35 @@ private fun DashboardHero(
         heroContext.getSharedPreferences("lumen_prefs", android.content.Context.MODE_PRIVATE)
     }
 
-    val speedStatsEnabled = remember(connected) {
-        heroPrefs.getBoolean("enable_speed_stats", true)
-    }
-
-    // Poll the device counters once per second while the tunnel is up and stats are enabled.
-    LaunchedEffect(connected, speedStatsEnabled) {
-        if (!connected || !speedStatsEnabled) {
-            downSpeed = 0L
-            upSpeed = 0L
+    // Session time is connection state, not speed telemetry. Keep counting even
+    // when the user turns traffic statistics off.
+    LaunchedEffect(connected) {
+        if (!connected) {
             sessionSeconds = 0L
-            history = emptyList()
-            if (!connected) heroPrefs.edit().remove("session_started_at").apply()
             return@LaunchedEffect
         }
-        val stored = heroPrefs.getLong("session_started_at", 0L)
-        val startedAt = if (stored > 0L) stored else System.currentTimeMillis().also {
-            heroPrefs.edit().putLong("session_started_at", it).apply()
-        }
-        sessionSeconds = ((System.currentTimeMillis() - startedAt) / 1000L).coerceAtLeast(0L)
-        var lastRx = android.net.TrafficStats.getTotalRxBytes()
-        var lastTx = android.net.TrafficStats.getTotalTxBytes()
         while (true) {
-            delay(1000)
-            val rx = android.net.TrafficStats.getTotalRxBytes()
-            val tx = android.net.TrafficStats.getTotalTxBytes()
-            downSpeed = (rx - lastRx).coerceAtLeast(0L)
-            upSpeed = (tx - lastTx).coerceAtLeast(0L)
-            lastRx = rx
-            lastTx = tx
-            history = (history + downSpeed.toFloat()).takeLast(36)
-            sessionSeconds = ((System.currentTimeMillis() - startedAt) / 1000L).coerceAtLeast(0L)
+            val startedAt = heroPrefs.getLong("session_started_at", 0L)
+            sessionSeconds = if (startedAt > 0L) {
+                ((System.currentTimeMillis() - startedAt) / 1000L).coerceAtLeast(0L)
+            } else {
+                0L
+            }
+            delay(1_000)
+        }
+    }
+
+    // Sampled on a timer like the session counter: keying on the speed value would
+    // only record transitions, so an idle or perfectly steady tunnel froze the curve.
+    val currentDownSpeed by rememberUpdatedState(downSpeed)
+    LaunchedEffect(connected, speedStatsEnabled) {
+        if (!connected || !speedStatsEnabled) {
+            history = emptyList()
+            return@LaunchedEffect
+        }
+        while (true) {
+            history = (history + currentDownSpeed.toFloat()).takeLast(36)
+            delay(1_000)
         }
     }
 
@@ -1428,55 +1447,51 @@ private fun DashboardHero(
     // Alternative dashboard layouts reuse the same live data; only the connect
     // control and its placement differ.
     if (style != DashboardStyle.DEFAULT) {
-        val statusText = when (connectionState) {
-            ConnectionState.Connected -> s.protectedStatus
-            ConnectionState.Connecting -> s.connectingStatus
-            ConnectionState.Error -> s.connectionError
-            else -> s.unprotectedStatus
-        }
         Column(
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    top = if (style == DashboardStyle.SLIDER) 2.dp else 6.dp,
+                    bottom = if (style == DashboardStyle.SLIDER) 2.dp else 10.dp
+                ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (style == DashboardStyle.CENTERED) {
+                // The button draws a 208.dp circle inside a 1.3x glow box, so it
+                // already carries 31.dp of transparent halo on every side. With the
+                // status caption gone, 6.dp above and below leaves the circle
+                // optically centred between the header and the stat tiles.
                 HeroConnectButton(
                     state = connectionState,
                     onConnectClick = onToggleConnection,
-                    buttonSize = 208.dp,
-                    statusText = statusText
+                    buttonSize = 208.dp
                 )
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(6.dp))
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(if (style == DashboardStyle.SLIDER) 6.dp else 10.dp)
             ) {
                 HeroStatTile(
                     label = s.serverLabel,
                     value = heroServerLabel(serverCountryCode, serverProtocol, serverName),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    compact = style == DashboardStyle.SLIDER
                 )
                 HeroStatTile(
                     label = s.sessionLabel,
                     value = formatHeroDuration(sessionSeconds),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    compact = style == DashboardStyle.SLIDER
                 )
             }
+            // Slide-to-connect stays at the bottom of the SLIDER dashboard
             if (style == DashboardStyle.SLIDER) {
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(6.dp))
                 ConnectionSliderBar(
                     connectionState = connectionState,
                     onToggleConnection = onToggleConnection,
                     modifier = Modifier.fillMaxWidth()
-                )
-            }
-            if (connectionState == ConnectionState.Error) {
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = s.connectionError,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.error
                 )
             }
         }
@@ -1486,7 +1501,12 @@ private fun DashboardHero(
     Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (speedStatsEnabled) {
+                Arrangement.Start
+            } else {
+                Arrangement.Center
+            }
         ) {
             Box(
                 modifier = Modifier.size(136.dp),
@@ -1619,13 +1639,26 @@ private fun DashboardHero(
                                 modifier = Modifier.size(48.dp)
                             )
                         }
+                        AnimatedVisibility(
+                            visible = connectionState == ConnectionState.Error,
+                            enter = fadeIn(animationSpec = tween(240)) +
+                                scaleIn(animationSpec = tween(240), initialScale = 0.72f),
+                            exit = fadeOut(animationSpec = tween(160))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = s.connectionError,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(48.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            Spacer(Modifier.width(14.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
+            if (speedStatsEnabled) {
+                Spacer(Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = s.speedLabel.uppercase(java.util.Locale.getDefault()),
                     style = MaterialTheme.typography.labelSmall,
@@ -1686,21 +1719,8 @@ private fun DashboardHero(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                }
             }
-        }
-
-        // Only a hard error is worth a caption; "Connecting" and the
-        // "protecting your data" line are noise, the button already says it.
-        if (connectionState == ConnectionState.Error) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = s.connectionError,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
         }
 
         Spacer(Modifier.height(10.dp))
@@ -1727,27 +1747,33 @@ private fun DashboardHero(
 private fun HeroStatTile(
     label: String,
     value: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
 ) {
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(if (compact) 13.dp else 18.dp)
     Column(
         modifier = modifier
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), shape)
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(
+                horizontal = if (compact) 10.dp else 14.dp,
+                vertical = if (compact) 5.dp else 12.dp
+            )
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = if (compact) 9.sp else 11.sp
         )
-        Spacer(Modifier.height(3.dp))
+        Spacer(Modifier.height(if (compact) 1.dp else 3.dp))
         Text(
             text = value,
-            style = MaterialTheme.typography.titleMedium,
+            style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
+            fontSize = if (compact) 12.sp else 16.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

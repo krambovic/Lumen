@@ -1,9 +1,0 @@
-﻿
-Lumen-kvn-release\android\app\src\main\java\com\lumen\app\vm\MainViewModel.kt:296:                    connection.setReq
-uestProperty("User-Agent", "Lumen/0.7.0")
-Lumen-kvn-release\android\core\vpn\src\main\java\com\lumen\core\vpn\TelemetryManager.kt:18:    private const val APP_VE
-RSION = "0.7.0"
-Lumen-kvn-release\android\ui\src\main\java\com\lumen\ui\screens\SettingsScreen.kt:236:            "Lumen-Subscription/A
-ndroid-0.7.0",
-
-

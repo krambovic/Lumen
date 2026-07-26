@@ -3,6 +3,7 @@ package com.lumen.app.widget
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.os.Build
 import android.widget.RemoteViews
 import net.kramb.lumen.R
 import com.lumen.core.vpn.LumenVpnService
+import com.lumen.core.vpn.VpnStartIntentFactory
 
 class LumenWidgetProvider : AppWidgetProvider() {
 
@@ -44,73 +46,27 @@ class LumenWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         when (intent.action) {
-            ACTION_TOGGLE_VPN -> {
-                toggleVpn(context)
-                refreshAll(context)
-            }
             ACTION_UPDATE_STATE -> refreshAll(context)
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED -> refreshAll(context)
         }
     }
 
-    private fun toggleVpn(context: Context) {
-        val isRunning = LumenVpnService.isRunning.value
-        val prefs = context.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
-
-        if (!isRunning) {
-            // Starting a tunnel needs the VPN consent dialog on first use and a
-            // config that actually exists; both are only available in the app, so
-            // fall back to opening it instead of silently doing nothing.
-            val configJson = prefs.getString("active_config_json", null)
-                ?: prefs.getString("config_json", null)
-            if (configJson.isNullOrBlank() || configJson == "{}" ||
-                android.net.VpnService.prepare(context) != null
-            ) {
-                openApp(context)
-                return
-            }
-        }
-
-        val intent = Intent(context, LumenVpnService::class.java).apply {
-            action = if (isRunning) LumenVpnService.ACTION_STOP_VPN else LumenVpnService.ACTION_START_VPN
-            if (!isRunning) {
-                val configJson = prefs.getString("active_config_json", null)
-                    ?: prefs.getString("config_json", null) ?: "{}"
-                val engineType = prefs.getString("engine_type", null) ?: "SINGBOX"
-                val splitMode = prefs.getString("split_mode", null) ?: "DISABLED"
-                val splitPackagesSet = prefs.getStringSet("split_packages", emptySet()) ?: emptySet()
-                val mtu = prefs.getInt("mtu", 1500)
-
-                putExtra(LumenVpnService.EXTRA_CONFIG_JSON, configJson)
-                putExtra(LumenVpnService.EXTRA_ENGINE_TYPE, engineType)
-                putExtra(LumenVpnService.EXTRA_SPLIT_MODE, splitMode)
-                putExtra(LumenVpnService.EXTRA_SPLIT_PACKAGES, ArrayList(splitPackagesSet))
-                putExtra(LumenVpnService.EXTRA_MTU, mtu)
-            }
-        }
-
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-        }.onFailure { openApp(context) }
-    }
-
-    private fun openApp(context: Context) {
-        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            ?: return
-        runCatching { context.startActivity(launch) }
-    }
-
     companion object {
         const val ACTION_TOGGLE_VPN = "com.lumen.app.widget.ACTION_TOGGLE_VPN"
         const val ACTION_UPDATE_STATE = "com.lumen.app.widget.ACTION_UPDATE_STATE"
 
-        private fun refreshAll(context: Context) {
+        /**
+         * Explicit toggle intent aimed at the non-exported control receiver, so no
+         * other app can drop the tunnel by broadcasting the action.
+         */
+        fun toggleIntent(context: Context): Intent =
+            Intent(context, LumenWidgetControlReceiver::class.java).apply {
+                action = ACTION_TOGGLE_VPN
+                setPackage(context.packageName)
+            }
+
+        fun refreshAll(context: Context) {
             val appWidgetManager = AppWidgetManager.getInstance(context) ?: return
             val componentName = ComponentName(context, LumenWidgetProvider::class.java)
             for (appWidgetId in appWidgetManager.getAppWidgetIds(componentName)) {
@@ -172,10 +128,7 @@ class LumenWidgetProvider : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, R.layout.widget_lumen_toggle)
             val prefs = context.getSharedPreferences("lumen_prefs", Context.MODE_PRIVATE)
 
-            val toggleIntent = Intent(context, LumenWidgetProvider::class.java).apply {
-                action = ACTION_TOGGLE_VPN
-                setPackage(context.packageName)
-            }
+            val toggleIntent = toggleIntent(context)
             val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             } else {
@@ -239,5 +192,58 @@ class LumenWidgetProvider : AppWidgetProvider() {
             }
             runCatching { context.sendBroadcast(intent) }
         }
+    }
+}
+
+/**
+ * Tunnel control for both home screen widgets. Declared android:exported="false":
+ * the widget PendingIntents are explicit and carry our own identity, so they still
+ * reach it, while no third party app can start or stop the VPN by broadcast.
+ */
+class LumenWidgetControlReceiver : BroadcastReceiver() {
+
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != LumenWidgetProvider.ACTION_TOGGLE_VPN) return
+        toggleVpn(context)
+        LumenWidgetProvider.refreshAll(context)
+        LumenCompactWidgetProvider.refreshAll(context)
+    }
+
+    private fun toggleVpn(context: Context) {
+        val isRunning = LumenVpnService.isRunning.value || LumenVpnService.isStarting.value
+        if (isRunning) {
+            startVpnService(context, VpnStartIntentFactory.buildStopIntent(context))
+            return
+        }
+        // Starting a tunnel needs the VPN consent dialog on first use and a config
+        // that actually exists; both are only available in the app, so fall back to
+        // opening it instead of silently doing nothing.
+        val params = VpnStartIntentFactory.startParamsFromPrefs(context)
+        // hasUsableConfig stats the stored file; onReceive runs on the main thread and
+        // params never carries the config itself. See VpnConfigStore.
+        if (!VpnStartIntentFactory.hasUsableConfig(context) ||
+            android.net.VpnService.prepare(context) != null
+        ) {
+            openApp(context)
+            return
+        }
+        if (!startVpnService(context, VpnStartIntentFactory.buildStartIntent(context, params))) {
+            openApp(context)
+        }
+    }
+
+    private fun startVpnService(context: Context, intent: Intent): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+    }.isSuccess
+
+    private fun openApp(context: Context) {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ?: return
+        runCatching { context.startActivity(launch) }
     }
 }

@@ -133,6 +133,7 @@ fun LumenApp(
     val strings = stringsForLanguage(settings.language.ifBlank { systemLanguage })
     val navController = rememberNavController()
     var editorDraft by remember { mutableStateOf<NodeDraft?>(null) }
+    var editorError by remember { mutableStateOf<String?>(null) }
     var qrExportLink by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -140,17 +141,9 @@ fun LumenApp(
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        uri?.let {
-            val content = context.contentResolver.openInputStream(it)?.use { stream ->
-                // Read raw bytes then decode as UTF-8 (handles BOM + non-ASCII)
-                stream.readBytes().toString(Charsets.UTF_8)
-            }
-            if (!content.isNullOrBlank()) {
-                // File imports bypass the 1 MiB clipboard size gate so that
-                // large .yaml / .json / .txt subscription files work correctly.
-                viewModel.prepareImportFileContent(content)
-            }
-        }
+        // The view model reads the stream on IO with a byte bound: a multi-MiB pick
+        // used to be materialised and parsed on the main thread.
+        uri?.let { viewModel.prepareImportFromUri(context, it, asFile = true) }
     }
 
     val qrScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
@@ -161,6 +154,20 @@ fun LumenApp(
 
     val mainTabRoutes = remember { listOf("dashboard", "servers", "settings") }
     val activity = context as? android.app.Activity
+
+    // The CAMERA permission is asked for at the point of use, inside :ui
+    // (rememberQrScanRequest), which also owns the localized rationale dialog. A second
+    // check here would only produce a second prompt, so this stays a plain launch.
+    fun startQrScanner() {
+        qrScanner.launch(
+            ScanOptions()
+                .setCaptureActivity(PortraitCaptureActivity::class.java)
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setBeepEnabled(false)
+                .setOrientationLocked(true)
+                .setPrompt("")
+        )
+    }
     fun openTab(route: String) {
         val current = navController.currentDestination?.route
         if (current == route) return
@@ -179,10 +186,33 @@ fun LumenApp(
         }
     }
 
+    // A finished import already pointed KEY_SERVERS_LAST_GROUP at the group it landed
+    // in; show the user that group instead of leaving them on the dashboard.
+    val serverGroupFocus by viewModel.serverGroupFocus.collectAsStateWithLifecycle()
+    LaunchedEffect(serverGroupFocus) {
+        if (viewModel.consumeServerGroupFocus()) openTab("servers")
+    }
+
     CompositionLocalProvider(
         LocalStrings provides strings,
         com.lumen.ui.screens.LocalHapticsEnabled provides settings.hapticsEnabled
     ) {
+        // Connection and import events the user should feel rather than read. Inside the
+        // provider on purpose: rememberHapticTick reads LocalHapticsEnabled, which is
+        // what keeps the in-app vibration switch in charge of these ticks too.
+        val hapticTick = com.lumen.ui.screens.rememberHapticTick()
+        LaunchedEffect(hapticTick) {
+            viewModel.events.collect { event ->
+                hapticTick(
+                    if (event == com.lumen.app.vm.LumenEvent.Connected) {
+                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+                    } else {
+                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove
+                    }
+                )
+            }
+        }
+
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -355,13 +385,15 @@ fun LumenApp(
                     val nodes by viewModel.nodes.collectAsStateWithLifecycle()
                     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
                     val pingingNodeIds by viewModel.pingingNodeIds.collectAsStateWithLifecycle()
-                    val sortByPingAfterRun by viewModel.sortByPing.collectAsStateWithLifecycle()
+                    val trafficStats by LumenVpnService.trafficStats.collectAsStateWithLifecycle()
                     DashboardScreen(
                         connectionState = connectionState,
                         nodes = nodes,
                         subscriptions = subscriptions,
+                        speedStatsEnabled = settings.enableSpeedStats,
+                        downloadSpeed = trafficStats.downloadSpeed,
+                        uploadSpeed = trafficStats.uploadSpeed,
                         pingingNodeIds = pingingNodeIds,
-                        sortByPingOverride = sortByPingAfterRun,
                         dashboardStyle = settings.dashboardStyle,
                         onToggleConnection = onToggleConnection,
                         onSelectNode = { node ->
@@ -373,26 +405,13 @@ fun LumenApp(
                             viewModel.prepareImportText(clipboard.getText()?.text)
                         },
                         onImportFile = { filePicker.launch("*/*") },
-                        onImportQr = {
-                            qrScanner.launch(
-                                ScanOptions()
-                                    .setCaptureActivity(com.lumen.app.PortraitCaptureActivity::class.java)
-                                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                                    .setBeepEnabled(false)
-                                    .setOrientationLocked(true)
-                                    .setPrompt("")
-                            )
-                        },
+                        onImportQr = { startQrScanner() },
                         onAddManualNode = { editorDraft = NodeDraft() },
                         onRefreshSubscription = viewModel::refreshSubscription,
                         onDeleteSubscription = viewModel::deleteSubscription,
-                        onPingAll = viewModel::pingAll,
-                        onUdpPingAll = viewModel::pingAllUdp,
                         onPingGroup = viewModel::pingGroup,
-                        onUdpPingGroup = viewModel::pingGroupUdp,
                         onEditNode = { node -> editorDraft = viewModel.draftForNode(node) },
                         onPingNode = viewModel::pingNode,
-                        onUdpPingNode = viewModel::pingNodeUdp,
                         onCopyNodeLink = { node ->
                             val link = viewModel.exportNodesText(setOf(node.id))
                             if (link.isNotBlank()) {
@@ -430,14 +449,18 @@ fun LumenApp(
                     val serverTestResults by viewModel.serverTestResults.collectAsStateWithLifecycle()
                     val serversConnectionState by viewModel.connectionState.collectAsStateWithLifecycle()
                     val serversPingingIds by viewModel.pingingNodeIds.collectAsStateWithLifecycle()
-                    val serversSortByPing by viewModel.sortByPing.collectAsStateWithLifecycle()
+                    // Latency colours follow the thresholds from the ping settings.
+                    LaunchedEffect(settings.pingGoodMs, settings.pingFairMs) {
+                        com.lumen.ui.screens.PingThresholds.goodMs = settings.pingGoodMs
+                        com.lumen.ui.screens.PingThresholds.fairMs = settings.pingFairMs
+                    }
                     ServerListScreen(
                         nodes = nodes,
                         subscriptions = subscriptions,
                         refreshingIds = refreshingIds,
                         isPinging = isPinging,
                         pingingNodeIds = serversPingingIds,
-                        pingSortActive = serversSortByPing,
+                        autoPingOnOpen = settings.pingAutoOnOpen,
                         testingNodeId = testingNodeId,
                         serverTestResults = serverTestResults,
                         connectionState = serversConnectionState,
@@ -452,9 +475,9 @@ fun LumenApp(
                         onDeleteAllNodes = viewModel::deleteAllNodes,
                         onAddNode = { editorDraft = NodeDraft() },
                         onPingAll = viewModel::pingAll,
-                        onUdpPingAll = viewModel::pingAllUdp,
+                        onStopPing = viewModel::stopPing,
+                        onPingNodes = viewModel::pingNodes,
                         onPingNode = viewModel::pingNode,
-                        onUdpPingNode = viewModel::pingNodeUdp,
                         onCopyNodeLink = { node ->
                             val link = viewModel.exportNodesText(setOf(node.id))
                             if (link.isNotBlank()) {
@@ -471,21 +494,12 @@ fun LumenApp(
                             viewModel.prepareImportText(clipboard.getText()?.text)
                         },
                         onImportFile = { filePicker.launch("*/*") },
-                        onImportQr = {
-                            qrScanner.launch(
-                                ScanOptions()
-                                    .setCaptureActivity(com.lumen.app.PortraitCaptureActivity::class.java)
-                                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                                    .setBeepEnabled(false)
-                                    .setOrientationLocked(true)
-                                    .setPrompt("")
-                            )
-                        },
+                        onImportQr = { startQrScanner() },
                         onAddSubscription = viewModel::addSubscription,
                         onRefreshSubscription = viewModel::refreshSubscription,
                         onDeleteSubscription = viewModel::deleteSubscription,
                         onPingGroup = viewModel::pingGroup,
-                        onUdpPingGroup = viewModel::pingGroupUdp,
+                        onExportNodesText = viewModel::exportNodesText,
                         onExportSubscriptionText = viewModel::exportSubscriptionText,
                         onCopyText = { text ->
                             clipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
@@ -561,11 +575,17 @@ fun LumenApp(
                         onDispose { viewModel.setLogsVisible(false) }
                     }
                     val logs by viewModel.logs.collectAsStateWithLifecycle()
+                    val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
+                    val moreLogHistory by viewModel.moreLogHistory.collectAsStateWithLifecycle()
                     LogsScreen(
                         logs = logs,
                         onClear = viewModel::clearLogs,
                         onExport = { viewModel.exportLogs(context) },
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        entries = logEntries,
+                        // Dropped once the store has handed over everything it kept.
+                        onLoadMore = if (moreLogHistory) viewModel::loadOlderLogs else null,
+                        onExportText = { viewModel.exportLogText(context, it) }
                     )
                 }
             }
@@ -642,10 +662,36 @@ fun LumenApp(
         }
 
         editorDraft?.let { draft ->
-            NodeEditorModal(draft, { editorDraft = null }) {
-                viewModel.saveDraft(it)
-                editorDraft = null
+            NodeEditorModal(draft, { editorDraft = null; editorError = null }) { edited ->
+                // The editor stays open when the draft cannot be turned into a node,
+                // instead of closing as if the save had succeeded.
+                viewModel.saveDraft(edited) { error ->
+                    if (error == null) editorDraft = null else editorError = error
+                }
             }
+        }
+
+        // Why the last start produced no tunnel, in the core's own words. Without
+        // this the button just flips back and the reason only exists in the logs.
+        val connectError by viewModel.connectError.collectAsStateWithLifecycle()
+        connectError?.let { message ->
+            LumenDialog(
+                title = "Connection failed",
+                message = message,
+                onDismissRequest = viewModel::dismissConnectError,
+                confirmText = "OK",
+                onConfirm = viewModel::dismissConnectError
+            )
+        }
+
+        editorError?.let { message ->
+            LumenDialog(
+                title = "Save failed",
+                message = message,
+                onDismissRequest = { editorError = null },
+                confirmText = "OK",
+                onConfirm = { editorError = null }
+            )
         }
     }
 }

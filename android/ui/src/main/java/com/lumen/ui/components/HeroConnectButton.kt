@@ -15,8 +15,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -53,13 +51,10 @@ fun HeroConnectButton(
     state: ConnectionState,
     onConnectClick: () -> Unit,
     modifier: Modifier = Modifier,
-    buttonSize: Dp = 204.dp,
-    statusText: String? = null
+    buttonSize: Dp = 204.dp
 ) {
     val cardBg = MaterialTheme.colorScheme.surface
     val surfaceVariantBg = MaterialTheme.colorScheme.surfaceVariant
-    val onSurfaceText = MaterialTheme.colorScheme.onSurface
-    val onSurfaceVariantText = MaterialTheme.colorScheme.onSurfaceVariant
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.secondary
 
@@ -126,13 +121,6 @@ fun HeroConnectButton(
     )
 
     val strings = com.lumen.ui.screens.LocalStrings.current
-
-    val resolvedStatusText = statusText ?: when (state) {
-        ConnectionState.Disconnected -> strings.tapToConnect
-        ConnectionState.Connecting -> strings.connectingStatus
-        ConnectionState.Connected -> strings.connectedStatus
-        ConnectionState.Error -> strings.connectionError
-    }
 
     val centerText = when (state) {
         ConnectionState.Disconnected -> strings.centerConnect
