@@ -11,10 +11,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.room.withTransaction
+import com.lumen.app.LauncherIconManager
 import com.lumen.app.subscription.ImportClassification
 import com.lumen.app.subscription.ImportClassifier
 import com.lumen.app.subscription.ImportKind
 import com.lumen.app.subscription.SubscriptionClient
+import com.lumen.app.subscription.SubscriptionMetadata
 import com.lumen.app.util.NodeDraftMapper
 import com.lumen.core.config.builder.SingboxConfigBuilder
 import com.lumen.core.config.builder.SingboxConfigOptions
@@ -23,7 +25,10 @@ import com.lumen.core.config.parser.ParsedNode
 import org.json.JSONObject
 import com.lumen.core.database.AppDatabase
 import com.lumen.core.database.model.NodeEntity
+import com.lumen.core.database.model.NodeGroupMemberEntity
+import com.lumen.core.database.model.ServerGroupEntity
 import com.lumen.core.database.model.SubscriptionEntity
+import com.lumen.core.database.model.groupKey
 import com.lumen.core.vpn.LumenVpnService
 import com.lumen.core.vpn.VpnLogBus
 import com.lumen.core.vpn.VpnLogEntry
@@ -39,9 +44,11 @@ import com.lumen.ui.screens.GeoResourceUiModel
 import com.lumen.ui.screens.ImportKindUi
 import com.lumen.ui.screens.ImportPhaseUi
 import com.lumen.ui.screens.ImportUiState
+import com.lumen.ui.screens.LauncherIconOption
 import com.lumen.ui.screens.LogEntryUi
 import com.lumen.ui.screens.NodeDraft
 import com.lumen.ui.screens.NodeUiModel
+import com.lumen.ui.screens.ServerGroupUiModel
 import com.lumen.ui.screens.SettingsUiState
 import com.lumen.ui.screens.SplitModeUi
 import com.lumen.ui.screens.SubscriptionUiModel
@@ -99,10 +106,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // No destructive fallback: `nodes` holds hand-typed servers and keys that
     // cannot be recovered, so a missing migration must fail loudly instead.
     private val db = Room.databaseBuilder(app, AppDatabase::class.java, "lumen.db")
-        .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+        .addMigrations(
+            AppDatabase.MIGRATION_1_2,
+            AppDatabase.MIGRATION_2_3,
+            AppDatabase.MIGRATION_3_4,
+            AppDatabase.MIGRATION_4_5
+        )
         .build()
     private val nodeDao = db.nodeDao()
     private val subscriptionDao = db.subscriptionDao()
+    private val serverGroupDao = db.serverGroupDao()
     private val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val subscriptionHwid: String by lazy {
         prefs.getString("subscription_hwid", null)?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString().also {
@@ -120,6 +133,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         com.lumen.core.vpn.TelemetryManager.appVersion = net.kramb.lumen.BuildConfig.VERSION_NAME
         // Keep Android visible in the same 45-minute "online now" window as desktop.
         com.lumen.core.vpn.TelemetryManager.startHeartbeatLoop(app, viewModelScope)
+        reconcileLauncherIcon()
+    }
+
+    /**
+     * Component-enabled state persists across updates but a fresh install starts from
+     * the manifest defaults, so a user who picked the dark icon would silently get the
+     * auto-theming one back after reinstalling. Re-applying the stored preference on
+     * every launch closes that gap; it is a no-op whenever the two already agree.
+     *
+     * The preference is read straight from [prefs] because this runs before
+     * [_settings] is constructed.
+     */
+    private fun reconcileLauncherIcon() {
+        val stored = runCatching {
+            LauncherIconOption.valueOf(
+                prefs.getString(PREF_LAUNCHER_ICON, LauncherIconOption.SYSTEM.name)
+                    ?: LauncherIconOption.SYSTEM.name
+            )
+        }.getOrDefault(LauncherIconOption.SYSTEM)
+        viewModelScope.launch(Dispatchers.IO) {
+            // Binder calls only; failures are non-fatal and leave the current icon alone.
+            runCatching { LauncherIconManager.applyOption(getApplication<Application>(), stored) }
+        }
     }
 
     // ---------- Logs ----------
@@ -343,6 +379,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         dashboardStyle = runCatching {
             DashboardStyle.valueOf(prefs.getString("dashboard_style", DashboardStyle.DEFAULT.name) ?: DashboardStyle.DEFAULT.name)
         }.getOrDefault(DashboardStyle.DEFAULT),
+        launcherIcon = runCatching {
+            LauncherIconOption.valueOf(
+                prefs.getString(PREF_LAUNCHER_ICON, LauncherIconOption.SYSTEM.name)
+                    ?: LauncherIconOption.SYSTEM.name
+            )
+        }.getOrDefault(LauncherIconOption.SYSTEM),
         // One master switch owns the whole pipeline; the store keeps it under its
         // own "app_log_enabled" key, so read it back from there.
         loggingEnabled = appLogSettings.enabled
@@ -355,6 +397,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateSettings(s: SettingsUiState) {
         val telemetryChanged = _settings.value.telemetryEnabled != s.telemetryEnabled
+        val launcherIconChanged = _settings.value.launcherIcon != s.launcherIcon
         _settings.value = s
         prefs.edit()
             .putString("engine_type", s.engine)
@@ -449,7 +492,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("ping_fair_ms", s.pingFairMs.coerceIn(20, 5000))
             .putBoolean("ping_auto_on_open", s.pingAutoOnOpen)
             .putString("dashboard_style", s.dashboardStyle.name)
+            .putString(PREF_LAUNCHER_ICON, s.launcherIcon.name)
             .apply()
+        // Persist first, then flip the components: if the process dies in between, the
+        // startup reconcile re-applies the stored choice instead of losing it.
+        if (launcherIconChanged) {
+            val wanted = s.launcherIcon
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { LauncherIconManager.applyOption(getApplication<Application>(), wanted) }
+            }
+        }
         // The log settings live in the bus under its own keys. Only the master switch
         // is user facing now; verbosity and retention keep their stored defaults so
         // turning logging back on restores the behaviour it had before.
@@ -720,13 +772,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private data class NodeUiCacheEntry(val fingerprint: Int, val base: NodeUiModel)
     private val nodeUiCache = java.util.concurrent.ConcurrentHashMap<String, NodeUiCacheEntry>()
 
+    // ---------- Custom server groups ----------
+    private val groupEntities: StateFlow<List<ServerGroupEntity>> = serverGroupDao.getGroups()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    private val groupMembers: StateFlow<List<NodeGroupMemberEntity>> = serverGroupDao.getMembers()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val nodes: StateFlow<List<NodeUiModel>> =
         combine(
             nodeEntities,
             _selectedNodeId,
-            _resolvedCountryCodes
-        ) { list, selectedId, resolvedCountryCodes ->
+            _resolvedCountryCodes,
+            groupEntities,
+            groupMembers
+        ) { list, selectedId, resolvedCountryCodes, customGroups, members ->
             val liveIds = HashSet<String>(list.size * 2)
+            // Membership is keyed on the node's stable key, not its row id, so it
+            // survives the delete/re-insert a subscription refresh does. Rows pointing
+            // at a group that no longer exists are ignored rather than hiding a server.
+            val liveGroupIds = customGroups.mapTo(HashSet()) { it.id }
+            val membership = members.asSequence()
+                .filter { it.groupId in liveGroupIds }
+                .associate { it.nodeKey to it.groupId }
             val mapped = list.mapNotNull { e ->
                 runCatching {
                     liveIds.add(e.id)
@@ -784,6 +851,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         pingMs = e.pingMs,
                         isAutoNode = e.isAutoNode || e.protocol.equals("auto", true),
                         subscriptionId = e.subscriptionId,
+                        groupId = membership[e.groupKey()],
                         isSelected = e.id == selectedId
                     )
                 }.getOrNull()
@@ -819,7 +887,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteNode(node: NodeUiModel) {
         viewModelScope.launch(Dispatchers.IO) {
+            val key = nodeEntities.value.firstOrNull { it.id == node.id }?.groupKey()
             nodeDao.deleteNodeById(node.id)
+            if (key != null) serverGroupDao.assignNodes(listOf(key), null)
             log("Deleted node ${node.name}")
         }
     }
@@ -827,8 +897,67 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // Deletes servers belonging to the default / manual group only.
     fun deleteAllNodes() {
         viewModelScope.launch(Dispatchers.IO) {
+            val keys = nodeEntities.value.filter { it.subscriptionId == null }.map { it.groupKey() }
             nodeDao.deleteManualNodes()
+            if (keys.isNotEmpty()) serverGroupDao.assignNodes(keys, null)
             log("Deleted all manual nodes")
+        }
+    }
+
+    /**
+     * Groups the user made, with the number of servers currently assigned to each.
+     */
+    val serverGroups: StateFlow<List<ServerGroupUiModel>> =
+        combine(groupEntities, nodes) { groups, nodeList ->
+            groups.map { entity ->
+                ServerGroupUiModel(
+                    id = entity.id,
+                    name = entity.name,
+                    nodeCount = nodeList.count { it.groupId == entity.id }
+                )
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun createServerGroup(name: String) {
+        val clean = name.trim().take(64)
+        if (clean.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            serverGroupDao.insertGroup(ServerGroupEntity(name = clean))
+            log("Created server group $clean")
+        }
+    }
+
+    fun renameServerGroup(groupId: String, name: String) {
+        val clean = name.trim().take(64)
+        if (clean.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            serverGroupDao.renameGroup(groupId, clean)
+            log("Renamed server group to $clean")
+        }
+    }
+
+    /** Drops the group only: its servers stay and fall back to their default bucket. */
+    fun deleteServerGroup(groupId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val freed = serverGroupDao.membersOf(groupId).size
+            serverGroupDao.deleteGroup(groupId)
+            log("Deleted server group, $freed server(s) moved back to the default group")
+        }
+    }
+
+    /**
+     * Moves [targets] into [groupId]; null clears the assignment. Keyed on the node's
+     * stable key so a later subscription refresh keeps the grouping.
+     */
+    fun assignNodesToGroup(targets: List<NodeUiModel>, groupId: String?) {
+        if (targets.isEmpty()) return
+        val ids = targets.mapTo(HashSet()) { it.id }
+        viewModelScope.launch(Dispatchers.IO) {
+            val keys = nodeEntities.value.filter { it.id in ids }.map { it.groupKey() }.distinct()
+            if (keys.isEmpty()) return@launch
+            serverGroupDao.assignNodes(keys, groupId)
+            val destination = if (groupId == null) "no group" else "a group"
+            log("Moved ${keys.size} server(s) to $destination")
         }
     }
 
@@ -1127,18 +1256,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val subEntities: StateFlow<List<SubscriptionEntity>> = subscriptionDao.getSubscriptions()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     private val _subscriptionPremium = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
-    // Premium API extras kept in one map so the subscriptions combine stays 5-arity.
-    // The usage figures live in _subscriptionUsage instead: they are the raw
+    // The usage figures live in _subscriptionUsage: they are the raw
     // subscription-userinfo values, so they can be merged and persisted per key.
-    private data class SubMeta(
-        val intervalHours: Int?,
-        val announce: String?
-    )
-    private val _subscriptionTraffic = MutableStateFlow<Map<String, SubMeta>>(emptyMap())
+    // Everything else the panel says about the subscription — the announcement, the
+    // support / website / premium links, the banner — is a column on the entity.
     private val _subscriptionUsage = MutableStateFlow(loadSubscriptionUsage())
 
     val subscriptions: StateFlow<List<SubscriptionUiModel>> =
-        combine(subEntities, nodeEntities, _subscriptionPremium, _subscriptionTraffic, _subscriptionUsage) { subs, allNodes, premium, traffic, usage ->
+        combine(subEntities, nodeEntities, _subscriptionPremium, _subscriptionUsage) { subs, allNodes, premium, usage ->
             val now = System.currentTimeMillis()
             subs.map { s ->
                 val info = usage[s.id].orEmpty()
@@ -1154,8 +1279,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     expiryDaysLeft = SubscriptionUsage.expiryEpochSeconds(info)
                         ?.let { SubscriptionUsage.daysLeft(it, now) },
                     trafficRatio = SubscriptionUsage.ratio(info),
-                    updateIntervalHours = traffic[s.id]?.intervalHours,
-                    announce = traffic[s.id]?.announce
+                    updateIntervalHours = s.updateIntervalHours.takeIf { it > 0 },
+                    announce = s.announce.ifBlank { null },
+                    announceUrl = s.announceUrl.ifBlank { null },
+                    description = s.description.ifBlank { null },
+                    telegramUrl = s.telegramUrl.ifBlank { null },
+                    supportUrl = s.supportUrl.ifBlank { null },
+                    supportEmail = s.supportEmail.ifBlank { null },
+                    websiteUrl = s.websiteUrl.ifBlank { null },
+                    premiumUrl = s.premiumUrl.ifBlank { null },
+                    bannerText = s.bannerText.ifBlank { null },
+                    bannerButtonText = s.bannerButtonText.ifBlank { null },
+                    bannerButtonUrl = s.bannerButtonUrl.ifBlank { null },
+                    bannerBgColor = s.bannerBgColor.ifBlank { null },
+                    bannerButtonColor = s.bannerButtonColor.ifBlank { null },
+                    hideUrl = s.hideUrl,
+                    sortOrder = s.sortOrder.ifBlank { null }
                 )
             }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -1271,14 +1410,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 importedCount = valid.size
                 _subscriptionPremium.value = _subscriptionPremium.value + (sub.id to payload.premiumFeatures)
-                // The update interval and the announce banner arrive independently of the
-                // usage header; they used to be dropped for every panel that sends one but
-                // not the other, because both lived behind the same userInfo check.
-                val meta = SubMeta(
-                    intervalHours = payload.updateIntervalHours?.takeIf { it in 1..8760 },
-                    announce = payload.premiumFeatures["announce"]?.take(240)?.ifBlank { null }
-                )
-                _subscriptionTraffic.value = _subscriptionTraffic.value + (sub.id to meta)
                 mergeSubscriptionUsage(sub.id, payload.userInfo)
                 val premiumApplied = applyCompatiblePremiumFeatures(payload.premiumFeatures)
                 // The subscription URL is a bearer credential: never let a provider
@@ -1292,7 +1423,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val autoUpdate = payload.premiumFeatures["subscription-auto-update-enable"]
                     ?.let(::premiumEnabled) ?: sub.autoUpdateEnabled
                 subscriptionDao.updateSubscription(
-                    sub.copy(
+                    mergeSubscriptionMetadata(
+                        sub,
+                        payload.metadata,
+                        payload.updateIntervalHours?.takeIf { it in 1..8760 }
+                    ).copy(
                         name = payload.profileTitle?.take(160)?.ifBlank { sub.name } ?: sub.name,
                         url = replacementUrl ?: sub.url,
                         lastUpdated = System.currentTimeMillis(),
@@ -1319,8 +1454,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteSubscription(model: SubscriptionUiModel) {
         viewModelScope.launch(Dispatchers.IO) {
+            val keys = nodeEntities.value.filter { it.subscriptionId == model.id }.map { it.groupKey() }
             nodeDao.deleteNodesBySubscription(model.id)
             subscriptionDao.deleteSubscriptionById(model.id)
+            if (keys.isNotEmpty()) serverGroupDao.assignNodes(keys, null)
             forgetSubscriptionUsage(model.id)
             log("Deleted subscription ${model.name}")
         }
@@ -1343,7 +1480,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     .takeIf { it > 0 } ?: 240
                 val now = System.currentTimeMillis()
                 subEntities.value.forEach { sub ->
-                    val providerMinutes = _subscriptionTraffic.value[sub.id]?.intervalHours?.times(60)
+                    val providerMinutes = sub.updateIntervalHours.takeIf { it in 1..8760 }?.times(60)
                     val intervalMinutes = providerMinutes ?: configuredMinutes
                     val due = now - sub.lastUpdated >= intervalMinutes * 60_000L
                     val backedOff = now < (subscriptionRetryAfter[sub.id] ?: 0L)
@@ -1371,6 +1508,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val capabilities = manager.getNetworkCapabilities(network) ?: return@runCatching false
         capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }.getOrDefault(true)
+
+    /**
+     * Resolvers of the currently active physical network. Only ever called while the
+     * VPN is down, so `activeNetwork` is the underlay; the scope suffix of a
+     * link-local address is stripped because nothing downstream can carry it.
+     */
+    private fun currentNetworkDnsServers(): List<String> = runCatching {
+        val manager = getApplication<Application>()
+            .getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val network = manager.activeNetwork ?: return@runCatching emptyList()
+        manager.getLinkProperties(network)?.dnsServers
+            ?.mapNotNull { it.hostAddress?.substringBefore('%') }
+            ?.distinct()
+            .orEmpty()
+    }.getOrDefault(emptyList())
 
     private fun premiumEnabled(value: String): Boolean =
         value.trim().lowercase(Locale.US) in setOf("1", "true", "yes", "on", "enabled")
@@ -2081,6 +2233,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         directDnsServer = s.dnsDirectServers.lineSequence().firstOrNull()?.trim().orEmpty().ifBlank { "1.1.1.1" },
                         dnsMode = s.dnsMode,
                         dnsDirectServers = s.dnsDirectServers.split(Regex("[\\n,;]+")).map(String::trim).filter(String::isNotEmpty),
+                        // Desktop parity: the physical adapter's own resolvers bootstrap
+                        // the DNS chain. Read here, before the tunnel exists, so this is
+                        // the underlay network's list and never the TUN's own address.
+                        systemDnsServers = currentNetworkDnsServers(),
                         dnsProxyServers = s.dnsProxyServers.split(Regex("[\\n,;]+")).map(String::trim).filter(String::isNotEmpty),
                         dnsDirectType = s.dnsDirectType,
                         dnsProxyType = s.dnsProxyType,
@@ -2482,6 +2638,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val PREFS_NAME = "lumen_prefs"
+
+        /**
+         * Launcher icon the user pinned. Read before [_settings] exists (startup
+         * reconcile) and written by [updateSettings], hence a named constant.
+         */
+        const val PREF_LAUNCHER_ICON = "launcher_icon"
         /** Preference ServerListScreen and the dashboard read their group from. */
         const val KEY_SERVERS_LAST_GROUP = "servers_last_group"
         /** Must match ServerListScreen's GROUP_MANUAL: the default / manual bucket. */
@@ -2499,6 +2661,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private val UDP_ONLY_SCHEMES = setOf("wireguard", "amneziawg", "awg", "wg", "warp")
     }
 }
+
+/** Longest provider text kept per field; the spec caps announcements at 200 characters. */
+private const val SUBSCRIPTION_TEXT_MAX = 400
+
+/**
+ * Folds one refresh's headers into the stored provider metadata.
+ *
+ * Same rule the traffic figures already follow: a field this response did not carry keeps
+ * the value the panel sent last time. A refresh that answers through a fallback
+ * User-Agent, or that simply drops `announce`, must not blank the card.
+ */
+internal fun mergeSubscriptionMetadata(
+    stored: SubscriptionEntity,
+    fresh: SubscriptionMetadata,
+    intervalHours: Int?
+): SubscriptionEntity = stored.copy(
+    description = fresh.description?.take(SUBSCRIPTION_TEXT_MAX) ?: stored.description,
+    announce = fresh.announce?.take(SUBSCRIPTION_TEXT_MAX) ?: stored.announce,
+    announceUrl = fresh.announceUrl ?: stored.announceUrl,
+    telegramUrl = fresh.telegramUrl ?: stored.telegramUrl,
+    supportUrl = fresh.supportUrl ?: stored.supportUrl,
+    supportEmail = fresh.supportEmail ?: stored.supportEmail,
+    websiteUrl = fresh.websiteUrl ?: stored.websiteUrl,
+    premiumUrl = fresh.premiumUrl ?: stored.premiumUrl,
+    bannerText = fresh.bannerText?.take(SUBSCRIPTION_TEXT_MAX) ?: stored.bannerText,
+    bannerButtonText = fresh.bannerButtonText?.take(80) ?: stored.bannerButtonText,
+    bannerButtonUrl = fresh.bannerButtonUrl ?: stored.bannerButtonUrl,
+    bannerBgColor = fresh.bannerBgColor ?: stored.bannerBgColor,
+    bannerButtonColor = fresh.bannerButtonColor ?: stored.bannerButtonColor,
+    hideUrl = fresh.hideUrl ?: stored.hideUrl,
+    sortOrder = fresh.sortOrder ?: stored.sortOrder,
+    updateIntervalHours = intervalHours ?: stored.updateIntervalHours
+)
 
 /**
  * Accounting for the `subscription-userinfo` figures. Pure, and kept out of the view

@@ -16,6 +16,13 @@ so the icon follows the system theme. The legacy density PNGs cannot theme
 themselves (pre-API-26 launchers have no night qualifier for mipmaps here), so
 they keep the light variant.
 
+On top of that auto-theming `ic_launcher`, two FIXED variants are emitted -
+`ic_launcher_light` and `ic_launcher_dark` - from the same geometry and the same
+two palettes. They live only in res/drawable (no -night twin), so they never
+re-theme themselves; the launcher-icon picker points an <activity-alias> at one
+of them and the user's choice sticks. Everything comes out of this one file, so
+the three icons cannot drift apart.
+
 Run from any directory: python android/tools/gen_launcher_icons.py
 """
 from pathlib import Path
@@ -62,6 +69,21 @@ LIGHT = Theme("drawable", "#FFFFFFFF", "#FFFFFFFF", "#FF000000")
 # Dark plate, white mark.
 DARK = Theme("drawable-night", "#FF202020", "#FF050505", "#FFFFFFFF")
 THEMES = (LIGHT, DARK)
+
+
+# A launcher-icon variant the user can pin from Customization. Both land in
+# res/drawable with no -night twin, so the qualifier can never re-theme them:
+# picking "Light" has to stay light on a device in dark mode.
+class Fixed(NamedTuple):
+    name: str     # resource base name, e.g. "ic_launcher_light"
+    theme: Theme  # colours only; the folder of the Theme is ignored here
+
+
+FIXED = (
+    Fixed("ic_launcher_light", LIGHT),
+    # Same palette as the -night variant, but parked in the unqualified folder.
+    Fixed("ic_launcher_dark", Theme("drawable", DARK.bg_top, DARK.bg_bottom, DARK.glyph)),
+)
 
 LEGACY_DENSITIES = {
     "mipmap-mdpi": 48,
@@ -165,14 +187,44 @@ def vector(comment: str, body: str, aapt: bool = False) -> str:
     )
 
 
-def adaptive_icon() -> str:
+def adaptive_icon(base: str = "ic_launcher") -> str:
+    # The monochrome layer is shared: the system tints it, so it is palette-free.
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
-        '    <background android:drawable="@drawable/ic_launcher_background" />\n'
-        '    <foreground android:drawable="@drawable/ic_launcher_foreground" />\n'
+        f'    <background android:drawable="@drawable/{base}_background" />\n'
+        f'    <foreground android:drawable="@drawable/{base}_foreground" />\n'
         '    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />\n'
         "</adaptive-icon>\n"
+    )
+
+
+def background_layer(theme: Theme) -> str:
+    return vector(
+        "Full-bleed plate. No artwork here: the launcher mask crops this layer.",
+        '    <path android:pathData="M0,0h1024v1024h-1024z">\n'
+        '        <aapt:attr name="android:fillColor">\n'
+        '            <gradient\n'
+        '                android:type="linear"\n'
+        '                android:startX="512"\n'
+        '                android:startY="0"\n'
+        '                android:endX="512"\n'
+        '                android:endY="1024">\n'
+        f'                <item android:offset="0" android:color="{theme.bg_top}" />\n'
+        f'                <item android:offset="1" android:color="{theme.bg_bottom}" />\n'
+        "            </gradient>\n"
+        "        </aapt:attr>\n"
+        "    </path>\n",
+        aapt=True,
+    )
+
+
+def foreground_layer(theme: Theme, mark: str) -> str:
+    return vector(
+        "Lumen mark, centred inside the 66dp safe zone of the 108dp canvas.",
+        '    <path\n'
+        f'        android:fillColor="{theme.glyph}"\n'
+        f'        android:pathData="{mark}" />\n',
     )
 
 
@@ -210,39 +262,8 @@ def main() -> None:
     mark = path_data(placed(VIEWPORT, GLYPH_HEIGHT_DP * VIEWPORT / CANVAS_DP))
 
     for theme in THEMES:
-        write(
-            vector(
-                "Full-bleed plate. No artwork here: the launcher mask crops "
-                "this layer.",
-                '    <path android:pathData="M0,0h1024v1024h-1024z">\n'
-                '        <aapt:attr name="android:fillColor">\n'
-                '            <gradient\n'
-                '                android:type="linear"\n'
-                '                android:startX="512"\n'
-                '                android:startY="0"\n'
-                '                android:endX="512"\n'
-                '                android:endY="1024">\n'
-                f'                <item android:offset="0" android:color="{theme.bg_top}" />\n'
-                f'                <item android:offset="1" android:color="{theme.bg_bottom}" />\n'
-                "            </gradient>\n"
-                "        </aapt:attr>\n"
-                "    </path>\n",
-                aapt=True,
-            ),
-            theme.folder,
-            "ic_launcher_background.xml",
-        )
-        write(
-            vector(
-                "Lumen mark, centred inside the 66dp safe zone of the 108dp "
-                "canvas.",
-                '    <path\n'
-                f'        android:fillColor="{theme.glyph}"\n'
-                f'        android:pathData="{mark}" />\n',
-            ),
-            theme.folder,
-            "ic_launcher_foreground.xml",
-        )
+        write(background_layer(theme), theme.folder, "ic_launcher_background.xml")
+        write(foreground_layer(theme, mark), theme.folder, "ic_launcher_foreground.xml")
         print(
             f"{theme.folder}: plate {theme.bg_top} -> {theme.bg_bottom}, "
             f"mark {theme.glyph}"
@@ -265,6 +286,21 @@ def main() -> None:
     for folder, pixels in LEGACY_DENSITIES.items():
         save(legacy(pixels, False, LIGHT), folder, "ic_launcher.png")
         save(legacy(pixels, True, LIGHT), folder, "ic_launcher_round.png")
+
+    # The two variants an <activity-alias> can pin. Identical geometry, one of
+    # the two palettes, and no -night twin, so the user's pick never flips.
+    for fixed in FIXED:
+        write(background_layer(fixed.theme), "drawable", f"{fixed.name}_background.xml")
+        write(foreground_layer(fixed.theme, mark), "drawable", f"{fixed.name}_foreground.xml")
+        write(adaptive_icon(fixed.name), "mipmap-anydpi-v26", f"{fixed.name}.xml")
+        write(adaptive_icon(fixed.name), "mipmap-anydpi-v26", f"{fixed.name}_round.xml")
+        for folder, pixels in LEGACY_DENSITIES.items():
+            save(legacy(pixels, False, fixed.theme), folder, f"{fixed.name}.png")
+            save(legacy(pixels, True, fixed.theme), folder, f"{fixed.name}_round.png")
+        print(
+            f"fixed {fixed.name}: plate {fixed.theme.bg_top} -> "
+            f"{fixed.theme.bg_bottom}, mark {fixed.theme.glyph}"
+        )
 
     stale = RES / "drawable-nodpi" / "ic_launcher_artwork.png"
     if stale.is_file():

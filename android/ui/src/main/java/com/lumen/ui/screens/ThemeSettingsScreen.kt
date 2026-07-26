@@ -1,6 +1,7 @@
 package com.lumen.ui.screens
 
 import android.os.Build
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -41,6 +42,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -279,7 +283,196 @@ fun ThemeSettingsScreen(
             ) { onUpdate(state.copy(dashboardStyle = DashboardStyle.CENTERED)) }
         }
 
+        Spacer(Modifier.height(20.dp))
+
+        Text(
+            text = s.launcherIcon,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(4.dp))
+        // The cost is real and launcher-specific, so it is stated up front rather
+        // than discovered after the icon vanishes off the home screen.
+        Text(
+            text = s.launcherIconDesc,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            LauncherIconCard(
+                title = s.launcherIconSystem,
+                option = LauncherIconOption.SYSTEM,
+                // Labelled as the default so the auto-theming behaviour the app has
+                // always shipped stays recognisable and reachable again.
+                defaultBadge = s.dashboardStyleDefault,
+                isSelected = state.launcherIcon == LauncherIconOption.SYSTEM,
+                modifier = Modifier.weight(1f)
+            ) { onUpdate(state.copy(launcherIcon = LauncherIconOption.SYSTEM)) }
+            LauncherIconCard(
+                title = s.launcherIconLight,
+                option = LauncherIconOption.LIGHT,
+                isSelected = state.launcherIcon == LauncherIconOption.LIGHT,
+                modifier = Modifier.weight(1f)
+            ) { onUpdate(state.copy(launcherIcon = LauncherIconOption.LIGHT)) }
+            LauncherIconCard(
+                title = s.launcherIconDark,
+                option = LauncherIconOption.DARK,
+                isSelected = state.launcherIcon == LauncherIconOption.DARK,
+                modifier = Modifier.weight(1f)
+            ) { onUpdate(state.copy(launcherIcon = LauncherIconOption.DARK)) }
+        }
+
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Launcher icon preview
+//
+// The mark below is the SAME six-point polygon that
+// android/tools/gen_launcher_icons.py traces, normalised to its own bounding
+// box, and the two palettes are the ones that generator emits. Drawing it here
+// rather than loading @mipmap/ic_launcher keeps the preview honest even for the
+// variant the system is not currently showing: on a device in dark mode the
+// launcher would hand back the night artwork for every one of the three tiles.
+// ---------------------------------------------------------------------------
+
+/** GLYPH from the generator, mapped into a 0..1 box: (x - 345) / 671.5, (y - 211.5) / 812. */
+private val LUMEN_MARK: List<Pair<Float, Float>> = listOf(
+    0.21668f to 0.00000f,
+    0.21668f to 0.81219f,
+    1.00000f to 0.81219f,
+    0.81683f to 1.00000f,
+    0.00000f to 1.00000f,
+    0.00000f to 0.18411f
+)
+
+/** 671.5 / 812 — width over height of the traced mark. */
+private const val MARK_ASPECT = 0.82697f
+
+/** GLYPH_HEIGHT_DP / MASK_DP: the mark fills 50dp of the 72dp a launcher shows. */
+private const val MARK_HEIGHT_FRACTION = 50f / 72f
+
+private val ICON_LIGHT_PLATE = listOf(Color(0xFFFFFFFF), Color(0xFFFFFFFF))
+private val ICON_LIGHT_MARK = Color(0xFF000000)
+private val ICON_DARK_PLATE = listOf(Color(0xFF202020), Color(0xFF050505))
+private val ICON_DARK_MARK = Color(0xFFFFFFFF)
+
+private fun DrawScope.drawLumenIcon(plate: List<Color>, markColor: Color) {
+    drawRect(Brush.verticalGradient(plate, startY = 0f, endY = size.height))
+    val markHeight = size.height * MARK_HEIGHT_FRACTION
+    val markWidth = markHeight * MARK_ASPECT
+    val left = (size.width - markWidth) / 2f
+    val top = (size.height - markHeight) / 2f
+    val path = Path()
+    LUMEN_MARK.forEachIndexed { index, point ->
+        val x = left + point.first * markWidth
+        val y = top + point.second * markHeight
+        if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    path.close()
+    drawPath(path, markColor)
+}
+
+@Composable
+private fun LauncherIconPreview(option: LauncherIconOption, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        when (option) {
+            // Both halves at once: "follow system" is neither one nor the other.
+            LauncherIconOption.SYSTEM -> {
+                clipRect(right = size.width / 2f) {
+                    drawLumenIcon(ICON_LIGHT_PLATE, ICON_LIGHT_MARK)
+                }
+                clipRect(left = size.width / 2f) {
+                    drawLumenIcon(ICON_DARK_PLATE, ICON_DARK_MARK)
+                }
+            }
+            LauncherIconOption.LIGHT -> drawLumenIcon(ICON_LIGHT_PLATE, ICON_LIGHT_MARK)
+            LauncherIconOption.DARK -> drawLumenIcon(ICON_DARK_PLATE, ICON_DARK_MARK)
+        }
+    }
+}
+
+// Same tile shape as DashboardStyleCard, with the actual artwork as the preview.
+@Composable
+private fun LauncherIconCard(
+    title: String,
+    option: LauncherIconOption,
+    isSelected: Boolean,
+    modifier: Modifier = Modifier,
+    defaultBadge: String? = null,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    val accent = MaterialTheme.colorScheme.primary
+    val border = if (isSelected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+    Column(
+        modifier = modifier
+            // Fixed height so the "Default" badge on one tile cannot make that
+            // tile taller than the other two.
+            .height(150.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(if (isSelected) 2.dp else 1.dp, border, shape)
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            LauncherIconPreview(
+                option = option,
+                modifier = Modifier
+                    .size(56.dp)
+                    // Rounded square rather than a circle: it reads as an app icon
+                    // without pretending to be one launcher's mask in particular.
+                    .clip(RoundedCornerShape(28))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(28))
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (isSelected) {
+                Spacer(Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier.size(16.dp).clip(CircleShape).background(accent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(11.dp)
+                    )
+                }
+            }
+        }
+        if (defaultBadge != null) {
+            Text(
+                text = defaultBadge,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }
 

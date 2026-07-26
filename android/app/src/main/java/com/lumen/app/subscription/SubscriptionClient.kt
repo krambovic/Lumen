@@ -18,7 +18,34 @@ internal data class SubscriptionPayload(
     val profileTitle: String?,
     val updateIntervalHours: Int?,
     val effectiveUrl: String?,
-    val clientProfile: String
+    val clientProfile: String,
+    val metadata: SubscriptionMetadata = SubscriptionMetadata()
+)
+
+/**
+ * Everything the panel says about the subscription itself, decoded and typed.
+ *
+ * A null field means "the panel did not send it in this response" — never "the panel
+ * cleared it". The caller keeps its last known value for those, the same rule the
+ * `subscription-userinfo` figures already follow.
+ */
+internal data class SubscriptionMetadata(
+    val description: String? = null,
+    val announce: String? = null,
+    val announceUrl: String? = null,
+    /** Happ's own header, absent from the incy spec; the reference client's "Channel / Bot". */
+    val telegramUrl: String? = null,
+    val supportUrl: String? = null,
+    val supportEmail: String? = null,
+    val websiteUrl: String? = null,
+    val premiumUrl: String? = null,
+    val bannerText: String? = null,
+    val bannerButtonText: String? = null,
+    val bannerButtonUrl: String? = null,
+    val bannerBgColor: String? = null,
+    val bannerButtonColor: String? = null,
+    val hideUrl: Boolean? = null,
+    val sortOrder: String? = null
 )
 
 internal object SubscriptionClient {
@@ -173,12 +200,15 @@ internal object SubscriptionClient {
         throw IOException(lastError?.message ?: "Subscription download failed", lastError)
     }
 
-    internal fun normalize(body: String, headers: Map<String, String>): SubscriptionPayload {
+    internal fun normalize(body: String, rawHeaders: Map<String, String>): SubscriptionPayload {
         var linksBody = body.trim()
         val premium = linkedMapOf<String, String>()
+        // Header names are case-insensitive and panels spell them with either separator.
+        val headers = rawHeaders.entries.associate { (key, value) ->
+            key.trim().lowercase(Locale.US).replace('_', '-') to value.trim()
+        }
         val userInfo = parseUserInfo(headers["subscription-userinfo"].orEmpty()).toMutableMap()
-        var title = decodeHeader(headers["profile-title"])
-        val interval = headers["profile-update-interval"]?.trim()?.toIntOrNull()
+        var title = decodeHeader(headers.pick("profile-title", "subscription-name"))
         premiumKeys.forEach { key -> headers[key]?.takeIf { it.isNotBlank() }?.let { premium[key] = it } }
 
         if (linksBody.startsWith("{")) {
@@ -211,22 +241,45 @@ internal object SubscriptionClient {
             }
         }
 
+        // The body may carry the same parameters as `# key: value` comments. They are
+        // collected separately so the HTTP headers can win, which is what the spec says.
         val kept = mutableListOf<String>()
+        val bodyMeta = linkedMapOf<String, String>()
         linksBody.lines().forEach { line ->
             val match = Regex("^\\s*#\\s*([A-Za-z0-9_-]+)\\s*:?[ \\t]*(.*?)\\s*$").matchEntire(line)
             if (match == null) {
                 kept += line
-            } else {
-                val key = match.groupValues[1].lowercase(Locale.US).replace('_', '-')
-                val value = match.groupValues[2].trim()
-                when {
-                    key in premiumKeys -> premium[key] = value
-                    key == "profile-title" && title.isNullOrBlank() -> title = decodeHeader(value)
-                    else -> kept += line
-                }
+                return@forEach
             }
+            val key = match.groupValues[1].lowercase(Locale.US).replace('_', '-')
+            val value = match.groupValues[2].trim()
+            var consumed = false
+            if (key in premiumKeys) {
+                premium[key] = value
+                consumed = true
+            }
+            if (key in metadataKeys) {
+                if (value.isNotBlank()) bodyMeta[key] = value
+                consumed = true
+            }
+            if (!consumed) kept += line
         }
         linksBody = kept.joinToString("\n").trim()
+
+        if (title.isNullOrBlank()) {
+            title = decodeHeader(bodyMeta.pick("profile-title", "subscription-name"))
+        }
+        // Last resort name: the filename the panel attached the response under.
+        if (title.isNullOrBlank()) title = titleFromContentDisposition(headers["content-disposition"])
+        val interval = headers.pick("profile-update-interval")?.toIntOrNull()
+            ?: bodyMeta["profile-update-interval"]?.toIntOrNull()
+        // Kept in the premium map for compatibility, but decoded like every other
+        // announcement: it used to reach the card as a raw `base64:...` string.
+        premium["announce"]?.let { raw -> premium["announce"] = decodeHeader(raw) ?: raw }
+
+        val metaSource = linkedMapOf<String, String>()
+        bodyMeta.forEach { (key, value) -> metaSource[key] = value }
+        metadataKeys.forEach { key -> headers[key]?.takeIf { it.isNotBlank() }?.let { metaSource[key] = it } }
 
         return SubscriptionPayload(
             body = linksBody,
@@ -235,8 +288,84 @@ internal object SubscriptionClient {
             profileTitle = title,
             updateIntervalHours = interval,
             effectiveUrl = premiumUrl(premium),
-            clientProfile = ""
+            clientProfile = "",
+            metadata = buildMetadata(metaSource)
         )
+    }
+
+    /**
+     * Header names the panel may send as subscription metadata, including the documented
+     * alternative spellings. Everything here is also recognised as a body comment.
+     */
+    private val metadataKeys = setOf(
+        "profile-title", "subscription-name", "profile-description",
+        "announce", "announcement", "announce-url", "announcement-url",
+        "support-url", "support", "support-email",
+        "profile-web-page-url", "homepage", "premium-url",
+        "banner-text", "banner-button-text", "banner-button-url",
+        "banner-bg-color", "banner-button-color",
+        "hide-url", "sort-order", "profile-update-interval"
+    )
+
+    private val sortOrders = setOf("ping", "name", "none")
+
+    /** First of [names] present with a non-blank value; the map is already lowercased. */
+    private fun Map<String, String>.pick(vararg names: String): String? =
+        names.firstNotNullOfOrNull { name -> this[name]?.trim()?.takeIf { it.isNotBlank() } }
+
+    internal fun buildMetadata(source: Map<String, String>): SubscriptionMetadata = SubscriptionMetadata(
+        description = decodeHeader(source.pick("profile-description")),
+        announce = decodeHeader(source.pick("announce", "announcement")),
+        announceUrl = webUrl(source.pick("announce-url", "announcement-url")),
+        telegramUrl = webUrl(source.pick("telegram-url", "telegram")),
+        supportUrl = webUrl(source.pick("support-url", "support")),
+        supportEmail = source.pick("support-email")
+            ?.removePrefix("mailto:")?.trim()?.takeIf { '@' in it && it.length <= 254 },
+        websiteUrl = webUrl(source.pick("profile-web-page-url", "homepage")),
+        premiumUrl = webUrl(source.pick("premium-url")),
+        bannerText = decodeHeader(source.pick("banner-text")),
+        bannerButtonText = decodeHeader(source.pick("banner-button-text")),
+        bannerButtonUrl = webUrl(source.pick("banner-button-url")),
+        bannerBgColor = hexColor(source.pick("banner-bg-color")),
+        bannerButtonColor = hexColor(source.pick("banner-button-color")),
+        hideUrl = source.pick("hide-url")?.let { parseFlag(it) },
+        sortOrder = source.pick("sort-order")?.lowercase(Locale.US)?.takeIf { it in sortOrders }
+    )
+
+    /** Provider supplied links are opened by the user, so only http(s) is accepted. */
+    private fun webUrl(value: String?): String? {
+        val text = value?.trim().orEmpty()
+        if (text.isBlank() || text.length > 2048) return null
+        if (!text.startsWith("http://", true) && !text.startsWith("https://", true)) return null
+        return text
+    }
+
+    private val hexColorRegex = Regex("^#?([0-9A-Fa-f]{6})$")
+
+    private fun hexColor(value: String?): String? =
+        value?.trim()?.let { hexColorRegex.find(it) }?.let { "#" + it.groupValues[1].uppercase(Locale.US) }
+
+    /** null keeps the caller's stored value: an unparseable flag is not a "false". */
+    private fun parseFlag(value: String): Boolean? = when (value.trim().lowercase(Locale.US)) {
+        "1", "true", "yes", "on", "enabled" -> true
+        "0", "false", "no", "off", "disabled" -> false
+        else -> null
+    }
+
+    private val dispositionFilename =
+        Regex("filename\\*?=(?:UTF-8''|\")?([^\";]+)", RegexOption.IGNORE_CASE)
+    private val dispositionSuffix = Regex("\\.(?:ya?ml|json|txt|conf)$", RegexOption.IGNORE_CASE)
+    private val genericFilenames = setOf("config", "subscription", "download")
+
+    internal fun titleFromContentDisposition(value: String?): String? {
+        val header = value?.trim().orEmpty()
+        if (header.isBlank()) return null
+        val raw = dispositionFilename.find(header)?.groupValues?.get(1)?.trim()?.trim('"') ?: return null
+        val decoded = runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+        val candidate = dispositionSuffix.replace(decoded, "").trim()
+        if (candidate.isBlank() || candidate.all { it.isDigit() }) return null
+        if (candidate.lowercase(Locale.US) in genericFilenames) return null
+        return candidate.take(160)
     }
 
     /** 9999-12-31T23:59:59Z: no plausible expiry in seconds is ever past this. */
@@ -275,15 +404,32 @@ internal object SubscriptionClient {
             }
         }.toMap()
 
-    private fun decodeHeader(value: String?): String? {
+    private const val BASE64_PREFIX = "base64:"
+    private val standardBase64 = Regex("^[A-Za-z0-9+/]+$")
+
+    /**
+     * Decodes a header the spec marks "supports base64".
+     *
+     * Only a value that actually carries the (case-insensitive) `base64:` prefix is
+     * decoded — a plain value that merely looks like base64 is a name, not a payload.
+     * The payload itself may use the standard or the URL-safe alphabet, may be wrapped
+     * or unpadded, and anything that fails to decode falls back to the raw string so a
+     * malformed announcement shows the provider's text instead of an empty card.
+     */
+    internal fun decodeHeader(value: String?): String? {
         val text = value?.trim().orEmpty()
         if (text.isBlank()) return null
-        if (!text.startsWith("base64:", ignoreCase = true)) return text
+        if (!text.startsWith(BASE64_PREFIX, ignoreCase = true)) return text
+        val payload = text.substring(BASE64_PREFIX.length)
+            .filterNot { it.isWhitespace() }
+            .map { if (it == '-') '+' else if (it == '_') '/' else it }
+            .joinToString("")
+            .trimEnd('=')
+        if (!standardBase64.matches(payload)) return text
         return runCatching {
-            val raw = text.substringAfter(':')
-            val padding = "=".repeat((4 - raw.length % 4) % 4)
-            String(java.util.Base64.getDecoder().decode(raw + padding), Charsets.UTF_8).trim()
-        }.getOrDefault(text)
+            val padded = payload + "=".repeat((4 - payload.length % 4) % 4)
+            String(java.util.Base64.getDecoder().decode(padded), Charsets.UTF_8).trim()
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: text
     }
 
     // The subscription URL carries the subscriber token and the X-Hwid header, so a

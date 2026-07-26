@@ -38,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -82,13 +83,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Surface
 import com.lumen.ui.components.ConnectionSliderBar
 import com.lumen.ui.components.ConnectionState
 import com.lumen.ui.components.HeroConnectButton
 import com.lumen.ui.components.CountryFlagIcon
+import com.lumen.ui.components.SubscriptionDetailsDialog
+import com.lumen.ui.components.SubscriptionProviderCard
+import com.lumen.ui.components.hasProviderCard
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -117,6 +119,7 @@ fun DashboardScreen(
     connectionState: ConnectionState,
     nodes: List<NodeUiModel>,
     subscriptions: List<SubscriptionUiModel>,
+    serverGroups: List<ServerGroupUiModel> = emptyList(),
     speedStatsEnabled: Boolean = true,
     downloadSpeed: Long = 0L,
     uploadSpeed: Long = 0L,
@@ -141,6 +144,8 @@ fun DashboardScreen(
     onExportSubscriptionText: (String?) -> String = { "" },
     onCopyText: (String) -> Unit = {},
     onShareText: (String) -> Unit = {},
+    // Provider links from the subscription card; no-op on hosts that cannot open one.
+    onOpenUrl: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val strings = LocalStrings.current
@@ -177,15 +182,27 @@ fun DashboardScreen(
     // One grouping pass: ping refreshes rebuild this list on every update, so it must
     // not scan the node list once per subscription. The comparator is the shared one,
     // applied inside each group so every sort option works on the grouped layout.
-    val groups = remember(nodes, subscriptions, strings.manual, sort) {
+    val groups = remember(nodes, subscriptions, serverGroups, strings.manual, sort) {
         val comparator = serverSortComparator(sort)
-        val bySubscription = nodes.groupBy { it.subscriptionId }
+        // A custom group takes a server out of its subscription bucket, so bucket on the
+        // custom group first and fall back to the subscription. Same rule as [nodeInGroup].
+        val byBucket = nodes.groupBy { it.groupId ?: it.subscriptionId }
         buildList {
             // Keep Default visible even while it is empty so the user can select it and
             // immediately add/paste the first manual node.
-            add(HomeServerGroup(GROUP_MANUAL, strings.groupDefault, bySubscription[null].orEmpty().sortedWith(comparator)))
+            add(HomeServerGroup(GROUP_MANUAL, strings.groupDefault, byBucket[null].orEmpty().sortedWith(comparator)))
+            serverGroups.forEach { custom ->
+                add(
+                    HomeServerGroup(
+                        id = custom.id,
+                        title = custom.name,
+                        nodes = byBucket[custom.id].orEmpty().sortedWith(comparator),
+                        isCustom = true
+                    )
+                )
+            }
             subscriptions.forEach { subscription ->
-                val subscriptionNodes = bySubscription[subscription.id].orEmpty()
+                val subscriptionNodes = byBucket[subscription.id].orEmpty()
                 if (subscriptionNodes.isNotEmpty()) {
                     add(HomeServerGroup(subscription.id, subscription.name, subscriptionNodes.sortedWith(comparator), true, subscription))
                 }
@@ -205,7 +222,7 @@ fun DashboardScreen(
     // is exactly what the dashboard shows ("all", "manual" or a subscription id).
     val serversGroupPref by rememberUiPreference("servers_last_group", GROUP_ALL)
     val activeGroupId = remember(nodes) {
-        nodes.firstOrNull { it.isSelected }?.let { it.subscriptionId ?: GROUP_MANUAL }
+        nodes.firstOrNull { it.isSelected }?.let { it.groupId ?: it.subscriptionId ?: GROUP_MANUAL }
     }
     // Survives item recycling, so a row scrolled back into view is composed at full
     // opacity instead of replaying the entrance fade.
@@ -412,10 +429,22 @@ fun DashboardScreen(
                                 },
                                 onRefreshSubscription = { onRefreshSubscription(group.id) },
                                 onDeleteSubscription = { onDeleteSubscription(group.id) },
-                                onPingGroup = { onPingGroup(if (group.isSubscription) group.id else null) },
+                                // A custom group is not a subscription bucket, so it pings and
+                                // exports by the nodes it actually holds.
+                                onPingGroup = {
+                                    if (group.isCustom) {
+                                        onPingNodes(group.nodes)
+                                    } else {
+                                        onPingGroup(if (group.isSubscription) group.id else null)
+                                    }
+                                },
                                 onShowProperties = { sub -> propertiesSub = sub },
                                 onExportAll = { subId ->
-                                    val text = onExportSubscriptionText(subId)
+                                    val text = if (group.isCustom) {
+                                        onExportNodesText(group.nodes.mapTo(mutableSetOf()) { it.id })
+                                    } else {
+                                        onExportSubscriptionText(subId)
+                                    }
                                     if (text.isNotBlank()) onShareText(text)
                                 }
                             )
@@ -424,13 +453,39 @@ fun DashboardScreen(
                         // Traffic + premium summary belongs to the opened group:
                         // a collapsed row stays a single clean line.
                         if (group.isSubscription && group.subscription != null && isExpanded) {
+                            val subscription = group.subscription
+                            // The provider block continues the same tile, so whenever it
+                            // draws, it — not the bar — owns the rounded bottom corner.
+                            val hasProvider = hasProviderCard(subscription)
+                            val barIsLast = group.nodes.isEmpty() && !hasProvider
                             item(key = "group_info_${group.id}") {
                                 // With rows below the bar must stay square and cover the 6.dp list gap.
                                 SubscriptionInfoBar(
-                                    sub = group.subscription,
-                                    roundedBottom = group.nodes.isEmpty(),
-                                    extraBottom = if (group.nodes.isEmpty()) 0.dp else 6.dp
+                                    sub = subscription,
+                                    roundedBottom = barIsLast,
+                                    extraBottom = if (barIsLast) 0.dp else 6.dp
                                 )
+                            }
+                            if (hasProvider) {
+                                item(key = "group_provider_${group.id}") {
+                                    SubscriptionProviderCard(
+                                        sub = subscription,
+                                        onOpenUrl = onOpenUrl,
+                                        // Same pull-up as the rows below, so the announcement,
+                                        // banner and buttons read as part of the tile.
+                                        modifier = Modifier
+                                            .offset(y = (-6).dp)
+                                            .then(
+                                                if (group.nodes.isEmpty()) {
+                                                    Modifier.clip(
+                                                        RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
+                                                    )
+                                                } else {
+                                                    Modifier
+                                                }
+                                            )
+                                    )
+                                }
                             }
                         }
 
@@ -538,7 +593,7 @@ fun DashboardScreen(
                 val showImportActions = serversGroupPref.isBlank() ||
                     serversGroupPref == GROUP_ALL ||
                     serversGroupPref == GROUP_MANUAL ||
-                    visibleGroups.any { !it.isSubscription }
+                    visibleGroups.any { !it.isSubscription && !it.isCustom }
                 if (!isSelectionMode && showImportActions) {
                     item(key = "import_action_buttons") {
                         Spacer(Modifier.height(4.dp))
@@ -686,12 +741,14 @@ fun DashboardScreen(
 
     }
 
-    // Subscription properties dialog
+    // "Subscription properties" from the header menu. Same dialog as the Servers tab, so
+    // the URL row is left out when the provider asked for it with hide-url.
     propertiesSub?.let { sub ->
-        SubscriptionPropertiesDialog(
+        SubscriptionDetailsDialog(
             sub = sub,
             onDismiss = { propertiesSub = null },
-            onCopyUrl = { onCopyText(sub.url) }
+            onCopyUrl = onCopyText,
+            onOpenUrl = onOpenUrl
         )
     }
 }
@@ -701,7 +758,9 @@ internal fun SelectionTopBar(
     selectedCount: Int,
     onCancel: () -> Unit,
     onExportSelected: () -> Unit,
-    onPingSelected: () -> Unit
+    onPingSelected: () -> Unit,
+    // Null on screens that do not offer custom groups; the action is then hidden.
+    onMoveSelected: (() -> Unit)? = null
 ) {
     val strings = LocalStrings.current
     Row(
@@ -729,6 +788,15 @@ internal fun SelectionTopBar(
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (onMoveSelected != null) {
+                IconButton(onClick = onMoveSelected) {
+                    Icon(
+                        imageVector = Icons.Filled.Folder,
+                        contentDescription = strings.moveToGroup,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
             IconButton(onClick = onExportSelected) {
                 Icon(
                     imageVector = Icons.Filled.Share,
@@ -747,95 +815,6 @@ internal fun SelectionTopBar(
     }
 }
 
-@Composable
-fun SubscriptionPropertiesDialog(
-    sub: SubscriptionUiModel,
-    onDismiss: () -> Unit,
-    onCopyUrl: () -> Unit
-) {
-    val strings = LocalStrings.current
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-        ) {
-            Column(Modifier.padding(20.dp)) {
-                Text(
-                    strings.subscriptionProperties,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(Modifier.height(16.dp))
-
-                // Name
-                Text(
-                    strings.sortByName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    sub.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // URL
-                Text(
-                    strings.url,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        sub.url,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    IconButton(onClick = onCopyUrl, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            imageVector = Icons.Filled.Edit,
-                            contentDescription = "Copy",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Surface(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable(onClick = onDismiss),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(
-                            strings.done,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 /** Shared group header: used by the dashboard and by the Servers tab. */
 @Composable
 fun SubscriptionHeaderTile(
@@ -846,7 +825,11 @@ fun SubscriptionHeaderTile(
     onDeleteSubscription: () -> Unit,
     onPingGroup: () -> Unit = {},
     onShowProperties: (SubscriptionUiModel) -> Unit = {},
-    onExportAll: (String?) -> Unit = {}
+    onExportAll: (String?) -> Unit = {},
+    // Custom groups only, and only where the screen can host the dialogs. Null hides
+    // the entry, which is what the dashboard wants: groups are managed on Servers.
+    onRenameGroup: (() -> Unit)? = null,
+    onDeleteGroup: (() -> Unit)? = null
 ) {
     val strings = LocalStrings.current
     var showMenu by remember { mutableStateOf(false) }
@@ -975,13 +958,14 @@ fun SubscriptionHeaderTile(
                                     }
                                 )
                             } else {
-                                // Default group menu: Export all, Ping
+                                // Default / custom group menu: Export all, Ping, and for a
+                                // custom group the rename and delete actions on top.
                                 DropdownMenuItem(
                                     text = { Text(strings.exportAll, color = MaterialTheme.colorScheme.onSurface) },
                                     trailingIcon = { Icon(Icons.Filled.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
                                     onClick = {
                                         showMenu = false
-                                        onExportAll(null)
+                                        onExportAll(if (group.isCustom) group.id else null)
                                     }
                                 )
                                 DropdownMenuItem(
@@ -992,6 +976,26 @@ fun SubscriptionHeaderTile(
                                         onPingGroup()
                                     }
                                 )
+                                if (group.isCustom && onRenameGroup != null) {
+                                    DropdownMenuItem(
+                                        text = { Text(strings.renameGroup, color = MaterialTheme.colorScheme.onSurface) },
+                                        trailingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            showMenu = false
+                                            onRenameGroup()
+                                        }
+                                    )
+                                }
+                                if (group.isCustom && onDeleteGroup != null) {
+                                    DropdownMenuItem(
+                                        text = { Text(strings.deleteGroup, color = MaterialTheme.colorScheme.error) },
+                                        trailingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            showMenu = false
+                                            onDeleteGroup()
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1071,15 +1075,9 @@ fun SubscriptionInfoBar(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 11.sp
         )
-        sub.announce?.takeIf { it.isNotBlank() }?.let { announce ->
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = announce,
-                style = MaterialTheme.typography.bodySmall,
-                color = primaryColor,
-                fontSize = 11.sp
-            )
-        }
+        // The announcement is not drawn here: SubscriptionProviderCard lays it out
+        // below the bar, where it can wrap over several lines next to the provider
+        // buttons instead of being squeezed into one 11sp line.
     }
 }
 
@@ -1098,7 +1096,9 @@ internal fun ServerTileRow(
     onPingNode: () -> Unit,
     onCopyLink: () -> Unit,
     onExportQr: () -> Unit,
-    onDeleteNode: () -> Unit
+    onDeleteNode: () -> Unit,
+    // Null on screens that do not offer custom groups; the entry is then hidden.
+    onMoveToGroup: (() -> Unit)? = null
 ) {
     val strings = LocalStrings.current
     val selected = node.isSelected
@@ -1322,6 +1322,16 @@ internal fun ServerTileRow(
                                     onPingNode()
                                 }
                             )
+                            if (onMoveToGroup != null) {
+                                DropdownMenuItem(
+                                    text = { Text(strings.moveToGroup, color = MaterialTheme.colorScheme.onSurface) },
+                                    trailingIcon = { Icon(Icons.Filled.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
+                                    onClick = {
+                                        showActionMenu = false
+                                        onMoveToGroup()
+                                    }
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text(strings.delete, color = MaterialTheme.colorScheme.error) },
                                 trailingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp)) },

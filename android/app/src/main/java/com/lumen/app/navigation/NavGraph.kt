@@ -113,6 +113,18 @@ import androidx.compose.foundation.layout.height
 // Shared slow-out easing for the bottom bar indicator.
 private val NavPremiumEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
+/**
+ * Provider links go to the platform browser / mail client. A device with no handler for
+ * the scheme must not take the screen down, so the failure is swallowed.
+ */
+private fun openExternalUrl(context: android.content.Context, url: String) {
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+        )
+    }
+}
+
 private data class LumenDest(val route: String, val icon: ImageVector)
 private val DESTINATIONS = listOf(
     LumenDest("dashboard", Icons.Filled.Home),
@@ -384,12 +396,14 @@ fun LumenApp(
                     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
                     val nodes by viewModel.nodes.collectAsStateWithLifecycle()
                     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
+                    val serverGroups by viewModel.serverGroups.collectAsStateWithLifecycle()
                     val pingingNodeIds by viewModel.pingingNodeIds.collectAsStateWithLifecycle()
                     val trafficStats by LumenVpnService.trafficStats.collectAsStateWithLifecycle()
                     DashboardScreen(
                         connectionState = connectionState,
                         nodes = nodes,
                         subscriptions = subscriptions,
+                        serverGroups = serverGroups,
                         speedStatsEnabled = settings.enableSpeedStats,
                         downloadSpeed = trafficStats.downloadSpeed,
                         uploadSpeed = trafficStats.uploadSpeed,
@@ -437,12 +451,14 @@ fun LumenApp(
                                 putExtra(android.content.Intent.EXTRA_TEXT, text)
                             }
                             context.startActivity(android.content.Intent.createChooser(shareIntent, "Export"))
-                        }
+                        },
+                        onOpenUrl = { url -> openExternalUrl(context, url) }
                     )
                 }
                 composable("servers") {
                     val nodes by viewModel.nodes.collectAsStateWithLifecycle()
                     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
+                    val serverGroups by viewModel.serverGroups.collectAsStateWithLifecycle()
                     val refreshingIds by viewModel.refreshingIds.collectAsStateWithLifecycle()
                     val isPinging by viewModel.isPinging.collectAsStateWithLifecycle()
                     val testingNodeId by viewModel.testingNodeId.collectAsStateWithLifecycle()
@@ -457,6 +473,7 @@ fun LumenApp(
                     ServerListScreen(
                         nodes = nodes,
                         subscriptions = subscriptions,
+                        serverGroups = serverGroups,
                         refreshingIds = refreshingIds,
                         isPinging = isPinging,
                         pingingNodeIds = serversPingingIds,
@@ -499,6 +516,10 @@ fun LumenApp(
                         onRefreshSubscription = viewModel::refreshSubscription,
                         onDeleteSubscription = viewModel::deleteSubscription,
                         onPingGroup = viewModel::pingGroup,
+                        onCreateGroup = viewModel::createServerGroup,
+                        onRenameGroup = viewModel::renameServerGroup,
+                        onDeleteGroup = viewModel::deleteServerGroup,
+                        onAssignNodesToGroup = viewModel::assignNodesToGroup,
                         onExportNodesText = viewModel::exportNodesText,
                         onExportSubscriptionText = viewModel::exportSubscriptionText,
                         onCopyText = { text ->
@@ -510,7 +531,8 @@ fun LumenApp(
                                 putExtra(android.content.Intent.EXTRA_TEXT, text)
                             }
                             context.startActivity(android.content.Intent.createChooser(shareIntent, "Export"))
-                        }
+                        },
+                        onOpenUrl = { url -> openExternalUrl(context, url) }
                     )
                 }
                 composable("routing") {

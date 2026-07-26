@@ -20,6 +20,9 @@ data class NodeUiModel(
     val isAutoNode: Boolean = false,
     val isSelected: Boolean = false,
     val subscriptionId: String? = null,
+    // Custom group the user put this server in, null when it is in none. Independent
+    // of [subscriptionId]: a subscription server can also sit in a custom group.
+    val groupId: String? = null,
     val displayProtocol: String = protocol.uppercase()
 )
 
@@ -37,7 +40,27 @@ data class SubscriptionUiModel(
     // Premium API extras shown on the dashboard card.
     val trafficRatio: Float? = null,
     val updateIntervalHours: Int? = null,
-    val announce: String? = null
+    // Provider metadata, already base64-decoded by the app layer. A null field means the
+    // panel has never sent it; the row it belongs to is simply not rendered.
+    val announce: String? = null,
+    val announceUrl: String? = null,
+    val description: String? = null,
+    /** Happ's "Channel / Bot" link (telegram-url). */
+    val telegramUrl: String? = null,
+    val supportUrl: String? = null,
+    val supportEmail: String? = null,
+    val websiteUrl: String? = null,
+    val premiumUrl: String? = null,
+    val bannerText: String? = null,
+    val bannerButtonText: String? = null,
+    val bannerButtonUrl: String? = null,
+    /** `#RRGGBB`, uppercase, validated by the app layer. */
+    val bannerBgColor: String? = null,
+    val bannerButtonColor: String? = null,
+    /** The provider asked for the subscription URL not to be shown. */
+    val hideUrl: Boolean = false,
+    /** "ping", "name" or "none" — the order the provider wants its servers listed in. */
+    val sortOrder: String? = null
 )
 
 /**
@@ -47,14 +70,59 @@ data class SubscriptionUiModel(
 internal const val GROUP_ALL = "all"
 internal const val GROUP_MANUAL = "manual"
 
+/** A group the user made by hand, listed next to Default and the subscriptions. */
+@Immutable
+data class ServerGroupUiModel(
+    val id: String,
+    val name: String,
+    val nodeCount: Int = 0
+)
+
 @Immutable
 data class HomeServerGroup(
     val id: String,
     val title: String,
     val nodes: List<NodeUiModel>,
     val isSubscription: Boolean = false,
-    val subscription: SubscriptionUiModel? = null
+    val subscription: SubscriptionUiModel? = null,
+    /** True for a user-made group; drives the rename / delete actions. */
+    val isCustom: Boolean = false
 )
+
+/**
+ * The group selector's ids, in display order: All, Default, the custom groups the user
+ * made, then one entry per subscription.
+ */
+fun serverGroupIds(
+    customGroups: List<ServerGroupUiModel>,
+    subscriptions: List<SubscriptionUiModel>
+): List<String> = buildList {
+    add(GROUP_ALL)
+    // Default is a real destination for manual imports and must stay selectable
+    // before its first node is added.
+    add(GROUP_MANUAL)
+    customGroups.forEach { add(it.id) }
+    subscriptions.forEach { add(it.id) }
+}
+
+/**
+ * Membership rule of the whole screen, in one place.
+ *
+ * A custom group wins over the subscription: once a server is assigned to one, that is
+ * the only group the selector lists it under, so moving servers around actually moves
+ * them. Subscription membership itself is untouched — the server keeps refreshing with
+ * its subscription and still exports with it — and "All servers" keeps showing
+ * everything.
+ */
+fun nodeInGroup(node: NodeUiModel, groupId: String): Boolean = when (groupId) {
+    GROUP_ALL -> true
+    GROUP_MANUAL -> node.subscriptionId == null && node.groupId == null
+    else -> if (node.groupId != null) node.groupId == groupId else node.subscriptionId == groupId
+}
+
+/** Nodes of one group, unsorted and unfiltered. */
+fun nodesInGroup(nodes: List<NodeUiModel>, groupId: String): List<NodeUiModel> =
+    nodes.filter { nodeInGroup(it, groupId) }
 
 data class AppEntryUiModel(
     val packageName: String,
@@ -234,11 +302,25 @@ data class SettingsUiState(
     val pingFairMs: Int = 300,
     // Start a check automatically when the server list opens.
     val pingAutoOnOpen: Boolean = false,
-    val dashboardStyle: DashboardStyle = DashboardStyle.DEFAULT
+    val dashboardStyle: DashboardStyle = DashboardStyle.DEFAULT,
+    val launcherIcon: LauncherIconOption = LauncherIconOption.SYSTEM
 )
 
 /** Dashboard layouts offered in Customization. */
 enum class DashboardStyle { DEFAULT, SLIDER, CENTERED }
+
+/**
+ * Launcher icon the user pinned in Customization.
+ *
+ * [SYSTEM] is the default and the state the user can always come back to: it keeps
+ * the shipped `ic_launcher`, which follows the system light/dark theme through the
+ * res/drawable-night qualifier. [LIGHT] and [DARK] pin one of the two variants and
+ * stop it re-theming itself.
+ *
+ * The app layer maps each entry to an <activity-alias>; the names are persisted, so
+ * renaming an entry silently resets everyone's choice.
+ */
+enum class LauncherIconOption { SYSTEM, LIGHT, DARK }
 
 /**
  * Editable node draft used by [NodeEditorModal]. [secret] holds the

@@ -67,6 +67,31 @@ class LocalSocksPortTest {
     }
 
     @Test
+    fun `the http inbound port is discoverable and rewritable too`() {
+        // The HTTP inbound races for its port exactly like the SOCKS one, and losing
+        // that race killed the core with
+        // `start inbound/http[http-in]: listen tcp 127.0.0.1:10809: bind: address
+        // already in use`. Its port is never passed to the service, so it has to be
+        // read back out of the generated config.
+        assertEquals(10809, LocalSocksPort.portOf(generatedConfig, LocalSocksPort.HTTP_INBOUND_TAG))
+        assertEquals(10808, LocalSocksPort.portOf(generatedConfig))
+
+        val rewritten = LocalSocksPort.applyToConfig(
+            generatedConfig,
+            45999,
+            LocalSocksPort.HTTP_INBOUND_TAG
+        )
+        assertEquals(45999, LocalSocksPort.portOf(rewritten, LocalSocksPort.HTTP_INBOUND_TAG))
+        // Rewriting one inbound must not disturb the other.
+        assertEquals(10808, LocalSocksPort.portOf(rewritten))
+    }
+
+    @Test
+    fun `portOf returns null when the config has no such inbound`() {
+        assertEquals(null, LocalSocksPort.portOf("""{"inbounds":[]}""", LocalSocksPort.HTTP_INBOUND_TAG))
+    }
+
+    @Test
     fun `applyToConfig rewrites only the socks inbound`() {
         val rewritten = LocalSocksPort.applyToConfig(generatedConfig, 45123)
         assertTrue(rewritten.contains("\"listen_port\": 45123"))

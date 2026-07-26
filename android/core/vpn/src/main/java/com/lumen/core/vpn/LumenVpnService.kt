@@ -449,12 +449,28 @@ misc:
                     "Local SOCKS port ${params.localSocksPort} is taken; using $port for this session"
                 )
             }
+            // The optional local HTTP inbound races for its port exactly like the
+            // SOCKS one, and losing it kills the core just as dead:
+            // `start inbound/http[http-in]: listen tcp 127.0.0.1:10809: bind:
+            // address already in use`. Its port never reaches us as a parameter,
+            // so take it from the config we are about to start.
+            var configJson = LocalSocksPort.applyToConfig(params.configJson, port)
+            LocalSocksPort.portOf(configJson, LocalSocksPort.HTTP_INBOUND_TAG)?.let { wanted ->
+                val httpPort = LocalSocksPort.resolve(wanted)
+                if (httpPort != wanted) {
+                    VpnLogBus.warning(
+                        "CORE",
+                        "Local HTTP port $wanted is taken; using $httpPort for this session"
+                    )
+                    configJson = LocalSocksPort.applyToConfig(
+                        configJson,
+                        httpPort,
+                        LocalSocksPort.HTTP_INBOUND_TAG
+                    )
+                }
+            }
             val result = runCatching {
-                engineManager.startEngine(
-                    params.engineType,
-                    LocalSocksPort.applyToConfig(params.configJson, port),
-                    null
-                )
+                engineManager.startEngine(params.engineType, configJson, null)
                 val state = engineManager.state.value
                 check(state is EngineState.Running) {
                     (state as? EngineState.Error)?.message ?: "Engine failed to start"
@@ -468,7 +484,7 @@ misc:
             ) {
                 throw lastError ?: IllegalStateException("Proxy core failed to start")
             }
-            VpnLogBus.warning("CORE", "Local SOCKS port $port was still in use; retrying")
+            VpnLogBus.warning("CORE", "A local inbound port was still in use; retrying")
             runCatching { engineManager.stopEngine() }
             delay(CORE_START_RETRY_DELAY_MS)
         }
