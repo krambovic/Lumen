@@ -1,32 +1,77 @@
-# Lumen
-
 <p align="center">
-  <img src="windows/assets/Lumen.png" alt="Lumen Logo" width="140">
+  <img src="assets/banner.png" alt="Lumen — Xray / sing-box extended cross-platform client" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?style=for-the-badge&label=Release&labelColor=3A3A3A&color=8A2BE2" alt="Release"></a>
-  <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=Downloads&labelColor=3A3A3A&color=17A673" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=3A3A3A" alt="Platform">
+  <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?style=for-the-badge&label=Release&labelColor=1C1C1C&color=8A2BE2" alt="Release"></a>
+  <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=Downloads&labelColor=1C1C1C&color=17A673" alt="Downloads"></a>
+  <img src="https://img.shields.io/badge/Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=1C1C1C&label=Platform" alt="Platform">
+  <img src="https://img.shields.io/badge/GPL--3.0-F5A623?style=for-the-badge&labelColor=1C1C1C&label=License" alt="License">
 </p>
 
 <p align="center">
-  <b>Language:</b> English | <a href="README-RU.md">Русский</a>
+  <b>English</b> · <a href="README-RU.md">Русский</a>
 </p>
 
 ---
 
-Lumen is a multi-platform client for VPN/TUN, system proxy, domain routing, server management, and DPI bypass. It supports both **Windows Desktop** (PyQt6 QML with Mica/Acrylic effects) and **Android** (Jetpack Compose with VpnService and extended sing-box Go core).
+**Lumen** is a VPN and anti-censorship client for **Windows** and **Android**. One app for the whole chain: import a server or a subscription, route only what you want through it, and get past DPI blocking — with a native interface on both platforms instead of a config file.
+
+Windows runs **xray-core** and **sing-box-extended** side by side and adds packet-level DPI bypass. Android is a native Jetpack Compose client built on **sing-box-extended** and Android's `VpnService`.
 
 > [!IMPORTANT]
-> On Windows, TUN/VPN modes and DPI bypass features (zapret) require Administrator privileges.
+> On Windows, TUN/VPN mode and the DPI bypass (zapret) need Administrator rights.
+
+---
+
+## Features
+
+| | What it does | Windows | Android |
+| :--- | :--- | :---: | :---: |
+| **TUN / VPN** | Full-tunnel mode over sing-box-extended, including AmneziaWG (AWG 2.0) and WireGuard | ✅ | ✅ |
+| **System proxy** | Routes the whole system through xray-core without a tunnel | ✅ | — |
+| **DPI bypass** | zapret / WinDivert — unblocks YouTube, Discord and others at packet level | ✅ | — |
+| **Split tunneling** | Choose exactly which apps go through the VPN | — | ✅ |
+| **Routing editor** | Presets plus your own domains, IP rules and per-service behaviour | ✅ | ✅ |
+| **Discord voice** | Sends Discord voice and streams through the proxy without full TUN | ✅ | — |
+| **AUTO server pools** | `urltest` groups pick the fastest server and re-check it on a timer | ✅ | ✅ |
+| **Diagnostics** | Latency and real download-speed tests; TCP, ICMP, HTTP GET and real-proxy ping | ✅ | ✅ |
+| **Quick controls** | Tray menu on Windows; home-screen widgets and a Quick Settings tile on Android | ✅ | ✅ |
+| **Themes** | Built-in theme presets, plus AMOLED black and Material You on Android | ✅ | ✅ |
+
+---
+
+## Supported protocols
+
+| Family | Protocols |
+| :--- | :--- |
+| **Core** | VLESS · VMess · Trojan · Shadowsocks · SOCKS · HTTP |
+| **Modern** | Hysteria · Hysteria2 · TUIC · MASQUE · Mieru · AnyTLS · NaïveProxy |
+| **WireGuard** | WireGuard · AmneziaWG (AWG 1.5 and 2.0) · Cloudflare WARP |
+| **Other** | OpenVPN, including obfs2/obfs3 bridges |
+| **Transports** | TCP · WebSocket · gRPC · HTTP/2 · HTTPUpgrade · XHTTP · mKCP · REALITY · uTLS |
+
+Raw **Xray** and **sing-box** JSON configs import as-is, including whole multi-profile documents.
+
+---
+
+## Subscriptions
+
+- Plain subscription URLs, plus encrypted Happ links: `happ://crypt` through `happ://crypt5`.
+- HWID-locked subscriptions — send a per-install identifier or your own custom HWID.
+- Happ Premium metadata, traffic usage and expiry shown right in the server list.
+- Automatic refresh on a schedule, using Lumen's own User-Agent first and falling back to other client profiles only for panels that gate on the client name.
+- Websites can hand a subscription straight to the app:
+  ```
+  lumen://add?url=<percent-encoded-subscription-url>&name=<optional-name>
+  ```
 
 ---
 
 ## Screenshots
 
 <details>
-<summary>Desktop Dashboard and theme previews</summary>
+<summary><b>Windows — dashboard, themes and DPI bypass</b></summary>
 <br>
 
 <img src="windows/assets/screenshots/dashboard-dark.png" alt="Dashboard in dark theme" width="100%">
@@ -43,79 +88,66 @@ Lumen is a multi-platform client for VPN/TUN, system proxy, domain routing, serv
 
 ---
 
-## Features
+## Install
 
-| Category | Components Used | Description |
+Grab the latest build from the **[Releases](https://github.com/krambovic/Lumen/releases)** page.
+
+| Platform | File | Notes |
 | :--- | :--- | :--- |
-| **DPI Bypass (Windows)** | zapret / WinDivert | DPI circumvention for YouTube, Discord, and other services on packet level. |
-| **TUN / VPN** | sing-box-extended | Fully-featured TUN mode with support for AmneziaWG (AWG 2.0), WireGuard, and XHTTP. |
-| **Proxy** | xray-core | System proxy mode (VLESS, Trojan, Shadowsocks, VMess). |
-| **Routing** | GUI presets | Convenient routing editor with presets, custom domains, IP rules, and per-service behavior. |
-| **Discord Voice** | droute / SOCKS5 | Routes Discord voice and streams through the proxy without enabling full TUN mode. |
-| **Diagnostics** | built-in tests | Latency (ping) and real download speed testing for servers. |
-| **Multi-platform** | Windows & Android | GPU-rendered QML interface on Windows & Jetpack Compose UI on Android. |
+| Windows | `Lumen-Setup-windows-x64.exe` | Recommended installer |
+| Windows | `Lumen-portable-windows-x64.zip` | Runs without installing |
+| Android | `Lumen-<version>-arm64-v8a.apk` | Almost every modern phone |
+| Android | `Lumen-<version>-x86_64.apk` | Emulators and x86 devices |
+| Android | `Lumen-<version>-universal.apk` | Both ABIs in one larger file |
+
+> [!NOTE]
+> There are no `armeabi-v7a` or `x86` builds: the native sing-box-extended core is not compiled for those ABIs, so such a package could never connect.
 
 ---
 
-## Supported protocols
-
-Lumen supports importing and running these server types:
-
-- **Xray / system proxy:** VLESS, VMess, Trojan, Shadowsocks, SOCKS, HTTP.
-- **sing-box / TUN:** Hysteria, Hysteria2, TUIC, Mieru, MASQUE, WireGuard, AmneziaWG (AWG), WARP.
-- **Custom configs:** raw Xray and sing-box JSON configs, including full sing-box config imports.
-
-## Subscription support
-
-- Regular subscription URLs and encrypted Happ links: `happ://crypt`, `happ://crypt2`, `happ://crypt3`, `happ://crypt4`, and `happ://crypt5`.
-- HWID-protected subscriptions: Lumen can send the real device HWID (enabled by default) or a custom HWID configured by the user.
-- Happ Premium subscription metadata and supported controls are displayed directly in the server list and subscription properties.
-- Websites can open Lumen and import a subscription through the `lumen://` deep-link protocol. Use `lumen://add?url=<percent-encoded-subscription-url>&name=<optional-name>` for an “Add VPN” button.
-
----
-
-## Repository Structure
-
-- **`windows/`**: Windows Desktop Python/PyQt6 QML client.
-- **`android/`**: Android Jetpack Compose native client (`:app`, `:ui`, `:core:config`, `:core:database`, `:core:engine`, `:core:vpn`).
-
----
-
-## Installation
-
-Go to the **[Releases](https://github.com/krambovic/Lumen/releases)** page and download the appropriate package:
-
-* **Windows Installer (`Lumen-Setup-windows-x64.exe`):** Recommended for Windows users.
-* **Windows Portable (`Lumen-portable-windows-x64.zip`):** Standalone archive running without installation.
-* **Android APK (`app-universal-debug.apk` / `app-arm64-v8a-debug.apk`):** Native Android app for smartphones and emulators.
-
----
-
-## Build Instructions (for Developers)
+## Building
 
 <details>
-<summary><b>Windows Build</b></summary>
+<summary><b>Windows</b> — Python 3, PyQt6</summary>
 
 ```powershell
 cd windows
 pip install -r requirements.txt
-python build_qml.py
+python build_qml.py   # installer + portable archive in windows/dist/
+python run_qml.py     # run from source
+pytest                # test suite
 ```
-Outputs are written to `windows/dist/`.
 </details>
 
 <details>
-<summary><b>Android Build</b></summary>
+<summary><b>Android</b> — JDK 17, Gradle</summary>
 
 ```powershell
 cd android
-./gradlew assembleDebug
+./gradlew assembleRelease    # APKs in app/build/outputs/apk/release/
+./gradlew testDebugUnitTest  # unit tests
 ```
-Outputs are written to `android/app/build/outputs/apk/debug/`.
+
+Release signing reads `keystore.properties` next to `settings.gradle.kts`; without it the build stays unsigned.
 </details>
+
+---
+
+## Repository layout
+
+```
+windows/   Python + PyQt6/QML desktop client, xray-core, sing-box-extended, zapret
+android/   Jetpack Compose client
+  app/            navigation, view models, widgets
+  ui/             Compose screens, themes, design tokens
+  core/config     link parsing, config builders, AmneziaWG normalisation
+  core/engine     core process management
+  core/vpn        VpnService, split tunneling, QS tile
+  core/database   Room storage
+```
 
 ---
 
 ## License
 
-Lumen is licensed under GPL-3.0. Integrated third-party components preserve their original licenses. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for details.
+Lumen is licensed under **GPL-3.0**. Bundled third-party components keep their own licenses — see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
