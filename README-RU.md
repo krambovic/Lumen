@@ -1,35 +1,80 @@
-# Lumen
-
 <p align="center">
-  <img src="windows/assets/Lumen.png" alt="Lumen Logo" width="140">
+  <img src="assets/banner.png" alt="Lumen — кроссплатформенный клиент Xray / sing-box extended" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?style=for-the-badge&label=Release&labelColor=3A3A3A&color=8A2BE2" alt="Релиз"></a>
-  <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=Downloads&labelColor=3A3A3A&color=17A673" alt="Скачивания"></a>
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=3A3A3A" alt="Платформа">
+  <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?style=for-the-badge&label=%D0%A0%D0%B5%D0%BB%D0%B8%D0%B7&labelColor=1C1C1C&color=8A2BE2" alt="Релиз"></a>
+  <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=%D0%A1%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D1%8F&labelColor=1C1C1C&color=17A673" alt="Скачивания"></a>
+  <img src="https://img.shields.io/badge/Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=1C1C1C&label=%D0%9F%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D0%B0" alt="Платформа">
+  <img src="https://img.shields.io/badge/GPL--3.0-F5A623?style=for-the-badge&labelColor=1C1C1C&label=%D0%9B%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F" alt="Лицензия">
 </p>
 
 <p align="center">
-  <b>Язык:</b> <a href="README.md">English</a> | <b>Русский</b>
+  <a href="README.md">English</a> · <b>Русский</b>
 </p>
 
 ---
 
-Lumen — кроссплатформенный клиент для VPN/TUN, системного прокси, маршрутизации, управления серверами и обхода DPI (DPI bypass). Проект поддерживает **Windows Desktop** (PyQt6 QML с эффектами Mica/Acrylic) и **Android** (Jetpack Compose, VpnService и встроенный Go-ядро sing-box extended).
+**Lumen** — клиент для VPN и обхода блокировок под **Windows** и **Android**. Одно приложение на всю цепочку: импортировать сервер или подписку, пустить через него только то, что нужно, и обойти DPI — с нормальным интерфейсом на обеих платформах вместо редактирования конфигов.
+
+На Windows одновременно работают **xray-core** и **sing-box-extended**, плюс обход DPI на уровне пакетов. Android — нативный клиент на Jetpack Compose поверх **sing-box-extended** и системного `VpnService`.
 
 > [!IMPORTANT]
-> Для работы TUN/VPN режимов и запуска средств обхода DPI (zapret) на Windows требуются права администратора.
+> На Windows для режима TUN/VPN и обхода DPI (zapret) нужны права администратора.
+
+---
+
+## Возможности
+
+| | Что делает | Windows | Android |
+| :--- | :--- | :---: | :---: |
+| **TUN / VPN** | Полный туннель через sing-box-extended, включая AmneziaWG (AWG 2.0) и WireGuard | ✅ | ✅ |
+| **Системный прокси** | Направляет всю систему через xray-core без туннеля | ✅ | — |
+| **Обход DPI** | zapret / WinDivert — разблокирует YouTube, Discord и другие сервисы на уровне пакетов | ✅ | — |
+| **Раздельное туннелирование** | Выбор приложений, которые идут через VPN | — | ✅ |
+| **Редактор маршрутов** | Пресеты плюс свои домены, IP-правила и поведение отдельных сервисов | ✅ | ✅ |
+| **Discord Voice** | Пускает голос и стримы Discord через прокси без полного TUN | ✅ | — |
+| **AUTO-пулы серверов** | Группы `urltest` выбирают самый быстрый сервер и перепроверяют его по таймеру | ✅ | ✅ |
+| **Диагностика** | Замер задержки и реальной скорости; пинг по TCP, ICMP, HTTP GET и через сам прокси | ✅ | ✅ |
+| **Быстрый доступ** | Меню в трее на Windows; виджеты и плитка в шторке на Android | ✅ | ✅ |
+| **Темы** | Набор встроенных тем, а на Android ещё AMOLED-чёрный и Material You | ✅ | ✅ |
+
+---
+
+## Поддерживаемые протоколы
+
+| Группа | Протоколы |
+| :--- | :--- |
+| **Базовые** | VLESS · VMess · Trojan · Shadowsocks · SOCKS · HTTP |
+| **Современные** | Hysteria · Hysteria2 · TUIC · MASQUE · Mieru · AnyTLS · NaïveProxy |
+| **WireGuard** | WireGuard · AmneziaWG (AWG 1.5 и 2.0) · Cloudflare WARP |
+| **Прочее** | OpenVPN, в том числе через мосты obfs2/obfs3 |
+| **Транспорты** | TCP · WebSocket · gRPC · HTTP/2 · HTTPUpgrade · XHTTP · mKCP · REALITY · uTLS |
+
+Сырые JSON-конфиги **Xray** и **sing-box** импортируются как есть, включая документы с несколькими профилями.
+
+---
+
+## Подписки
+
+- Обычные URL подписок и зашифрованные ссылки Happ: от `happ://crypt` до `happ://crypt5`.
+- Подписки с привязкой по HWID — можно отправлять идентификатор установки или свой собственный HWID.
+- Метаданные Happ Premium, остаток трафика и дата окончания видны прямо в списке серверов.
+- Автообновление по расписанию: сначала используется собственный User-Agent Lumen, а другие профили клиентов подставляются только для панелей, которые смотрят на имя клиента.
+- Сайт может передать подписку прямо в приложение:
+  ```
+  lumen://add?url=<URL-подписки-в-percent-encoding>&name=<необязательное-имя>
+  ```
 
 ---
 
 ## Скриншоты
 
 <details>
-<summary>Панель управления и темы оформления (Windows)</summary>
+<summary><b>Windows — панель управления, темы и обход DPI</b></summary>
 <br>
 
-<img src="windows/assets/screenshots/dashboard-dark.png" alt="Панель управления в темной теме" width="100%">
+<img src="windows/assets/screenshots/dashboard-dark.png" alt="Панель управления в тёмной теме" width="100%">
 <br><br>
 <img src="windows/assets/screenshots/dashboard-red.png" alt="Панель управления с красным акцентом" width="100%">
 <br><br>
@@ -43,79 +88,66 @@ Lumen — кроссплатформенный клиент для VPN/TUN, си
 
 ---
 
-## Возможности программы
+## Установка
 
-| Раздел | Используемые компоненты | Описание |
+Свежая сборка — на странице **[Releases](https://github.com/krambovic/Lumen/releases)**.
+
+| Платформа | Файл | Примечание |
 | :--- | :--- | :--- |
-| **Обход DPI (Windows)** | zapret / WinDivert | Обход замедлений и блокировок YouTube, Discord и других сервисов на уровне пакетов. |
-| **TUN / VPN** | sing-box-extended | Полноценный TUN-режим с поддержкой AmneziaWG (AWG 2.0), WireGuard и XHTTP. |
-| **Прокси** | xray-core | Системный прокси (VLESS, Trojan, Shadowsocks, VMess). |
-| **Маршрутизация** | GUI-пресеты | Удобная настройка маршрутов через интерфейс: пресеты, пользовательские домены, IP-правила и поведение отдельных сервисов. |
-| **Discord Voice** | droute / SOCKS5 | Направляет голосовые каналы и стримы Discord через прокси без включения полного TUN-режима. |
-| **Диагностика** | встроенные тесты | Проверка ping и реальной скорости скачивания серверов. |
-| **Кроссплатформенность** | Windows & Android | Графический интерфейс на QML для Windows и Jetpack Compose для Android. |
+| Windows | `Lumen-Setup-windows-x64.exe` | Рекомендуемый установщик |
+| Windows | `Lumen-portable-windows-x64.zip` | Работает без установки |
+| Android | `Lumen-<версия>-arm64-v8a.apk` | Почти все современные телефоны |
+| Android | `Lumen-<версия>-x86_64.apk` | Эмуляторы и устройства на x86 |
+| Android | `Lumen-<версия>-universal.apk` | Обе архитектуры в одном файле, крупнее |
+
+> [!NOTE]
+> Сборок под `armeabi-v7a` и `x86` нет: нативное ядро sing-box-extended под эти ABI не собирается, поэтому такой пакет всё равно не смог бы подключиться.
 
 ---
 
-## Поддерживаемые протоколы
+## Сборка
 
-Lumen поддерживает импорт и запуск таких типов серверов:
+<details>
+<summary><b>Windows</b> — Python 3, PyQt6</summary>
 
-- **Xray / системный прокси:** VLESS, VMess, Trojan, Shadowsocks, SOCKS, HTTP.
-- **sing-box / TUN:** Hysteria, Hysteria2, TUIC, Mieru, MASQUE, WireGuard, AmneziaWG (AWG), WARP.
-- **Кастомные конфиги:** raw Xray и sing-box JSON-конфиги, включая импорт полных sing-box конфигов.
+```powershell
+cd windows
+pip install -r requirements.txt
+python build_qml.py   # установщик и портативный архив в windows/dist/
+python run_qml.py     # запуск из исходников
+pytest                # тесты
+```
+</details>
 
-## Поддержка подписок
+<details>
+<summary><b>Android</b> — JDK 17, Gradle</summary>
 
-- Обычные URL подписок и зашифрованные ссылки Happ: `happ://crypt`, `happ://crypt2`, `happ://crypt3`, `happ://crypt4` и `happ://crypt5`.
-- Подписки с привязкой по HWID: Lumen может отправлять настоящий HWID устройства Windows (включено по умолчанию) или указанный пользователем HWID.
-- Метаданные и поддерживаемые функции подписок Happ Premium отображаются прямо в списке серверов и свойствах подписки.
-- Сайты могут открыть Lumen и импортировать подписку через диплинк `lumen://`. Для кнопки «Добавить VPN» используйте `lumen://add?url=<URL-подписки-в-percent-encoding>&name=<необязательное-имя>`.
+```powershell
+cd android
+./gradlew assembleRelease    # APK в app/build/outputs/apk/release/
+./gradlew testDebugUnitTest  # юнит-тесты
+```
+
+Подпись релиза берётся из `keystore.properties` рядом с `settings.gradle.kts`; без него сборка остаётся неподписанной.
+</details>
 
 ---
 
 ## Структура репозитория
 
-- **`windows/`**: Клиент для Windows (Python, PyQt6, QML, zapret).
-- **`android/`**: Нативный клиент для Android (`:app`, `:ui`, `:core:config`, `:core:database`, `:core:engine`, `:core:vpn`).
-
----
-
-## Установка и запуск
-
-Перейдите на страницу **[Releases](https://github.com/krambovic/Lumen/releases)** и скачайте актуальную версию:
-
-* **Windows Установщик (`Lumen-Setup-windows-x64.exe`):** Рекомендуется для Windows.
-* **Windows Портативная версия (`Lumen-portable-windows-x64.zip`):** Работает без установки.
-* **Android APK (`app-universal-debug.apk`):** Приложение для смартфонов и эмуляторов Android.
-
----
-
-## Сборка проекта (для разработчиков)
-
-<details>
-<summary><b>Сборка для Windows</b></summary>
-
-```powershell
-cd windows
-pip install -r requirements.txt
-python build_qml.py
 ```
-Сборка создает установщик и портативный архив в директории `windows/dist/`.
-</details>
-
-<details>
-<summary><b>Сборка для Android</b></summary>
-
-```powershell
-cd android
-./gradlew assembleDebug
+windows/   Десктопный клиент на Python + PyQt6/QML, xray-core, sing-box-extended, zapret
+android/   Клиент на Jetpack Compose
+  app/            навигация, view-модели, виджеты
+  ui/             экраны Compose, темы, дизайн-токены
+  core/config     разбор ссылок, сборка конфигов, нормализация AmneziaWG
+  core/engine     управление процессом ядра
+  core/vpn        VpnService, раздельное туннелирование, плитка в шторке
+  core/database   хранилище Room
 ```
-Сборка создает APK в директории `android/app/build/outputs/apk/debug/`.
-</details>
 
 ---
 
 ## Лицензия
 
-Проект Lumen поставляется под лицензией GPL-3.0. Сторонние бинарные файлы и библиотеки сохраняют свои оригинальные лицензии. Подробнее: [LICENSE](LICENSE) и [NOTICE.md](NOTICE.md).
+Lumen распространяется под **GPL-3.0**. Сторонние компоненты сохраняют свои лицензии — см. [LICENSE](LICENSE) и [NOTICE.md](NOTICE.md).

@@ -66,4 +66,5 @@ desktop.ini
 
 # Worktrees
 .worktrees/
+AGENTS.md
 /telemetry-site
