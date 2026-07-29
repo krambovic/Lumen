@@ -82,7 +82,7 @@ class ProcessEngine(
         process = started
         liveProcesses.add(started)
         Thread({
-            runCatching {
+            val readerFailure = runCatching {
                 started.inputStream.bufferedReader().useLines { lines ->
                     lines.forEach { line ->
                         // The core colours its own output even through a pipe; the
@@ -97,14 +97,25 @@ class ProcessEngine(
                         }
                     }
                 }
-                val exitCode = started.waitFor()
-                liveProcesses.remove(started)
-                if (process === started) {
-                    process = null
-                    onLog("${type.name}: core exited unexpectedly with code $exitCode")
-                    onUnexpectedExit(exitCode)
-                }
-            }.onFailure { onLog("${type.name}: log reader failed: ${it.message}") }
+            }.exceptionOrNull()
+            if (readerFailure != null) {
+                onLog("${type.name}: log reader failed: ${readerFailure.message}")
+            }
+            // A broken/closed stdout pipe must not orphan the process. Waiting
+            // and dispatching its exit is independent from log collection.
+            val exitCode = try {
+                started.waitFor()
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                onLog("${type.name}: exit watcher was interrupted")
+                return@Thread
+            }
+            liveProcesses.remove(started)
+            if (process === started) {
+                process = null
+                onLog("${type.name}: core exited unexpectedly with code $exitCode")
+                onUnexpectedExit(exitCode)
+            }
         }, "lumen-${type.name.lowercase()}-log").apply {
             isDaemon = true
             start()
@@ -154,11 +165,17 @@ class ProcessEngine(
             .redirectErrorStream(true)
             .redirectOutput(validationOutput)
             .start()
-        if (!validator.waitFor(10, TimeUnit.SECONDS)) {
+        if (!validator.waitFor(VALIDATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             validator.destroyForcibly()
+            validator.waitFor(VALIDATION_KILL_WAIT_SECONDS, TimeUnit.SECONDS)
             error("${type.name} configuration validation timed out")
         }
-        val output = validationOutput.takeIf(File::isFile)?.readText()?.trim().orEmpty()
+        val output = validationOutput.takeIf(File::isFile)
+            ?.readText()
+            ?.lineSequence()
+            ?.joinToString("\n") { stripAnsi(it) }
+            ?.trim()
+            .orEmpty()
         output.lineSequence().filter(String::isNotBlank).forEach { onLog("${type.name} CHECK: $it") }
         check(validator.exitValue() == 0) {
             "${type.name} rejected generated configuration (exit ${validator.exitValue()}): ${output.takeLast(2_000)}"
@@ -214,6 +231,10 @@ class ProcessEngine(
         private const val STARTUP_DRAIN_MS = 150L
         private const val STOP_GRACEFUL_MS = 1_500L
         private const val STOP_TIMEOUT_MS = 4_000L
+        // `check` initializes remote rule-sets in sing-box extended. Ten seconds
+        // was too short on filtered or high-latency networks.
+        private const val VALIDATION_TIMEOUT_SECONDS = 20L
+        private const val VALIDATION_KILL_WAIT_SECONDS = 2L
         private val ANSI_ESCAPE = Regex("\\u001B\\[[0-9;]*[A-Za-z]")
 
         // Every core this app process spawned and has not reaped yet. The VPN service

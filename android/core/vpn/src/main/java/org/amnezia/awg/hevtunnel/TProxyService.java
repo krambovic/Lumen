@@ -8,7 +8,8 @@ public final class TProxyService {
 
     private TProxyService() {}
 
-    public static native void TProxyStartService(String configPath, int tunFd);
-    public static native void TProxyStopService();
+    public static native boolean TProxyStartService(String configPath, int tunFd);
+    public static native boolean TProxyStopService();
+    public static native boolean TProxyIsRunning();
     public static native long[] TProxyGetStats();
 }

@@ -194,12 +194,31 @@ data class ImportUiState(
     val message: String = ""
 )
 
+/**
+ * Socks5 credentials for the local inbound. The login keeps the `lu_` prefix so
+ * it is recognisable, and both values are generated from a cryptographic source
+ * because they are the only thing protecting the local proxy on a shared LAN.
+ */
+fun generateSocks5Username(): String {
+    val random = java.security.SecureRandom()
+    return "lu_" + (1..9).joinToString("") { random.nextInt(10).toString() }
+}
+
+fun generateSocks5Password(): String {
+    // No look-alike characters: these values are read off the screen and retyped.
+    val alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    val random = java.security.SecureRandom()
+    return (1..16).joinToString("") { alphabet[random.nextInt(alphabet.length)].toString() }
+}
+
 val DEFAULT_DIRECT_DOMAINS: String = """
 direct:10.0.0.0/8
 direct:172.16.0.0/12
 direct:192.168.0.0/16
 direct:127.0.0.0/8
 direct:fc00::/7
+direct:geosite:category-ru
+direct:geoip:ru
 """.trimIndent()
 
 data class SettingsUiState(
@@ -228,6 +247,11 @@ data class SettingsUiState(
     val localSocksPort: Int = 10808,
     val localHttpPort: Int = 10809,
     val lanSharingEnabled: Boolean = false,
+    // Socks5 authorization for the local proxy, on by default like v2rayTUN.
+    // The credentials are generated once and only ever copied by the user.
+    val socks5AuthEnabled: Boolean = true,
+    val socks5Username: String = "",
+    val socks5Password: String = "",
     val autoConnectOnBoot: Boolean = false,
     val enableSpeedStats: Boolean = true,
     val preferIpv6: Boolean = false,
@@ -241,6 +265,8 @@ data class SettingsUiState(
     val proxyDnsServer: String = "cloudflare-dns.com",
     val directDnsServer: String = "1.1.1.1",
     val dnsMode: String = "automatic",
+    /** Exact sing-box-extended `dns` object used only by the explicit JSON mode. */
+    val dnsCustomJson: String = "",
     val dnsDirectServers: String = "1.1.1.1\n8.8.8.8",
     val dnsProxyServers: String = "cloudflare-dns.com\ndns.google",
     val dnsDirectType: String = "udp",
@@ -254,9 +280,9 @@ data class SettingsUiState(
     val dnsGeoCheck: Boolean = true,
     val dnsProxyIpv4Only: Boolean = true,
     val dnsHosts: String = "",
-    val dnsOverrideEnabled: Boolean = true,
-    val dnsOverrideHostname: String = "ntc.party",
-    val dnsOverrideIpv4: String = "130.255.77.28",
+    val dnsOverrideEnabled: Boolean = false,
+    val dnsOverrideHostname: String = "",
+    val dnsOverrideIpv4: String = "",
     val urlTestUrl: String = "https://www.gstatic.com/generate_204",
     val urlTestIntervalMinutes: Int = 3,
     val urlTestToleranceMs: Int = 50,
@@ -271,6 +297,9 @@ data class SettingsUiState(
     val subscriptionIncludeRegex: String = "",
     val subscriptionExcludeRegex: String = "",
     val subscriptionUseProxyTun: Boolean = false,
+    // Plain HTTP subscription URLs contain bearer tokens in clear text. Keep them
+    // disabled unless the user explicitly accepts that risk for a legacy panel.
+    val subscriptionAllowHttp: Boolean = false,
     val subscriptionConverterEnabled: Boolean = false,
     val subscriptionConverterUrl: String = "",
     // One switch for the whole logging pipeline: the core's verbosity, the in-app
@@ -289,7 +318,9 @@ data class SettingsUiState(
     val validateProxyDataPath: Boolean = false,
     val showNotification: Boolean = true,
     val showNotificationSpeed: Boolean = true,
-    val pingType: String = "tcping",
+    // HTTP GET is the default: it measures a real request through the node and
+    // works for UDP-only protocols, where a TCP connect can never complete.
+    val pingType: String = "http",
     val pingTimeoutMs: Int = 2000,
     val pingConcurrency: Int = 16,
     val pingUrl: String = "https://www.google.com/generate_204",
@@ -342,6 +373,8 @@ data class NodeDraft(
     val sni: String = "",
     val alpn: String = "",
     val fingerprint: String = "",
+    /** Base64 SHA-256 digest of the server certificate's SPKI public key. */
+    val certificateSha256: String = "",
     val publicKey: String = "",
     val shortId: String = "",
     val method: String = "aes-256-gcm",
@@ -388,6 +421,8 @@ data class NodeDraft(
     val ovpnCa: String = "",
     val ovpnCert: String = "",
     val ovpnKey: String = "",
+    // Passphrase of an encrypted private key (OpenVPN's askpass).
+    val ovpnKeyPassword: String = "",
     val ovpnTlsCrypt: String = "",
     val ovpnTlsCryptV2: Boolean = false,
     val ovpnTlsAuth: String = "",
@@ -409,11 +444,11 @@ data class NodeDraft(
 )
 
 val SUPPORTED_PROTOCOLS: List<String> = listOf(
-    "vless", "vmess", "trojan", "ss", "hysteria2", "tuic",
+    "vless", "vmess", "trojan", "ss", "hysteria", "hysteria2", "tuic",
     "wireguard", "awg", "masque", "openvpn", "socks", "http"
 )
 
-val NETWORK_TRANSPORTS: List<String> = listOf("tcp", "ws", "grpc", "xhttp", "http")
+val NETWORK_TRANSPORTS: List<String> = listOf("tcp", "ws", "grpc", "xhttp", "http", "quic")
 
 val SECURITY_OPTIONS: List<String> = listOf("none", "tls", "reality")
 

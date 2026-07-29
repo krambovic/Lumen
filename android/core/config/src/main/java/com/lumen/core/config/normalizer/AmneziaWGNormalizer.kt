@@ -18,6 +18,13 @@ object AmneziaWGNormalizer {
     // AWG 2.0 packet definitions: the core reads these as strings.
     private val AMNEZIA_STR_KEYS = listOf("i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3")
     private val AMNEZIA_JUNK_KEYS = AMNEZIA_INT_KEYS + AMNEZIA_RANGE_KEYS + AMNEZIA_STR_KEYS
+    // The extended core's WireGuardPeer schema. Everything else is rejected while
+    // decoding the endpoint (`json: unknown field ...`), and provider profiles do
+    // ship extra keys such as `name`, `mtu` or `dns` inside a peer.
+    private val WIREGUARD_PEER_KEYS = setOf(
+        "address", "port", "public_key", "pre_shared_key",
+        "allowed_ips", "persistent_keepalive_interval"
+    )
     // Cloudflare WARP endpoint networks (parity with the Windows client).
     private val WARP_IPV4_NETWORKS = listOf(
         Pair("162.159.192.0", 24),
@@ -190,6 +197,29 @@ object AmneziaWGNormalizer {
 
                 peersList.add(peerMap)
             }
+        }
+
+        // The core decodes endpoints with unknown-field rejection, so a leftover
+        // `name`, `mtu` or `dns` inside a peer aborts the whole config, and a
+        // keepalive that arrives as a string is rejected as a type error. Plain
+        // WireGuard profiles from real providers carry both.
+        peersList.forEach { peer ->
+            peer.keys.retainAll(WIREGUARD_PEER_KEYS)
+            val keepalive = peer["persistent_keepalive_interval"]
+            val keepaliveInt = when (keepalive) {
+                is Number -> keepalive.toInt()
+                is String -> keepalive.trim().toIntOrNull()
+                else -> null
+            }
+            if (keepaliveInt != null && keepaliveInt > 0) {
+                peer["persistent_keepalive_interval"] = keepaliveInt
+            } else {
+                peer.remove("persistent_keepalive_interval")
+            }
+            if (peer["pre_shared_key"]?.toString()?.trim().isNullOrEmpty()) {
+                peer.remove("pre_shared_key")
+            }
+            peer["port"] = positiveInt(peer["port"], 51820)
         }
 
         result["peers"] = peersList

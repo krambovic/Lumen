@@ -43,7 +43,9 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -73,7 +75,7 @@ import androidx.compose.ui.unit.dp
 private val PremiumEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 private val LANGUAGES = listOf("en", "ru", "fa", "zh")
-private enum class SettingsPage { HUB, SUBSCRIPTIONS, TRAFFIC, DNS, PING, APP, THEME }
+private enum class SettingsPage { HUB, SUBSCRIPTIONS, TRAFFIC, DNS, PING, APP, THEME, UPDATES }
 
 private fun languageLabel(code: String): String = when (code) {
     "ru" -> "Русский"
@@ -90,6 +92,16 @@ fun SettingsScreen(
     onOpenRouting: () -> Unit,
     onOpenLogs: () -> Unit,
     onOpenCommunity: () -> Unit,
+    updateChecked: Boolean = false,
+    updateIsChecking: Boolean = false,
+    updateLatestVersion: String? = null,
+    updateReleaseTag: String? = null,
+    updateAvailable: Boolean = false,
+    updateError: String? = null,
+    updateIsDownloading: Boolean = false,
+    updateDownloadProgress: Int? = null,
+    onCheckUpdates: (Boolean) -> Unit = {},
+    onInstallUpdate: () -> Unit = {},
     resetToHubSignal: Int = 0,
     modifier: Modifier = Modifier
 ) {
@@ -148,6 +160,7 @@ fun SettingsScreen(
                     onDns = { page = SettingsPage.DNS },
                     onPing = { page = SettingsPage.PING },
                     onApp = { page = SettingsPage.APP },
+                    onUpdates = { page = SettingsPage.UPDATES },
                     onRouting = onOpenRouting,
                     onLogs = onOpenLogs,
                     onCommunity = onOpenCommunity
@@ -172,6 +185,24 @@ fun SettingsScreen(
                     LumenScreenHeader(title = s.appSettings, onBack = { page = SettingsPage.HUB }, applyStatusBarPadding = false)
                     AppSettings(state, onUpdate, onLanguageChange)
                 }
+                SettingsPage.UPDATES -> {
+                    LaunchedEffect(updateChecked) {
+                        if (!updateChecked) onCheckUpdates(false)
+                    }
+                    LumenScreenHeader(title = s.updates, onBack = { page = SettingsPage.HUB }, applyStatusBarPadding = false)
+                    UpdateSettings(
+                        checked = updateChecked,
+                        isChecking = updateIsChecking,
+                        latestVersion = updateLatestVersion,
+                        releaseTag = updateReleaseTag,
+                        updateAvailable = updateAvailable,
+                        error = updateError,
+                        isDownloading = updateIsDownloading,
+                        downloadProgress = updateDownloadProgress,
+                        onCheck = { onCheckUpdates(true) },
+                        onInstall = onInstallUpdate
+                    )
+                }
                 SettingsPage.THEME -> Unit
             }
             // The scaffold already reserves the nav pill height, so only a small
@@ -189,6 +220,7 @@ private fun SettingsHub(
     onDns: () -> Unit,
     onPing: () -> Unit,
     onApp: () -> Unit,
+    onUpdates: () -> Unit,
     onRouting: () -> Unit,
     onLogs: () -> Unit,
     onCommunity: () -> Unit
@@ -221,6 +253,8 @@ private fun SettingsHub(
     SectionHeader(s.categoryOther)
     SettingsCard {
         SettingsMenuRow(Icons.Filled.Menu, s.logs, onLogs)
+        SettingsDivider()
+        SettingsMenuRow(Icons.Filled.CloudDownload, s.updates, onUpdates)
     }
     SectionHeader(s.infoSection)
     SettingsCard {
@@ -231,6 +265,94 @@ private fun SettingsHub(
     Spacer(Modifier.height(18.dp))
     SettingsCard {
         SettingsMenuRow(Icons.Filled.Person, s.community, onCommunity)
+    }
+}
+
+@Composable
+private fun UpdateSettings(
+    checked: Boolean,
+    isChecking: Boolean,
+    latestVersion: String?,
+    releaseTag: String?,
+    updateAvailable: Boolean,
+    error: String?,
+    isDownloading: Boolean,
+    downloadProgress: Int?,
+    onCheck: () -> Unit,
+    onInstall: () -> Unit
+) {
+    val s = LocalStrings.current
+    SectionHeader(s.infoSection)
+    SettingsCard {
+        InfoRow(s.currentVersion, LumenVersion.appVersion)
+        if (!latestVersion.isNullOrBlank()) {
+            SettingsDivider()
+            InfoRow(s.latestVersion, latestVersion)
+        }
+        if (!releaseTag.isNullOrBlank()) {
+            SettingsDivider()
+            InfoRow(s.androidReleaseTag, releaseTag)
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    val status = when {
+        isChecking -> s.checkingUpdates
+        isDownloading -> buildString {
+            append(s.downloadingUpdate)
+            downloadProgress?.let { append(" $it%") }
+        }
+        !error.isNullOrBlank() -> "${s.updateCheckFailed}: $error"
+        checked && updateAvailable -> s.updateAvailable
+        checked -> s.upToDate
+        else -> s.updatesDesc
+    }
+    Text(
+        text = status,
+        style = MaterialTheme.typography.bodyMedium,
+        color = if (error.isNullOrBlank()) {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        } else {
+            MaterialTheme.colorScheme.error
+        },
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton(
+        onClick = onCheck,
+        enabled = !isChecking && !isDownloading,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(if (isChecking) s.checkingUpdates else s.checkUpdates)
+    }
+    if (updateAvailable) {
+        Spacer(Modifier.height(8.dp))
+        if (isDownloading) {
+            if (downloadProgress != null) {
+                LinearProgressIndicator(
+                    progress = { downloadProgress.coerceIn(0, 100) / 100f },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        Button(
+            onClick = onInstall,
+            enabled = !isChecking && !isDownloading,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                if (isDownloading) {
+                    buildString {
+                        append(s.downloadingUpdate)
+                        downloadProgress?.let { append(" $it%") }
+                    }
+                } else {
+                    s.downloadUpdate
+                }
+            )
+        }
     }
 }
 
@@ -267,6 +389,11 @@ private fun SubscriptionSettings(state: SettingsUiState, onUpdate: (SettingsUiSt
         s.subscriptionUseProxyTunDesc,
         state.subscriptionUseProxyTun
     ) { onUpdate(state.copy(subscriptionUseProxyTun = it)) }
+    ToggleRow(
+        s.subscriptionAllowHttp,
+        s.subscriptionAllowHttpDesc,
+        state.subscriptionAllowHttp
+    ) { onUpdate(state.copy(subscriptionAllowHttp = it)) }
     Spacer(Modifier.height(6.dp))
     }
     SectionHeader(s.subscriptionAutoUpdate)
@@ -363,6 +490,17 @@ private fun DnsSettings(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 14.dp)
         )
+    }
+
+    if (state.dnsMode == "json") {
+        SectionHeader(s.dnsModeJson)
+        SettingsCard {
+            Spacer(Modifier.height(8.dp))
+            TextAreaSettingField(s.dnsCustomJsonLabel, state.dnsCustomJson) {
+                onUpdate(state.copy(dnsCustomJson = it.take(65_536)))
+            }
+            Spacer(Modifier.height(8.dp))
+        }
     }
 
     SectionHeader(s.dnsDirectSection)
@@ -589,6 +727,76 @@ private fun TrafficSettings(
         }
         Spacer(Modifier.height(4.dp))
     }
+    // Socks5 authorization for the local proxy. On by default: without it the
+    // inbound is open to anything that can reach the device.
+    SectionHeader(s.socks5Auth)
+    SettingsCard {
+        Spacer(Modifier.height(4.dp))
+        ToggleRow(s.socks5Auth, s.socks5AuthDesc, state.socks5AuthEnabled) { enabled ->
+            onUpdate(
+                state.copy(
+                    socks5AuthEnabled = enabled,
+                    // Turning it on with empty credentials would publish an
+                    // inbound nothing can authenticate against.
+                    socks5Username = state.socks5Username.ifBlank { generateSocks5Username() },
+                    socks5Password = state.socks5Password.ifBlank { generateSocks5Password() }
+                )
+            )
+        }
+        if (state.socks5AuthEnabled) {
+            SettingsDivider()
+            Socks5CredentialRow(s.socks5Login, state.socks5Username)
+            SettingsDivider()
+            Socks5CredentialRow(s.socks5PasswordLabel, state.socks5Password)
+            SettingsDivider()
+            androidx.compose.material3.TextButton(
+                onClick = {
+                    onUpdate(
+                        state.copy(
+                            socks5Username = generateSocks5Username(),
+                            socks5Password = generateSocks5Password()
+                        )
+                    )
+                },
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Text(s.socks5Reset)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+/** Read-only credential row: the value can only be copied, never edited. */
+@Composable
+private fun Socks5CredentialRow(label: String, value: String) {
+    val s = LocalStrings.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                value.ifBlank { "\u2014" },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        androidx.compose.material3.TextButton(
+            onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(value))
+                android.widget.Toast
+                    .makeText(context, s.copied, android.widget.Toast.LENGTH_SHORT)
+                    .show()
+            },
+            enabled = value.isNotBlank()
+        ) {
+            Text(s.copyAction)
+        }
+    }
 }
 
 @Composable
@@ -679,7 +887,7 @@ private fun PingSettings(
             onClick = {
                 onUpdate(
                     state.copy(
-                        pingType = "tcping",
+                        pingType = "http",
                         pingTimeoutMs = 2000,
                         pingConcurrency = 16,
                         pingUrl = PING_URL_PRESETS.first(),

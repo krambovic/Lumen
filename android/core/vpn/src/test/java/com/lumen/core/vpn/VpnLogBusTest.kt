@@ -10,6 +10,17 @@ import org.junit.rules.TemporaryFolder
 
 class VpnLogBusTest {
 
+    @Test
+    fun `dialog error keeps the core reason without colours or duplicate wrapper`() {
+        val cause = IllegalStateException(
+            "\u001B[31mConnection failed: FATAL\u001B[0m unknown cipher_suite"
+        )
+        assertEquals(
+            "FATAL unknown cipher_suite",
+            VpnLogBus.userFacingError("Connection failed", cause)
+        )
+    }
+
     @get:Rule
     val temp = TemporaryFolder()
 

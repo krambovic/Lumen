@@ -18,8 +18,8 @@ val hasReleaseKeystore = keystoreProps.getProperty("storeFile") != null
 // The sing-box extended core (libsingbox.so) and libhev-socks5-tunnel.so are committed under
 // src/main/jniLibs for these ABIs only. Shipping any other ABI produces an APK that installs
 // but can never start a tunnel, so the split and the packaged ABIs are pinned to this list.
-val supportedAbis = listOf("arm64-v8a", "x86_64")
-val baseVersionCode = 30
+val supportedAbis = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+val baseVersionCode = 31
 // AGP does not derive per-output version codes; without an offset every split APK would share one.
 val abiVersionCodeOffsets = mapOf(
     "armeabi-v7a" to 1,
@@ -37,7 +37,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = baseVersionCode
-        versionName = "1.0.0"
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -157,6 +157,7 @@ dependencies {
 
     // Testing
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.08.00"))

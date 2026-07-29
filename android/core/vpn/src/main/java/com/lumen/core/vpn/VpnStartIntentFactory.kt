@@ -94,6 +94,7 @@ object VpnConfigStore {
             .edit()
             .remove(VpnStartIntentFactory.KEY_CONFIG_JSON)
             .remove(VpnStartIntentFactory.KEY_LEGACY_CONFIG_JSON)
+            .remove(VpnStartIntentFactory.KEY_CONFIG_DIRTY)
             .apply()
     }
 
@@ -235,6 +236,7 @@ object VpnStartIntentFactory {
     const val PREFS_NAME = "lumen_prefs"
     const val KEY_CONFIG_JSON = "active_config_json"
     const val KEY_LEGACY_CONFIG_JSON = "config_json"
+    const val KEY_CONFIG_DIRTY = "active_config_dirty"
     const val KEY_ENGINE_TYPE = "engine_type"
     const val KEY_SPLIT_MODE = "split_mode"
     const val KEY_SPLIT_PACKAGES = "split_packages"
@@ -268,11 +270,26 @@ object VpnStartIntentFactory {
      * this stats the stored file instead of materialising hundreds of kilobytes.
      */
     fun hasUsableConfig(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // A node or routing setting changed after this file was generated. Keep the
+        // previous file intact for the active service, but never let a tile/widget
+        // start a new tunnel from stale credentials or routing rules.
+        if (prefs.getBoolean(KEY_CONFIG_DIRTY, false)) return false
         if (VpnConfigStore.hasStoredConfig(context)) return true
         // Upgrade path: prefs still hold the config until the service migrates it.
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return isUsableConfig(prefs.getString(KEY_CONFIG_JSON, null)) ||
             isUsableConfig(prefs.getString(KEY_LEGACY_CONFIG_JSON, null))
+    }
+
+    /**
+     * Prevents background entry points from starting a stale generated config while
+     * preserving the file currently owned by a running VPN service.
+     */
+    fun markConfigDirty(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_CONFIG_DIRTY, true)
+            .commit()
     }
 
     /**
@@ -286,6 +303,7 @@ object VpnStartIntentFactory {
             // The config is a file now, not a preference; drop any leftover copy.
             .remove(KEY_CONFIG_JSON)
             .remove(KEY_LEGACY_CONFIG_JSON)
+            .putBoolean(KEY_CONFIG_DIRTY, false)
             .putString(KEY_ENGINE_TYPE, params.engineType)
             .putString(KEY_SPLIT_MODE, params.splitMode)
             .putStringSet(KEY_SPLIT_PACKAGES, params.splitPackages)
@@ -296,7 +314,7 @@ object VpnStartIntentFactory {
             .putString(KEY_OBFS_TYPE, params.obfsType)
             .putString(KEY_OBFS_HOST, params.obfsHost)
             .putInt(KEY_OBFS_PORT, params.obfsPort)
-            .apply()
+            .commit()
         return path
     }
 

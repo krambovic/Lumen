@@ -7,7 +7,7 @@ package com.lumen.ui.screens
  */
 
 private val OVPN_INLINE_BLOCK = Regex(
-    "(?ims)^[ \\t]*<(ca|cert|key|tls-auth|tls-crypt|tls-crypt-v2|auth-user-pass)>[ \\t]*\\r?\\n(.*?)^[ \\t]*</\\1>[ \\t]*$"
+    "(?ims)^[ \\t]*<(ca|cert|key|tls-auth|tls-crypt|tls-crypt-v2|auth-user-pass|askpass)>[ \\t]*\\r?\\n(.*?)^[ \\t]*</\\1>[ \\t]*$"
 )
 
 val OPENVPN_PROTOCOLS: List<String> = listOf("udp", "tcp")
@@ -18,11 +18,11 @@ val OPENVPN_CIPHERS: List<String> = listOf(
     "AES-128-CBC", "AES-192-CBC", "AES-256-CBC", "CHACHA20-POLY1305"
 )
 
-val OPENVPN_AUTH_DIGESTS: List<String> = listOf("", "SHA1", "SHA256", "SHA384", "SHA512")
+val OPENVPN_AUTH_DIGESTS: List<String> = listOf("", "MD5", "SHA1", "SHA256", "SHA384", "SHA512")
 
 val OPENVPN_KEY_DIRECTIONS: List<String> = listOf("", "0", "1", "-1")
 
-val OPENVPN_X509_MODES: List<String> = listOf("", "name", "name-prefix", "subject")
+val OPENVPN_X509_MODES: List<String> = listOf("", "name", "name-prefix", "name-suffix")
 
 /**
  * "Use proxy" options for OpenVPN nodes. Http/Socks are handled by sing-box
@@ -63,9 +63,9 @@ fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
 
     fun last(key: String): List<String> = byKey[key]?.lastOrNull() ?: emptyList()
     fun arg(key: String): String = last(key).firstOrNull()?.trim().orEmpty()
-    fun proto(value: String): String = when {
-        value.startsWith("tcp") -> "tcp"
-        value.startsWith("udp") -> "udp"
+    fun proto(value: String): String = when (value.trim().lowercase()) {
+        "tcp", "tcp-client", "tcp4", "tcp4-client", "tcp6", "tcp6-client" -> "tcp"
+        "udp", "udp4", "udp6" -> "udp"
         else -> ""
     }
 
@@ -102,15 +102,15 @@ fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
     val globalProto = proto(arg("proto").lowercase())
     val remoteProto = first?.getOrNull(2)?.lowercase()?.let { proto(it) }.orEmpty()
     val credentials = (inline["auth-user-pass"] ?: "").lines().map { it.trim() }.filter { it.isNotEmpty() }
-    val cipher = listOf("cipher", "data-ciphers", "ncp-ciphers", "data-ciphers-fallback")
+    val cipher = listOf("data-ciphers", "ncp-ciphers", "cipher", "data-ciphers-fallback")
         .asSequence()
         .flatMap { arg(it).split(":").asSequence() }
         .map { it.trim().uppercase() }
         .firstOrNull { it.isNotEmpty() && it in OPENVPN_CIPHERS }
         .orEmpty()
-    val tlsSuites = listOf("tls-cipher", "tls-ciphersuites")
-        .mapNotNull { arg(it).ifBlank { null } }
-        .joinToString(":")
+    // tls-ciphersuites is TLS 1.3-only; the bundled extended core exposes only
+    // the TLS <=1.2 cipher list, so keep the representable directive separate.
+    val tlsSuites = arg("tls-cipher")
     val verify = last("verify-x509-name")
     val dns = byKey["dhcp-option"].orEmpty()
         .filter { it.size >= 2 && it[0].uppercase() in setOf("DNS", "DNS6") }
@@ -128,6 +128,10 @@ fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
         ovpnCa = inline["ca"].orEmpty(),
         ovpnCert = inline["cert"].orEmpty(),
         ovpnKey = inline["key"].orEmpty(),
+        ovpnKeyPassword = (inline["askpass"] ?: "").lines()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() }
+            ?: comment("lumen-key-password").firstOrNull().orEmpty(),
         ovpnTlsCrypt = inline["tls-crypt"] ?: inline["tls-crypt-v2"] ?: "",
         ovpnTlsCryptV2 = inline.containsKey("tls-crypt-v2"),
         ovpnTlsAuth = inline["tls-auth"].orEmpty(),
@@ -216,6 +220,9 @@ fun openVpnProfileFromDraft(d: NodeDraft): String {
     block("ca", d.ovpnCa)
     block("cert", d.ovpnCert)
     block("key", d.ovpnKey)
+    // Passphrase of an encrypted private key. Inline, because a file reference
+    // cannot be resolved on Android; the parser reads exactly this block.
+    if (d.ovpnKeyPassword.isNotBlank()) block("askpass", d.ovpnKeyPassword.trim())
     block("tls-auth", d.ovpnTlsAuth)
     if (d.ovpnTlsCrypt.isNotBlank()) {
         block(if (d.ovpnTlsCryptV2) "tls-crypt-v2" else "tls-crypt", d.ovpnTlsCrypt)

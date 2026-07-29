@@ -19,6 +19,34 @@ object SplitTunnelingManager {
     private const val TAG = "SplitTunnelingManager"
 
     /**
+     * The VPN process must never be routed into its own TUN. Remove duplicate
+     * user state in every mode; non-allow modes explicitly disallow it later.
+     */
+    fun withoutOwnPackage(
+        config: SplitTunnelingConfig,
+        ownPackage: String
+    ): SplitTunnelingConfig = config.copy(packages = config.packages - ownPackage)
+
+    /**
+     * Android interprets an allow-list with zero successfully added packages as
+     * "no app filter", which captures every app. Refuse that unsafe inversion.
+     */
+    fun requireSafeAllowList(
+        config: SplitTunnelingConfig,
+        appliedPackages: List<String>? = null
+    ) {
+        if (config.mode != SplitTunnelingMode.ALLOW_LIST) return
+        require(config.packages.isNotEmpty()) {
+            "Split tunneling allow-list is empty; select at least one application"
+        }
+        if (appliedPackages != null) {
+            require(appliedPackages.isNotEmpty()) {
+                "None of the allow-listed applications is installed"
+            }
+        }
+    }
+
+    /**
      * Applies split tunneling configuration to the provided VpnService.Builder.
      *
      * Handles PackageManager.NameNotFoundException gracefully if a package in the set
@@ -73,8 +101,8 @@ object SplitTunnelingManager {
      * Our own package must never end up inside the tunnel: the core's outbound
      * sockets would be routed back into the TUN they feed. An allow-list keeps us
      * out implicitly, but only while the framework actually accepted at least one
-     * package - if every allow-listed app is uninstalled no per-app filter is
-     * applied at all and Android captures every UID on the device.
+     * package. Empty or entirely invalid allow-lists are rejected before the
+     * interface is established, so they can never invert into a full-device VPN.
      *
      * @param mode The mode that was applied to the builder
      * @param applied The packages [applySplitTunneling] reported as accepted

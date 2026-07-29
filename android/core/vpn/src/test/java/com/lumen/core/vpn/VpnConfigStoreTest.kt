@@ -32,7 +32,10 @@ class VpnConfigStoreTest {
 
     private lateinit var editor: SharedPreferences.Editor
 
-    private fun context(strings: Map<String, String> = emptyMap()): Context {
+    private fun context(
+        strings: Map<String, String> = emptyMap(),
+        booleans: Map<String, Boolean> = emptyMap()
+    ): Context {
         // RETURNS_SELF so the putX()/remove() chain in persistStartParams works.
         editor = mock<SharedPreferences.Editor>(defaultAnswer = Answers.RETURNS_SELF)
         val prefs = mock<SharedPreferences>()
@@ -41,7 +44,9 @@ class VpnConfigStoreTest {
             strings[invocation.getArgument<String>(0)] ?: invocation.getArgument<String?>(1)
         }
         whenever(prefs.getInt(any(), any())).thenAnswer { it.getArgument<Int>(1) }
-        whenever(prefs.getBoolean(any(), any())).thenAnswer { it.getArgument<Boolean>(1) }
+        whenever(prefs.getBoolean(any(), any())).thenAnswer { invocation ->
+            booleans[invocation.getArgument<String>(0)] ?: invocation.getArgument<Boolean>(1)
+        }
         whenever(prefs.getStringSet(any(), anyOrNull())).thenAnswer {
             it.getArgument<Set<String>?>(1)
         }
@@ -127,6 +132,33 @@ class VpnConfigStoreTest {
         assertEquals(config, VpnConfigStore.read(context, path))
         assertTrue(VpnConfigStore.hasStoredConfig(context))
         assertTrue(VpnStartIntentFactory.hasUsableConfig(context))
+        verify(editor).putBoolean(VpnStartIntentFactory.KEY_CONFIG_DIRTY, false)
+    }
+
+    @Test
+    fun `a dirty generated config remains on disk but cannot be started again`() {
+        val context = context(
+            booleans = mapOf(VpnStartIntentFactory.KEY_CONFIG_DIRTY to true)
+        )
+        val config = autoPoolConfig(13)
+        VpnConfigStore.write(context, config)
+
+        assertTrue(VpnConfigStore.hasStoredConfig(context))
+        assertEquals(config, VpnConfigStore.read(context))
+        assertFalse(VpnStartIntentFactory.hasUsableConfig(context))
+    }
+
+    @Test
+    fun `marking a config dirty never deletes the file used by the active tunnel`() {
+        val context = context()
+        val config = autoPoolConfig(13)
+        VpnConfigStore.write(context, config)
+
+        VpnStartIntentFactory.markConfigDirty(context)
+
+        assertEquals(config, VpnConfigStore.read(context))
+        verify(editor).putBoolean(VpnStartIntentFactory.KEY_CONFIG_DIRTY, true)
+        verify(editor).commit()
     }
 
     @Test

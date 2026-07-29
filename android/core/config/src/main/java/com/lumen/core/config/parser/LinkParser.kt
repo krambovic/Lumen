@@ -1,5 +1,6 @@
 package com.lumen.core.config.parser
 
+import com.lumen.core.config.normalizer.OpenVpnConfigNormalizer
 import com.lumen.core.config.crypto.HappCrypt
 import org.json.JSONArray
 import org.json.JSONObject
@@ -56,6 +57,14 @@ object LinkParser {
         "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "h2-opts", "http-opts",
         "obfs-opts", "plugin-opts", "udp-over-tcp", "congestion-controller", "ip-version",
         "auth-str", "hop-interval", "disable-mtu-discovery", "recv-window-conn", "dialer-proxy"
+    )
+    private val CLASH_SUPPORTED_PROXY_TYPES = setOf(
+        "vless", "vmess", "trojan",
+        "ss", "shadowsocks",
+        "hysteria", "hy", "hysteria2", "hy2",
+        "tuic", "naive", "mieru", "masque", "anytls", "snell",
+        "wireguard", "wg", "awg", "amneziawg", "amnezia-wg",
+        "socks", "socks5", "http", "https"
     )
 
     private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost", "0.0.0.0", "::1")
@@ -551,6 +560,8 @@ object LinkParser {
         params["sni"] = json.optString("sni")
         params["alpn"] = json.optString("alpn")
         params["fp"] = json.optString("fp")
+        params["pinsha256"] = json.optString("pinSHA256")
+            .ifBlank { json.optString("certificate_public_key_sha256") }
 
         val user = mapOf("id" to id, "alterId" to aid, "security" to scy)
         val streamSettings = buildStreamSettings(params, defaultNetwork = "tcp", defaultSecurity = params["security"] ?: "none")
@@ -704,6 +715,9 @@ object LinkParser {
         params["alpn"]?.takeIf { it.isNotEmpty() }?.let {
             tls["alpn"] = it.split(",").map { s -> s.trim() }.filter { s -> s.isNotEmpty() }
         }
+        certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
+            tls["certificate_public_key_sha256"] = it
+        }
         singbox["tls"] = tls
 
         hysteriaObfs(params)?.let { (obfsType, obfsPassword) ->
@@ -731,16 +745,20 @@ object LinkParser {
         val sni = params["sni"] ?: params["peer"] ?: params["server_name"] ?: params["servername"] ?: server
         val insecure = toBool(params["insecure"]) || toBool(params["allowinsecure"]) || toBool(params["allow_insecure"])
 
+        val tls = mutableMapOf<String, Any?>(
+            "enabled" to true,
+            "server_name" to sni,
+            "insecure" to insecure
+        )
+        certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
+            tls["certificate_public_key_sha256"] = it
+        }
         val singbox = mutableMapOf<String, Any?>(
             "type" to "hysteria2",
             "server" to server,
             "server_port" to port,
             "password" to auth,
-            "tls" to mapOf(
-                "enabled" to true,
-                "server_name" to sni,
-                "insecure" to insecure
-            )
+            "tls" to tls
         )
 
         hysteriaObfs(params)?.let { (obfsType, obfsPassword) ->
@@ -784,6 +802,9 @@ object LinkParser {
         if (toBool(params["insecure"]) || toBool(params["allowinsecure"]) || toBool(params["allow_insecure"])) {
             tls["insecure"] = true
         }
+        certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
+            tls["certificate_public_key_sha256"] = it
+        }
 
         val singbox = mutableMapOf<String, Any?>(
             "type" to "tuic",
@@ -823,6 +844,9 @@ object LinkParser {
         )
         if (toBool(params["insecure"]) || toBool(params["allowinsecure"]) || toBool(params["allow_insecure"])) {
             tls["insecure"] = true
+        }
+        certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
+            tls["certificate_public_key_sha256"] = it
         }
         params["alpn"]?.takeIf { it.isNotEmpty() }?.let {
             tls["alpn"] = it.split(",").map { s -> s.trim() }.filter { s -> s.isNotEmpty() }
@@ -879,6 +903,110 @@ object LinkParser {
         is List<*> -> value.mapNotNull { it?.toString()?.trim() }.filter { it.isNotEmpty() }
         null -> emptyList()
         else -> value.toString().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    private fun clashCertificatePins(map: Map<String, Any?>): List<String> =
+        clashStringList(
+            map["certificate-public-key-sha256"]
+                ?: map["certificate_public_key_sha256"]
+                ?: map["pin-sha256"]
+                ?: map["pinSHA256"]
+        )
+
+    private fun clashTransportParams(map: Map<String, Any?>, params: MutableMap<String, String>) {
+        val network = (map["network"] ?: map["net"])?.toString()?.lowercase()
+            ?.takeIf(String::isNotBlank) ?: params["type"] ?: "tcp"
+        params["type"] = network
+
+        when (network) {
+            "ws" -> {
+                val opts = map["ws-opts"] as? Map<*, *> ?: map["ws_opts"] as? Map<*, *>
+                opts?.get("path")?.toString()?.let { params["path"] = it }
+                val headers = opts?.get("headers") as? Map<*, *>
+                headers?.entries?.firstOrNull { it.key?.toString()?.equals("host", true) == true }
+                    ?.value?.toString()?.let { params["host"] = it }
+            }
+            "grpc", "gun" -> {
+                val opts = map["grpc-opts"] as? Map<*, *> ?: map["grpc_opts"] as? Map<*, *>
+                (opts?.get("grpc-service-name") ?: opts?.get("service-name") ?: opts?.get("service_name"))
+                    ?.toString()?.let { params["servicename"] = it }
+                (opts?.get("authority") ?: opts?.get("grpc-authority") ?: opts?.get("grpc_authority")
+                    ?: map["grpc-authority"] ?: map["grpc_authority"])
+                    ?.toString()?.let { params["authority"] = it }
+            }
+            "h2", "http" -> {
+                val opts = (map["h2-opts"] as? Map<*, *>)
+                    ?: (map["h2_opts"] as? Map<*, *>)
+                    ?: (map["http-opts"] as? Map<*, *>)
+                    ?: (map["http_opts"] as? Map<*, *>)
+                val path = when (val raw = opts?.get("path")) {
+                    is List<*> -> raw.firstOrNull()?.toString()
+                    else -> raw?.toString()
+                }
+                path?.let { params["path"] = it }
+                clashStringList(opts?.get("host")).takeIf { it.isNotEmpty() }?.let {
+                    params["host"] = it.joinToString(",")
+                }
+            }
+        }
+    }
+
+    /**
+     * Keep every Clash transport option in the persisted Xray-shaped object.
+     * SingboxConfigBuilder currently consumes the common subset; retaining the
+     * rest prevents a save/reload from destroying it and lets newer builders use
+     * the exact extended fields without a database migration.
+     */
+    private fun enrichClashStreamSettings(
+        source: Map<String, Any?>,
+        map: Map<String, Any?>
+    ): Map<String, Any?> {
+        val result = source.toMutableMap()
+        when (source["network"]?.toString()?.lowercase()) {
+            "ws" -> {
+                val opts = map["ws-opts"] as? Map<*, *> ?: map["ws_opts"] as? Map<*, *>
+                if (opts != null) {
+                    @Suppress("UNCHECKED_CAST")
+                    val ws = ((result["wsSettings"] as? Map<String, Any?>) ?: emptyMap()).toMutableMap()
+                    (opts["headers"] as? Map<*, *>)?.let { ws["headers"] = it }
+                    (opts["max-early-data"] ?: opts["max_early_data"] ?: map["max-early-data"])
+                        ?.toString()?.toIntOrNull()?.let { ws["ed"] = it }
+                    (opts["early-data-header-name"] ?: opts["early_data_header_name"])
+                        ?.toString()?.takeIf(String::isNotBlank)?.let { ws["earlyDataHeaderName"] = it }
+                    result["wsSettings"] = ws
+                }
+            }
+            "grpc" -> {
+                val opts = map["grpc-opts"] as? Map<*, *> ?: map["grpc_opts"] as? Map<*, *>
+                if (opts != null) {
+                    @Suppress("UNCHECKED_CAST")
+                    val grpc = ((result["grpcSettings"] as? Map<String, Any?>) ?: emptyMap()).toMutableMap()
+                    (opts["authority"] ?: opts["grpc-authority"] ?: opts["grpc_authority"]
+                        ?: map["grpc-authority"] ?: map["grpc_authority"])
+                        ?.toString()?.takeIf(String::isNotBlank)?.let { grpc["authority"] = it }
+                    (opts["idle-timeout"] ?: opts["idle_timeout"])?.let { grpc["idleTimeout"] = it }
+                    (opts["ping-timeout"] ?: opts["ping_timeout"])?.let { grpc["pingTimeout"] = it }
+                    (opts["permit-without-stream"] ?: opts["permit_without_stream"])
+                        ?.let { grpc["permitWithoutStream"] = toBool(it) }
+                    result["grpcSettings"] = grpc
+                }
+            }
+            "http", "h2" -> {
+                val opts = (map["h2-opts"] as? Map<*, *>)
+                    ?: (map["h2_opts"] as? Map<*, *>)
+                    ?: (map["http-opts"] as? Map<*, *>)
+                    ?: (map["http_opts"] as? Map<*, *>)
+                if (opts != null) {
+                    @Suppress("UNCHECKED_CAST")
+                    val http = ((result["httpSettings"] as? Map<String, Any?>) ?: emptyMap()).toMutableMap()
+                    (opts["headers"] as? Map<*, *>)?.let { http["headers"] = it }
+                    opts["method"]?.toString()?.takeIf(String::isNotBlank)?.let { http["method"] = it }
+                    result["httpSettings"] = http
+                }
+            }
+            "quic" -> result["quicSettings"] = emptyMap<String, Any?>()
+        }
+        return result
     }
 
     private fun parseNaiveLink(link: String, sourceScheme: String = ""): ParsedNode {
@@ -947,13 +1075,26 @@ object LinkParser {
         val fragment = extractFragment(link)
         val params = parseQueryParams(uri.rawQuery)
         val server = uri.host ?: params["server"] ?: params["address"] ?: params["host"] ?: ""
-        val port = if (uri.port > 0) uri.port else (params["port"] ?: params["server_port"])?.toIntOrNull() ?: 0
+        val scalarPort = if (uri.port > 0) {
+            uri.port
+        } else {
+            (params["port"] ?: params["server_port"])?.toIntOrNull()
+        }
+        val serverPorts = (params["server_ports"] ?: params["server-ports"] ?: params["ports"])
+            ?.split(",")
+            ?.map(String::trim)
+            ?.filter(String::isNotEmpty)
+            .orEmpty()
+        // Room keeps one integer for display/filtering, while the exact extended
+        // outbound retains the complete range list. Use the first range boundary
+        // as a representative instead of rejecting a valid range-only profile.
+        val port = scalarPort ?: representativePort(serverPorts) ?: 0
         val userInfo = userInfoOf(uri) ?: ""
         val username = userInfo.substringBefore(":", userInfo).ifEmpty { params["username"] ?: params["user"] ?: "" }
         val password = (if (userInfo.contains(":")) userInfo.substringAfter(":") else "")
             .ifEmpty { params["password"] ?: params["pass"] ?: "" }
-        if (server.isEmpty() || username.isEmpty() || password.isEmpty()) {
-            throw LinkParseError("mieru link must contain server, username and password")
+        if (server.isEmpty() || username.isEmpty() || password.isEmpty() || (scalarPort == null && serverPorts.isEmpty())) {
+            throw LinkParseError("mieru link must contain server, port/server_ports, username and password")
         }
 
         val singbox = mutableMapOf<String, Any?>(
@@ -964,10 +1105,8 @@ object LinkParser {
             "username" to username,
             "password" to password
         )
-        if (port > 0) singbox["server_port"] = port
-        (params["server_ports"] ?: params["ports"])?.takeIf { it.isNotEmpty() }?.let {
-            singbox["server_ports"] = it.split(",").map { p -> p.trim() }.filter { p -> p.isNotEmpty() }
-        }
+        scalarPort?.takeIf { it in 1..65535 }?.let { singbox["server_port"] = it }
+        if (serverPorts.isNotEmpty()) singbox["server_ports"] = serverPorts
         (params["multiplexing"] ?: params["mux"])?.takeIf { it.isNotEmpty() }?.let { singbox["multiplexing"] = it }
         (params["traffic_pattern"] ?: params["trafficpattern"])?.takeIf { it.isNotEmpty() }?.let {
             singbox["traffic_pattern"] = it
@@ -976,6 +1115,20 @@ object LinkParser {
         val outbound = mapOf<String, Any?>("protocol" to "mieru", "singbox" to singbox)
         val name = cleanName(fragment, "mieru-$server:${if (port > 0) port.toString() else "range"}")
         return ParsedNode(name = name, scheme = "mieru", server = server, port = port, link = link, outbound = outbound)
+    }
+
+    private fun representativePort(ranges: List<String>): Int? =
+        ranges.asSequence()
+            .mapNotNull { range ->
+                range.substringBefore('-').trim().toIntOrNull()?.takeIf { it in 1..65535 }
+            }
+            .firstOrNull()
+
+    private fun clashSpeedMbps(value: Any?): Int? = speedMbps(value?.toString())
+
+    private fun durationSeconds(value: Any?): String {
+        val text = value?.toString()?.trim().orEmpty()
+        return if (text.toDoubleOrNull() != null) "${text}s" else text
     }
 
     private fun parseMasque(link: String): ParsedNode {
@@ -1362,15 +1515,32 @@ object LinkParser {
     }
 
     private val OPENVPN_INLINE_BLOCK_REGEX = Regex(
-        "(?ims)^[ \\t]*<(ca|cert|key|tls-auth|tls-crypt|tls-crypt-v2|auth-user-pass)>[ \\t]*\\r?\\n(.*?)^[ \\t]*</\\1>[ \\t]*$"
+        "(?ims)^[ \\t]*<(ca|cert|key|tls-auth|tls-crypt|tls-crypt-v2|auth-user-pass|askpass)>[ \\t]*\\r?\\n(.*?)^[ \\t]*</\\1>[ \\t]*$"
     )
-    private val OPENVPN_SUPPORTED_CIPHERS = setOf(
-        "AES-128-GCM", "AES-192-GCM", "AES-256-GCM",
-        "AES-128-CBC", "AES-192-CBC", "AES-256-CBC", "CHACHA20-POLY1305"
-    )
+    // `askpass` is supported as long as the passphrase itself is inline: an
+    // encrypted <key> is useless without it and many providers ship one.
     private val OPENVPN_UNSAFE_DIRECTIVES = setOf(
-        "askpass", "http-proxy-user-pass", "pkcs12", "secret"
+        "http-proxy-user-pass", "pkcs12", "secret"
     )
+
+    /**
+     * Passphrase of an encrypted private key. It arrives either as an inline
+     * `<askpass>` block or as the `# lumen-key-password <pass>` comment the node
+     * editor writes, so a profile stays portable for other clients.
+     */
+    private fun openVpnKeyPassword(text: String, inline: Map<String, String>): String {
+        val inlinePass = (inline["askpass"] ?: "").lines()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() }
+            .orEmpty()
+        if (inlinePass.isNotEmpty()) return inlinePass
+        return text.lines()
+            .map { it.trim() }
+            .lastOrNull { it.startsWith("# lumen-key-password ") }
+            ?.removePrefix("# lumen-key-password ")
+            ?.trim()
+            .orEmpty()
+    }
 
     /** "Use proxy" values Lumen understands; obfs variants are terminated in-app. */
     private val OPENVPN_OBFS_PROXIES = setOf("obfs3", "obfs2", "obfs2-legacy")
@@ -1411,6 +1581,12 @@ object LinkParser {
         if (host.isEmpty()) throw LinkParseError("OpenVPN proxy `$type` is missing a server address")
         val port = endpoint.getOrNull(1)?.trim()?.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: throw LinkParseError("invalid OpenVPN proxy port for `$type`")
+        if (type in setOf("http", "socks") && endpoint.size > 2) {
+            throw LinkParseError(
+                "OpenVPN `$type-proxy` credential files are not supported on Android; " +
+                    "enter proxy credentials in the node editor"
+            )
+        }
         return buildMap {
             put("type", type)
             put("server", host)
@@ -1429,10 +1605,8 @@ object LinkParser {
      */
     fun openVpnRequiresUserAuth(text: String): Boolean {
         var inlineAuth = false
-        val inlineBlocks = mutableSetOf<String>()
         val directivesText = OPENVPN_INLINE_BLOCK_REGEX.replace(text) { match ->
             val name = match.groupValues[1].lowercase()
-            inlineBlocks += name
             if (name == "auth-user-pass") inlineAuth = true
             ""
         }
@@ -1443,23 +1617,10 @@ object LinkParser {
             runCatching { tokenizeOpenVpnLine(line) }.getOrNull()
                 ?.firstOrNull()?.trimStart('-')?.trim()?.lowercase()
         }.toSet()
-        if ("auth-user-pass" in directives) return true
-        // Only judge a text that is actually a profile. A stored node can carry a
-        // placeholder link instead of its .ovpn, and calling that "needs a login"
-        // would reject a node that has always worked.
-        val looksLikeProfile = OPENVPN_PROFILE_MARKERS.any { it in inlineBlocks || it in directives }
-        if (!looksLikeProfile) return false
-        // A profile with neither a client certificate nor a private key has nothing
-        // to authenticate with on its own, so it needs a login even though it never
-        // says so. `ca` alone verifies the server, not the client. Matches
-        // openVpnRequiresCredentials in the editor, which warns about the same
-        // profile before the node is saved.
-        return OPENVPN_CLIENT_AUTH_KEYS.none { it in inlineBlocks || it in directives }
+        // Some servers deliberately do not request a client certificate or username.
+        // Only an explicit auth-user-pass directive proves that credentials are needed.
+        return "auth-user-pass" in directives
     }
-
-    private val OPENVPN_CLIENT_AUTH_KEYS = setOf("cert", "key", "pkcs12")
-    private val OPENVPN_PROFILE_MARKERS =
-        setOf("client", "remote", "dev", "ca", "proto", "tls-crypt", "tls-auth")
 
     // Full structured port of the desktop openvpn_import.py: the extended
     // sing-box core rejects the old {"type":"openvpn","config_str":...} shape,
@@ -1469,8 +1630,13 @@ object LinkParser {
             throw LinkParseError("not an OpenVPN client profile")
         }
 
+        // Windows-exported profiles use CRLF. Carriage returns survive inside the
+        // inline <ca>/<tls-crypt> bodies and reach the core as part of the PEM text,
+        // where they break certificate and static-key decoding.
+        val normalizedText = text.replace("\r\n", "\n").replace("\r", "\n")
+
         val inline = mutableMapOf<String, String>()
-        val directivesText = OPENVPN_INLINE_BLOCK_REGEX.replace(text) { match ->
+        val directivesText = OPENVPN_INLINE_BLOCK_REGEX.replace(normalizedText) { match ->
             val tag = match.groupValues[1].lowercase()
             val body = match.groupValues[2].trim('\r', '\n')
             inline[tag] = if (body.isEmpty()) "" else body + "\n"
@@ -1493,8 +1659,11 @@ object LinkParser {
         }
         val dev = openVpnLastArg(byKey, "dev").lowercase()
         if (dev.startsWith("tap")) throw LinkParseError("OpenVPN TAP profiles are not supported; a TUN profile is required")
+        // Same rule as the desktop client, which imports these profiles fine: a bare
+        // `comp-lzo` / `compress` only asks for the compression framing byte, which the
+        // core negotiates away, so it is accepted. Only an explicit algorithm the core
+        // cannot decompress (lzo, lz4, ...) is rejected.
         for (key in listOf("compress", "comp-lzo")) {
-            if (key !in byKey) continue
             val value = openVpnLastArg(byKey, key).lowercase()
             if (value.isNotEmpty() && value !in setOf("no", "disable", "stub", "stub-v2")) {
                 throw LinkParseError("OpenVPN compression `$value` is not supported")
@@ -1502,8 +1671,7 @@ object LinkParser {
         }
 
         val globalProto = normalizeOpenVpnProto(openVpnLastArg(byKey, "proto").ifEmpty { "udp" })
-        val servers = mutableListOf<Map<String, Any?>>()
-        val remoteProtos = mutableSetOf<String>()
+        val remotes = mutableListOf<Pair<String, Map<String, Any?>>>()
         for (values in byKey["remote"] ?: emptyList()) {
             if (values.isEmpty()) continue
             val server = values[0].trim()
@@ -1512,14 +1680,24 @@ object LinkParser {
             val port = portText.toIntOrNull()?.takeIf { it in 1..65535 }
                 ?: throw LinkParseError("invalid OpenVPN remote port `$portText`")
             val remoteProto = values.getOrNull(2)?.let { normalizeOpenVpnProto(it) } ?: globalProto
-            remoteProtos.add(remoteProto)
-            servers.add(mapOf("server" to server, "server_port" to port))
+            remotes.add(remoteProto to mapOf("server" to server, "server_port" to port))
         }
-        if (servers.isEmpty()) throw LinkParseError("OpenVPN profile does not contain a usable `remote` server")
-        if (remoteProtos.size > 1) {
-            throw LinkParseError("OpenVPN profile mixes TCP and UDP remotes, which this core cannot represent")
+        if (remotes.isEmpty()) throw LinkParseError("OpenVPN profile does not contain a usable `remote` server")
+        // The bundled core implements neither --fragment nor --mssfix, and its
+        // `udp_fragment` dial option does not clear the kernel DF bit, so a UDP control
+        // channel always dies on the oversized certificate datagram with
+        // `write: message too long`. A profile that also lists TCP remotes carries the
+        // very same credentials, so keep those and drop the UDP ones instead of failing
+        // the import.
+        val tcpRemotes = remotes.filter { it.first == "tcp" }
+        val selected = if (tcpRemotes.isNotEmpty()) tcpRemotes else remotes
+        val proto = selected.first().first
+        if (proto != "tcp") {
+            throw LinkParseError(
+                "OpenVPN over UDP is not supported by this core; import the TCP variant of this profile"
+            )
         }
-        val proto = remoteProtos.firstOrNull() ?: globalProto
+        val servers = selected.map { it.second }
 
         val native = mutableMapOf<String, Any?>(
             "type" to "openvpn",
@@ -1538,7 +1716,9 @@ object LinkParser {
         val cipher = selectOpenVpnCipher(byKey)
         if (cipher.isNotEmpty()) native["cipher"] = cipher
         val auth = openVpnLastArg(byKey, "auth")
-        if (auth.isNotEmpty() && auth.lowercase() != "none") native["auth"] = auth.uppercase()
+        if (auth.isNotEmpty() && auth.lowercase() != "none") {
+            OpenVpnConfigNormalizer.normalizeAuthDigest(auth)?.let { native["auth"] = it }
+        }
 
         val credentials = inline["auth-user-pass"] ?: ""
         if (credentials.isEmpty() && openVpnLastValues(byKey, "auth-user-pass").isNotEmpty()) {
@@ -1549,6 +1729,17 @@ object LinkParser {
             if (credLines.isNotEmpty()) native["username"] = credLines[0]
             if (credLines.size > 1) native["password"] = credLines[1]
         }
+
+        // An encrypted <key> is unusable without its passphrase. `askpass <file>`
+        // cannot be read on Android, so the value has to travel inside the profile.
+        val keyPassword = openVpnKeyPassword(text, inline)
+        if (keyPassword.isEmpty() && openVpnLastValues(byKey, "askpass").isNotEmpty()) {
+            throw LinkParseError(
+                "OpenVPN `askpass` file references are not supported on Android; " +
+                    "enter the private key password in the node editor"
+            )
+        }
+        if (keyPassword.isNotEmpty()) native["key_password"] = keyPassword
 
         for ((directive, nativeKey) in listOf("tls-auth" to "tls_auth", "tls-crypt" to "tls_crypt", "tls-crypt-v2" to "tls_crypt")) {
             val content = inline[directive] ?: ""
@@ -1561,6 +1752,10 @@ object LinkParser {
                 if (directive == "tls-crypt-v2") native["tls_crypt_v2"] = true
             }
             if (directive == "tls-auth" && values.size > 1) native["key_direction"] = openVpnKeyDirection(values[1])
+            if (directive == "tls-auth" && content.isNotEmpty() && values.size <= 1) {
+                // The core's zero value means direction 0, not bidirectional.
+                native.putIfAbsent("key_direction", -1)
+            }
         }
         val direction = openVpnLastArg(byKey, "key-direction")
         if (direction.isNotEmpty()) native["key_direction"] = openVpnKeyDirection(direction)
@@ -1569,6 +1764,18 @@ object LinkParser {
             val value = openVpnLastArg(byKey, directive)
             if (value.isNotEmpty()) native[nativeKey] = openVpnDurationSeconds(value, directive)
         }
+        // `keepalive N M` is the shorthand most providers ship instead of the pair above.
+        openVpnLastValues(byKey, "keepalive").let { values ->
+            values.getOrNull(0)?.takeIf { it.isNotBlank() }?.let {
+                native.putIfAbsent("ping_interval", openVpnDurationSeconds(it, "keepalive"))
+            }
+            values.getOrNull(1)?.takeIf { it.isNotBlank() }?.let {
+                native.putIfAbsent("ping_restart", openVpnDurationSeconds(it, "keepalive"))
+            }
+        }
+        // No implicit timers beyond what the profile states: the desktop client that
+        // runs these same profiles successfully leaves them unset, and a forced
+        // `ping_restart` tears down a healthy tunnel whenever the peer stays quiet.
 
         val tls = mutableMapOf<String, Any?>()
         for ((directive, nativeKey) in listOf("ca" to "ca", "cert" to "certificate", "key" to "key")) {
@@ -1579,11 +1786,11 @@ object LinkParser {
             }
             if (content.isNotEmpty()) tls[nativeKey] = content
         }
-        val tlsCiphers = mutableListOf<String>()
-        for (directive in listOf("tls-cipher", "tls-ciphersuites")) {
-            val value = openVpnLastArg(byKey, directive)
-            if (value.isNotEmpty()) tlsCiphers.addAll(value.split(":").map { it.trim() }.filter { it.isNotEmpty() })
-        }
+        // The shipped extended core configures Go's TLS <=1.2 CipherSuites. OpenVPN's
+        // `tls-ciphersuites` controls TLS 1.3 and cannot be represented by that field.
+        val tlsCiphers = OpenVpnConfigNormalizer.normalizeTlsCipherSuites(
+            openVpnLastArg(byKey, "tls-cipher")
+        )
         if (tlsCiphers.isNotEmpty()) tls["cipher_suites"] = tlsCiphers
         val verifyValues = openVpnLastValues(byKey, "verify-x509-name")
         if (verifyValues.isNotEmpty()) {
@@ -1655,18 +1862,19 @@ object LinkParser {
 
     private fun normalizeOpenVpnProto(value: String): String {
         val proto = value.trim().lowercase().ifEmpty { "udp" }
-        if (proto.startsWith("udp")) return "udp"
+        if (proto in setOf("udp", "udp4", "udp6")) return "udp"
         if (proto in setOf("tcp", "tcp-client", "tcp4", "tcp4-client", "tcp6", "tcp6-client")) return "tcp"
         throw LinkParseError("unsupported OpenVPN transport `$value`")
     }
 
     private fun selectOpenVpnCipher(byKey: Map<String, MutableList<List<String>>>): String {
-        for (directive in listOf("cipher", "data-ciphers", "ncp-ciphers", "data-ciphers-fallback")) {
+        // Prefer the negotiated modern list. `cipher` and data-ciphers-fallback are
+        // legacy fallbacks and must not override a compatible data-ciphers choice.
+        for (directive in listOf("data-ciphers", "ncp-ciphers", "cipher", "data-ciphers-fallback")) {
             val value = openVpnLastArg(byKey, directive)
             if (value.isEmpty()) continue
             for (candidate in value.split(":")) {
-                val normalized = candidate.trim().uppercase()
-                if (normalized in OPENVPN_SUPPORTED_CIPHERS) return normalized
+                OpenVpnConfigNormalizer.normalizeDataCipher(candidate)?.let { return it }
             }
         }
         return ""
@@ -1692,7 +1900,10 @@ object LinkParser {
     private fun openVpnVerifyNameMode(value: String): String {
         val normalized = value.trim().lowercase()
         return when (normalized) {
-            "name", "name-prefix", "subject" -> normalized
+            "name", "name-prefix", "name-suffix" -> normalized
+            "subject" -> throw LinkParseError(
+                "OpenVPN verify-x509-name mode `subject` is not supported by the bundled core"
+            )
             else -> throw LinkParseError("invalid OpenVPN verify-x509-name mode `$value`")
         }
     }
@@ -1801,12 +2012,20 @@ object LinkParser {
 
     fun parseClashProxyMap(map: Map<String, Any?>): ParsedNode {
         val name = map["name"]?.toString()?.ifBlank { "Proxy" } ?: "Proxy"
-        val rawType = map["type"]?.toString()?.lowercase() ?: throw LinkParseError("Missing proxy type")
+        val rawType = map["type"]?.toString()?.trim()?.lowercase()
+            ?.takeIf(String::isNotEmpty) ?: throw LinkParseError("Missing proxy type")
+        if (rawType !in CLASH_SUPPORTED_PROXY_TYPES) {
+            throw LinkParseError(
+                "Unsupported Clash proxy type `$rawType`; it cannot be translated safely for sing-box-extended"
+            )
+        }
         // WARP-generator MASQUE entries may be profile-only (no server field).
         val serverOrNull = map["server"]?.toString() ?: map["address"]?.toString() ?: map["host"]?.toString()
         if (serverOrNull == null && rawType != "masque") throw LinkParseError("Missing proxy server")
         val server = serverOrNull ?: ""
-        val port = (map["port"] ?: map["server_port"])?.toString()?.toIntOrNull() ?: 443
+        val scalarPort = (map["port"] ?: map["server_port"])?.toString()?.toIntOrNull()
+        val rangePorts = clashStringList(map["server-ports"] ?: map["server_ports"] ?: map["ports"])
+        val port = scalarPort ?: representativePort(rangePorts) ?: 443
 
         // `reserved` is a plain WireGuard/WARP field, not an AmneziaWG obfuscation
         // parameter, so it must not promote the entry to AWG. Clash keeps the real
@@ -1850,6 +2069,7 @@ object LinkParser {
     ): String {
         return try {
             val encodedName = java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+            val rawType = map["type"]?.toString()?.trim()?.lowercase().orEmpty()
             when (scheme) {
                 "vless" -> {
                     val uuid = map["uuid"]?.toString() ?: map["id"]?.toString() ?: ""
@@ -1870,6 +2090,13 @@ object LinkParser {
                     if (sni.isNotEmpty()) params["sni"] = sni
                     if (fp.isNotEmpty()) params["fp"] = fp
                     if (flow.isNotEmpty()) params["flow"] = flow
+                    clashCertificatePins(map).takeIf { it.isNotEmpty() }?.let {
+                        params["pinsha256"] = it.joinToString(",")
+                    }
+                    if (toBool(map["skip-cert-verify"]) || toBool(map["insecure"])) {
+                        params["allowinsecure"] = "1"
+                    }
+                    clashTransportParams(map, params)
 
                     if (wsOpts != null) {
                         wsOpts["path"]?.toString()?.let { params["path"] = it }
@@ -1885,7 +2112,10 @@ object LinkParser {
 
                     val user = mutableMapOf<String, Any?>("id" to uuid, "encryption" to "none")
                     if (flow.isNotEmpty()) user["flow"] = flow
-                    val streamSettings = buildStreamSettings(params, defaultNetwork = "tcp", defaultSecurity = security)
+                    val streamSettings = enrichClashStreamSettings(
+                        buildStreamSettings(params, defaultNetwork = "tcp", defaultSecurity = security),
+                        map
+                    )
 
                     outbound["settings"] = mapOf("vnext" to listOf(mapOf("address" to server, "port" to port, "users" to listOf(user))))
                     outbound["streamSettings"] = streamSettings
@@ -1900,13 +2130,21 @@ object LinkParser {
                     val net = map["network"]?.toString() ?: "tcp"
                     val tls = if (map["tls"] == true || map["tls"]?.toString() == "true") "tls" else "none"
                     val sni = map["servername"]?.toString() ?: map["sni"]?.toString() ?: ""
-                    val wsOpts = map["ws-opts"] as? Map<*, *>
-                    val path = wsOpts?.get("path")?.toString() ?: ""
-                    val host = (wsOpts?.get("headers") as? Map<*, *>)?.get("Host")?.toString() ?: ""
-
                     val user = mapOf("id" to uuid, "alterId" to alterId, "security" to cipher)
-                    val params = mutableMapOf("type" to net, "security" to tls, "host" to host, "path" to path, "sni" to sni)
-                    val streamSettings = buildStreamSettings(params, defaultNetwork = "tcp", defaultSecurity = tls)
+                    val params = mutableMapOf("type" to net, "security" to tls, "sni" to sni)
+                    map["client-fingerprint"]?.toString()?.takeIf(String::isNotEmpty)?.let { params["fp"] = it }
+                    map["alpn"]?.let { params["alpn"] = clashStringList(it).joinToString(",") }
+                    clashCertificatePins(map).takeIf { it.isNotEmpty() }?.let {
+                        params["pinsha256"] = it.joinToString(",")
+                    }
+                    if (toBool(map["skip-cert-verify"]) || toBool(map["insecure"])) {
+                        params["allowinsecure"] = "1"
+                    }
+                    clashTransportParams(map, params)
+                    val streamSettings = enrichClashStreamSettings(
+                        buildStreamSettings(params, defaultNetwork = "tcp", defaultSecurity = tls),
+                        map
+                    )
 
                     outbound["settings"] = mapOf("vnext" to listOf(mapOf("address" to server, "port" to port, "users" to listOf(user))))
                     outbound["streamSettings"] = streamSettings
@@ -1914,7 +2152,11 @@ object LinkParser {
                     val json = JSONObject(mapOf(
                         "v" to "2", "ps" to name, "add" to server, "port" to port, "id" to uuid,
                         "aid" to alterId, "scy" to cipher, "net" to net, "type" to "none",
-                        "host" to host, "path" to path, "tls" to tls, "sni" to sni
+                        "host" to (params["host"] ?: ""), "path" to (
+                            params["path"] ?: params["servicename"] ?: ""
+                        ), "tls" to tls, "sni" to sni,
+                        "alpn" to (params["alpn"] ?: ""), "fp" to (params["fp"] ?: ""),
+                        "pinSHA256" to (params["pinsha256"] ?: "")
                     )).toString()
                     "vmess://${Base64.getEncoder().encodeToString(json.toByteArray(Charsets.UTF_8))}"
                 }
@@ -1922,25 +2164,60 @@ object LinkParser {
                     val password = map["password"]?.toString() ?: ""
                     val sni = map["servername"]?.toString() ?: map["sni"]?.toString() ?: server
                     val net = map["network"]?.toString() ?: "tcp"
-                    val wsOpts = map["ws-opts"] as? Map<*, *>
-                    val path = wsOpts?.get("path")?.toString() ?: ""
-
-                    val params = mutableMapOf("type" to net, "security" to "tls", "sni" to sni, "path" to path)
-                    val streamSettings = buildStreamSettings(params, defaultNetwork = "tcp", defaultSecurity = "tls")
+                    val params = mutableMapOf("type" to net, "security" to "tls", "sni" to sni)
+                    map["client-fingerprint"]?.toString()?.takeIf(String::isNotEmpty)?.let { params["fp"] = it }
+                    map["alpn"]?.let { params["alpn"] = clashStringList(it).joinToString(",") }
+                    clashCertificatePins(map).takeIf { it.isNotEmpty() }?.let {
+                        params["pinsha256"] = it.joinToString(",")
+                    }
+                    if (toBool(map["skip-cert-verify"]) || toBool(map["insecure"])) {
+                        params["allowinsecure"] = "1"
+                    }
+                    clashTransportParams(map, params)
+                    val streamSettings = enrichClashStreamSettings(
+                        buildStreamSettings(params, defaultNetwork = "tcp", defaultSecurity = "tls"),
+                        map
+                    )
 
                     outbound["settings"] = mapOf("servers" to listOf(mapOf("address" to server, "port" to port, "password" to password)))
                     outbound["streamSettings"] = streamSettings
 
-                    "trojan://$password@$server:$port?security=tls&sni=${java.net.URLEncoder.encode(sni, "UTF-8")}&type=$net#$encodedName"
+                    val query = params.entries.joinToString("&") {
+                        "${it.key}=${java.net.URLEncoder.encode(it.value, "UTF-8")}"
+                    }
+                    "trojan://$password@$server:$port?$query#$encodedName"
                 }
                 "ss" -> {
                     val method = map["cipher"]?.toString() ?: map["method"]?.toString() ?: "aes-256-gcm"
                     val password = map["password"]?.toString() ?: ""
 
-                    outbound["settings"] = mapOf("servers" to listOf(mapOf("address" to server, "port" to port, "method" to method, "password" to password)))
+                    val serverMap = mutableMapOf<String, Any?>(
+                        "address" to server,
+                        "port" to port,
+                        "method" to method,
+                        "password" to password
+                    )
+                    val plugin = map["plugin"]?.toString().orEmpty()
+                    val pluginOpts = (map["plugin-opts"] ?: map["plugin_opts"])?.let { raw ->
+                        when (raw) {
+                            is Map<*, *> -> raw.entries.joinToString(";") { (key, value) ->
+                                if (value == true) key.toString() else "${key}=${value}"
+                            }
+                            else -> raw.toString()
+                        }
+                    }.orEmpty()
+                    if (plugin.isNotEmpty()) serverMap["plugin"] = plugin
+                    if (pluginOpts.isNotEmpty()) serverMap["plugin_opts"] = pluginOpts
+                    outbound["settings"] = mapOf("servers" to listOf(serverMap))
 
                     val userPassB64 = Base64.getEncoder().encodeToString("$method:$password".toByteArray(Charsets.UTF_8))
-                    "ss://$userPassB64@$server:$port#$encodedName"
+                    val pluginQuery = if (plugin.isEmpty()) {
+                        ""
+                    } else {
+                        val pluginValue = listOf(plugin, pluginOpts).filter(String::isNotEmpty).joinToString(";")
+                        "/?plugin=${java.net.URLEncoder.encode(pluginValue, "UTF-8")}"
+                    }
+                    "ss://$userPassB64@$server:$port$pluginQuery#$encodedName"
                 }
                 "hysteria2" -> {
                     val password = map["password"]?.toString() ?: map["auth"]?.toString() ?: ""
@@ -1949,17 +2226,40 @@ object LinkParser {
                     val obfs = map["obfs"]?.toString() ?: ""
                     val obfsPassword = map["obfs-password"]?.toString() ?: ""
 
+                    val tlsMap = mutableMapOf<String, Any?>(
+                        "enabled" to true,
+                        "server_name" to sni,
+                        "insecure" to insecure
+                    )
+                    clashCertificatePins(map).takeIf { it.isNotEmpty() }?.let {
+                        tlsMap["certificate_public_key_sha256"] = it
+                    }
                     val singbox = mutableMapOf<String, Any?>(
                         "type" to "hysteria2",
                         "server" to server,
                         "server_port" to port,
                         "password" to password,
-                        "tls" to mapOf("enabled" to true, "server_name" to sni, "insecure" to insecure)
+                        "tls" to tlsMap
                     )
                     if (obfs.isNotEmpty()) singbox["obfs"] = mapOf("type" to obfs, "password" to obfsPassword)
+                    clashSpeedMbps(map["up"] ?: map["up-mbps"] ?: map["up_mbps"])?.let { singbox["up_mbps"] = it }
+                    clashSpeedMbps(map["down"] ?: map["down-mbps"] ?: map["down_mbps"])?.let { singbox["down_mbps"] = it }
+                    val ports = clashStringList(map["ports"] ?: map["server-ports"] ?: map["server_ports"])
+                    if (ports.isNotEmpty()) singbox["server_ports"] = ports
+                    (map["hop-interval"] ?: map["hop_interval"])?.let {
+                        singbox["hop_interval"] = durationSeconds(it)
+                    }
                     outbound["singbox"] = singbox
 
-                    "hy2://$password@$server:$port?sni=${java.net.URLEncoder.encode(sni, "UTF-8")}&insecure=${if (insecure) 1 else 0}#$encodedName"
+                    val params = mutableListOf(
+                        "sni=${java.net.URLEncoder.encode(sni, "UTF-8")}",
+                        "insecure=${if (insecure) 1 else 0}"
+                    )
+                    if (obfs.isNotEmpty()) params += "obfs=${java.net.URLEncoder.encode(obfs, "UTF-8")}"
+                    if (obfsPassword.isNotEmpty()) {
+                        params += "obfs-password=${java.net.URLEncoder.encode(obfsPassword, "UTF-8")}"
+                    }
+                    "hy2://$password@$server:$port?${params.joinToString("&")}#$encodedName"
                 }
                 "hysteria" -> {
                     // Hysteria v1 (parity with desktop _clash_to_singbox_outbound).
@@ -1971,10 +2271,22 @@ object LinkParser {
                     )
                     val authStr = (map["auth-str"] ?: map["auth_str"] ?: map["auth"] ?: map["password"])?.toString() ?: ""
                     if (authStr.isNotEmpty()) singbox["auth_str"] = authStr
-                    (map["up"] ?: map["up-speed"])?.toString()?.filter { it.isDigit() }?.toIntOrNull()?.let { singbox["up_mbps"] = it }
-                    (map["down"] ?: map["down-speed"])?.toString()?.filter { it.isDigit() }?.toIntOrNull()?.let { singbox["down_mbps"] = it }
+                    clashSpeedMbps(map["up"] ?: map["up-speed"] ?: map["up_mbps"])?.let { singbox["up_mbps"] = it }
+                    clashSpeedMbps(map["down"] ?: map["down-speed"] ?: map["down_mbps"])?.let { singbox["down_mbps"] = it }
                     map["protocol"]?.toString()?.takeIf { it.isNotBlank() && it.lowercase() != "hysteria" }?.let { singbox["protocol"] = it }
                     map["obfs"]?.toString()?.takeIf { it.isNotBlank() }?.let { singbox["obfs"] = it }
+                    clashStringList(map["ports"] ?: map["server-ports"] ?: map["server_ports"])
+                        .takeIf { it.isNotEmpty() }?.let { singbox["server_ports"] = it }
+                    (map["hop-interval"] ?: map["hop_interval"])?.let {
+                        singbox["hop_interval"] = durationSeconds(it)
+                    }
+                    (map["recv-window-conn"] ?: map["recv_window_conn"])?.toString()?.toLongOrNull()
+                        ?.let { singbox["recv_window_conn"] = it }
+                    (map["recv-window"] ?: map["recv_window"])?.toString()?.toLongOrNull()
+                        ?.let { singbox["recv_window"] = it }
+                    if (toBool(map["disable-mtu-discovery"] ?: map["disable_mtu_discovery"])) {
+                        singbox["disable_mtu_discovery"] = true
+                    }
                     val tls = mutableMapOf<String, Any?>("enabled" to true)
                     tls["server_name"] = (map["servername"] ?: map["sni"])?.toString()?.takeIf { it.isNotBlank() } ?: server
                     if (toBool(map["skip-cert-verify"])) tls["insecure"] = true
@@ -1985,6 +2297,9 @@ object LinkParser {
                         else -> alpnValue.toString().split(",").map { it.trim() }.filter { it.isNotEmpty() }
                     }
                     if (alpnList.isNotEmpty()) tls["alpn"] = alpnList
+                    clashCertificatePins(map).takeIf { it.isNotEmpty() }?.let {
+                        tls["certificate_public_key_sha256"] = it
+                    }
                     singbox["tls"] = tls
                     outbound["singbox"] = singbox
                     toJsonString(singbox)
@@ -2021,14 +2336,17 @@ object LinkParser {
                         "type" to "mieru",
                         "tag" to "proxy",
                         "server" to server,
-                        "server_port" to port,
                         "transport" to ((map["transport"]?.toString()?.takeIf { it.isNotBlank() } ?: "TCP").uppercase()),
                         "username" to (map["username"]?.toString() ?: ""),
                         "password" to (map["password"]?.toString() ?: "")
                     )
+                    (map["port"] ?: map["server_port"])?.toString()?.toIntOrNull()
+                        ?.takeIf { it in 1..65535 }?.let { singbox["server_port"] = it }
                     map["multiplexing"]?.toString()?.takeIf { it.isNotBlank() }?.let { singbox["multiplexing"] = it }
                     val serverPorts = clashStringList(map["server-ports"] ?: map["server_ports"] ?: map["ports"])
                     if (serverPorts.isNotEmpty()) singbox["server_ports"] = serverPorts
+                    (map["traffic-pattern"] ?: map["traffic_pattern"])?.toString()
+                        ?.takeIf(String::isNotBlank)?.let { singbox["traffic_pattern"] = it }
                     outbound["singbox"] = singbox
                     toJsonString(singbox)
                 }
@@ -2209,10 +2527,79 @@ object LinkParser {
                     outbound["settings"] = mapOf("servers" to listOf(serverMap))
 
                     val auth = if (user.isNotEmpty()) "$user:$pass@" else ""
-                    "http://$auth$server:$port#$encodedName"
+                    val secure = rawType == "https" || toBool(map["tls"])
+                    if (secure) {
+                        val tls = mutableMapOf<String, Any?>(
+                            "enabled" to true,
+                            "server_name" to (
+                                map["servername"]?.toString()
+                                    ?: map["sni"]?.toString()
+                                    ?: server
+                            )
+                        )
+                        if (toBool(map["skip-cert-verify"] ?: map["insecure"])) tls["insecure"] = true
+                        clashCertificatePins(map).takeIf { it.isNotEmpty() }?.let {
+                            tls["certificate_public_key_sha256"] = it
+                        }
+                        outbound["tls"] = tls
+                    }
+                    "${if (secure) "https" else "http"}://$auth$server:$port#$encodedName"
+                }
+                "anytls" -> {
+                    val password = map["password"]?.toString().orEmpty()
+                    if (password.isEmpty()) throw LinkParseError("AnyTLS proxy is missing password")
+                    val tls = mutableMapOf<String, Any?>(
+                        "enabled" to true,
+                        "server_name" to (
+                            map["servername"]?.toString()
+                                ?: map["sni"]?.toString()
+                                ?: server
+                        )
+                    )
+                    if (toBool(map["skip-cert-verify"] ?: map["insecure"])) tls["insecure"] = true
+                    clashStringList(map["alpn"]).takeIf { it.isNotEmpty() }?.let { tls["alpn"] = it }
+                    clashCertificatePins(map).takeIf { it.isNotEmpty() }?.let {
+                        tls["certificate_public_key_sha256"] = it
+                    }
+                    val singbox = mutableMapOf<String, Any?>(
+                        "type" to "anytls",
+                        "server" to server,
+                        "server_port" to port,
+                        "password" to password,
+                        "tls" to tls
+                    )
+                    (map["idle-session-check-interval"] ?: map["idle_session_check_interval"])
+                        ?.let { singbox["idle_session_check_interval"] = durationSeconds(it) }
+                    (map["idle-session-timeout"] ?: map["idle_session_timeout"])
+                        ?.let { singbox["idle_session_timeout"] = durationSeconds(it) }
+                    (map["min-idle-session"] ?: map["min_idle_session"])?.toString()?.toIntOrNull()
+                        ?.let { singbox["min_idle_session"] = it }
+                    outbound["singbox"] = singbox
+                    toJsonString(singbox)
+                }
+                "snell" -> {
+                    val psk = (map["psk"] ?: map["password"])?.toString().orEmpty()
+                    if (psk.isEmpty()) throw LinkParseError("Snell proxy is missing psk")
+                    val singbox = mutableMapOf<String, Any?>(
+                        "type" to "snell",
+                        "server" to server,
+                        "server_port" to port,
+                        "psk" to psk
+                    )
+                    map["version"]?.toString()?.toIntOrNull()?.let { singbox["version"] = it }
+                    if (toBool(map["reuse"])) singbox["reuse"] = true
+                    val obfsOpts = map["obfs-opts"] as? Map<*, *> ?: map["obfs_opts"] as? Map<*, *>
+                    if (obfsOpts != null) {
+                        val obfs = mutableMapOf<String, Any?>()
+                        obfsOpts["mode"]?.toString()?.takeIf(String::isNotBlank)?.let { obfs["mode"] = it }
+                        obfsOpts["host"]?.toString()?.takeIf(String::isNotBlank)?.let { obfs["host"] = it }
+                        if (obfs.isNotEmpty()) singbox["obfs"] = obfs
+                    }
+                    outbound["singbox"] = singbox
+                    toJsonString(singbox)
                 }
                 else -> {
-                    toJsonString(map)
+                    throw LinkParseError("Unsupported Clash proxy type `$rawType`")
                 }
             }
         } catch (e: LinkParseError) {
@@ -2294,6 +2681,7 @@ object LinkParser {
             val skipProtocols = setOf("freedom", "blackhole", "dns", "direct", "block", "selector", "urltest", "url-test", "loopback")
             var handled = false
             val nodesByTag = mutableMapOf<String, ParsedNode>()
+            val nativeItemsByTag = linkedMapOf<String, Pair<String, Map<String, Any?>>>()
             val autoGroupDefs = mutableListOf<Pair<String, List<String>>>()
             for (arrayKey in listOf("outbounds", "endpoints")) {
                 if (!json.has(arrayKey)) continue
@@ -2308,6 +2696,10 @@ object LinkParser {
                         continue
                     }
                     val item = raw as? JSONObject ?: continue
+                    val itemTag = item.optString("tag").trim()
+                    if (itemTag.isNotEmpty()) {
+                        nativeItemsByTag.putIfAbsent(itemTag, arrayKey to jsonToMap(item))
+                    }
                     val protocol = item.optString("protocol", item.optString("type"))
                     if (protocol.lowercase() in skipProtocols) {
                         // Every urltest/selector group is imported as one AUTO node
@@ -2330,13 +2722,13 @@ object LinkParser {
                     try {
                         val parsedItem = parseJsonItem(item)
                         nodes.add(parsedItem)
-                        val itemTag = item.optString("tag").trim()
                         if (itemTag.isNotEmpty()) nodesByTag[itemTag] = parsedItem
                     } catch (e: Exception) {
                         errors.add("Outbound ${i + 1}: ${e.message}")
                     }
                 }
             }
+            attachSingboxDependencies(nodesByTag, nativeItemsByTag)
             // Xray represents an explicit automatic pool through routing balancers.
             // A selector is a tag prefix, so resolve it only after every outbound is parsed.
             json.optJSONObject("routing")?.optJSONArray("balancers")?.let { balancers ->
@@ -2404,6 +2796,75 @@ object LinkParser {
         if (nodes.isEmpty()) throw LinkParseError("No servers found in JSON payload")
 
         return Pair(nodes, errors)
+    }
+
+    private fun attachSingboxDependencies(
+        nodesByTag: Map<String, ParsedNode>,
+        nativeItemsByTag: Map<String, Pair<String, Map<String, Any?>>>
+    ) {
+        for ((rootTag, node) in nodesByTag) {
+            val orderedTags = mutableListOf<String>()
+            val added = mutableSetOf<String>()
+            val visiting = mutableSetOf<String>()
+
+            fun visit(tag: String) {
+                if (tag == rootTag || tag in added || !visiting.add(tag)) return
+                val raw = nativeItemsByTag[tag]?.second
+                if (raw == null) {
+                    visiting.remove(tag)
+                    return
+                }
+                nativeDependencyReferences(raw).forEach(::visit)
+                visiting.remove(tag)
+                if (added.add(tag)) orderedTags.add(tag)
+            }
+
+            nativeItemsByTag[rootTag]?.second
+                ?.let(::nativeDependencyReferences)
+                ?.forEach(::visit)
+
+            if (orderedTags.isEmpty()) continue
+            val dependencies = linkedMapOf<String, Any?>(
+                "outbounds" to orderedTags.mapNotNull { tag ->
+                    nativeItemsByTag[tag]?.takeIf { it.first == "outbounds" }?.second
+                },
+                "endpoints" to orderedTags.mapNotNull { tag ->
+                    nativeItemsByTag[tag]?.takeIf { it.first == "endpoints" }?.second
+                }
+            )
+            node.outbound = node.outbound.toMutableMap().apply {
+                this["_singbox_dependencies"] = dependencies
+            }
+        }
+    }
+
+    private fun nativeDependencyReferences(value: Any?): List<String> {
+        val references = linkedSetOf<String>()
+
+        fun collect(current: Any?) {
+            when (current) {
+                is Map<*, *> -> current.forEach { (rawKey, child) ->
+                    when (rawKey?.toString()?.lowercase()) {
+                        "detour", "default" ->
+                            child?.toString()?.trim()?.takeIf(String::isNotEmpty)?.let(references::add)
+                        "outbounds" -> when (child) {
+                            is Iterable<*> -> child.forEach { item ->
+                                item?.toString()?.trim()?.takeIf(String::isNotEmpty)?.let(references::add)
+                            }
+                            is Array<*> -> child.forEach { item ->
+                                item?.toString()?.trim()?.takeIf(String::isNotEmpty)?.let(references::add)
+                            }
+                        }
+                        else -> collect(child)
+                    }
+                }
+                is Iterable<*> -> current.forEach(::collect)
+                is Array<*> -> current.forEach(::collect)
+            }
+        }
+
+        collect(value)
+        return references.toList()
     }
 
     /**
@@ -2706,6 +3167,16 @@ object LinkParser {
                 params["congestion"]?.takeIf { it.isNotEmpty() }?.let { kcp["congestion"] = toBool(it) }
                 stream["kcpSettings"] = kcp
             }
+            // The bundled sing-box-extended is built with with_quic. Its V2Ray
+            // QUIC transport has an intentionally empty option object and requires
+            // TLS; keeping the explicit network lets the runtime builder emit
+            // `transport: {type: "quic"}` rather than rejecting a valid profile.
+            "quic" -> {
+                if (security != "tls") {
+                    throw LinkParseError("V2Ray quic requires TLS in sing-box-extended")
+                }
+                stream["quicSettings"] = emptyMap<String, Any?>()
+            }
             "tcp" -> Unit
             else -> throw LinkParseError("unsupported transport `$rawNetwork`")
         }
@@ -2715,6 +3186,9 @@ object LinkParser {
             params["sni"]?.let { if (it.isNotEmpty()) tls["serverName"] = it }
             params["alpn"]?.let { if (it.isNotEmpty()) tls["alpn"] = it.split(",").map { s -> s.trim() } }
             params["fp"]?.let { if (it.isNotEmpty()) tls["fingerprint"] = it }
+            certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
+                tls["certificatePublicKeySha256"] = it
+            }
             if (toBool(params["allowinsecure"]) || toBool(params["allow_insecure"]) || toBool(params["insecure"])) {
                 tls["allowInsecure"] = true
             }
@@ -2731,6 +3205,20 @@ object LinkParser {
         }
 
         return stream
+    }
+
+    /**
+     * Common share-link spellings for sing-box's SPKI pin. Values are kept as
+     * strings here and normalized/validated by the config builder immediately
+     * before they are emitted to the core.
+     */
+    private fun certificatePublicKeyPins(params: Map<String, String>): List<String> {
+        val raw = params["pinsha256"]
+            ?: params["certificate_public_key_sha256"]
+            ?: params["certificate-public-key-sha256"]
+            ?: params["certsha256"]
+            ?: return emptyList()
+        return raw.split(',').map(String::trim).filter(String::isNotEmpty)
     }
 
     private fun applyHappServerMetadata(node: ParsedNode, raw: String) {

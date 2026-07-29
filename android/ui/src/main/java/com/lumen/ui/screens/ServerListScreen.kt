@@ -151,6 +151,7 @@ fun ServerListScreen(
     onExportQrCode: (NodeUiModel) -> Unit = {},
     onImportClipboard: () -> Unit,
     onAddSubscription: (String, String) -> Unit,
+    onUpdateSubscription: (SubscriptionUiModel, String, String) -> Boolean = { _, _, _ -> false },
     onRefreshSubscription: (SubscriptionUiModel) -> Unit,
     onDeleteSubscription: (SubscriptionUiModel) -> Unit,
     onImportFile: () -> Unit = {},
@@ -205,6 +206,7 @@ fun ServerListScreen(
     var showFiltersMenu by remember { mutableStateOf(false) }
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
     var propertiesSub by remember { mutableStateOf<SubscriptionUiModel?>(null) }
+    var editingSubscription by remember { mutableStateOf<SubscriptionUiModel?>(null) }
     // Group management: create/rename share one name dialog, delete asks first, and the
     // picker serves both the row menu and the multi-select bar.
     var showCreateGroup by remember { mutableStateOf(false) }
@@ -704,6 +706,7 @@ fun ServerListScreen(
                         },
                         onPingGroup = { onPingGroup(selectedSubscription.id) },
                         onShowProperties = { sub -> propertiesSub = sub },
+                        onEditSubscription = { sub -> editingSubscription = sub },
                         onExportAll = { subId ->
                             val text = onExportSubscriptionText(subId)
                             if (text.isNotBlank()) onShareText(text)
@@ -937,6 +940,18 @@ fun ServerListScreen(
 
     // "Subscription properties" from the header menu; the URL row is left out when the
     // provider asked for it with hide-url.
+    editingSubscription?.let { sub ->
+        EditSubscriptionDialog(
+            subscription = sub,
+            onDismiss = { editingSubscription = null },
+            onConfirm = { name, url ->
+                onUpdateSubscription(sub, name, url).also { saved ->
+                    if (saved) editingSubscription = null
+                }
+            }
+        )
+    }
+
     propertiesSub?.let { sub ->
         SubscriptionDetailsDialog(
             sub = sub,
@@ -944,6 +959,81 @@ fun ServerListScreen(
             onCopyUrl = onCopyText,
             onOpenUrl = onOpenUrl
         )
+    }
+}
+
+/** Subscription groups own both a display name and a source URL. */
+@Composable
+private fun EditSubscriptionDialog(
+    subscription: SubscriptionUiModel,
+    onDismiss: () -> Unit,
+    onConfirm: (String, String) -> Boolean
+) {
+    val s = LocalStrings.current
+    var name by remember(subscription.id) { mutableStateOf(subscription.name) }
+    var url by remember(subscription.id) { mutableStateOf(subscription.url) }
+    var invalid by remember(subscription.id) { mutableStateOf(false) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "${s.edit}: ${subscription.name}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(14.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        invalid = false
+                    },
+                    label = { Text(s.groupNameLabel) },
+                    singleLine = true,
+                    isError = invalid && name.isBlank(),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = {
+                        url = it
+                        invalid = false
+                    },
+                    label = { Text(s.url) },
+                    singleLine = true,
+                    isError = invalid,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text(s.cancel) }
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            invalid = !onConfirm(name.trim(), url.trim())
+                        },
+                        enabled = name.isNotBlank() && url.isNotBlank()
+                    ) { Text(s.saveAction) }
+                }
+            }
+        }
     }
 }
 
