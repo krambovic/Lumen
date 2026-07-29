@@ -66,14 +66,48 @@ class ConfigBuilderTest {
         assertEquals("https", dnsRemote.getString("type"))
         assertEquals("cloudflare-dns.com", dnsRemote.getString("server"))
         assertEquals("proxy", dnsRemote.getString("detour"))
-        assertEquals("dns-bootstrap", dnsRemote.getString("domain_resolver"))
+        // Known DoH providers resolve from the static table, so a carrier that blocks
+        // UDP/53 cannot stop the proxy resolver from coming up. The hostname is kept
+        // so TLS still has a valid certificate identity.
+        assertEquals("dns-doh-hosts", dnsRemote.getString("domain_resolver"))
+        val dohHosts = (0 until dnsServers.length())
+            .map { dnsServers.getJSONObject(it) }
+            .first { it.optString("tag") == "dns-doh-hosts" }
+        assertEquals("hosts", dohHosts.getString("type"))
+        assertEquals(
+            "1.1.1.1",
+            dohHosts.getJSONObject("predefined").getJSONArray("cloudflare-dns.com").getString(0)
+        )
         assertTrue(!dnsRemote.has("domain_strategy"))
         assertTrue(!dnsRemote.has("address"))
+        // Outbounds resolve their server hostname through dns-bootstrap, and a
+        // hijacking carrier answers plaintext UDP/53 with a block-page address, so
+        // the encrypted transport is tried first and the former plaintext one is
+        // kept behind it for networks that block DoH outright.
         val bootstrap = (0 until dnsServers.length())
             .map { dnsServers.getJSONObject(it) }
             .first { it.optString("tag") == "dns-bootstrap" }
-        assertEquals("udp", bootstrap.getString("type"))
-        assertEquals("direct", bootstrap.getString("detour"))
+        assertEquals("fallback", bootstrap.getString("type"))
+        assertEquals("sequential", bootstrap.getString("strategy"))
+        assertEquals(
+            listOf("dns-bootstrap-secure", "dns-bootstrap-plain"),
+            (0 until bootstrap.getJSONArray("servers").length())
+                .map { bootstrap.getJSONArray("servers").getString(it) }
+        )
+        val bootstrapSecure = (0 until dnsServers.length())
+            .map { dnsServers.getJSONObject(it) }
+            .first { it.optString("tag") == "dns-bootstrap-secure" }
+        assertEquals("https", bootstrapSecure.getString("type"))
+        assertEquals("cloudflare-dns.com", bootstrapSecure.getString("server"))
+        assertEquals("direct", bootstrapSecure.getString("detour"))
+        // Resolving itself from the static table is what keeps the encrypted
+        // bootstrap independent of UDP/53 without losing its TLS identity.
+        assertEquals("dns-doh-hosts", bootstrapSecure.getString("domain_resolver"))
+        val bootstrapPlain = (0 until dnsServers.length())
+            .map { dnsServers.getJSONObject(it) }
+            .first { it.optString("tag") == "dns-bootstrap-plain" }
+        assertEquals("udp", bootstrapPlain.getString("type"))
+        assertEquals("direct", bootstrapPlain.getString("detour"))
         val route = json.getJSONObject("route")
         assertEquals("dns-bootstrap", route.getJSONObject("default_domain_resolver").getString("server"))
         val routeRules = route.getJSONArray("rules")
@@ -298,7 +332,11 @@ class ConfigBuilderTest {
         val remote = (0 until dns.length())
             .map { dns.getJSONObject(it) }
             .first { it.optString("tag") == "dns-proxy-1" }
-        assertEquals("dns-bootstrap", remote.getString("domain_resolver"))
+        // The proxy resolver must never bootstrap through itself. A well-known DoH
+        // provider is answered by the static hosts table (no UDP/53 dependency);
+        // anything unknown still falls back to dns-bootstrap.
+        assertEquals("dns-doh-hosts", remote.getString("domain_resolver"))
+        assertTrue((0 until dns.length()).any { dns.getJSONObject(it).optString("tag") == "dns-doh-hosts" })
     }
 
     @Test
@@ -320,7 +358,7 @@ class ConfigBuilderTest {
             )
         )
         val dns = JSONObject(SingboxConfigBuilder.buildConfig(node)).getJSONObject("dns")
-        assertEquals("dns-proxy-1", dns.getString("final"))
+        assertEquals("dns-proxy-final", dns.getString("final"))
         val servers = dns.getJSONArray("servers")
         assertTrue((0 until servers.length()).none {
             servers.getJSONObject(it).optString("tag").startsWith("dns-vpn-")
@@ -368,14 +406,14 @@ class ConfigBuilderTest {
         assertEquals("dns-vpn-2", members.getString(1))
         // The proxied resolver keeps the lookup alive when the profile DNS is a
         // placeholder, and it dials through the same tunnel, so nothing leaks.
-        assertEquals("dns-proxy-1", members.getString(2))
+        assertEquals("dns-proxy-final", members.getString(2))
         val proxy = servers.first { it.optString("tag") == "dns-proxy-1" }
         assertEquals("proxy", proxy.getString("detour"))
         // The core resolves fallback members by tag while it walks the list, so
         // it must be declared after every server it names.
         val tags = servers.map { it.optString("tag") }
         assertTrue(tags.indexOf("dns-vpn-final") > tags.indexOf("dns-vpn-2"))
-        assertTrue(tags.indexOf("dns-vpn-final") > tags.indexOf("dns-proxy-1"))
+        assertTrue(tags.indexOf("dns-vpn-final") > tags.indexOf("dns-proxy-final"))
     }
 
     private fun systemDnsServerOf(vararg reported: String): JSONObject {
@@ -448,7 +486,7 @@ class ConfigBuilderTest {
                 SingboxConfigOptions(tunMode = false, dnsMode = "android")
             )
         )
-        assertEquals("dns-direct-1", json.getJSONObject("dns").getString("final"))
+        assertEquals("dns-direct-final", json.getJSONObject("dns").getString("final"))
         val rules = json.getJSONObject("route").getJSONArray("rules")
         assertTrue((0 until rules.length()).none { rules.getJSONObject(it).optString("action") == "hijack-dns" })
         assertTrue((0 until rules.length()).any {
@@ -458,7 +496,7 @@ class ConfigBuilderTest {
     }
 
     @Test
-    fun testSingboxMasqueOutboundKeepsDirectEndpointFieldsAtTopLevel() {
+    fun testSingboxMasqueOutboundUsesTheExtendedProfileSchema() {
         val node = ParsedNode(
             name = "WARP Masque",
             scheme = "masque",
@@ -473,23 +511,23 @@ class ConfigBuilderTest {
                 "public_key" to "public_key_abc",
                 "address" to listOf("172.16.0.2/32"),
                 "mtu" to 1280,
-                "profile" to mapOf("detour" to "direct")
+                "profile" to mapOf("detour" to "direct"),
+                "legacy_unknown" to true
             )
         )
         val json = JSONObject(SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions()))
         val proxyOb = json.getJSONArray("outbounds").getJSONObject(0)
         assertEquals("masque", proxyOb.getString("type"))
-        // The bundled -lumen core accepts the direct Clash/usque endpoint only at
-        // the top level. Dropping it leaves the tunnel without an endpoint.
-        assertEquals("162.159.193.1", proxyOb.getString("server"))
-        assertEquals(2408, proxyOb.getInt("server_port"))
-        assertEquals("private_key_xyz", proxyOb.getString("private_key"))
-        assertEquals("public_key_abc", proxyOb.getString("public_key"))
-        assertEquals(1280, proxyOb.getInt("mtu"))
-        assertTrue(proxyOb.has("address"))
+        // sing-box-extended 2.5.2 obtains its endpoint and EC key from the
+        // Cloudflare profile/cache. Static Clash/usque fields are unknown here.
+        for (key in listOf("server", "server_port", "private_key", "public_key", "address", "mtu")) {
+            assertTrue("MASQUE outbound must not contain $key", !proxyOb.has(key))
+        }
+        assertEquals(false, proxyOb.getBoolean("system"))
+        assertEquals("masque0", proxyOb.getString("name"))
+        assertTrue(!proxyOb.has("legacy_unknown"))
         val profile = proxyOb.getJSONObject("profile")
         assertEquals("direct", profile.getString("detour"))
-        // ...and rejects every one of them inside `profile`.
         for (key in listOf("server", "server_port", "public_key", "address", "mtu")) {
             assertTrue("MASQUE profile must not contain $key", !profile.has(key))
         }
@@ -514,10 +552,9 @@ class ConfigBuilderTest {
         val json = JSONObject(SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions()))
         val proxyOb = json.getJSONArray("outbounds").getJSONObject(0)
         assertEquals("masque", proxyOb.getString("type"))
-        // Endpoint fields are hoisted out of the legacy profile, not discarded.
-        assertEquals("162.159.193.1", proxyOb.getString("server"))
-        assertEquals(2408, proxyOb.getInt("server_port"))
-        assertEquals(1280, proxyOb.getInt("mtu"))
+        assertTrue(!proxyOb.has("server"))
+        assertTrue(!proxyOb.has("server_port"))
+        assertTrue(!proxyOb.has("mtu"))
         val profile = proxyOb.getJSONObject("profile")
         assertEquals("direct", profile.getString("detour"))
         assertEquals("profile-uuid", profile.getString("id"))
@@ -936,7 +973,7 @@ class ConfigBuilderTest {
         val dnsRules = json.getJSONObject("dns").getJSONArray("rules")
         val directRule = (0 until dnsRules.length())
             .map { dnsRules.getJSONObject(it) }
-            .first { it.optString("server") == "dns-direct-1" }
+            .first { it.optString("server") == "dns-direct-final" }
         val suffixes = directRule.getJSONArray("domain_suffix")
         assertEquals(1, suffixes.length())
         assertEquals("gov.ru", suffixes.getString(0))
@@ -1313,7 +1350,7 @@ class ConfigBuilderTest {
             )
         ).getJSONObject("dns")
         // `default server cannot be fakeip` prevents the core from starting.
-        assertEquals("dns-proxy-1", json.getString("final"))
+        assertEquals("dns-proxy-final", json.getString("final"))
         val rules = json.getJSONArray("rules")
         assertTrue((0 until rules.length()).any { rules.getJSONObject(it).optString("server") == "dns-fake" })
         val servers = json.getJSONArray("servers")
@@ -1562,7 +1599,7 @@ class ConfigBuilderTest {
                 .getJSONObject("dns").getInt("cache_capacity")
 
         assertEquals(2048, capacity(SingboxConfigOptions(tunMode = false)))
-        assertEquals(4096, capacity(SingboxConfigOptions(tunMode = false, dnsParallelQuery = true)))
+        assertEquals(2048, capacity(SingboxConfigOptions(tunMode = false, dnsParallelQuery = true)))
         assertEquals(8192, capacity(SingboxConfigOptions(tunMode = false, dnsCacheCapacity = 8192)))
         // uint32 in the core, so an out-of-range request is clamped, not emitted.
         assertEquals(64, capacity(SingboxConfigOptions(tunMode = false, dnsCacheCapacity = 1)))
@@ -1575,7 +1612,7 @@ class ConfigBuilderTest {
                 .getJSONObject("dns").getJSONArray("rules")
             return (0 until rules.length())
                 .map { rules.getJSONObject(it) }
-                .first { it.optString("server") == "dns-direct-1" }
+                .first { it.optString("server") == "dns-direct-final" }
         }
 
         val base = SingboxConfigOptions(tunMode = false, directDomains = listOf("gov.ru"))
@@ -1682,7 +1719,7 @@ class ConfigBuilderTest {
     private fun openVpnProfile(userAuth: Boolean, credentials: Boolean): String = buildString {
         appendLine("client")
         appendLine("dev tun")
-        appendLine("proto udp")
+        appendLine("proto tcp")
         appendLine("remote ovpn.example.com 1194")
         appendLine("<ca>")
         appendLine("-----BEGIN CERTIFICATE-----")
@@ -1744,6 +1781,128 @@ class ConfigBuilderTest {
     }
 
     @Test
+    fun openVpnProfileWithoutDeclaredLoginIsNotRejectedByHeuristic() {
+        val profile = """
+            client
+            dev tun
+            proto tcp
+            remote anonymous.example.com 1194
+            <ca>
+            -----BEGIN CERTIFICATE-----
+            MIIB
+            -----END CERTIFICATE-----
+            </ca>
+        """.trimIndent()
+        val node = LinkParser.parseOpenVpnConfig(profile)
+        val proxy = JSONObject(
+            SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions(tunMode = false))
+        ).getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("openvpn", proxy.getString("type"))
+        assertTrue(!proxy.has("username"))
+        assertTrue(!proxy.has("password"))
+    }
+
+    @Test
+    fun nativeOpenVpnJsonIsSanitizedForExtended252() {
+        val native = ParsedNode(
+            name = "Imported native OpenVPN",
+            scheme = "openvpn",
+            server = "ovpn.example.com",
+            port = 443,
+            link = "openvpn://stored",
+            outbound = mapOf(
+                "singbox" to mapOf(
+                    "type" to "openvpn",
+                    "servers" to listOf(mapOf("server" to "ovpn.example.com", "server_port" to 443)),
+                    "proto" to "tcp6",
+                    "cipher" to "BF-CBC",
+                    "auth" to "BLAKE2",
+                    "tls_auth" to "inline-key",
+                    "tls" to mapOf(
+                        "ca" to "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+                        "cipher_suites" to listOf(
+                            "TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256",
+                            "DEFAULT@SECLEVEL=0"
+                        )
+                    )
+                )
+            )
+        )
+
+        val proxy = JSONObject(
+            SingboxConfigBuilder.buildConfig(native, SingboxConfigOptions(tunMode = false))
+        ).getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("tcp", proxy.getString("proto"))
+        assertTrue(!proxy.has("cipher"))
+        assertTrue(!proxy.has("auth"))
+        assertEquals(-1, proxy.getInt("key_direction"))
+        val suites = proxy.getJSONObject("tls").getJSONArray("cipher_suites")
+        assertEquals(1, suites.length())
+        assertEquals("TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", suites.getString(0))
+    }
+
+    @Test
+    fun nativeOpenVpnJsonWithUnknownTransportIsRejected() {
+        val native = ParsedNode(
+            name = "Invalid native OpenVPN",
+            scheme = "openvpn",
+            server = "ovpn.example.com",
+            port = 443,
+            link = "openvpn://stored",
+            outbound = mapOf(
+                "singbox" to mapOf(
+                    "type" to "openvpn",
+                    "servers" to listOf(mapOf("server" to "ovpn.example.com", "server_port" to 443)),
+                    "proto" to "tcp-obfuscated"
+                )
+            )
+        )
+
+        val error = runCatching {
+            SingboxConfigBuilder.buildConfig(native, SingboxConfigOptions(tunMode = false))
+        }.exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+        assertTrue(error?.message.orEmpty().contains("Unsupported OpenVPN transport"))
+    }
+
+    @Test
+    fun openVpnUdpProfilesAreRejectedBecauseTheCoreCannotFragmentTheHandshake() {
+        fun buildFor(proto: String): Result<String> = runCatching {
+            SingboxConfigBuilder.buildConfig(
+                ParsedNode(
+                    name = "Native OpenVPN $proto",
+                    scheme = "openvpn",
+                    server = "ovpn.example.com",
+                    port = 443,
+                    link = "openvpn://stored",
+                    outbound = mapOf(
+                        "singbox" to mapOf(
+                            "type" to "openvpn",
+                            "servers" to listOf(
+                                mapOf("server" to "ovpn.example.com", "server_port" to 443)
+                            ),
+                            "proto" to proto
+                        )
+                    )
+                ),
+                SingboxConfigOptions(tunMode = false)
+            )
+        }
+
+        // The control channel sends the certificate chain in one oversized datagram and
+        // the core has no --fragment/--mssfix, so the handshake can only fail with
+        // `write: message too long`. Refuse instead of pretending to connect.
+        val error = buildFor("udp").exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+        assertTrue(error?.message.orEmpty().contains("OpenVPN over UDP is not supported"))
+        // TCP profiles stream and are unaffected.
+        val proxy = JSONObject(buildFor("tcp").getOrThrow())
+            .getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("tcp", proxy.getString("proto"))
+        assertTrue(!proxy.has("udp_fragment"))
+    }
+
+    @Test
     fun autoPoolSkipsAnOpenVpnMemberWithoutCredentials() {
         val broken = LinkParser.parseOpenVpnConfig(openVpnProfile(userAuth = true, credentials = false))
         val auto = ParsedNode("AUTO", "auto", "", 0, "")
@@ -1764,4 +1923,613 @@ class ConfigBuilderTest {
             (0 until pool.length()).map { pool.getString(it) }
         )
     }
+
+    @Test
+    fun iranGeoRulesUseChocolateRuleSetsAndDirectDns() {
+        val node = LinkParser.parseSingle(
+            "vless://00000000-0000-0000-0000-000000000001@example.com:443?security=tls#IR"
+        )
+        val root = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(
+                    tunMode = false,
+                    geoResourceSource = "https://github.com/Chocolate4U/Iran-sing-box-rules/",
+                    directDomains = listOf("geosite:ir", "geoip:ir")
+                )
+            )
+        )
+
+        val ruleSets = root.getJSONObject("route").getJSONArray("rule_set")
+        val byTag = (0 until ruleSets.length()).associate {
+            val item = ruleSets.getJSONObject(it)
+            item.getString("tag") to item
+        }
+        assertEquals(
+            "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/rule-set/geosite-ir.srs",
+            byTag.getValue("geosite-ir").getString("url")
+        )
+        assertEquals("proxy", byTag.getValue("geosite-ir").getString("download_detour"))
+        assertEquals(
+            "https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/rule-set/geoip-ir.srs",
+            byTag.getValue("geoip-ir").getString("url")
+        )
+
+        val dnsRules = root.getJSONObject("dns").getJSONArray("rules")
+        assertTrue((0 until dnsRules.length()).any { index ->
+            val rule = dnsRules.getJSONObject(index)
+            rule.optString("server") == "dns-direct-final" &&
+                rule.optJSONArray("rule_set")?.optString(0) == "geosite-ir"
+        })
+    }
+
+    @Test
+    fun downloadedRuleSetIsLoadedFromDiskInsteadOfGithub() {
+        val directory = java.nio.file.Files.createTempDirectory("lumen-rule-sets").toFile()
+        val local = java.io.File(directory, "geosite-ir.srs").apply { writeBytes(ByteArray(64)) }
+        val node = LinkParser.parseSingle(
+            "vless://00000000-0000-0000-0000-000000000001@example.com:443?security=tls#IR"
+        )
+        val root = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(
+                    tunMode = false,
+                    geoResourceSource = "https://github.com/Chocolate4U/Iran-sing-box-rules/",
+                    directDomains = listOf("geosite:ir", "geoip:ir"),
+                    geoRuleSetDir = directory.absolutePath
+                )
+            )
+        )
+
+        val ruleSets = root.getJSONObject("route").getJSONArray("rule_set")
+        val byTag = (0 until ruleSets.length()).associate {
+            val item = ruleSets.getJSONObject(it)
+            item.getString("tag") to item
+        }
+        assertEquals("local", byTag.getValue("geosite-ir").getString("type"))
+        assertEquals(local.absolutePath, byTag.getValue("geosite-ir").getString("path"))
+        // Only what is on disk becomes local; the rest still falls back to remote.
+        assertEquals("remote", byTag.getValue("geoip-ir").getString("type"))
+    }
+
+    @Test
+    fun missingRuleSetIsDroppedWhenLocalRuleSetsAreRequired() {
+        val directory = java.nio.file.Files.createTempDirectory("lumen-rule-sets").toFile()
+        java.io.File(directory, "geosite-ir.srs").writeBytes(ByteArray(64))
+        val node = LinkParser.parseSingle(
+            "vless://00000000-0000-0000-0000-000000000001@example.com:443?security=tls#IR"
+        )
+        val root = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(
+                    tunMode = false,
+                    geoResourceSource = "https://github.com/Chocolate4U/Iran-sing-box-rules/",
+                    directDomains = listOf("geosite:ir", "geoip:ir"),
+                    geoRuleSetDir = directory.absolutePath,
+                    requireLocalRuleSets = true
+                )
+            )
+        )
+
+        // A remote rule set is fetched while the core starts and a failed fetch is
+        // fatal, so an undownloaded set must cost one rule, not the whole start.
+        val ruleSets = root.getJSONObject("route").getJSONArray("rule_set")
+        val tags = (0 until ruleSets.length()).map { ruleSets.getJSONObject(it).getString("tag") }
+        assertEquals(listOf("geosite-ir"), tags)
+        assertTrue((0 until ruleSets.length()).none {
+            ruleSets.getJSONObject(it).getString("type") == "remote"
+        })
+        assertTrue(!root.toString().contains("geoip-ir"))
+    }
+
+    @Test
+    fun blockAdsUsesLocalBinaryRuleSetAndRejectAction() {
+        val directory = java.nio.file.Files.createTempDirectory("lumen-ads-rule-set").toFile()
+        val local = java.io.File(directory, "geosite-category-ads-all.srs")
+            .apply { writeBytes(ByteArray(64)) }
+        val node = LinkParser.parseSingle(
+            "vless://00000000-0000-0000-0000-000000000001@example.com:443?security=tls#Ads"
+        )
+        val root = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(
+                    tunMode = false,
+                    directDomains = listOf("block:geosite:category-ads-all"),
+                    geoRuleSetDir = directory.absolutePath,
+                    requireLocalRuleSets = true
+                )
+            )
+        )
+
+        val route = root.getJSONObject("route")
+        val ruleSets = route.getJSONArray("rule_set")
+        val adsSet = (0 until ruleSets.length())
+            .map { ruleSets.getJSONObject(it) }
+            .single { it.getString("tag") == "geosite-category-ads-all" }
+        assertEquals("local", adsSet.getString("type"))
+        assertEquals("binary", adsSet.getString("format"))
+        assertEquals(local.absolutePath, adsSet.getString("path"))
+
+        val rules = route.getJSONArray("rules")
+        assertTrue((0 until rules.length()).any { index ->
+            val rule = rules.getJSONObject(index)
+            rule.optString("action") == "reject" &&
+                rule.optJSONArray("rule_set")?.optString(0) == "geosite-category-ads-all"
+        })
+    }
+
+    @Test
+    fun socksAuthorizationAddsUsersAndDropsTheHttpInbound() {
+        val node = LinkParser.parseSingle(
+            "vless://00000000-0000-0000-0000-000000000001@example.com:443?security=tls#Auth"
+        )
+        val inbounds = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(
+                    tunMode = false,
+                    localSocksPort = 10808,
+                    localHttpPort = 10809,
+                    socksAuthEnabled = true,
+                    socksUsername = "lu_123456789",
+                    socksPassword = "s3cret-value"
+                )
+            )
+        ).getJSONArray("inbounds")
+        val all = (0 until inbounds.length()).map { inbounds.getJSONObject(it) }
+
+        val user = all.first { it.getString("type") == "socks" }
+            .getJSONArray("users")
+            .getJSONObject(0)
+        assertEquals("lu_123456789", user.getString("username"))
+        assertEquals("s3cret-value", user.getString("password"))
+        // The HTTP inbound cannot carry these credentials, so it must not exist.
+        assertTrue(all.none { it.getString("type") == "http" })
+    }
+
+    @Test
+    fun certificatePublicKeySha256IsEmittedAsCanonicalBase64() {
+        val pinHex = "01".repeat(32)
+        val node = LinkParser.parseSingle(
+            "vless://00000000-0000-0000-0000-000000000001@example.com:443" +
+                "?security=tls&sni=cdn.example.com&pinSHA256=$pinHex#Pinned"
+        )
+        val proxy = JSONObject(
+            SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions(tunMode = false))
+        ).getJSONArray("outbounds").getJSONObject(0)
+
+        assertEquals(
+            Base64.getEncoder().encodeToString(ByteArray(32) { 1 }),
+            proxy.getJSONObject("tls").getJSONArray("certificate_public_key_sha256").getString(0)
+        )
+    }
+
+    @Test
+    fun clashCertificatePinSurvivesImport() {
+        val pin = Base64.getEncoder().encodeToString(ByteArray(32) { 7 })
+        val node = LinkParser.parseClashProxyMap(
+            mapOf(
+                "name" to "Fastly pinned",
+                "type" to "vless",
+                "server" to "edge.fastly.example",
+                "port" to 443,
+                "uuid" to "00000000-0000-0000-0000-000000000001",
+                "tls" to true,
+                "servername" to "origin.example.com",
+                "certificate-public-key-sha256" to pin
+            )
+        )
+        val proxy = JSONObject(
+            SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions(tunMode = false))
+        ).getJSONArray("outbounds").getJSONObject(0)
+
+        assertEquals("origin.example.com", proxy.getJSONObject("tls").getString("server_name"))
+        assertEquals(
+            pin,
+            proxy.getJSONObject("tls").getJSONArray("certificate_public_key_sha256").getString(0)
+        )
+    }
+
+    @Test
+    fun domainRulesKeepDesktopFullSuffixKeywordAndRegexSemantics() {
+        val node = LinkParser.parseSingle(
+            "vless://00000000-0000-0000-0000-000000000001@example.com:443?security=tls#Rules"
+        )
+        val root = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(
+                    tunMode = false,
+                    directDomains = listOf(
+                        "example.ir",
+                        "full:only.example.ir",
+                        "keyword:bank",
+                        "regexp:^api[0-9]+\\.example\\.ir$"
+                    )
+                )
+            )
+        )
+        val rules = root.getJSONObject("route").getJSONArray("rules")
+        val directRules = (0 until rules.length()).map { rules.getJSONObject(it) }
+            .filter { it.optString("outbound") == "direct" }
+
+        assertTrue(directRules.any { it.optJSONArray("domain_suffix")?.toString()?.contains("example.ir") == true })
+        assertTrue(directRules.any { it.optJSONArray("domain")?.optString(0) == "only.example.ir" })
+        assertTrue(directRules.any { it.optJSONArray("domain_keyword")?.optString(0) == "bank" })
+        assertTrue(directRules.any { it.optJSONArray("domain_regex")?.optString(0)?.startsWith("^api") == true })
+    }
+
+    @Test
+    fun generatedDnsUsesExactFallbackTransportsAndSecurePolicy() {
+        val root = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                simpleNode(),
+                SingboxConfigOptions(
+                    tunMode = false,
+                    dnsMode = "secure",
+                    dnsProxyType = "udp",
+                    dnsProxyServers = listOf("udp://1.1.1.1", "dns.google"),
+                    dnsDirectServers = listOf("1.1.1.1:5353", "[2606:4700:4700::1111]:5353"),
+                    dnsParallelQuery = true,
+                    dnsOptimisticCache = true
+                )
+            )
+        )
+        val dns = root.getJSONObject("dns")
+        val servers = (0 until dns.getJSONArray("servers").length())
+            .map { dns.getJSONArray("servers").getJSONObject(it) }
+            .associateBy { it.getString("tag") }
+
+        assertEquals("https", servers.getValue("dns-proxy-1").getString("type"))
+        assertEquals("cloudflare-dns.com", servers.getValue("dns-proxy-1").getString("server"))
+        assertEquals("dns-bootstrap", servers.getValue("dns-proxy-1").getString("domain_resolver"))
+        val directFinal = servers.getValue("dns-direct-final")
+        assertEquals("fallback", directFinal.getString("type"))
+        assertEquals("parallel", directFinal.getString("strategy"))
+        assertEquals("1.1.1.1", servers.getValue("dns-direct-1").getString("server"))
+        assertEquals(5353, servers.getValue("dns-direct-1").getInt("server_port"))
+        assertEquals("2606:4700:4700::1111", servers.getValue("dns-direct-2").getString("server"))
+        assertEquals(5353, servers.getValue("dns-direct-2").getInt("server_port"))
+        assertTrue(!servers.getValue("dns-direct-2").has("domain_resolver"))
+        assertEquals(
+            listOf("dns-direct-1", "dns-direct-2"),
+            (0 until directFinal.getJSONArray("servers").length())
+                .map { directFinal.getJSONArray("servers").getString(it) }
+        )
+        val proxyFinal = servers.getValue("dns-proxy-final")
+        assertEquals("fallback", proxyFinal.getString("type"))
+        assertEquals(
+            listOf("dns-proxy-1", "dns-proxy-2"),
+            (0 until proxyFinal.getJSONArray("servers").length())
+                .map { proxyFinal.getJSONArray("servers").getString(it) }
+        )
+        assertEquals("dns-proxy-final", dns.getString("final"))
+        // Optimistic caching used to be mapped to disable_expire, which means
+        // "never expire" in the exact core rather than stale-while-revalidate.
+        assertTrue(!dns.has("disable_expire"))
+    }
+
+    @Test
+    fun customDnsJsonKeepsBootstrapAndRejectsFatalReferences() {
+        val custom = """
+            {
+              "servers": [
+                {
+                  "type": "https",
+                  "tag": "secure",
+                  "server": "resolver.example",
+                  "path": "/dns-query"
+                },
+                {
+                  "type": "fallback",
+                  "tag": "chosen",
+                  "servers": ["secure", "dns-bootstrap"],
+                  "strategy": "parallel"
+                }
+              ],
+              "rules": [
+                {"domain_suffix": ["example.test"], "server": "secure"}
+              ],
+              "final": "chosen",
+              "strategy": "prefer_ipv4",
+              "cache_capacity": 4096
+            }
+        """.trimIndent()
+        val dns = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                simpleNode(),
+                SingboxConfigOptions(tunMode = false, dnsMode = "json", dnsCustomJson = custom)
+            )
+        ).getJSONObject("dns")
+        val servers = (0 until dns.getJSONArray("servers").length())
+            .map { dns.getJSONArray("servers").getJSONObject(it) }
+            .associateBy { it.getString("tag") }
+
+        assertTrue(servers.keys.containsAll(listOf("dns-system", "dns-bootstrap", "secure", "chosen")))
+        assertEquals("dns-bootstrap", servers.getValue("secure").getString("domain_resolver"))
+        assertEquals("chosen", dns.getString("final"))
+        assertEquals(4096, dns.getInt("cache_capacity"))
+
+        val invalidDocuments = listOf(
+            """{"servers":[{"type":"udp","tag":"one","server":"1.1.1.1"}],"final":"missing"}""",
+            """{"servers":[{"type":"fallback","tag":"one","servers":["later"]},{"type":"udp","tag":"later","server":"1.1.1.1"}]}""",
+            """{"servers":[{"type":"udp","tag":"one","server":"1.1.1.1"}],"disable_expire":true}""",
+            """{"servers":[{"type":"udp","tag":"one","server":"1.1.1.1"}],"unknown":true}"""
+        )
+        invalidDocuments.forEach { document ->
+            val error = runCatching {
+                SingboxConfigBuilder.buildConfig(
+                    simpleNode(),
+                    SingboxConfigOptions(
+                        tunMode = false,
+                        dnsMode = "json",
+                        dnsCustomJson = document
+                    )
+                )
+            }.exceptionOrNull()
+            assertTrue("custom DNS must reject $document", error is IllegalArgumentException)
+        }
+    }
+
+    @Test
+    fun autoDnsAggregatesPrivateResolversFromEveryPoolMember() {
+        val first = ParsedNode(
+            "First", "trojan", "one.example", 443, "",
+            mapOf("password" to "one", "_dns" to listOf("10.10.0.1"))
+        )
+        val second = ParsedNode(
+            "Second", "trojan", "two.example", 443, "",
+            mapOf("password" to "two", "_dns" to listOf("10.10.0.2"))
+        )
+        val auto = ParsedNode("AUTO", "auto", "", 0, "")
+        val dns = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                listOf(first, second, auto),
+                auto,
+                SingboxConfigOptions(tunMode = false)
+            )
+        ).getJSONObject("dns")
+        val servers = (0 until dns.getJSONArray("servers").length())
+            .map { dns.getJSONArray("servers").getJSONObject(it) }
+            .associateBy { it.getString("tag") }
+
+        assertEquals("10.10.0.1", servers.getValue("dns-vpn-1").getString("server"))
+        assertEquals("10.10.0.2", servers.getValue("dns-vpn-2").getString("server"))
+        val fallback = servers.getValue("dns-vpn-final").getJSONArray("servers")
+        assertEquals(
+            listOf("dns-vpn-1", "dns-vpn-2", "dns-proxy-final"),
+            (0 until fallback.length()).map(fallback::getString)
+        )
+        assertEquals("dns-vpn-final", dns.getString("final"))
+    }
+
+    @Test
+    fun routingIsFailClosedOrderedAndDropsInvalidMatchers() {
+        val root = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                simpleNode(),
+                SingboxConfigOptions(
+                    tunMode = false,
+                    directIpCidrs = listOf(
+                        "192.0.2.10",
+                        "block:192.0.2.10",
+                        "300.1.1.1/24"
+                    ),
+                    directDomains = listOf(
+                        "direct:example.test",
+                        "block:example.test",
+                        "proxy:full:api.example.test",
+                        "regexp:(?<=unsupported)lookbehind"
+                    )
+                )
+            )
+        )
+        val rules = (0 until root.getJSONObject("route").getJSONArray("rules").length())
+            .map { root.getJSONObject("route").getJSONArray("rules").getJSONObject(it) }
+        fun indexOf(predicate: (JSONObject) -> Boolean) = rules.indexOfFirst(predicate)
+
+        val rejectIp = indexOf {
+            it.optString("action") == "reject" &&
+                it.optJSONArray("ip_cidr")?.optString(0) == "192.0.2.10/32"
+        }
+        val directIp = indexOf {
+            it.optString("outbound") == "direct" &&
+                it.optJSONArray("ip_cidr")?.optString(0) == "192.0.2.10/32"
+        }
+        val rejectDomain = indexOf {
+            it.optString("action") == "reject" &&
+                it.optJSONArray("domain_suffix")?.optString(0) == "example.test"
+        }
+        val directDomain = indexOf {
+            it.optString("outbound") == "direct" &&
+                it.optJSONArray("domain_suffix")?.optString(0) == "example.test"
+        }
+        assertTrue(rejectIp >= 0 && rejectIp < directIp)
+        assertTrue(rejectDomain >= 0 && rejectDomain < directDomain)
+        assertTrue(root.toString().contains("api.example.test"))
+        assertTrue(!root.toString().contains("300.1.1.1"))
+        assertTrue(!root.toString().contains("lookbehind"))
+        assertTrue(rules.any {
+            it.optString("action") == "reject" &&
+                it.optJSONArray("ip_cidr")?.toString()?.contains("224.0.0.0/4") == true
+        })
+        assertTrue(rules.none {
+            it.optJSONArray("ip_cidr")?.toString()?.contains("224.0.0.0/3") == true
+        })
+
+        val bypassRules = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                simpleNode(),
+                SingboxConfigOptions(tunMode = false, bypassLan = true)
+            )
+        ).getJSONObject("route").getJSONArray("rules")
+        assertTrue((0 until bypassRules.length()).any {
+            val rule = bypassRules.getJSONObject(it)
+            rule.optBoolean("ip_is_private") && rule.optString("outbound") == "direct"
+        })
+        assertTrue((0 until bypassRules.length()).any {
+            val rule = bypassRules.getJSONObject(it)
+            rule.optString("outbound") == "direct" &&
+                rule.optJSONArray("ip_cidr")?.toString()?.contains("ff00::/8") == true
+        })
+    }
+
+    @Test
+    fun nativeCompositeDependenciesAreEmittedBeforeTheSelectedOutbound() {
+        val (nodes, errors) = LinkParser.parseLinksText(
+            """
+                {
+                  "outbounds": [
+                    {
+                      "type": "shadowsocks",
+                      "tag": "ss-base",
+                      "server": "ss.example.com",
+                      "server_port": 8388,
+                      "method": "2022-blake3-aes-128-gcm",
+                      "password": "MTIzNDU2Nzg5MDEyMzQ1Ng=="
+                    },
+                    {
+                      "type": "shadowtls",
+                      "tag": "tls-hop",
+                      "server": "edge.example.com",
+                      "server_port": 443,
+                      "version": 3,
+                      "password": "secret",
+                      "detour": "ss-base"
+                    },
+                    {
+                      "type": "vless",
+                      "tag": "root",
+                      "server": "root.example.com",
+                      "server_port": 443,
+                      "uuid": "11111111-2222-3333-4444-555555555555",
+                      "detour": "tls-hop"
+                    }
+                  ]
+                }
+            """.trimIndent()
+        )
+        assertTrue(errors.joinToString("; "), errors.isEmpty())
+        val rootNode = nodes.first { it.name == "root" }
+        val root = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                rootNode,
+                SingboxConfigOptions(tunMode = false, multiplexEnabled = true)
+            )
+        )
+        val outbounds = root.getJSONArray("outbounds")
+        val tags = (0 until outbounds.length()).map { outbounds.getJSONObject(it).getString("tag") }
+        assertEquals(listOf("ss-base", "tls-hop", "proxy"), tags.take(3))
+        assertEquals("ss-base", outbounds.getJSONObject(1).getString("detour"))
+        assertEquals("tls-hop", outbounds.getJSONObject(2).getString("detour"))
+        assertTrue(outbounds.getJSONObject(0).has("multiplex"))
+        assertTrue(!root.toString().contains("_singbox_dependencies"))
+    }
+
+    @Test
+    fun xhttpDownloadAndQuicUseTheExactExtendedTransportSchema() {
+        val xhttpNode = ParsedNode(
+            "XHTTP", "vless", "upload.example", 443, "",
+            mapOf(
+                "uuid" to "00000000-0000-0000-0000-000000000010",
+                "streamSettings" to mapOf(
+                    "security" to "tls",
+                    "tlsSettings" to mapOf("serverName" to "upload.example"),
+                    "network" to "xhttp",
+                    "xhttpSettings" to mapOf(
+                        "mode" to "packet-up",
+                        "path" to "/upload",
+                        "xPaddingBytes" to "100-500",
+                        "downloadSettings" to mapOf(
+                            "address" to "download.example",
+                            "port" to 8443,
+                            "security" to "tls",
+                            "tlsSettings" to mapOf(
+                                "serverName" to "cdn.example",
+                                "allowInsecure" to false
+                            ),
+                            "xhttpSettings" to mapOf(
+                                "path" to "/download",
+                                "host" to "cdn.example"
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val xhttp = JSONObject(SingboxConfigBuilder.buildConfig(xhttpNode))
+            .getJSONArray("outbounds").getJSONObject(0).getJSONObject("transport")
+        assertEquals("xhttp", xhttp.getString("type"))
+        assertTrue(xhttp.has("download"))
+        assertTrue(!xhttp.has("download_settings"))
+        val download = xhttp.getJSONObject("download")
+        assertEquals("download.example", download.getString("server"))
+        assertEquals(8443, download.getInt("server_port"))
+        assertEquals("/download", download.getString("path"))
+        assertEquals("cdn.example", download.getJSONObject("tls").getString("server_name"))
+
+        fun quicNode(security: String) = ParsedNode(
+            "QUIC", "vless", "quic.example", 443, "",
+            mapOf(
+                "uuid" to "00000000-0000-0000-0000-000000000011",
+                "streamSettings" to mapOf(
+                    "security" to security,
+                    "tlsSettings" to mapOf("serverName" to "quic.example"),
+                    "network" to "quic",
+                    "quicSettings" to mapOf(
+                        "security" to "aes-128-gcm",
+                        "key" to "must-not-leak",
+                        "header" to mapOf("type" to "srtp")
+                    )
+                )
+            )
+        )
+        val quic = JSONObject(SingboxConfigBuilder.buildConfig(quicNode("tls")))
+            .getJSONArray("outbounds").getJSONObject(0).getJSONObject("transport")
+        assertEquals("quic", quic.getString("type"))
+        assertEquals(1, quic.length())
+        val error = runCatching {
+            SingboxConfigBuilder.buildConfig(quicNode("none"))
+        }.exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+        assertTrue(error?.message.orEmpty().contains("requires TLS"))
+    }
+
+    @Test
+    fun cacheFileStoresExtendedWarpAndMasqueProfiles() {
+        fun cacheFor(node: ParsedNode) = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(tunMode = false, cacheFileEnabled = true)
+            )
+        ).getJSONObject("experimental").getJSONObject("cache_file")
+
+        val warp = ParsedNode(
+            "WARP", "warp", "", 0, "",
+            mapOf(
+                "protocol" to "warp",
+                "singbox" to mapOf(
+                    "type" to "warp",
+                    "profile" to mapOf("detour" to "direct")
+                )
+            )
+        )
+        assertTrue(cacheFor(warp).getBoolean("store_warp_config"))
+
+        val masque = ParsedNode(
+            "MASQUE", "masque", "", 0, "",
+            mapOf(
+                "protocol" to "masque",
+                "singbox" to mapOf(
+                    "type" to "masque",
+                    "profile" to mapOf("detour" to "direct")
+                )
+            )
+        )
+        assertTrue(cacheFor(masque).getBoolean("store_masque_config"))
+    }
+
 }

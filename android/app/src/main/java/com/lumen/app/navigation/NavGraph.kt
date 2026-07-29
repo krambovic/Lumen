@@ -87,6 +87,7 @@ import com.journeyapps.barcodescanner.BarcodeEncoder
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.lumen.app.PortraitCaptureActivity
+import com.lumen.app.update.AndroidUpdateInstaller
 import com.lumen.core.vpn.LumenVpnService
 import com.lumen.app.vm.MainViewModel
 import com.lumen.ui.components.LumenDialog
@@ -109,6 +110,9 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.height
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 
 // Shared slow-out easing for the bottom bar indicator.
 private val NavPremiumEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
@@ -149,6 +153,55 @@ fun LumenApp(
     var qrExportLink by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
+    val updateState by viewModel.androidUpdateState.collectAsStateWithLifecycle()
+
+    // Android 8+ grants "install unknown apps" per source. Returning from that
+    // settings page is the continuation of the same user-initiated update action.
+    val unknownSourcesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (AndroidUpdateInstaller.canRequestPackageInstalls(context)) {
+            viewModel.prepareAndroidUpdate()
+        } else {
+            viewModel.reportAndroidUpdateError(strings.updateInstallPermissionRequired)
+        }
+    }
+
+    // A successful download increments the request id. Keeping the effect at the
+    // app root means navigation or recomposition cannot lose the installer launch.
+    LaunchedEffect(updateState.installRequestId) {
+        val requestId = updateState.installRequestId
+        val path = updateState.downloadedApkPath
+        if (requestId <= 0L || path.isNullOrBlank()) return@LaunchedEffect
+        viewModel.consumeAndroidUpdateInstallRequest(requestId)
+        runCatching {
+            withContext(Dispatchers.IO) {
+                AndroidUpdateInstaller.commitInstall(context.applicationContext, File(path))
+            }
+        }.onFailure { error ->
+            viewModel.reportAndroidUpdateError(
+                error.message ?: strings.updateInstallerUnavailable
+            )
+        }
+    }
+
+    fun requestAndroidUpdate() {
+        if (AndroidUpdateInstaller.canRequestPackageInstalls(context)) {
+            viewModel.prepareAndroidUpdate()
+            return
+        }
+        runCatching {
+            unknownSourcesLauncher.launch(
+                AndroidUpdateInstaller.unknownSourcesIntent(context)
+            )
+        }.recoverCatching {
+            unknownSourcesLauncher.launch(
+                AndroidUpdateInstaller.fallbackSecuritySettingsIntent()
+            )
+        }.onFailure {
+            viewModel.reportAndroidUpdateError(strings.updateInstallerUnavailable)
+        }
+    }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -225,10 +278,49 @@ fun LumenApp(
             }
         }
 
+        // Results the user must actually notice: the dashboard "Check" ping and the
+        // outcome of a subscription refresh. Drawn by Lumen itself (LumenToastHost)
+        // instead of android.widget.Toast so they follow the app theme and always sit
+        // right above the navigation pill.
+        val toastState = com.lumen.ui.screens.rememberLumenToastState()
+        LaunchedEffect(toastState) {
+            viewModel.toasts.collect { message -> toastState.show(message) }
+        }
+        LaunchedEffect(strings, toastState) {
+            viewModel.subscriptionSummaries.collect { summary ->
+                val text = if (summary.unchanged) {
+                    "${summary.subscriptionName}: ${strings.subscriptionNoChanges}"
+                } else {
+                    val parts = buildList {
+                        if (summary.added > 0) add("${strings.subscriptionAddedCount} ${summary.added}")
+                        if (summary.updated > 0) add("${strings.subscriptionUpdatedCount} ${summary.updated}")
+                        if (summary.removed > 0) add("${strings.subscriptionRemovedCount} ${summary.removed}")
+                    }
+                    "${strings.subscriptionUpdated} — ${summary.subscriptionName}: " + parts.joinToString(", ")
+                }
+                toastState.show(text)
+            }
+        }
+
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            // The snackbar slot is an overlay layer: Scaffold draws it on top of the
+            // content, just above the bottom bar, without reserving any layout space.
+            // That is exactly what a floating toast island needs - the page below does
+            // not move when a notice appears or disappears.
+            snackbarHost = {
+                com.lumen.ui.screens.LumenToastHost(
+                    state = toastState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 10.dp)
+                )
+            },
             bottomBar = {
+                // Only the navigation pill takes part in the layout here. The toast is
+                // drawn as an overlay in the content layer instead, so showing it never
+                // changes the bar height and never shifts the page underneath it.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -399,6 +491,8 @@ fun LumenApp(
                     val serverGroups by viewModel.serverGroups.collectAsStateWithLifecycle()
                     val pingingNodeIds by viewModel.pingingNodeIds.collectAsStateWithLifecycle()
                     val trafficStats by LumenVpnService.trafficStats.collectAsStateWithLifecycle()
+                    val connectedPing by viewModel.connectedPing.collectAsStateWithLifecycle()
+                    val checkingPing by viewModel.checkingConnectedPing.collectAsStateWithLifecycle()
                     DashboardScreen(
                         connectionState = connectionState,
                         nodes = nodes,
@@ -409,6 +503,13 @@ fun LumenApp(
                         uploadSpeed = trafficStats.uploadSpeed,
                         pingingNodeIds = pingingNodeIds,
                         dashboardStyle = settings.dashboardStyle,
+                        connectedPing = connectedPing,
+                        isCheckingPing = checkingPing,
+                        onCheckPing = {
+                            // A failed measurement reads as "0 ms" instead of a localized
+                            // "unreachable", matching how the server rows report it.
+                            viewModel.checkConnectedPing("0 ms", strings.noServerSelected)
+                        },
                         onToggleConnection = onToggleConnection,
                         onSelectNode = { node ->
                             val wasSelected = node.isSelected
@@ -513,6 +614,7 @@ fun LumenApp(
                         onImportFile = { filePicker.launch("*/*") },
                         onImportQr = { startQrScanner() },
                         onAddSubscription = viewModel::addSubscription,
+                        onUpdateSubscription = viewModel::updateSubscription,
                         onRefreshSubscription = viewModel::refreshSubscription,
                         onDeleteSubscription = viewModel::deleteSubscription,
                         onPingGroup = viewModel::pingGroup,
@@ -572,7 +674,6 @@ fun LumenApp(
                         resources = resources,
                         source = settings.geoResourceSource,
                         isUpdating = updating,
-                        onSourceChange = { viewModel.updateSettings(settings.copy(geoResourceSource = it)) },
                         onDownload = viewModel::downloadGeoResources,
                         onBack = { navController.popBackStack() }
                     )
@@ -587,6 +688,16 @@ fun LumenApp(
                         onOpenCommunity = {
                             context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/lumenkvn")))
                         },
+                        updateChecked = updateState.checked,
+                        updateIsChecking = updateState.isChecking,
+                        updateLatestVersion = updateState.latest?.version,
+                        updateReleaseTag = updateState.latest?.tag,
+                        updateAvailable = updateState.updateAvailable,
+                        updateError = updateState.error,
+                        updateIsDownloading = updateState.isDownloading,
+                        updateDownloadProgress = updateState.downloadProgress,
+                        onCheckUpdates = viewModel::checkForAndroidUpdate,
+                        onInstallUpdate = ::requestAndroidUpdate,
                         resetToHubSignal = settingsResetSignal
                     )
                 }

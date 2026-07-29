@@ -76,7 +76,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -90,7 +89,6 @@ import com.lumen.ui.components.HeroConnectButton
 import com.lumen.ui.components.CountryFlagIcon
 import com.lumen.ui.components.SubscriptionDetailsDialog
 import com.lumen.ui.components.SubscriptionProviderCard
-import com.lumen.ui.components.hasProviderCard
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -125,6 +123,10 @@ fun DashboardScreen(
     uploadSpeed: Long = 0L,
     pingingNodeIds: Set<String> = emptySet(),
     dashboardStyle: DashboardStyle = DashboardStyle.DEFAULT,
+    // "Check" result for the server that is connected right now, plus its busy flag.
+    connectedPing: String? = null,
+    isCheckingPing: Boolean = false,
+    onCheckPing: () -> Unit = {},
     onToggleConnection: () -> Unit,
     onSelectNode: (NodeUiModel) -> Unit,
     onImportClipboard: () -> Unit,
@@ -224,9 +226,6 @@ fun DashboardScreen(
     val activeGroupId = remember(nodes) {
         nodes.firstOrNull { it.isSelected }?.let { it.groupId ?: it.subscriptionId ?: GROUP_MANUAL }
     }
-    // Survives item recycling, so a row scrolled back into view is composed at full
-    // opacity instead of replaying the entrance fade.
-    val appearedGroups = remember { mutableSetOf<String>() }
     val visibleGroups = remember(groups, serversGroupPref, activeGroupId) {
         if (serversGroupPref.isBlank() || serversGroupPref == GROUP_ALL) {
             groups.filter { it.id == activeGroupId }.ifEmpty { groups }
@@ -333,7 +332,9 @@ fun DashboardScreen(
                     }
                 ),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                // Group headers, subscription information and server rows own their
+                // spacing so each group can render as one uninterrupted panel.
+                verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 item(key = "header_spacer") { Spacer(Modifier.height(4.dp)) }
 
@@ -341,21 +342,27 @@ fun DashboardScreen(
                 // SLIDER is fixed above the bottom navigation instead.
                 if (!isSelectionMode && dashboardStyle != DashboardStyle.SLIDER) {
                     item(key = "hero_connect") {
-                        val heroNode = nodes.firstOrNull { it.isSelected } ?: nodes.firstOrNull()
-                        DashboardHero(
-                            connectionState = connectionState,
-                            style = dashboardStyle,
-                            speedStatsEnabled = speedStatsEnabled,
-                            downSpeed = downloadSpeed,
-                            upSpeed = uploadSpeed,
-                            serverName = heroNode?.name,
-                            serverCountryCode = heroNode?.countryCode,
-                            serverProtocol = heroNode?.displayProtocol ?: heroNode?.protocol,
-                            onToggleConnection = {
-                                tick(HapticFeedbackType.LongPress)
-                                onToggleConnection()
-                            }
-                        )
+                        Column {
+                            val heroNode = nodes.firstOrNull { it.isSelected } ?: nodes.firstOrNull()
+                            DashboardHero(
+                                connectionState = connectionState,
+                                style = dashboardStyle,
+                                speedStatsEnabled = speedStatsEnabled,
+                                downSpeed = downloadSpeed,
+                                upSpeed = uploadSpeed,
+                                serverName = heroNode?.name,
+                                serverCountryCode = heroNode?.countryCode,
+                                serverProtocol = heroNode?.displayProtocol ?: heroNode?.protocol,
+                                connectedPing = connectedPing,
+                                isCheckingPing = isCheckingPing,
+                                onCheckPing = onCheckPing,
+                                onToggleConnection = {
+                                    tick(HapticFeedbackType.LongPress)
+                                    onToggleConnection()
+                                }
+                            )
+                            Spacer(Modifier.height(6.dp))
+                        }
                     }
                 }
 
@@ -364,7 +371,7 @@ fun DashboardScreen(
                 if (groups.isNotEmpty() && !isSelectionMode) {
                     item(key = "sort_and_ping_row") {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.Start,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -416,8 +423,12 @@ fun DashboardScreen(
                         }
                     }
                 } else {
-                    visibleGroups.forEach { group ->
+                    visibleGroups.forEachIndexed { groupIndex, group ->
                         val isExpanded = group.id in expandedGroups
+
+                        if (groupIndex > 0) {
+                            item(key = "group_gap_${group.id}") { Spacer(Modifier.height(8.dp)) }
+                        }
 
                         // Group Header Tile
                         item(key = "group_header_${group.id}") {
@@ -454,38 +465,20 @@ fun DashboardScreen(
                         // a collapsed row stays a single clean line.
                         if (group.isSubscription && group.subscription != null && isExpanded) {
                             val subscription = group.subscription
-                            // The provider block continues the same tile, so whenever it
-                            // draws, it — not the bar — owns the rounded bottom corner.
-                            val hasProvider = hasProviderCard(subscription)
-                            val barIsLast = group.nodes.isEmpty() && !hasProvider
                             item(key = "group_info_${group.id}") {
-                                // With rows below the bar must stay square and cover the 6.dp list gap.
+                                // Same shape and zero pull-up as the Servers tab.
                                 SubscriptionInfoBar(
                                     sub = subscription,
-                                    roundedBottom = barIsLast,
-                                    extraBottom = if (barIsLast) 0.dp else 6.dp
+                                    pullUp = 0.dp,
+                                    roundedBottom = false
                                 )
                             }
-                            if (hasProvider) {
-                                item(key = "group_provider_${group.id}") {
-                                    SubscriptionProviderCard(
-                                        sub = subscription,
-                                        onOpenUrl = onOpenUrl,
-                                        // Same pull-up as the rows below, so the announcement,
-                                        // banner and buttons read as part of the tile.
-                                        modifier = Modifier
-                                            .offset(y = (-6).dp)
-                                            .then(
-                                                if (group.nodes.isEmpty()) {
-                                                    Modifier.clip(
-                                                        RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
-                                                    )
-                                                } else {
-                                                    Modifier
-                                                }
-                                            )
-                                    )
-                                }
+                            item(key = "group_provider_${group.id}") {
+                                // Renders nothing when the provider did not send metadata.
+                                SubscriptionProviderCard(
+                                    sub = subscription,
+                                    onOpenUrl = onOpenUrl
+                                )
                             }
                         }
 
@@ -499,7 +492,6 @@ fun DashboardScreen(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .offset(y = (-6).dp)
                                             .clip(RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp))
                                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f))
                                             .padding(16.dp),
@@ -519,36 +511,24 @@ fun DashboardScreen(
                                 ) { index ->
                                     val node = group.nodes[index]
                                     val isLast = index == group.nodes.lastIndex
-                                    var appeared by remember(group.id) {
-                                        mutableStateOf(group.id in appearedGroups)
+                                    val railShape = if (isLast) {
+                                        RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
+                                    } else {
+                                        RoundedCornerShape(0.dp)
                                     }
-                                    LaunchedEffect(group.id) {
-                                        appeared = true
-                                        delay(220)
-                                        appearedGroups.add(group.id)
-                                    }
-                                    val appearAlpha by animateFloatAsState(
-                                        targetValue = if (appeared) 1f else 0f,
-                                        animationSpec = tween(220, easing = FastOutSlowInEasing),
-                                        label = "node_appear"
-                                    )
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .offset(y = (-6).dp)
-                                            .then(
-                                                if (isLast) Modifier.clip(RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)) else Modifier
-                                            )
+                                            .clip(railShape)
                                             .background(
                                                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)
                                             )
                                             .padding(
-                                                start = 10.dp,
-                                                end = 10.dp,
-                                                top = if (index == 0) 10.dp else 3.dp,
-                                                bottom = if (isLast) 10.dp else 3.dp
+                                                start = 8.dp,
+                                                end = 8.dp,
+                                                top = 4.dp,
+                                                bottom = if (isLast) 10.dp else 4.dp
                                             )
-                                            .alpha(appearAlpha)
                                     ) {
                                         ServerTileRow(
                                             node = node,
@@ -730,6 +710,9 @@ fun DashboardScreen(
                         serverName = heroNode?.name,
                         serverCountryCode = heroNode?.countryCode,
                         serverProtocol = heroNode?.displayProtocol ?: heroNode?.protocol,
+                        connectedPing = connectedPing,
+                        isCheckingPing = isCheckingPing,
+                        onCheckPing = onCheckPing,
                         onToggleConnection = {
                             tick(HapticFeedbackType.LongPress)
                             onToggleConnection()
@@ -825,6 +808,7 @@ fun SubscriptionHeaderTile(
     onDeleteSubscription: () -> Unit,
     onPingGroup: () -> Unit = {},
     onShowProperties: (SubscriptionUiModel) -> Unit = {},
+    onEditSubscription: ((SubscriptionUiModel) -> Unit)? = null,
     onExportAll: (String?) -> Unit = {},
     // Custom groups only, and only where the screen can host the dialogs. Null hides
     // the entry, which is what the dashboard wants: groups are managed on Servers.
@@ -932,7 +916,17 @@ fun SubscriptionHeaderTile(
                     ) {
                         Column {
                             if (group.isSubscription) {
-                                // Subscription menu: Properties, Export all, Delete
+                                // Subscription menu: Edit, Properties, Export all, Delete.
+                                if (onEditSubscription != null) {
+                                    DropdownMenuItem(
+                                        text = { Text(strings.edit, color = MaterialTheme.colorScheme.onSurface) },
+                                        trailingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            showMenu = false
+                                            group.subscription?.let(onEditSubscription)
+                                        }
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text(strings.subscriptionProperties, color = MaterialTheme.colorScheme.onSurface) },
                                     trailingIcon = { Icon(Icons.Filled.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
@@ -1385,6 +1379,75 @@ private fun heroServerLabel(countryCode: String?, protocol: String?, fallbackNam
  * Dashboard hero: round/centered controls or a bottom slider, live throughput
  * and the shared server/session tiles.
  */
+/**
+ * "Check" action shared by every dashboard style. Instead of a loose button under
+ * the hero it is a third stat tile next to "Server" and "Session": tapping it
+ * measures the currently connected server with the ping method chosen in settings
+ * and replaces its own value with the result (also delivered as a toast).
+ */
+@Composable
+private fun HeroPingTile(
+    connectedPing: String?,
+    isChecking: Boolean,
+    onCheckPing: () -> Unit,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
+) {
+    val s = LocalStrings.current
+    val shape = RoundedCornerShape(if (compact) 13.dp else 18.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), shape)
+            .clickable(enabled = !isChecking, onClick = onCheckPing)
+            .padding(
+                horizontal = if (compact) 10.dp else 14.dp,
+                vertical = if (compact) 5.dp else 12.dp
+            )
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = s.checkPing,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = if (compact) 9.sp else 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.Filled.NetworkCheck,
+                contentDescription = s.checkPing,
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                modifier = Modifier.size(if (compact) 10.dp else 12.dp)
+            )
+        }
+        Spacer(Modifier.height(if (compact) 1.dp else 3.dp))
+        if (isChecking) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(if (compact) 12.dp else 16.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
+        } else {
+            Text(
+                text = if (connectedPing.isNullOrBlank()) "—" else connectedPing,
+                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (connectedPing.isNullOrBlank()) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                fontSize = if (compact) 12.sp else 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
 @Composable
 private fun DashboardHero(
     connectionState: ConnectionState,
@@ -1395,6 +1458,9 @@ private fun DashboardHero(
     serverName: String?,
     serverCountryCode: String?,
     serverProtocol: String?,
+    connectedPing: String? = null,
+    isCheckingPing: Boolean = false,
+    onCheckPing: () -> Unit = {},
     onToggleConnection: () -> Unit
 ) {
     val s = LocalStrings.current
@@ -1492,6 +1558,15 @@ private fun DashboardHero(
                     label = s.sessionLabel,
                     value = formatHeroDuration(sessionSeconds),
                     modifier = Modifier.weight(1f),
+                    compact = style == DashboardStyle.SLIDER
+                )
+                // Ping sits in the same row as the other stats, so the hero keeps a
+                // single tidy strip instead of a stray button underneath it.
+                HeroPingTile(
+                    connectedPing = connectedPing,
+                    isChecking = isCheckingPing,
+                    onCheckPing = onCheckPing,
+                    modifier = Modifier.weight(0.72f),
                     compact = style == DashboardStyle.SLIDER
                 )
             }
@@ -1748,6 +1823,14 @@ private fun DashboardHero(
                 label = s.sessionLabel,
                 value = formatHeroDuration(sessionSeconds),
                 modifier = Modifier.weight(1f)
+            )
+            // Ping joins the same strip as the other stats instead of hanging
+            // underneath the hero as a loose button.
+            HeroPingTile(
+                connectedPing = connectedPing,
+                isChecking = isCheckingPing,
+                onCheckPing = onCheckPing,
+                modifier = Modifier.weight(0.72f)
             )
         }
     }

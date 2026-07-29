@@ -19,13 +19,22 @@ object NodeDraftMapper {
 
     fun draftFromEntity(entity: NodeEntity?): NodeDraft? {
         if (entity == null) return null
+        val protocol = normalizeProtocol(entity.protocol)
+        val preservedConfig = if (
+            protocol !in setOf("wireguard", "awg", "openvpn", "masque") &&
+            entity.outboundJson.trim().let { it.startsWith("{") && it.endsWith("}") }
+        ) {
+            entity.outboundJson
+        } else {
+            entity.link
+        }
         val base = NodeDraft(
             id = entity.id,
             name = entity.name,
-            protocol = normalizeProtocol(entity.protocol),
+            protocol = protocol,
             server = entity.server,
             port = entity.port.toString(),
-            rawConfig = entity.link
+            rawConfig = preservedConfig
         )
         // Editing must expose every protocol parameter, so the stored link is parsed back.
         return runCatching { fillFromLink(base, entity.link) }.getOrDefault(base)
@@ -72,6 +81,7 @@ object NodeDraftMapper {
             sni = q["sni"] ?: q["peer"] ?: "",
             alpn = q["alpn"] ?: "",
             fingerprint = q["fp"] ?: "",
+            certificateSha256 = q["pinsha256"] ?: q["certificate_public_key_sha256"] ?: "",
             publicKey = q["pbk"] ?: "",
             shortId = q["sid"] ?: "",
             obfs = q["obfs"] ?: "",
@@ -93,6 +103,9 @@ object NodeDraftMapper {
             sni = json.optString("sni"),
             alpn = json.optString("alpn"),
             fingerprint = json.optString("fp")
+                .ifBlank { json.optString("fingerprint") },
+            certificateSha256 = json.optString("pinSHA256")
+                .ifBlank { json.optString("certificate_public_key_sha256") }
         )
     }
 
@@ -140,7 +153,8 @@ object NodeDraftMapper {
     }
 
     private fun normalizeProtocol(p: String): String = when (p.lowercase()) {
-        "hy", "hy2", "hysteria", "hysteria2" -> "hysteria2"
+        "hy", "hysteria" -> "hysteria"
+        "hy2", "hysteria2" -> "hysteria2"
         "shadowsocks", "ss" -> "ss"
         "wg" -> "wireguard"
         "socks5" -> "socks"
@@ -163,6 +177,13 @@ object NodeDraftMapper {
         val link = buildLink(draft)
         val parsed = LinkParser.parseLinksText(link).first.firstOrNull()
             ?: throw IllegalArgumentException("Could not parse node configuration")
+        val preservedOutbound = parseStoredOutbound(draft.rawConfig)
+        val outbound = if (preservedOutbound == null) {
+            parsed.outbound
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            deepMerge(preservedOutbound, parsed.outbound) as Map<String, Any?>
+        }
         return NodeEntity(
             id = draft.id ?: UUID.randomUUID().toString(),
             name = draft.name.ifBlank { parsed.name.ifBlank { parsed.server } },
@@ -170,7 +191,7 @@ object NodeDraftMapper {
             server = parsed.server,
             port = parsed.port,
             link = link,
-            outboundJson = "",
+            outboundJson = LinkParser.toJsonString(outbound),
             isAutoNode = false
         )
     }
@@ -190,6 +211,7 @@ object NodeDraftMapper {
                     "sni" to d.sni,
                     "alpn" to d.alpn,
                     "fp" to d.fingerprint,
+                    "pinSHA256" to d.certificateSha256,
                     "pbk" to d.publicKey,
                     "sid" to d.shortId,
                     "allowInsecure" to if (d.insecure) "1" else null
@@ -213,6 +235,7 @@ object NodeDraftMapper {
                 json.put("sni", d.sni)
                 json.put("alpn", d.alpn)
                 json.put("fp", d.fingerprint)
+                json.put("pinSHA256", d.certificateSha256)
                 "vmess://" + b64(json.toString())
             }
             "trojan" -> {
@@ -225,6 +248,7 @@ object NodeDraftMapper {
                     "sni" to d.sni,
                     "alpn" to d.alpn,
                     "fp" to d.fingerprint,
+                    "pinSHA256" to d.certificateSha256,
                     "pbk" to d.publicKey,
                     "sid" to d.shortId,
                     "allowInsecure" to if (d.insecure) "1" else null
@@ -232,9 +256,19 @@ object NodeDraftMapper {
                 "trojan://${encUserinfo(d.secret)}@${d.server.trim()}:${d.port.trim()}?$params#$name"
             }
             "ss" -> "ss://" + b64url("${d.method}:${d.secret}") + "@${d.server.trim()}:${d.port.trim()}#$name"
+            "hysteria" -> {
+                val params = buildParams(
+                    "sni" to d.sni,
+                    "pinSHA256" to d.certificateSha256,
+                    "insecure" to if (d.insecure) "1" else null,
+                    "obfs" to d.obfsPassword.ifBlank { d.obfs }
+                )
+                "hysteria://${encUserinfo(d.secret)}@${d.server.trim()}:${d.port.trim()}?$params#$name"
+            }
             "hysteria2" -> {
                 val params = buildParams(
                     "sni" to d.sni,
+                    "pinSHA256" to d.certificateSha256,
                     "insecure" to if (d.insecure) "1" else null,
                     "obfs" to d.obfs,
                     "obfs-password" to d.obfsPassword
@@ -245,6 +279,7 @@ object NodeDraftMapper {
                 val params = buildParams(
                     "sni" to d.sni,
                     "alpn" to d.alpn,
+                    "pinSHA256" to d.certificateSha256,
                     "congestion_control" to d.congestionControl,
                     "allow_insecure" to if (d.insecure) "1" else null
                 )
@@ -274,6 +309,39 @@ object NodeDraftMapper {
             }
             else -> throw IllegalArgumentException("Unsupported protocol: ${d.protocol}")
         }
+    }
+
+    private fun parseStoredOutbound(rawConfig: String): Map<String, Any?>? {
+        val raw = rawConfig.trim()
+        if (!raw.startsWith("{") || !raw.endsWith("}")) return null
+        return runCatching { LinkParser.jsonToMap(JSONObject(raw)) }.getOrNull()
+    }
+
+    private fun deepMerge(base: Any?, overlay: Any?): Any? = when {
+        base is Map<*, *> && overlay is Map<*, *> -> {
+            val merged = linkedMapOf<String, Any?>()
+            base.forEach { (key, value) -> key?.toString()?.let { merged[it] = value } }
+            overlay.forEach { (key, value) ->
+                val textKey = key?.toString() ?: return@forEach
+                merged[textKey] = if (merged.containsKey(textKey)) {
+                    deepMerge(merged[textKey], value)
+                } else {
+                    value
+                }
+            }
+            merged
+        }
+        base is List<*> && overlay is List<*> -> {
+            val size = maxOf(base.size, overlay.size)
+            List(size) { index ->
+                when {
+                    index >= overlay.size -> base[index]
+                    index >= base.size -> overlay[index]
+                    else -> deepMerge(base[index], overlay[index])
+                }
+            }
+        }
+        else -> overlay
     }
 
     /** Query keys the masque editor owns; the WARP extras of the imported link survive as-is. */

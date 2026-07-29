@@ -12,6 +12,10 @@
         android:name="android.hardware.camera"
         android:required="false" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Required on Android 8+ before Lumen may hand its downloaded release APK
+         to the system package installer. The user still approves both the source
+         and every individual update in Android's own UI. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Lets the home screen widget repaint itself after a reboot or update. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- The in-app vibration switch drives the vibrator directly, so it keeps working
@@ -20,11 +24,18 @@
 
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Lumen">
+
+        <!-- Explicit PackageInstaller status target. It has no intent filter and cannot
+             be invoked by other apps; only Lumen's own session PendingIntent targets it. -->
+        <receiver
+            android:name="com.lumen.app.update.AndroidUpdateInstallReceiver"
+            android:exported="false" />
 
         <activity
             android:name="com.lumen.app.MainActivity"

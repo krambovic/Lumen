@@ -208,8 +208,28 @@ object VpnLogBus {
                 }
             }
         }
-        _lastError.value = message + (cause?.message?.let { ": $it" } ?: "")
+        // Dialogs already use "Connection failed" as their title. Prefer the actual
+        // exception reason, strip the core's colour escapes, and remove wrappers left
+        // by an older service so the body never reads "Connection failed" twice.
+        _lastError.value = userFacingError(message, cause)
         append(VpnLogLevel.ERROR, component, details)
+    }
+
+    internal fun userFacingError(message: String, cause: Throwable?): String {
+        val raw = cause?.message?.takeIf(String::isNotBlank) ?: message
+        return raw
+            .replace(Regex("\\u001B\\[[0-9;]*[A-Za-z]"), "")
+            .trim()
+            .removeRepeatedPrefix("Connection failed:")
+            .ifBlank { "Connection failed" }
+    }
+
+    private fun String.removeRepeatedPrefix(prefix: String): String {
+        var value = this
+        while (value.startsWith(prefix, ignoreCase = true)) {
+            value = value.substring(prefix.length).trimStart()
+        }
+        return value
     }
 
     /** Drops the live view and the persisted log; the log screen's "clear" button. */

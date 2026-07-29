@@ -14,8 +14,21 @@
                 android:startY="0"
                 android:endX="512"
                 android:endY="1024">
-                <item android:offset="0" android:color="#FF202020" />
-                <item android:offset="1" android:color="#FF050505" />
+                <item android:offset="0" android:color="#FF212121" />
+                <item android:offset="1" android:color="#FF0B0B0B" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M870,0 L1024,0 L1024,1024 L348,1024 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="870"
+                android:startY="0"
+                android:endX="348"
+                android:endY="1024">
+                <item android:offset="0" android:color="#FF2A2A2A" />
+                <item android:offset="1" android:color="#FF111111" />
             </gradient>
         </aapt:attr>
     </path>

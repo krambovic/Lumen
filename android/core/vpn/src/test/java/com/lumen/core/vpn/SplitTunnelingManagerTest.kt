@@ -5,6 +5,7 @@ import android.net.VpnService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.never
@@ -133,5 +134,39 @@ class SplitTunnelingManagerTest {
 
         assertTrue(applied.isEmpty())
         assertTrue(SplitTunnelingManager.requiresSelfDisallow(config.mode, applied))
+    }
+
+    @Test
+    fun `own package is removed from an allow-list`() {
+        val sanitized = SplitTunnelingManager.withoutOwnPackage(
+            SplitTunnelingConfig(
+                SplitTunnelingMode.ALLOW_LIST,
+                setOf("net.kramb.lumen", "com.example.browser")
+            ),
+            "net.kramb.lumen"
+        )
+
+        assertEquals(setOf("com.example.browser"), sanitized.packages)
+    }
+
+    @Test
+    fun `empty allow-list is rejected instead of capturing every app`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            SplitTunnelingManager.requireSafeAllowList(
+                SplitTunnelingConfig(SplitTunnelingMode.ALLOW_LIST)
+            )
+        }
+    }
+
+    @Test
+    fun `allow-list with no installed applications is rejected`() {
+        val config = SplitTunnelingConfig(
+            SplitTunnelingMode.ALLOW_LIST,
+            setOf("com.example.removed")
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            SplitTunnelingManager.requireSafeAllowList(config, emptyList())
+        }
     }
 }

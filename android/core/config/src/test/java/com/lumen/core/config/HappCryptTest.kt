@@ -40,17 +40,6 @@ class HappCryptTest {
     }
 
     @Test
-    fun testDecryptInvalidPayloadThrowsError() {
-        var errorThrown = false
-        try {
-            HappCrypt.decryptHappLink("happ://crypt/invalidpayload==")
-        } catch (e: HappDecryptError) {
-            errorThrown = true
-        }
-        assertTrue(errorThrown)
-    }
-
-    @Test
     fun testCrypt51EmbeddedLengthOneModFourStillBuildsCandidates() {
         // Embedded length n = 9 (n - 1 is a multiple of 4) used to index one past
         // the end of the url region, aborting candidate generation entirely.

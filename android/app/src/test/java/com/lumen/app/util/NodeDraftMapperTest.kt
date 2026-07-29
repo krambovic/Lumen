@@ -2,6 +2,7 @@ package com.lumen.app.util
 
 import com.lumen.core.database.model.NodeEntity
 import com.lumen.ui.screens.NodeDraft
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -132,5 +133,95 @@ class NodeDraftMapperTest {
         assertTrue(link, link.contains("use_http2=1"))
         assertTrue(link, link.contains("name=masque0"))
         assertEquals(1, Regex("sni=").findAll(link).count())
+    }
+
+    @Test
+    fun hysteriaV1EditKeepsProtocolAndUnmodeledExtendedFields() {
+        val entity = NodeEntity(
+            id = "hy-1",
+            name = "Hysteria one",
+            protocol = "hysteria",
+            server = "hy.example.com",
+            port = 443,
+            link = "hysteria://secret@hy.example.com:443?sni=hy.example.com#Hysteria",
+            outboundJson = """
+                {
+                  "protocol":"hysteria",
+                  "singbox":{
+                    "type":"hysteria",
+                    "server":"hy.example.com",
+                    "server_port":443,
+                    "auth_str":"secret",
+                    "up_mbps":75,
+                    "down_mbps":250,
+                    "tls":{"enabled":true,"server_name":"hy.example.com"}
+                  }
+                }
+            """.trimIndent()
+        )
+
+        val draft = NodeDraftMapper.draftFromEntity(entity)!!
+        assertEquals("hysteria", draft.protocol)
+        val saved = NodeDraftMapper.entityFromDraft(draft.copy(name = "Edited"))
+
+        assertEquals("hysteria", saved.protocol)
+        assertTrue(saved.link.startsWith("hysteria://"))
+        val singbox = JSONObject(saved.outboundJson).getJSONObject("singbox")
+        assertEquals("hysteria", singbox.getString("type"))
+        assertEquals(75, singbox.getInt("up_mbps"))
+        assertEquals(250, singbox.getInt("down_mbps"))
+    }
+
+    @Test
+    fun clashShadowsocksEditKeepsPluginAndOriginalMetadata() {
+        val entity = NodeEntity(
+            id = "ss-1",
+            name = "Plugin SS",
+            protocol = "ss",
+            server = "ss.example.com",
+            port = 8388,
+            link = "ss://YWVzLTEyOC1nY206c2VjcmV0@ss.example.com:8388#Plugin",
+            outboundJson = """
+                {
+                  "protocol":"ss",
+                  "settings":{
+                    "servers":[{
+                      "address":"ss.example.com",
+                      "port":8388,
+                      "method":"aes-128-gcm",
+                      "password":"secret",
+                      "plugin":"v2ray-plugin",
+                      "plugin_opts":"mode=websocket;host=cdn.example.com"
+                    }]
+                  },
+                  "clash":{"type":"ss","plugin":"v2ray-plugin"}
+                }
+            """.trimIndent()
+        )
+
+        val saved = NodeDraftMapper.entityFromDraft(NodeDraftMapper.draftFromEntity(entity)!!)
+        val json = JSONObject(saved.outboundJson)
+        val server = json.getJSONObject("settings").getJSONArray("servers").getJSONObject(0)
+        assertEquals("v2ray-plugin", server.getString("plugin"))
+        assertEquals("mode=websocket;host=cdn.example.com", server.getString("plugin_opts"))
+        assertEquals("v2ray-plugin", json.getJSONObject("clash").getString("plugin"))
+    }
+
+    @Test
+    fun newManualNodePersistsNormalizedOutboundJson() {
+        val saved = NodeDraftMapper.entityFromDraft(
+            NodeDraft(
+                name = "Manual",
+                protocol = "vless",
+                server = "vless.example.com",
+                port = "443",
+                secret = "11111111-2222-3333-4444-555555555555",
+                security = "tls",
+                sni = "vless.example.com"
+            )
+        )
+
+        assertTrue(saved.outboundJson.startsWith("{"))
+        assertEquals("vless", JSONObject(saved.outboundJson).getString("protocol"))
     }
 }

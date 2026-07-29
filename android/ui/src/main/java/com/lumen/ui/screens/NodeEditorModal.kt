@@ -43,7 +43,7 @@ import androidx.compose.ui.window.DialogProperties
 
 /**
  * Full node editor supporting all protocols from the desktop app:
- * VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / WireGuard /
+ * VLESS / VMess / Trojan / Shadowsocks / Hysteria / Hysteria2 / TUIC / WireGuard /
  * AmneziaWG / OpenVPN / SOCKS / HTTP.
  */
 @Composable
@@ -140,6 +140,7 @@ private fun protocolLabel(p: String): String = when (p) {
     "vmess" -> "VMess"
     "trojan" -> "Trojan"
     "ss" -> "Shadowsocks"
+    "hysteria" -> "Hysteria"
     "hysteria2" -> "Hysteria2"
     "tuic" -> "TUIC v5"
     "wireguard" -> "WireGuard"
@@ -162,10 +163,9 @@ private fun isDraftValid(d: NodeDraft): Boolean = when (d.protocol) {
 }
 
 /**
- * True when the profile authenticates the user interactively: either it asks for it
- * (`auth-user-pass`), or it carries no client certificate at all, which leaves the
- * username/password as the only credential the server can check. A certificate-only
- * profile has <cert> and <key> and legitimately needs neither, so it is not flagged.
+ * True when the profile explicitly asks for username/password authentication.
+ * A server may intentionally accept a client without a certificate, so the absence
+ * of <cert>/<key> alone is not proof that credentials are required.
  */
 fun openVpnRequiresCredentials(d: NodeDraft): Boolean {
     if (d.protocol != "openvpn") return false
@@ -174,7 +174,7 @@ fun openVpnRequiresCredentials(d: NodeDraft): Boolean {
         token == "auth-user-pass" || token == "<auth-user-pass>" ||
             token.startsWith("auth-user-pass ") || token.startsWith("auth-user-pass\t")
     }
-    return declared || (d.ovpnCert.isBlank() && d.ovpnKey.isBlank())
+    return declared
 }
 
 /**
@@ -183,6 +183,21 @@ fun openVpnRequiresCredentials(d: NodeDraft): Boolean {
  */
 fun openVpnCredentialsMissing(d: NodeDraft): Boolean =
     openVpnRequiresCredentials(d) && (d.ovpnUsername.isBlank() || d.ovpnPassword.isBlank())
+
+/**
+ * An encrypted private key ("Proc-Type: 4,ENCRYPTED" for traditional PEM keys,
+ * "BEGIN ENCRYPTED PRIVATE KEY" for PKCS#8) cannot be loaded without its
+ * passphrase: OpenVPN would ask for it interactively, which is impossible here.
+ */
+fun openVpnKeyIsEncrypted(key: String): Boolean {
+    val text = key.uppercase()
+    return text.contains("ENCRYPTED PRIVATE KEY") ||
+        (text.contains("PROC-TYPE:") && text.contains("ENCRYPTED"))
+}
+
+/** The private key needs a passphrase and the editor field is still empty. */
+fun openVpnKeyPasswordMissing(d: NodeDraft): Boolean =
+    d.protocol == "openvpn" && openVpnKeyIsEncrypted(d.ovpnKey) && d.ovpnKeyPassword.isBlank()
 
 @Composable
 private fun Field(
@@ -284,7 +299,16 @@ private fun TransportFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
         label = s.transportLabel,
         options = NETWORK_TRANSPORTS,
         selected = draft.network,
-        onSelected = { onChange(draft.copy(network = it)) }
+        onSelected = {
+            onChange(
+                draft.copy(
+                    network = it,
+                    // The exact extended core only registers QUIC as a V2Ray
+                    // transport inside a TLS/Reality connection.
+                    security = if (it == "quic" && draft.security == "none") "tls" else draft.security
+                )
+            )
+        }
     )
     Spacer(Modifier.height(4.dp))
     if (draft.network in listOf("ws", "xhttp", "http")) {
@@ -315,6 +339,9 @@ private fun SecurityFields(
         Field(s.sniLabel, draft.sni) { onChange(draft.copy(sni = it)) }
         Field(s.alpnLabel, draft.alpn) { onChange(draft.copy(alpn = it)) }
         Field(s.utlsFingerprintLabel, draft.fingerprint) { onChange(draft.copy(fingerprint = it)) }
+        Field(s.certificateSha256Label, draft.certificateSha256) {
+            onChange(draft.copy(certificateSha256 = it))
+        }
         ToggleField(s.allowInsecureTlsLabel, draft.insecure) { onChange(draft.copy(insecure = it)) }
     }
     if (draft.security == "reality") {
@@ -360,9 +387,12 @@ private fun UriProtocolFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
             )
             Field(s.password, draft.secret) { onChange(draft.copy(secret = it)) }
         }
-        "hysteria2" -> {
+        "hysteria", "hysteria2" -> {
             Field(s.passwordAuthLabel, draft.secret) { onChange(draft.copy(secret = it)) }
             Field(s.sniLabel, draft.sni) { onChange(draft.copy(sni = it)) }
+            Field(s.certificateSha256Label, draft.certificateSha256) {
+                onChange(draft.copy(certificateSha256 = it))
+            }
             Field(s.obfsLabel, draft.obfs) { onChange(draft.copy(obfs = it)) }
             Field(s.obfsPasswordLabel, draft.obfsPassword) { onChange(draft.copy(obfsPassword = it)) }
             ToggleField(s.allowInsecureTlsLabel, draft.insecure) { onChange(draft.copy(insecure = it)) }
@@ -371,6 +401,9 @@ private fun UriProtocolFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
             Field(s.uuidPasswordLabel, draft.secret) { onChange(draft.copy(secret = it)) }
             Field(s.sniLabel, draft.sni) { onChange(draft.copy(sni = it)) }
             Field(s.alpnLabel, draft.alpn) { onChange(draft.copy(alpn = it)) }
+            Field(s.certificateSha256Label, draft.certificateSha256) {
+                onChange(draft.copy(certificateSha256 = it))
+            }
             LumenDropdown(
                 label = s.congestionControlLabel,
                 options = CONGESTION_OPTIONS,
@@ -598,6 +631,12 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
     Field("CA certificate", draft.ovpnCa, singleLine = false, minLines = 4) { onChange(draft.copy(ovpnCa = it)) }
     Field("Client certificate", draft.ovpnCert, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnCert = it)) }
     Field("Private key", draft.ovpnKey, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnKey = it)) }
+    // Encrypted private keys ("Proc-Type: 4,ENCRYPTED" / PKCS#8 ENCRYPTED) cannot be
+    // used without their passphrase; OpenVPN would prompt for it interactively.
+    Field(s.ovpnKeyPasswordLabel, draft.ovpnKeyPassword) { onChange(draft.copy(ovpnKeyPassword = it)) }
+    if (openVpnKeyPasswordMissing(draft)) {
+        EditorWarning(s.ovpnKeyPasswordRequired)
+    }
     Field("tls-crypt key", draft.ovpnTlsCrypt, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnTlsCrypt = it)) }
     ToggleField("tls-crypt-v2", draft.ovpnTlsCryptV2) { onChange(draft.copy(ovpnTlsCryptV2 = it)) }
     Field("tls-auth key", draft.ovpnTlsAuth, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnTlsAuth = it)) }

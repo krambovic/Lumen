@@ -6,6 +6,8 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.URI
 import java.net.URL
 import java.util.Locale
@@ -113,7 +115,9 @@ internal object SubscriptionClient {
         rawUrl: String,
         hwid: String?,
         customUserAgent: String? = null,
-        direct: Boolean = true
+        direct: Boolean = true,
+        allowHttp: Boolean = false,
+        proxyPort: Int? = null
     ): SubscriptionPayload {
         require(hwid == null || (hwid.length <= 256 && '\r' !in hwid && '\n' !in hwid)) { "Invalid HWID" }
         require(customUserAgent == null ||
@@ -132,12 +136,19 @@ internal object SubscriptionClient {
             target = decrypted
         }
         require(target.startsWith("http://") || target.startsWith("https://")) { "Subscription URL must use HTTP(S)" }
+        require(allowHttp || target.startsWith("https://")) {
+            "HTTP subscription links are disabled in Subscription settings"
+        }
 
         val profiles = clientProfiles(customUserAgent)
         var lastError: Throwable? = null
         for ((profile, userAgent) in profiles) {
             try {
-                val conn = URL(target).openConnection() as HttpURLConnection
+                val connectionProxy = proxyPort?.takeIf { it in 1..65535 }?.let {
+                    Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", it))
+                }
+                val conn = (connectionProxy?.let { URL(target).openConnection(it) }
+                    ?: URL(target).openConnection()) as HttpURLConnection
                 conn.connectTimeout = 15_000
                 conn.readTimeout = 20_000
                 conn.instanceFollowRedirects = true
@@ -149,6 +160,9 @@ internal object SubscriptionClient {
                 if (direct) conn.setRequestProperty("X-Lumen-Route", "direct")
                 try {
                     val code = conn.responseCode
+                    require(allowHttp || conn.url.protocol.equals("https", true)) {
+                        "Subscription redirect to HTTP is disabled in Subscription settings"
+                    }
                     val rawStream = if (code in 200..299) conn.inputStream else conn.errorStream
                     val stream = rawStream?.let {
                         if (conn.getHeaderField("Content-Encoding")?.contains("gzip", ignoreCase = true) == true) {
@@ -300,6 +314,9 @@ internal object SubscriptionClient {
     private val metadataKeys = setOf(
         "profile-title", "subscription-name", "profile-description",
         "announce", "announcement", "announce-url", "announcement-url",
+        // telegram-url is Happ's own, absent from the incy spec: the "Channel / Bot"
+        // button. Without it here the whitelist below drops it before buildMetadata.
+        "telegram-url", "telegram",
         "support-url", "support", "support-email",
         "profile-web-page-url", "homepage", "premium-url",
         "banner-text", "banner-button-text", "banner-button-url",
@@ -333,11 +350,27 @@ internal object SubscriptionClient {
     )
 
     /** Provider supplied links are opened by the user, so only http(s) is accepted. */
+    /**
+     * Desktop stores these links verbatim, so panels get away with sending
+     * `t.me/support` or `tg://resolve?domain=x`. Requiring an explicit http(s)
+     * prefix silently dropped both and left the buttons missing on Android only.
+     * A bare host is promoted to https; anything that is not link-shaped is still
+     * rejected rather than handed to an intent.
+     */
     private fun webUrl(value: String?): String? {
         val text = value?.trim().orEmpty()
         if (text.isBlank() || text.length > 2048) return null
-        if (!text.startsWith("http://", true) && !text.startsWith("https://", true)) return null
-        return text
+        if (text.any(Char::isWhitespace)) return null
+        if (text.startsWith("http://", true) || text.startsWith("https://", true)) return text
+        // Telegram's own scheme: the card opens it with an intent, and the opener
+        // falls back when no app can handle it.
+        if (text.startsWith("tg://", true)) return text
+        if (text.startsWith("@") && text.length > 1) return "https://t.me/${text.drop(1)}"
+        // Scheme-less "host/path": needs a dot and must not look like another scheme.
+        if (text.contains("://") || text.contains('.').not()) return null
+        val host = text.substringBefore('/')
+        if (host.isBlank() || host.startsWith('.') || host.endsWith('.')) return null
+        return "https://$text"
     }
 
     private val hexColorRegex = Regex("^#?([0-9A-Fa-f]{6})$")

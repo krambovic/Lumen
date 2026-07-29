@@ -27,7 +27,7 @@ Run from any directory: python android/tools/gen_launcher_icons.py
 """
 from pathlib import Path
 from math import hypot
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 from PIL import Image, ImageDraw
 
@@ -62,12 +62,22 @@ class Theme(NamedTuple):
     bg_top: str
     bg_bottom: str
     glyph: str
+    diagonal_top: Optional[str]
+    diagonal_bottom: Optional[str]
 
 
 # White plate, black mark. Both stops are the same colour, so the plate is flat.
-LIGHT = Theme("drawable", "#FFFFFFFF", "#FFFFFFFF", "#FF000000")
-# Dark plate, white mark.
-DARK = Theme("drawable-night", "#FF202020", "#FF050505", "#FFFFFFFF")
+LIGHT = Theme("drawable", "#FFFFFFFF", "#FFFFFFFF", "#FF000000", None, None)
+# Dark plate from the approved artwork: white mark over a black vertical
+# gradient with the characteristic lighter diagonal facet on the right.
+DARK = Theme(
+    "drawable-night",
+    "#FF212121",
+    "#FF0B0B0B",
+    "#FFFFFFFF",
+    "#FF2A2A2A",
+    "#FF111111",
+)
 THEMES = (LIGHT, DARK)
 
 
@@ -82,7 +92,17 @@ class Fixed(NamedTuple):
 FIXED = (
     Fixed("ic_launcher_light", LIGHT),
     # Same palette as the -night variant, but parked in the unqualified folder.
-    Fixed("ic_launcher_dark", Theme("drawable", DARK.bg_top, DARK.bg_bottom, DARK.glyph)),
+    Fixed(
+        "ic_launcher_dark",
+        Theme(
+            "drawable",
+            DARK.bg_top,
+            DARK.bg_bottom,
+            DARK.glyph,
+            DARK.diagonal_top,
+            DARK.diagonal_bottom,
+        ),
+    ),
 )
 
 LEGACY_DENSITIES = {
@@ -171,6 +191,33 @@ def save(image: Image.Image, folder: str, name: str) -> None:
     print("wrote", destination)
 
 
+def verify_dark_outputs() -> None:
+    """Every place that means "dark launcher icon" must use the approved artwork."""
+    equivalent_layers = (
+        (
+            RES / "drawable-night" / "ic_launcher_background.xml",
+            RES / "drawable" / "ic_launcher_dark_background.xml",
+        ),
+        (
+            RES / "drawable-night" / "ic_launcher_foreground.xml",
+            RES / "drawable" / "ic_launcher_dark_foreground.xml",
+        ),
+    )
+    for automatic, fixed in equivalent_layers:
+        if automatic.read_bytes() != fixed.read_bytes():
+            raise ValueError(f"dark icon layers drifted apart: {automatic} != {fixed}")
+
+    for folder, pixels in LEGACY_DENSITIES.items():
+        for suffix in ("", "_round"):
+            path = RES / folder / f"ic_launcher_dark{suffix}.png"
+            with Image.open(path) as image:
+                if image.size != (pixels, pixels):
+                    raise ValueError(
+                        f"{path} is {image.size}, expected {(pixels, pixels)}"
+                    )
+    print("verified one dark artwork across system-night, fixed, adaptive and legacy icons")
+
+
 def vector(comment: str, body: str, aapt: bool = False) -> str:
     namespace = '\n    xmlns:aapt="http://schemas.android.com/aapt"' if aapt else ""
     return (
@@ -200,6 +247,23 @@ def adaptive_icon(base: str = "ic_launcher") -> str:
 
 
 def background_layer(theme: Theme) -> str:
+    diagonal = ""
+    if theme.diagonal_top is not None and theme.diagonal_bottom is not None:
+        diagonal = (
+            '    <path android:pathData="M870,0 L1024,0 L1024,1024 L348,1024 Z">\n'
+            '        <aapt:attr name="android:fillColor">\n'
+            '            <gradient\n'
+            '                android:type="linear"\n'
+            '                android:startX="870"\n'
+            '                android:startY="0"\n'
+            '                android:endX="348"\n'
+            '                android:endY="1024">\n'
+            f'                <item android:offset="0" android:color="{theme.diagonal_top}" />\n'
+            f'                <item android:offset="1" android:color="{theme.diagonal_bottom}" />\n'
+            "            </gradient>\n"
+            "        </aapt:attr>\n"
+            "    </path>\n"
+        )
     return vector(
         "Full-bleed plate. No artwork here: the launcher mask crops this layer.",
         '    <path android:pathData="M0,0h1024v1024h-1024z">\n'
@@ -214,7 +278,8 @@ def background_layer(theme: Theme) -> str:
         f'                <item android:offset="1" android:color="{theme.bg_bottom}" />\n'
         "            </gradient>\n"
         "        </aapt:attr>\n"
-        "    </path>\n",
+        "    </path>\n"
+        + diagonal,
         aapt=True,
     )
 
@@ -228,8 +293,8 @@ def foreground_layer(theme: Theme, mark: str) -> str:
     )
 
 
-def gradient_image(size: int, theme: Theme) -> Image.Image:
-    top, bottom = rgb(theme.bg_top), rgb(theme.bg_bottom)
+def vertical_gradient(size: int, top_color: str, bottom_color: str) -> Image.Image:
+    top, bottom = rgb(top_color), rgb(bottom_color)
     image = Image.new("RGBA", (1, size))
     pixels = image.load()
     for y in range(size):
@@ -240,10 +305,30 @@ def gradient_image(size: int, theme: Theme) -> Image.Image:
     return image.resize((size, size), Image.Resampling.NEAREST)
 
 
+def background_image(size: int, theme: Theme) -> Image.Image:
+    image = vertical_gradient(size, theme.bg_top, theme.bg_bottom)
+    if theme.diagonal_top is None or theme.diagonal_bottom is None:
+        return image
+
+    facet = vertical_gradient(size, theme.diagonal_top, theme.diagonal_bottom)
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).polygon(
+        [
+            (size * 870 / VIEWPORT, 0),
+            (size, 0),
+            (size, size),
+            (size * 348 / VIEWPORT, size),
+        ],
+        fill=255,
+    )
+    image.paste(facet, (0, 0), mask)
+    return image
+
+
 def legacy(size: int, round_mask: bool, theme: Theme) -> Image.Image:
     scale = 4
     large = size * scale
-    image = gradient_image(large, theme)
+    image = background_image(large, theme)
     if round_mask:
         mask = Image.new("L", image.size, 0)
         ImageDraw.Draw(mask).ellipse((0, 0, large - 1, large - 1), fill=255)
@@ -301,6 +386,8 @@ def main() -> None:
             f"fixed {fixed.name}: plate {fixed.theme.bg_top} -> "
             f"{fixed.theme.bg_bottom}, mark {fixed.theme.glyph}"
         )
+
+    verify_dark_outputs()
 
     stale = RES / "drawable-nodpi" / "ic_launcher_artwork.png"
     if stale.is_file():

@@ -359,11 +359,33 @@ private const val MARK_HEIGHT_FRACTION = 50f / 72f
 
 private val ICON_LIGHT_PLATE = listOf(Color(0xFFFFFFFF), Color(0xFFFFFFFF))
 private val ICON_LIGHT_MARK = Color(0xFF000000)
-private val ICON_DARK_PLATE = listOf(Color(0xFF202020), Color(0xFF050505))
+private val ICON_DARK_PLATE = listOf(Color(0xFF212121), Color(0xFF0B0B0B))
+private val ICON_DARK_FACET = listOf(Color(0xFF2A2A2A), Color(0xFF111111))
 private val ICON_DARK_MARK = Color(0xFFFFFFFF)
 
-private fun DrawScope.drawLumenIcon(plate: List<Color>, markColor: Color) {
+private fun DrawScope.drawLumenIcon(
+    plate: List<Color>,
+    markColor: Color,
+    diagonalFacet: List<Color>? = null
+) {
     drawRect(Brush.verticalGradient(plate, startY = 0f, endY = size.height))
+    if (diagonalFacet != null) {
+        val facet = Path().apply {
+            moveTo(size.width * 870f / 1024f, 0f)
+            lineTo(size.width, 0f)
+            lineTo(size.width, size.height)
+            lineTo(size.width * 348f / 1024f, size.height)
+            close()
+        }
+        drawPath(
+            path = facet,
+            brush = Brush.linearGradient(
+                colors = diagonalFacet,
+                start = Offset(size.width * 870f / 1024f, 0f),
+                end = Offset(size.width * 348f / 1024f, size.height)
+            )
+        )
+    }
     val markHeight = size.height * MARK_HEIGHT_FRACTION
     val markWidth = markHeight * MARK_ASPECT
     val left = (size.width - markWidth) / 2f
@@ -388,11 +410,12 @@ private fun LauncherIconPreview(option: LauncherIconOption, modifier: Modifier =
                     drawLumenIcon(ICON_LIGHT_PLATE, ICON_LIGHT_MARK)
                 }
                 clipRect(left = size.width / 2f) {
-                    drawLumenIcon(ICON_DARK_PLATE, ICON_DARK_MARK)
+                    drawLumenIcon(ICON_DARK_PLATE, ICON_DARK_MARK, ICON_DARK_FACET)
                 }
             }
             LauncherIconOption.LIGHT -> drawLumenIcon(ICON_LIGHT_PLATE, ICON_LIGHT_MARK)
-            LauncherIconOption.DARK -> drawLumenIcon(ICON_DARK_PLATE, ICON_DARK_MARK)
+            LauncherIconOption.DARK ->
+                drawLumenIcon(ICON_DARK_PLATE, ICON_DARK_MARK, ICON_DARK_FACET)
         }
     }
 }

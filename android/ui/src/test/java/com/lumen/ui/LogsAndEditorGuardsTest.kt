@@ -68,12 +68,12 @@ class LogsAndEditorGuardsTest {
     )
 
     @Test
-    fun profileWithoutClientCertificateNeedsCredentials() {
+    fun profileWithoutClientCertificateIsNotAssumedToNeedCredentials() {
         val draft = openVpnDraft()
-        assertTrue(openVpnRequiresCredentials(draft))
-        assertTrue(openVpnCredentialsMissing(draft))
-        assertTrue(openVpnCredentialsMissing(draft.copy(ovpnUsername = "user")))
-        assertTrue(openVpnCredentialsMissing(draft.copy(ovpnPassword = "secret")))
+        assertFalse(openVpnRequiresCredentials(draft))
+        assertFalse(openVpnCredentialsMissing(draft))
+        assertFalse(openVpnCredentialsMissing(draft.copy(ovpnUsername = "user")))
+        assertFalse(openVpnCredentialsMissing(draft.copy(ovpnPassword = "secret")))
         assertFalse(openVpnCredentialsMissing(draft.copy(ovpnUsername = "user", ovpnPassword = "secret")))
     }
 
@@ -112,7 +112,8 @@ class LogsAndEditorGuardsTest {
         "logLevelAll", "logLevelDebug", "logLevelInfo", "logLevelWarning", "logLevelError",
         "loadOlderLogs", "ovpnCredentialsRequired", "ovpnCertificateOnlyHint",
         "cameraPermissionTitle", "cameraPermissionMessage", "cameraPermissionBlocked",
-        "openAppSettings"
+        "openAppSettings", "downloadingUpdate", "updateInstallPermissionRequired",
+        "updateInstallerUnavailable"
     )
 
     @Test

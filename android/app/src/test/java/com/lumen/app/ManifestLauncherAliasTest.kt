@@ -92,6 +92,29 @@ class ManifestLauncherAliasTest {
         assertEquals(listOf(LauncherIconManager.ALIAS_DEFAULT), enabled)
     }
 
+    @Test
+    fun everyAliasPointsAtItsMatchingArtwork() {
+        assumeTrue(manifest != null)
+        val expected = mapOf(
+            LauncherIconManager.ALIAS_DEFAULT to
+                ("@mipmap/ic_launcher" to "@mipmap/ic_launcher_round"),
+            LauncherIconManager.ALIAS_LIGHT to
+                ("@mipmap/ic_launcher_light" to "@mipmap/ic_launcher_light_round"),
+            LauncherIconManager.ALIAS_DARK to
+                ("@mipmap/ic_launcher_dark" to "@mipmap/ic_launcher_dark_round")
+        )
+        elements("activity-alias").forEach { alias ->
+            val name = alias.getAttribute("android:name")
+            val artwork = requireNotNull(expected[name]) { "unexpected launcher alias $name" }
+            assertEquals("$name uses the wrong icon", artwork.first, alias.getAttribute("android:icon"))
+            assertEquals(
+                "$name uses the wrong round icon",
+                artwork.second,
+                alias.getAttribute("android:roundIcon")
+            )
+        }
+    }
+
     /** The filters that make imports work must all still be on MainActivity. */
     @Test
     fun mainActivityKeepsEveryOtherIntentFilter() {
@@ -107,6 +130,30 @@ class ManifestLauncherAliasTest {
         listOf("lumen", "vless", "wireguard", "content", "file").forEach { scheme ->
             assertTrue("scheme $scheme must stay on MainActivity", scheme in schemes)
         }
+    }
+
+    @Test
+    fun updaterHasPermissionAndAPrivateInstallerStatusReceiver() {
+        assumeTrue(manifest != null)
+        val permissions = elements("uses-permission")
+            .map { it.getAttribute("android:name") }
+        assertTrue(
+            "in-app updates require REQUEST_INSTALL_PACKAGES",
+            "android.permission.REQUEST_INSTALL_PACKAGES" in permissions
+        )
+
+        val receiver = elements("receiver").single {
+            it.getAttribute("android:name") ==
+                "com.lumen.app.update.AndroidUpdateInstallReceiver"
+        }
+        assertEquals("installer status receiver must stay private", "false",
+            receiver.getAttribute("android:exported"))
+        assertTrue(
+            "the updater no longer needs to expose a FileProvider",
+            elements("provider").none {
+                it.getAttribute("android:name") == "androidx.core.content.FileProvider"
+            }
+        )
     }
 
     private companion object {

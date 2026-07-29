@@ -21,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import com.lumen.core.vpn.LumenVpnService
 import com.lumen.ui.theme.LumenTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -169,14 +170,25 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Restarts the tunnel on the newly selected server. Called when the user
-     * picks another node while the VPN is running.
+     * Restarts the tunnel on the newly selected server. A selection made while
+     * startup is still in progress must cancel that attempt as well; otherwise the
+     * UI names the new server while the old generated config finishes connecting.
      */
     private fun restartVpnForNewServer() {
-        if (!LumenVpnService.isRunning.value) return
+        if (!LumenVpnService.isRunning.value && !LumenVpnService.isStarting.value) return
         lifecycleScope.launch {
             startService(viewModel.buildStopIntent(this@MainActivity))
-            withTimeoutOrNull(6_000) { LumenVpnService.isRunning.first { running -> !running } }
+            val stopped = withTimeoutOrNull(10_000) {
+                combine(
+                    LumenVpnService.isRunning,
+                    LumenVpnService.isStarting
+                ) { running, starting -> !running && !starting }
+                    .first { it }
+            } == true
+            if (!stopped) {
+                viewModel.reportConnectError("Could not stop the previous VPN session")
+                return@launch
+            }
             delay(250)
             VpnService.prepare(this@MainActivity)?.let(vpnPermissionLauncher::launch) ?: startVpn()
         }

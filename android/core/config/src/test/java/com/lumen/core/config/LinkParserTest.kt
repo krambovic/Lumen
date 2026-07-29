@@ -323,7 +323,7 @@ class LinkParserTest {
         val ovpn = """
             client
             dev tun
-            proto udp
+            proto tcp
             remote ovpn.example.com 1194
             resolv-retry infinite
             nobind
@@ -581,6 +581,143 @@ class LinkParserTest {
         assertEquals(443, firstServer["server_port"])
         val tls = singbox["tls"] as Map<*, *>
         assertTrue(tls["ca"].toString().contains("BEGIN CERTIFICATE"))
+    }
+
+    @Test
+    fun openVpnProfileWithBothTransportsKeepsOnlyTheTcpRemotes() {
+        val node = LinkParser.parseOpenVpnConfig(
+            """
+            client
+            dev tun
+            proto udp
+            remote ovpn-udp.example.com 1194 udp
+            remote ovpn-tcp.example.com 443 tcp
+            <ca>
+            -----BEGIN CERTIFICATE-----
+            MIIB
+            -----END CERTIFICATE-----
+            </ca>
+            """.trimIndent()
+        )
+        val singbox = node.outbound["singbox"] as Map<*, *>
+        assertEquals("tcp", singbox["proto"])
+        val servers = singbox["servers"] as List<*>
+        assertEquals(1, servers.size)
+        assertEquals("ovpn-tcp.example.com", (servers[0] as Map<*, *>)["server"])
+    }
+
+    @Test
+    fun udpOnlyOpenVpnProfileIsRejectedWithAnActionableMessage() {
+        val error = runCatching {
+            LinkParser.parseOpenVpnConfig(
+                """
+                client
+                dev tun
+                proto udp
+                remote ovpn-udp.example.com 1194
+                <ca>
+                -----BEGIN CERTIFICATE-----
+                MIIB
+                -----END CERTIFICATE-----
+                </ca>
+                """.trimIndent()
+            )
+        }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("OpenVPN over UDP is not supported"))
+    }
+
+    private fun openVpnWith(vararg directives: String): String = buildString {
+        appendLine("client")
+        appendLine("dev tun")
+        appendLine("proto tcp")
+        appendLine("remote ovpn.example.com 443")
+        directives.forEach(::appendLine)
+        appendLine("<ca>")
+        appendLine("-----BEGIN CERTIFICATE-----")
+        appendLine("MIIB")
+        appendLine("-----END CERTIFICATE-----")
+        appendLine("</ca>")
+    }
+
+    @Test
+    fun protonTlsCipherNameIsConvertedForTheBundledExtendedCore() {
+        val node = LinkParser.parseOpenVpnConfig(
+            openVpnWith("tls-cipher TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256")
+        )
+        val singbox = node.outbound["singbox"] as Map<*, *>
+        val tls = singbox["tls"] as Map<*, *>
+        assertEquals(
+            listOf("TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"),
+            tls["cipher_suites"]
+        )
+    }
+
+    @Test
+    fun opensslTlsAliasIsConvertedAndUnknownRestrictionDoesNotCrashCore() {
+        val supported = LinkParser.parseOpenVpnConfig(
+            openVpnWith("tls-cipher ECDHE-RSA-AES256-GCM-SHA384")
+        )
+        val supportedTls = (supported.outbound["singbox"] as Map<*, *>)["tls"] as Map<*, *>
+        assertEquals(
+            listOf("TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"),
+            supportedTls["cipher_suites"]
+        )
+
+        val unknown = LinkParser.parseOpenVpnConfig(openVpnWith("tls-cipher DEFAULT@SECLEVEL=0"))
+        val unknownTls = (unknown.outbound["singbox"] as Map<*, *>)["tls"] as Map<*, *>
+        assertTrue(!unknownTls.containsKey("cipher_suites"))
+    }
+
+    @Test
+    fun tls13CipherSuitesAreNotMisroutedIntoTheExtendedTls12Field() {
+        val node = LinkParser.parseOpenVpnConfig(
+            openVpnWith("tls-ciphersuites TLS_AES_256_GCM_SHA384")
+        )
+        val tls = (node.outbound["singbox"] as Map<*, *>)["tls"] as Map<*, *>
+        assertTrue(!tls.containsKey("cipher_suites"))
+    }
+
+    @Test
+    fun negotiatedDataCipherWinsOverLegacyCipherFallback() {
+        val node = LinkParser.parseOpenVpnConfig(
+            openVpnWith(
+                "cipher AES-128-CBC",
+                "data-ciphers AES-256-GCM:AES-128-GCM"
+            )
+        )
+        val singbox = node.outbound["singbox"] as Map<*, *>
+        assertEquals("AES-256-GCM", singbox["cipher"])
+    }
+
+    @Test
+    fun tlsAuthWithoutDirectionIsBidirectionalInExtendedCore() {
+        val node = LinkParser.parseOpenVpnConfig(
+            openVpnWith(
+                "<tls-auth>",
+                "-----BEGIN OpenVPN Static key V1-----",
+                "00",
+                "-----END OpenVPN Static key V1-----",
+                "</tls-auth>"
+            )
+        )
+        val singbox = node.outbound["singbox"] as Map<*, *>
+        assertEquals(-1, singbox["key_direction"])
+    }
+
+    @Test
+    fun unsupportedAuthDigestFallsBackInsteadOfRejectingWholeConfig() {
+        val node = LinkParser.parseOpenVpnConfig(openVpnWith("auth BLAKE2"))
+        val singbox = node.outbound["singbox"] as Map<*, *>
+        assertTrue(!singbox.containsKey("auth"))
+    }
+
+    @Test
+    fun unknownOpenVpnTransportIsRejectedInsteadOfSilentlyChanged() {
+        val error = runCatching {
+            LinkParser.parseOpenVpnConfig(openVpnWith("proto udp-obfuscated"))
+        }.exceptionOrNull()
+        assertTrue(error is LinkParseError)
+        assertTrue(error?.message.orEmpty().contains("unsupported OpenVPN transport"))
     }
 
     @Test
@@ -1209,5 +1346,190 @@ class LinkParserTest {
         assertEquals("🇲🇾 Малайзия · my-1", nodes[1].name)
         assertEquals("vless", nodes[1].scheme)
         assertEquals("my1.example.com", nodes[1].server)
+    }
+
+    @Test
+    fun testMieruRangeOnlyLinkPreservesExtendedServerPorts() {
+        val node = LinkParser.parseSingle(
+            "mieru://alice:secret@mieru.example.com?server_ports=20000-20010,30000-30005&transport=tcp#Range"
+        )
+
+        assertEquals("mieru", node.scheme)
+        assertEquals(20000, node.port)
+        @Suppress("UNCHECKED_CAST")
+        val singbox = node.outbound["singbox"] as Map<String, Any?>
+        assertEquals(listOf("20000-20010", "30000-30005"), singbox["server_ports"])
+        assertTrue(!singbox.containsKey("server_port"))
+    }
+
+    @Test
+    fun testClashHysteriaV1IsNotSilentlyConvertedToV2() {
+        val (nodes, errors) = LinkParser.parseLinksText(
+            """
+                proxies:
+                  - name: hy-one
+                    type: hysteria
+                    server: hy.example.com
+                    port: 443
+                    auth-str: secret
+                    up: 75 Mbps
+                    down: 250 Mbps
+                    sni: hy.example.com
+            """.trimIndent()
+        )
+
+        assertTrue(errors.joinToString("; "), errors.isEmpty())
+        assertEquals(1, nodes.size)
+        assertEquals("hysteria", nodes.single().scheme)
+        @Suppress("UNCHECKED_CAST")
+        val singbox = nodes.single().outbound["singbox"] as Map<String, Any?>
+        assertEquals("hysteria", singbox["type"])
+        assertEquals(75, singbox["up_mbps"])
+        assertEquals(250, singbox["down_mbps"])
+    }
+
+    @Test
+    fun testClashTransportPluginAndSecureHttpFieldsSurviveImport() {
+        val yaml = """
+            proxies:
+              - name: vmess-grpc
+                type: vmess
+                server: vmess.example.com
+                port: 443
+                uuid: 11111111-2222-3333-4444-555555555555
+                cipher: auto
+                tls: true
+                network: grpc
+                grpc-opts:
+                  grpc-service-name: lumen
+                  grpc-authority: edge.example.com
+              - name: ss-plugin
+                type: ss
+                server: ss.example.com
+                port: 8388
+                cipher: aes-128-gcm
+                password: secret
+                plugin: v2ray-plugin
+                plugin-opts:
+                  mode: websocket
+                  host: cdn.example.com
+              - name: secure-http
+                type: https
+                server: proxy.example.com
+                port: 443
+                username: user
+                password: pass
+                sni: edge.example.com
+        """.trimIndent()
+
+        val (nodes, errors) = LinkParser.parseLinksText(yaml)
+        assertTrue(errors.joinToString("; "), errors.isEmpty())
+        val vmess = nodes.first { it.name == "vmess-grpc" }
+        @Suppress("UNCHECKED_CAST")
+        val stream = vmess.outbound["streamSettings"] as Map<String, Any?>
+        @Suppress("UNCHECKED_CAST")
+        val grpc = stream["grpcSettings"] as Map<String, Any?>
+        assertEquals("lumen", grpc["serviceName"])
+        assertEquals("edge.example.com", grpc["authority"])
+
+        val shadowsocks = nodes.first { it.name == "ss-plugin" }
+        val reparsedShadowsocks = LinkParser.parseSingle(shadowsocks.link)
+        @Suppress("UNCHECKED_CAST")
+        val ssSettings = reparsedShadowsocks.outbound["settings"] as Map<String, Any?>
+        @Suppress("UNCHECKED_CAST")
+        val ssServers = ssSettings["servers"] as List<Map<String, Any?>>
+        assertEquals("v2ray-plugin", ssServers.single()["plugin"])
+
+        val http = nodes.first { it.name == "secure-http" }
+        assertTrue(http.link.startsWith("https://"))
+        @Suppress("UNCHECKED_CAST")
+        val tls = http.outbound["tls"] as Map<String, Any?>
+        assertEquals(true, tls["enabled"])
+        assertEquals("edge.example.com", tls["server_name"])
+    }
+
+    @Test
+    fun testExtendedV2rayQuicTransportRequiresTlsAndIsPreservedExactly() {
+        val tlsNode = LinkParser.parseSingle(
+            "vless://11111111-2222-3333-4444-555555555555@quic.example.com:443" +
+                "?type=quic&security=tls&sni=quic.example.com#QUIC"
+        )
+        @Suppress("UNCHECKED_CAST")
+        val stream = tlsNode.outbound["streamSettings"] as Map<String, Any?>
+        assertEquals("quic", stream["network"])
+        assertEquals(emptyMap<String, Any?>(), stream["quicSettings"])
+
+        try {
+            LinkParser.parseSingle(
+                "vless://11111111-2222-3333-4444-555555555555@quic.example.com:443?type=quic&security=none"
+            )
+            fail("QUIC without TLS must be rejected by the extended-core parser")
+        } catch (expected: LinkParseError) {
+            assertTrue(expected.message.orEmpty().contains("TLS", ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun testUnsupportedClashProxyProducesExplicitImportError() {
+        val (nodes, errors) = LinkParser.parseLinksText(
+            """
+                proxies:
+                  - name: unsupported
+                    type: ssh
+                    server: ssh.example.com
+                    port: 22
+                    username: user
+                    password: pass
+            """.trimIndent()
+        )
+
+        assertTrue(nodes.isEmpty())
+        assertTrue(errors.joinToString("; "), errors.any { it.contains("Unsupported Clash proxy type `ssh`") })
+    }
+
+    @Test
+    fun testNativeSingboxCompositeGetsDependencyFirstClosure() {
+        val (nodes, errors) = LinkParser.parseLinksText(
+            """
+                {
+                  "outbounds": [
+                    {
+                      "type": "shadowsocks",
+                      "tag": "ss-base",
+                      "server": "ss.example.com",
+                      "server_port": 8388,
+                      "method": "2022-blake3-aes-128-gcm",
+                      "password": "MTIzNDU2Nzg5MDEyMzQ1Ng=="
+                    },
+                    {
+                      "type": "shadowtls",
+                      "tag": "tls-hop",
+                      "server": "edge.example.com",
+                      "server_port": 443,
+                      "version": 3,
+                      "password": "secret",
+                      "detour": "ss-base"
+                    },
+                    {
+                      "type": "vless",
+                      "tag": "root",
+                      "server": "root.example.com",
+                      "server_port": 443,
+                      "uuid": "11111111-2222-3333-4444-555555555555",
+                      "detour": "tls-hop"
+                    }
+                  ]
+                }
+            """.trimIndent()
+        )
+
+        assertTrue(errors.joinToString("; "), errors.isEmpty())
+        val root = nodes.first { it.name == "root" }
+        @Suppress("UNCHECKED_CAST")
+        val dependencies = root.outbound["_singbox_dependencies"] as Map<String, Any?>
+        @Suppress("UNCHECKED_CAST")
+        val outbounds = dependencies["outbounds"] as List<Map<String, Any?>>
+        assertEquals(listOf("ss-base", "tls-hop"), outbounds.map { it["tag"] })
+        assertEquals(emptyList<Map<String, Any?>>(), dependencies["endpoints"])
     }
 }
