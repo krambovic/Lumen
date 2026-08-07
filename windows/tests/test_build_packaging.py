@@ -77,6 +77,19 @@ def test_installer_installs_transition_bridge_for_legacy_updater() -> None:
     assert "UninstallDisplayIcon={app}\\Lumen.exe" in installer
 
 
+def test_installer_license_file_resolves_from_repository_root() -> None:
+    installer = build_qml.INNO_SCRIPT.read_text(encoding="utf-8")
+    license_setting = next(
+        line for line in installer.splitlines() if line.startswith("LicenseFile=")
+    )
+    license_path = Path(license_setting.split("=", 1)[1].strip().replace("\\", "/"))
+
+    resolved_license = (build_qml.INNO_SCRIPT.parent / license_path).resolve()
+
+    assert resolved_license == (build_qml.REPO_ROOT / "LICENSE").resolve()
+    assert resolved_license.is_file()
+
+
 def test_installer_registers_lumen_deep_link_protocol() -> None:
     installer = build_qml.INNO_SCRIPT.read_text(encoding="utf-8")
 
