@@ -80,6 +80,13 @@ def _read_http_response(response: object, max_bytes: int) -> tuple[bytes, dict[s
     except (AttributeError, TypeError):
         pass
     try:
+        effective_url = str(response.geturl() or "").strip()
+    except (AttributeError, TypeError, ValueError):
+        effective_url = ""
+    if effective_url:
+        # Internal-only metadata used to reject HTTPS -> HTTP redirect downgrades.
+        raw_headers["x-lumen-effective-url"] = effective_url
+    try:
         status = int(getattr(response, "status", 0) or 0)
     except (TypeError, ValueError):
         status = 0

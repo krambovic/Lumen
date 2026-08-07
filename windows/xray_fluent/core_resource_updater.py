@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.parse import urlsplit
 from urllib.request import Request
 import zipfile
 
@@ -42,6 +43,7 @@ from .engines.xray.core_updater import (
     _is_newer,
     _raise_if_cancelled,
     _request_json,
+    _safe_asset_name,
     _sha256_file,
 )
 from .http_utils import abort_http_response, urlopen_proxy_first
@@ -57,6 +59,8 @@ GEODATA_METADATA_NAME = "lumen-geodata.json"
 _MAX_RESOURCE_DOWNLOAD_BYTES = 512 * 1024 * 1024
 _MAX_RULE_SET_MEMBER_BYTES = 64 * 1024 * 1024
 _MAX_RULE_SET_TOTAL_BYTES = 256 * 1024 * 1024
+# sing-box binary rule-sets start with the "SRS" magic followed by a version byte.
+_SRS_MAGIC = b"SRS"
 
 
 @dataclass(slots=True)
@@ -110,6 +114,10 @@ def _download_direct(
                                 )
                             if on_progress and total > 0:
                                 on_progress(downloaded, total)
+                    if total > 0 and downloaded != total:
+                        raise RuntimeError(
+                            f"ресурс загружен не полностью: {downloaded} из {total} байт"
+                        )
                 finally:
                     if response_closed is not None:
                         response_closed(response)
@@ -139,6 +147,8 @@ def _release_asset_digest(
     *,
     proxy_url: str | None = None,
     cancelled=None,
+    response_opened=None,
+    response_closed=None,
 ) -> str:
     assets = [asset for asset in (release.get("assets") or []) if isinstance(asset, dict)]
     selected = next(
@@ -162,6 +172,8 @@ def _release_asset_digest(
                 str(sidecar.get("browser_download_url") or ""),
                 proxy_url=proxy_url,
                 cancelled=cancelled,
+                response_opened=response_opened,
+                response_closed=response_closed,
             )
     return ""
 
@@ -171,6 +183,8 @@ def _resolve_geodata_release(
     region: str = "russia",
     proxy_url: str | None = None,
     cancelled=None,
+    response_opened=None,
+    response_closed=None,
 ) -> tuple[str, dict[str, tuple[str, str]]]:
     region = str(region or "russia").strip().lower()
     source_name, release_api, required_assets = {
@@ -182,6 +196,8 @@ def _resolve_geodata_release(
         release_api,
         proxy_url=proxy_url,
         cancelled=cancelled,
+        response_opened=response_opened,
+        response_closed=response_closed,
     )
     if not isinstance(release, dict):
         raise RuntimeError(f"invalid {source_name} release response")
@@ -205,9 +221,12 @@ def _resolve_geodata_release(
             name,
             proxy_url=proxy_url,
             cancelled=cancelled,
+            response_opened=response_opened,
+            response_closed=response_closed,
         )
         if not url or not digest:
             raise RuntimeError(f"{source_name} release does not provide a published SHA-256 for {name}")
+        _require_https(url, name)
         assets[name] = (url, digest)
     return version, assets
 
@@ -231,8 +250,10 @@ def regional_geodata_installed(
 
     Xray uses one active ``geoip.dat``/``geosite.dat`` pair, so merely having
     another region's sing-box ``.srs`` files is not enough.  The metadata must
-    also identify the requested region.  This check intentionally avoids
-    network access and hashing large files on the GUI thread.
+    also identify the requested region.  The check is local-only and verifies
+    every available recorded hash.  Legacy Russian bundles without metadata
+    remain compatible, but their binary rule-sets still have to pass the SRS
+    format check; the next resource update upgrades them to hashed schema 3.
     """
     normalized = str(region or "russia").strip().lower()
     if normalized not in REGIONAL_SINGBOX_RULE_SETS:
@@ -240,13 +261,28 @@ def regional_geodata_installed(
     target_dir = Path(target_dir) if target_dir is not None else _core_dir()
     rule_set_dir = Path(rule_set_dir) if rule_set_dir is not None else SINGBOX_RULE_SET_DIR
     metadata = _read_geodata_metadata(target_dir)
+    schema = int(metadata.get("schema") or 0)
     installed_region = str(metadata.get("region") or "russia").strip().lower()
     if installed_region != normalized:
         return False
+    recorded_hashes = metadata.get("sha256")
+    recorded_rule_hashes = metadata.get("rule_set_sha256")
+    if schema >= 3 and (
+        not isinstance(recorded_hashes, dict) or not isinstance(recorded_rule_hashes, dict)
+    ):
+        return False
+    recorded_hashes = recorded_hashes if isinstance(recorded_hashes, dict) else {}
+    recorded_rule_hashes = recorded_rule_hashes if isinstance(recorded_rule_hashes, dict) else {}
     for name in ("geoip.dat", "geosite.dat"):
         path = target_dir / name
         try:
-            if not path.is_file() or path.stat().st_size < 1024:
+            expected_hash = str(recorded_hashes.get(name) or "").lower()
+            if (
+                not path.is_file()
+                or path.stat().st_size < 1024
+                or (expected_hash and _sha256_file(path).lower() != expected_hash)
+                or (schema >= 3 and not expected_hash)
+            ):
                 return False
         except OSError:
             return False
@@ -258,9 +294,14 @@ def regional_geodata_installed(
         )
         path = rule_set_dir / filename
         try:
-            if not path.is_file() or path.stat().st_size < 64:
+            _ensure_rule_set_file(path, key)
+            expected_hash = str(recorded_rule_hashes.get(filename) or "").lower()
+            if (
+                (expected_hash and _sha256_file(path).lower() != expected_hash)
+                or (schema >= 3 and not expected_hash)
+            ):
                 return False
-        except OSError:
+        except (OSError, RuntimeError):
             return False
     return True
 
@@ -480,6 +521,8 @@ def _singbox_asset_digest(
     *,
     proxy_url: str | None = None,
     cancelled=None,
+    response_opened=None,
+    response_closed=None,
 ) -> str:
     assets = [asset for asset in (release.get("assets") or []) if isinstance(asset, dict)]
     selected = next(
@@ -500,6 +543,8 @@ def _singbox_asset_digest(
                 str(sidecar.get("browser_download_url") or ""),
                 proxy_url=proxy_url,
                 cancelled=cancelled,
+                response_opened=response_opened,
+                response_closed=response_closed,
             )
     return ""
 
@@ -508,6 +553,28 @@ def _ensure_zip_file(path: Path, label: str) -> None:
     if not zipfile.is_zipfile(path):
         size = path.stat().st_size if path.exists() else 0
         raise RuntimeError(f"{label}: скачанный файл не является zip-архивом ({size} байт)")
+
+
+def _require_https(url: str, label: str) -> str:
+    if urlsplit(url).scheme.lower() != "https":
+        raise RuntimeError(f"{label}: загрузка допускается только по https")
+    return url
+
+
+def _ensure_rule_set_file(path: Path, key: str) -> None:
+    """Reject a rule-set that is not a complete sing-box binary rule-set.
+
+    Unlike the russia archive these files carry no published SHA-256, so the
+    format check is the only defence against a truncated or substituted body.
+    """
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as handle:
+            header = handle.read(len(_SRS_MAGIC))
+    except OSError as exc:
+        raise RuntimeError(f"rule-set {key} недоступен: {exc}")
+    if size < 64 or not header.startswith(_SRS_MAGIC):
+        raise RuntimeError(f"rule-set {key} выглядит повреждённым")
 
 
 def check_or_update_droute(
@@ -589,6 +656,8 @@ def check_or_update_singbox(
             SINGBOX_EXTENDED_LATEST_API,
             proxy_url=proxy_url,
             cancelled=cancelled,
+            response_opened=response_opened,
+            response_closed=response_closed,
         )
         if not isinstance(release, dict):
             raise RuntimeError("GitHub вернул неожиданный ответ")
@@ -645,6 +714,8 @@ def check_or_update_singbox(
             asset_name,
             proxy_url=proxy_url,
             cancelled=cancelled,
+            response_opened=response_opened,
+            response_closed=response_closed,
         )
         if not expected_hash:
             raise RuntimeError("для архива sing-box отсутствует SHA-256")
@@ -653,6 +724,8 @@ def check_or_update_singbox(
             cronet_asset_name,
             proxy_url=proxy_url,
             cancelled=cancelled,
+            response_opened=response_opened,
+            response_closed=response_closed,
         )
         if not cronet_expected_hash:
             raise RuntimeError("для архива libcronet отсутствует SHA-256")
@@ -670,7 +743,7 @@ def check_or_update_singbox(
     try:
         with tempfile.TemporaryDirectory(prefix="singbox_update_") as temp_dir_str:
             temp_dir = Path(temp_dir_str)
-            archive = temp_dir / asset_name
+            archive = temp_dir / _safe_asset_name(asset_name, "sing-box-windows-amd64.zip")
             if not repair_cronet_only:
                 _download_file(
                     url,
@@ -684,7 +757,9 @@ def check_or_update_singbox(
                 _ensure_zip_file(archive, "sing-box")
                 if _sha256_file(archive).lower() != expected_hash.lower():
                     raise RuntimeError("контрольная сумма архива sing-box не совпадает")
-            cronet_archive = temp_dir / cronet_asset_name
+            cronet_archive = temp_dir / _safe_asset_name(
+                cronet_asset_name, "sing-box-windows-amd64-purego.zip"
+            )
             _download_file(
                 cronet_url,
                 cronet_archive,
@@ -799,6 +874,8 @@ def update_geodata(
             region=region,
             proxy_url=proxy_url,
             cancelled=cancelled,
+            response_opened=response_opened,
+            response_closed=response_closed,
         )
         if _geodata_install_matches(target_dir, latest_version, release_assets, region=region):
             return ResourceUpdateResult(
@@ -859,13 +936,13 @@ def update_geodata(
                     source = staging / filename
                     offset = 50 + int(index * 50 / max(1, len(sources)))
                     span = max(1, int(50 / max(1, len(sources))))
+                    _require_https(url, f"rule-set {key}")
                     _download_direct(
                         url, source, on_progress=_scaled_progress(offset, span),
                         proxy_url=proxy_url, cancelled=cancelled,
                         response_opened=response_opened, response_closed=response_closed,
                     )
-                    if source.stat().st_size < 64:
-                        raise RuntimeError(f"rule-set {key} выглядит повреждённым")
+                    _ensure_rule_set_file(source, key)
                     rule_replacements.append((source, SINGBOX_RULE_SET_DIR / filename))
             replacements = [
                 (geoip, target_dir / "geoip.dat"),
@@ -877,13 +954,17 @@ def update_geodata(
             metadata_path.write_text(
                 json.dumps(
                     {
-                        "schema": 2,
+                        "schema": 3,
                         "region": region,
                         "version": latest_version,
                         "rule_sets": REGIONAL_SINGBOX_RULE_SETS[region],
                         "sha256": {
                             name: digest
                             for name, (_url, digest) in release_assets.items()
+                        },
+                        "rule_set_sha256": {
+                            destination.name: _sha256_file(source)
+                            for source, destination in rule_replacements
                         },
                     },
                     ensure_ascii=True,
@@ -938,6 +1019,8 @@ def check_geodata_update(
         region=region,
         proxy_url=proxy_url,
         cancelled=cancelled,
+        response_opened=response_opened,
+        response_closed=response_closed,
     )
 
 
@@ -947,12 +1030,16 @@ def _check_geodata_release_identity(
     region: str = "russia",
     proxy_url: str | None = None,
     cancelled=None,
+    response_opened=None,
+    response_closed=None,
 ) -> ResourceUpdateResult:
     try:
         latest_version, release_assets = _resolve_geodata_release(
             region=region,
             proxy_url=proxy_url,
             cancelled=cancelled,
+            response_opened=response_opened,
+            response_closed=response_closed,
         )
         metadata = _read_geodata_metadata(target_dir)
         current_version = str(metadata.get("version") or "")
@@ -995,6 +1082,8 @@ def _geodata_install_matches(
     region: str = "russia",
 ) -> bool:
     metadata = _read_geodata_metadata(target_dir)
+    if metadata.get("schema") != 3:
+        return False
     installed_region = str(metadata.get("region") or "russia").strip().lower()
     if installed_region != str(region or "russia").strip().lower():
         return False
@@ -1012,16 +1101,26 @@ def _geodata_install_matches(
                 return False
     expected_rules = REGIONAL_SINGBOX_RULE_SETS.get(region, REGIONAL_SINGBOX_RULE_SETS["russia"])
     recorded_rules = metadata.get("rule_sets")
-    if metadata.get("schema") == 2 and recorded_rules != expected_rules:
+    if recorded_rules != expected_rules:
         return False
-    return all(
-        (SINGBOX_RULE_SET_DIR / (
+    recorded_rule_hashes = metadata.get("rule_set_sha256")
+    if not isinstance(recorded_rule_hashes, dict):
+        return False
+    for key, source in expected_rules.items():
+        filename = (
             Path(source.removeprefix("archive:")).name
             if source.startswith("archive:")
             else f"{key.replace(':', '-')}.srs"
-        )).is_file()
-        for key, source in expected_rules.items()
-    )
+        )
+        path = SINGBOX_RULE_SET_DIR / filename
+        try:
+            _ensure_rule_set_file(path, key)
+            expected_hash = str(recorded_rule_hashes.get(filename) or "").lower()
+            if not expected_hash or _sha256_file(path).lower() != expected_hash:
+                return False
+        except (OSError, RuntimeError):
+            return False
+    return True
 
 
 class StartupResourceCheckWorker(QThread):

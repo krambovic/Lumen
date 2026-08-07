@@ -24,6 +24,7 @@ from ...constants import (
     DEFAULT_SOCKS_PORT,
     PROXY_HOST,
     SINGBOX_CLASH_API_PORT,
+    SINGBOX_TUN_INTERFACE_NAME,
     SINGBOX_XRAY_RELAY_PORT,
     SS_PROTECT_PORT_END,
     SS_PROTECT_PORT_START,
@@ -33,6 +34,7 @@ from ...multiplex import apply_xray_multiplex
 from ...routing_runtime import apply_singbox_gui_routing
 from ...xray_fragments import apply_xray_final_fragment
 from ...wireguard_normalization import normalize_singbox_wireguard_endpoints
+from ...openvpn_normalization import normalize_openvpn_outbound
 from .config_builder import build_singbox_outbound
 
 
@@ -41,6 +43,7 @@ _APP_SINGBOX_HYBRID_PROTECT_INBOUND_TAG = "__app_hybrid_protect_in"
 _APP_XRAY_SIDECAR_RELAY_INBOUND_TAG = "__app_hybrid_relay_in"
 _APP_XRAY_SIDECAR_PROTECT_OUTBOUND_TAG = "__app_hybrid_protect_out"
 _APP_DISCORD_PROXY_INBOUND_TAG = "discord-socks-in"
+_APP_TUN_INBOUND_TAG = "tun-in"
 _APP_TUN_MIXED_INBOUND_TAG = "socks-in"
 _APP_TUN_HTTP_INBOUND_TAG = "http-in"
 _ENDPOINT_DNS_CACHE_TTL_SECONDS = 300.0
@@ -190,6 +193,8 @@ def plan_singbox_runtime(
     tun_block_quic: bool = True,
     local_socks_port: int = DEFAULT_SOCKS_PORT,
     local_http_port: int = DEFAULT_HTTP_PORT,
+    proxy_auth_username: str = "",
+    proxy_auth_password: str = "",
     preferred_relay_port: int = 0,
     preferred_protect_port: int = 0,
     preferred_protect_password: str = "",
@@ -206,6 +211,8 @@ def plan_singbox_runtime(
             tun_mode=tun_mode,
             local_socks_port=local_socks_port,
             local_http_port=local_http_port,
+            proxy_auth_username=proxy_auth_username,
+            proxy_auth_password=proxy_auth_password,
         )
         clash_api_secret = _ensure_singbox_metrics_contract(runtime_config)
         _ensure_singbox_runtime_contract(
@@ -221,12 +228,15 @@ def plan_singbox_runtime(
             tun_block_quic=tun_block_quic,
             local_socks_port=local_socks_port,
             local_http_port=local_http_port,
+            proxy_auth_username=proxy_auth_username,
+            proxy_auth_password=proxy_auth_password,
         )
-        _ensure_all_endpoint_server_bootstrap_contract(runtime_config)
-        _ensure_all_openvpn_server_bootstrap_contract(runtime_config)
         _ensure_full_config_proxy_alias(runtime_config)
         if routing is not None:
             apply_singbox_gui_routing(runtime_config, routing)
+        # Add bootstrap loop protection after GUI rules so it keeps the runtime's
+        # reserved priority without being confused with imported user routes.
+        _ensure_all_server_bootstrap_contracts(runtime_config)
         _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
         clamp_singbox_local_inbounds(runtime_config)
         _validate_runtime_dns_contract(runtime_config)
@@ -250,6 +260,8 @@ def plan_singbox_runtime(
         tun_mode=tun_mode,
         local_socks_port=local_socks_port,
         local_http_port=local_http_port,
+        proxy_auth_username=proxy_auth_username,
+        proxy_auth_password=proxy_auth_password,
     )
     clash_api_secret = _ensure_singbox_metrics_contract(runtime_config)
     _ensure_singbox_runtime_contract(
@@ -265,15 +277,18 @@ def plan_singbox_runtime(
         tun_block_quic=tun_block_quic,
         local_socks_port=local_socks_port,
         local_http_port=local_http_port,
+        proxy_auth_username=proxy_auth_username,
+        proxy_auth_password=proxy_auth_password,
     )
-    _ensure_all_endpoint_server_bootstrap_contract(runtime_config)
-    _ensure_all_openvpn_server_bootstrap_contract(runtime_config)
-
     outbounds = runtime_config.get("outbounds")
     proxy_index = _find_proxy_outbound_index(outbounds)
     if proxy_index is None:
+        # The runtime contracts reference outbound `proxy`; a document whose own
+        # proxy outbound is tagged differently needs the alias to resolve them.
+        _ensure_full_config_proxy_alias(runtime_config)
         if routing is not None:
             apply_singbox_gui_routing(runtime_config, routing)
+        _ensure_all_server_bootstrap_contracts(runtime_config)
         _ensure_singbox_discord_proxy_contract(runtime_config, enabled=discord_proxy_enabled)
         clamp_singbox_local_inbounds(runtime_config)
         _validate_runtime_dns_contract(runtime_config)
@@ -322,6 +337,7 @@ def plan_singbox_runtime(
         )
         if routing is not None:
             apply_singbox_gui_routing(plan.singbox_config, routing)
+        _ensure_all_server_bootstrap_contracts(plan.singbox_config)
         _ensure_singbox_discord_proxy_contract(plan.singbox_config, enabled=discord_proxy_enabled)
         clamp_singbox_local_inbounds(plan.singbox_config)
         _validate_runtime_dns_contract(plan.singbox_config)
@@ -336,6 +352,7 @@ def plan_singbox_runtime(
         outbounds[proxy_index] = native_proxy
     if routing is not None:
         apply_singbox_gui_routing(runtime_config, routing)
+    _ensure_all_server_bootstrap_contracts(runtime_config)
     if native_is_endpoint:
         _ensure_endpoint_server_bootstrap_contract(runtime_config, native_proxy)
     elif str(native_proxy.get("type") or "").strip().lower() == "openvpn":
@@ -529,10 +546,27 @@ def _ensure_tun_inbound(config: dict[str, Any]) -> None:
         0,
         {
             "type": "tun",
-            "tag": "tun-in",
-            "interface_name": "singbox_tun",
+            "tag": _APP_TUN_INBOUND_TAG,
+            "interface_name": SINGBOX_TUN_INTERFACE_NAME,
         },
     )
+
+
+def _rename_singbox_rule_inbound_tags(payload: dict[str, Any], old_tags: set[str], new_tag: str) -> None:
+    route = payload.get("route")
+    if not isinstance(route, dict):
+        return
+    for rule in route.get("rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        inbound = rule.get("inbound")
+        if isinstance(inbound, str):
+            if inbound in old_tags:
+                rule["inbound"] = new_tag
+        elif isinstance(inbound, list):
+            rule["inbound"] = list(
+                dict.fromkeys(new_tag if str(item) in old_tags else item for item in inbound)
+            )
 
 
 def _configure_singbox_runtime_inbounds(
@@ -541,6 +575,8 @@ def _configure_singbox_runtime_inbounds(
     tun_mode: bool,
     local_socks_port: int,
     local_http_port: int,
+    proxy_auth_username: str,
+    proxy_auth_password: str,
 ) -> None:
     inbounds = _ensure_list(config, "inbounds")
     if tun_mode:
@@ -555,6 +591,8 @@ def _configure_singbox_runtime_inbounds(
         config,
         socks_port=local_socks_port,
         http_port=local_http_port,
+        username=proxy_auth_username,
+        password=proxy_auth_password,
     )
 
 
@@ -832,11 +870,13 @@ def _normalize_openvpn_outbounds(payload: dict[str, Any]) -> None:
         return
     used_names: set[str] = set()
     openvpn_index = 0
+    detours: list[dict[str, Any]] = []
     for outbound in outbounds:
         if not isinstance(outbound, dict):
             continue
         if str(outbound.get("type") or "").strip().lower() != "openvpn":
             continue
+        normalize_openvpn_outbound(outbound)
         outbound["system"] = False
         requested_name = str(outbound.get("name") or f"openvpn{openvpn_index}").strip()
         name_candidate = requested_name
@@ -846,7 +886,33 @@ def _normalize_openvpn_outbounds(payload: dict[str, Any]) -> None:
             suffix += 1
         outbound["name"] = name_candidate
         used_names.add(name_candidate)
+        proxy = outbound.pop("lumen_proxy", None)
+        if isinstance(proxy, dict):
+            proxy_type = str(proxy.get("type") or "").strip().lower()
+            if proxy_type not in {"http", "socks"}:
+                raise ValueError(f"Unsupported OpenVPN proxy type `{proxy_type or 'unknown'}`")
+            server = str(proxy.get("server") or "").strip()
+            try:
+                port = int(proxy.get("server_port") or 0)
+            except (TypeError, ValueError):
+                port = 0
+            if not server or not (1 <= port <= 65535):
+                raise ValueError("OpenVPN proxy must contain a valid server and port")
+            detour_tag = f"ovpn-proxy-{openvpn_index}"
+            outbound["detour"] = detour_tag
+            detour: dict[str, Any] = {
+                "type": proxy_type,
+                "tag": detour_tag,
+                "server": server,
+                "server_port": port,
+            }
+            for key in ("username", "password"):
+                value = str(proxy.get(key) or "")
+                if value:
+                    detour[key] = value
+            detours.append(detour)
         openvpn_index += 1
+    outbounds.extend(detours)
 
 
 def _ensure_all_openvpn_server_bootstrap_contract(payload: dict[str, Any]) -> None:
@@ -858,6 +924,11 @@ def _ensure_all_openvpn_server_bootstrap_contract(payload: dict[str, Any]) -> No
             continue
         if str(outbound.get("type") or "").strip().lower() == "openvpn":
             _ensure_openvpn_server_bootstrap_contract(payload, outbound)
+
+
+def _ensure_all_server_bootstrap_contracts(payload: dict[str, Any]) -> None:
+    _ensure_all_endpoint_server_bootstrap_contract(payload)
+    _ensure_all_openvpn_server_bootstrap_contract(payload)
 
 
 def _endpoint_ip_cidr(value: str) -> str:
@@ -1086,6 +1157,8 @@ def _ensure_singbox_tun_local_proxy_contract(
     *,
     socks_port: int = DEFAULT_SOCKS_PORT,
     http_port: int = DEFAULT_HTTP_PORT,
+    username: str = "",
+    password: str = "",
 ) -> None:
     """Keep v2rayN-style local proxy ports alive while TUN is running.
 
@@ -1120,22 +1193,27 @@ def _ensure_singbox_tun_local_proxy_contract(
     ]
     rules[:] = [rule for rule in rules if not _is_singbox_tun_local_proxy_rule(rule)]
 
-    inbounds.extend(
-        [
-            {
+    auth_users = (
+        [{"username": str(username).strip(), "password": str(password)}]
+        if str(username).strip() and str(password)
+        else []
+    )
+    mixed_inbound = {
                 "type": "mixed",
                 "tag": _APP_TUN_MIXED_INBOUND_TAG,
                 "listen": PROXY_HOST,
                 "listen_port": socks_value,
-            },
-            {
+            }
+    http_inbound = {
                 "type": "http",
                 "tag": _APP_TUN_HTTP_INBOUND_TAG,
                 "listen": PROXY_HOST,
                 "listen_port": http_value,
-            },
-        ]
-    )
+            }
+    if auth_users:
+        mixed_inbound["users"] = list(auth_users)
+        http_inbound["users"] = list(auth_users)
+    inbounds.extend([mixed_inbound, http_inbound])
     rules.insert(
         _singbox_local_proxy_rule_insert_index(rules),
         {
@@ -1170,7 +1248,7 @@ def _singbox_local_proxy_rule_insert_index(rules: list[Any]) -> int:
         if inbound:
             index += 1
             continue
-        if rule.get("action") == "sniff":
+        if rule.get("action") in {"sniff", "route-options"}:
             index += 1
             continue
         break
@@ -1480,6 +1558,8 @@ def _ensure_singbox_tun_runtime_contract(
     tun_block_quic: bool = True,
     local_socks_port: int = DEFAULT_SOCKS_PORT,
     local_http_port: int = DEFAULT_HTTP_PORT,
+    proxy_auth_username: str = "",
+    proxy_auth_password: str = "",
 ) -> None:
     """Patch app-owned runtime fields for raw sing-box configs.
 
@@ -1497,6 +1577,7 @@ def _ensure_singbox_tun_runtime_contract(
         stack_value = "mixed"
     inbounds = payload.get("inbounds")
     has_tun = False
+    renamed_tun_tags: set[str] = set()
     if isinstance(inbounds, list):
         for inbound in inbounds:
             if not isinstance(inbound, dict):
@@ -1504,7 +1585,11 @@ def _ensure_singbox_tun_runtime_contract(
             if str(inbound.get("type") or "").strip().lower() != "tun":
                 continue
             has_tun = True
-            inbound["interface_name"] = "singbox_tun"
+            previous_tag = str(inbound.get("tag") or "").strip()
+            if previous_tag and previous_tag != _APP_TUN_INBOUND_TAG:
+                renamed_tun_tags.add(previous_tag)
+            inbound["tag"] = _APP_TUN_INBOUND_TAG
+            inbound["interface_name"] = SINGBOX_TUN_INTERFACE_NAME
             inbound["address"] = _singbox_tun_addresses()
             inbound["mtu"] = mtu_value
             inbound["auto_route"] = True
@@ -1525,6 +1610,8 @@ def _ensure_singbox_tun_runtime_contract(
             inbound.pop("sniff", None)
     if not has_tun:
         return
+    if renamed_tun_tags:
+        _rename_singbox_rule_inbound_tags(payload, renamed_tun_tags, _APP_TUN_INBOUND_TAG)
 
     route = _ensure_dict(payload, "route")
     route["auto_detect_interface"] = True
@@ -1548,6 +1635,8 @@ def _ensure_singbox_tun_runtime_contract(
         payload,
         socks_port=local_socks_port,
         http_port=local_http_port,
+        username=proxy_auth_username,
+        password=proxy_auth_password,
     )
 
 
@@ -1565,6 +1654,8 @@ def _ensure_singbox_runtime_contract(
     tun_block_quic: bool,
     local_socks_port: int,
     local_http_port: int,
+    proxy_auth_username: str,
+    proxy_auth_password: str,
 ) -> None:
     if tun_mode:
         _ensure_singbox_tun_runtime_contract(
@@ -1579,6 +1670,8 @@ def _ensure_singbox_runtime_contract(
             tun_block_quic=tun_block_quic,
             local_socks_port=local_socks_port,
             local_http_port=local_http_port,
+            proxy_auth_username=proxy_auth_username,
+            proxy_auth_password=proxy_auth_password,
         )
         return
 
@@ -1595,6 +1688,8 @@ def _ensure_singbox_runtime_contract(
         payload,
         socks_port=local_socks_port,
         http_port=local_http_port,
+        username=proxy_auth_username,
+        password=proxy_auth_password,
     )
 
 
@@ -1855,20 +1950,19 @@ def _ensure_singbox_tun_base_rules(
     # HTTP/2. Scoped to tun-in only, so proxy UDP endpoints (WARP/AWG/Hysteria2)
     # that dial out from the outbound side are untouched.
     quic_reject_rule = {
-        "inbound": ["tun-in"],
+        "inbound": [_APP_TUN_INBOUND_TAG],
         "protocol": "quic",
         "action": "reject",
     }
     browser_doh_reject_rule = {
-        "inbound": ["tun-in"],
+        "inbound": [_APP_TUN_INBOUND_TAG],
         "domain_suffix": _BROWSER_DOH_DOMAIN_SUFFIXES,
         "action": "reject",
     }
     base_rules = [sniff_rule]
-    if block_quic:
-        base_rules.append(quic_reject_rule)
-    base_rules.extend([browser_doh_reject_rule, dns_hijack_rule, *noisy_local_dns_rejects])
     if enable_final_fragment:
+        # `route` is terminal, `route-options` is not: the fragment rule has to
+        # precede the GUI route rules or only fall-through traffic gets it.
         base_rules.append(
             {
                 "protocol": ["tls"],
@@ -1877,6 +1971,9 @@ def _ensure_singbox_tun_base_rules(
                 "tls_fragment_fallback_delay": "500ms",
             }
         )
+    if block_quic:
+        base_rules.append(quic_reject_rule)
+    base_rules.extend([browser_doh_reject_rule, dns_hijack_rule, *noisy_local_dns_rejects])
     rules[:] = [rule for rule in rules if not _is_singbox_tun_base_rule(rule)]
     rules[0:0] = base_rules
 
@@ -1905,7 +2002,7 @@ def _is_singbox_tun_base_rule(rule: Any) -> bool:
         return True
     if (
         action == "reject"
-        and rule.get("inbound") == ["tun-in"]
+        and rule.get("inbound") == [_APP_TUN_INBOUND_TAG]
         and rule.get("protocol") == "quic"
     ):
         return True
@@ -1913,7 +2010,7 @@ def _is_singbox_tun_base_rule(rule: Any) -> bool:
         return True
     if (
         action == "reject"
-        and rule.get("inbound") == ["tun-in"]
+        and rule.get("inbound") == [_APP_TUN_INBOUND_TAG]
         and rule.get("domain_suffix") == _BROWSER_DOH_DOMAIN_SUFFIXES
     ):
         return True

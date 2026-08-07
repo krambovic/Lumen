@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from xray_fluent.engines.singbox import operations
+from xray_fluent.engines.singbox.config_builder import build_singbox_outbound
 from xray_fluent.engines.singbox.runtime_planner import (
     classify_node_for_singbox,
     parse_singbox_document,
@@ -89,6 +91,57 @@ def _wireguard_node(server: str) -> Node:
                 ],
             },
         },
+    )
+
+
+def _hysteria_node(**bandwidth) -> Node:
+    return Node(
+        scheme="hysteria",
+        server="srv.example.com",
+        outbound={
+            "protocol": "hysteria",
+            "singbox": {
+                "type": "hysteria",
+                "server": "srv.example.com",
+                "server_port": 443,
+                "auth_str": "auth",
+                **bandwidth,
+            },
+        },
+    )
+
+
+def _endpoint_document(server: str) -> dict:
+    config = _base_config()
+    config["outbounds"] = [
+        {"type": "selector", "tag": "SELECT", "outbounds": ["direct"], "default": "direct"},
+        {"type": "direct", "tag": "direct"},
+        {"type": "block", "tag": "block"},
+    ]
+    config["endpoints"] = [
+        {
+            "type": "wireguard",
+            "tag": "wg-out",
+            "address": ["10.0.0.2/32"],
+            "private_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "peers": [
+                {
+                    "address": server,
+                    "port": 51820,
+                    "public_key": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+                    "allowed_ips": ["0.0.0.0/0"],
+                }
+            ],
+        }
+    ]
+    return config
+
+
+def _full_config_node(config: dict) -> Node:
+    return Node(
+        scheme="singbox_config",
+        server="",
+        outbound={"protocol": "singbox_config", "singbox_config": config},
     )
 
 
@@ -185,7 +238,7 @@ def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults(monkeypatch: pytest.Mon
     )
     inbound = _tun_inbound(config)
 
-    assert inbound["interface_name"] == "singbox_tun"
+    assert inbound["interface_name"] == "tun0"
     assert inbound["address"] == ["172.18.0.1/30", "fdfe:dcba:9876::1/126"]
     assert inbound["mtu"] == 1280
     assert inbound["stack"] == "gvisor"
@@ -531,7 +584,7 @@ def test_builtin_dns_always_hijacks_the_tun_dns_peer() -> None:
     assert hijack_rules == [_tun_dns_hijack_rule()]
 
 
-def test_builtin_fake_dns_keeps_real_dns_final_for_direct_default() -> None:
+def test_builtin_fake_dns_keeps_proxied_dns_final_for_direct_default() -> None:
     config = _plan(
         RoutingSettings(
             mode="direct",
@@ -543,7 +596,7 @@ def test_builtin_fake_dns_keeps_real_dns_final_for_direct_default() -> None:
     )
 
     assert config["route"]["final"] == "direct"
-    assert config["dns"]["final"] == "bootstrap-dns"
+    assert config["dns"]["final"] == "proxy-dns"
     assert any(rule.get("server") == "fake-dns" for rule in config["dns"]["rules"])
 
 
@@ -902,3 +955,180 @@ def test_builtin_dns_adds_multiple_servers_and_hosts_without_unsupported_optimis
         rule.get("ip_accept_any") is True and rule.get("server") == "hosts-dns"
         for rule in config["dns"]["rules"]
     )
+
+
+def test_hysteria_without_bandwidth_gets_singbox_speed_defaults() -> None:
+    outbound = build_singbox_outbound(_hysteria_node(), tag="proxy")
+
+    assert outbound["up_mbps"] == 50
+    assert outbound["down_mbps"] == 200
+
+
+def test_hysteria_keeps_bandwidth_declared_by_the_link() -> None:
+    outbound = build_singbox_outbound(_hysteria_node(up_mbps=10, down_mbps=20), tag="proxy")
+
+    assert outbound["up_mbps"] == 10
+    assert outbound["down_mbps"] == 20
+
+
+def test_full_config_node_keeps_endpoint_bootstrap_route_after_gui_routing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_getaddrinfo(*_args, **_kwargs):
+        raise socket.gaierror()
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_getaddrinfo)
+
+    document = parse_singbox_document(Path("test.json"), json.dumps(_base_config()))
+    config = plan_singbox_runtime(
+        document,
+        _full_config_node(_endpoint_document("wg.example.com")),
+        routing=RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
+    ).singbox_config
+
+    assert any(
+        rule.get("outbound") == "direct" and "wg.example.com" in rule.get("domain", [])
+        for rule in config["route"]["rules"]
+    )
+
+
+def test_document_without_proxy_outbound_keeps_endpoint_bootstrap_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_getaddrinfo(*_args, **_kwargs):
+        raise socket.gaierror()
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_getaddrinfo)
+
+    document = parse_singbox_document(
+        Path("test.json"), json.dumps(_endpoint_document("wg.example.com"))
+    )
+    plan = plan_singbox_runtime(
+        document,
+        None,
+        routing=RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
+    )
+
+    assert plan.has_proxy_outbound is False
+    assert any(
+        rule.get("outbound") == "direct" and "wg.example.com" in rule.get("domain", [])
+        for rule in plan.singbox_config["route"]["rules"]
+    )
+
+
+def test_document_with_foreign_proxy_tag_gets_a_proxy_alias() -> None:
+    document = parse_singbox_document(
+        Path("test.json"), json.dumps(_endpoint_document("198.51.100.7"))
+    )
+    plan = plan_singbox_runtime(
+        document,
+        None,
+        routing=RoutingSettings(mode="global", dns_mode="builtin", tun_default_outbound="proxy"),
+    )
+    config = plan.singbox_config
+
+    alias = next(outbound for outbound in config["outbounds"] if outbound.get("tag") == "proxy")
+
+    assert plan.has_proxy_outbound is False
+    assert alias["type"] == "selector"
+    assert alias["default"] == "SELECT"
+    assert config["route"]["final"] == "proxy"
+    assert any(
+        rule.get("inbound") == ["socks-in", "http-in"] and rule.get("outbound") == "proxy"
+        for rule in config["route"]["rules"]
+    )
+
+
+def test_imported_tun_inbound_tag_is_normalized_for_the_scoped_reject_rules() -> None:
+    payload = _base_config()
+    payload["inbounds"][0]["tag"] = "tun"
+    payload["route"]["rules"] = [{"inbound": ["tun"], "action": "route", "outbound": "direct"}]
+    document = parse_singbox_document(Path("test.json"), json.dumps(payload))
+    config = plan_singbox_runtime(
+        document,
+        _node(),
+        routing=RoutingSettings(mode="global", tun_default_outbound="proxy"),
+    ).singbox_config
+
+    rules = config["route"]["rules"]
+
+    assert _tun_inbound(config)["tag"] == "tun-in"
+    assert any(
+        rule.get("inbound") == ["tun-in"]
+        and rule.get("protocol") == "quic"
+        and rule.get("action") == "reject"
+        for rule in rules
+    )
+    assert not any("tun" in (rule.get("inbound") or []) for rule in rules)
+
+
+def test_tls_fragment_rule_precedes_terminal_gui_route_rules() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="rule",
+            proxy_domains=["example.com"],
+            tun_default_outbound="proxy",
+        )
+    )
+    rules = config["route"]["rules"]
+
+    fragment_index = next(
+        index for index, rule in enumerate(rules) if rule.get("action") == "route-options"
+    )
+    gui_index = next(
+        index
+        for index, rule in enumerate(rules)
+        if rule.get("outbound") == "proxy" and "example.com" in rule.get("domain_suffix", [])
+    )
+    local_proxy_index = next(
+        index
+        for index, rule in enumerate(rules)
+        if rule.get("inbound") == ["socks-in", "http-in"]
+    )
+
+    assert fragment_index < gui_index
+    assert fragment_index < local_proxy_index
+
+
+def test_dns_hosts_override_precedes_the_fakeip_rule() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="global",
+            dns_mode="builtin",
+            dns_fake_enabled=True,
+            dns_hosts={"my.internal": ["10.1.2.3"]},
+            tun_default_outbound="proxy",
+        )
+    )
+    dns_rules = config["dns"]["rules"]
+
+    https_index = next(
+        index for index, rule in enumerate(dns_rules) if rule.get("query_type") == ["HTTPS", "SVCB"]
+    )
+    hosts_index = next(
+        index for index, rule in enumerate(dns_rules) if rule.get("server") == "hosts-dns"
+    )
+    fake_index = next(
+        index for index, rule in enumerate(dns_rules) if rule.get("server") == "fake-dns"
+    )
+
+    assert https_index < hosts_index < fake_index
+
+
+def test_planner_runtime_error_is_reported_as_a_connection_error() -> None:
+    statuses: list[tuple[str, str]] = []
+
+    class FakeController:
+        _active_core = "xray"
+
+        def _plan_runtime_singbox(self, node, *, tun_mode):
+            raise RuntimeError("Не найден региональный rule-set geosite:ru-blocked.")
+
+        def _set_connection_status(self, status, message, *, level):
+            statuses.append((status, message))
+
+    controller = FakeController()
+
+    assert operations.start_runtime(controller, None, prev_active_core="xray", tun_mode=True) is None
+    assert controller._active_core == "xray"
+    assert statuses == [("error", "Не найден региональный rule-set geosite:ru-blocked.")]

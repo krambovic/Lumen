@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..constants import PROXY_HOST
 from ..engines.xray import XrayCoreUpdateResult, XrayCoreUpdateWorker
 from ..qthread_utils import bind_thread_reference
 
@@ -14,10 +13,9 @@ def _controller_proxy_url(controller: AppController) -> str | None:
     if not controller.connected:
         return None
     try:
-        port = controller.get_effective_http_proxy_port()
+        return controller.get_effective_http_proxy_url()
     except Exception:
         return None
-    return f"http://{PROXY_HOST}:{int(port)}" if port else None
 
 
 def _start_xray_worker(controller: AppController, *, apply_update: bool) -> None:

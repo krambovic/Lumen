@@ -7,6 +7,7 @@ from PyQt6.QtCore import QMetaObject, QThread, Qt
 from ..constants import SINGBOX_CLASH_API_PORT
 from ..live_metrics_worker import LiveMetricsWorker
 from ..qthread_utils import stop_and_wait_for_thread
+from ..subprocess_utils import is_windows_shutting_down
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -187,7 +188,13 @@ def on_live_metrics(controller: AppController, payload: dict[str, object]) -> No
         controller._traffic_history.update_session(stats_dict)
         controller._traffic_save_counter += 1
         if controller._traffic_save_counter >= 15:
-            controller._traffic_history.save_periodic()
+            # Serialising a year of history must not run on the GUI thread. The
+            # write is atomic and TrafficHistoryStorage is lock-guarded, so it is
+            # safe on the same single-threaded executor used for state saves.
+            if getattr(controller, "_save_executor_shutdown", True):
+                controller._traffic_history.save_periodic()
+            else:
+                controller._save_executor.submit(controller._traffic_history.save_periodic)
             controller._traffic_save_counter = 0
 
 
@@ -226,7 +233,8 @@ def shutdown(controller: AppController) -> None:
         controller.zapret.stop(fast=True)
     if controller.proxy.is_enabled():
         controller.proxy.disable(restore_previous=True)
-    controller._cleanup_tun_adapter(max_wait=1.0)
+    if not getattr(controller, "_system_shutdown", False) and not is_windows_shutting_down():
+        controller._cleanup_tun_adapter(max_wait=1.0)
     _call_in_qobject_thread(controller.network_monitor, "stop")
     _call_in_qobject_thread(controller._lock_timer, "stop")
     controller.save()

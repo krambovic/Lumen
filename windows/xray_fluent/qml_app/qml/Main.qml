@@ -235,6 +235,12 @@ ApplicationWindow {
             if (App.compactMode && [3, 5, 6].indexOf(win.currentIndex) !== -1)
                 win.currentIndex = 0
         }
+        function onNetworkConflictRequested(mode, message, canTerminate) {
+            networkConflictDialog.mode = mode
+            networkConflictDialog.message = message
+            networkConflictDialog.canTerminate = canTerminate
+            networkConflictDialog.open()
+        }
     }
 
     Item {
@@ -457,6 +463,64 @@ ApplicationWindow {
     }
 
     ToastHost {}
+
+    Dialog {
+        id: networkConflictDialog
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(560, win.width - 40)
+        modal: true
+        closePolicy: Popup.CloseOnEscape
+        property string mode: ""
+        property string message: ""
+        property bool canTerminate: false
+        onRejected: App.cancelNetworkConflict()
+        background: Rectangle {
+            color: Theme.flyout
+            border.width: 1
+            border.color: Theme.flyoutBorder
+            radius: Theme.radius
+        }
+        header: Text {
+            text: I18n.t("Обнаружен другой VPN/прокси")
+            color: Theme.text
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontStrong
+            font.weight: Font.DemiBold
+            leftPadding: 20; rightPadding: 20
+            topPadding: 18; bottomPadding: 8
+        }
+        contentItem: Text {
+            text: I18n.t(networkConflictDialog.message)
+            color: Theme.textMuted
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontNormal
+            wrapMode: Text.WordWrap
+            leftPadding: 20; rightPadding: 20
+            topPadding: 8; bottomPadding: 12
+        }
+        footer: RowLayout {
+            spacing: 8
+            Item { Layout.fillWidth: true }
+            AccentButton {
+                kind: "ghost"
+                text: I18n.t("Закрыть")
+                onClicked: {
+                    App.cancelNetworkConflict()
+                    networkConflictDialog.close()
+                }
+            }
+            AccentButton {
+                visible: networkConflictDialog.canTerminate
+                kind: "danger"
+                text: I18n.t("Закрыть процессы и продолжить")
+                onClicked: {
+                    if (App.closeNetworkConflictsAndContinue())
+                        networkConflictDialog.close()
+                }
+            }
+            Item { Layout.preferredWidth: 12 }
+        }
+    }
 
     function hasSupportedConfigDrop(urls) {
         if (!urls)

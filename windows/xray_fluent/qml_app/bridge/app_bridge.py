@@ -26,12 +26,20 @@ from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from ...app_controller import AppController
 from ...application.node_runtime_service import proxy_core_for_node
 from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
-from ...constants import APP_NAME, APP_VERSION, SPEED_TEST_MAX_CONCURRENCY, PROXY_HOST
+from ...constants import (
+    APP_NAME,
+    APP_VERSION,
+    DEFAULT_DISCORD_SOCKS_PORT,
+    DEFAULT_HTTP_PORT,
+    DEFAULT_SOCKS_PORT,
+    SPEED_TEST_MAX_CONCURRENCY,
+)
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri
 from ...deeplinks import DeepLinkError, parse_lumen_deep_link
 from ...engines.singbox import get_singbox_version
 from ...models import Node, RoutingSettings
 from ...node_transport import node_transport
+from ...process_conflicts import scan_network_conflicts, terminate_scanned_conflicts
 from ...qthread_utils import retain_thread_until_finished, stop_and_wait_for_thread
 from ...routing_rule_import import parse_routing_rules
 from ...startup import STARTUP_STATE_DISABLED, get_startup_state, is_process_elevated, relaunch_as_admin
@@ -146,11 +154,12 @@ class AppBridge(QObject):
     actionToast = pyqtSignal(str, str, str, str)  # level, message, action id, button label
     autoSwitch = pyqtSignal(str)              # (node name)
     bulkTaskProgress = pyqtSignal(str, int, int, bool)  # task, cur, total, done
-    connectivityResult = pyqtSignal(bool, str, int)
+    connectivityResult = pyqtSignal(bool, str, object)  # ok, message, elapsed_ms (None on failure)
     appUpdateState = pyqtSignal("QVariantMap")     # application updater
     xrayUpdateState = pyqtSignal("QVariantMap")    # Xray-core updater
     resourceUpdateState = pyqtSignal("QVariantMap")    # sing-box/geodata updater
     updatesAvailableChanged = pyqtSignal()    # флаг наличия любых обновлений (бейдж)
+    networkConflictRequested = pyqtSignal(str, str, bool)  # mode, message, can terminate
 
     # ── property-change signals ──────────────────────────────────
     connectedChanged = pyqtSignal()
@@ -240,8 +249,13 @@ class AppBridge(QObject):
 
         self._tray_available = False
         self._quitting = False
+        self._system_shutdown = False
         self._updates_available = False
         self._deferred_started = False
+        self._toasts_ready = False
+        self._pending_toasts: list[tuple[str, tuple]] = []
+        self._pending_network_mode = ""
+        self._pending_conflict_processes: list[dict] = []
         self._sub_importing = False
         self._sub_import_status = ""
 
@@ -264,13 +278,33 @@ class AppBridge(QObject):
             self.controller.recent_logs = self.controller.recent_logs[-5000:]
         self._log_source_model.append_line(self._localized_log_line(line))
 
+    # ── notifications ──────────────────────────────────────
+    def _notify(self, level: str, message: str) -> None:
+        """Emit a toast, buffering it while QML has not connected to us yet."""
+        if self._toasts_ready:
+            self.toast.emit(level, message)
+        elif len(self._pending_toasts) < 20:
+            self._pending_toasts.append(("toast", (level, message)))
+
+    def _notify_action(self, level: str, message: str, action_id: str, action_label: str) -> None:
+        if self._toasts_ready:
+            self.actionToast.emit(level, message, action_id, action_label)
+        elif len(self._pending_toasts) < 20:
+            self._pending_toasts.append(("actionToast", (level, message, action_id, action_label)))
+
+    def _flush_pending_toasts(self) -> None:
+        self._toasts_ready = True
+        pending, self._pending_toasts = self._pending_toasts, []
+        for name, args in pending:
+            getattr(self, name).emit(*args)
+
     # ── lifecycle ──────────────────────────────────────────
     def load(self) -> None:
         """Load persisted state and push initial snapshots into QML."""
         try:
             self.controller.load()
         except Exception as exc:  # pragma: no cover - defensive
-            self.toast.emit("error", tr("Ошибка загрузки: {error}", error=exc))
+            self._notify("error", tr("Ошибка загрузки: {error}", error=exc))
         self._push_initial_snapshot()
         self._reconfigure_sub_timer()
         self._reconfigure_app_update_timer()
@@ -316,6 +350,7 @@ class AppBridge(QObject):
             pass
     @pyqtSlot()
     def startDeferred(self) -> None:
+        self._flush_pending_toasts()
         if self._deferred_started:
             return
         self._deferred_started = True
@@ -475,7 +510,7 @@ class AppBridge(QObject):
             try:
                 proxy_port = self.controller.get_effective_http_proxy_port()
                 if proxy_port:
-                    proxy_url = f"http://{PROXY_HOST}:{int(proxy_port)}"
+                    proxy_url = self.controller.get_effective_http_proxy_url() or ""
             except Exception:
                 proxy_url = ""
         converter_url = ""
@@ -599,6 +634,17 @@ class AppBridge(QObject):
             set_toasts_enabled(False)
             self.quittingChanged.emit()
 
+    def prepareSystemShutdown(self) -> None:
+        """Enter the non-interactive, no-new-process Windows shutdown path."""
+        self._system_shutdown = True
+        self.controller._system_shutdown = True
+        self.prepareQuit()
+        try:
+            self._sub_timer.stop()
+            self._app_update_timer.stop()
+        except Exception:
+            pass
+
     @pyqtSlot()
     def notifyHiddenToTray(self) -> None:
         if self._quitting:
@@ -677,6 +723,7 @@ class AppBridge(QObject):
         c.auto_switch_triggered.connect(self._on_auto_switch)
         c.connectivity_test_done.connect(self.connectivityResult.emit)
         c.lock_state_changed.connect(self._on_lock_state)
+        c.passphrase_required.connect(self._on_passphrase_required)
         c.admin_relaunch_requested.connect(self._on_admin_relaunch)
 
     def _english_ui(self) -> bool:
@@ -789,12 +836,12 @@ class AppBridge(QObject):
                 self.controller._log(f"[app-{level}] {localized}")
             entry = parse_log_line(localized)
             if entry.action_id:
-                self.actionToast.emit(level, entry.message + "\n" + entry.details.split(". ", 1)[0] + ".", entry.action_id, tr(entry.action_label))
+                self._notify_action(level, entry.message + "\n" + entry.details.split(". ", 1)[0] + ".", entry.action_id, tr(entry.action_label))
                 return
             if entry.message != entry.details:
-                self.toast.emit(level, entry.message + "\n" + entry.details.split(". ", 1)[0] + ".")
+                self._notify(level, entry.message + "\n" + entry.details.split(". ", 1)[0] + ".")
                 return
-        self.toast.emit(level, localized)
+        self._notify(level, localized)
 
     # ── controller -> QML slots ─────────────────────────────────
     def _on_nodes_changed(self, nodes: list[Node]) -> None:
@@ -988,9 +1035,27 @@ class AppBridge(QObject):
             self.toast.emit("warning", "Приложение заблокировано")
         self.lockedChanged.emit()
 
+    def _on_passphrase_required(self) -> None:
+        """State file is passphrase-encrypted: say so instead of starting empty."""
+        message = tr("Данные зашифрованы: укажите пароль шифрования в разделе «Данные», иначе серверы не будут загружены")
+        self.controller._log(f"[app-error] {message}")
+        self._notify("error", message)
+
     # ── QML-invokable commands ──────────────────────────────────
     @pyqtSlot()
     def toggleConnection(self) -> None:
+        if (
+            not self._connected
+            and bool(self.controller.state.settings.tun_mode)
+            and not is_process_elevated()
+        ):
+            self._notify_action(
+                "warning",
+                tr("VPN (TUN) требует права администратора"),
+                "restart-admin",
+                tr("Перезапустить от администратора"),
+            )
+            return
         self.controller.toggle_connection()
         target = bool(getattr(self.controller, "_desired_connected", self._connected))
         if target != self._transition_target_connected:
@@ -1035,8 +1100,10 @@ class AppBridge(QObject):
 
     @pyqtSlot(str)
     def applyRoutingPresetOption(self, preset_id: str) -> None:
+        from ...routing_presets import BUILT_IN_ROUTING_PRESET_IDS
+
         preset_id = (preset_id or "").strip()
-        if preset_id in {"global", "blocked", "except_ru", "blocked_cn", "except_cn", "except_ir"}:
+        if preset_id in BUILT_IN_ROUTING_PRESET_IDS:
             self.applyRoutingPreset(preset_id)
         else:
             self.applyCustomRoutingPreset(preset_id)
@@ -1079,21 +1146,109 @@ class AppBridge(QObject):
             self.controller.save()
             self.routingChanged.emit()
 
-    @pyqtSlot(bool)
-    def setTun(self, enabled: bool) -> None:
+    def _own_engine_pids(self) -> set[int]:
+        return self.controller.owned_core_process_pids()
+
+    def _network_conflicts(self) -> dict:
+        settings = self.controller.state.settings
+        return scan_network_conflicts(
+            {
+                int(getattr(settings, "local_socks_port", DEFAULT_SOCKS_PORT) or DEFAULT_SOCKS_PORT),
+                int(getattr(settings, "local_http_port", DEFAULT_HTTP_PORT) or DEFAULT_HTTP_PORT),
+                DEFAULT_DISCORD_SOCKS_PORT,
+            },
+            ignored_pids=self._own_engine_pids(),
+        )
+
+    def _request_network_mode(self, mode: str) -> bool:
+        snapshot = self._network_conflicts()
+        apps = [str(name) for name in snapshot.get("apps") or []]
+        unknown = bool(snapshot.get("unknown_client"))
+        if not apps and not unknown:
+            return True
+        names = ", ".join(apps[:6]) if apps else tr("другой VPN/прокси-клиент")
+        self._pending_network_mode = mode
+        self._pending_conflict_processes = list(snapshot.get("processes") or [])
+        self.networkConflictRequested.emit(
+            mode,
+            tr(
+                "Работе Lumen могут помешать запущенные процессы: {names}. Закройте окно или завершите конфликтующие процессы и продолжите.",
+                names=names,
+            ),
+            bool(self._pending_conflict_processes),
+        )
+        return False
+
+    def _apply_network_mode(self, mode: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        if mode == "tun":
+            settings.tun_mode = True
+            settings.enable_system_proxy = False
+        elif mode == "proxy":
+            settings.enable_system_proxy = True
+            settings.tun_mode = False
+        else:
+            return
+        self.controller.update_settings(settings)
+
+    @pyqtSlot()
+    def cancelNetworkConflict(self) -> None:
+        self._pending_network_mode = ""
+        self._pending_conflict_processes = []
+        self.settingsChanged.emit()
+
+    @pyqtSlot(result=bool)
+    def closeNetworkConflictsAndContinue(self) -> bool:
+        mode = self._pending_network_mode
+        scanned = list(self._pending_conflict_processes)
+        if not mode or not scanned:
+            self.cancelNetworkConflict()
+            return False
+        _closed, failed = terminate_scanned_conflicts(scanned)
+        snapshot = self._network_conflicts()
+        remaining = list(snapshot.get("apps") or [])
+        if failed or remaining or snapshot.get("unknown_client"):
+            names = ", ".join(dict.fromkeys([*failed, *remaining])) or tr("другой VPN/прокси-клиент")
+            self._pending_conflict_processes = list(snapshot.get("processes") or [])
+            self.toast.emit("error", tr("Не удалось закрыть конфликтующие процессы: {names}", names=names))
+            return False
+        self._pending_network_mode = ""
+        self._pending_conflict_processes = []
+        self._apply_network_mode(mode)
+        return True
+
+    @pyqtSlot(bool, result=bool)
+    def setTun(self, enabled: bool) -> bool:
+        if enabled and not is_process_elevated():
+            self._notify_action(
+                "warning",
+                tr("VPN (TUN) требует права администратора"),
+                "restart-admin",
+                tr("Перезапустить от администратора"),
+            )
+            self.settingsChanged.emit()
+            return False
+        if enabled and not self._request_network_mode("tun"):
+            self.settingsChanged.emit()
+            return False
         settings = deepcopy(self.controller.state.settings)
         settings.tun_mode = enabled
         if enabled:
             settings.enable_system_proxy = False
         self.controller.update_settings(settings)
+        return True
 
-    @pyqtSlot(bool)
-    def setProxy(self, enabled: bool) -> None:
+    @pyqtSlot(bool, result=bool)
+    def setProxy(self, enabled: bool) -> bool:
+        if enabled and not self._request_network_mode("proxy"):
+            self.settingsChanged.emit()
+            return False
         settings = deepcopy(self.controller.state.settings)
         settings.enable_system_proxy = enabled
         if enabled and settings.tun_mode:
             settings.tun_mode = False
         self.controller.update_settings(settings)
+        return True
 
     @pyqtSlot(bool)
     def setDiscordProxy(self, enabled: bool) -> None:
@@ -1734,6 +1889,31 @@ class AppBridge(QObject):
         settings.__post_init__()  # re-run normalization: range, droute port 10818, socks/http collision
         self.controller.update_settings(settings)
 
+    @pyqtSlot(str, str)
+    def setProxyAuthCredentials(self, username: str, password: str) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.proxy_auth_username = str(username or "").strip()[:256]
+        settings.proxy_auth_password = str(password or "")[:256]
+        if settings.proxy_auth_enabled and not (
+            settings.proxy_auth_username and settings.proxy_auth_password
+        ):
+            settings.proxy_auth_enabled = False
+            self.toast.emit("warning", tr("Авторизация прокси отключена: укажите логин и пароль"))
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool, result=bool)
+    def setProxyAuthEnabled(self, enabled: bool) -> bool:
+        settings = deepcopy(self.controller.state.settings)
+        if enabled and not (
+            str(settings.proxy_auth_username or "").strip()
+            and str(settings.proxy_auth_password or "")
+        ):
+            self.toast.emit("warning", tr("Сначала укажите логин и пароль прокси"))
+            return False
+        settings.proxy_auth_enabled = bool(enabled)
+        self.controller.update_settings(settings)
+        return True
+
     @pyqtSlot(bool)
     def setTunEndpointIndependentNat(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
@@ -2005,6 +2185,11 @@ class AppBridge(QObject):
     @pyqtSlot('QVariantList')
     def tcpingNodes(self, ids: list | None = None) -> None:
         self.controller.ping_nodes(set(ids) if ids else None, method="tcping")
+
+    @pyqtSlot()
+    @pyqtSlot('QVariantList')
+    def httpGetNodes(self, ids: list | None = None) -> None:
+        self.controller.ping_nodes(set(ids) if ids else None, method="http")
 
     @pyqtSlot()
     @pyqtSlot('QVariantList')
@@ -2291,11 +2476,18 @@ class AppBridge(QObject):
 
     def _start_app_update_check(self, silent: bool = False) -> None:
         from ...app_updater import UpdateChecker
-        if (
-            self._quitting
-            or getattr(self, "_app_update_checker", None) is not None
-            or getattr(self, "_app_update_downloader", None) is not None
-        ):
+        if self._quitting:
+            return
+        if getattr(self, "_app_update_downloader", None) is not None:
+            if not silent:
+                self._notify("info", tr("Обновление уже выполняется"))
+            return
+        if getattr(self, "_app_update_checker", None) is not None:
+            if not silent:
+                # A silent check is already in flight — promote it so the Updates page
+                # shows its progress and result instead of ignoring the click.
+                self._app_update_silent = False
+                self.appUpdateState.emit({"phase": "checking"})
             return
         self._app_update_silent = silent
         if not silent:
@@ -2306,7 +2498,7 @@ class AppBridge(QObject):
             try:
                 proxy_port = self.controller.get_effective_http_proxy_port()
                 if proxy_port:
-                    proxy_url = f"http://{PROXY_HOST}:{int(proxy_port)}"
+                    proxy_url = self.controller.get_effective_http_proxy_url()
             except Exception:
                 proxy_url = None
         checker = UpdateChecker(
@@ -2337,7 +2529,7 @@ class AppBridge(QObject):
             try:
                 proxy_port = self.controller.get_effective_http_proxy_port()
                 if proxy_port:
-                    proxy_url = f"http://{PROXY_HOST}:{int(proxy_port)}"
+                    proxy_url = self.controller.get_effective_http_proxy_url()
             except Exception:
                 proxy_url = None
         worker = StartupResourceCheckWorker(
@@ -2429,13 +2621,12 @@ class AppBridge(QObject):
         if getattr(self, "_app_update_downloader", None) is not None:
             return
         from ...app_updater import UpdateDownloader
-        from ...constants import PROXY_HOST
         proxy_url = None
         try:
             if self.controller.connected:
                 port = self.controller.get_effective_http_proxy_port()
                 if port:
-                    proxy_url = f"http://{PROXY_HOST}:{port}"
+                    proxy_url = self.controller.get_effective_http_proxy_url()
         except Exception:
             proxy_url = None
         self.appUpdateState.emit({"phase": "downloading", "percent": 0})
@@ -2678,8 +2869,12 @@ class AppBridge(QObject):
             self.controller.state.settings.zapret_preset = name
             self.controller.save()
             if not is_process_elevated():
-                self.toast.emit("warning", "Для Zapret нужны права администратора. Перезапускаю Lumen.")
-                self.controller.admin_relaunch_requested.emit()
+                self._notify_action(
+                    "warning",
+                    tr("Zapret требует права администратора"),
+                    "restart-admin",
+                    tr("Перезапустить от администратора"),
+                )
                 return
             self.controller.zapret.start(name)
         except Exception as exc:  # noqa: BLE001
@@ -3240,6 +3435,9 @@ class AppBridge(QObject):
 
     @pyqtSlot(str)
     def runToastAction(self, action_id: str) -> None:
+        if action_id == "restart-admin":
+            self._on_admin_relaunch()
+            return
         if not action_id.startswith("change-port:"):
             return
         try:
@@ -3397,6 +3595,10 @@ class AppBridge(QObject):
     def tunMode(self) -> bool:
         return self._tun_mode
 
+    @pyqtProperty(bool, constant=True)
+    def limitedMode(self) -> bool:
+        return not is_process_elevated()
+
     @pyqtProperty(bool, notify=settingsChanged)
     def proxyEnabled(self) -> bool:
         return self._proxy_enabled
@@ -3528,6 +3730,18 @@ class AppBridge(QObject):
             return int(self.controller.state.settings.local_http_port)
         except Exception:
             return 10809
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def proxyAuthEnabled(self) -> bool:
+        return bool(getattr(self.controller.state.settings, "proxy_auth_enabled", False))
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def proxyAuthUsername(self) -> str:
+        return str(getattr(self.controller.state.settings, "proxy_auth_username", "") or "")
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def proxyAuthPassword(self) -> str:
+        return str(getattr(self.controller.state.settings, "proxy_auth_password", "") or "")
 
     @pyqtProperty(bool, notify=settingsChanged)
     def tunBlockQuic(self) -> bool:
@@ -3727,7 +3941,7 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def setPingMethod(self, method: str) -> None:
         value = (method or "tcping").strip().lower()
-        if value not in ("tcping", "icmp", "real"):
+        if value not in ("tcping", "icmp", "http", "real"):
             value = "tcping"
         settings = deepcopy(self.controller.state.settings)
         settings.ping_method = value
@@ -4134,20 +4348,24 @@ class AppBridge(QObject):
 
     @staticmethod
     def _is_internal_domain_rule(addr: str) -> bool:
-        value = str(addr or "").strip().lower()
-        return value.startswith(("geosite:", "geoip:"))
+        from ...routing_presets import is_internal_preset_rule
+
+        return is_internal_preset_rule(addr)
 
     @pyqtProperty('QVariantList', notify=routingChanged)
     def serviceList(self):
+        from ...routing_runtime import effective_service_action
         from ...service_presets import SERVICE_PRESETS
-        routes = self.controller.state.routing.service_routes
+        routing = self.controller.state.routing
         return [
             {
                 "id": s.id,
                 "name": s.name,
                 "description": s.description,
                 "defaultAction": s.default_action,
-                "action": routes.get(s.id) if routes.get(s.id) in ("proxy", "direct") else s.default_action,
+                # defaultAction is catalog metadata.  The selected value must
+                # instead reflect the active preset's effective fallback.
+                "action": effective_service_action(routing, s.id),
             }
             for s in SERVICE_PRESETS
         ]
@@ -4392,19 +4610,19 @@ class AppBridge(QObject):
         self.toast.emit("success", tr("Импортировано правил: {count}", count=imported_count))
 
     @staticmethod
-    def _dns_server_lines(text: str, fallback: str) -> list[str]:
+    def _dns_server_lines(text: str, fallback: str = "") -> list[str]:
         values: list[str] = []
         for raw in str(text or "").replace(";", "\n").splitlines():
             value = raw.strip()
             if value and value not in values:
                 values.append(value)
-        return values or [fallback]
+        return values or ([fallback] if fallback else [])
 
     @pyqtSlot(str)
     def setDnsBootstrapServers(self, text: str) -> None:
         def apply(r: RoutingSettings) -> None:
-            r.dns_bootstrap_servers = self._dns_server_lines(text, "1.1.1.1")
-            r.dns_bootstrap_server = r.dns_bootstrap_servers[0]
+            r.dns_bootstrap_servers = self._dns_server_lines(text)
+            r.dns_bootstrap_server = r.dns_bootstrap_servers[0] if r.dns_bootstrap_servers else ""
         self._mutate_routing(apply)
 
     @pyqtSlot(str)
@@ -4466,8 +4684,8 @@ class AppBridge(QObject):
             return False
 
         def apply(r: RoutingSettings) -> None:
-            r.dns_bootstrap_servers = self._dns_server_lines(bootstrap_text, "1.1.1.1")
-            r.dns_bootstrap_server = r.dns_bootstrap_servers[0]
+            r.dns_bootstrap_servers = self._dns_server_lines(bootstrap_text)
+            r.dns_bootstrap_server = r.dns_bootstrap_servers[0] if r.dns_bootstrap_servers else ""
             r.dns_proxy_servers = self._dns_server_lines(proxy_text, "cloudflare-dns.com")
             r.dns_proxy_server = r.dns_proxy_servers[0]
             r.dns_hosts = hosts

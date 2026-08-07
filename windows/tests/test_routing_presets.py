@@ -10,7 +10,9 @@ from xray_fluent.models import RoutingSettings
 from xray_fluent.routing_presets import (
     build_routing_preset,
     equivalent_regional_preset,
+    normalize_routing_preset_for_region,
     preset_domain_rules,
+    repair_builtin_preset_service_routes,
     regional_routing_preset_ids,
 )
 from xray_fluent.routing_runtime import (
@@ -40,6 +42,18 @@ def test_except_ru_keeps_custom_rules_out_of_system_storage() -> None:
     assert routing.proxy_domains == ["example.com"]
 
 
+def test_quick_presets_preserve_user_owned_geo_rules() -> None:
+    current = RoutingSettings(
+        direct_domains=["geosite:private-company", "geosite:category-ru"],
+        proxy_domains=["geoip:private-company", "geoip:ru-blocked"],
+    )
+
+    routing = build_routing_preset(current, "except_cn")
+
+    assert routing.direct_domains == ["geosite:private-company"]
+    assert routing.proxy_domains == ["geoip:private-company"]
+
+
 @pytest.mark.parametrize("preset_id", ["global", "blocked", "except_ru"])
 def test_quick_preset_keeps_application_routing(preset_id: str) -> None:
     process_rules = [
@@ -61,6 +75,19 @@ def test_quick_preset_keeps_application_routing(preset_id: str) -> None:
     assert routing.process_preset_routes == process_preset_routes
 
 
+def test_saved_blocked_preset_repairs_missing_service_defaults_without_overwriting_user_choice() -> None:
+    routing = RoutingSettings(
+        preset_id="blocked",
+        mode="rule",
+        service_routes={"youtube": "direct"},
+    )
+
+    repaired = repair_builtin_preset_service_routes(routing)
+
+    assert repaired.service_routes["youtube"] == "direct"
+    assert repaired.service_routes["discord"] == "proxy"
+
+
 def test_except_ru_uses_full_xray_geodata_and_custom_rule_wins() -> None:
     routing = RoutingSettings(
         mode="global",
@@ -80,7 +107,7 @@ def test_except_ru_uses_full_xray_geodata_and_custom_rule_wins() -> None:
         index
         for index, rule in enumerate(rules)
         if rule.get("outboundTag") == "direct"
-        and "geosite:ru-available-only-inside" in rule.get("domain", [])
+        and "geosite:category-ru" in rule.get("domain", [])
     )
     assert proxy_index < geosite_index
     assert any(
@@ -148,6 +175,9 @@ def test_regional_quick_presets_match_v2rayn_profiles() -> None:
     assert regional_routing_preset_ids("iran") == ("global", "except_ir")
     assert equivalent_regional_preset("except_ru", "china") == "except_cn"
     assert equivalent_regional_preset("blocked", "iran") == "global"
+    assert normalize_routing_preset_for_region("except_ru", "china") == "except_cn"
+    assert normalize_routing_preset_for_region("blocked_cn", "russia") == "blocked"
+    assert normalize_routing_preset_for_region("user-preset", "iran") == "user-preset"
 
 
 def test_china_and_iran_presets_use_regional_geodata() -> None:

@@ -123,6 +123,91 @@ def test_domain_rules_stay_ahead_of_fake_dns_fallback() -> None:
     assert rules[fake_index]["outbound"] == "direct"
 
 
+def test_explicit_private_ip_route_wins_over_lan_bypass_in_both_cores() -> None:
+    routing = RoutingSettings(
+        mode="global",
+        preset_id="global",
+        proxy_domains=["10.0.0.1/32"],
+        bypass_lan=True,
+    )
+
+    xray_rules = build_xray_gui_routing_rules(routing, _Settings())
+    xray_proxy = next(
+        index for index, rule in enumerate(xray_rules)
+        if rule.get("outboundTag") == "proxy" and "10.0.0.1/32" in rule.get("ip", [])
+    )
+    xray_private = next(
+        index for index, rule in enumerate(xray_rules)
+        if rule.get("outboundTag") == "direct" and "geoip:private" in rule.get("ip", [])
+    )
+
+    singbox_rules, _ = build_singbox_gui_route_rules(routing)
+    singbox_proxy = next(
+        index for index, rule in enumerate(singbox_rules)
+        if rule.get("outbound") == "proxy" and "10.0.0.1/32" in rule.get("ip_cidr", [])
+    )
+    singbox_private = next(
+        index for index, rule in enumerate(singbox_rules)
+        if rule.get("outbound") == "direct" and rule.get("ip_is_private") is True
+    )
+
+    assert xray_proxy < xray_private
+    assert singbox_proxy < singbox_private
+
+
+def test_apply_singbox_gui_routing_preserves_imported_route_and_dns_rules() -> None:
+    imported_route = {
+        "domain_suffix": ["user.example"],
+        "action": "route",
+        "outbound": "direct",
+    }
+    imported_dns = {
+        "domain_suffix": ["user.example"],
+        "action": "route",
+        "server": "bootstrap-dns",
+    }
+    payload = {
+        "route": {"rules": [imported_route.copy()]},
+        "dns": {
+            "servers": [
+                {"tag": "bootstrap-dns", "type": "udp", "server": "1.1.1.1"},
+                {"tag": "proxy-dns", "type": "https", "server": "dns.google"},
+            ],
+            "rules": [imported_dns.copy()],
+        },
+    }
+    routing = RoutingSettings(mode="global", preset_id="global")
+
+    apply_singbox_gui_routing(payload, routing)
+    apply_singbox_gui_routing(payload, routing)
+
+    assert payload["route"]["rules"].count(imported_route) == 1
+    assert payload["dns"]["rules"].count(imported_dns) == 1
+
+
+def test_apply_singbox_gui_routing_replaces_previous_generated_domain_rules() -> None:
+    payload = {
+        "route": {"rules": [], "final": "proxy"},
+        "dns": {
+            "servers": [
+                {"tag": "bootstrap-dns", "type": "udp", "server": "1.1.1.1"},
+                {"tag": "proxy-dns", "type": "https", "server": "dns.google"},
+            ],
+            "rules": [],
+        },
+    }
+
+    apply_singbox_gui_routing(payload, RoutingSettings(proxy_domains=["old.example"]))
+    apply_singbox_gui_routing(payload, RoutingSettings(proxy_domains=["new.example"]))
+
+    route_text = str(payload["route"]["rules"])
+    dns_text = str(payload["dns"]["rules"])
+    assert "old.example" not in route_text
+    assert "old.example" not in dns_text
+    assert "new.example" in route_text
+    assert "new.example" in dns_text
+
+
 def test_custom_rule_routing_falls_back_to_proxy_without_tun_default_setting() -> None:
     payload = {"route": {"rules": [], "final": "direct"}}
     routing = RoutingSettings(

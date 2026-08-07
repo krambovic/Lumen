@@ -17,7 +17,7 @@ if os.name == "nt":
 
 from PyQt6.QtCore import QObject, QProcess, QTimer, pyqtSignal
 
-from .constants import BASE_DIR
+from .constants import BASE_DIR, DATA_DIR
 from .subprocess_utils import (
     CREATE_NO_WINDOW,
     decode_output,
@@ -34,6 +34,9 @@ ZAPRET_DIR = BASE_DIR / "zapret"
 WINWS2_EXE = ZAPRET_DIR / "exe" / "winws2.exe"
 WINWS_EXE = ZAPRET_DIR / "exe" / "winws.exe"
 PRESETS_DIR = ZAPRET_DIR / "presets"
+# User-authored presets live outside the install tree: the portable in-app
+# updater wipes everything there except data/.
+USER_PRESETS_DIR = DATA_DIR / "zapret" / "presets"
 PROGRAM_DATA_DIR = Path(os.environ.get("ProgramData") or r"C:\ProgramData")
 AT_CONFIG_DIR = PROGRAM_DATA_DIR / "Lumen" / "zapret" / "winws2_at_config"
 _INLINE_ARG_SPLIT_RE = re.compile(r"(?<=\S)\s+(?=--)")
@@ -109,18 +112,27 @@ class ZapretManager(QObject):
         self._health_timer.timeout.connect(self._check_health)
 
     @staticmethod
-    def _presets_signature() -> tuple[tuple[str, int, int], ...]:
-        if not PRESETS_DIR.is_dir():
-            return ()
-        entries: list[tuple[str, int, int]] = []
-        for path in PRESETS_DIR.iterdir():
-            if path.suffix != ".txt" or path.name.startswith("_"):
+    def _preset_files() -> dict[str, Path]:
+        """Preset name -> file; a user copy shadows the builtin of the same name."""
+        found: dict[str, Path] = {}
+        for directory in (PRESETS_DIR, USER_PRESETS_DIR):
+            if not directory.is_dir():
                 continue
+            for path in directory.iterdir():
+                if path.suffix != ".txt" or path.name.startswith("_"):
+                    continue
+                found[path.stem] = path
+        return found
+
+    @staticmethod
+    def _presets_signature() -> tuple[tuple[str, int, int], ...]:
+        entries: list[tuple[str, int, int]] = []
+        for name, path in ZapretManager._preset_files().items():
             try:
                 stat = path.stat()
-                entries.append((path.name, int(stat.st_mtime_ns), int(stat.st_size)))
             except OSError:
                 continue
+            entries.append((name, int(stat.st_mtime_ns), int(stat.st_size)))
         return tuple(sorted(entries))
 
     @classmethod
@@ -151,13 +163,19 @@ class ZapretManager(QObject):
         cached = ZapretManager._preset_names_cache
         if cached and cached[0] == signature:
             return list(cached[1])
-        names = sorted(path_name[:-4] for path_name, _mtime, _size in signature)
+        names = sorted(preset_name for preset_name, _mtime, _size in signature)
         ZapretManager._preset_names_cache = (signature, names)
         return list(names)
 
     @staticmethod
     def preset_path(name: str) -> Path:
-        return PRESETS_DIR / f"{name}.txt"
+        user_path = USER_PRESETS_DIR / f"{name}.txt"
+        if user_path.is_file():
+            return user_path
+        builtin_path = PRESETS_DIR / f"{name}.txt"
+        if builtin_path.is_file():
+            return builtin_path
+        return user_path
 
     @staticmethod
     def _split_launch_line(raw_line: str) -> list[str]:
@@ -252,19 +270,14 @@ class ZapretManager(QObject):
         cached = ZapretManager._preset_infos_cache
         if cached and cached[0] == signature:
             return list(cached[1])
-        if not PRESETS_DIR.is_dir():
-            ZapretManager._preset_infos_cache = (signature, [])
-            return []
         result = []
-        for p in sorted(PRESETS_DIR.iterdir()):
-            if p.suffix != ".txt" or p.name.startswith("_"):
-                continue
+        for name, p in sorted(ZapretManager._preset_files().items()):
             text = p.read_text(encoding="utf-8", errors="replace")
             meta = ZapretManager._parse_metadata(text)
             arg_count = sum(1 for line in text.splitlines()
                            if line.strip() and not line.strip().startswith("#"))
             result.append(PresetInfo(
-                name=p.stem,
+                name=name,
                 description=meta.get("Description", ""),
                 created=meta.get("Created", ""),
                 modified=meta.get("Modified", ""),
@@ -277,21 +290,32 @@ class ZapretManager(QObject):
     @staticmethod
     def read_preset(name: str) -> str:
         """Return full text content of a preset file."""
-        path = PRESETS_DIR / f"{name}.txt"
+        path = ZapretManager.preset_path(name)
         if not path.is_file():
             return ""
         return path.read_text(encoding="utf-8", errors="replace")
 
     @staticmethod
+    def _remove_preset_files(name: str) -> bool:
+        removed = False
+        for directory in (USER_PRESETS_DIR, PRESETS_DIR):
+            path = directory / f"{name}.txt"
+            if path.is_file():
+                path.unlink()
+                removed = True
+        return removed
+
+    @staticmethod
     def save_preset(name: str, content: str, description: str = "") -> PresetInfo:
         """Write preset file with updated metadata headers."""
-        path = PRESETS_DIR / f"{name}.txt"
-        PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+        existing = ZapretManager.preset_path(name)
+        path = USER_PRESETS_DIR / f"{name}.txt"
+        USER_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
 
         # Preserve original Created date if file exists
         created = ""
-        if path.is_file():
-            old_text = path.read_text(encoding="utf-8", errors="replace")
+        if existing.is_file():
+            old_text = existing.read_text(encoding="utf-8", errors="replace")
             old_meta = ZapretManager._parse_metadata(old_text)
             created = old_meta.get("Created", "")
 
@@ -325,16 +349,17 @@ class ZapretManager(QObject):
     @staticmethod
     def rename_preset(old_name: str, new_name: str) -> PresetInfo | None:
         """Rename preset file. Returns new PresetInfo or None on failure."""
-        old_path = PRESETS_DIR / f"{old_name}.txt"
-        new_path = PRESETS_DIR / f"{new_name}.txt"
-        if not old_path.is_file() or new_path.exists():
+        old_path = ZapretManager.preset_path(old_name)
+        new_path = USER_PRESETS_DIR / f"{new_name}.txt"
+        if not old_path.is_file() or new_name in ZapretManager._preset_files():
             return None
 
         # Update # Preset: header inside the file
         text = old_path.read_text(encoding="utf-8", errors="replace")
         text = text.replace(f"# Preset: {old_name}", f"# Preset: {new_name}", 1)
+        USER_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
         new_path.write_text(text, encoding="utf-8")
-        old_path.unlink()
+        ZapretManager._remove_preset_files(old_name)
         ZapretManager.invalidate_preset_cache()
 
         meta = ZapretManager._parse_metadata(text)
@@ -346,25 +371,24 @@ class ZapretManager(QObject):
     @staticmethod
     def delete_preset(name: str) -> bool:
         """Delete preset file. Returns True if deleted."""
-        path = PRESETS_DIR / f"{name}.txt"
-        if path.is_file():
-            path.unlink()
-            ZapretManager.invalidate_preset_cache()
-            return True
-        return False
+        if not ZapretManager._remove_preset_files(name):
+            return False
+        ZapretManager.invalidate_preset_cache()
+        return True
 
     @staticmethod
     def import_preset(source_path: Path) -> PresetInfo | None:
         """Import a preset file from external path. Handles name conflicts."""
         if not source_path.is_file():
             return None
-        PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+        USER_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
 
+        taken = ZapretManager._preset_files()
         base_name = source_path.stem
-        target = PRESETS_DIR / f"{base_name}.txt"
+        target = USER_PRESETS_DIR / f"{base_name}.txt"
         counter = 1
-        while target.exists():
-            target = PRESETS_DIR / f"{base_name} ({counter}).txt"
+        while target.stem in taken or target.exists():
+            target = USER_PRESETS_DIR / f"{base_name} ({counter}).txt"
             counter += 1
 
         shutil.copy2(source_path, target)
@@ -409,16 +433,18 @@ class ZapretManager(QObject):
         return paths
 
     @staticmethod
-    def _ensure_compatibility_lists() -> None:
+    def _ensure_compatibility_lists() -> str:
+        """Create lists/ipset-base.txt from ipset-all.txt. Returns an error text."""
         lists_dir = ZAPRET_DIR / "lists"
         ipset_base = lists_dir / "ipset-base.txt"
         ipset_all = lists_dir / "ipset-all.txt"
         if ipset_base.exists() or not ipset_all.is_file():
-            return
+            return ""
         try:
             shutil.copy2(ipset_all, ipset_base)
-        except OSError:
-            pass
+        except OSError as exc:
+            return f"Не удалось создать {ipset_base}: {exc}"
+        return ""
 
     @staticmethod
     def _missing_referenced_files(args: list[str]) -> list[Path]:
@@ -450,6 +476,7 @@ class ZapretManager(QObject):
             self.error.emit(f"Пресет пустой: {preset_name}")
             return
 
+        lists_error = self._ensure_compatibility_lists()
         missing_files = self._missing_referenced_files(args)
         if missing_files:
             preview_items: list[str] = []
@@ -461,7 +488,10 @@ class ZapretManager(QObject):
             preview = ", ".join(preview_items)
             if len(missing_files) > 6:
                 preview += f" ... (+{len(missing_files) - 6})"
-            self.error.emit(f"Не найдены файлы списков Zapret: {preview}")
+            message = f"Не найдены файлы списков Zapret: {preview}"
+            if lists_error:
+                message += f". {lists_error}"
+            self.error.emit(message)
             return
 
         was_running = self.running
@@ -474,7 +504,6 @@ class ZapretManager(QObject):
 
         killed = [] if was_running and not _force_cleanup else self._kill_orphaned(
             timeout=0.8 if not _force_cleanup else 5,
-            taskkill_timeout=0.8 if not _force_cleanup else 3,
             settle_delay=0.1 if not _force_cleanup else 1.25,
         )
         for name in killed:
@@ -575,7 +604,6 @@ class ZapretManager(QObject):
         self._output_tail = []
         killed = self._kill_orphaned(
             timeout=1 if fast else 5,
-            taskkill_timeout=1 if fast else 3,
             settle_delay=0 if fast else 1.25,
         )
         for name in killed:
@@ -590,10 +618,12 @@ class ZapretManager(QObject):
     # ── internals ───────────────────────────────────────────────
 
     @staticmethod
-    def _kill_orphaned(
-        *, timeout: float = 5.0, taskkill_timeout: float = 3.0, settle_delay: float = 1.25
-    ) -> list[str]:
-        """Kill any orphaned winws.exe / winws2.exe processes."""
+    def _kill_orphaned(*, timeout: float = 5.0, settle_delay: float = 1.25) -> list[str]:
+        """Kill orphaned winws.exe / winws2.exe processes started from ZAPRET_DIR.
+
+        Scoped by image path: winws.exe is the standard zapret binary name, and a
+        name-based taskkill would tear down an unrelated third-party instance.
+        """
         killed: list[str] = []
         if os.name != "nt":
             return killed
@@ -603,27 +633,26 @@ class ZapretManager(QObject):
                     killed.append(exe_name)
             except Exception:
                 pass
-            try:
-                result = run_text_pumped(
-                    ["taskkill", "/F", "/T", "/IM", exe_name],
-                    timeout=taskkill_timeout,
-                    creationflags=CREATE_NO_WINDOW,
-                )
-                if result.returncode == 0 and exe_name not in killed:
-                    killed.append(exe_name)
-            except Exception:
-                pass
         if killed:
             sleep_with_events(settle_delay)
         return killed
 
     @staticmethod
     def _find_windivert_services() -> list[str]:
+        """Driver services registered from Lumen's own bundled winws2 only.
+
+        WinDivert service names are shared with GoodbyeDPI / ByeDPI / standalone
+        zapret, so they are matched by image path instead of by name.
+        """
         if os.name != "nt":
             return []
         if ZapretManager._windivert_services_cache is not None:
             return list(ZapretManager._windivert_services_cache)
-        found: set[str] = {"WinDivert", "WinDivert14", "WinDivert64", "WinDivert2", "Monkey"}
+        try:
+            owned_dir = str((ZAPRET_DIR / "exe").resolve()).lower().replace("/", "\\")
+        except OSError:
+            owned_dir = str(ZAPRET_DIR / "exe").lower().replace("/", "\\")
+        found: set[str] = set()
         try:
             with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services") as root:
                 index = 0
@@ -638,7 +667,9 @@ class ZapretManager(QObject):
                             image_path, _ = winreg.QueryValueEx(service_key, "ImagePath")
                     except OSError:
                         continue
-                    image_text = str(image_path or "").lower()
+                    image_text = str(image_path or "").lower().replace("/", "\\")
+                    if owned_dir not in image_text:
+                        continue
                     if any(marker in image_text for marker in ("monkey64", "monkey32", "windivert")):
                         found.add(name)
         except OSError:

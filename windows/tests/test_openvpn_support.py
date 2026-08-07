@@ -34,9 +34,9 @@ def _base_config() -> dict:
 def test_ovpn_inline_profile_imports_supported_extended_fields() -> None:
     nodes, errors = parse_links_text(
         """client
-proto udp
+proto tcp-client
 remote vpn-one.example.com 1194
-remote vpn-two.example.com 443 udp
+remote vpn-two.example.com 443 tcp-client
 data-ciphers AES-256-GCM:AES-128-GCM
 auth SHA256
 auth-user-pass
@@ -68,7 +68,7 @@ KEY
     assert node.scheme == "openvpn"
     assert node.server == "vpn-one.example.com"
     assert node.port == 1194
-    assert node_transport(node) == "UDP"
+    assert node_transport(node) == "TCP"
     assert is_native_singbox_only_node(node) is True
     assert _node_supports_test(node, "ping", ping_method="tcping") is False
     assert _node_supports_test(node, "speed") is False
@@ -78,7 +78,7 @@ KEY
         {"server": "vpn-one.example.com", "server_port": 1194},
         {"server": "vpn-two.example.com", "server_port": 443},
     ]
-    assert outbound["proto"] == "udp"
+    assert outbound["proto"] == "tcp"
     assert outbound["cipher"] == "AES-256-GCM"
     assert outbound["auth"] == "SHA256"
     assert outbound["username"] == "alice"
@@ -87,7 +87,7 @@ KEY
     assert outbound["reconnect_delay"] == "5s"
     assert outbound["ping_interval"] == "10s"
     assert outbound["ping_restart"] == "60s"
-    assert outbound["tls"]["verify_x509_name_mode"] == "exact"
+    assert outbound["tls"]["verify_x509_name_mode"] == "name"
     assert node.outbound["_dns"] == ["10.8.0.1"]
     assert validate_node_outbound(node) is None
 
@@ -112,7 +112,7 @@ auth-user-pass auth.txt
         encoding="utf-8",
     )
 
-    nodes, errors = parse_links_text(str(profile))
+    nodes, errors = parse_links_text(str(profile), allow_file_reference=True)
 
     assert errors == []
     node = nodes[0]
@@ -137,11 +137,11 @@ def test_ovpn_file_cannot_read_resources_outside_profile_directory(tmp_path: Pat
     (tmp_path / "outside-ca.crt").write_text("PRIVATE DATA", encoding="utf-8")
     profile = profile_dir / "unsafe.ovpn"
     profile.write_text(
-        "client\nremote vpn.example.com 1194\nca ../outside-ca.crt\n",
+        "client\nproto tcp-client\nremote vpn.example.com 1194\nca ../outside-ca.crt\n",
         encoding="utf-8",
     )
 
-    nodes, errors = parse_links_text(str(profile))
+    nodes, errors = parse_links_text(str(profile), allow_file_reference=True)
 
     assert nodes == []
     assert errors and "inside the profile directory" in errors[0]
@@ -188,7 +188,7 @@ def test_openvpn_native_json_and_urltest_auto_are_preserved() -> None:
 
 def test_openvpn_runtime_bootstraps_every_remote(monkeypatch) -> None:
     nodes, errors = parse_links_text(
-        "client\nremote first.example.com 1194\nremote 198.51.100.20 443\nproto udp\n"
+        "client\nremote first.example.com 1194\nremote 198.51.100.20 443\nproto tcp-client\n"
         "<ca>\n-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n</ca>\n"
     )
     assert errors == []
@@ -211,6 +211,16 @@ def test_openvpn_runtime_bootstraps_every_remote(monkeypatch) -> None:
     assert "203.0.113.10/32" in tun["route_exclude_address"]
     assert "198.51.100.20/32" in tun["route_exclude_address"]
     assert any("first.example.com" in rule.get("domain", []) for rule in config["route"]["rules"])
+
+
+def test_openvpn_udp_only_profile_reports_core_limitation() -> None:
+    nodes, errors = parse_links_text(
+        "client\nremote vpn.example.com 1194\nproto udp\n"
+        "<ca>\n-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n</ca>\n"
+    )
+
+    assert nodes == []
+    assert errors and "OpenVPN over UDP is not supported" in errors[0]
 
 
 def test_openvpn_editor_round_trip_and_manual_protocol() -> None:

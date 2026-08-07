@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 from .constants import BASE_DIR
 
@@ -101,5 +102,24 @@ def resolve_configured_path(
 
     path = Path(normalized)
     if path.is_absolute():
-        return path.resolve(strict=False)
-    return (BASE_DIR / path).resolve(strict=False)
+        resolved = path.resolve(strict=False)
+    else:
+        resolved = (BASE_DIR / path).resolve(strict=False)
+
+    # Since the repository was split into windows/ and android/, developer
+    # checkouts can still have downloaded cores in the repository-level core/
+    # directory.  Packaged builds always use BASE_DIR/core and never enter this
+    # fallback.  Limit it to the configured default so a missing custom path is
+    # not silently replaced by an unrelated executable.
+    if (
+        not getattr(sys, "frozen", False)
+        and default_path is not None
+        and not resolved.is_file()
+        and resolved == default_path.resolve(strict=False)
+    ):
+        default_relative = _base_relative(default_path)
+        if default_relative is not None:
+            source_tree_candidate = (BASE_DIR.parent / default_relative).resolve(strict=False)
+            if source_tree_candidate.is_file():
+                return source_tree_candidate
+    return resolved

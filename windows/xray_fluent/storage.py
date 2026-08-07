@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 
 from .constants import (
     CONFIGS_DIR,
@@ -45,6 +46,7 @@ class StateStorage:
     def __init__(self, state_file: Path = STATE_FILE):
         self.state_file = state_file
         self._passphrase: str = ""
+        self._encoding: str = "plain"
         self._ensure_dirs()
 
     @property
@@ -361,6 +363,7 @@ class StateStorage:
                 self._atomic_write_content(restored_content)
             elif paths_migrated:
                 self._atomic_write_content(self._encode_state(state, encoding))
+            self._encoding = encoding
             # Backups may predate a successfully normalized primary file. Scan
             # them independently so an older absolute product path cannot be
             # restored by a later recovery.
@@ -374,14 +377,20 @@ class StateStorage:
             f"Не удалось восстановить {self.state_file.name}.{suffix} {detail}".strip()
         )
 
+    def _save_encoding(self, state: AppState) -> str:
+        """Keep the loaded encoding and protect newly stored proxy secrets."""
+        if self._passphrase:
+            return "passphrase"
+        if self._encoding == "dpapi":
+            return "dpapi"
+        proxy_password = str(getattr(state.settings, "proxy_auth_password", "") or "")
+        if sys.platform == "win32" and proxy_password:
+            return "dpapi"
+        return "plain"
+
     def save(self, state: AppState) -> None:
         self._ensure_dirs()
-        payload = self._serialize_state(state)
-
-        if self._passphrase:
-            content = encrypt_with_passphrase(payload.encode("utf-8"), self._passphrase)
-        else:
-            content = payload
+        content = self._encode_state(state, self._save_encoding(state))
 
         self._rotate_backups()
         self._atomic_write_content(content)

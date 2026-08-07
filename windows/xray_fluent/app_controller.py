@@ -171,6 +171,8 @@ from .routing_presets import (
     build_routing_preset,
     equivalent_regional_preset,
     normalize_regional_preset,
+    normalize_routing_preset_for_region,
+    repair_builtin_preset_service_routes,
 )
 from .security import create_password_hash, get_idle_seconds, verify_password
 from .storage import PassphraseRequired, StateLoadError, StateStorage
@@ -183,7 +185,6 @@ from .startup import (
     set_always_run_as_admin,
     set_startup_enabled,
 )
-from .subprocess_utils import result_output_text, run_text
 from .traffic_history import TrafficHistoryStorage
 from .zapret_manager import ZapretManager
 
@@ -310,6 +311,12 @@ class AppController(QObject):
         self.singbox = SingBoxManager(self)
         self.zapret = ZapretManager(self)
         self.proxy = ProxyManager()
+        # An abnormal exit leaves the registry pointing at our own dead port;
+        # repair it at launch instead of waiting for the next connect/disconnect.
+        try:
+            self.proxy.reconcile_stale_state()
+        except Exception:
+            pass
         self.discord_proxy = DiscordProxyManager()
         self.network_monitor = NetworkMonitor(parent=self)
 
@@ -367,6 +374,7 @@ class AppController(QObject):
         self._xray_update_proxy_url: str | None = None
         self._reconnect_after_xray_update = False
         self._reconnect_after_resource_updates = False
+        self._pending_update_disconnects: list[QThread] = []
         self._xray_update_apply_requested = False
         self._reconnecting = False
         self._connecting = False
@@ -440,9 +448,10 @@ class AppController(QObject):
             Qt.ConnectionType.QueuedConnection,
         )
         self._metrics_request.connect(self._on_metrics_request, Qt.ConnectionType.QueuedConnection)
+        self._startup_sync_active = False
         self._startup_sync_timer = QTimer(self)
-        self._startup_sync_timer.setInterval(5_000)
-        self._startup_sync_timer.timeout.connect(self._sync_startup_state_from_windows)
+        self._startup_sync_timer.setInterval(120_000)
+        self._startup_sync_timer.timeout.connect(self._schedule_startup_state_sync)
 
     def load(self) -> bool:
         try:
@@ -456,8 +465,28 @@ class AppController(QObject):
             return False
 
         self._migrate_sort_order()
-        migrated = apply_masque_direct_update_once(self.state)
+        region = normalize_regional_preset(self.state.settings.regional_preset)
+        current_preset = str(self.state.routing.preset_id or "").strip().lower()
+        normalized_preset = normalize_routing_preset_for_region(current_preset, region)
+        migrated = normalized_preset != current_preset
+        if migrated:
+            self.state.routing = build_routing_preset(self.state.routing, normalized_preset)
+            self._log(
+                f"[routing] normalized saved preset for {region}: "
+                f"{current_preset} -> {normalized_preset}"
+            )
+        repaired_routing = repair_builtin_preset_service_routes(self.state.routing)
+        if repaired_routing is not self.state.routing:
+            self.state.routing = repaired_routing
+            migrated = True
+            self._log("[routing] restored missing service routes for the saved blocked preset")
+        migrated = apply_masque_direct_update_once(self.state) or migrated
         migrated = apply_dns_defaults_update_once(self.state) or migrated
+        if not is_process_elevated() and self.state.settings.tun_mode:
+            # Preserve the usable proxy-only application instead of letting a
+            # saved TUN preference make non-admin startup fail completely.
+            self.state.settings.tun_mode = False
+            migrated = True
         if migrated:
             self.save()
         self.nodes_changed.emit(self.state.nodes)
@@ -498,11 +527,9 @@ class AppController(QObject):
                 self.status.emit("error", f"Ошибка настройки запуска от администратора: {exc}")
         self._reconcile_startup_registration()
         self._startup_sync_timer.start()
-        if not is_process_elevated():
-            self.status.emit(
-                "warning",
-                "Lumen запущен без прав администратора. TUN, Zapret и WinDivert могут работать нестабильно.",
-            )
+        # Restrictions are explained by the relevant controls when clicked.
+        # A delayed global warning here could surface during an unrelated
+        # server switch and incorrectly make that switch look rejected.
 
     def _reconcile_startup_registration(self) -> None:
         try:
@@ -517,6 +544,19 @@ class AppController(QObject):
             )
         except Exception as exc:
             self._logger.warning("Failed to reconcile startup registration: %s", exc)
+
+    def _schedule_startup_state_sync(self) -> None:
+        # Registry + schtasks probing must never run on the GUI thread.
+        if self._startup_sync_active or self._shutting_down:
+            return
+        self._startup_sync_active = True
+        self._start_background_task(self._run_startup_state_sync, "startup-state-sync")
+
+    def _run_startup_state_sync(self) -> None:
+        try:
+            self._sync_startup_state_from_windows()
+        finally:
+            self._startup_sync_active = False
 
     def _sync_startup_state_from_windows(self) -> bool:
         try:
@@ -852,6 +892,50 @@ class AppController(QObject):
         _, http_port = self.get_effective_proxy_ports()
         return http_port if http_port > 0 else None
 
+    def get_effective_http_proxy_url(self) -> str | None:
+        """Return the live local HTTP proxy URL, including optional auth."""
+        from urllib.parse import quote
+
+        port = self.get_effective_http_proxy_port()
+        if not port:
+            return None
+        settings = self.state.settings
+        username = str(getattr(settings, "proxy_auth_username", "") or "").strip()
+        password = str(getattr(settings, "proxy_auth_password", "") or "")
+        if bool(getattr(settings, "proxy_auth_enabled", False)) and username and password:
+            credentials = f"{quote(username, safe='')}:{quote(password, safe='')}@"
+        else:
+            credentials = ""
+        return f"http://{credentials}{PROXY_HOST}:{int(port)}"
+
+    def owned_core_process_pids(self) -> set[int]:
+        """Return main and temporary core PIDs currently owned by this Lumen instance."""
+        pids: set[int] = set()
+        for manager in (self.xray, self.singbox):
+            proc = getattr(manager, "_proc", None)
+            pid = int(getattr(proc, "pid", 0) or 0)
+            if pid > 0:
+                pids.add(pid)
+
+        workers = [self._ping_worker, self._speed_worker, *self._retired_workers]
+        for worker in workers:
+            if worker is None:
+                continue
+            lock = getattr(worker, "_process_lock", None)
+            try:
+                if lock is None:
+                    processes = list(getattr(worker, "_processes", ()))
+                else:
+                    with lock:
+                        processes = list(getattr(worker, "_processes", ()))
+            except Exception:
+                continue
+            for proc in processes:
+                pid = int(getattr(proc, "pid", 0) or 0)
+                if pid > 0:
+                    pids.add(pid)
+        return pids
+
     def _cache_singbox_document_state(self, path: Path, text: str) -> SingboxDocumentState:
         state = self._singbox_documents.cache_state(path, text)
         parsed = self._parsed_singbox_document
@@ -1032,6 +1116,16 @@ class AppController(QObject):
             tun_block_quic=self.state.settings.tun_block_quic,
             local_socks_port=self.state.settings.local_socks_port,
             local_http_port=self.state.settings.local_http_port,
+            proxy_auth_username=(
+                self.state.settings.proxy_auth_username
+                if self.state.settings.proxy_auth_enabled
+                else ""
+            ),
+            proxy_auth_password=(
+                self.state.settings.proxy_auth_password
+                if self.state.settings.proxy_auth_enabled
+                else ""
+            ),
             preferred_relay_port=preferred_relay_port,
             preferred_protect_port=preferred_protect_port,
             preferred_protect_password=preferred_protect_password,
@@ -1344,9 +1438,11 @@ class AppController(QObject):
 
         action = self._compute_transition_action()
         if action is None:
+            self._auto_switch_transitioning = False
             self._emit_no_transition_feedback()
             self._transition_pending = False
             self.transition_state_changed.emit(False, "")
+            self._resolve_pending_update_disconnects()
             return
 
         self._transition_pending = False
@@ -1400,6 +1496,10 @@ class AppController(QObject):
                 self._transition_worker_thread = None
 
     def _on_transition_action_complete(self, ok: bool, action: str, reason: str, generation: int) -> None:
+        # Any finished transition ends the auto-switch window: leaving the flag
+        # set would make the next unexpected drop evaluate the kill-switch as
+        # inactive and tear down the system proxy (fail-open).
+        self._auto_switch_transitioning = False
         if self._shutting_down:
             self._transition_active = False
             return
@@ -1428,6 +1528,7 @@ class AppController(QObject):
             self._transition_timer.start(50)
         else:
             self.transition_state_changed.emit(False, "")
+        self._resolve_pending_update_disconnects()
 
     def _on_metrics_request(self, start: bool) -> None:
         # Always runs on the GUI thread (owns the metrics worker / its QThread).
@@ -1469,8 +1570,12 @@ class AppController(QObject):
         self._transition_pending = False
         self._transition_scheduled = False
         self._desired_connected = False
-        self._join_background_tasks()
-        self._join_transition_worker()
+        for worker in self._pending_update_disconnects:
+            self._confirm_update_disconnect(worker, False)
+        self._pending_update_disconnects.clear()
+        if not getattr(self, "_system_shutdown", False):
+            self._join_background_tasks()
+            self._join_transition_worker()
         try:
             self._flush_state_saves(timeout=5.0)
             shutdown_operation(self)
@@ -1483,29 +1588,10 @@ class AppController(QObject):
     @staticmethod
     def _cleanup_tun_adapter(max_wait: float = 3.0) -> None:
         """Remove the wintun TUN adapter if it was left behind."""
-        import subprocess as _sp
         try:
             from .engines.singbox.manager import SingBoxManager
 
             SingBoxManager.cleanup_orphaned_tun_adapters(max_wait=max_wait)
-        except Exception:
-            pass
-        timeout = max(1, int(max_wait))
-        try:
-            result = run_text(
-                ["netsh", "interface", "show", "interface"],
-                timeout=timeout,
-                creationflags=0x08000000,
-            )
-            interfaces = result_output_text(result)
-            for interface_name in ("Lumen_TUN", "Lumen_TUN"):
-                if interface_name not in interfaces:
-                    continue
-                _sp.run(
-                    ["netsh", "interface", "set", "interface", interface_name, "admin=disable"],
-                    capture_output=True, timeout=timeout,
-                    creationflags=0x08000000,
-                )
         except Exception:
             pass
 
@@ -1556,7 +1642,8 @@ class AppController(QObject):
                 http_port=int(self.state.settings.local_http_port),
             )
             return json.dumps(cfg, ensure_ascii=True, indent=2)
-        except ValueError:
+        except (ValueError, RuntimeError):
+            # RuntimeError comes from a missing rule-set binary or port exhaustion.
             return None
 
     def import_nodes_from_text(
@@ -1700,14 +1787,16 @@ class AppController(QObject):
     def toggle_connection(self) -> None:
         current_target = self._desired_connected if (self._transition_active or self._transition_pending) else self.connected
         if not current_target and self.state.settings.tun_mode and not is_process_elevated():
-            self.status.emit("warning", "Для VPN (TUN) нужны права администратора. Перезапускаю Lumen с повышенными правами.")
-            self.admin_relaunch_requested.emit()
+            self.status.emit("warning", "VPN (TUN) недоступен без прав администратора. Переключитесь на режим прокси.")
             return
         self._desired_connected = not current_target
         self._request_transition("toggle connection")
 
     def set_discord_proxy_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
+        if enabled and not is_process_elevated():
+            self.status.emit("warning", "Discord Voice через WinDivert недоступен без прав администратора.")
+            return
         if enabled and (self.state.settings.tun_mode or (self._active_session is not None and self._active_session.tun_mode)):
             self.status.emit("warning", "Discord Voice недоступен при включенном TUN: трафик Discord уже идет через VPN.")
             return
@@ -1802,6 +1891,14 @@ class AppController(QObject):
             self._request_transition("routing changed")
 
     def apply_routing_preset(self, preset_id: str, *, restart_runtime: bool = True) -> None:
+        region = normalize_regional_preset(self.state.settings.regional_preset)
+        requested_preset = str(preset_id or "").strip().lower()
+        preset_id = normalize_routing_preset_for_region(requested_preset, region)
+        if requested_preset != preset_id:
+            self._log(
+                f"[routing] mapped incompatible preset for {region}: "
+                f"{requested_preset} -> {preset_id}"
+            )
         before = self._routing_signature(self.state.routing)
         routing = build_routing_preset(self.state.routing, preset_id)
         after = self._routing_signature(routing)
@@ -1853,11 +1950,11 @@ class AppController(QObject):
         current_region = normalize_regional_preset(
             getattr(self.state.settings, "regional_preset", "russia")
         )
-        if current_region == region and not self._pending_regional_preset:
-            return "unchanged"
         if self._pending_regional_preset:
             return "pending" if self._pending_regional_preset == region else "busy"
         if regional_geodata_installed(region):
+            if current_region == region:
+                return "unchanged"
             self._commit_regional_preset(region, restart_runtime=True)
             return "applied"
 
@@ -1987,9 +2084,7 @@ class AppController(QObject):
         proxy_url = None
         if self.connected:
             try:
-                proxy_port = self.get_effective_http_proxy_port()
-                if proxy_port:
-                    proxy_url = f"http://{PROXY_HOST}:{int(proxy_port)}"
+                proxy_url = self.get_effective_http_proxy_url()
             except Exception:
                 proxy_url = None
         update_region = normalize_regional_preset(
@@ -2017,24 +2112,44 @@ class AppController(QObject):
         Stops the running connection so files are not locked.
         """
         worker = self.sender()
-        success = True
         if self._shutting_down:
-            success = False
             self._reconnect_after_resource_updates = False
             self._reconnect_after_xray_update = False
-        elif self.connected:
-            self._logger.info("[updater] Connection active. Disconnecting before replacing files...")
-            self.status.emit("info", "Остановка ядра для установки обновлений...")
-            stopped = self.disconnect_current()
-            if stopped:
-                if worker is self._xray_update_worker:
-                    self._reconnect_after_xray_update = True
-                else:
-                    self._reconnect_after_resource_updates = True
-                self._logger.info("[updater] Disconnected successfully.")
-            else:
-                success = False
-                self._logger.warning("[updater] Failed to disconnect.")
+            self._confirm_update_disconnect(worker, False)
+            return
+        if not self.connected:
+            self._confirm_update_disconnect(worker, True)
+            return
+        self._logger.info("[updater] Connection active. Disconnecting before replacing files...")
+        self.status.emit("info", "Остановка ядра для установки обновлений...")
+        if worker is self._xray_update_worker:
+            self._reconnect_after_xray_update = True
+        else:
+            self._reconnect_after_resource_updates = True
+        # The teardown itself must go through the transition state machine so it
+        # never races an in-flight connect worker and never blocks the GUI thread.
+        self._pending_update_disconnects.append(worker)
+        self._desired_connected = False
+        self._request_transition("updater disconnect")
+
+    def _resolve_pending_update_disconnects(self) -> None:
+        if not self._pending_update_disconnects:
+            return
+        stopped = not self.connected
+        if not stopped and (self._transition_pending or self._transition_scheduled or self._transition_active):
+            return
+        workers = list(self._pending_update_disconnects)
+        self._pending_update_disconnects.clear()
+        if stopped:
+            self._logger.info("[updater] Disconnected successfully.")
+        else:
+            self._reconnect_after_resource_updates = False
+            self._reconnect_after_xray_update = False
+            self._logger.warning("[updater] Failed to disconnect.")
+        for worker in workers:
+            self._confirm_update_disconnect(worker, stopped)
+
+    def _confirm_update_disconnect(self, worker, success: bool) -> None:
         if hasattr(worker, "confirm_disconnect"):
             worker.confirm_disconnect(success)
 
@@ -2128,7 +2243,7 @@ class AppController(QObject):
         self.locked = True
         self.lock_state_changed.emit(True)
         self._desired_connected = False
-        self.disconnect_current()
+        self._request_transition("app locked")
 
     def build_diagnostics(self, *, include: dict | None = None, upload: bool = True) -> Path:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

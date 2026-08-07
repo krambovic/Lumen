@@ -49,6 +49,10 @@ def normalize_wireguard_endpoint(endpoint: dict[str, Any]) -> dict[str, Any]:
     endpoint_type = str(result.get("type") or "").strip().lower()
     if endpoint_type == "warp":
         result["system"] = False
+        # sing-box-extended 2.5.1+ rejects an explicit "reserved" field on WARP
+        # endpoints (`endpoints[0].reserved: json: unknown field "reserved"`);
+        # the WARP profile derives the reserved bytes itself.
+        result.pop("reserved", None)
         return result
     if endpoint_type not in {"wireguard", "awg"}:
         return result
@@ -144,7 +148,6 @@ def normalize_wireguard_endpoint(endpoint: dict[str, Any]) -> dict[str, Any]:
                 "detour": "direct",
                 "private_key": str(result.get("private_key") or ""),
             },
-            "reserved": legacy_reserved,
         }
         keepalive = first_peer.get("persistent_keepalive_interval")
         if keepalive not in (None, ""):
@@ -187,7 +190,7 @@ def normalize_singbox_wireguard_endpoints(payload: dict[str, Any]) -> None:
                 if isinstance(outbound, dict)
                 else ""
             )
-            if outbound_type in {"wireguard", "awg"}:
+            if outbound_type in {"wireguard", "awg", "warp"}:
                 migrated = normalize_wireguard_endpoint(outbound)
                 tag = str(migrated.get("tag") or "").strip()
                 if tag:
@@ -271,6 +274,7 @@ def _is_cloudflare_warp_peer(value: str) -> bool:
         for network in (
             ipaddress.ip_network("162.159.192.0/24"),
             ipaddress.ip_network("162.159.193.0/24"),
+            ipaddress.ip_network("162.159.195.0/24"),
             ipaddress.ip_network("188.114.96.0/20"),
             ipaddress.ip_network("2606:4700:d0::/48"),
             ipaddress.ip_network("2606:4700:d1::/48"),

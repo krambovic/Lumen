@@ -13,8 +13,10 @@ from urllib.request import url2pathname
 from .models import Node
 from .openvpn_import import looks_like_openvpn_config, parse_openvpn_config
 from .wireguard_normalization import (
+    _split_endpoint,
     normalize_ip_prefixes,
     normalize_singbox_wireguard_endpoints,
+    normalize_wireguard_endpoint,
 )
 
 try:  # Optional at runtime, listed in requirements for bundled builds.
@@ -38,13 +40,19 @@ _AWG_BYTES_TAG_RE = re.compile(r"<b\s+0x([0-9A-Fa-f]*)>")
 _AWG_UINT_RANGE_RE = re.compile(r"\d+(?:\s*-\s*\d+)?")
 
 
-def parse_links_text(text: str) -> tuple[list[Node], list[str]]:
+def parse_links_text(
+    text: str,
+    *,
+    allow_file_reference: bool = False,
+) -> tuple[list[Node], list[str]]:
     if len(text.encode("utf-8", errors="replace")) > MAX_IMPORT_BYTES:
         return [], [f"Import data exceeds the {MAX_IMPORT_BYTES}-byte limit"]
     stripped = text.strip()
     source_path: Path | None = None
     try:
-        file_reference = _read_import_file_reference(stripped)
+        file_reference = (
+            _read_import_file_reference(stripped) if allow_file_reference else None
+        )
     except LinkParseError as exc:
         return [], [str(exc)]
     if file_reference is not None:
@@ -124,14 +132,16 @@ def _read_import_file_reference(text: str) -> tuple[str, Path] | None:
     if len(candidate_text) >= 3 and candidate_text[1] == ":" and candidate_text[2] in {"\\", "/"}:
         path_text = candidate_text
     elif parsed.scheme.lower() == "file":
+        # A `file://host/share` target makes Windows open an SMB session and
+        # authenticate to `host`, so remote hosts are never followed.
+        if parsed.netloc:
+            return None
         path_text = url2pathname(unquote(parsed.path or ""))
-        if parsed.netloc and not path_text.startswith("\\\\"):
-            path_text = f"\\\\{parsed.netloc}{path_text}"
     elif parsed.scheme == "":
         candidate = candidate_text
         if candidate.lower().endswith((".conf", ".ovpn", ".txt", ".json", ".yaml", ".yml")):
             path_text = candidate
-    if not path_text:
+    if not path_text or path_text.startswith(("\\\\", "//")):
         return None
     path = Path(path_text)
     if not path.is_file():
@@ -194,6 +204,8 @@ def parse_single(raw: str) -> Node:
         return _parse_mieru(text)
     if scheme == "masque":
         return _parse_masque(text)
+    if scheme == "anytls":
+        return _parse_anytls(text)
 
     raise LinkParseError(f"unsupported scheme: {scheme or 'unknown'}")
 
@@ -652,11 +664,16 @@ def _is_clash_proxy_payload(payload: Any) -> bool:
     if kind not in {
         "vless", "vmess", "trojan", "ss", "shadowsocks",
         "hy", "hysteria", "hy2", "hysteria2", "tuic", "wireguard",
-        "awg", "amneziawg", "amnezia-wg", "masque", "naive",
+        "awg", "amneziawg", "amnezia-wg", "masque", "naive", "mieru",
+        "anytls", "snell", "socks", "socks5", "http", "https",
     }:
         return False
     return (
-        ("server" in payload and "port" in payload and "server_port" not in payload)
+        (
+            "server" in payload
+            and any(key in payload for key in ("port", "server-port", "server-ports", "server_ports", "ports"))
+            and "server_port" not in payload
+        )
         or "private-key" in payload
         or "public-key" in payload
         or "amnezia-wg-option" in payload
@@ -997,15 +1014,26 @@ def _parse_shadowsocks(link: str) -> Node:
             raise LinkParseError("invalid shadowsocks credentials")
         method, password = decoded.split(":", 1)
     else:
-        decoded = _decode_b64(parsed.netloc)
-        parsed_decoded = urlsplit(f"ss://{decoded}")
-        if parsed_decoded.username and parsed_decoded.password and parsed_decoded.hostname:
-            method = unquote(parsed_decoded.username)
-            password = unquote(parsed_decoded.password)
-            server = parsed_decoded.hostname
-            port = parsed_decoded.port or 8388
-        else:
+        # urlsplit stops the netloc at the first `/`, which is a valid base64
+        # symbol, and the decoded credentials may contain `?`, so isolate the
+        # blob and split it without going through urlsplit again.
+        body = link.split("://", 1)[-1].split("#", 1)[0].split("?", 1)[0]
+        try:
+            decoded = _decode_b64(body)
+        except Exception as exc:
+            raise LinkParseError("invalid shadowsocks link") from exc
+        credentials, separator, host_port = decoded.rpartition("@")
+        host, port_separator, port_text = host_port.rpartition(":")
+        if not port_separator or not port_text.isdigit():
+            host, port_text = host_port, "8388"
+        host = host.strip().strip("[]").lower()
+        if not separator or ":" not in credentials or not host:
             raise LinkParseError("invalid shadowsocks link")
+        method, password = credentials.split(":", 1)
+        method = unquote(method)
+        password = unquote(password)
+        server = host
+        port = int(port_text)
 
     if not method or not password or not server:
         raise LinkParseError("invalid shadowsocks link")
@@ -1417,13 +1445,17 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         kind = "hysteria2"
     elif kind in {"socks", "socks5"}:
         kind = "socks"
+    elif kind == "https":
+        kind = "http"
+        payload = {**payload, "tls": True}
     elif kind in {"awg", "amneziawg", "amnezia-wg"}:
         kind = "wireguard"
-    if kind not in {"vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria", "hysteria2", "tuic", "masque", "naive"}:
+    if kind not in {"vless", "vmess", "trojan", "shadowsocks", "socks", "http", "wireguard", "hysteria", "hysteria2", "tuic", "masque", "naive", "mieru", "anytls", "snell"}:
         raise LinkParseError(f"unsupported Clash proxy type: {kind or 'unknown'}")
 
     server = str(payload.get("server") or "").strip()
-    port = int(payload.get("port") or payload.get("server-port") or 0)
+    server_ports = _clash_list(payload.get("server-ports", payload.get("server_ports", payload.get("ports"))))
+    port = int(payload.get("port") or payload.get("server-port") or _representative_clash_port(server_ports) or 0)
     name = str(payload.get("name") or payload.get("tag") or f"{kind}-{server}:{port}").strip()
     if not server or port <= 0:
         raise LinkParseError("proxy must contain server and port")
@@ -1433,7 +1465,7 @@ def _parse_clash_proxy_payload(payload: dict[str, Any]) -> Node:
         return _parse_clash_wireguard_payload(payload, name, server, port)
     if kind == "masque":
         return _parse_clash_masque_payload(payload, name, server, port)
-    if kind in {"hysteria", "hysteria2", "tuic", "naive"}:
+    if kind in {"hysteria", "hysteria2", "tuic", "naive", "mieru", "anytls", "snell"}:
         outbound = _native_singbox_outbound(_clash_to_singbox_outbound(payload, kind))
     else:
         outbound = _clash_to_xray_outbound(payload, kind)
@@ -1544,6 +1576,37 @@ def _clash_list(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(item).strip() for item in value if str(item).strip()]
     return _split_csv(str(value or ""))
+
+
+def _representative_clash_port(ranges: list[str]) -> int:
+    for value in ranges:
+        match = re.match(r"^\s*(\d{1,5})", value)
+        if match and 1 <= int(match.group(1)) <= 65535:
+            return int(match.group(1))
+    return 0
+
+
+def _clash_speed_mbps(value: Any) -> int | None:
+    digits = "".join(char for char in str(value or "") if char.isdigit())
+    return int(digits) if digits else None
+
+
+def _clash_duration(value: Any) -> str:
+    text = str(value or "").strip()
+    return f"{text}s" if text.isdigit() else text
+
+
+def _clash_certificate_pins(payload: dict[str, Any]) -> list[str]:
+    for key in (
+        "certificate-public-key-sha256",
+        "certificate_public_key_sha256",
+        "pin-sha256",
+        "pinSHA256",
+    ):
+        pins = _clash_list(payload.get(key))
+        if pins:
+            return pins
+    return []
 
 
 def _parse_clash_masque_payload(
@@ -1664,10 +1727,12 @@ def _parse_clash_wireguard_payload(
     reserved_bytes = _parse_reserved_bytes(payload.get("reserved"))
     keepalive = payload.get("persistent-keepalive") or payload.get("persistent_keepalive_interval")
 
+    if reserved_bytes and not _is_warp_endpoint(server):
+        raise LinkParseError("reserved bytes are supported only for Cloudflare WARP profiles")
+
     if reserved_bytes:
         endpoint = _build_warp_profile_endpoint(
             private_key=private_key,
-            reserved=reserved_bytes,
             persistent_keepalive=keepalive,
             amnezia=amnezia,
             listen_port=payload.get("listen-port") or payload.get("listen_port") or "",
@@ -1717,8 +1782,6 @@ def _parse_clash_wireguard_payload(
         ),
     )
     peer = endpoint["peers"][0]
-    if reserved_bytes:
-        raise LinkParseError("reserved bytes are supported only for Cloudflare WARP profiles")
     if keepalive not in (None, ""):
         peer["persistent_keepalive_interval"] = int(keepalive)
 
@@ -1764,15 +1827,24 @@ def _clash_to_xray_outbound(payload: dict[str, Any], kind: str) -> dict[str, Any
             server_item["users"] = [{"user": username, "pass": password}]
         settings = {"servers": [server_item]}
     else:
+        plugin_options = payload.get("plugin-opts", payload.get("plugin_opts", ""))
+        if isinstance(plugin_options, dict):
+            plugin_options = ";".join(
+                str(key) if value is True else f"{key}={value}"
+                for key, value in plugin_options.items()
+            )
+        server_item = {
+            "address": server,
+            "port": port,
+            "method": str(payload.get("cipher") or payload.get("method") or "none"),
+            "password": password,
+        }
+        if payload.get("plugin"):
+            server_item["plugin"] = str(payload["plugin"])
+        if plugin_options:
+            server_item["plugin_opts"] = str(plugin_options)
         settings = {
-            "servers": [
-                {
-                    "address": server,
-                    "port": port,
-                    "method": str(payload.get("cipher") or payload.get("method") or "none"),
-                    "password": password,
-                }
-            ]
+            "servers": [server_item]
         }
 
     outbound = {
@@ -1788,31 +1860,55 @@ def _clash_stream_settings(payload: dict[str, Any]) -> dict[str, Any]:
     network = str(payload.get("network") or "tcp").strip().lower()
     if network in {"httpupgrade", "http-upgrade"}:
         network = "httpupgrade"
-    security = "tls" if payload.get("tls") else "none"
+    security = "tls" if _to_bool(payload.get("tls")) else "none"
     if str(payload.get("reality-opts") or "").strip() or payload.get("reality"):
         security = "reality"
     stream = {"network": network, "security": security}
 
-    ws_opts = payload.get("ws-opts") if isinstance(payload.get("ws-opts"), dict) else {}
-    grpc_opts = payload.get("grpc-opts") if isinstance(payload.get("grpc-opts"), dict) else {}
-    http_opts = payload.get("http-opts") if isinstance(payload.get("http-opts"), dict) else {}
+    ws_opts = payload.get("ws-opts", payload.get("ws_opts"))
+    ws_opts = ws_opts if isinstance(ws_opts, dict) else {}
+    grpc_opts = payload.get("grpc-opts", payload.get("grpc_opts"))
+    grpc_opts = grpc_opts if isinstance(grpc_opts, dict) else {}
+    http_opts = payload.get("h2-opts", payload.get("h2_opts"))
+    if not isinstance(http_opts, dict):
+        http_opts = payload.get("http-opts", payload.get("http_opts"))
+    http_opts = http_opts if isinstance(http_opts, dict) else {}
     xhttp_opts = payload.get("xhttp-opts") if isinstance(payload.get("xhttp-opts"), dict) else {}
 
     if network == "ws":
         headers = dict(ws_opts.get("headers") or {}) if isinstance(ws_opts.get("headers"), dict) else {}
-        stream["wsSettings"] = {
+        ws_settings = {
             "path": str(ws_opts.get("path") or payload.get("path") or "/"),
             "headers": headers,
         }
+        early_data = ws_opts.get("max-early-data", ws_opts.get("max_early_data", payload.get("max-early-data")))
+        if str(early_data or "").strip().isdigit():
+            ws_settings["maxEarlyData"] = int(early_data)
+        early_header = ws_opts.get("early-data-header-name", ws_opts.get("early_data_header_name"))
+        if early_header:
+            ws_settings["earlyDataHeaderName"] = str(early_header)
+        stream["wsSettings"] = ws_settings
     elif network == "grpc":
-        stream["grpcSettings"] = {
-            "serviceName": str(grpc_opts.get("grpc-service-name") or grpc_opts.get("serviceName") or payload.get("service-name") or "")
+        grpc_settings = {
+            "serviceName": str(grpc_opts.get("grpc-service-name") or grpc_opts.get("service-name") or grpc_opts.get("service_name") or grpc_opts.get("serviceName") or payload.get("service-name") or "")
         }
+        authority = grpc_opts.get("authority") or grpc_opts.get("grpc-authority") or grpc_opts.get("grpc_authority") or payload.get("grpc-authority") or payload.get("grpc_authority")
+        if authority:
+            grpc_settings["authority"] = str(authority)
+        stream["grpcSettings"] = grpc_settings
     elif network in {"http", "h2"}:
         host = http_opts.get("host") or payload.get("host") or []
         if isinstance(host, str):
             host = [host]
-        stream["httpSettings"] = {"host": host, "path": str(http_opts.get("path") or payload.get("path") or "/")}
+        path = http_opts.get("path") or payload.get("path") or "/"
+        if isinstance(path, list):
+            path = path[0] if path else "/"
+        http_settings: dict[str, Any] = {"host": host, "path": str(path)}
+        if isinstance(http_opts.get("headers"), dict):
+            http_settings["headers"] = deepcopy(http_opts["headers"])
+        if http_opts.get("method"):
+            http_settings["method"] = str(http_opts["method"])
+        stream["httpSettings"] = http_settings
     elif network == "xhttp":
         stream["xhttpSettings"] = {
             "path": str(xhttp_opts.get("path") or payload.get("path") or "/"),
@@ -1821,11 +1917,18 @@ def _clash_stream_settings(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
     if security == "tls":
-        stream["tlsSettings"] = {
+        tls_settings = {
             "serverName": str(payload.get("servername") or payload.get("sni") or payload.get("server") or ""),
             "fingerprint": str(payload.get("client-fingerprint") or payload.get("fingerprint") or ""),
-            "allowInsecure": bool(payload.get("skip-cert-verify", False)),
+            "allowInsecure": _to_bool(payload.get("skip-cert-verify", False)),
         }
+        alpn = _clash_list(payload.get("alpn"))
+        if alpn:
+            tls_settings["alpn"] = alpn
+        pins = _clash_certificate_pins(payload)
+        if pins:
+            tls_settings["pinSHA256"] = pins
+        stream["tlsSettings"] = tls_settings
     elif security == "reality":
         reality_opts = payload.get("reality-opts") if isinstance(payload.get("reality-opts"), dict) else {}
         stream["realitySettings"] = {
@@ -1855,20 +1958,83 @@ def _clash_to_singbox_outbound(payload: dict[str, Any], kind: str) -> dict[str, 
         ("username", "username"),
         ("insecure-concurrency", "insecure_concurrency"),
         ("quic-congestion-control", "quic_congestion_control"),
+        ("min-idle-session", "min_idle_session"),
+        ("idle-session-check-interval", "idle_session_check_interval"),
+        ("psk", "psk"),
+        ("version", "version"),
     ):
         value = payload.get(clash_key)
         if value not in (None, ""):
             native[singbox_key] = value
+    if kind == "snell" and not native.get("psk"):
+        native["psk"] = str(payload.get("password") or "")
+    if kind == "mieru":
+        native["transport"] = str(payload.get("transport") or "TCP").upper()
+        server_ports = _clash_list(payload.get("server-ports", payload.get("server_ports", payload.get("ports"))))
+        if server_ports:
+            native["server_ports"] = server_ports
+        traffic_pattern = payload.get("traffic-pattern", payload.get("traffic_pattern"))
+        if traffic_pattern:
+            native["traffic_pattern"] = str(traffic_pattern)
+        if payload.get("multiplexing"):
+            native["multiplexing"] = payload["multiplexing"]
+    if kind in {"hysteria", "hysteria2"}:
+        server_ports = _clash_list(payload.get("ports", payload.get("server-ports", payload.get("server_ports"))))
+        if server_ports:
+            native["server_ports"] = server_ports
+        hop_interval = payload.get("hop-interval", payload.get("hop_interval"))
+        if hop_interval not in (None, ""):
+            native["hop_interval"] = _clash_duration(hop_interval)
+        up_value = payload.get("up", payload.get("up-mbps", payload.get("up_mbps", payload.get("up-speed"))))
+        down_value = payload.get("down", payload.get("down-mbps", payload.get("down_mbps", payload.get("down-speed"))))
+        if (up_mbps := _clash_speed_mbps(up_value)) is not None:
+            native["up_mbps"] = up_mbps
+        if (down_mbps := _clash_speed_mbps(down_value)) is not None:
+            native["down_mbps"] = down_mbps
+        for clash_key, singbox_key in (
+            ("recv-window-conn", "recv_window_conn"),
+            ("recv_window_conn", "recv_window_conn"),
+            ("recv-window", "recv_window"),
+            ("recv_window", "recv_window"),
+        ):
+            if payload.get(clash_key) not in (None, ""):
+                native[singbox_key] = int(payload[clash_key])
+        if _to_bool(payload.get("disable-mtu-discovery", payload.get("disable_mtu_discovery", False))):
+            native["disable_mtu_discovery"] = True
+        if kind == "hysteria":
+            auth = payload.get("auth-str", payload.get("auth_str", payload.get("auth", payload.get("password"))))
+            if auth:
+                native["auth_str"] = str(auth)
+            protocol = str(payload.get("protocol") or "").strip()
+            if protocol and protocol.lower() != "hysteria":
+                native["protocol"] = protocol
+            if payload.get("obfs"):
+                native["obfs"] = str(payload["obfs"])
+            native.pop("password", None)
+        else:
+            if not native.get("password") and payload.get("auth"):
+                native["password"] = str(payload["auth"])
+            native.pop("auth_str", None)
+            obfs_type = str(payload.get("obfs") or "").strip()
+            obfs_password = str(payload.get("obfs-password", payload.get("obfs_password", "")) or "")
+            if obfs_type:
+                native["obfs"] = {"type": obfs_type, "password": obfs_password}
     server_name = str(payload.get("servername") or payload.get("sni") or "").strip()
-    if payload.get("tls") or server_name or kind == "naive":
+    if _to_bool(payload.get("tls")) or server_name or kind in {"naive", "anytls"}:
         native["tls"] = {"enabled": True}
         if server_name:
             native["tls"]["server_name"] = server_name
         # The Cronet-backed Naive outbound intentionally supports only a
         # restricted TLS subset.  Passing insecure/ALPN makes sing-box reject
         # the whole config instead of merely ignoring the unsupported option.
-        if payload.get("skip-cert-verify") and kind != "naive":
+        if _to_bool(payload.get("skip-cert-verify")) and kind != "naive":
             native["tls"]["insecure"] = True
+        alpn = _clash_list(payload.get("alpn"))
+        if alpn and kind != "naive":
+            native["tls"]["alpn"] = alpn
+        pins = _clash_certificate_pins(payload)
+        if pins and kind != "naive":
+            native["tls"]["certificate_public_key_sha256"] = pins
     if kind == "naive":
         native["quic"] = _to_bool(payload.get("quic", False))
         udp_over_tcp = payload.get("udp-over-tcp", payload.get("udp_over_tcp"))
@@ -1959,7 +2125,7 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
         peer = peers[0] if isinstance(peers, list) and peers and isinstance(peers[0], dict) else {}
         server = str(peer.get("address") or native.get("server") or "")
         port = int(peer.get("port") or native.get("server_port") or 0)
-    elif protocol in {"hysteria", "hysteria2", "tuic", "mieru", "naive"}:
+    elif protocol in {"hysteria", "hysteria2", "tuic", "mieru", "naive", "anytls", "snell"}:
         if native:
             server = str(native.get("server") or "")
             port = int(native.get("server_port") or 0)
@@ -2086,6 +2252,9 @@ def _native_singbox_outbound(payload: dict[str, Any]) -> dict[str, Any]:
     elif protocol == "openvpn":
         native["system"] = False
         native["name"] = str(native.get("name") or "openvpn0")
+    elif protocol in {"wireguard", "awg", "warp"}:
+        native = normalize_wireguard_endpoint(native)
+        protocol = str(native.get("type") or "custom").lower()
     return {
         "protocol": "awg" if protocol == "wireguard" and isinstance(native.get("amnezia"), dict) else protocol,
         "singbox": native,
@@ -2449,6 +2618,66 @@ def _parse_mieru(link: str) -> Node:
     return Node(name=name, scheme="mieru", server=server, port=int(port or 0), link=link, outbound=_native_singbox_outbound(outbound))
 
 
+def _parse_anytls(link: str) -> Node:
+    parsed = urlsplit(link)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    params = {key.lower(): _first(query, key) for key in query}
+    server = str(parsed.hostname or "").strip()
+    port = int(parsed.port or 443)
+    password = unquote(parsed.username or "") or _get_param(params, "password")
+    if not server or not password:
+        raise LinkParseError("anytls link must contain server and password")
+    tls: dict[str, Any] = {
+        "enabled": True,
+        "server_name": _get_param(params, "sni", "peer", "server_name", "servername", default=server),
+    }
+    if _to_bool(_get_param(params, "insecure", "allowinsecure", "allow_insecure")):
+        tls["insecure"] = True
+    pins = _get_param(
+        params,
+        "pinsha256",
+        "certificate_public_key_sha256",
+        "certificate-public-key-sha256",
+        "certsha256",
+    )
+    if pins:
+        tls["certificate_public_key_sha256"] = _split_csv(pins)
+    alpn = _get_param(params, "alpn")
+    if alpn:
+        tls["alpn"] = _split_csv(alpn)
+    native: dict[str, Any] = {
+        "type": "anytls",
+        "tag": "proxy",
+        "server": server,
+        "server_port": port,
+        "password": password,
+        "tls": tls,
+    }
+    for source, target in (
+        ("idle_session_check_interval", "idle_session_check_interval"),
+        ("idle-session-check-interval", "idle_session_check_interval"),
+        ("idle_session_timeout", "idle_session_timeout"),
+        ("idle-session-timeout", "idle_session_timeout"),
+    ):
+        if params.get(source):
+            native[target] = params[source]
+    min_idle = _get_param(params, "min_idle_session", "min-idle-session")
+    if min_idle:
+        try:
+            native["min_idle_session"] = int(min_idle)
+        except ValueError as exc:
+            raise LinkParseError("AnyTLS min_idle_session must be an integer") from exc
+    name = _clean_name(parsed.fragment, f"anytls-{server}:{port}")
+    return Node(
+        name=name,
+        scheme="anytls",
+        server=server,
+        port=port,
+        link=link,
+        outbound=_native_singbox_outbound(native),
+    )
+
+
 def _parse_masque(link: str) -> Node:
     parsed = urlsplit(link)
     query = parse_qs(parsed.query, keep_blank_values=True)
@@ -2585,7 +2814,6 @@ def _parse_wireguard_like_link(link: str, scheme: str) -> Node:
     if (_is_warp_endpoint(server) or scheme == "warp") and reserved:
         endpoint = _build_warp_profile_endpoint(
             private_key=private_key,
-            reserved=reserved,
             persistent_keepalive=keepalive,
             amnezia=amnezia,
             listen_port=_get_param(params, "listen_port", "listenPort"),
@@ -2692,7 +2920,6 @@ def _parse_wireguard_config(text: str) -> Node:
     if _is_warp_endpoint(first_server) and reserved:
         endpoint = _build_warp_profile_endpoint(
             private_key=private_key,
-            reserved=reserved,
             persistent_keepalive=peers[0].get("persistentkeepalive", ""),
             amnezia=amnezia,
             listen_port=interface.get("listenport", ""),
@@ -2760,9 +2987,9 @@ def _build_warp_endpoint(params: dict[str, str]) -> dict[str, Any]:
     amnezia = _amnezia_from_params(params)
     if amnezia:
         endpoint["amnezia"] = amnezia
-    reserved = _parse_reserved_bytes(_get_param(params, "reserved"))
-    if reserved:
-        endpoint["reserved"] = reserved
+    # `reserved` is validated but never emitted: sing-box-extended 2.5.1+ rejects
+    # the field on WARP endpoints and derives the bytes from the profile itself.
+    _parse_reserved_bytes(_get_param(params, "reserved"))
     keepalive = _get_param(
         params,
         "persistent_keepalive",
@@ -2798,6 +3025,7 @@ def _is_warp_endpoint(server: str) -> bool:
         for network in (
             ipaddress.ip_network("162.159.192.0/24"),
             ipaddress.ip_network("162.159.193.0/24"),
+            ipaddress.ip_network("162.159.195.0/24"),
             ipaddress.ip_network("188.114.96.0/20"),
             ipaddress.ip_network("2606:4700:d0::/48"),
             ipaddress.ip_network("2606:4700:d1::/48"),
@@ -2894,7 +3122,6 @@ def _build_wireguard_peer(
 def _build_warp_profile_endpoint(
     *,
     private_key: str,
-    reserved: list[int] | None = None,
     persistent_keepalive: Any = "",
     amnezia: dict[str, Any] | None = None,
     listen_port: Any = "",
@@ -2907,8 +3134,6 @@ def _build_warp_profile_endpoint(
     }
     if listen_port not in (None, ""):
         endpoint["listen_port"] = int(listen_port)
-    if reserved:
-        endpoint["reserved"] = reserved
     if persistent_keepalive not in (None, ""):
         endpoint["persistent_keepalive_interval"] = int(persistent_keepalive)
     if amnezia:
@@ -2999,19 +3224,6 @@ def _amnezia_from_params(params: dict[str, str]) -> dict[str, Any]:
 
 def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
-
-
-def _split_endpoint(value: str) -> tuple[str, int]:
-    text = str(value or "").strip()
-    if not text:
-        return "", 0
-    if text.startswith("[") and "]:" in text:
-        host, _, port_text = text[1:].partition("]:")
-        return host, int(port_text or 0)
-    if ":" in text:
-        host, _, port_text = text.rpartition(":")
-        return host.strip(), int(port_text or 0)
-    return text, 0
 
 
 def _clean_b64_key(value: str) -> str:

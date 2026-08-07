@@ -83,27 +83,52 @@ class _TCP_ESTATS_DATA_ROD_v0(ctypes.Structure):
     ]
 
 
-# Cache PID → exe name (PIDs don't change often)
-_pid_cache: dict[int, str] = {}
+# Cache PID → (creation time, exe name); the creation time detects recycled PIDs
+_pid_cache: dict[int, tuple[int, str]] = {}
+_PID_CACHE_MAX = 512
 
 # Track connections with estats already enabled — avoid redundant Set calls
 _estats_enabled: set[tuple[int, int, int, int]] = set()  # (localAddr, localPort, remoteAddr, remotePort)
 
 
+def _process_creation_time(handle) -> int:
+    """Process creation FILETIME as an int, 0 when unavailable."""
+    created = ctypes.wintypes.FILETIME()
+    exited = ctypes.wintypes.FILETIME()
+    kernel_time = ctypes.wintypes.FILETIME()
+    user_time = ctypes.wintypes.FILETIME()
+    if not _kernel32.GetProcessTimes(
+        handle,
+        ctypes.byref(created),
+        ctypes.byref(exited),
+        ctypes.byref(kernel_time),
+        ctypes.byref(user_time),
+    ):
+        return 0
+    return (created.dwHighDateTime << 32) | created.dwLowDateTime
+
+
 def _pid_to_exe(pid: int) -> str:
-    """Get exe name from PID. Cached."""
-    if pid in _pid_cache:
-        return _pid_cache[pid]
+    """Get exe name from PID. Cached per (pid, process creation time)."""
     try:
         h = _kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not h:
-            return ""
+            # The process is gone, so the PID cannot have been reused by a
+            # different live process — the cached name is still the right one.
+            cached = _pid_cache.get(pid)
+            return cached[1] if cached else ""
         try:
+            created = _process_creation_time(h)
+            cached = _pid_cache.get(pid)
+            if cached is not None and cached[0] == created:
+                return cached[1]
             buf = ctypes.create_unicode_buffer(260)
             size = ctypes.wintypes.DWORD(260)
             if _kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
                 exe = os.path.basename(buf.value)
-                _pid_cache[pid] = exe
+                if len(_pid_cache) >= _PID_CACHE_MAX:
+                    _pid_cache.clear()
+                _pid_cache[pid] = (created, exe)
                 return exe
         finally:
             _kernel32.CloseHandle(h)
@@ -211,6 +236,7 @@ def get_proxy_connections(socks_port: int = 10808, http_port: int = 10809) -> li
     ).contents
 
     by_exe: dict[str, ProxyProcessInfo] = {}
+    live_keys: set[tuple[int, int, int, int]] = set()
     for i in range(n):
         row = row_array[i]
         if row.dwState != _MIB_TCP_STATE_ESTAB:
@@ -226,6 +252,7 @@ def get_proxy_connections(socks_port: int = 10808, http_port: int = 10809) -> li
         if not exe or exe.lower() in ("xray.exe", "sing-box.exe"):
             continue
 
+        live_keys.add(_conn_key(row))
         _enable_estats(row)
         estats = _get_estats_bytes(row)
 
@@ -236,6 +263,9 @@ def get_proxy_connections(socks_port: int = 10808, http_port: int = 10809) -> li
         if estats is not None:
             by_exe[exe].bytes_in += estats[0]
             by_exe[exe].bytes_out += estats[1]
+
+    # Drop closed connections so a recycled 4-tuple gets eStats enabled again.
+    _estats_enabled.intersection_update(live_keys)
 
     result = sorted(by_exe.values(), key=lambda p: p.connections, reverse=True)
     return result

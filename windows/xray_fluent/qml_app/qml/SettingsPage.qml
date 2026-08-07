@@ -756,7 +756,7 @@ Item {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     Text { text: I18n.t("Прямые DNS-серверы"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                                    Text { text: I18n.t("По одному адресу в строке"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
+                                    Text { text: I18n.t("Необязательно; пусто — DNS только через прокси"); color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                                     StyledArea { id: dnsBootstrapServers; text: App.dnsBootstrapServersText; placeholderText: "1.1.1.1\n8.8.8.8" }
                                 }
                                 ColumnLayout {
@@ -964,6 +964,38 @@ Item {
                     FluentSpin { from: 1025; to: 65535; value: App.localHttpPort; onValueModified: App.setLocalHttpPort(value) }
                 }
                 SettingRow {
+                    glyph: "\uE72E"; title: I18n.t("Авторизация прокси"); subtitle: I18n.t("Требовать логин и пароль для SOCKS/mixed и HTTP прокси")
+                    InfoIcon { tip: I18n.t("По умолчанию выключено. После изменения активное подключение переподключится. Клиенты системного прокси должны поддерживать HTTP-аутентификацию.") }
+                    Switch {
+                        checked: App.proxyAuthEnabled
+                        enabled: proxyAuthUsername.text.trim().length > 0 && proxyAuthPassword.text.length > 0
+                        onToggled: App.setProxyAuthEnabled(checked)
+                    }
+                }
+                SettingRow {
+                    glyph: "\uE77B"; title: I18n.t("Логин прокси"); subtitle: I18n.t("Имя пользователя для локального прокси")
+                    StyledField {
+                        id: proxyAuthUsername
+                        Layout.preferredWidth: 240
+                        text: App.proxyAuthUsername
+                        maximumLength: 256
+                        placeholderText: I18n.t("Логин")
+                        onEditingFinished: App.setProxyAuthCredentials(text, proxyAuthPassword.text)
+                    }
+                }
+                SettingRow {
+                    glyph: "\uE8D7"; title: I18n.t("Пароль прокси"); subtitle: I18n.t("Пароль не показывается в интерфейсе")
+                    StyledField {
+                        id: proxyAuthPassword
+                        Layout.preferredWidth: 240
+                        text: App.proxyAuthPassword
+                        maximumLength: 256
+                        echoMode: TextInput.Password
+                        placeholderText: I18n.t("Пароль")
+                        onEditingFinished: App.setProxyAuthCredentials(proxyAuthUsername.text, text)
+                    }
+                }
+                SettingRow {
                     glyph: "\uE774"; title: I18n.t("Разрешить подключения из локальной сети"); subtitle: I18n.t("Открыть SOCKS/HTTP порты для других устройств вашей сети")
                     InfoIcon { tip: I18n.t("Другие устройства вашей сети смогут использовать этот ПК как прокси (адрес — IP этого ПК и указанные выше порты). Работает в режиме прокси. Windows может запросить разрешение брандмауэра.") }
                     Switch { checked: App.proxyAllowLan; onToggled: App.setProxyAllowLan(checked) }
@@ -978,6 +1010,8 @@ Item {
         Card {
             Layout.fillWidth: true
             visible: page.showAdvancedSettings
+            enabled: !App.limitedMode
+            opacity: enabled ? 1.0 : 0.5
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 14
@@ -1065,8 +1099,8 @@ Item {
                 SettingRow {
                     glyph: "\uE724"; title: I18n.t("Способ измерения ping"); subtitle: I18n.t("TCP ping быстрее всего; ICMP — системный ping; реальная задержка — HTTP через сервер")
                     StyledCombo {
-                        model: [I18n.t("TCP ping (быстро)"), I18n.t("ICMP (системный)"), I18n.t("Реальная задержка (HTTP)")]
-                        readonly property var keys: ["tcping", "icmp", "real"]
+                        model: [I18n.t("TCP ping (быстро)"), I18n.t("ICMP (системный)"), I18n.t("HTTP GET"), I18n.t("Реальная задержка (HTTP)")]
+                        readonly property var keys: ["tcping", "icmp", "http", "real"]
                         currentIndex: Math.max(0, keys.indexOf(App.pingMethod))
                         onActivated: App.setPingMethod(keys[currentIndex])
                     }

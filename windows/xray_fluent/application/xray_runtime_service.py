@@ -274,11 +274,18 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
 
     settings = controller.state.settings
     route_only = bool(getattr(settings, "sniff_route_only", False))
+    auth_enabled = bool(
+        getattr(settings, "proxy_auth_enabled", False)
+        and str(getattr(settings, "proxy_auth_username", "") or "").strip()
+        and str(getattr(settings, "proxy_auth_password", "") or "")
+    )
     patched_inbounds = ensure_xray_mixed_proxy_inbound(
         payload,
         socks_port=int(getattr(settings, "local_socks_port", 10808)),
         http_port=int(getattr(settings, "local_http_port", 10809)),
         route_only=route_only,
+        username=(str(getattr(settings, "proxy_auth_username", "") or "").strip() if auth_enabled else ""),
+        password=(str(getattr(settings, "proxy_auth_password", "") or "") if auth_enabled else ""),
     )
     if patched_inbounds:
         controller._log(f"[xray] local proxy inbound normalized for mixed mode ({patched_inbounds} change(s))")

@@ -186,11 +186,66 @@ def _apply_mica(window, dark: bool, backdrop_name: str = "mica") -> None:
                     hwnd, DWMWA_MICA_EFFECT,
                     ctypes.byref(enable), ctypes.sizeof(enable),
                 )
-        else:
-            print("Mica backdrop unavailable: requires Windows 11",
-                  file=sys.stderr)
-    except Exception as exc: 
-        print(f"Mica backdrop unavailable: {exc}", file=sys.stderr)
+        # Windows 10 has no Mica API.  This is an expected capability fallback,
+        # not an error worth repeating in the user's console.
+    except Exception:
+        # A solid QML backdrop is already active, so DWM failures are harmless.
+        pass
+
+
+def _refresh_custom_frame(window) -> None:
+    """Force Windows to recalculate QWindowKit's zero-height native caption.
+
+    Some Windows 10/DPI combinations retain the old caption inset after the
+    window agent attaches.  The QML title bar is still exactly 34 logical px,
+    but the stale native inset creates a second blank band above it.  A frame
+    recalculation removes that inset without changing any QML dimensions or
+    styling.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        hwnd = int(window.winId())
+        user32 = ctypes.windll.user32
+
+        class _Point(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        class _Rect(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        class _Margins(ctypes.Structure):
+            _fields_ = [
+                ("cxLeftWidth", ctypes.c_int),
+                ("cxRightWidth", ctypes.c_int),
+                ("cyTopHeight", ctypes.c_int),
+                ("cyBottomHeight", ctypes.c_int),
+            ]
+
+        margins = _Margins(0, 0, 0, 0)
+        ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+        window_rect = _Rect()
+        client_origin = _Point(0, 0)
+        if user32.GetWindowRect(hwnd, ctypes.byref(window_rect)) and user32.ClientToScreen(
+            hwnd, ctypes.byref(client_origin)
+        ):
+            dpi = int(user32.GetDpiForWindow(hwnd) or 96) if hasattr(user32, "GetDpiForWindow") else 96
+            stale_caption_threshold = max(16, round(16 * dpi / 96))
+            if client_origin.y - window_rect.top > stale_caption_threshold:
+                # QWindowKit occasionally misses the initial NCCALCSIZE pass.
+                # Strip only the native caption bits; thick-frame resizing and
+                # the existing QML title bar/buttons remain unchanged.
+                style = int(user32.GetWindowLongW(hwnd, -16))
+                user32.SetWindowLongW(hwnd, -16, style & ~0x00C00000)
+        flags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020  # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
+        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, flags)
+    except Exception:
+        pass
 
 
 def _set_app_user_model_id() -> None:
@@ -257,6 +312,7 @@ def _register_toast_protocol() -> None:
         return
     try:
         import winreg
+        from ..constants import APP_ICON_PATH
         launch = _protocol_launch_command()
         if launch is None:
             return
@@ -278,8 +334,12 @@ def _register_toast_protocol() -> None:
                 rf"Software\Classes\{scheme}\DefaultIcon",
             ) as key:
                 winreg.SetValueEx(key, None, 0, winreg.REG_SZ, f"{icon_target},0")
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging
+
+        logging.getLogger("xray_fluent").warning(
+            "Cannot register the lumen: protocol", exc_info=exc
+        )
 
 
 def _cleanup_legacy_root_program_install() -> None:
@@ -711,6 +771,20 @@ def main(argv: list[str] | None = None) -> int:
 
     launch_arguments = list(argv if argv is not None else sys.argv)
     initial_deep_link = find_lumen_deep_link(launch_arguments)
+    if "--tray" in launch_arguments[1:] and not initial_deep_link:
+        try:
+            from ..startup import (
+                STARTUP_STATE_DISABLED,
+                build_startup_command,
+                get_startup_state,
+                set_startup_enabled,
+            )
+
+            if get_startup_state(APP_NAME) == STARTUP_STATE_DISABLED:
+                set_startup_enabled(APP_NAME, False, build_startup_command(in_tray=True))
+                return 0
+        except Exception:
+            pass
     app = QApplication(launch_arguments)
     from .native_context_menu_filter import QmlNativeContextMenuFilter
 
@@ -741,6 +815,7 @@ def main(argv: list[str] | None = None) -> int:
 
     window = engine.rootObjects()[0]
     _attach_qwindowkit(window)
+    _refresh_custom_frame(window)
     # QWindowKit updates Qt's non-client-area geometry.  Restore the saved
     # size and install minimum constraints only after that setup is complete;
     # applying them while QML is still loading can leave a DPI-scaled blank
@@ -803,6 +878,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     def _refresh_backdrop() -> None:
+        _refresh_custom_frame(window)
         _apply_mica(window, _resolve_dark(app, _theme_name(bridge)), bridge.uiBackdrop)
 
     def _schedule_backdrop_refresh(*_args) -> None:
@@ -867,6 +943,12 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(not tray_available)
     tray = QmlTray(app, window, bridge) if tray_available else None
     window.setVisible(not (start_in_tray and tray_available))
+    QTimer.singleShot(0, lambda: _refresh_custom_frame(window))
+    QTimer.singleShot(200, lambda: _refresh_custom_frame(window))
+    try:
+        app.commitDataRequest.connect(lambda _manager: bridge.prepareSystemShutdown())
+    except Exception:
+        pass
     app.aboutToQuit.connect(bridge.shutdown)
 
     return app.exec()

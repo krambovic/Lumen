@@ -169,15 +169,18 @@ class RoutingSettings:
     def __post_init__(self) -> None:
         bootstrap_defaults = ["1.1.1.1", "8.8.8.8"] if self.dns_bootstrap_server == "1.1.1.1" else [self.dns_bootstrap_server]
         proxy_defaults = ["cloudflare-dns.com", "dns.google"] if self.dns_proxy_server == "cloudflare-dns.com" else [self.dns_proxy_server]
+        # An explicitly empty direct-DNS list is meaningful: DNS still goes
+        # through the proxied resolver, including names whose traffic route is
+        # direct.  Fresh/legacy settings keep the historical defaults.
         self.dns_bootstrap_servers = _normalize_string_list(
             self.dns_bootstrap_servers or bootstrap_defaults,
-            fallback="1.1.1.1",
+            fallback="",
         )
         self.dns_proxy_servers = _normalize_string_list(
             self.dns_proxy_servers or proxy_defaults,
             fallback="cloudflare-dns.com",
         )
-        self.dns_bootstrap_server = self.dns_bootstrap_servers[0]
+        self.dns_bootstrap_server = self.dns_bootstrap_servers[0] if self.dns_bootstrap_servers else ""
         self.dns_proxy_server = self.dns_proxy_servers[0]
         self.dns_hosts = _normalize_dns_hosts(self.dns_hosts)
 
@@ -230,6 +233,17 @@ class RoutingSettings:
                 preset_id = "global"
             else:
                 preset_id = "custom"
+        raw_bootstrap_servers = data.get("dns_bootstrap_servers")
+        if raw_bootstrap_servers is None:
+            bootstrap_server = str(data.get("dns_bootstrap_server") or "1.1.1.1")
+            bootstrap_servers: list[str] = []
+        else:
+            bootstrap_servers = [
+                str(item).strip()
+                for item in (raw_bootstrap_servers if isinstance(raw_bootstrap_servers, list) else [])
+                if str(item).strip()
+            ]
+            bootstrap_server = bootstrap_servers[0] if bootstrap_servers else ""
         return RoutingSettings(
             mode=str(data.get("mode") or ROUTING_RULE),
             preset_id=preset_id,
@@ -238,8 +252,8 @@ class RoutingSettings:
             proxy_domains=list(data.get("proxy_domains") or []),
             block_domains=list(data.get("block_domains") or []),
             dns_mode=str(data.get("dns_mode") or "builtin"),
-            dns_bootstrap_server=str(data.get("dns_bootstrap_server") or "1.1.1.1"),
-            dns_bootstrap_servers=list(data.get("dns_bootstrap_servers") or []),
+            dns_bootstrap_server=bootstrap_server,
+            dns_bootstrap_servers=bootstrap_servers,
             dns_bootstrap_type=str(data.get("dns_bootstrap_type") or "udp"),
             dns_bootstrap_strategy=str(data.get("dns_bootstrap_strategy") or "ipv4_only"),
             dns_proxy_server=str(data.get("dns_proxy_server") or "cloudflare-dns.com"),
@@ -348,7 +362,7 @@ class AppSettings:
     # Не подключаться автоматически к только что импортированному серверу.
     auto_connect_on_import: bool = False
     # Способ измерения ping: "tcping" | "icmp" | "real" (реальная задержка HTTP).
-    ping_method: str = "tcping"
+    ping_method: str = "tcping"  # tcping | icmp | http | real
     # Пользовательский URL/размер для теста скорости (пусто = значение по умолчанию).
     speed_test_url: str = ""
     # Число одновременных проверок при тесте (0 = значение по умолчанию).
@@ -387,6 +401,9 @@ class AppSettings:
     tun_block_quic: bool = True
     local_socks_port: int = 10808
     local_http_port: int = 10809
+    proxy_auth_enabled: bool = False
+    proxy_auth_username: str = ""
+    proxy_auth_password: str = ""
     sniff_route_only: bool = False
 
     def __post_init__(self) -> None:
@@ -398,6 +415,12 @@ class AppSettings:
         if self.local_http_port == self.local_socks_port:
             self.local_http_port = _normalize_local_port(self.local_socks_port + 1, 10809)
         self.tun_mtu = _clamp_tun_mtu(self.tun_mtu)
+        self.proxy_auth_username = str(self.proxy_auth_username or "").strip()[:256]
+        self.proxy_auth_password = str(self.proxy_auth_password or "")[:256]
+        if self.proxy_auth_enabled and not (
+            self.proxy_auth_username and self.proxy_auth_password
+        ):
+            self.proxy_auth_enabled = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -446,6 +469,9 @@ class AppSettings:
             "tun_block_quic": self.tun_block_quic,
             "local_socks_port": self.local_socks_port,
             "local_http_port": self.local_http_port,
+            "proxy_auth_enabled": self.proxy_auth_enabled,
+            "proxy_auth_username": self.proxy_auth_username,
+            "proxy_auth_password": self.proxy_auth_password,
             "sniff_route_only": self.sniff_route_only,
             "xray_config_file": self.xray_config_file,
             "xray_template_file": self.xray_template_file,
@@ -547,6 +573,9 @@ class AppSettings:
             tun_block_quic=bool(data.get("tun_block_quic", True)),
             local_socks_port=_normalize_local_port(data.get("local_socks_port", 10808), 10808),
             local_http_port=_normalize_local_port(data.get("local_http_port", 10809), 10809),
+            proxy_auth_enabled=bool(data.get("proxy_auth_enabled", False)),
+            proxy_auth_username=str(data.get("proxy_auth_username") or ""),
+            proxy_auth_password=str(data.get("proxy_auth_password") or ""),
             sniff_route_only=bool(data.get("sniff_route_only", False)),
             xray_config_file=str(data.get("xray_config_file") or ""),
             xray_template_file=str(data.get("xray_template_file") or ""),

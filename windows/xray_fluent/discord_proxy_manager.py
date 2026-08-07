@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .constants import DATA_DIR, INSTALL_DATA_DIR
-from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pumped
+from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pumped, sleep_with_events
 
 
 DROUTE_LEGACY_VERSION = "1.1.2"
@@ -20,6 +20,9 @@ DROUTE_SOURCE_URL = "https://github.com/snowluwu/droute"
 DROUTE_BUNDLED_DIR = INSTALL_DATA_DIR / "external" / "droute"
 DROUTE_DIR = DATA_DIR / "external" / "droute"
 DROUTE_EXE = DROUTE_DIR / "droute.exe"
+DROUTE_BUNDLED_EXE = DROUTE_BUNDLED_DIR / DROUTE_EXE.name
+# Copied alongside the checksummed payload; none of them is loaded as code.
+DROUTE_EXTRA_FILES = ("version.txt", "SHA256SUMS.txt", "droute.exe.config", "README.md", "LICENSE.txt")
 DROUTE_NOTICE = DROUTE_DIR / "README.droute.txt"
 DROUTE_VERSION_FILE = DROUTE_DIR / "version.txt"
 DROUTE_INSTALL_VERSION_FILE = "Lumen.droute.version"
@@ -131,16 +134,28 @@ def _droute_version_at(directory: Path) -> str:
     return version or DROUTE_LEGACY_VERSION
 
 
-def _verify_bundled_droute(directory: Path) -> None:
+def _droute_manifest_entries(directory: Path) -> list[tuple[str, str]]:
     manifest = directory / "SHA256SUMS.txt"
     try:
         lines = manifest.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
         raise RuntimeError("У встроенного droute отсутствует список контрольных сумм.") from exc
+    entries: list[tuple[str, str]] = []
     for line in lines:
+        if not line.strip():
+            continue
         expected, separator, relative_name = line.strip().partition("  ")
-        if not separator or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        if not separator or not re.fullmatch(r"[0-9a-f]{64}", expected) or not relative_name.strip():
             raise RuntimeError("Список контрольных сумм droute поврежден.")
+        entries.append((expected, relative_name.strip()))
+    # An empty or truncated manifest would otherwise verify vacuously.
+    if not any(name == DROUTE_EXE.name for _expected, name in entries):
+        raise RuntimeError("Список контрольных сумм droute поврежден.")
+    return entries
+
+
+def _verify_bundled_droute(directory: Path) -> None:
+    for expected, relative_name in _droute_manifest_entries(directory):
         source = (directory / relative_name).resolve()
         try:
             source.relative_to(directory.resolve())
@@ -194,10 +209,12 @@ def install_bundled_droute(
         pass
 
     target.mkdir(parents=True, exist_ok=True)
-    for source_file in source.rglob("*"):
+    manifest_names = [name for _expected, name in _droute_manifest_entries(source)]
+    for relative_name in (*manifest_names, *DROUTE_EXTRA_FILES):
+        source_file = source / relative_name
         if not source_file.is_file():
             continue
-        destination = target / source_file.relative_to(source)
+        destination = target / relative_name
         destination.parent.mkdir(parents=True, exist_ok=True)
         staged = destination.with_name(destination.name + ".lumen-new")
         try:
@@ -228,16 +245,15 @@ def get_droute_bundle_version() -> str:
 def ensure_droute_bundle() -> Path:
     DROUTE_DIR.mkdir(parents=True, exist_ok=True)
     bundled_version = get_bundled_droute_version()
+    if not bundled_version:
+        raise RuntimeError("Встроенный droute не найден. Переустановите Lumen.")
     current_version = _current_droute_version()
-    if bundled_version and (
-        not current_version
-        or _droute_version_key(bundled_version) > _droute_version_key(current_version)
-    ):
+    if not current_version or _droute_version_key(bundled_version) > _droute_version_key(current_version):
         install_bundled_droute()
-    if DROUTE_EXE.is_file() and DROUTE_EXE.stat().st_size > 1024:
-        _write_droute_notice()
-        return DROUTE_EXE
-    raise RuntimeError("Встроенный droute не найден. Переустановите Lumen.")
+    _write_droute_notice()
+    # DROUTE_DIR is user-writable, and the assembly is loaded by an elevated
+    # PowerShell. Run the checksum-verified copy from the install tree instead.
+    return DROUTE_BUNDLED_EXE
 
 
 def _powershell_quote(value: str | Path) -> str:
@@ -373,12 +389,15 @@ def _terminate_discord(install: DiscordInstall) -> None:
 
 
 def _launch_discord(install: DiscordInstall) -> None:
+    # Hand the launch to the shell. A direct CreateProcess would give Discord
+    # (and its Squirrel updater) the Administrator token of the Lumen process.
     subprocess.Popen(
-        [str(install.exe_path)],
+        ["explorer.exe", str(install.exe_path)],
         cwd=str(install.app_dir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True,
+        creationflags=CREATE_NO_WINDOW,
     )
 
 
@@ -405,7 +424,7 @@ def _wait_for_discord_start(install: DiscordInstall, timeout_sec: float = 10.0) 
     while time.monotonic() < deadline:
         if _process_pids_for_install(install):
             return True
-        time.sleep(0.25)
+        sleep_with_events(0.25)
     return False
 
 
@@ -414,7 +433,7 @@ def _wait_for_discord_exit(install: DiscordInstall, timeout_sec: float = 8.0) ->
     while time.monotonic() < deadline:
         if not _process_pids_for_install(install):
             return True
-        time.sleep(0.25)
+        sleep_with_events(0.25)
     return False
 
 
@@ -548,7 +567,7 @@ def _remove_droute_payload(install: DiscordInstall) -> list[str]:
                 removed = True
                 break
             except PermissionError:
-                time.sleep(0.25)
+                sleep_with_events(0.25)
         if not removed and path.is_file():
             leftovers.append(path.name)
     return sorted(set(leftovers))
@@ -567,7 +586,7 @@ class DiscordProxyManager:
         target_port = int(socks_port)
         try:
             needs_install = any(not _droute_payload_installed(install) for install in installs)
-            exe = ensure_droute_bundle() if needs_install else DROUTE_EXE
+            exe = ensure_droute_bundle() if needs_install else DROUTE_BUNDLED_EXE
             if not exe.is_file():
                 exe = ensure_droute_bundle()
             current_port = _read_droute_registry_port()

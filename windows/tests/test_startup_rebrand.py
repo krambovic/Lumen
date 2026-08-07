@@ -70,6 +70,22 @@ def test_legacy_bridge_uses_canonical_executable_for_startup(tmp_path: Path, mon
     assert str(legacy) not in command
 
 
+def test_development_admin_relaunch_prefers_pythonw_beside_active_interpreter(
+    tmp_path: Path, monkeypatch
+) -> None:
+    python = tmp_path / "python.exe"
+    pythonw = tmp_path / "pythonw.exe"
+    python.write_bytes(b"console interpreter")
+    pythonw.write_bytes(b"windowless interpreter")
+    monkeypatch.setattr(startup.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(startup.sys, "executable", str(python))
+    monkeypatch.setattr(startup.sys, "argv", ["run_qml.py"])
+
+    executable, _arguments, _working_dir = startup._admin_launch_command()
+
+    assert executable == pythonw.resolve()
+
+
 def test_data_only_legacy_program_files_directory_is_scheduled_for_cleanup(
     tmp_path: Path,
     monkeypatch,

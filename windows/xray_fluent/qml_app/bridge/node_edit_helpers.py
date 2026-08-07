@@ -1,6 +1,7 @@
 """GUI-free port of ``ui/node_edit_dialog.py`` outbound load/build logic"""
 from __future__ import annotations
 
+import base64
 from copy import deepcopy
 import json
 import re
@@ -33,6 +34,8 @@ ENDPOINT_EDITABLE_PROTOCOLS = {
     "masque",
     "openvpn",
     "naive",
+    "anytls",
+    "snell",
 }
 NATIVE_PROTOCOLS = {
     "wireguard",
@@ -46,6 +49,8 @@ NATIVE_PROTOCOLS = {
     "openvpn",
     "naive",
     "singbox_config",
+    "anytls",
+    "snell",
 }
 
 MANUAL_NODE_PROTOCOLS = (
@@ -141,17 +146,17 @@ def _field_capabilities(protocol: str) -> dict[str, bool | str]:
     }
 
 
-def _build_vless_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
-    settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
-    vnext = _first_dict(settings.get("vnext"))
-    user = _first_dict(vnext.get("users"))
-    user_id = str(user.get("id") or "")
-    stream = outbound.get("streamSettings") if isinstance(outbound.get("streamSettings"), dict) else {}
-    params: dict[str, str] = {
-        "encryption": str(user.get("encryption") or "none"),
-        "type": "tcp" if str(stream.get("network") or "tcp").lower() == "raw" else str(stream.get("network") or "tcp"),
-    }
-    _set_param(params, "flow", str(user.get("flow") or ""))
+def _share_query(params: dict[str, str]) -> str:
+    return "&".join(f"{quote(key)}={quote(value, safe='')}" for key, value in params.items() if value != "")
+
+
+def _share_network(stream: dict[str, Any]) -> str:
+    network = str(stream.get("network") or "tcp")
+    return "tcp" if network.lower() == "raw" else network
+
+
+def _stream_share_params(stream: dict[str, Any]) -> dict[str, str]:
+    params: dict[str, str] = {"type": _share_network(stream)}
     security = str(stream.get("security") or "none").lower()
     _set_param(params, "security", security if security != "none" else "")
     tls = stream.get("tlsSettings") if isinstance(stream.get("tlsSettings"), dict) else {}
@@ -162,8 +167,8 @@ def _build_vless_link(name: str, server: str, port: int, outbound: dict[str, Any
     _set_param(params, "pcs", str(tls.get("pinnedPeerCertSha256") or ""))
     alpn = tls.get("alpn")
     _set_param(params, "alpn", ",".join(str(item) for item in alpn) if isinstance(alpn, list) else str(alpn or ""))
-    if tls.get("allowInsecure") is True:
-        _set_param(params, "allowInsecure", "1")
+    if "allowInsecure" in tls:
+        _set_param(params, "allowInsecure", "1" if tls.get("allowInsecure") is True else "0")
     network = str(stream.get("network") or "tcp").lower()
     if network == "ws":
         ws = stream.get("wsSettings") if isinstance(stream.get("wsSettings"), dict) else {}
@@ -210,10 +215,150 @@ def _build_vless_link(name: str, server: str, port: int, outbound: dict[str, Any
     finalmask = stream.get("finalmask")
     if finalmask not in (None, ""):
         _set_param(params, "fm", finalmask if isinstance(finalmask, str) else json.dumps(finalmask, ensure_ascii=False, separators=(",", ":")))
+    return params
 
-    query = "&".join(f"{quote(key)}={quote(value, safe='')}" for key, value in params.items() if value != "")
+
+def _native_share_tls_params(params: dict[str, str], native: dict[str, Any]) -> None:
+    tls = native.get("tls") if isinstance(native.get("tls"), dict) else {}
+    _set_param(params, "sni", str(tls.get("server_name") or ""))
+    alpn = tls.get("alpn")
+    _set_param(params, "alpn", ",".join(str(item) for item in alpn) if isinstance(alpn, list) else str(alpn or ""))
+    if "insecure" in tls:
+        _set_param(params, "insecure", "1" if tls.get("insecure") is True else "0")
+
+
+def _build_vless_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
+    settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
+    vnext = _first_dict(settings.get("vnext"))
+    user = _first_dict(vnext.get("users"))
+    user_id = str(user.get("id") or "")
+    stream = outbound.get("streamSettings") if isinstance(outbound.get("streamSettings"), dict) else {}
+    params: dict[str, str] = {
+        "encryption": str(user.get("encryption") or "none"),
+        "type": _share_network(stream),
+    }
+    _set_param(params, "flow", str(user.get("flow") or ""))
+    params.update(_stream_share_params(stream))
     fragment = quote(name, safe="")
-    return f"vless://{quote(user_id, safe='')}@{server}:{port}?{query}#{fragment}"
+    return f"vless://{quote(user_id, safe='')}@{server}:{port}?{_share_query(params)}#{fragment}"
+
+
+def _build_vmess_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
+    settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
+    vnext = _first_dict(settings.get("vnext"))
+    user = _first_dict(vnext.get("users"))
+    stream = outbound.get("streamSettings") if isinstance(outbound.get("streamSettings"), dict) else {}
+    params = _stream_share_params(stream)
+    security = str(stream.get("security") or "none").lower()
+    payload: dict[str, str] = {
+        "v": "2",
+        "ps": name,
+        "add": server,
+        "port": str(port),
+        "id": str(user.get("id") or ""),
+        "aid": str(user.get("alterId") or 0),
+        "scy": str(user.get("security") or "auto"),
+        "net": params.get("type", "tcp"),
+        "type": params.get("headerType", "none"),
+        "host": params.get("host", ""),
+        "path": params.get("path", "") or params.get("serviceName", ""),
+        "tls": "tls" if security in {"tls", "reality"} else "",
+        "sni": params.get("sni", ""),
+        "alpn": params.get("alpn", ""),
+        "fp": params.get("fp", ""),
+    }
+    service_name = params.get("serviceName", "")
+    if service_name:
+        payload["serviceName"] = service_name
+    encoded = base64.b64encode(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    return f"vmess://{encoded}"
+
+
+def _build_trojan_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
+    settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
+    server_item = _first_dict(settings.get("servers"))
+    stream = outbound.get("streamSettings") if isinstance(outbound.get("streamSettings"), dict) else {}
+    params = _stream_share_params(stream)
+    # trojan defaults to TLS on import, so an explicit "none" must survive the round trip.
+    params.setdefault("security", "none")
+    fragment = quote(name, safe="")
+    password = quote(str(server_item.get("password") or ""), safe="")
+    return f"trojan://{password}@{server}:{port}?{_share_query(params)}#{fragment}"
+
+
+def _build_shadowsocks_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
+    settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
+    server_item = _first_dict(settings.get("servers"))
+    credentials = f"{server_item.get('method') or ''}:{server_item.get('password') or ''}"
+    encoded = base64.urlsafe_b64encode(credentials.encode("utf-8")).decode("ascii").rstrip("=")
+    params: dict[str, str] = {}
+    _set_param(params, "plugin", str(server_item.get("plugin") or ""))
+    query = _share_query(params)
+    fragment = quote(name, safe="")
+    return f"ss://{encoded}@{server}:{port}{'?' + query if query else ''}#{fragment}"
+
+
+def _build_socks_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
+    settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
+    server_item = _first_dict(settings.get("servers"))
+    user = _first_dict(server_item.get("users"))
+    username = str(user.get("user") or "")
+    credentials = ""
+    if username:
+        credentials = f"{quote(username, safe='')}:{quote(str(user.get('pass') or ''), safe='')}@"
+    fragment = quote(name, safe="")
+    return f"socks://{credentials}{server}:{port}#{fragment}"
+
+
+def _build_hysteria2_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
+    native = _native_payload(outbound)
+    params: dict[str, str] = {}
+    _native_share_tls_params(params, native)
+    obfs = native.get("obfs")
+    if isinstance(obfs, dict):
+        _set_param(params, "obfs", str(obfs.get("type") or ""))
+        _set_param(params, "obfs-password", str(obfs.get("password") or ""))
+    fragment = quote(name, safe="")
+    password = quote(str(native.get("password") or ""), safe="")
+    return f"hysteria2://{password}@{server}:{port}?{_share_query(params)}#{fragment}"
+
+
+def _build_tuic_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
+    native = _native_payload(outbound)
+    params: dict[str, str] = {}
+    _set_param(params, "congestion_control", str(native.get("congestion_control") or ""))
+    _set_param(params, "udp_relay_mode", str(native.get("udp_relay_mode") or ""))
+    if native.get("zero_rtt_handshake") is True:
+        _set_param(params, "zero_rtt_handshake", "1")
+    _native_share_tls_params(params, native)
+    fragment = quote(name, safe="")
+    credentials = quote(str(native.get("uuid") or ""), safe="")
+    password = str(native.get("password") or "")
+    if password:
+        credentials = f"{credentials}:{quote(password, safe='')}"
+    return f"tuic://{credentials}@{server}:{port}?{_share_query(params)}#{fragment}"
+
+
+# Protocols with a portable share URI; everything else keeps the canonical JSON form,
+# which link_parser also accepts but no other client can read.
+_SHARE_LINK_BUILDERS = {
+    "vless": _build_vless_link,
+    "vmess": _build_vmess_link,
+    "trojan": _build_trojan_link,
+    "shadowsocks": _build_shadowsocks_link,
+    "socks": _build_socks_link,
+    "hysteria2": _build_hysteria2_link,
+    "tuic": _build_tuic_link,
+}
+
+
+def _build_node_link(protocol: str, name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
+    builder = _SHARE_LINK_BUILDERS.get(protocol)
+    if builder is None:
+        return json.dumps(outbound, ensure_ascii=False, separators=(",", ":"))
+    return builder(name, server, port, outbound)
 
 
 def _native_payload(outbound: dict[str, Any]) -> dict[str, Any]:
@@ -528,11 +673,17 @@ def _protocol_editor_fields(protocol: str, values: dict[str, Any], native: dict[
     elif protocol == "openvpn":
         fields.extend([
             _editor_field("openvpnServersJson", "OpenVPN servers (JSON)", values.get("openvpnServersJson", ""), kind="area", placeholder='[{"server":"vpn.example.com","server_port":1194}]'),
-            _editor_field("openvpnProto", "OpenVPN transport", values.get("openvpnProto", "udp"), kind="combo", options=("udp", "tcp")),
+            _editor_field("openvpnProto", "OpenVPN transport", values.get("openvpnProto", "tcp"), kind="combo", options=("tcp",)),
             _editor_field("openvpnCipher", "Data cipher", values.get("openvpnCipher", ""), kind="combo", options=("", "AES-128-GCM", "AES-192-GCM", "AES-256-GCM", "AES-128-CBC", "AES-192-CBC", "AES-256-CBC", "CHACHA20-POLY1305")),
             _editor_field("openvpnAuth", "HMAC auth", values.get("openvpnAuth", ""), kind="combo", options=("", "SHA1", "SHA256", "SHA384", "SHA512")),
             _editor_field("username", "Username", values.get("username", "")),
-            _editor_field("password", "Password", values.get("password", "")),
+            _editor_field("password", "Password", values.get("password", ""), secret=True),
+            _editor_field("keyPassword", "Private key password", values.get("keyPassword", ""), secret=True),
+            _editor_field("openvpnProxyType", "OpenVPN proxy", values.get("openvpnProxyType", ""), kind="combo", options=("", "http", "socks")),
+            _editor_field("openvpnProxyServer", "Proxy server", values.get("openvpnProxyServer", ""), when_key="openvpnProxyType", when_values=("http", "socks")),
+            _editor_field("openvpnProxyPort", "Proxy port", values.get("openvpnProxyPort", ""), kind="number", when_key="openvpnProxyType", when_values=("http", "socks")),
+            _editor_field("openvpnProxyUsername", "Proxy username", values.get("openvpnProxyUsername", ""), when_key="openvpnProxyType", when_values=("http", "socks")),
+            _editor_field("openvpnProxyPassword", "Proxy password", values.get("openvpnProxyPassword", ""), secret=True, when_key="openvpnProxyType", when_values=("http", "socks")),
             _editor_field("tlsCrypt", "TLS Crypt", values.get("tlsCrypt", ""), kind="area"),
             _editor_field("tlsCryptV2", "TLS Crypt v2", values.get("tlsCryptV2", False), kind="bool"),
             _editor_field("tlsAuth", "TLS Auth", values.get("tlsAuth", ""), kind="area"),
@@ -542,7 +693,7 @@ def _protocol_editor_fields(protocol: str, values: dict[str, Any], native: dict[
             _editor_field("caCertificate", "CA certificate", values.get("caCertificate", ""), kind="area"),
             _editor_field("tlsCipherSuites", "TLS cipher suites", values.get("tlsCipherSuites", ""), kind="area"),
             _editor_field("verifyX509Name", "Verify X.509 name", values.get("verifyX509Name", "")),
-            _editor_field("verifyX509NameMode", "X.509 name mode", values.get("verifyX509NameMode", "exact"), kind="combo", options=("exact", "name-prefix", "name-suffix")),
+            _editor_field("verifyX509NameMode", "X.509 name mode", values.get("verifyX509NameMode", "name"), kind="combo", options=("name", "name-prefix", "name-suffix")),
             _editor_field("allowedIps", "Allowed IPs", values.get("allowedIps", ""), kind="area"),
             _editor_field("interfaceName", "Interface name", values.get("interfaceName", "openvpn0")),
             _editor_field("reconnectDelay", "Reconnect delay", values.get("reconnectDelay", "")),
@@ -793,11 +944,18 @@ def load_node_edit_fields(node) -> dict:
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
-            fields["openvpnProto"] = str(native.get("proto") or "udp")
+            fields["openvpnProto"] = str(native.get("proto") or "tcp")
             fields["openvpnCipher"] = str(native.get("cipher") or "")
             fields["openvpnAuth"] = str(native.get("auth") or "")
             fields["username"] = str(native.get("username") or "")
             fields["password"] = str(native.get("password") or "")
+            fields["keyPassword"] = str(native.get("key_password") or "")
+            openvpn_proxy = native.get("lumen_proxy") if isinstance(native.get("lumen_proxy"), dict) else {}
+            fields["openvpnProxyType"] = str(openvpn_proxy.get("type") or "")
+            fields["openvpnProxyServer"] = str(openvpn_proxy.get("server") or "")
+            fields["openvpnProxyPort"] = str(openvpn_proxy.get("server_port") or "")
+            fields["openvpnProxyUsername"] = str(openvpn_proxy.get("username") or "")
+            fields["openvpnProxyPassword"] = str(openvpn_proxy.get("password") or "")
             fields["tlsCrypt"] = str(native.get("tls_crypt") or "")
             fields["tlsCryptV2"] = bool(native.get("tls_crypt_v2", False))
             fields["tlsAuth"] = str(native.get("tls_auth") or "")
@@ -807,7 +965,7 @@ def load_node_edit_fields(node) -> dict:
             fields["caCertificate"] = str(tls_openvpn.get("ca") or "")
             fields["tlsCipherSuites"] = _text_list(tls_openvpn.get("cipher_suites"))
             fields["verifyX509Name"] = str(tls_openvpn.get("verify_x509_name") or "")
-            fields["verifyX509NameMode"] = str(tls_openvpn.get("verify_x509_name_mode") or "exact")
+            fields["verifyX509NameMode"] = str(tls_openvpn.get("verify_x509_name_mode") or "name").replace("exact", "name")
             fields["allowedIps"] = _text_list(native.get("allowed_ips"))
             fields["interfaceName"] = str(native.get("name") or "openvpn0")
             fields["reconnectDelay"] = str(native.get("reconnect_delay") or "")
@@ -1261,11 +1419,30 @@ def build_node_updates(node, fields: dict) -> dict:
             server_item["server_port"] = port
             native["system"] = False
             native["name"] = g("interfaceName", "openvpn0") or "openvpn0"
-            native["proto"] = g("openvpnProto", "udp").lower() or "udp"
+            native["proto"] = g("openvpnProto", "tcp").lower() or "tcp"
             _set_optional(native, "cipher", g("openvpnCipher").upper())
             _set_optional(native, "auth", g("openvpnAuth").upper())
             _set_optional(native, "username", g("username"))
             _set_optional(native, "password", g("password"))
+            _set_optional(native, "key_password", g("keyPassword"))
+            proxy_type = g("openvpnProxyType").lower()
+            if proxy_type:
+                proxy_server = g("openvpnProxyServer")
+                proxy_port = _editor_int(raw("openvpnProxyPort"), None)
+                if proxy_type not in {"http", "socks"}:
+                    raise ValueError("OpenVPN proxy type must be HTTP or SOCKS")
+                if not proxy_server or not proxy_port:
+                    raise ValueError("OpenVPN proxy server and port are required")
+                openvpn_proxy = {
+                    "type": proxy_type,
+                    "server": proxy_server,
+                    "server_port": int(proxy_port),
+                }
+                _set_optional(openvpn_proxy, "username", g("openvpnProxyUsername"))
+                _set_optional(openvpn_proxy, "password", g("openvpnProxyPassword"))
+                native["lumen_proxy"] = openvpn_proxy
+            else:
+                native.pop("lumen_proxy", None)
             _set_optional(native, "allowed_ips", _split_editor_list(raw("allowedIps")))
             _set_optional(native, "reconnect_delay", g("reconnectDelay"))
             _set_optional(native, "ping_interval", g("pingInterval"))
@@ -1310,7 +1487,7 @@ def build_node_updates(node, fields: dict) -> dict:
             _set_optional(tls, "cipher_suites", _split_editor_list(raw("tlsCipherSuites")))
             _set_optional(tls, "verify_x509_name", g("verifyX509Name"))
             if tls.get("verify_x509_name"):
-                tls["verify_x509_name_mode"] = g("verifyX509NameMode", "exact") or "exact"
+                tls["verify_x509_name_mode"] = g("verifyX509NameMode", "name") or "name"
             else:
                 tls.pop("verify_x509_name_mode", None)
             tls["kernel_tx"] = _editor_bool(raw("kernelTx", False))
@@ -1346,11 +1523,6 @@ def build_node_updates(node, fields: dict) -> dict:
                 native.pop("tls", None)
             _set_optional(outbound, "_dns", _split_editor_list(raw("dns")))
 
-    link = (
-        _build_vless_link(name, server, port, outbound)
-        if protocol == "vless"
-        else json.dumps(outbound, ensure_ascii=False, separators=(",", ":"))
-    )
     updates["outbound"] = outbound
-    updates["link"] = link
+    updates["link"] = _build_node_link(protocol, name, server, port, outbound)
     return updates

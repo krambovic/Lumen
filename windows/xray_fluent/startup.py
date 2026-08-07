@@ -32,6 +32,8 @@ LEGACY_PROTOCOL_KEYS = (
     r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Lumen.LumenKVN",
 )
 _legacy_startup_was_disabled = False
+_legacy_cleanup_done = False
+SCHTASKS_TIMEOUT = 15
 
 
 def _legacy_shell_paths() -> tuple[Path, ...]:
@@ -75,9 +77,15 @@ def _cleanup_legacy_shell_entries() -> None:
 
 
 def cleanup_legacy_system_entries() -> None:
-    global _legacy_startup_was_disabled
+    global _legacy_startup_was_disabled, _legacy_cleanup_done
     if sys.platform != "win32":
         return
+    if _legacy_cleanup_done:
+        return
+    # One-time rebrand migration: registry, scheduled tasks and shell entries
+    # left by previous product names. Re-running it on every state poll would
+    # spawn schtasks and walk the filesystem forever.
+    _legacy_cleanup_done = True
     for name in LEGACY_APP_NAMES:
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_RUN_KEY, 0, winreg.KEY_READ) as key:
@@ -93,6 +101,7 @@ def cleanup_legacy_system_entries() -> None:
                 ["schtasks", "/Delete", "/TN", name, "/F"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                timeout=SCHTASKS_TIMEOUT,
                 creationflags=CREATE_NO_WINDOW,
             )
         except Exception:
@@ -141,8 +150,15 @@ def set_startup_enabled(app_name: str, enabled: bool, command: str) -> None:
             # keeps showing them as "Enabled". Lumen runs elevated (UAC
             # manifest / RUNASADMIN layer), so register a scheduled task with
             # the highest run level instead.
-            _delete_registry_startup(app_name)
-            _delete_startup_approved(app_name)
+            # Keep a normal Run/StartupApproved entry as the discoverable
+            # Startup Apps registration.  Windows 10 Task Manager does not
+            # enumerate Task Scheduler entries, which made an enabled Lumen
+            # disappear from its Startup tab.  Windows skips this elevated
+            # command at logon; the highest-run-level task performs the launch.
+            # If a Windows build launches both, the single-instance guard
+            # immediately closes the duplicate.
+            _create_registry_startup(app_name, command)
+            _set_startup_approved(app_name, enabled=True)
             _create_startup_task(command)
         else:
             _delete_startup_task()
@@ -159,9 +175,10 @@ def get_startup_state(app_name: str) -> str:
     if sys.platform != "win32":
         return STARTUP_STATE_ABSENT
     cleanup_legacy_system_entries()
-    if app_name == TASK_NAME and _startup_task_exists():
-        return STARTUP_STATE_ENABLED
-    if not _registry_startup_exists(app_name):
+    registry_exists = _registry_startup_exists(app_name)
+    if not registry_exists:
+        if app_name == TASK_NAME and _startup_task_exists():
+            return STARTUP_STATE_ENABLED
         if app_name == TASK_NAME and _legacy_startup_was_disabled:
             return STARTUP_STATE_DISABLED
         return STARTUP_STATE_ABSENT
@@ -189,6 +206,7 @@ def _startup_task_exists() -> bool:
         result = subprocess.run(
             ["schtasks", "/Query", "/TN", TASK_NAME],
             capture_output=True,
+            timeout=SCHTASKS_TIMEOUT,
             creationflags=CREATE_NO_WINDOW,
         )
     except Exception:
@@ -210,13 +228,14 @@ def relaunch_as_admin(extra_args: list[str] | None = None) -> bool:
         return False
     executable, arguments, working_dir = _admin_launch_command(extra_args)
     try:
+        show_command = 1 if getattr(sys, "frozen", False) else 0
         result = ctypes.windll.shell32.ShellExecuteW(
             None,
             "runas",
             str(executable),
             arguments,
             str(working_dir),
-            1,
+            show_command,
         )
         return int(result) > 32
     except Exception:
@@ -279,8 +298,12 @@ def _admin_launch_command(extra_args: list[str] | None = None) -> tuple[Path, st
         return executable, subprocess.list2cmdline(args), executable.parent
 
     base_dir = Path(__file__).resolve().parents[1]
-    pythonw = base_dir / ".venv" / "Scripts" / "pythonw.exe"
-    executable = pythonw if pythonw.exists() else Path(sys.executable).resolve()
+    current_python = Path(sys.executable).resolve()
+    candidates = (
+        current_python.with_name("pythonw.exe"),
+        base_dir / ".venv" / "Scripts" / "pythonw.exe",
+    )
+    executable = next((candidate for candidate in candidates if candidate.is_file()), current_python)
     script = base_dir / "run_qml.py"
     return executable, subprocess.list2cmdline([str(script), *args]), base_dir
 
@@ -384,6 +407,7 @@ def _create_startup_task(command: str) -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=SCHTASKS_TIMEOUT,
         creationflags=CREATE_NO_WINDOW,
     )
 
@@ -395,6 +419,7 @@ def _delete_startup_task() -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=SCHTASKS_TIMEOUT,
         creationflags=CREATE_NO_WINDOW,
     )
 

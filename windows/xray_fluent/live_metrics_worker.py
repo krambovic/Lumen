@@ -112,15 +112,20 @@ class LiveMetricsWorker(QThread):
 
             process_stats = None
             if iteration_count % process_stats_interval == 0:
-                if self._mode == "singbox":
-                    process_stats = collect_process_stats(
-                        self._clash_api_port,
-                        clash_api_secret=self._clash_api_secret,
-                    )
-                elif self._mode == "xray":
-                    process_stats = self._collect_proxy_process_stats(
-                        proxy_prev_bytes, proxy_total_bytes,
-                    )
+                # A collector fault must never terminate the metrics loop: the
+                # thread is not restarted until the next connect.
+                try:
+                    if self._mode == "singbox":
+                        process_stats = collect_process_stats(
+                            self._clash_api_port,
+                            clash_api_secret=self._clash_api_secret,
+                        )
+                    elif self._mode == "xray":
+                        process_stats = self._collect_proxy_process_stats(
+                            proxy_prev_bytes, proxy_total_bytes,
+                        )
+                except Exception:
+                    process_stats = None
 
             self.metrics.emit(
                 {

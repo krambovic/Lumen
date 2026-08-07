@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from urllib.parse import urlsplit
 from urllib.request import Request
 
 from .constants import APP_VERSION
@@ -17,9 +18,18 @@ class UpdateInfo:
     digest_sha256: str = ""
 
 
+def is_https_url(url: str) -> bool:
+    parts = urlsplit(str(url or "").strip())
+    return parts.scheme.lower() == "https" and bool(parts.netloc)
+
+
 def check_update(feed_url: str, channel: str = "stable", timeout: float = 5.0, proxy_url: str | None = None) -> UpdateInfo | None:
     if not feed_url:
         return None
+    # The feed carries both the payload URL and its SHA-256, so an
+    # unauthenticated transport would let one party supply both.
+    if not is_https_url(feed_url):
+        raise ValueError("update feed URL must use https")
 
     attempts = (proxy_url, None) if proxy_url else (None,)
     for index, active_proxy in enumerate(attempts):
@@ -43,6 +53,8 @@ def check_update(feed_url: str, channel: str = "stable", timeout: float = 5.0, p
     url = str(release.get("url") or "")
     if not version or not url:
         return None
+    if not is_https_url(url):
+        raise ValueError("update download URL must use https")
 
     digest = str(release.get("digest") or release.get("sha256") or "")
     if digest.lower().startswith("sha256:"):

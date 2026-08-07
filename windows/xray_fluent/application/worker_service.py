@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..connectivity_test import ConnectivityTestWorker
@@ -137,7 +138,7 @@ def _auto_candidate_supports(candidate: dict, test: str, *, ping_method: str) ->
     server, port = _outbound_endpoint(candidate)
     if not server or port <= 0:
         return False
-    if test == "speed" or ping_method == "real":
+    if test == "speed" or ping_method in {"http", "real"}:
         return protocol not in _XRAY_TEST_UNSUPPORTED and protocol not in {
             "awg", "hysteria", "hysteria2", "hy", "hy2", "masque", "mieru",
             "openvpn", "naive", "tuic", "warp", "wireguard",
@@ -148,20 +149,20 @@ def _auto_candidate_supports(candidate: dict, test: str, *, ping_method: str) ->
 def _node_supports_test(node: Node, test: str, *, ping_method: str = "tcping") -> bool:
     protocol = _node_protocol(node)
     if protocol in _AUTO_CONFIG_PROTOCOLS:
-        if protocol == "singbox_config" and (test == "speed" or ping_method == "real"):
+        if protocol == "singbox_config" and (test == "speed" or ping_method in {"http", "real"}):
             return False
         return any(
             _auto_candidate_supports(candidate, test, ping_method=ping_method)
             for candidate in _auto_candidate_outbounds(node)
         )
-    if test == "speed" or ping_method == "real":
+    if test == "speed" or ping_method in {"http", "real"}:
         return not is_native_singbox_only_node(node) and protocol not in _XRAY_TEST_UNSUPPORTED
     return protocol not in _ENDPOINT_PING_UNSUPPORTED
 
 
 def _node_for_test(node: Node, test: str, *, ping_method: str) -> Node:
     protocol = _node_protocol(node)
-    if protocol not in _AUTO_CONFIG_PROTOCOLS or test == "speed" or ping_method == "real":
+    if protocol not in _AUTO_CONFIG_PROTOCOLS or test == "speed" or ping_method in {"http", "real"}:
         return node
     for candidate in _auto_candidate_outbounds(node):
         if not _auto_candidate_supports(candidate, test, ping_method=ping_method):
@@ -192,7 +193,9 @@ def _filter_testable_nodes(
         return supported
 
     test_name = tr("Тест скорости") if test == "speed" else (
-        tr("Реальный пинг") if ping_method == "real" else tr("Пинг")
+        tr("HTTP GET ping") if ping_method == "http" else (
+            tr("Реальный пинг") if ping_method == "real" else tr("Пинг")
+        )
     )
     names = [str(node.name or node.server or node.scheme or "—") for node in unsupported[:3]]
     if len(unsupported) > 3:
@@ -235,6 +238,23 @@ def _clear_speed_measurements(controller: AppController, nodes: list[Node]) -> N
         controller.schedule_save()
 
 
+def _resolve_xray_test_executable(controller: AppController) -> Path | None:
+    resolved = resolve_configured_path(
+        controller.state.settings.xray_path,
+        default_path=XRAY_PATH_DEFAULT,
+        use_default_if_empty=True,
+        migrate_default_location=True,
+    )
+    if resolved is not None and resolved.is_file():
+        return resolved
+    missing_path = resolved or XRAY_PATH_DEFAULT
+    controller.status.emit(
+        "error",
+        tr("xray.exe не найден: ") + str(missing_path),
+    )
+    return None
+
+
 def ping_nodes(
     controller: AppController,
     node_ids: set[str] | None = None,
@@ -247,11 +267,17 @@ def ping_nodes(
         return
 
     resolved_method = (method or controller.state.settings.ping_method or "tcping").strip().lower()
-    if resolved_method not in ("tcping", "icmp", "real"):
+    if resolved_method not in ("tcping", "icmp", "http", "real"):
         resolved_method = "tcping"
     nodes = _filter_testable_nodes(controller, nodes, "ping", ping_method=resolved_method)
     if not nodes:
         return
+
+    xray_test_executable = None
+    if resolved_method in {"http", "real"}:
+        xray_test_executable = _resolve_xray_test_executable(controller)
+        if xray_test_executable is None:
+            return
 
     if controller._ping_worker and controller._ping_worker.isRunning():
         previous = controller._ping_worker
@@ -271,15 +297,9 @@ def ping_nodes(
     _clear_ping_measurements(controller, list(controller._ping_node_map.values()))
     controller.bulk_task_progress.emit("ping", 0, controller._ping_total, False)
 
-    if resolved_method == "real":
+    if resolved_method in {"http", "real"}:
         # Реальная задержка измеряется через временный xray-прокси (как в v2rayN).
-        resolved = resolve_configured_path(
-            controller.state.settings.xray_path,
-            default_path=XRAY_PATH_DEFAULT,
-            use_default_if_empty=True,
-            migrate_default_location=True,
-        )
-        xray_path = str(resolved) if resolved else controller.state.settings.xray_path
+        xray_path = str(xray_test_executable)
         controller._log("[ping] Измеряю реальную задержку через временные прокси")
         real_active_session = controller._active_session
         real_bypass_tun = bool(
@@ -330,13 +350,10 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
     if not nodes:
         return False
 
-    resolved = resolve_configured_path(
-        controller.state.settings.xray_path,
-        default_path=XRAY_PATH_DEFAULT,
-        use_default_if_empty=True,
-        migrate_default_location=True,
-    )
-    xray_path = str(resolved) if resolved else controller.state.settings.xray_path
+    xray_test_executable = _resolve_xray_test_executable(controller)
+    if xray_test_executable is None:
+        return False
+    xray_path = str(xray_test_executable)
 
     controller._speed_total = len(nodes)
     controller._speed_completed = 0
@@ -385,7 +402,12 @@ def test_connectivity(controller: AppController, url: str | None = None) -> None
         return
 
     http_port = controller.get_effective_http_proxy_port() or int(controller.state.settings.local_http_port)
-    controller._connectivity_worker = ConnectivityTestWorker(http_port, target, tun_mode=controller.state.settings.tun_mode)
+    controller._connectivity_worker = ConnectivityTestWorker(
+        http_port,
+        target,
+        tun_mode=controller.state.settings.tun_mode,
+        proxy_url=controller.get_effective_http_proxy_url() or "",
+    )
     bind_thread_reference(controller, "_connectivity_worker", controller._connectivity_worker)
     controller._connectivity_worker.result.connect(controller._on_connectivity_result)
     controller._connectivity_worker.start()

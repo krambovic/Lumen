@@ -116,7 +116,7 @@ proxies:
         encoding="utf-8",
     )
 
-    nodes, errors = parse_links_text(str(config_path))
+    nodes, errors = parse_links_text(str(config_path), allow_file_reference=True)
 
     assert errors == []
     assert [node.scheme for node in nodes] == ["warp", "awg"]
@@ -124,7 +124,8 @@ proxies:
     plain = build_singbox_outbound(nodes[0], tag="proxy")
     assert plain["type"] == "warp"
     assert plain["profile"]["private_key"] == "private-key="
-    assert plain["reserved"] == [14, 84, 156]
+    # sing-box-extended 2.5.1+ rejects an explicit `reserved` on WARP endpoints.
+    assert "reserved" not in plain
     assert plain["persistent_keepalive_interval"] == 25
     amnezia = build_singbox_outbound(nodes[1], tag="proxy")["amnezia"]
     assert amnezia["jc"] == 4
@@ -169,7 +170,33 @@ def test_legacy_clash_wireguard_link_is_migrated_before_runtime() -> None:
     assert "server" not in outbound
     assert outbound["type"] == "warp"
     assert outbound["profile"]["private_key"] == "private-key="
-    assert outbound["reserved"] == [14, 84, 156]
+    assert "reserved" not in outbound
+
+
+def test_warp_link_reserved_parameter_is_not_emitted_on_the_endpoint() -> None:
+    nodes, errors = parse_links_text("warp://?private_key=private-key%3D&reserved=DlSc#WARP")
+
+    assert errors == []
+    outbound = build_singbox_outbound(nodes[0], tag="proxy")
+    assert outbound["type"] == "warp"
+    assert "reserved" not in outbound
+
+
+def test_clash_wireguard_reserved_on_non_cloudflare_server_is_rejected() -> None:
+    payload = {
+        "name": "NonWarpWG",
+        "type": "wireguard",
+        "server": "203.0.113.9",
+        "port": 51820,
+        "private-key": "private-key=",
+        "public-key": "public-key=",
+        "ip": "10.7.0.2",
+        "reserved": [12, 34, 56],
+    }
+    nodes, errors = parse_links_text("proxies:\n  - " + json.dumps(payload))
+
+    assert nodes == []
+    assert errors and "Cloudflare WARP" in errors[0]
 
 
 def test_newline_delimited_clash_awg_json_uses_native_wireguard_endpoints() -> None:
@@ -636,9 +663,79 @@ def test_cloudflare_wireguard_reserved_config_uses_native_warp_endpoint() -> Non
     outbound = build_singbox_outbound(nodes[0], tag="proxy")
     assert nodes[0].scheme == "warp"
     assert outbound["type"] == "warp"
-    assert outbound["reserved"] == [14, 84, 156]
+    assert "reserved" not in outbound
     assert outbound["persistent_keepalive_interval"] == 25
     assert outbound["profile"]["private_key"] == "private-key="
+
+
+def test_legacy_wireguard_outbound_json_is_migrated_to_the_endpoint_schema() -> None:
+    nodes, errors = parse_links_text(
+        json.dumps(
+            {
+                "type": "wireguard",
+                "tag": "proxy",
+                "server": "203.0.113.9",
+                "server_port": 51820,
+                "private_key": "private-key=",
+                "peer_public_key": "public-key=",
+                "local_address": ["10.7.0.2/32"],
+                "mtu": 1408,
+            }
+        )
+    )
+
+    assert errors == []
+    assert validate_node_outbound(nodes[0]) is None
+    endpoint = nodes[0].outbound["singbox"]
+    assert endpoint["address"] == ["10.7.0.2/32"]
+    assert endpoint["peers"][0]["address"] == "203.0.113.9"
+    assert endpoint["peers"][0]["public_key"] == "public-key="
+    assert "server" not in endpoint
+
+
+def test_warp_outbound_is_migrated_into_the_endpoints_section() -> None:
+    nodes, errors = parse_links_text(
+        json.dumps(
+            {
+                "protocol": "singbox_config",
+                "singbox_config": {
+                    "outbounds": [
+                        {
+                            "type": "warp",
+                            "tag": "proxy",
+                            "profile": {"detour": "direct", "private_key": "private-key="},
+                        },
+                        {"type": "direct", "tag": "direct"},
+                    ]
+                },
+            }
+        )
+    )
+
+    assert errors == []
+    config = nodes[0].outbound["singbox_config"]
+    assert [item["type"] for item in config["outbounds"]] == ["direct"]
+    assert config["endpoints"][0]["type"] == "warp"
+
+
+def test_wireguard_config_with_bracketless_ipv6_endpoint_still_imports() -> None:
+    nodes, errors = parse_links_text(
+        """
+        [Interface]
+        PrivateKey = private-key=
+        Address = 172.16.0.2
+
+        [Peer]
+        PublicKey = public-key=
+        AllowedIPs = 0.0.0.0/0, ::/0
+        Endpoint = 2606:4700:d0::a
+        """
+    )
+
+    assert errors == []
+    endpoint = build_singbox_outbound(nodes[0], tag="proxy")
+    assert endpoint["peers"][0]["address"] == "2606:4700:d0::a"
+    assert endpoint["peers"][0]["port"] == 51820
 
 
 def test_saved_wireguard_endpoint_is_normalized_again_before_runtime() -> None:

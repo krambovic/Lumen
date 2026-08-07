@@ -13,6 +13,18 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 _SUBPROCESS_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="xray_fluent_subprocess")
 
 
+def is_windows_shutting_down() -> bool:
+    """Return True once Windows has started ending the interactive session."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.user32.GetSystemMetrics(0x2000))
+    except Exception:
+        return False
+
+
 def decode_output(data: bytes | None) -> str:
     if not data:
         return ""

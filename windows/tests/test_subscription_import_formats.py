@@ -230,6 +230,124 @@ proxies:
     ]
 
 
+_REAL_LINK = (
+    "vless://00000000-0000-0000-0000-000000000001@one.example:443"
+    "?encryption=none&type=tcp&security=none#one"
+)
+_STUB_LINK = (
+    "vless://00000000-0000-0000-0000-000000000002@stub.example:443"
+    "?encryption=none&type=tcp&security=none#{name}"
+)
+# "Ваш клиент не поддерживается" и "Обновите приложение" в percent-encoding.
+_STUB_NAMES = (
+    "Your%20client%20is%20not%20supported",
+    "Please%20update%20your%20app",
+    "%D0%92%D0%B0%D1%88%20%D0%BA%D0%BB%D0%B8%D0%B5%D0%BD%D1%82%20%D0%BD%D0%B5%20"
+    "%D0%BF%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B8%D0%B2%D0%B0%D0%B5%D1%82%D1%81%D1%8F",
+    "%D0%9E%D0%B1%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D0%B5%20"
+    "%D0%BF%D1%80%D0%B8%D0%BB%D0%BE%D0%B6%D0%B5%D0%BD%D0%B8%D0%B5",
+)
+
+
+def test_lumen_client_profile_is_tried_before_happ() -> None:
+    names = [name for name, _headers in node_service._SUBSCRIPTION_CLIENT_PROFILES]
+
+    assert names[0] == "Lumen"
+    assert names.index("Lumen") < names.index("Happ Windows")
+    assert names.index("Lumen") < names.index("Happ")
+    assert len(names) == len(set(names))
+
+
+def test_lumen_user_agent_carries_the_real_app_version() -> None:
+    from xray_fluent.constants import APP_VERSION
+
+    assert node_service.LUMEN_SUBSCRIPTION_USER_AGENT == f"Lumen-Subscription/Windows-{APP_VERSION}"
+    assert dict(node_service._SUBSCRIPTION_CLIENT_PROFILES)["Lumen"]["User-Agent"] == (
+        node_service.LUMEN_SUBSCRIPTION_USER_AGENT
+    )
+
+
+def test_client_stub_is_detected_in_english_and_russian() -> None:
+    for name in _STUB_NAMES:
+        body = _STUB_LINK.format(name=name)
+        nodes, errors = parse_links_text(body)
+        assert errors == []
+        # Сама заглушка выглядит как валидный сервер — отличаем её только по тексту.
+        assert node_service._parsed_nodes_are_usable(nodes)
+        assert node_service._looks_like_client_stub(body, nodes)
+        assert not node_service._subscription_response_is_accepted(body, nodes)
+
+    nodes, _errors = parse_links_text(_REAL_LINK)
+    assert not node_service._looks_like_client_stub(_REAL_LINK, nodes)
+    assert node_service._subscription_response_is_accepted(_REAL_LINK, nodes)
+
+
+@pytest.mark.parametrize("stub_name", _STUB_NAMES)
+def test_client_not_supported_stub_falls_back_to_happ(monkeypatch, stub_name) -> None:
+    calls = []
+
+    def fake_fetch(url: str, profile: str, headers: dict, *, direct: bool = True):
+        calls.append(profile)
+        if profile == "Lumen":
+            return _STUB_LINK.format(name=stub_name), {"clientProfile": profile}
+        return _REAL_LINK, {"clientProfile": profile}
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
+
+    text, info, errors = node_service.fetch_subscription_payload(
+        "https://sub.example/path",
+        hwid="",
+        use_real_hwid=False,
+    )
+
+    assert errors == []
+    assert "one.example" in text
+    assert calls[0] == "Lumen"
+    assert info["clientProfile"] == "Happ Windows"
+
+
+def test_empty_body_advances_to_the_next_client_profile(monkeypatch) -> None:
+    calls = []
+
+    def fake_fetch(url: str, profile: str, headers: dict, *, direct: bool = True):
+        calls.append(profile)
+        if profile == "Lumen":
+            return "", {"clientProfile": profile}
+        return _REAL_LINK, {"clientProfile": profile}
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
+
+    _text, info, errors = node_service.fetch_subscription_payload(
+        "https://sub.example/path",
+        hwid="",
+        use_real_hwid=False,
+    )
+
+    assert errors == []
+    assert calls == ["Lumen", "Happ Windows"]
+    assert info["clientProfile"] == "Happ Windows"
+
+
+def test_http_404_does_not_walk_the_client_profiles(monkeypatch) -> None:
+    calls = []
+
+    def fail_fetch(url: str, profile: str, headers: dict, **_kwargs):
+        calls.append(profile)
+        raise OSError("HTTP Error 404: Not Found")
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fail_fetch)
+
+    text, _info, errors = node_service.fetch_subscription_payload(
+        "https://sub.example/path",
+        hwid="",
+        use_real_hwid=False,
+    )
+
+    assert text == ""
+    assert calls == ["Lumen"]
+    assert errors and "не найдена" in errors[0]
+
+
 def test_subscription_tls_eof_retries_same_profile_direct(monkeypatch) -> None:
     calls = []
 
@@ -252,18 +370,18 @@ def test_subscription_tls_eof_retries_same_profile_direct(monkeypatch) -> None:
 
     assert errors == []
     assert "one.example" in text
-    assert info["clientProfile"] == "Happ Windows"
+    assert info["clientProfile"] == "Lumen"
     assert info["networkPath"] == "direct"
     assert calls[:2] == [
         (
-            "Happ Windows",
-            node_service.HAPP_WINDOWS_USER_AGENT,
+            "Lumen",
+            node_service.LUMEN_SUBSCRIPTION_USER_AGENT,
             node_service.DEFAULT_SUBSCRIPTION_HWID,
             True,
         ),
         (
-            "Happ Windows",
-            node_service.HAPP_WINDOWS_USER_AGENT,
+            "Lumen",
+            node_service.LUMEN_SUBSCRIPTION_USER_AGENT,
             node_service.DEFAULT_SUBSCRIPTION_HWID,
             True,
         ),
@@ -337,7 +455,7 @@ def test_subscription_proxy_tun_mode_is_forwarded_to_http_fetch(monkeypatch) -> 
     assert calls == [
         (
             "https://sub.example/path",
-            "Happ Windows",
+            "Lumen",
             False,
             "http://127.0.0.1:10809",
         )
@@ -416,8 +534,8 @@ def test_subscription_uses_real_windows_hwid_by_default(monkeypatch) -> None:
     )
 
     assert errors == []
-    assert info["clientProfile"] == "Happ Windows"
-    assert calls == [("Happ Windows", "real-machine-guid", True)]
+    assert info["clientProfile"] == "Lumen"
+    assert calls == [("Lumen", "real-machine-guid", True)]
 
 
 def test_subscription_rejects_hwid_with_newline(monkeypatch) -> None:
@@ -455,10 +573,36 @@ def test_import_file_size_limit_is_checked_before_read(tmp_path) -> None:
         stream.seek(MAX_IMPORT_BYTES)
         stream.write(b"x")
 
-    nodes, errors = parse_links_text(str(path))
+    nodes, errors = parse_links_text(str(path), allow_file_reference=True)
 
     assert nodes == []
     assert errors and "exceeds" in errors[0]
+
+
+def test_file_reference_is_ignored_for_downloaded_subscription_bodies(tmp_path) -> None:
+    path = tmp_path / "secret.txt"
+    path.write_text("vless://00000000-0000-0000-0000-000000000001@one.example:443#one", encoding="utf-8")
+
+    nodes, errors = parse_links_text(str(path))
+
+    assert nodes == []
+    assert errors and "unsupported scheme" in errors[0]
+
+
+def test_unc_file_reference_is_never_opened(monkeypatch) -> None:
+    def _fail(self):  # pragma: no cover - must not run
+        raise AssertionError(f"UNC path must not be stat'ed: {self}")
+
+    monkeypatch.setattr("pathlib.Path.is_file", _fail)
+
+    for body in (
+        "file://attacker.example.com/share/a.txt",
+        "\\\\attacker.example.com\\share\\a.txt",
+        "//attacker.example.com/share/a.txt",
+    ):
+        nodes, errors = parse_links_text(body, allow_file_reference=True)
+        assert nodes == []
+        assert errors
 
 
 def test_subscription_metadata_accepts_common_button_headers() -> None:
@@ -505,6 +649,41 @@ def test_happ_crypt5_1_link_reports_friendly_error(monkeypatch) -> None:
     assert text == ""
     assert errors and errors[0].startswith("Happ:")
     assert "crypt5.1" in errors[0]
+
+
+def test_crypt5_1_candidates_survive_a_skip_index_at_the_region_end() -> None:
+    from xray_fluent.happ_crypt import HappKeyUnavailableError, _c51_candidates, decrypt_happ_link
+
+    # payload[18:20] == '21' and 21 % 4 == 1, which used to index url_region[21]
+    # out of range and discard every trailer-length candidate.
+    payload = "A" * 18 + "21" + "B" * 21 + "C" * 684 + "D" * 10
+
+    assert len(_c51_candidates(payload)) > 0
+    with pytest.raises(HappKeyUnavailableError):
+        decrypt_happ_link(f"happ://crypt5/{payload}")
+
+
+def test_crypt5_1_short_payload_does_not_raise_index_error() -> None:
+    from xray_fluent.happ_crypt import HappDecryptError, decrypt_happ_link
+
+    with pytest.raises(HappDecryptError) as excinfo:
+        decrypt_happ_link("happ://crypt5/abcdefgh")
+
+    assert "string index out of range" not in str(excinfo.value)
+
+
+def test_legacy_base64_shadowsocks_link_with_slash_is_imported() -> None:
+    import base64
+
+    blob = base64.b64encode(b"aes-256-gcm:pw?x@example.com:8388").decode("ascii")
+    assert "/" in blob
+
+    nodes, errors = parse_links_text(f"ss://{blob}#legacy")
+
+    assert errors == []
+    server = nodes[0].outbound["settings"]["servers"][0]
+    assert (nodes[0].server, nodes[0].port) == ("example.com", 8388)
+    assert (server["method"], server["password"]) == ("aes-256-gcm", "pw?x")
 
 
 def test_happ_crypt_direct_config_payload(monkeypatch) -> None:

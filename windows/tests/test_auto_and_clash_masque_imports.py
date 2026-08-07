@@ -67,7 +67,7 @@ def _xray_auto_payload() -> dict:
 
 def _singbox_base_document():
     payload = {
-        "inbounds": [{"type": "tun", "tag": "tun-in", "interface_name": "singbox_tun"}],
+        "inbounds": [{"type": "tun", "tag": "tun-in", "interface_name": "tun0"}],
         "outbounds": [
             {"type": "direct", "tag": "proxy"},
             {"type": "direct", "tag": "direct"},

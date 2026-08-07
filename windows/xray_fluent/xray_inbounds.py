@@ -18,17 +18,23 @@ def build_xray_mixed_inbound(
     *,
     tag: str = "socks-in",
     route_only: bool = False,
+    username: str = "",
+    password: str = "",
 ) -> dict[str, Any]:
+    auth_enabled = bool(str(username).strip() and str(password))
+    settings: dict[str, Any] = {
+        "auth": "password" if auth_enabled else "noauth",
+        "udp": True,
+        "allowTransparent": False,
+    }
+    if auth_enabled:
+        settings["accounts"] = [{"user": str(username).strip(), "pass": str(password)}]
     return {
         "tag": tag,
         "listen": PROXY_HOST,
         "port": int(port),
         "protocol": "mixed",
-        "settings": {
-            "auth": "noauth",
-            "udp": True,
-            "allowTransparent": False,
-        },
+        "settings": settings,
         "sniffing": build_xray_sniffing(route_only=route_only),
     }
 
@@ -38,13 +44,20 @@ def build_xray_http_compat_inbound(
     *,
     tag: str = "http-in",
     route_only: bool = False,
+    username: str = "",
+    password: str = "",
 ) -> dict[str, Any]:
+    auth_enabled = bool(str(username).strip() and str(password))
     return {
         "tag": tag,
         "listen": PROXY_HOST,
         "port": int(port),
         "protocol": "http",
-        "settings": {},
+        "settings": (
+            {"accounts": [{"user": str(username).strip(), "pass": str(password)}]}
+            if auth_enabled
+            else {}
+        ),
         "sniffing": build_xray_sniffing(route_only=route_only),
     }
 
@@ -84,6 +97,8 @@ def ensure_xray_mixed_proxy_inbound(
     socks_port: int = DEFAULT_SOCKS_PORT,
     http_port: int = DEFAULT_HTTP_PORT,
     route_only: bool = False,
+    username: str = "",
+    password: str = "",
 ) -> int:
     inbounds = payload.setdefault("inbounds", [])
     if not isinstance(inbounds, list):
@@ -108,7 +123,12 @@ def ensure_xray_mixed_proxy_inbound(
         elif tag == "http-in" or (port == int(http_port) and protocol == "http"):
             http_index = index
 
-    main_inbound = build_xray_mixed_inbound(socks_port, route_only=route_only)
+    main_inbound = build_xray_mixed_inbound(
+        socks_port,
+        route_only=route_only,
+        username=username,
+        password=password,
+    )
     if main_index >= 0 and isinstance(inbounds[main_index], dict):
         current = inbounds[main_index]
         for key, value in main_inbound.items():
@@ -120,7 +140,12 @@ def ensure_xray_mixed_proxy_inbound(
         changed += 1
 
     if int(http_port) != int(socks_port):
-        http_inbound = build_xray_http_compat_inbound(http_port, route_only=route_only)
+        http_inbound = build_xray_http_compat_inbound(
+            http_port,
+            route_only=route_only,
+            username=username,
+            password=password,
+        )
         if http_index >= 0 and isinstance(inbounds[http_index], dict):
             current = inbounds[http_index]
             for key, value in http_inbound.items():

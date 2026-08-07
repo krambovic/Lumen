@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from ipaddress import ip_address, ip_network
 from typing import Any
+from urllib.parse import urlsplit
 
 from ...constants import (
     DEFAULT_DISCORD_SOCKS_PORT,
@@ -13,7 +15,10 @@ from ...constants import (
 from ...models import AppSettings, Node, RoutingSettings
 from ...multiplex import apply_xray_multiplex
 from ...routing_presets import custom_domain_rules, preset_domain_rules
-from ...routing_runtime import build_xray_gui_routing_rules
+from ...routing_runtime import (
+    build_xray_gui_routing_rules,
+    collect_service_route_domains,
+)
 from ...xray_inbounds import build_xray_http_compat_inbound, build_xray_mixed_inbound
 from ...xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
 
@@ -77,7 +82,18 @@ def _xray_dns_entries(
     domains: list[str] | None = None,
 ) -> list[str | dict[str, Any]]:
     entries: list[str | dict[str, Any]] = []
-    domain_rules = [item for item in (domains or []) if not str(item).lower().startswith("geoip:")]
+    domain_rules: list[str] = []
+    for raw in domains or []:
+        value = str(raw or "").strip()
+        if not value or value.lower().startswith(("geoip:", "ip:")):
+            continue
+        if value.startswith(("domain:", "full:", "regexp:", "keyword:", "geosite:", "ext:")):
+            domain_rules.append(value)
+            continue
+        try:
+            ip_network(value, strict=False)
+        except ValueError:
+            domain_rules.append(f"domain:{value}")
     for address in addresses:
         value = _xray_dns_server(address, transport)
         if domain_rules:
@@ -91,6 +107,39 @@ def _xray_dns_entries(
         else:
             entries.append(value)
     return entries
+
+
+def _xray_proxy_dns_route_rule(addresses: list[str], transport: str) -> dict[str, Any] | None:
+    """Pin remote DNS transports to the proxy even in direct-fallback presets."""
+    domains: list[str] = []
+    ips: list[str] = []
+    for address in addresses:
+        value = _xray_dns_server(address, transport)
+        parsed = urlsplit(value if "://" in value else f"//{value}")
+        host = str(parsed.hostname or "").strip().strip("[]")
+        if not host:
+            continue
+        try:
+            ip_address(host)
+        except ValueError:
+            domain = f"full:{host}"
+            if domain not in domains:
+                domains.append(domain)
+        else:
+            if host not in ips:
+                ips.append(host)
+    if not domains and not ips:
+        return None
+    rule: dict[str, Any] = {
+        "type": "field",
+        "network": "tcp,udp",
+        "outboundTag": "proxy",
+    }
+    if domains:
+        rule["domain"] = domains
+    if ips:
+        rule["ip"] = ips
+    return rule
 
 
 def build_xray_config(
@@ -132,11 +181,35 @@ def build_xray_config(
     routing_rules.extend(build_xray_gui_routing_rules(routing, settings))
 
     route_only = bool(getattr(settings, "sniff_route_only", False))
+    auth_enabled = bool(
+        getattr(settings, "proxy_auth_enabled", False)
+        and str(getattr(settings, "proxy_auth_username", "") or "").strip()
+        and str(getattr(settings, "proxy_auth_password", "") or "")
+    )
+    auth_username = str(getattr(settings, "proxy_auth_username", "") or "").strip() if auth_enabled else ""
+    auth_password = str(getattr(settings, "proxy_auth_password", "") or "") if auth_enabled else ""
     inbounds: list[dict[str, Any]] = [
-        build_xray_mixed_inbound(socks_port, route_only=route_only),
+        build_xray_mixed_inbound(
+            socks_port,
+            route_only=route_only,
+            username=auth_username,
+            password=auth_password,
+        ),
     ]
+    if routing.dns_mode == "builtin":
+        proxy_dns_servers = routing.dns_proxy_servers or [routing.dns_proxy_server]
+        proxy_dns_rule = _xray_proxy_dns_route_rule(proxy_dns_servers, routing.dns_proxy_type)
+        if proxy_dns_rule is not None:
+            routing_rules.append(proxy_dns_rule)
     if int(http_port) != int(socks_port):
-        inbounds.append(build_xray_http_compat_inbound(http_port, route_only=route_only))
+        inbounds.append(
+            build_xray_http_compat_inbound(
+                http_port,
+                route_only=route_only,
+                username=auth_username,
+                password=auth_password,
+            )
+        )
     if settings.discord_proxy_enabled:
         inbounds.append(
             {
@@ -216,26 +289,42 @@ def build_xray_config(
 
     if routing.dns_mode == "builtin":
         preset_direct, preset_proxy = preset_domain_rules(routing.preset_id)
-        direct_domains: list[str] = []
-        proxy_domains: list[str] = []
+        service_direct, service_proxy, _service_block = collect_service_route_domains(routing)
+        direct_domains = [*service_direct, *custom_domain_rules(routing.direct_domains)]
+        proxy_domains = [*service_proxy, *custom_domain_rules(routing.proxy_domains)]
         if routing.dns_geo_check:
-            direct_domains = [*custom_domain_rules(routing.direct_domains), *preset_direct]
-            proxy_domains = [*custom_domain_rules(routing.proxy_domains), *preset_proxy]
-        bootstrap_servers = routing.dns_bootstrap_servers or [routing.dns_bootstrap_server]
+            direct_domains.extend(preset_direct)
+            proxy_domains.extend(preset_proxy)
+        bootstrap_servers = [
+            str(item).strip()
+            for item in routing.dns_bootstrap_servers
+            if str(item).strip()
+        ]
         proxy_servers = routing.dns_proxy_servers or [routing.dns_proxy_server]
         dns_config: dict[str, Any] = {
             "servers": [
-                *_xray_dns_entries(
-                    proxy_servers,
-                    routing.dns_proxy_type,
-                    domains=proxy_domains,
+                *(
+                    _xray_dns_entries(
+                        bootstrap_servers,
+                        routing.dns_bootstrap_type,
+                        domains=direct_domains,
+                    )
+                    if direct_domains
+                    else []
                 ),
-                *_xray_dns_entries(
-                    bootstrap_servers,
-                    routing.dns_bootstrap_type,
-                    domains=direct_domains,
+                *(
+                    _xray_dns_entries(
+                        proxy_servers,
+                        routing.dns_proxy_type,
+                        domains=proxy_domains,
+                    )
+                    if proxy_domains
+                    else []
                 ),
-                "localhost",
+                # The final resolver must also be proxied.  `localhost` here
+                # handed every unmatched query to the Windows/ISP resolver and
+                # was the source of the leak visible on browser DNS tests.
+                *_xray_dns_entries(proxy_servers, routing.dns_proxy_type),
             ],
             "queryStrategy": _xray_dns_strategy(
                 routing.dns_proxy_strategy,

@@ -106,6 +106,38 @@ class ProxyManager:
             if "AutoConfigURL" in values:
                 winreg.SetValueEx(key, "AutoConfigURL", 0, winreg.REG_SZ, str(values["AutoConfigURL"]))
 
+    @staticmethod
+    def _is_lumen_proxy(value: object) -> bool:
+        for entry in str(value or "").replace(",", ";").split(";"):
+            endpoint = entry.strip()
+            if not endpoint:
+                continue
+            _scheme, _separator, address = endpoint.rpartition("=")
+            host = address.rsplit(":", 1)[0].strip().strip("[]")
+            if host == PROXY_HOST:
+                return True
+        return False
+
+    def _snapshot_settings(self) -> dict[str, str | int]:
+        values = self._read_settings()
+        if self._is_lumen_proxy(values.get("ProxyServer")):
+            # Values left in the registry by an abnormal exit are Lumen's own,
+            # never the user's originals — restoring them would point the system
+            # at a dead local port.
+            values["ProxyEnable"] = 0
+            values["ProxyServer"] = ""
+        return values
+
+    def reconcile_stale_state(self) -> bool:
+        """Undo a system proxy left enabled by an abnormal exit. Call on startup."""
+        if not self.is_supported:
+            return False
+        backup = self._load_persisted_backup()
+        if backup is None and not self._is_lumen_proxy(self._read_settings().get("ProxyServer")):
+            return False
+        self.disable(restore_previous=True)
+        return True
+
     def _load_persisted_backup(self) -> dict[str, str | int] | None:
         if not self._backup_file.exists():
             return None
@@ -236,7 +268,9 @@ class ProxyManager:
         if not self.is_supported:
             return
         if self._backup is None:
-            self._backup = self._read_settings()
+            # The persisted snapshot survives a crash; the registry at this point
+            # may still hold Lumen's own values from the previous run.
+            self._backup = self._load_persisted_backup() or self._snapshot_settings()
             self._persist_backup(self._backup)
 
         # v2rayN-style system proxy: WinINET points at the local mixed inbound.

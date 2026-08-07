@@ -129,7 +129,7 @@ def _patch_imported_nodes(nodes: list[Node]):
         node_service.validate_node_outbound,
         node_service.detect_country,
     )
-    node_service.parse_links_text = lambda _text: (nodes, [])
+    node_service.parse_links_text = lambda _text, **_kwargs: (nodes, [])
     node_service.normalize_node_outbound = lambda _node: None
     node_service.validate_node_outbound = lambda _node: ""
     node_service.detect_country = lambda *_args: ""
@@ -315,6 +315,25 @@ def test_subscription_update_reselects_when_active_group_is_replaced() -> None:
     assert added == 1
     assert controller.state.selected_node_id == "fresh-sub"
     assert controller.transition_reasons == ["active subscription updated"]
+
+
+def test_subscription_hwid_never_leaks_the_raw_machine_guid(monkeypatch) -> None:
+    machine_guid = "72b21638-4934-4a0a-ad11-bf13a9612c0e"
+    node_service._windows_machine_hwid.cache_clear()
+    monkeypatch.setattr(node_service, "_windows_machine_guid", lambda: machine_guid)
+    monkeypatch.setattr(node_service, "get_install_id", lambda: "install-a")
+
+    resolved = node_service._resolve_subscription_hwid("manual", use_real_hwid=True)
+
+    assert resolved != machine_guid
+    assert len(resolved) == 36
+    node_service._windows_machine_hwid.cache_clear()
+    assert node_service._resolve_subscription_hwid("manual", use_real_hwid=True) == resolved
+
+    node_service._windows_machine_hwid.cache_clear()
+    monkeypatch.setattr(node_service, "get_install_id", lambda: "install-b")
+    assert node_service._resolve_subscription_hwid("manual", use_real_hwid=True) != resolved
+    node_service._windows_machine_hwid.cache_clear()
 
 
 def test_auto_switch_stays_inside_current_group() -> None:

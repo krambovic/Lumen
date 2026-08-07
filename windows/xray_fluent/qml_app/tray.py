@@ -69,6 +69,7 @@ class QmlTray(QObject):
             action.hovered.connect(self._hide_routing_menu)
 
         self._tray.activated.connect(self._on_activated)
+        self._tray.messageClicked.connect(self._show_window)
         try:
             self._bridge.connectedChanged.connect(self._refresh_actions)
         except Exception:
@@ -232,12 +233,14 @@ class QmlTray(QObject):
         self._routing_menu.clear()
         self._routing_actions.clear()
 
-        presets = [
-            ("global", tr("Все через VPN")),
-            ("blocked", tr("Только заблокированное")),
-            ("except_ru", tr("Все кроме РФ")),
-        ]
-        for preset_id, label in presets:
+        presets = getattr(self._bridge, "regionalRoutingPresets", []) or []
+        for item in presets:
+            if not isinstance(item, dict):
+                continue
+            preset_id = str(item.get("id") or "")
+            if not preset_id:
+                continue
+            label = str(item.get("name") or "") or tr("Пресет")
             action = QAction(label, self._routing_menu)
             action.triggered.connect(lambda _checked=False, pid=preset_id: self._apply_default_routing(pid))
             self._insert_routing_action(action)
@@ -365,9 +368,13 @@ class QmlTray(QObject):
             return
         self._notified = True
         message = tr("Приложение свернуто в системный трей")
-        if show_toast(APP_NAME, message):
-            return
+        # show_toast() only reports that PowerShell was spawned — the WinRT script can
+        # still die on execution policy or missing assemblies without telling us, so the
+        # in-process balloon goes first and the toast stays as the fallback.
         try:
-            self._tray.showMessage(APP_NAME, message, QSystemTrayIcon.MessageIcon.Information, 2000)
+            if self._tray.isVisible() and QSystemTrayIcon.supportsMessages():
+                self._tray.showMessage(APP_NAME, message, QSystemTrayIcon.MessageIcon.Information, 2000)
+                return
         except Exception:
             pass
+        show_toast(APP_NAME, message)

@@ -130,6 +130,14 @@ def _target_app_dir(current_app_dir: Path) -> Path:
     return current_app_dir.resolve(strict=False)
 
 
+def _powershell_path() -> str:
+    """Absolute interpreter path so PATH/current-directory cannot be hijacked."""
+    if sys.platform != "win32":
+        return "powershell"
+    system_root = os.environ.get("SystemRoot") or r"C:\Windows"
+    return str(Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+
+
 def _launch_update_script(script: Path, *, elevated: bool) -> bool:
     if sys.platform == "win32" and elevated:
         try:
@@ -147,7 +155,7 @@ def _launch_update_script(script: Path, *, elevated: bool) -> bool:
             result = ctypes.windll.shell32.ShellExecuteW(
                 None,
                 "runas",
-                "powershell.exe",
+                _powershell_path(),
                 args,
                 str(script.parent),
                 0,
@@ -158,7 +166,7 @@ def _launch_update_script(script: Path, *, elevated: bool) -> bool:
 
     subprocess.Popen(
         [
-            "powershell",
+            _powershell_path(),
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
@@ -272,6 +280,17 @@ def _sha256_file(file_path: Path) -> str:
     return digest.hexdigest()
 
 
+_SAFE_ASSET_NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
+
+
+def _safe_asset_name(name: str, default: str) -> str:
+    """Reduce release metadata to a plain file name inside the download dir."""
+    candidate = Path(str(name or "")).name
+    if candidate in ("", ".", "..") or not _SAFE_ASSET_NAME_RE.fullmatch(candidate):
+        return default
+    return candidate
+
+
 def _is_nightly_asset(asset: dict) -> bool:
     name = str(asset.get("name") or "").lower()
     return "nightly" in name or "qml" in name
@@ -300,7 +319,7 @@ def _asset_score(asset: dict, prefer_qml: bool = False, portable: bool = False) 
         score += 2
 
     if _is_nightly_asset(asset):
-        score -= 1
+        score += 3 if prefer_qml else -1
     return (score, name)
 
 
@@ -804,7 +823,7 @@ class UpdateDownloader(QThread):
             self._raise_if_cancelled()
             tmp_dir = Path(tempfile.mkdtemp(prefix="lumen_update_"))
             default_setup = "Lumen-portable-windows-x64.zip" if is_portable() else "Lumen-Setup-windows-x64.exe"
-            setup_name = self._update.asset_name or default_setup
+            setup_name = _safe_asset_name(self._update.asset_name, default_setup)
             setup_path = tmp_dir / setup_name
 
             downloaded_ok = False
@@ -891,6 +910,7 @@ class UpdateDownloader(QThread):
                     "if (-not (Test-Path -LiteralPath $fallbackExe)) { $fallbackExe = Join-Path $currentAppDir 'LumenKVN.exe' }",
                     f"$tempDir = {_powershell_literal(str(tmp_dir))}",
                     f"$expectedVersion = {_powershell_literal(self._update.version)}",
+                    f"$expectedHash = {_powershell_literal(expected_hash)}",
                     "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
                     "$runtimeDir = Join-Path (Join-Path $appDir 'data') 'runtime'",
                     "$errorLog = Join-Path $logDir 'update_error.log'",
@@ -902,12 +922,24 @@ class UpdateDownloader(QThread):
                     "if ($proc) { Stop-Process -Id $pidToWait -Force }",
                     "Get-Process -Name 'Lumen','LumenKVN','Lumen-qml','LumenKVN-qml' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
                     "foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
+                    # Only touch the driver service our own bundled winws registered:
+                    # a co-installed GoodbyeDPI/ByeDPI/standalone zapret uses the same
+                    # generic service names and must not be torn down by our updater.
+                    "$ownedRoots = @($appDir, $currentAppDir) | Where-Object { $_ } | ForEach-Object { $_.ToLower() }",
                     "foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
+                    "    $svcKey = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\' + $driverName",
+                    "    $svcImage = (Get-ItemProperty -Path $svcKey -Name ImagePath -ErrorAction SilentlyContinue).ImagePath",
+                    "    if (-not $svcImage) { continue }",
+                    "    $svcImage = $svcImage.ToLower()",
+                    "    $owned = $false",
+                    "    foreach ($root in $ownedRoots) { if ($svcImage.Contains($root)) { $owned = $true } }",
+                    "    if (-not $owned) { continue }",
                     "    & sc.exe stop $driverName *> $null",
                     "    & sc.exe delete $driverName *> $null",
                     "}",
                     "Start-Sleep -Milliseconds 1200",
                     "try {",
+                    "    if ((Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash -ine $expectedHash) { throw 'Update payload failed SHA-256 verification' }",
                     "    $tempExtractDir = Join-Path $tempDir 'extract'",
                     "    New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null",
                     "    Expand-Archive -LiteralPath $setupPath -DestinationPath $tempExtractDir -Force",
@@ -971,6 +1003,7 @@ class UpdateDownloader(QThread):
                     "$fallbackExe = Join-Path $currentAppDir 'Lumen.exe'",
                     f"$tempDir = {_powershell_literal(str(tmp_dir))}",
                     f"$expectedVersion = {_powershell_literal(self._update.version)}",
+                    f"$expectedHash = {_powershell_literal(expected_hash)}",
                     "$logDir = Join-Path (Join-Path $appDir 'data') 'logs'",
                     "$runtimeDir = Join-Path (Join-Path $appDir 'data') 'runtime'",
                     "$errorLog = Join-Path $logDir 'update_error.log'",
@@ -990,10 +1023,22 @@ class UpdateDownloader(QThread):
                     "if ($proc) { Stop-Process -Id $pidToWait -Force }",
                     "Get-Process -Name 'Lumen','LumenKVN','Lumen-qml','LumenKVN-qml' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
                     "foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
-                    "foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
-                    "    & sc.exe stop $driverName *> $null",
-                    "    & sc.exe delete $driverName *> $null",
+                    # Same scoping as above: never delete another product's driver service.
+                    "$ownedRoots = @($appDir, $currentAppDir) | Where-Object { $_ } | ForEach-Object { $_.ToLower() }",
+                    "function Remove-LumenDrivers($roots) {",
+                    "    foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
+                    "        $svcKey = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\' + $driverName",
+                    "        $svcImage = (Get-ItemProperty -Path $svcKey -Name ImagePath -ErrorAction SilentlyContinue).ImagePath",
+                    "        if (-not $svcImage) { continue }",
+                    "        $svcImage = $svcImage.ToLower()",
+                    "        $owned = $false",
+                    "        foreach ($root in $roots) { if ($svcImage.Contains($root)) { $owned = $true } }",
+                    "        if (-not $owned) { continue }",
+                    "        & sc.exe stop $driverName *> $null",
+                    "        & sc.exe delete $driverName *> $null",
+                    "    }",
                     "}",
+                    "Remove-LumenDrivers $ownedRoots",
                     "$zapretExeDir = Join-Path (Join-Path $appDir 'zapret') 'exe'",
                     "$currentDataDir = Join-Path $currentAppDir 'data'",
                     "if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir)) {",
@@ -1004,6 +1049,7 @@ class UpdateDownloader(QThread):
                     "}",
                     "Start-Sleep -Milliseconds 1200",
                     "try {",
+                    "    if ((Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash -ine $expectedHash) { throw 'Update payload failed SHA-256 verification' }",
                     "    $installDirArg = '/DIR=\"' + $appDir + '\"'",
                     "    $logArg = '/LOG=\"' + $setupLog + '\"'",
                     "    $installerArgs = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/FORCECLOSEAPPLICATIONS','/RESTARTEXITCODE=3010',$installDirArg,$logArg)",
@@ -1013,10 +1059,7 @@ class UpdateDownloader(QThread):
                     "        if ($install.ExitCode -eq 0 -or $install.ExitCode -eq 3010) { break }",
                     "        Get-Process -Name 'Lumen','LumenKVN','Lumen-qml','LumenKVN-qml' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
                     "        foreach ($coreName in @('xray','sing-box','singbox','winws','winws2','tun2socks','warp-svc')) { Get-Process -Name $coreName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }",
-                    "        foreach ($driverName in @('Monkey','WinDivert','WinDivert14','WinDivert64','WinDivert2')) {",
-                    "            & sc.exe stop $driverName *> $null",
-                    "            & sc.exe delete $driverName *> $null",
-                    "        }",
+                    "        Remove-LumenDrivers $ownedRoots",
                     "        foreach ($driverFile in @('Monkey64.sys','WinDivert32.sys','WinDivert64.sys')) {",
                     "            Remove-Item -LiteralPath (Join-Path $zapretExeDir $driverFile) -Force -ErrorAction SilentlyContinue",
                     "        }",

@@ -39,15 +39,28 @@ Item {
     readonly property int rowH: compact ? 30 : 34
     readonly property int cellFont: 13
 
-    // Fixed-width columns.
-    readonly property int colType: 78
-    readonly property int colTransport: 92
-    readonly property int colPort: 60
-    readonly property int colGroup: 120
-    readonly property int colPing: 80
-    readonly property int colSpeed: 108
-    readonly property int colStatus: 72
-    readonly property int colLast: 140
+    // Columns start in automatic mode. The first divider drag freezes the
+    // current layout, after which every boundary can be adjusted independently.
+    property bool manualColumnWidths: false
+    property real manualColName: 160
+    property real manualColType: 78
+    property real manualColTransport: 92
+    property real manualColAddr: 150
+    property real manualColPort: 60
+    property real manualColGroup: 120
+    property real manualColPing: 80
+    property real manualColSpeed: 108
+    property real manualColStatus: 72
+    property real manualColLast: 140
+
+    readonly property int colType: Math.round(manualColType)
+    readonly property int colTransport: Math.round(manualColTransport)
+    readonly property int colPort: Math.round(manualColPort)
+    readonly property int colGroup: Math.round(manualColGroup)
+    readonly property int colPing: Math.round(manualColPing)
+    readonly property int colSpeed: Math.round(manualColSpeed)
+    readonly property int colStatus: Math.round(manualColStatus)
+    readonly property int colLast: Math.round(manualColLast)
     readonly property int leftPad: 12
     readonly property int trailPad: 12
 
@@ -60,10 +73,45 @@ Item {
     readonly property int minTableWidth: fixedCols + colNameMin + colAddrMin + leftPad + trailPad
 
     // Fill the viewport when wider than the minimum; scroll when narrower.
-    readonly property int tableWidth: Math.max(minTableWidth, Math.floor(hflick.width))
-    readonly property int flexExtra: Math.max(0, tableWidth - minTableWidth)
-    readonly property int colName: colNameMin + Math.floor(flexExtra / 2)
-    readonly property int colAddr: colAddrMin + (flexExtra - Math.floor(flexExtra / 2))
+    readonly property int autoTableWidth: Math.max(minTableWidth, Math.floor(hflick.width))
+    readonly property int flexExtra: Math.max(0, autoTableWidth - minTableWidth)
+    readonly property int colName: Math.round(manualColumnWidths ? manualColName : colNameMin + Math.floor(flexExtra / 2))
+    readonly property int colAddr: Math.round(manualColumnWidths ? manualColAddr : colAddrMin + (flexExtra - Math.floor(flexExtra / 2)))
+    readonly property int tableWidth: manualColumnWidths
+        ? leftPad + trailPad + colName + colType + colTransport + colAddr + colPort
+          + colGroup + colPing + colSpeed + colStatus + colLast
+        : autoTableWidth
+
+    function freezeColumnWidths() {
+        if (manualColumnWidths)
+            return;
+        manualColName = colName;
+        manualColType = colType;
+        manualColTransport = colTransport;
+        manualColAddr = colAddr;
+        manualColPort = colPort;
+        manualColGroup = colGroup;
+        manualColPing = colPing;
+        manualColSpeed = colSpeed;
+        manualColStatus = colStatus;
+        manualColLast = colLast;
+        manualColumnWidths = true;
+    }
+
+    function resizeColumn(index, width) {
+        freezeColumnWidths();
+        var value = Math.max(index === 0 || index === 3 ? 90 : 48, Math.round(width));
+        if (index === 0) manualColName = value;
+        else if (index === 1) manualColType = value;
+        else if (index === 2) manualColTransport = value;
+        else if (index === 3) manualColAddr = value;
+        else if (index === 4) manualColPort = value;
+        else if (index === 5) manualColGroup = value;
+        else if (index === 6) manualColPing = value;
+        else if (index === 7) manualColSpeed = value;
+        else if (index === 8) manualColStatus = value;
+        else if (index === 9) manualColLast = value;
+    }
 
     // ── selection helpers ─────────────────────
     function _commit(obj, count) {
@@ -355,6 +403,7 @@ Item {
     component HeaderLabel: Text {
         id: hdr
         property int w: 80
+        property int columnIndex: -1
         property string sortKey: ""
         readonly property bool sortable: sortKey !== ""
         readonly property bool activeSort: sortable && page.sortKey === sortKey
@@ -384,9 +433,35 @@ Item {
         // Click a sortable header to sort by it; click again to flip direction.
         MouseArea {
             anchors.fill: parent
+            anchors.rightMargin: 5
             enabled: hdr.sortable
             cursorShape: Qt.PointingHandCursor
             onClicked: page.applySort(hdr.sortKey)
+        }
+
+        MouseArea {
+            id: columnResizeHandle
+            z: 2
+            width: 10
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+            acceptedButtons: Qt.LeftButton
+            cursorShape: Qt.SplitHCursor
+            property real pressedX: 0
+            property real pressedWidth: 0
+            onPressed: (mouse) => {
+                var point = mapToItem(page, mouse.x, mouse.y);
+                pressedX = point.x;
+                pressedWidth = hdr.width;
+                mouse.accepted = true;
+            }
+            onPositionChanged: (mouse) => {
+                if (!pressed)
+                    return;
+                var point = mapToItem(page, mouse.x, mouse.y);
+                page.resizeColumn(hdr.columnIndex, pressedWidth + point.x - pressedX);
+            }
         }
     }
     component FilterCombo: FluentCombo {
@@ -759,16 +834,16 @@ Item {
                         Row {
                             anchors.fill: parent
                             anchors.leftMargin: page.leftPad
-                            HeaderLabel { w: page.colName; text: I18n.t("Сервер"); sortKey: "name" }
-                            HeaderLabel { w: page.colType; text: I18n.t("Тип"); sortKey: "scheme" }
-                            HeaderLabel { w: page.colTransport; text: I18n.t("Транспорт"); sortKey: "transport" }
-                            HeaderLabel { w: page.colAddr; text: I18n.t("Адрес") }
-                            HeaderLabel { w: page.colPort; text: I18n.t("Порт") }
-                            HeaderLabel { w: page.colGroup; text: I18n.t("Группа"); sortKey: "group" }
-                            HeaderLabel { w: page.colPing; text: I18n.t("Пинг"); sortKey: "ping" }
-                            HeaderLabel { w: page.colSpeed; text: I18n.t("Скорость"); sortKey: "speed" }
-                            HeaderLabel { w: page.colStatus; text: I18n.t("Статус") }
-                            HeaderLabel { w: page.colLast; text: I18n.t("Последнее"); sortKey: "last" }
+                            HeaderLabel { columnIndex: 0; w: page.colName; text: I18n.t("Сервер"); sortKey: "name" }
+                            HeaderLabel { columnIndex: 1; w: page.colType; text: I18n.t("Тип"); sortKey: "scheme" }
+                            HeaderLabel { columnIndex: 2; w: page.colTransport; text: I18n.t("Транспорт"); sortKey: "transport" }
+                            HeaderLabel { columnIndex: 3; w: page.colAddr; text: I18n.t("Адрес") }
+                            HeaderLabel { columnIndex: 4; w: page.colPort; text: I18n.t("Порт") }
+                            HeaderLabel { columnIndex: 5; w: page.colGroup; text: I18n.t("Группа"); sortKey: "group" }
+                            HeaderLabel { columnIndex: 6; w: page.colPing; text: I18n.t("Пинг"); sortKey: "ping" }
+                            HeaderLabel { columnIndex: 7; w: page.colSpeed; text: I18n.t("Скорость"); sortKey: "speed" }
+                            HeaderLabel { columnIndex: 8; w: page.colStatus; text: I18n.t("Статус") }
+                            HeaderLabel { columnIndex: 9; w: page.colLast; text: I18n.t("Последнее"); sortKey: "last" }
                         }
                         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.divider }
                     }
@@ -1346,6 +1421,11 @@ Item {
             text: I18n.t("Тест TCP ping ({count})", { count: page.selCount })
             enabled: page.selCount > 0
             onTriggered: App.tcpingNodes(page.selectedIds())
+        }
+        Ctx {
+            text: I18n.t("Тест HTTP GET ({count})", { count: page.selCount })
+            enabled: page.selCount > 0
+            onTriggered: App.httpGetNodes(page.selectedIds())
         }
         Ctx {
             text: I18n.t("Тест реальной задержки ({count})", { count: page.selCount })

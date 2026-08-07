@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from xray_fluent.app_controller import AppController, apply_dns_defaults_update_once
+from xray_fluent.application import node_service
 from xray_fluent.application.node_service import (
     _filter_subscription_nodes,
     _subscription_converter_target,
@@ -54,6 +55,36 @@ def test_real_subscription_hwid_is_enabled_by_default() -> None:
 
 def test_subscription_proxy_tun_is_disabled_by_default() -> None:
     assert AppSettings.from_dict({}).subscription_use_proxy_tun is False
+
+
+def test_without_a_custom_user_agent_lumen_asks_as_itself() -> None:
+    assert AppSettings.from_dict({}).subscription_user_agent == ""
+    assert node_service._SUBSCRIPTION_CLIENT_PROFILES[0][0] == "Lumen"
+
+
+def test_custom_subscription_user_agent_still_wins_over_lumen(monkeypatch) -> None:
+    settings = AppSettings(subscription_user_agent="CustomClient/2.0")
+    calls = []
+
+    def fake_fetch(url: str, profile: str, headers: dict, *, direct: bool = True):
+        calls.append((profile, headers["User-Agent"]))
+        return (
+            "vless://00000000-0000-0000-0000-000000000001@one.example:443"
+            "?encryption=none&type=tcp&security=none#one",
+            {"clientProfile": profile},
+        )
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
+
+    _text, info, errors = node_service.fetch_subscription_payload(
+        "https://sub.example/sub",
+        user_agent=settings.subscription_user_agent,
+        use_real_hwid=False,
+    )
+
+    assert errors == []
+    assert info["clientProfile"] == "Custom"
+    assert calls == [("Custom", "CustomClient/2.0")]
 
 
 def test_real_subscription_hwid_hides_manual_field() -> None:

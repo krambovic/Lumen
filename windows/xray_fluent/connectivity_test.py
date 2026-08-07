@@ -13,12 +13,20 @@ from PyQt6.QtCore import QThread, pyqtSignal
 class ConnectivityTestWorker(QThread):
     result = pyqtSignal(bool, str, object)
 
-    def __init__(self, http_port: int, url: str, timeout: float = 8.0, tun_mode: bool = False):
+    def __init__(
+        self,
+        http_port: int,
+        url: str,
+        timeout: float = 8.0,
+        tun_mode: bool = False,
+        proxy_url: str = "",
+    ):
         super().__init__()
         self._http_port = http_port
         self._url = url
         self._timeout = timeout
         self._tun_mode = tun_mode
+        self._proxy_url = str(proxy_url or "")
         self._cancelled = threading.Event()
         self._response = None
         self._response_lock = threading.Lock()
@@ -38,7 +46,7 @@ class ConnectivityTestWorker(QThread):
         if self._tun_mode:
             opener = build_opener()
         else:
-            proxy_url = f"http://127.0.0.1:{self._http_port}"
+            proxy_url = self._proxy_url or f"http://127.0.0.1:{self._http_port}"
             opener = build_opener(
                 ProxyHandler(
                     {

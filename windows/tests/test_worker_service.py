@@ -155,6 +155,7 @@ def test_xray_auto_is_testable_when_its_candidates_support_the_test() -> None:
     )
 
     assert _node_supports_test(auto, "ping", ping_method="tcping") is True
+    assert _node_supports_test(auto, "ping", ping_method="http") is True
     assert _node_supports_test(auto, "ping", ping_method="real") is True
     assert _node_supports_test(auto, "speed") is True
 

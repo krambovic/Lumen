@@ -282,7 +282,7 @@ def test_vmess_editor_updates_vmess_only_fields_and_transport() -> None:
     assert stream["tlsSettings"]["serverName"] == "front.example"
 
 
-def test_trojan_editor_updates_password_transport_and_persists_exact_json() -> None:
+def test_trojan_editor_updates_password_transport_and_persists_share_uri() -> None:
     node = parse_single("trojan://old@example.com:443?security=tls&sni=old.example#Trojan")
 
     updates = build_node_updates(
@@ -302,6 +302,131 @@ def test_trojan_editor_updates_password_transport_and_persists_exact_json() -> N
     server = updates["outbound"]["settings"]["servers"][0]
     assert server == {"address": "new.example", "port": 8443, "password": "new-secret"}
     assert updates["outbound"]["streamSettings"]["grpcSettings"]["serviceName"] == "trojan-grpc"
+    assert updates["link"].startswith("trojan://new-secret@new.example:8443?")
+    reparsed = parse_single(updates["link"])
+    assert reparsed.outbound == updates["outbound"]
+    assert reparsed.name == "Trojan new"
+
+
+@pytest.mark.parametrize(
+    ("link", "changes", "prefix"),
+    [
+        (
+            "trojan://old@example.com:443#Trojan",
+            {"password": "p@ss word", "security": "none"},
+            "trojan://p%40ss%20word@new.example:8443?",
+        ),
+        (
+            "ss://aes-128-gcm:old@example.com:8388#SS",
+            {"method": "chacha20-ietf-poly1305", "password": "new"},
+            "ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpuZXc@new.example:8443",
+        ),
+        (
+            "socks://old:old@example.com:1080#SOCKS",
+            {"username": "new-user", "password": "new-pass"},
+            "socks://new-user:new-pass@new.example:8443",
+        ),
+        (
+            "hy2://old@example.com:443?sni=old.example#HY2",
+            {"password": "new", "sni": "front.example", "obfsType": "salamander", "obfsPassword": "mask"},
+            "hysteria2://new@new.example:8443?",
+        ),
+        (
+            "tuic://00000000-0000-0000-0000-000000000000:old@example.com:443?sni=old.example#TUIC",
+            {"password": "new", "sni": "front.example", "zeroRtt": True},
+            "tuic://00000000-0000-0000-0000-000000000000:new@new.example:8443?",
+        ),
+    ],
+)
+def test_editor_emits_portable_share_uri_not_json(
+    link: str,
+    changes: dict,
+    prefix: str,
+) -> None:
+    node = parse_single(link)
+    updates = build_node_updates(node, {"name": "Shared", "server": "new.example", "port": "8443", **changes})
+
+    assert not updates["link"].startswith("{")
+    assert updates["link"].startswith(prefix)
+    reparsed = parse_single(updates["link"])
+    assert reparsed.outbound == updates["outbound"]
+    assert reparsed.name == "Shared"
+
+
+def test_vmess_editor_emits_vmess_share_uri() -> None:
+    node = Node(
+        name="VMess",
+        scheme="vmess",
+        server="old.example",
+        port=443,
+        outbound={
+            "protocol": "vmess",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "old.example",
+                        "port": 443,
+                        "users": [{"id": "old-id", "alterId": 0, "security": "auto"}],
+                    }
+                ]
+            },
+            "streamSettings": {"network": "tcp", "security": "none"},
+        },
+    )
+
+    updates = build_node_updates(
+        node,
+        {
+            "name": "VMess new",
+            "server": "new.example",
+            "port": "8443",
+            "uuid": "new-id",
+            "alterId": "4",
+            "vmessSecurity": "aes-128-gcm",
+            "network": "ws",
+            "transportPath": "/vmess",
+            "transportHost": "cdn.example",
+            "security": "tls",
+            "sni": "front.example",
+        },
+    )
+
+    assert updates["link"].startswith("vmess://")
+    reparsed = parse_single(updates["link"])
+    assert reparsed.name == "VMess new"
+    assert reparsed.server == "new.example"
+    assert reparsed.port == 8443
+    assert reparsed.outbound["settings"]["vnext"][0]["users"][0] == {
+        "id": "new-id",
+        "alterId": 4,
+        "security": "aes-128-gcm",
+    }
+    stream = reparsed.outbound["streamSettings"]
+    assert stream["network"] == "ws"
+    assert stream["security"] == "tls"
+    assert stream["wsSettings"] == {"path": "/vmess", "headers": {"Host": "cdn.example"}}
+    assert stream["tlsSettings"]["serverName"] == "front.example"
+
+
+def test_native_only_protocols_keep_canonical_json_link() -> None:
+    node = Node(
+        name="MASQUE",
+        scheme="masque",
+        server="masque.example",
+        port=443,
+        outbound={
+            "protocol": "masque",
+            "singbox": {
+                "type": "masque",
+                "server": "masque.example",
+                "server_port": 443,
+                "profile": {"detour": "direct"},
+            },
+        },
+    )
+
+    updates = build_node_updates(node, {"name": "MASQUE new", "server": "new.example", "port": "8443"})
+
     assert updates["link"].startswith("{")
     assert parse_single(updates["link"]).outbound == updates["outbound"]
 

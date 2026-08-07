@@ -12,8 +12,10 @@ from ..constants import (
 )
 from ..engines.singbox import SingboxRuntimePlan, start_proxy as start_singbox_proxy, start_tun as start_singbox_tun
 from ..engines.xray import start_proxy as start_xray_proxy
+from ..core_resource_updater import regional_geodata_installed
 from ..path_utils import resolve_configured_path
 from ..process_conflicts import scan_network_conflicts
+from ..routing_presets import normalize_regional_preset, preset_requires_regional_geodata
 from ..subprocess_utils import kill_processes_by_path
 from .server_preflight import validate_server_preflight
 from .node_runtime_service import proxy_core_for_node
@@ -81,20 +83,22 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
 
         _cleanup_orphaned_lumen_engines(controller)
 
-        ignored_pids = {
-            int(proc.pid)
-            for manager in (controller.xray, controller.singbox)
-            if (proc := getattr(manager, "_proc", None)) is not None and getattr(proc, "pid", 0)
-        }
+        ignored_pids = controller.owned_core_process_pids()
         settings = getattr(getattr(controller, "state", None), "settings", None)
-        conflicts = scan_network_conflicts(
-            {
-                int(getattr(settings, "local_socks_port", 10808) or 10808),
-                int(getattr(settings, "local_http_port", 10809) or 10809),
-                10818,
-            },
-            ignored_pids=ignored_pids,
-        )
+        # Initial connections must reject another VPN client. A reconnect has
+        # already passed that validation; while switching servers, Windows can
+        # briefly retain the previous Lumen core in its process snapshot after
+        # the manager released it, which must not be reported as foreign Xray.
+        conflicts = {"apps": [], "unknown_client": False}
+        if not controller._reconnecting:
+            conflicts = scan_network_conflicts(
+                {
+                    int(getattr(settings, "local_socks_port", 10808) or 10808),
+                    int(getattr(settings, "local_http_port", 10809) or 10809),
+                    10818,
+                },
+                ignored_pids=ignored_pids,
+            )
         conflicting_apps = list(conflicts.get("apps") or [])
         unknown_client = bool(conflicts.get("unknown_client"))
         if conflicting_apps or unknown_client:
@@ -115,6 +119,18 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
                 level="error",
             )
             return False
+
+        routing = controller.state.routing
+        if preset_requires_regional_geodata(routing.preset_id):
+            region = normalize_regional_preset(controller.state.settings.regional_preset)
+            if not regional_geodata_installed(region):
+                controller._set_connection_status(
+                    "error",
+                    "Файлы маршрутизации выбранного региона отсутствуют или повреждены. "
+                    "Обновите geoip/geosite и повторите подключение.",
+                    level="error",
+                )
+                return False
 
         node = controller.selected_node
         singbox_editor_mode = controller.is_singbox_editor_mode()

@@ -27,7 +27,7 @@ def start_runtime(
     controller._active_core = "singbox"
     try:
         plan = controller._plan_runtime_singbox(node, tun_mode=tun_mode)
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         controller._active_core = prev_active_core
         controller._set_connection_status("error", str(exc), level="error")
         return None
@@ -153,7 +153,7 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
         controller._log(f"[tun-hot-swap] {reason}")
         try:
             plan = controller._plan_runtime_singbox(node)
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
             controller._set_connection_status("error", str(exc), level="error")
             return False
 

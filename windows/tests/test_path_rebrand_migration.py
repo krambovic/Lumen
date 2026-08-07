@@ -39,3 +39,45 @@ def test_existing_custom_core_path_is_preserved(tmp_path: Path, monkeypatch) -> 
     )
 
     assert normalized == str(custom_path)
+
+
+def test_source_checkout_falls_back_to_repository_level_default_core(
+    tmp_path: Path, monkeypatch
+) -> None:
+    base_dir = tmp_path / "windows"
+    default_path = base_dir / "core" / "xray.exe"
+    repository_core = tmp_path / "core" / "xray.exe"
+    repository_core.parent.mkdir(parents=True)
+    repository_core.write_bytes(b"source-core")
+    monkeypatch.setattr(path_utils, "BASE_DIR", base_dir)
+    monkeypatch.setattr(path_utils.sys, "frozen", False, raising=False)
+
+    resolved = path_utils.resolve_configured_path(
+        "core/xray.exe",
+        default_path=default_path,
+        use_default_if_empty=True,
+        migrate_default_location=True,
+    )
+
+    assert resolved == repository_core.resolve()
+
+
+def test_missing_custom_core_does_not_use_source_checkout_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    base_dir = tmp_path / "windows"
+    default_path = base_dir / "core" / "xray.exe"
+    repository_core = tmp_path / "core" / "xray.exe"
+    repository_core.parent.mkdir(parents=True)
+    repository_core.write_bytes(b"source-core")
+    custom_path = tmp_path / "custom" / "xray.exe"
+    monkeypatch.setattr(path_utils, "BASE_DIR", base_dir)
+    monkeypatch.setattr(path_utils.sys, "frozen", False, raising=False)
+
+    resolved = path_utils.resolve_configured_path(
+        custom_path,
+        default_path=default_path,
+        migrate_default_location=True,
+    )
+
+    assert resolved == custom_path.resolve()

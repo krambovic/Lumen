@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -286,16 +287,25 @@ def test_geodata_same_verified_release_is_not_downloaded(monkeypatch, tmp_path) 
     }
     (core_dir / "geoip.dat").write_bytes(geoip)
     (core_dir / "geosite.dat").write_bytes(geosite)
+    rule_hashes: dict[str, str] = {}
+    for key, source in core_resource_updater.REGIONAL_SINGBOX_RULE_SETS["russia"].items():
+        filename = Path(source.removeprefix("archive:")).name
+        payload = b"SRS\x01" + key.encode("utf-8") + b"x" * 100
+        (rules_dir / filename).write_bytes(payload)
+        rule_hashes[filename] = hashlib.sha256(payload).hexdigest()
     (core_dir / "lumen-geodata.json").write_text(
-        '{"version":"202607132228","sha256":{'
-        f'"geoip.dat":"{assets["geoip.dat"][1]}",'
-        f'"geosite.dat":"{assets["geosite.dat"][1]}",'
-        f'"sing-box.zip":"{assets["sing-box.zip"][1]}"'
-        "}}",
+        json.dumps(
+            {
+                "schema": 3,
+                "region": "russia",
+                "version": "202607132228",
+                "rule_sets": core_resource_updater.REGIONAL_SINGBOX_RULE_SETS["russia"],
+                "sha256": {name: digest for name, (_url, digest) in assets.items()},
+                "rule_set_sha256": rule_hashes,
+            }
+        ),
         encoding="utf-8",
     )
-    for member in core_resource_updater.SINGBOX_BINARY_RULE_SETS.values():
-        (rules_dir / Path(member).name).write_bytes(b"rules")
 
     monkeypatch.setattr(core_resource_updater, "_core_dir", lambda: core_dir)
     monkeypatch.setattr(core_resource_updater, "SINGBOX_RULE_SET_DIR", rules_dir)
@@ -321,19 +331,36 @@ def test_regional_geodata_installed_requires_matching_active_data_and_all_rules(
     core_dir = tmp_path / "core"
     rule_set_dir = core_dir / "rule-sets"
     rule_set_dir.mkdir(parents=True)
-    (core_dir / "geoip.dat").write_bytes(b"i" * 2048)
-    (core_dir / "geosite.dat").write_bytes(b"s" * 2048)
-    (core_dir / "lumen-geodata.json").write_text(
-        '{"schema":2,"region":"china","version":"test"}',
-        encoding="utf-8",
-    )
+    geoip = b"i" * 2048
+    geosite = b"s" * 2048
+    (core_dir / "geoip.dat").write_bytes(geoip)
+    (core_dir / "geosite.dat").write_bytes(geosite)
+    rule_hashes: dict[str, str] = {}
     for key, source in core_resource_updater.REGIONAL_SINGBOX_RULE_SETS["china"].items():
         filename = (
             Path(source.removeprefix("archive:")).name
             if source.startswith("archive:")
             else f"{key.replace(':', '-')}.srs"
         )
-        (rule_set_dir / filename).write_bytes(b"r" * 80)
+        payload = b"SRS\x01" + key.encode("utf-8") + b"r" * 80
+        (rule_set_dir / filename).write_bytes(payload)
+        rule_hashes[filename] = hashlib.sha256(payload).hexdigest()
+    (core_dir / "lumen-geodata.json").write_text(
+        json.dumps(
+            {
+                "schema": 3,
+                "region": "china",
+                "version": "test",
+                "rule_sets": core_resource_updater.REGIONAL_SINGBOX_RULE_SETS["china"],
+                "sha256": {
+                    "geoip.dat": hashlib.sha256(geoip).hexdigest(),
+                    "geosite.dat": hashlib.sha256(geosite).hexdigest(),
+                },
+                "rule_set_sha256": rule_hashes,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     assert regional_geodata_installed(
         "china",
@@ -352,6 +379,42 @@ def test_regional_geodata_installed_requires_matching_active_data_and_all_rules(
         target_dir=core_dir,
         rule_set_dir=rule_set_dir,
     )
+
+
+def test_regional_geodata_installed_rejects_hash_mismatch(tmp_path) -> None:
+    core_dir = tmp_path / "core"
+    rule_set_dir = core_dir / "rule-sets"
+    rule_set_dir.mkdir(parents=True)
+    geoip = b"i" * 2048
+    geosite = b"s" * 2048
+    (core_dir / "geoip.dat").write_bytes(geoip)
+    (core_dir / "geosite.dat").write_bytes(geosite)
+    rule_hashes: dict[str, str] = {}
+    for key, source in core_resource_updater.REGIONAL_SINGBOX_RULE_SETS["iran"].items():
+        filename = f"{key.replace(':', '-')}.srs"
+        payload = b"SRS\x01" + key.encode("utf-8") + b"r" * 80
+        (rule_set_dir / filename).write_bytes(payload)
+        rule_hashes[filename] = hashlib.sha256(payload).hexdigest()
+    (core_dir / "lumen-geodata.json").write_text(
+        json.dumps(
+            {
+                "schema": 3,
+                "region": "iran",
+                "version": "test",
+                "rule_sets": core_resource_updater.REGIONAL_SINGBOX_RULE_SETS["iran"],
+                "sha256": {
+                    "geoip.dat": hashlib.sha256(geoip).hexdigest(),
+                    "geosite.dat": hashlib.sha256(geosite).hexdigest(),
+                },
+                "rule_set_sha256": rule_hashes,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert regional_geodata_installed("iran", target_dir=core_dir, rule_set_dir=rule_set_dir)
+    (rule_set_dir / "geosite-ir.srs").write_bytes(b"SRS\x01" + b"tampered" * 20)
+    assert not regional_geodata_installed("iran", target_dir=core_dir, rule_set_dir=rule_set_dir)
 
 
 def test_resource_card_keeps_installed_version_when_update_is_only_available() -> None:
@@ -543,6 +606,177 @@ def test_update_json_request_retries_transient_connection_reset(monkeypatch) -> 
     assert len(calls) == 2
 
 
+def test_update_json_request_is_rebuilt_for_every_attempt(monkeypatch) -> None:
+    hosts: list[tuple[str, str | None]] = []
+
+    def fake_open(request, *, timeout, proxy_url):
+        del timeout
+        hosts.append((request.host, proxy_url))
+        # urllib's ProxyHandler rewrites the request object in place.
+        request.host = "127.0.0.1:2080"
+        request._tunnel_host = "example.test"
+        raise ConnectionRefusedError(10061, "connection refused")
+
+    monkeypatch.setattr(xray_core_updater, "urlopen_proxy_first", fake_open)
+    monkeypatch.setattr(xray_core_updater.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(ConnectionRefusedError):
+        xray_core_updater._request_json(
+            "https://example.test/release",
+            proxy_url="http://127.0.0.1:2080",
+        )
+
+    assert len(hosts) == 6
+    assert all(host == "example.test" for host, _proxy in hosts)
+    assert [proxy for _host, proxy in hosts[3:]] == [None, None, None]
+
+
+def test_update_json_request_registers_response_for_cancellation(monkeypatch) -> None:
+    opened: list[object] = []
+    closed: list[object] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"tag_name":"v1.0.0"}'
+
+    monkeypatch.setattr(xray_core_updater, "urlopen_proxy_first", lambda *_a, **_k: Response())
+
+    payload = xray_core_updater._request_json(
+        "https://example.test/release",
+        response_opened=opened.append,
+        response_closed=closed.append,
+    )
+
+    assert payload == {"tag_name": "v1.0.0"}
+    assert len(opened) == 1
+    assert closed == opened
+
+
+def test_geodata_check_registers_response_for_cancellation(monkeypatch) -> None:
+    opened: list[object] = []
+    closed: list[object] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"tag_name":"v1.0.0","assets":[]}'
+
+    monkeypatch.setattr(xray_core_updater, "urlopen_proxy_first", lambda *_a, **_k: Response())
+
+    result = core_resource_updater.check_geodata_update(
+        response_opened=opened.append,
+        response_closed=closed.append,
+    )
+
+    assert result.status == "error"
+    assert len(opened) == 1
+    assert closed == opened
+
+
+def test_release_asset_name_cannot_escape_the_download_directory(tmp_path) -> None:
+    for candidate in (
+        "..\\..\\evil.exe",
+        "../../evil.exe",
+        "C:\\Windows\\System32\\evil.exe",
+        "",
+        "..",
+        "a b.zip",
+    ):
+        name = xray_core_updater._safe_asset_name(candidate, "default.zip")
+        assert (tmp_path / name).parent == tmp_path
+
+    assert (
+        xray_core_updater._safe_asset_name("sing-box-1.13.14-windows-amd64.zip", "default.zip")
+        == "sing-box-1.13.14-windows-amd64.zip"
+    )
+
+
+def test_resource_download_rejects_truncated_body(monkeypatch, tmp_path) -> None:
+    class Response:
+        def __init__(self) -> None:
+            self.headers = {"Content-Length": "10"}
+            self._chunks = [b"12345"]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self, *_args) -> bytes:
+            return self._chunks.pop(0) if self._chunks else b""
+
+    monkeypatch.setattr(core_resource_updater, "urlopen_proxy_first", lambda *_a, **_k: Response())
+    destination = tmp_path / "geoip.dat"
+
+    with pytest.raises(RuntimeError, match="не полностью"):
+        core_resource_updater._download_direct("https://example.test/geoip.dat", destination)
+
+
+def test_regional_rule_set_must_be_a_sing_box_rule_set(tmp_path) -> None:
+    good = tmp_path / "geoip-cn.srs"
+    good.write_bytes(b"SRS\x01" + b"x" * 100)
+    core_resource_updater._ensure_rule_set_file(good, "geoip:cn")
+
+    truncated = tmp_path / "geoip-ir.srs"
+    truncated.write_bytes(b"SRS\x01")
+    with pytest.raises(RuntimeError, match="повреждённым"):
+        core_resource_updater._ensure_rule_set_file(truncated, "geoip:ir")
+
+    substituted = tmp_path / "geosite-ir.srs"
+    substituted.write_bytes(b"<!DOCTYPE html>" + b"x" * 100)
+    with pytest.raises(RuntimeError, match="повреждённым"):
+        core_resource_updater._ensure_rule_set_file(substituted, "geosite:ir")
+
+
+def test_unverified_regional_rule_set_is_not_installed(monkeypatch, tmp_path) -> None:
+    core_dir = tmp_path / "core"
+    rules_dir = core_dir / "rule-sets"
+    rules_dir.mkdir(parents=True)
+    geoip_payload = b"i" * 2048
+    geosite_payload = b"s" * 2048
+    assets = {
+        "geoip.dat": ("https://example.invalid/geoip.dat", hashlib.sha256(geoip_payload).hexdigest()),
+        "geosite.dat": ("https://example.invalid/geosite.dat", hashlib.sha256(geosite_payload).hexdigest()),
+    }
+    monkeypatch.setattr(core_resource_updater, "_core_dir", lambda: core_dir)
+    monkeypatch.setattr(core_resource_updater, "SINGBOX_RULE_SET_DIR", rules_dir)
+    monkeypatch.setattr(
+        core_resource_updater,
+        "_resolve_geodata_release",
+        lambda **_kwargs: ("202607132228", assets),
+    )
+    monkeypatch.setattr(core_resource_updater, "_validate_geodata_with_xray", lambda *_a, **_k: None)
+
+    def download(_url, destination, **_kwargs) -> None:
+        if destination.name == "geoip.dat":
+            destination.write_bytes(geoip_payload)
+        elif destination.name == "geosite.dat":
+            destination.write_bytes(geosite_payload)
+        else:
+            destination.write_bytes(b"<html>rate limited</html>" + b"x" * 200)
+
+    monkeypatch.setattr(core_resource_updater, "_download_direct", download)
+
+    result = core_resource_updater.update_geodata(region="iran")
+
+    assert result.status == "error"
+    assert "повреждённым" in result.message
+    assert not list(rules_dir.iterdir())
+    assert not (core_dir / "geoip.dat").exists()
+
+
 def test_xray_update_does_not_force_local_proxy_in_tun_mode() -> None:
     controller = SimpleNamespace(
         connected=True,
@@ -622,6 +856,31 @@ def test_xray_equal_versions_are_up_to_date(monkeypatch, tmp_path) -> None:
     assert result.status == "up_to_date"
     assert result.current_version == "26.7.11"
     assert result.latest_version == "26.7.11"
+
+
+def test_missing_xray_can_be_discovered_and_offered_for_install(monkeypatch, tmp_path) -> None:
+    missing_exe = tmp_path / "core" / "xray.exe"
+    monkeypatch.setattr(
+        xray_core_updater,
+        "resolve_configured_path",
+        lambda *_args, **_kwargs: missing_exe,
+    )
+    monkeypatch.setattr(
+        xray_core_updater,
+        "resolve_xray_release",
+        lambda *_args, **_kwargs: XrayCoreRelease(
+            version="v26.7.11",
+            channel="stable",
+            url="https://example.invalid/Xray-windows-64.zip",
+        ),
+    )
+
+    result = xray_core_updater.check_and_update_xray_core(str(missing_exe), "stable")
+
+    assert result.status == "available"
+    assert result.current_version == ""
+    assert result.latest_version == "26.7.11"
+    assert "не установлен" in result.message
 
 
 def test_xray_stable_channel_can_replace_newer_beta(monkeypatch, tmp_path) -> None:

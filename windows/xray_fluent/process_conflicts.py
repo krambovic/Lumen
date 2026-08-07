@@ -35,6 +35,10 @@ _KNOWN_CONFLICTS = {
     "v2rayn.exe": "v2rayN",
     "wireguard.exe": "WireGuard",
 }
+_CORE_CONFLICTS = {
+    "xray.exe": "Xray",
+    "sing-box.exe": "sing-box",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,13 +235,41 @@ def has_foreign_system_proxy(
 
 def scan_network_conflicts(ports: set[int], *, ignored_pids: set[int] | None = None) -> dict:
     processes = _running_processes()
-    apps = find_conflicting_network_apps(processes)
+    ignored = set(ignored_pids or ())
+    conflicting_processes: dict[int, dict[str, object]] = {}
+    for pid, process_name in processes.items():
+        if pid in ignored or pid <= 4 or pid == os.getpid():
+            continue
+        normalized_name = process_name.strip().lower()
+        label = _KNOWN_CONFLICTS.get(normalized_name) or _CORE_CONFLICTS.get(normalized_name)
+        if label:
+            conflicting_processes[pid] = {
+                "pid": pid,
+                "name": process_name,
+                "label": label,
+            }
     port_conflicts = find_listening_port_conflicts(
-        ports, ignored_pids=ignored_pids, processes=processes
+        ports, ignored_pids=ignored, processes=processes
+    )
+    for conflict in port_conflicts:
+        if conflict.pid <= 4 or conflict.pid == os.getpid():
+            continue
+        conflicting_processes.setdefault(
+            conflict.pid,
+            {
+                "pid": conflict.pid,
+                "name": conflict.process_name,
+                "label": conflict.process_name,
+            },
+        )
+    apps = sorted(
+        {str(item["label"]) for item in conflicting_processes.values()},
+        key=str.casefold,
     )
     return {
         "apps": apps,
         "ports": port_conflicts,
+        "processes": list(conflicting_processes.values()),
         "unknown_client": bool(
             not apps
             and (
@@ -249,3 +281,38 @@ def scan_network_conflicts(ports: set[int], *, ignored_pids: set[int] | None = N
             )
         ),
     }
+
+
+def terminate_scanned_conflicts(processes: list[dict]) -> tuple[list[str], list[str]]:
+    """Terminate only processes that still match a freshly scanned PID/name."""
+    if os.name != "nt":
+        return [], []
+    running = _running_processes()
+    closed: list[str] = []
+    failed: list[str] = []
+    for item in processes:
+        try:
+            pid = int(item.get("pid") or 0)
+        except (TypeError, ValueError):
+            continue
+        expected_name = str(item.get("name") or "").strip()
+        label = str(item.get("label") or expected_name or pid)
+        current_name = str(running.get(pid) or "").strip()
+        if pid <= 4 or pid == os.getpid() or not current_name:
+            continue
+        if not expected_name or current_name.casefold() != expected_name.casefold():
+            failed.append(label)
+            continue
+        try:
+            result = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=6,
+                check=False,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            (closed if result.returncode == 0 else failed).append(label)
+        except Exception:
+            failed.append(label)
+    return closed, failed

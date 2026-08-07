@@ -1,5 +1,7 @@
 from __future__ import annotations
 import json
+import os
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
@@ -75,6 +77,10 @@ class TrafficSession:
 
 class TrafficHistoryStorage:
     def __init__(self) -> None:
+        # Reentrant: the mutators below call _save() while already holding it.
+        # Needed because save_periodic() runs on a background executor while the
+        # GUI thread keeps calling update_session().
+        self._lock = threading.RLock()
         self._sessions: list[TrafficSession] = []
         self._daily_totals: dict[str, dict[str, int]] = {}  # {"2026-03-24": {"upload": N, "download": N}}
         self._current_session: TrafficSession | None = None
@@ -86,6 +92,9 @@ class TrafficHistoryStorage:
         try:
             data = json.loads(TRAFFIC_HISTORY_FILE.read_text(encoding="utf-8"))
         except Exception:
+            # Never silently drop a year of history: keep the unreadable file
+            # aside so it can be recovered instead of being overwritten.
+            self._quarantine_corrupt_file()
             return
 
         changed = False
@@ -122,27 +131,47 @@ class TrafficHistoryStorage:
         if changed:
             self._save()
 
+    @staticmethod
+    def _quarantine_corrupt_file() -> None:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        backup = TRAFFIC_HISTORY_FILE.with_name(f"{TRAFFIC_HISTORY_FILE.name}.corrupt-{stamp}")
+        try:
+            os.replace(TRAFFIC_HISTORY_FILE, backup)
+        except OSError:
+            pass
+
     def _save(self) -> None:
         TRAFFIC_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "sessions": [s.to_dict() for s in self._sessions],
-            "daily_totals": self._daily_totals,
-        }
-        TRAFFIC_HISTORY_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            payload = json.dumps(
+                {
+                    "sessions": [s.to_dict() for s in self._sessions],
+                    "daily_totals": self._daily_totals,
+                },
+                ensure_ascii=False,
+            )
+        # Atomic replace: a crash mid-write must never truncate the history.
+        staged = TRAFFIC_HISTORY_FILE.with_name(f".{TRAFFIC_HISTORY_FILE.name}.tmp")
+        with open(staged, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(staged, TRAFFIC_HISTORY_FILE)
 
     def start_session(self, node_name: str, mode: str) -> str:
-        if self._current_session is not None:
-            self.end_session()
-        session = TrafficSession(
-            started_at=datetime.now(timezone.utc).isoformat(),
-            node_name=node_name,
-            mode=mode,
-        )
-        self._current_session = session
-        self._sessions.append(session)
-        self._cleanup_old_sessions()
-        self._save()
-        return session.id
+        with self._lock:
+            if self._current_session is not None:
+                self.end_session()
+            session = TrafficSession(
+                started_at=datetime.now(timezone.utc).isoformat(),
+                node_name=node_name,
+                mode=mode,
+            )
+            self._current_session = session
+            self._sessions.append(session)
+            self._cleanup_old_sessions()
+            self._save()
+            return session.id
 
     def update_session(self, process_stats: dict[str, tuple[int, int, str]]) -> None:
         """Update current session with process traffic data.
@@ -150,6 +179,10 @@ class TrafficHistoryStorage:
         Args:
             process_stats: {exe_name: (upload_bytes, download_bytes, route)}
         """
+        with self._lock:
+            self._update_session_locked(process_stats)
+
+    def _update_session_locked(self, process_stats: dict[str, tuple[int, int, str]]) -> None:
         s = self._current_session
         if not s:
             return
@@ -277,6 +310,10 @@ class TrafficHistoryStorage:
 
 
     def end_session(self) -> None:
+        with self._lock:
+            self._end_session_locked()
+
+    def _end_session_locked(self) -> None:
         if self._current_session:
             # Accumulate session totals into daily totals
             day_key = self._session_day_key(self._current_session.started_at)
@@ -300,10 +337,11 @@ class TrafficHistoryStorage:
 
     def clear(self) -> None:
         """Drop all persisted traffic history and the active in-memory session."""
-        self._sessions = []
-        self._daily_totals = {}
-        self._current_session = None
-        self._save()
+        with self._lock:
+            self._sessions = []
+            self._daily_totals = {}
+            self._current_session = None
+            self._save()
 
     def get_sessions(self, days: int = 30) -> list[TrafficSession]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

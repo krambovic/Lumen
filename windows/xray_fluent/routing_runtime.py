@@ -129,6 +129,21 @@ def _routing_final_outbound(routing: RoutingSettings, *, use_rule_default: bool 
     return "proxy"
 
 
+def effective_service_action(routing: RoutingSettings, service_id: str) -> str:
+    """Return an explicit service route or the route inherited from the preset."""
+    explicit = str(routing.service_routes.get(service_id) or "").strip().lower()
+    if explicit in {"proxy", "direct"}:
+        return explicit
+    if str(routing.preset_id or "").strip().lower() in {
+        ROUTING_PRESET_BLOCKED,
+        ROUTING_PRESET_BLOCKED_CN,
+    }:
+        preset = SERVICE_PRESETS_BY_ID.get(service_id)
+        if preset is not None and preset.default_action in {"proxy", "direct"}:
+            return preset.default_action
+    return _routing_final_outbound(routing)
+
+
 def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
     domains: list[str] = []
     ips: list[str] = []
@@ -218,7 +233,7 @@ def append_xray_process_rule(rules: list[dict[str, Any]], processes: list[str], 
     rules.append({"type": "field", "process": names, "network": "tcp,udp", "outboundTag": outbound})
 
 
-def _collect_service_route_domains(routing: RoutingSettings) -> tuple[list[str], list[str], list[str]]:
+def collect_service_route_domains(routing: RoutingSettings) -> tuple[list[str], list[str], list[str]]:
     service_direct: list[str] = []
     service_proxy: list[str] = []
     service_block: list[str] = []
@@ -238,10 +253,6 @@ def _collect_service_route_domains(routing: RoutingSettings) -> tuple[list[str],
 
 def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
-    if routing.bypass_lan:
-        rules.append({"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"})
-        rules.append({"type": "field", "domain": ["geosite:private"], "outboundTag": "direct"})
-
     if not settings.tun_mode:
         preset_processes: dict[str, list[str]] = {"direct": [], "proxy": [], "block": []}
         for preset_id, action in routing.process_preset_routes.items():
@@ -260,7 +271,7 @@ def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings
         for action, processes in manual_processes.items():
             append_xray_process_rule(rules, processes, action)
 
-    service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
+    service_direct, service_proxy, service_block = collect_service_route_domains(routing)
     preset_direct, preset_proxy = preset_domain_rules(routing.preset_id)
 
     append_xray_domain_ip_rule(rules, service_direct, "direct")
@@ -271,6 +282,12 @@ def build_xray_gui_routing_rules(routing: RoutingSettings, settings: AppSettings
     append_xray_domain_ip_rule(rules, custom_domain_rules(routing.proxy_domains), "proxy")
     append_xray_domain_ip_rule(rules, preset_direct, "direct")
     append_xray_domain_ip_rule(rules, preset_proxy, "proxy")
+
+    # Match sing-box priority: explicit process/domain/service choices win over
+    # the optional LAN bypass, and the final catch-all remains last.
+    if routing.bypass_lan:
+        rules.append({"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"})
+        rules.append({"type": "field", "domain": ["geosite:private"], "outboundTag": "direct"})
 
     rules.append(
         {
@@ -380,17 +397,27 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         rules = []
         route["rules"] = rules
 
+    gui_rules, route_rule_sets = build_singbox_gui_route_rules(routing)
+    dns_rules, dns_rule_sets = build_singbox_gui_dns_rules(routing)
+    rules[:] = _strip_marked_singbox_rule_block(
+        rules,
+        start=_is_subscription_fetcher_direct_rule,
+        end=_is_lumen_singbox_route_end_rule,
+    )
     rules[:] = [
         rule
         for rule in rules
         if not _is_legacy_lumen_singbox_route_rule(rule)
         and not _is_subscription_fetcher_direct_rule(rule)
+        and not _is_lumen_singbox_route_end_rule(rule)
     ]
-    gui_rules, route_rule_sets = build_singbox_gui_route_rules(routing)
-    dns_rules, dns_rule_sets = build_singbox_gui_dns_rules(routing)
     _ensure_singbox_rule_sets(route, route_rule_sets | dns_rule_sets)
     insert_at = _singbox_runtime_rule_insert_index(rules)
-    rules[insert_at:insert_at] = [_subscription_fetcher_direct_rule(), *gui_rules]
+    rules[insert_at:insert_at] = [
+        _subscription_fetcher_direct_rule(),
+        *gui_rules,
+        _lumen_singbox_route_end_rule(),
+    ]
     final_outbound = _routing_final_outbound(routing)
     route["final"] = final_outbound
     dns = payload.get("dns")
@@ -400,10 +427,11 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
             for server in dns.get("servers") or []
             if isinstance(server, dict)
         }
-        target_dns = "bootstrap-dns" if final_outbound == "direct" else "proxy-dns"
-        target_strategy = (
-            routing.dns_bootstrap_strategy if final_outbound == "direct" else routing.dns_proxy_strategy
-        )
+        # DNS privacy is independent from the traffic fallback.  Unmatched
+        # names always use the resolver whose dialer is the proxy; explicit
+        # direct-domain rules may still select bootstrap-dns below.
+        target_dns = "proxy-dns"
+        target_strategy = routing.dns_proxy_strategy
         target_strategy = _singbox_dns_strategy(target_strategy)
         if target_dns in dns_tags:
             dns["final"] = target_dns
@@ -412,8 +440,17 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
         if not isinstance(existing_dns_rules, list):
             existing_dns_rules = []
             dns["rules"] = existing_dns_rules
+        existing_dns_rules[:] = _strip_marked_singbox_rule_block(
+            existing_dns_rules,
+            start=_is_lumen_singbox_dns_start_rule,
+            end=_is_lumen_singbox_dns_end_rule,
+        )
         existing_dns_rules[:] = [
-            rule for rule in existing_dns_rules if not _is_lumen_singbox_dns_rule(rule)
+            rule
+            for rule in existing_dns_rules
+            if not _is_lumen_singbox_dns_rule(rule)
+            and not _is_lumen_singbox_dns_start_rule(rule)
+            and not _is_lumen_singbox_dns_end_rule(rule)
         ]
         if "fake-dns" in dns_tags:
             existing_dns_rules.insert(
@@ -425,7 +462,11 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
                 },
             )
         if dns_rules:
-            existing_dns_rules[0:0] = dns_rules
+            existing_dns_rules[0:0] = [
+                _lumen_singbox_dns_start_rule(),
+                *dns_rules,
+                _lumen_singbox_dns_end_rule(),
+            ]
         # Keep the HTTPS/SVCB (type 64/65) reject ahead of every domain rule so
         # ECH config and HTTP/3 hints are never answered for routed domains.
         existing_dns_rules[:] = [
@@ -439,6 +480,14 @@ def apply_singbox_gui_routing(payload: dict[str, Any], routing: RoutingSettings)
                 "action": "reject",
             },
         )
+        # DNS rules are first-match: the user hosts override has to stay ahead of
+        # the FakeIP A/AAAA rule, which would otherwise answer every query first.
+        hosts_rules = [rule for rule in existing_dns_rules if _is_singbox_hosts_dns_rule(rule)]
+        if hosts_rules:
+            existing_dns_rules[:] = [
+                rule for rule in existing_dns_rules if not _is_singbox_hosts_dns_rule(rule)
+            ]
+            existing_dns_rules[2:2] = hosts_rules
 
 
 def _subscription_fetcher_direct_rule() -> dict[str, Any]:
@@ -447,6 +496,45 @@ def _subscription_fetcher_direct_rule() -> dict[str, Any]:
         "action": "route",
         "outbound": "direct",
     }
+
+
+def _lumen_singbox_route_end_rule() -> dict[str, Any]:
+    """Valid but inert sentinel delimiting the app-owned GUI route block."""
+    return {
+        "process_name": ["__lumen_gui_route_end__.exe"],
+        "action": "route",
+        "outbound": "direct",
+    }
+
+
+def _lumen_singbox_dns_start_rule() -> dict[str, Any]:
+    """Valid but inert sentinel delimiting the app-owned GUI DNS block."""
+    return {"domain": ["__lumen_gui_dns_start__.invalid"], "action": "reject"}
+
+
+def _lumen_singbox_dns_end_rule() -> dict[str, Any]:
+    return {"domain": ["__lumen_gui_dns_end__.invalid"], "action": "reject"}
+
+
+def _strip_marked_singbox_rule_block(rules: list[Any], *, start, end) -> list[Any]:
+    """Remove complete app-owned blocks while preserving imported look-alike rules."""
+    result: list[Any] = []
+    index = 0
+    while index < len(rules):
+        if not start(rules[index]):
+            result.append(rules[index])
+            index += 1
+            continue
+        end_index = index + 1
+        while end_index < len(rules) and not end(rules[end_index]):
+            end_index += 1
+        if end_index >= len(rules):
+            # Legacy configs have no end sentinel. Remove only the known start
+            # marker; imported rules following it must remain untouched.
+            index += 1
+            continue
+        index = end_index + 1
+    return result
 
 
 def _is_subscription_fetcher_direct_rule(rule: Any) -> bool:
@@ -461,6 +549,18 @@ def _is_subscription_fetcher_direct_rule(rule: Any) -> bool:
         and rule.get("action") == "route"
         and rule.get("outbound") == "direct"
     )
+
+
+def _is_lumen_singbox_route_end_rule(rule: Any) -> bool:
+    return rule == _lumen_singbox_route_end_rule()
+
+
+def _is_lumen_singbox_dns_start_rule(rule: Any) -> bool:
+    return rule == _lumen_singbox_dns_start_rule()
+
+
+def _is_lumen_singbox_dns_end_rule(rule: Any) -> bool:
+    return rule == _lumen_singbox_dns_end_rule()
 
 
 def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[str, Any]], set[str]]:
@@ -497,7 +597,7 @@ def build_singbox_gui_route_rules(routing: RoutingSettings) -> tuple[list[dict[s
         _append_singbox_process_rule(rules, manual_paths[action], action, key="process_path")
         _append_singbox_process_rule(rules, manual_regex[action], action, key="process_path_regex")
 
-    service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
+    service_direct, service_proxy, service_block = collect_service_route_domains(routing)
     preset_direct, preset_proxy = preset_domain_rules(routing.preset_id)
 
     for items, outbound in (
@@ -533,20 +633,21 @@ def build_singbox_gui_dns_rules(routing: RoutingSettings) -> tuple[list[dict[str
     rules: list[dict[str, Any]] = []
     rule_sets: set[str] = set()
 
-    service_direct, service_proxy, service_block = _collect_service_route_domains(routing)
+    service_direct, service_proxy, service_block = collect_service_route_domains(routing)
     if routing.dns_geo_check:
         preset_direct, preset_proxy = preset_domain_rules(routing.preset_id)
     else:
         preset_direct, preset_proxy = [], []
 
+    direct_dns_action = "bootstrap-dns" if routing.dns_bootstrap_servers else "proxy-dns"
     for items, dns_action in (
-        (service_direct, "bootstrap-dns"),
-        (custom_domain_rules(routing.direct_domains), "bootstrap-dns"),
+        (service_direct, direct_dns_action),
+        (custom_domain_rules(routing.direct_domains), direct_dns_action),
         (service_block, "reject"),
         (custom_domain_rules(routing.block_domains), "reject"),
         (service_proxy, "proxy-dns"),
         (custom_domain_rules(routing.proxy_domains), "proxy-dns"),
-        (preset_direct, "bootstrap-dns"),
+        (preset_direct, direct_dns_action),
         (preset_proxy, "proxy-dns"),
     ):
         rule, used_sets = _singbox_domain_dns_rule(items, dns_action)
@@ -582,18 +683,7 @@ def _is_legacy_lumen_singbox_route_rule(rule: Any) -> bool:
         return True
     if rule.get("ip_is_private") is True and outbound == "direct":
         return True
-    generated_keys = {
-        "domain_suffix",
-        "domain",
-        "domain_keyword",
-        "domain_regex",
-        "ip_cidr",
-        "process_name",
-        "process_path",
-        "process_path_regex",
-    }
-    allowed_keys = generated_keys | {"rule_set", "ip_is_private", "action", "outbound"}
-    return bool(generated_keys & set(rule)) and set(rule).issubset(allowed_keys)
+    return False
 
 
 def _is_lumen_singbox_dns_rule(rule: Any) -> bool:
@@ -621,14 +711,7 @@ def _is_lumen_singbox_dns_rule(rule: Any) -> bool:
             return True
     elif isinstance(rule_set, list) and any(str(item) in _SINGBOX_MANAGED_RULE_SET_TAGS for item in rule_set):
         return True
-    generated_keys = {
-        "domain_suffix",
-        "domain",
-        "domain_keyword",
-        "domain_regex",
-    }
-    allowed_keys = generated_keys | {"rule_set", "action", "server"}
-    return bool(generated_keys & set(rule)) and set(rule).issubset(allowed_keys)
+    return False
 
 
 def _is_browser_doh_dns_reject_rule(rule: Any) -> bool:
@@ -651,6 +734,14 @@ def _is_https_dns_reject_rule(rule: Any) -> bool:
     if not isinstance(query_type, list):
         return False
     return {str(item).strip().upper() for item in query_type} == {"HTTPS", "SVCB"}
+
+
+def _is_singbox_hosts_dns_rule(rule: Any) -> bool:
+    return (
+        isinstance(rule, dict)
+        and rule.get("ip_accept_any") is True
+        and str(rule.get("server") or "") == "hosts-dns"
+    )
 
 
 def _singbox_dns_strategy(value: str) -> str:

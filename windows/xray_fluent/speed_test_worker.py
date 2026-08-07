@@ -89,6 +89,8 @@ class SpeedTestWorker(QThread):
         self._response_lock = threading.Lock()
 
     def cancel(self) -> None:
+        # Called from the GUI thread: only signal and release, never wait —
+        # run()'s finally does the kill escalation on the worker thread.
         self._cancelled = True
         with self._response_lock:
             responses = list(self._responses)
@@ -97,9 +99,9 @@ class SpeedTestWorker(QThread):
                 response.close()
             except Exception:
                 pass
-        self._terminate_all_processes()
+        self._terminate_all_processes(wait=False)
 
-    def _terminate_all_processes(self) -> None:
+    def _terminate_all_processes(self, *, wait: bool = True) -> None:
         with self._process_lock:
             processes = list(self._processes)
         for proc in processes:
@@ -108,6 +110,8 @@ class SpeedTestWorker(QThread):
                     proc.terminate()
                 except Exception:
                     pass
+        if not wait:
+            return
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline and any(proc.poll() is None for proc in processes):
             time.sleep(0.05)
@@ -215,12 +219,13 @@ class SpeedTestWorker(QThread):
         return targets
 
     def _test_node(self, node: Node) -> tuple[Node, float | None, bool]:
-        port, reservation = self._reserve_port()
-        target = _SpeedTestTarget(node=node, http_port=port)
+        reservation: socket.socket | None = None
         tmp = None
         proc = None
 
         try:
+            port, reservation = self._reserve_port()
+            target = _SpeedTestTarget(node=node, http_port=port)
             config = self._build_config(target)
             tmp = tempfile.NamedTemporaryFile(
                 mode="w",
@@ -266,8 +271,13 @@ class SpeedTestWorker(QThread):
             if reservation is not None:
                 self._close_reserved_ports([reservation])
             if proc is not None:
-                self._unregister_process(proc)
-                self._stop_process(proc)
+                # Keep the PID visible as Lumen-owned until the temporary core
+                # has really exited. Otherwise conflict scanning can briefly
+                # report our own test process as a foreign Xray instance.
+                try:
+                    self._stop_process(proc)
+                finally:
+                    self._unregister_process(proc)
             if tmp:
                 try:
                     Path(tmp.name).unlink(missing_ok=True)

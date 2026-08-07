@@ -12,13 +12,24 @@ ROUTING_PRESET_BLOCKED_CN = "blocked_cn"
 ROUTING_PRESET_EXCEPT_CN = "except_cn"
 ROUTING_PRESET_EXCEPT_IR = "except_ir"
 
+BUILT_IN_ROUTING_PRESET_IDS = frozenset(
+    {
+        ROUTING_PRESET_GLOBAL,
+        ROUTING_PRESET_BLOCKED,
+        ROUTING_PRESET_EXCEPT_RU,
+        ROUTING_PRESET_BLOCKED_CN,
+        ROUTING_PRESET_EXCEPT_CN,
+        ROUTING_PRESET_EXCEPT_IR,
+    }
+)
+
 REGION_RUSSIA = "russia"
 REGION_CHINA = "china"
 REGION_IRAN = "iran"
 REGIONAL_PRESETS = (REGION_RUSSIA, REGION_CHINA, REGION_IRAN)
 
 RU_DIRECT_RULES = (
-    "geosite:ru-available-only-inside",
+    "geosite:category-ru",
     "geoip:ru",
 )
 
@@ -40,6 +51,22 @@ CN_BLOCKED_PROXY_RULES = (
     "geosite:gfw", "geosite:greatfire", "geosite:google",
     "geoip:facebook", "geoip:fastly", "geoip:google", "geoip:netflix",
     "geoip:telegram", "geoip:twitter",
+)
+
+# Rules managed by the built-in quick presets.  Keep this list exact: users may
+# intentionally add their own geosite:/geoip: rules and those must survive a
+# preset switch.  The two legacy entries remove data left by older Lumen builds.
+INTERNAL_PRESET_DOMAIN_RULES = frozenset(
+    {
+        *RU_DIRECT_RULES,
+        *CN_DIRECT_RULES,
+        *IR_DIRECT_RULES,
+        *BLOCKED_PROXY_RULES,
+        *BLOCKED_DIRECT_RULES,
+        *CN_BLOCKED_PROXY_RULES,
+        "geosite:ru-available-only-inside",
+        "geosite:category-media-ru-blocked",
+    }
 )
 
 
@@ -68,13 +95,27 @@ def equivalent_regional_preset(preset_id: str, region: str) -> str:
         return choices[1] if len(choices) == 3 else ROUTING_PRESET_GLOBAL
     return value
 
+
+def normalize_routing_preset_for_region(preset_id: str, region: str) -> str:
+    """Map a built-in preset to its valid counterpart for *region*."""
+    value = str(preset_id or "").strip().lower()
+    if value not in BUILT_IN_ROUTING_PRESET_IDS:
+        return value
+    return equivalent_regional_preset(value, region)
+
+
+def is_internal_preset_rule(value: str) -> bool:
+    return str(value or "").strip().lower() in INTERNAL_PRESET_DOMAIN_RULES
+
+
+def preset_requires_regional_geodata(preset_id: str) -> bool:
+    value = str(preset_id or "").strip().lower()
+    return value in BUILT_IN_ROUTING_PRESET_IDS and value != ROUTING_PRESET_GLOBAL
+
+
 def custom_domain_rules(items: list[str]) -> list[str]:
     """Return only rules explicitly owned by the user."""
-    return [
-        item
-        for item in items
-        if not str(item).strip().lower().startswith(("geosite:", "geoip:"))
-    ]
+    return [item for item in items if not is_internal_preset_rule(item)]
 
 
 def preset_domain_rules(preset_id: str) -> tuple[list[str], list[str]]:
@@ -98,6 +139,30 @@ def proxy_default_services() -> dict[str, str]:
         for preset in SERVICE_PRESETS
         if preset.default_action == "proxy"
     }
+
+
+def repair_builtin_preset_service_routes(routing: RoutingSettings) -> RoutingSettings:
+    """Fill service defaults omitted by old/default persisted blocked presets.
+
+    Explicit entries win, so a service that the user deliberately changed to
+    direct remains direct across restarts.
+    """
+    if str(routing.preset_id or "").strip().lower() not in {
+        ROUTING_PRESET_BLOCKED,
+        ROUTING_PRESET_BLOCKED_CN,
+    }:
+        return routing
+    repaired = proxy_default_services()
+    repaired.update(
+        {
+            str(service_id): str(action)
+            for service_id, action in routing.service_routes.items()
+            if str(action).strip().lower() in {"proxy", "direct"}
+        }
+    )
+    if repaired == routing.service_routes:
+        return routing
+    return replace(routing, service_routes=repaired)
 
 
 def build_routing_preset(current: RoutingSettings, preset_id: str) -> RoutingSettings:

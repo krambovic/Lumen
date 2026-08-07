@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import hmac
 import json
 import re
 import uuid
@@ -12,7 +14,9 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from PyQt6.QtCore import QTimer
 
+from ..constants import APP_VERSION
 from ..country_flags import detect_country
+from ..data_paths import get_install_id
 from ..happ_crypt import HappDecryptError, decrypt_happ_link, is_happ_crypt_link, is_happ_link
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
 from ..models import DEFAULT_SUBSCRIPTION_HWID, Node
@@ -27,6 +31,9 @@ if TYPE_CHECKING:
 
 MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
 HAPP_WINDOWS_USER_AGENT = "Happ/2.18.3/Windows/2606241603601"
+# Lumen's own subscription User-Agent; the Android build sends the same shape
+# with an "Android-" platform tag.
+LUMEN_SUBSCRIPTION_USER_AGENT = f"Lumen-Subscription/Windows-{APP_VERSION}"
 
 # Parameters documented by Happ for premium subscriptions.  Keep the original
 # kebab-case names in persisted metadata so providers and users can see exactly
@@ -73,13 +80,30 @@ _HAPP_BODY_METADATA_KEYS = {
     "telegram-url",
     "announce",
     "announce-url",
+    "subscription-name",
+    "profile-description",
+    "announcement",
+    "announcement-url",
+    "telegram",
+    "support",
+    "support-email",
+    "homepage",
+    "premium-url",
+    "banner-text",
+    "banner-button-text",
+    "banner-button-url",
+    "banner-bg-color",
+    "banner-button-color",
+    "hide-url",
+    "sort-order",
+    "profile-update-interval",
     *HAPP_PREMIUM_PARAMETERS,
 }
 
 
 @lru_cache(maxsize=1)
-def _windows_machine_hwid() -> str:
-    """Return the stable Windows installation identifier without spawning a process."""
+def _windows_machine_guid() -> str:
+    """Return the raw Windows installation identifier without spawning a process."""
     try:
         import winreg
     except ImportError:
@@ -108,6 +132,24 @@ def _windows_machine_hwid() -> str:
     return ""
 
 
+@lru_cache(maxsize=1)
+def _windows_machine_hwid() -> str:
+    """Return an app-scoped device id for subscription providers.
+
+    MachineGuid is an OS-wide installation identifier shared with every other
+    program on the machine, so it is never sent verbatim: the value handed to a
+    provider is HMAC-SHA256(MachineGuid) keyed with the random per-install id.
+    It stays stable for this install (what panels bind licences to) without
+    being correlatable with fingerprints collected by unrelated software.
+    """
+    machine_guid = _windows_machine_guid()
+    if not machine_guid:
+        return ""
+    key = get_install_id().encode("utf-8")
+    digest = hmac.new(key, machine_guid.encode("utf-8"), hashlib.sha256).digest()
+    return str(uuid.UUID(bytes=digest[:16]))
+
+
 def _resolve_subscription_hwid(hwid: str, *, use_real_hwid: bool) -> str:
     if use_real_hwid:
         machine_hwid = _windows_machine_hwid()
@@ -133,7 +175,11 @@ def import_nodes_from_text(
     auto_connect: bool | None = None,
     select_imported: bool = False,
 ) -> tuple[int, list[str]]:
-    nodes, errors = parse_links_text(text)
+    # User-initiated import (paste / drag-drop / "open file" dialog). This is the
+    # only entry point where `text` may legitimately be a local filesystem path,
+    # so it is the only one that enables file references; every subscription path
+    # below parses remote, untrusted bodies and must keep the secure default.
+    nodes, errors = parse_links_text(text, allow_file_reference=True)
     if not nodes:
         return 0, errors
 
@@ -402,7 +448,7 @@ def _parse_userinfo_header(value: str) -> dict:
     info: dict = {}
     if not value:
         return info
-    for part in value.split(";"):
+    for part in re.split(r"[;,]", value):
         if "=" not in part:
             continue
         key, _, raw = part.partition("=")
@@ -411,10 +457,61 @@ def _parse_userinfo_header(value: str) -> dict:
         if not key:
             continue
         try:
-            info[key] = int(raw)
+            number = int(raw)
         except (TypeError, ValueError):
-            info[key] = raw
+            continue
+        if key == "expire":
+            number = _normalize_expire_seconds(number)
+        if number >= 0:
+            info[key] = number
     return info
+
+
+def _normalize_expire_seconds(value: object) -> int:
+    """Normalize seconds/milliseconds/microseconds to a valid Unix timestamp."""
+    try:
+        expire = int(value)
+    except (TypeError, ValueError):
+        return 0
+    if expire <= 0:
+        return 0
+    max_seconds = 253_402_300_799
+    while expire > max_seconds:
+        expire //= 1000
+    return expire
+
+
+def _subscription_web_url(value: object, *, telegram: bool = False) -> str:
+    text = str(value or "").strip()
+    if not text or len(text) > 2048 or any(char.isspace() for char in text):
+        return ""
+    if telegram and text.startswith("@") and len(text) > 1:
+        text = f"https://t.me/{text[1:]}"
+    parsed = urlparse(text)
+    if not parsed.scheme and parsed.path and "." in parsed.path:
+        host = parsed.path.split("/", 1)[0]
+        if not host or host.startswith(".") or host.endswith("."):
+            return ""
+        text = f"https://{text}"
+        parsed = urlparse(text)
+    if parsed.scheme.lower() not in ({"http", "https", "tg"} if telegram else {"http", "https"}):
+        return ""
+    return text if (parsed.netloc or parsed.scheme.lower() == "tg") else ""
+
+
+def _subscription_hex_color(value: object) -> str:
+    text = str(value or "").strip()
+    match = re.fullmatch(r"#?([0-9A-Fa-f]{6})", text)
+    return f"#{match.group(1).upper()}" if match else ""
+
+
+def _subscription_flag(value: object) -> bool | None:
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return None
 
 
 def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
@@ -434,6 +531,8 @@ def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
         info = {str(k): v for k, v in user.items()}
     elif isinstance(data.get("userStatus"), str) or "username" in data:
         info = {str(k): v for k, v in data.items() if k != "links"}
+    if "expire" in info:
+        info["expire"] = _normalize_expire_seconds(info.get("expire"))
     for key in (
         "profileTitle",
         "subscriptionName",
@@ -444,9 +543,40 @@ def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
         "announcementUrl",
         "providerId",
         "profileUpdateInterval",
+        "profileDescription",
+        "supportEmail",
+        "premiumUrl",
+        "bannerText",
+        "bannerButtonText",
+        "bannerButtonUrl",
+        "bannerBgColor",
+        "bannerButtonColor",
+        "hideUrl",
+        "sortOrder",
     ):
         if key in data and data.get(key) not in (None, ""):
             info[key] = data.get(key)
+    for key, telegram in (
+        ("supportUrl", False),
+        ("profileUrl", False),
+        ("telegramUrl", True),
+        ("announcementUrl", False),
+        ("premiumUrl", False),
+        ("bannerButtonUrl", False),
+    ):
+        if key in info:
+            normalized_url = _subscription_web_url(info.get(key), telegram=telegram)
+            if normalized_url:
+                info[key] = normalized_url
+            else:
+                info.pop(key, None)
+    for key in ("bannerBgColor", "bannerButtonColor"):
+        if key in info:
+            color = _subscription_hex_color(info.get(key))
+            if color:
+                info[key] = color
+            else:
+                info.pop(key, None)
     premium = data.get("premiumFeatures")
     if isinstance(premium, dict):
         info["premiumFeatures"] = {str(key): str(value) for key, value in premium.items()}
@@ -503,18 +633,44 @@ def _extract_happ_body_metadata(text: str) -> tuple[str, dict]:
             premium[key] = value
         elif key in {"providerid", "provider-id"}:
             info["providerId"] = value
-        elif key == "profile-title":
+        elif key in {"profile-title", "subscription-name"}:
             info["profileTitle"] = _decode_profile_header(value)
-        elif key == "support-url":
-            info["supportUrl"] = value
-        elif key == "profile-web-page-url":
-            info["profileUrl"] = value
-        elif key == "telegram-url":
-            info["telegramUrl"] = value
-        elif key == "announce":
+        elif key == "profile-description":
+            info["profileDescription"] = _decode_profile_header(value)
+        elif key in {"support-url", "support"}:
+            info["supportUrl"] = _subscription_web_url(value)
+        elif key in {"profile-web-page-url", "homepage"}:
+            info["profileUrl"] = _subscription_web_url(value)
+        elif key in {"telegram-url", "telegram"}:
+            info["telegramUrl"] = _subscription_web_url(value, telegram=True)
+        elif key in {"announce", "announcement"}:
             info["announcement"] = _decode_profile_header(value)
-        elif key == "announce-url":
-            info["announcementUrl"] = value
+        elif key in {"announce-url", "announcement-url"}:
+            info["announcementUrl"] = _subscription_web_url(value)
+        elif key == "support-email":
+            email = re.sub(r"^mailto:", "", value, flags=re.IGNORECASE).strip()
+            if len(email) <= 254 and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+                info["supportEmail"] = email
+        elif key in {"premium-url", "banner-button-url"}:
+            info[{"premium-url": "premiumUrl", "banner-button-url": "bannerButtonUrl"}[key]] = _subscription_web_url(value)
+        elif key in {"banner-bg-color", "banner-button-color"}:
+            color = _subscription_hex_color(value)
+            if color:
+                info[{"banner-bg-color": "bannerBgColor", "banner-button-color": "bannerButtonColor"}[key]] = color
+        elif key in {"banner-text", "banner-button-text", "sort-order", "profile-update-interval"}:
+            target_key = {
+                "banner-text": "bannerText",
+                "banner-button-text": "bannerButtonText",
+                "sort-order": "sortOrder",
+                "profile-update-interval": "profileUpdateInterval",
+            }[key]
+            normalized_value = value.lower() if key == "sort-order" else value
+            if key != "sort-order" or normalized_value in {"ping", "name", "none"}:
+                info[target_key] = normalized_value
+        elif key == "hide-url":
+            flag = _subscription_flag(value)
+            if flag is not None:
+                info["hideUrl"] = flag
     if premium:
         info["premiumFeatures"] = premium
     return "\n".join(kept), info
@@ -551,7 +707,7 @@ def _premium_subscription_url(url: str, info: dict | None) -> str:
     replacement = str(premium.get("new-url") or "").strip()
     if replacement:
         parsed = urlparse(replacement)
-        if parsed.scheme in {"http", "https"} and parsed.netloc:
+        if parsed.scheme == "https" and parsed.netloc:
             return replacement
     new_domain = str(premium.get("new-domain") or "").strip()
     if new_domain:
@@ -579,7 +735,18 @@ def _migrate_subscription_url(controller: AppController, old_url: str, new_url: 
     return True
 
 
+# Lumen asks as itself first; the compatibility profiles below are only walked
+# when the panel makes clear it does not accept the Lumen client (empty body, no
+# usable servers, a "client not supported" stub or a profile dependent status).
 _SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
+    (
+        "Lumen",
+        {
+            "User-Agent": LUMEN_SUBSCRIPTION_USER_AGENT,
+            "Accept": "text/yaml,application/yaml,application/json,text/plain,*/*",
+            "Profile-Update-Interval": "24",
+        },
+    ),
     (
         "Happ Windows",
         {
@@ -600,6 +767,22 @@ _SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
         {
             "User-Agent": "SFA/1.11.0",
             "Accept": "application/json,*/*",
+            "Profile-Update-Interval": "24",
+        },
+    ),
+    (
+        "v2rayNG",
+        {
+            "User-Agent": "v2rayNG/1.10.29",
+            "Accept": "application/json,text/plain,*/*",
+            "Profile-Update-Interval": "24",
+        },
+    ),
+    (
+        "Streisand",
+        {
+            "User-Agent": "Streisand/1.6.54",
+            "Accept": "application/json,text/plain,*/*",
             "Profile-Update-Interval": "24",
         },
     ),
@@ -635,13 +818,6 @@ _SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
             "Profile-Update-Interval": "24",
         },
     ),
-    (
-        "Lumen",
-        {
-            "User-Agent": "Lumen-Subscription/1.0",
-            "Accept": "*/*",
-        },
-    ),
 )
 
 
@@ -649,17 +825,26 @@ def _decode_profile_header(value: str) -> str:
     text = str(value or "").strip()
     if text.lower().startswith("base64:"):
         raw = text.split(":", 1)[1].strip()
-        try:
-            return base64.b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", errors="replace").strip()
-        except Exception:
-            return text
-    return text
+        for decoder in (base64.urlsafe_b64decode, base64.b64decode):
+            try:
+                decoded = decoder(raw + "=" * (-len(raw) % 4)).decode("utf-8", errors="strict").strip()
+            except (binascii.Error, ValueError, UnicodeDecodeError):
+                continue
+            if decoded:
+                return decoded[:512]
+        return text[:512]
+    return text[:512]
 
 
 def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
     info: dict = {"clientProfile": profile_name}
     try:
-        profile_title = _decode_profile_header(headers.get("profile-title", ""))
+        profile_title = _decode_profile_header(
+            _first_header(headers, "profile-title", "profile_title", "subscription-name", "subscription_name")
+        )
+        profile_description = _decode_profile_header(
+            _first_header(headers, "profile-description", "profile_description")
+        )
         support_url = _first_header(headers, "support-url", "support_url", "support-link", "support")
         profile_url = _first_header(
             headers,
@@ -677,6 +862,17 @@ def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
         provider_id = _first_header(headers, "providerid", "provider-id", "provider_id")
         update_interval = _first_header(headers, "profile-update-interval")
         content_disposition = _first_header(headers, "content-disposition")
+        support_email = _first_header(headers, "support-email", "support_email")
+        premium_url = _first_header(headers, "premium-url", "premium_url")
+        banner_text = _decode_profile_header(_first_header(headers, "banner-text", "banner_text"))
+        banner_button_text = _decode_profile_header(
+            _first_header(headers, "banner-button-text", "banner_button_text")
+        )
+        banner_button_url = _first_header(headers, "banner-button-url", "banner_button_url")
+        banner_bg_color = _first_header(headers, "banner-bg-color", "banner_bg_color")
+        banner_button_color = _first_header(headers, "banner-button-color", "banner_button_color")
+        hide_url = _first_header(headers, "hide-url", "hide_url")
+        sort_order = _first_header(headers, "sort-order", "sort_order").lower()
     except Exception:
         return info
     if not profile_title and content_disposition:
@@ -692,20 +888,41 @@ def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
                 profile_title = candidate[:160]
     if profile_title:
         info["profileTitle"] = profile_title
-    if support_url:
-        info["supportUrl"] = support_url
-    if profile_url:
-        info["profileUrl"] = profile_url
-    if telegram_url:
-        info["telegramUrl"] = telegram_url
+    if profile_description:
+        info["profileDescription"] = profile_description
+    if sanitized := _subscription_web_url(support_url):
+        info["supportUrl"] = sanitized
+    if sanitized := _subscription_web_url(profile_url):
+        info["profileUrl"] = sanitized
+    if sanitized := _subscription_web_url(telegram_url, telegram=True):
+        info["telegramUrl"] = sanitized
     if announcement:
         info["announcement"] = announcement
-    if announcement_url:
-        info["announcementUrl"] = announcement_url
+    if sanitized := _subscription_web_url(announcement_url):
+        info["announcementUrl"] = sanitized
     if provider_id:
         info["providerId"] = provider_id
     if update_interval:
         info["profileUpdateInterval"] = update_interval
+    support_email = re.sub(r"^mailto:", "", support_email, flags=re.IGNORECASE).strip()
+    if len(support_email) <= 254 and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", support_email):
+        info["supportEmail"] = support_email
+    if sanitized := _subscription_web_url(premium_url):
+        info["premiumUrl"] = sanitized
+    if banner_text:
+        info["bannerText"] = banner_text
+    if banner_button_text:
+        info["bannerButtonText"] = banner_button_text
+    if sanitized := _subscription_web_url(banner_button_url):
+        info["bannerButtonUrl"] = sanitized
+    if color := _subscription_hex_color(banner_bg_color):
+        info["bannerBgColor"] = color
+    if color := _subscription_hex_color(banner_button_color):
+        info["bannerButtonColor"] = color
+    if (flag := _subscription_flag(hide_url)) is not None:
+        info["hideUrl"] = flag
+    if sort_order in {"ping", "name", "none"}:
+        info["sortOrder"] = sort_order
     premium = {
         key: _first_header(headers, key, key.replace("-", "_"))
         for key in HAPP_PREMIUM_PARAMETERS
@@ -761,6 +978,9 @@ def _fetch_subscription_with_headers(
         )
     except SubscriptionFetcherCancelled as exc:
         raise SubscriptionFetchCancelled(str(exc)) from exc
+    effective_url = str(response.headers.get("x-lumen-effective-url") or url).strip()
+    if urlparse(url).scheme.lower() == "https" and urlparse(effective_url).scheme.lower() != "https":
+        raise RuntimeError("Subscription redirect from HTTPS to an insecure URL was blocked")
     raw = response.body
     header_value = response.headers.get("subscription-userinfo", "")
     metadata = _extract_subscription_metadata(response.headers, profile_name)
@@ -770,12 +990,12 @@ def _fetch_subscription_with_headers(
     # JSON-тело (например, формат с {"user": {...}, "links": [...]}).
     text, body_info = _extract_userinfo_from_body(text)
     # Данные из тела приоритетнее заголовка.
-    userinfo = _merge_subscription_info(userinfo, directive_info, body_info)
+    userinfo = _merge_subscription_info(userinfo, directive_info, body_info, metadata)
     decoded = _maybe_base64_decode(text)
     return (decoded or text), userinfo
 
 
-def _fetch_subscription(url: str, *, user_agent: str = "Lumen-Subscription/1.0") -> tuple[str, dict]:
+def _fetch_subscription(url: str, *, user_agent: str = LUMEN_SUBSCRIPTION_USER_AGENT) -> tuple[str, dict]:
     return _fetch_subscription_with_headers(url, "Lumen", {"User-Agent": user_agent, "Accept": "*/*"})
 
 
@@ -785,6 +1005,12 @@ def _fetch_subscription_happ(url: str) -> tuple[str, dict]:
         "Happ Windows",
         {"User-Agent": HAPP_WINDOWS_USER_AGENT, "Accept": "*/*"},
     )
+
+
+def _is_permanent_subscription_error(exc: BaseException) -> bool:
+    """404/410 не зависят от профиля клиента — перебирать User-Agent бессмысленно."""
+    match = re.search(r"http error\s+(\d{3})", str(exc).lower())
+    return bool(match) and int(match.group(1)) in {404, 410}
 
 
 def _is_tls_eof_error(exc: BaseException) -> bool:
@@ -907,6 +1133,52 @@ def _parsed_nodes_are_usable(nodes: list) -> bool:
     return False
 
 
+_SUBSCRIPTION_PLACEHOLDER_MARKERS: tuple[str, ...] = (
+    "client not supported",
+    "client is not supported",
+    "unsupported client",
+    "app not supported",
+    "unsupported app",
+    "application is not supported",
+    "update your app",
+    "update your client",
+    "use another client",
+    "клиент не поддерживается",
+    "неподдерживаемый клиент",
+    "приложение не поддерживается",
+    "обновите приложение",
+    "обновите клиент",
+    "используйте другой клиент",
+)
+
+
+def _looks_like_client_stub(text: str, nodes: list) -> bool:
+    """Ответ-заглушка вида «ваш клиент не поддерживается» вместо самой подписки."""
+    if len(nodes) > 2:
+        return False
+    raw = str(text or "")
+    if not raw.strip():
+        return True
+    try:
+        haystack = f"{raw}\n{unquote(raw)}".casefold()
+    except Exception:
+        haystack = raw.casefold()
+    return any(marker in haystack for marker in _SUBSCRIPTION_PLACEHOLDER_MARKERS)
+
+
+def _subscription_response_is_accepted(text: str, nodes: list) -> bool:
+    """Панель приняла текущий профиль клиента и вернула настоящую подписку."""
+    if not nodes or not _parsed_nodes_are_usable(nodes):
+        return False
+    return not _looks_like_client_stub(text, nodes)
+
+
+def _subscription_reject_reason(text: str, nodes: list, errors: list[str]) -> str:
+    if nodes and _parsed_nodes_are_usable(nodes) and _looks_like_client_stub(text, nodes):
+        return "панель вернула заглушку «клиент не поддерживается»"
+    return "; ".join((_node_validation_errors(nodes) or errors or [])[:2]) or "нет подходящих серверов"
+
+
 def _node_validation_errors(nodes: list) -> list[str]:
     errors: list[str] = []
     seen: set[str] = set()
@@ -989,8 +1261,10 @@ def fetch_subscription_payload(
             return "", {}, [f"Happ: {exc}"]
         if not decrypted:
             return "", {}, ["Happ: пустой результат расшифровки"]
-        if decrypted.lower().startswith(("http://", "https://")):
+        if decrypted.lower().startswith("https://"):
             url = decrypted
+        elif decrypted.lower().startswith("http://"):
+            return "", {}, ["Happ: URL подписки внутри crypt-ссылки должен использовать HTTPS"]
         else:
             return _happ_direct_payload(decrypted)
     if converter_url:
@@ -1047,11 +1321,9 @@ def fetch_subscription_payload(
             if userinfo and not first_userinfo:
                 first_userinfo = dict(userinfo)
             nodes, errors = parse_links_text(text)
-            if nodes and _parsed_nodes_are_usable(nodes):
+            if _subscription_response_is_accepted(text, nodes):
                 return text, userinfo, errors
-            validation_errors = _node_validation_errors(nodes)
-            detail = "; ".join((validation_errors or errors or [])[:2]) or "нет подходящих серверов"
-            attempts.append(f"{profile_name}: {detail}")
+            attempts.append(f"{profile_name}: {_subscription_reject_reason(text, nodes, errors)}")
         except SubscriptionFetchCancelled:
             raise
         except Exception as exc:  # noqa: BLE001 - пробуем следующий профиль клиента
@@ -1069,11 +1341,11 @@ def fetch_subscription_payload(
                     if userinfo and not first_userinfo:
                         first_userinfo = dict(userinfo)
                     nodes, errors = parse_links_text(text)
-                    if nodes and _parsed_nodes_are_usable(nodes):
+                    if _subscription_response_is_accepted(text, nodes):
                         return text, {**userinfo, "networkPath": network_path}, errors
-                    validation_errors = _node_validation_errors(nodes)
-                    detail = "; ".join((validation_errors or errors or [])[:2]) or "нет подходящих серверов"
-                    attempts.append(f"{profile_name} direct: {detail}")
+                    attempts.append(
+                        f"{profile_name} direct: {_subscription_reject_reason(text, nodes, errors)}"
+                    )
                     continue
                 except SubscriptionFetchCancelled:
                     raise
@@ -1091,6 +1363,8 @@ def fetch_subscription_payload(
                 exc,
                 use_proxy_tun=use_proxy_tun,
             )
+            if _is_permanent_subscription_error(exc):
+                break
     return "", first_userinfo, attempts or ["Не удалось загрузить подписку"]
 
 
@@ -1192,6 +1466,7 @@ def _apply_happ_premium_settings(controller: AppController, info: dict) -> list[
     if "ping-type" in premium:
         ping_method = {
             "proxy": "real",
+            "http": "http",
             "tcp": "tcping",
             "icmp": "icmp",
         }.get(str(premium["ping-type"]).strip().lower())

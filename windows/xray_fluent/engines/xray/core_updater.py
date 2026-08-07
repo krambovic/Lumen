@@ -131,16 +131,31 @@ def _normalize_channel(value: str) -> str:
     return "stable"
 
 
-def _request_json(url: str, *, proxy_url: str | None = None, cancelled=None) -> object:
-    request = Request(url, headers={"User-Agent": f"Lumen/{APP_VERSION}"})
+def _request_json(
+    url: str,
+    *,
+    proxy_url: str | None = None,
+    cancelled=None,
+    response_opened=None,
+    response_closed=None,
+) -> object:
     last_error: Exception | None = None
     transports = (proxy_url, None) if proxy_url else (None,)
     for transport_index, active_proxy in enumerate(transports):
         for attempt in range(3):
             _raise_if_cancelled(cancelled)
+            # ProxyHandler rewrites the Request in place, so a reused object
+            # keeps dialing the local proxy on the direct fallback.
+            request = Request(url, headers={"User-Agent": f"Lumen/{APP_VERSION}"})
             try:
                 with urlopen_proxy_first(request, timeout=12, proxy_url=active_proxy) as response:
-                    payload = response.read()
+                    if response_opened is not None:
+                        response_opened(response)
+                    try:
+                        payload = response.read()
+                    finally:
+                        if response_closed is not None:
+                            response_closed(response)
                 _raise_if_cancelled(cancelled)
                 return json.loads(payload.decode("utf-8"))
             except UpdateCancelled:
@@ -193,6 +208,17 @@ def _find_github_asset(release: dict, name: str) -> dict | None:
     return None
 
 
+_SAFE_ASSET_NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
+
+
+def _safe_asset_name(name: str, default: str) -> str:
+    """Reduce release metadata to a plain file name inside the download dir."""
+    candidate = Path(str(name or "")).name
+    if candidate in ("", ".", "..") or not _SAFE_ASSET_NAME_RE.fullmatch(candidate):
+        return default
+    return candidate
+
+
 def _extract_digest(value: str) -> str:
     text = value.strip().lower()
     if text.startswith("sha256:"):
@@ -201,14 +227,27 @@ def _extract_digest(value: str) -> str:
     return match.group(1) if match else ""
 
 
-def _fetch_dgst_hash(url: str, *, proxy_url: str | None = None, cancelled=None) -> str:
+def _fetch_dgst_hash(
+    url: str,
+    *,
+    proxy_url: str | None = None,
+    cancelled=None,
+    response_opened=None,
+    response_closed=None,
+) -> str:
     attempts = (proxy_url, None) if proxy_url else (None,)
     for index, active_proxy in enumerate(attempts):
         _raise_if_cancelled(cancelled)
         request = Request(url, headers={"User-Agent": f"Lumen/{APP_VERSION}"})
         try:
             with urlopen_proxy_first(request, timeout=12, proxy_url=active_proxy) as response:
-                body = response.read().decode("utf-8", errors="replace")
+                if response_opened is not None:
+                    response_opened(response)
+                try:
+                    body = response.read().decode("utf-8", errors="replace")
+                finally:
+                    if response_closed is not None:
+                        response_closed(response)
             _raise_if_cancelled(cancelled)
             return _extract_digest(body)
         except UpdateCancelled:
@@ -225,6 +264,8 @@ def resolve_xray_release(
     *,
     proxy_url: str | None = None,
     cancelled=None,
+    response_opened=None,
+    response_closed=None,
 ) -> XrayCoreRelease | None:
     normalized_channel = _normalize_channel(channel)
 
@@ -240,7 +281,13 @@ def resolve_xray_release(
             notes=info.notes,
         )
 
-    payload = _request_json(XRAY_GITHUB_RELEASES_API, proxy_url=proxy_url, cancelled=cancelled)
+    payload = _request_json(
+        XRAY_GITHUB_RELEASES_API,
+        proxy_url=proxy_url,
+        cancelled=cancelled,
+        response_opened=response_opened,
+        response_closed=response_closed,
+    )
     if not isinstance(payload, list):
         return None
     release = _pick_release_from_github([item for item in payload if isinstance(item, dict)], normalized_channel)
@@ -259,6 +306,8 @@ def resolve_xray_release(
                 str(dgst_asset.get("browser_download_url") or ""),
                 proxy_url=proxy_url,
                 cancelled=cancelled,
+                response_opened=response_opened,
+                response_closed=response_closed,
             )
 
     version = str(release.get("tag_name") or release.get("name") or "")
@@ -432,17 +481,8 @@ def check_and_update_xray_core(
     )
     if exe is None:
         exe = XRAY_PATH_DEFAULT
-    if not exe.exists():
-        return XrayCoreUpdateResult(
-            status="error",
-            message=f"xray.exe не найден: {exe}",
-            channel=_normalize_channel(channel),
-            current_version="",
-            latest_version="",
-            updated=False,
-        )
-
-    current_text = get_xray_version(str(exe)) or ""
+    core_missing = not exe.is_file()
+    current_text = "" if core_missing else (get_xray_version(str(exe)) or "")
     current_version = _extract_version(current_text)
 
     try:
@@ -451,6 +491,8 @@ def check_and_update_xray_core(
             feed_url,
             proxy_url=proxy_url,
             cancelled=cancelled,
+            response_opened=response_opened,
+            response_closed=response_closed,
         )
     except UpdateCancelled:
         raise
@@ -486,7 +528,9 @@ def check_and_update_xray_core(
         )
 
     if not apply_update:
-        if _is_newer(latest_version, current_version):
+        if core_missing:
+            message = f"Xray core не установлен. Доступна установка версии {latest_version}"
+        elif _is_newer(latest_version, current_version):
             message = f"Доступно обновление Xray до {latest_version}"
         else:
             message = f"Доступен переход Xray на {latest_version}"

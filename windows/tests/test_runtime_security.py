@@ -38,7 +38,7 @@ def test_clamp_singbox_local_inbounds_keeps_proxy_inbounds_on_loopback() -> None
             {"tag": "mixed-in", "type": "mixed", "listen": "0.0.0.0", "listen_port": 10808},
             {"tag": "discord-socks-in", "type": "socks", "listen": "::", "listen_port": 10818},
             {"tag": "__app_hybrid_protect_in", "type": "shadowsocks", "listen_port": 19090},
-            {"tag": "tun-in", "type": "tun", "interface_name": "singbox_tun"},
+            {"tag": "tun-in", "type": "tun", "interface_name": "tun0"},
         ]
     }
 

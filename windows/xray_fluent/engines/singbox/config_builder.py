@@ -4,6 +4,8 @@ from copy import deepcopy
 from typing import Any
 
 from ...wireguard_normalization import normalize_wireguard_endpoint
+from ...openvpn_import import openvpn_requires_user_auth
+from ...openvpn_normalization import normalize_openvpn_outbound, openvpn_private_key_is_encrypted
 
 from ...multiplex import apply_singbox_multiplex
 
@@ -24,6 +26,8 @@ _SUPPORTED_NATIVE_PROTOCOLS = {
     "masque",
     "openvpn",
     "naive",
+    "anytls",
+    "snell",
 }
 
 _DEFAULT_HYSTERIA_UP_MBPS = 50
@@ -70,6 +74,19 @@ def build_singbox_outbound(
         )
 
     outbound["tag"] = tag
+    if str(outbound.get("type") or "").strip().lower() == "openvpn":
+        requires_user_auth = bool(outbound.pop("lumen_requires_user_auth", False)) or openvpn_requires_user_auth(
+            str(getattr(node, "link", "") or "")
+        )
+        normalize_openvpn_outbound(outbound)
+        if openvpn_private_key_is_encrypted(outbound) and not str(outbound.get("key_password") or "").strip():
+            raise ValueError("OpenVPN private key is encrypted and requires a private key password")
+        if requires_user_auth:
+            username = str(outbound.get("username") or "").strip()
+            password = str(outbound.get("password") or "").strip()
+            if not username or not password:
+                raise ValueError("OpenVPN node requires a username and password")
+    _ensure_hysteria_speeds(outbound)
     apply_singbox_multiplex(
         outbound,
         enabled=multiplex_enabled,
@@ -121,6 +138,12 @@ def _convert_outbound(xray_ob: dict[str, Any], *, tag: str = "proxy") -> dict[st
         sb["server_port"] = int(servers.get("port") or 0)
         sb["method"] = str(servers.get("method") or "")
         sb["password"] = str(servers.get("password") or "")
+        plugin = str(servers.get("plugin") or "").strip()
+        if plugin:
+            sb["plugin"] = plugin
+        plugin_opts = str(servers.get("plugin_opts") or "").strip()
+        if plugin_opts:
+            sb["plugin_opts"] = plugin_opts
 
     elif protocol in ("socks", "http"):
         servers = (xray_settings.get("servers") or [{}])[0]
@@ -171,6 +194,13 @@ def _apply_tls(sb: dict[str, Any], stream: dict[str, Any], server: str = "") -> 
             tls["utls"] = {"enabled": True, "fingerprint": fingerprint}
         if tls_settings.get("allowInsecure", False):
             tls["insecure"] = True
+        pins = tls_settings.get("pinSHA256") or tls_settings.get("certificate_public_key_sha256")
+        if pins:
+            tls["certificate_public_key_sha256"] = (
+                [str(item) for item in pins if str(item).strip()]
+                if isinstance(pins, list)
+                else [str(pins)]
+            )
         ech_config = str(tls_settings.get("echConfigList") or "")
         if ech_config:
             if "://" in ech_config:
@@ -230,6 +260,12 @@ def _apply_transport(sb: dict[str, Any], stream: dict[str, Any]) -> None:
         headers = dict(ws_settings.get("headers") or {})
         if headers:
             transport["headers"] = headers
+        max_early_data = ws_settings.get("maxEarlyData")
+        if max_early_data not in (None, ""):
+            transport["max_early_data"] = int(max_early_data)
+        early_data_header = str(ws_settings.get("earlyDataHeaderName") or "").strip()
+        if early_data_header:
+            transport["early_data_header_name"] = early_data_header
         sb["transport"] = transport
         return
 
@@ -242,6 +278,11 @@ def _apply_transport(sb: dict[str, Any], stream: dict[str, Any]) -> None:
         path = str(http_settings.get("path") or "")
         if path:
             transport["path"] = path
+        if isinstance(http_settings.get("headers"), dict):
+            transport["headers"] = dict(http_settings["headers"])
+        method = str(http_settings.get("method") or "").strip()
+        if method:
+            transport["method"] = method
         sb["transport"] = transport
         return
 
@@ -251,6 +292,9 @@ def _apply_transport(sb: dict[str, Any], stream: dict[str, Any]) -> None:
         service_name = str(grpc_settings.get("serviceName") or "")
         if service_name:
             transport["service_name"] = service_name
+        authority = str(grpc_settings.get("authority") or "").strip()
+        if authority:
+            transport["authority"] = authority
         sb["transport"] = transport
         return
 

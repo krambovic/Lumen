@@ -1,26 +1,11 @@
 from __future__ import annotations
 
+import json
+import threading
 from types import SimpleNamespace
 
 import xray_fluent.engines.singbox.manager as manager_module
 from xray_fluent.engines.singbox.manager import SingBoxManager
-
-
-def test_routine_connection_logs_can_be_normalized_to_v2rayn_style_access_lines() -> None:
-    manager = SingBoxManager()
-
-    assert (
-        manager._format_access_log_line(
-            "+0300 INFO [12345 1ms] inbound/tun[tun-in]: inbound connection to chatgpt.com:443"
-        )
-        == ""
-    )
-    assert (
-        manager._format_access_log_line(
-            "+0300 INFO [12345 25ms] outbound/vless[proxy]: outbound connection to chatgpt.com:443"
-        )
-        == "[singbox-access] accepted tcp:chatgpt.com:443 [tun -> proxy]"
-    )
 
 
 def test_routine_connection_logs_are_suppressed_when_not_normalized() -> None:
@@ -85,7 +70,7 @@ def test_windows_tun_readiness_uses_single_persistent_probe(monkeypatch) -> None
     proc = SimpleNamespace(pid=1234, poll=lambda: None)
     monkeypatch.setattr(manager_module, "run_text_pumped", fake_run)
 
-    assert SingBoxManager._wait_for_windows_tun_ready(proc, "singbox_tun", 8.0)
+    assert SingBoxManager._wait_for_windows_tun_ready(proc, "tun0", 8.0)
     assert len(calls) == 1
     assert "Get-NetIPAddress" in calls[0][0][-1]
 
@@ -100,7 +85,7 @@ def test_native_core_ready_marker_skips_slow_windows_probe(monkeypatch) -> None:
 
     monkeypatch.setattr(manager, "_wait_for_windows_tun_ready", unexpected_probe)
 
-    assert manager._wait_until_tun_ready(proc, "singbox_tun", max_wait=1.0)
+    assert manager._wait_until_tun_ready(proc, "tun0", max_wait=1.0)
 
 
 def test_direct_masque_confirmation_uses_native_handshake_marker() -> None:
@@ -273,6 +258,60 @@ def test_element_not_found_is_a_retryable_wintun_startup_race() -> None:
 
     assert manager._startup_error_is_retryable()
     assert manager._startup_error_is_stale_adapter()
+
+
+def test_ipv6_auto_disable_strips_the_ipv6_prefix_the_planner_emits(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "singbox.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "inbounds": [
+                    {
+                        "type": "tun",
+                        "tag": "tun-in",
+                        "address": ["172.18.0.1/30", "fdfe:dcba:9876::1/126"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(manager_module, "SINGBOX_CONFIG_FILE", config_path)
+
+    manager = SingBoxManager()
+    logs: list[str] = []
+    manager.log_received.connect(logs.append)
+
+    manager._disable_ipv6_in_singbox_config()
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert payload["inbounds"][0]["address"] == ["172.18.0.1/30"]
+    assert not any("Failed to auto-disable" in line for line in logs)
+
+
+def test_startup_classifiers_survive_concurrent_reader_output() -> None:
+    manager = SingBoxManager()
+    for index in range(100):
+        manager._last_output_lines.append(f"INFO line {index}")
+
+    stop = threading.Event()
+
+    def append_output() -> None:
+        while not stop.is_set():
+            with manager._lock:
+                manager._last_output_lines.append("INFO more output")
+
+    writer = threading.Thread(target=append_output, name="fake-output-reader", daemon=True)
+    writer.start()
+    try:
+        for _ in range(200):
+            assert manager._startup_error_is_retryable() is False
+            assert manager._startup_error_is_stale_adapter() is False
+            assert manager._startup_error_is_ipv6_disabled() is False
+    finally:
+        stop.set()
+        writer.join(2.0)
 
 
 def test_reader_does_not_report_transient_startup_exit_before_retry() -> None:

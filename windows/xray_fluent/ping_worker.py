@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import socket
 import os
+import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
@@ -196,6 +197,13 @@ def _direct_dns_resolve_a(domain: str, dns_server: str, timeout: float = 3.0) ->
     return ""
 
 
+# A ping run and a speed test can hold a bypass at the same time, so temporary
+# host routes are refcounted process-wide: an IP is only deleted once the last
+# holder releases it.
+_ROUTE_REFS_LOCK = threading.Lock()
+_ROUTE_REFS: dict[tuple[str, str], int] = {}
+
+
 class _WindowsPingBypass:
     def __init__(self, nodes: list[Node], enabled: bool):
         self._nodes = nodes
@@ -218,6 +226,28 @@ class _WindowsPingBypass:
         if result.returncode == 0:
             return True
         return _has_direct_host_route(ip, self._gateway)
+
+    def _acquire_route(self, ip: str) -> bool:
+        key = (self._gateway, ip)
+        with _ROUTE_REFS_LOCK:
+            refs = _ROUTE_REFS.get(key, 0)
+            if refs <= 0:
+                if not self._route_add(ip):
+                    return False
+                _ROUTE_REFS[key] = 1
+                return True
+            _ROUTE_REFS[key] = refs + 1
+            return True
+
+    def _release_route(self, ip: str) -> None:
+        key = (self._gateway, ip)
+        with _ROUTE_REFS_LOCK:
+            refs = _ROUTE_REFS.get(key, 0)
+            if refs > 1:
+                _ROUTE_REFS[key] = refs - 1
+                return
+            _ROUTE_REFS.pop(key, None)
+            self._route_delete(ip)
 
     def _route_delete(self, ip: str) -> None:
         try:
@@ -254,7 +284,7 @@ class _WindowsPingBypass:
         # Route the public resolvers directly so DNS lookups bypass the TUN
         # (and sing-box fake-ip) while we resolve the real server addresses.
         for dns_server in _DIRECT_DNS_SERVERS:
-            if self._route_add(dns_server):
+            if self._acquire_route(dns_server):
                 self._added_ips.add(dns_server)
                 self._dns_routes.add(dns_server)
 
@@ -272,7 +302,7 @@ class _WindowsPingBypass:
             if ip in self._added_ips or ip in self._covered_ips:
                 self._covered_ips.add(ip)
                 continue
-            if self._route_add(ip):
+            if self._acquire_route(ip):
                 self._added_ips.add(ip)
                 self._covered_ips.add(ip)
         return self
@@ -291,7 +321,7 @@ class _WindowsPingBypass:
 
     def __exit__(self, *_exc) -> None:
         for ip in self._added_ips:
-            self._route_delete(ip)
+            self._release_route(ip)
         self._added_ips.clear()
         self._dns_routes.clear()
         self._covered_ips.clear()
@@ -401,7 +431,8 @@ class PingWorker(QThread):
                 for future in pending:
                     future.cancel()
         finally:
+            # No measurement may outlive its direct host route.
+            executor.shutdown(wait=True, cancel_futures=True)
             bypass.__exit__(None, None, None)
-            executor.shutdown(wait=False, cancel_futures=True)
 
         self.completed.emit()

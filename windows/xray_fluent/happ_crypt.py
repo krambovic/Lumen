@@ -239,6 +239,8 @@ def _c51_block_pair_swap(region: str, length: int) -> str:
 
 def _c51_extract_nonce(payload: str) -> str:
     n = payload[4:16]
+    if len(n) < 12:
+        return ""
     return (
         n[2] + n[3] + n[0] + n[1] + n[6] + n[7]
         + n[4] + n[5] + n[10] + n[11] + n[8] + n[9]
@@ -290,10 +292,11 @@ def _c51_candidates(payload: str) -> list[tuple[str, str, str, bool]]:
     if n > 0 and len(payload) >= 20 + n + 684:
         url_region = payload[20:20 + n]
         enc_region = payload[20 + n:20 + n + 684]
-        skip = ((n - 1) // 4) * 4 + 1
-        url_b64 = payload[17] + _c51_block_pair_swap(url_region, n - 1)
-        enc_str = url_region[skip] + _c51_block_pair_swap(enc_region, 683)
-        push(url_b64, enc_str, True)
+        skip = n - 1 if (n - 1) % 4 == 0 else ((n - 1) // 4) * 4 + 1
+        if skip < len(url_region):
+            url_b64 = payload[17] + _c51_block_pair_swap(url_region, n - 1)
+            enc_str = url_region[skip] + _c51_block_pair_swap(enc_region, 683)
+            push(url_b64, enc_str, True)
 
     for trailer_len in range(4, 9):
         url_len = len(payload) - 20 - 684 - trailer_len

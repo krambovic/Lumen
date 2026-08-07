@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from ipaddress import ip_network
 import json
 import os
 import re
@@ -19,12 +20,15 @@ from ...constants import (
     RUNTIME_DIR,
     SINGBOX_CLASH_API_PORT,
     SINGBOX_CONFIG_FILE,
+    SINGBOX_LEGACY_TUN_INTERFACE_NAMES,
     SINGBOX_PATH_DEFAULT,
+    SINGBOX_TUN_INTERFACE_NAME,
 )
 from ...path_utils import resolve_configured_path
 from ...process_conflicts import is_process_name_running
 from ...subprocess_utils import (
     decode_output,
+    is_windows_shutting_down,
     kill_processes_by_path,
     pump_qt_events,
     result_output_text,
@@ -33,6 +37,20 @@ from ...subprocess_utils import (
 )
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+_MANAGED_TUN_ADAPTER_NAMES_PS = ",".join(
+    f"'{name}'" for name in (*SINGBOX_LEGACY_TUN_INTERFACE_NAMES, SINGBOX_TUN_INTERFACE_NAME)
+)
+_MANAGED_TUN_ADAPTER_FILTER_PS = (
+    f"($_.Name -ne '{SINGBOX_TUN_INTERFACE_NAME}') -or "
+    "($_.InterfaceDescription -match '(?i)wintun|sing.?box')"
+)
+
+
+def _is_ipv4_prefix(value: Any) -> bool:
+    try:
+        return ip_network(str(value), strict=False).version == 4
+    except ValueError:
+        return False
 
 
 class SingBoxManager(QObject):
@@ -56,12 +74,9 @@ class SingBoxManager(QObject):
         # initialization error even when subsequent DNS requests repeat the
         # shorter "endpoint/tunnel not initialized" message.
         self._last_output_lines: deque[str] = deque(maxlen=100)
-        self._suppressed_noisy_lines = 0
-        self._last_noisy_summary_at = 0.0
         self._last_exit_code: int | None = None
         self._exe_path: Path | None = None
         self._tun_mode = True
-        self._access_traces: dict[str, dict[str, str]] = {}
         # sing-box's own ready marker is a better startup boundary than a
         # separate PowerShell route/DNS probe.  The latter used to keep the UI
         # in "connecting" for several seconds after real traffic was already
@@ -173,7 +188,7 @@ class SingBoxManager(QObject):
             self._running = False
             self.state_changed.emit(False)
 
-        # Kill only orphaned processes before start. The stable singbox_tun
+        # Kill only orphaned processes before start. The stable tun0
         # adapter is reused by Wintun; retry cleanup handles real conflicts.
         self._kill_orphaned(exe)
 
@@ -185,9 +200,8 @@ class SingBoxManager(QObject):
         self._starting = True
         self._startup_failure_reported = False
         self._runtime_error_reported = False
-        self._last_output_lines.clear()
-        self._suppressed_noisy_lines = 0
-        self._last_noisy_summary_at = time.monotonic()
+        with self._lock:
+            self._last_output_lines.clear()
 
         # Retry only actual Wintun/socket races. Profile initialization errors
         # are deterministic for a given config, so repeating the whole startup
@@ -199,7 +213,8 @@ class SingBoxManager(QObject):
             self.log_received.emit(
                 f"[sing-box] startup attempt {attempt + 1}/{max_attempts}, {runtime_label}"
             )
-            self._last_output_lines.clear()
+            with self._lock:
+                self._last_output_lines.clear()
             self._core_ready_event.clear()
             self._profile_ready_event.clear()
             self._profile_error_event.clear()
@@ -415,8 +430,9 @@ class SingBoxManager(QObject):
                         "-NonInteractive",
                         "-Command",
                         (
-                            "$active = @(Get-NetAdapter -Name @('xftun*','singbox_tun') -ErrorAction SilentlyContinue "
-                            "| Where-Object { $_.Status -notin @('Disabled','Not Present') }); "
+                            f"$active = @(Get-NetAdapter -Name @({_MANAGED_TUN_ADAPTER_NAMES_PS}) -ErrorAction SilentlyContinue "
+                            f"| Where-Object {{ ({_MANAGED_TUN_ADAPTER_FILTER_PS}) -and "
+                            "$_.Status -notin @('Disabled','Not Present') }); "
                             "if ($active.Count -eq 0) { exit 0 } else { exit 1 }"
                         ),
                     ],
@@ -453,11 +469,12 @@ class SingBoxManager(QObject):
     @staticmethod
     def cleanup_orphaned_tun_adapters(max_wait: float = 5.0) -> None:
         """Remove routes from app-owned sing-box TUN adapters and disable them."""
-        if os.name != "nt":
+        if os.name != "nt" or is_windows_shutting_down():
             return
         script = (
             "$ErrorActionPreference = 'SilentlyContinue'; "
-            "$adapters = @(Get-NetAdapter -Name @('xftun*','singbox_tun') -ErrorAction SilentlyContinue); "
+            f"$adapters = @(Get-NetAdapter -Name @({_MANAGED_TUN_ADAPTER_NAMES_PS}) -ErrorAction SilentlyContinue "
+            f"| Where-Object {{ {_MANAGED_TUN_ADAPTER_FILTER_PS} }}); "
             "foreach ($adapter in $adapters) { "
             "$alias = $adapter.Name; "
             "Get-NetRoute -InterfaceAlias $alias -ErrorAction SilentlyContinue "
@@ -508,7 +525,8 @@ class SingBoxManager(QObject):
                     for line in text.splitlines():
                         clean = line.rstrip()
                         if clean:
-                            self._last_output_lines.append(clean)
+                            with self._lock:
+                                self._last_output_lines.append(clean)
                             self._observe_startup_line(clean)
                             # Windows can send captured DNS and connection
                             # traffic to the adapter before sing-box prints its
@@ -766,6 +784,12 @@ class SingBoxManager(QObject):
             return False
         return result.returncode == 0 and proc.poll() is None
 
+    def _output_snapshot(self) -> tuple[str, ...]:
+        # The reader thread appends while start()/stop() classify; iterate a copy
+        # so CPython never raises "deque mutated during iteration".
+        with self._lock:
+            return tuple(self._last_output_lines)
+
     def _startup_error_is_retryable(self) -> bool:
         needles = (
             "already exists",
@@ -776,7 +800,7 @@ class SingBoxManager(QObject):
             "bind:",
             "element not found",
         )
-        for line in self._last_output_lines:
+        for line in self._output_snapshot():
             text = line.lower()
             if any(needle in text for needle in needles):
                 return True
@@ -784,7 +808,7 @@ class SingBoxManager(QObject):
 
     def _profile_outbound_not_ready_message(self) -> str:
         marker_detail = ""
-        for line in reversed(self._last_output_lines):
+        for line in reversed(self._output_snapshot()):
             text = str(line).lower()
             if "tunnel not initialized" in text or "endpoint not initialized" in text:
                 marker_detail = str(line).strip()
@@ -802,7 +826,7 @@ class SingBoxManager(QObject):
             "open existing adapter",
             "element not found",
         )
-        for line in self._last_output_lines:
+        for line in self._output_snapshot():
             text = line.lower()
             if any(needle in text for needle in needles):
                 return True
@@ -811,26 +835,31 @@ class SingBoxManager(QObject):
     def _startup_error_is_ipv6_disabled(self) -> bool:
         return any(
             "set ipv6 address" in line.lower()
-            for line in self._last_output_lines
+            for line in self._output_snapshot()
         )
 
     def _disable_ipv6_in_singbox_config(self) -> None:
         try:
-            from xray_fluent.utils import SINGBOX_CONFIG_FILE
-            import json
             with open(SINGBOX_CONFIG_FILE, "r", encoding="utf-8") as f:
                 config = json.load(f)
             modified = False
             for inbound in config.get("inbounds", []):
-                if isinstance(inbound, dict) and inbound.get("type") == "tun":
-                    inbound["inet6_address"] = []
+                if not isinstance(inbound, dict) or inbound.get("type") != "tun":
+                    continue
+                inbound.pop("inet6_address", None)
+                addresses = inbound.get("address")
+                if not isinstance(addresses, list):
+                    continue
+                ipv4_only = [prefix for prefix in addresses if _is_ipv4_prefix(prefix)]
+                if ipv4_only != addresses:
+                    inbound["address"] = ipv4_only
                     modified = True
             if modified:
                 with open(SINGBOX_CONFIG_FILE, "w", encoding="utf-8") as f:
                     json.dump(config, f, indent=2, ensure_ascii=False)
                 self.log_received.emit("[sing-box] Automatically disabled IPv6 for TUN due to broken Windows IPv6 stack.")
         except Exception as e:
-            self.log_received.emit(f"[sing-box] Failed to auto-disable TUN IPv6: {e}")
+            self.log_received.emit(f"[sing-box] Failed to auto-disable TUN IPv6: {type(e).__name__}: {e}")
 
     def _tun_not_ready_message(self, tun_interface_name: str) -> str:
         markers = (
@@ -839,7 +868,7 @@ class SingBoxManager(QObject):
             "wintun",
             "create adapter",
         )
-        for line in self._last_output_lines:
+        for line in self._output_snapshot():
             text = str(line).lower()
             if any(marker in text for marker in markers):
                 return (
@@ -861,7 +890,8 @@ class SingBoxManager(QObject):
         startup: bool,
     ) -> str:
         stage = "during startup" if startup else "unexpectedly"
-        detail = self._last_output_lines[-1].strip() if self._last_output_lines else ""
+        lines = self._output_snapshot()
+        detail = lines[-1].strip() if lines else ""
         if detail:
             return f"sing-box exited {stage}: {detail}"
         if exit_code is None:
@@ -931,71 +961,6 @@ class SingBoxManager(QObject):
         if any(marker in text for marker in ("error", "failed", "fatal", "panic")):
             return False
         return cls._is_noisy_runtime_line(line)
-
-    _TRACE_RE = re.compile(r"\[(?P<trace>\d+)\s+[^\]]+\]\s+(?P<body>.+)$")
-    _INBOUND_RE = re.compile(
-        r"inbound/(?P<type>[^\[]+)\[(?P<tag>[^\]]+)\]: inbound (?P<packet>packet )?connection to (?P<dest>\S+)"
-    )
-    _OUTBOUND_RE = re.compile(
-        r"outbound/[^\[]+\[(?P<tag>[^\]]+)\]: outbound (?P<packet>packet )?connection to (?P<dest>\S+)"
-    )
-
-    def _format_access_log_line(self, line: str) -> str:
-        match = self._TRACE_RE.search(line)
-        if not match:
-            return ""
-        trace = match.group("trace")
-        body = match.group("body")
-        inbound = self._INBOUND_RE.search(body)
-        if inbound:
-            tag = inbound.group("tag")
-            source = self._access_source_for_inbound(tag, inbound.group("type"))
-            network = "udp" if inbound.group("packet") else "tcp"
-            self._access_traces[trace] = {
-                "source": source,
-                "network": network,
-                "dest": inbound.group("dest"),
-                "at": str(time.monotonic()),
-            }
-            self._trim_access_traces()
-            return ""
-        outbound = self._OUTBOUND_RE.search(body)
-        if not outbound:
-            return ""
-        info = self._access_traces.pop(trace, {})
-        source = info.get("source") or "tun"
-        network = info.get("network") or ("udp" if outbound.group("packet") else "tcp")
-        dest = info.get("dest") or outbound.group("dest")
-        target = outbound.group("tag") or "proxy"
-        return f"[singbox-access] accepted {network}:{dest} [{source} -> {target}]"
-
-    @staticmethod
-    def _access_source_for_inbound(tag: str, inbound_type: str) -> str:
-        tag = str(tag or "").strip()
-        inbound_type = str(inbound_type or "").strip().lower()
-        if tag == "tun-in" or inbound_type == "tun":
-            return "tun"
-        if tag == "http-in" or inbound_type == "http":
-            return "http"
-        if tag in {"socks-in", "mixed-in"} or inbound_type in {"socks", "mixed"}:
-            return "socks"
-        if tag == "discord-socks-in":
-            return "discord"
-        return tag or inbound_type or "inbound"
-
-    def _trim_access_traces(self) -> None:
-        if len(self._access_traces) <= 512:
-            return
-        now = time.monotonic()
-        stale = [
-            trace
-            for trace, info in self._access_traces.items()
-            if now - float(info.get("at") or 0.0) > 30.0
-        ]
-        for trace in stale:
-            self._access_traces.pop(trace, None)
-        while len(self._access_traces) > 512:
-            self._access_traces.pop(next(iter(self._access_traces)), None)
 
 
 def get_singbox_version(singbox_path: str) -> str | None:

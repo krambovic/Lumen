@@ -25,6 +25,17 @@ data/*
 data/external/*
 !data/external/droute/
 !data/external/droute/**
+windows/data/*
+!windows/data/templates/
+!windows/data/templates/**
+!windows/data/external/
+!windows/data/external/**
+
+# Local backup artifacts
+*.bak
+*.bak[0-9]*
+*.bak_*
+*.broken_dns
 
 # Android signing (never commit)
 keystore.properties

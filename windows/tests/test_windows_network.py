@@ -9,7 +9,7 @@ from xray_fluent.windows_network import (
 def test_select_windows_route_context_ignores_tun_and_keeps_physical_dns() -> None:
     adapters = [
         WindowsAdapterSnapshot(
-            alias="singbox_tun",
+            alias="tun0",
             description="Wintun Userspace Tunnel",
             interface_index=8,
             gateway="172.18.0.1",

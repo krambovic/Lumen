@@ -7,12 +7,14 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen"
-APP_VERSION = "1.9.6"
+APP_VERSION = "1.9.7"
 STATE_SCHEMA_VERSION = 1
 SUBSCRIPTION_FETCHER_EXE_NAME = "lumen-subscription-fetcher.exe"
 
 DIAGNOSTICS_UPLOAD_URL = "https://diagnostics.lumen-kvn.eu.cc/api/ingest"
-DIAGNOSTICS_SECRET = "07f7d005166286e354645dcbce892998987bd8d8d20f296026dbb01ff05a9b8a"
+# A secret shipped in every client authenticates nothing; ingest traffic must be
+# treated as untrusted server-side. Empty disables the X-Diag-Signature header.
+DIAGNOSTICS_SECRET = ""
 
 PROXY_HOST = "127.0.0.1"
 DEFAULT_SOCKS_PORT = 10808
@@ -59,6 +61,8 @@ SINGBOX_DEFAULT_CONFIG_NAME = "default.json"
 SINGBOX_PATH_DEFAULT = BASE_DIR / "core" / "sing-box.exe"
 SINGBOX_CLASH_API_PORT = 19090
 SINGBOX_XRAY_RELAY_PORT = 11808
+SINGBOX_TUN_INTERFACE_NAME = "tun0"
+SINGBOX_LEGACY_TUN_INTERFACE_NAMES = ("singbox_tun", "xftun*")
 
 SPEED_TEST_DEFAULT_URL = "https://cachefly.cachefly.net/50mb.test"
 SPEED_TEST_PING_URL = "https://www.google.com/generate_204"
@@ -72,7 +76,7 @@ SPEED_TEST_SLOW_GRACE_SECONDS = 2.5
 SPEED_TEST_MIN_BYTES_AFTER_GRACE = 128 * 1024
 SPEED_TEST_MIN_MBPS_AFTER_GRACE = 0.2
 
-PING_METHODS = ("tcping", "icmp", "real")
+PING_METHODS = ("tcping", "icmp", "http", "real")
 ICMP_PING_TIMEOUT_MS = 1500
 SPEED_TEST_MAX_CONCURRENCY = 32
 

@@ -24,6 +24,10 @@ REDACT_KEYS = {
     "uuid",
 }
 
+# Substring matches, so fields added later (password_hash, salt, api_key, ...)
+# are redacted by default instead of leaking into an uploaded bundle.
+REDACT_KEY_PATTERNS = ("password", "passphrase", "hash", "salt", "secret", "token", "key")
+
 _DOMAIN_LOG_FILES = {
     "errors": "errors.log",
     "core": "core.log",
@@ -48,11 +52,20 @@ def _normalize_include(include: dict | None) -> dict:
     return {key: bool(include.get(key, False)) for key in _DEFAULT_INCLUDE}
 
 
+def _should_redact(key) -> bool:
+    if not isinstance(key, str):
+        return False
+    if key in REDACT_KEYS:
+        return True
+    lowered = key.lower()
+    return any(pattern in lowered for pattern in REDACT_KEY_PATTERNS)
+
+
 def _redact(value):
     if isinstance(value, dict):
         redacted = {}
         for key, item in value.items():
-            if key in REDACT_KEYS:
+            if _should_redact(key):
                 redacted[key] = "***"
             else:
                 redacted[key] = _redact(item)
@@ -65,6 +78,7 @@ def _redact(value):
 def _sanitize_state(state_dict: dict) -> dict:
     """Redact secrets and reduce nodes/subscriptions to names only"""
     safe = _redact(state_dict)
+    safe.pop("security", None)
     nodes = safe.get("nodes")
     if isinstance(nodes, list):
         safe["nodes"] = [
