@@ -231,6 +231,29 @@ def _install_legacy_update_bridge(app_dir: Path = APP_DIR) -> Path:
     return target
 
 
+def _verify_packaged_launcher(app_dir: Path = APP_DIR) -> None:
+    """Import the packaged GUI bootstrap without starting services or cores."""
+    executable = app_dir / f"{APP_NAME}.exe"
+    output = BUILD_DIR / "startup-probe.txt"
+    output.unlink(missing_ok=True)
+    try:
+        result = subprocess.run(
+            [str(executable), "--startup-probe-file", str(output)],
+            cwd=str(app_dir),
+            check=False,
+            timeout=45,
+        )
+        expected = _read_app_version()
+        actual = output.read_text(encoding="utf-8").strip() if output.is_file() else ""
+        if result.returncode != 0 or actual != expected:
+            raise RuntimeError(
+                "Packaged launcher startup probe failed "
+                f"(exit={result.returncode}, version={actual or 'missing'})"
+            )
+    finally:
+        output.unlink(missing_ok=True)
+
+
 # ------------------------------------------------------------------
 def ensure_venv() -> None:
     if VENV_PYTHON.exists():
@@ -331,6 +354,7 @@ def build_exe() -> None:
         if notice_file.is_file():
             shutil.copy2(str(notice_file), str(APP_DIR / notice_file.name))
 
+    _verify_packaged_launcher(APP_DIR)
     _print(f"Build complete: {APP_DIR / (APP_NAME + '.exe')}")
 
 

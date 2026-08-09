@@ -60,6 +60,7 @@ def test_portable_zip_has_flat_root_for_legacy_updater(tmp_path: Path, monkeypat
 def test_installer_installs_transition_bridge_for_legacy_updater() -> None:
     installer = build_qml.INNO_SCRIPT.read_text(encoding="utf-8")
 
+    assert "LicenseFile=..\\..\\LICENSE" in installer
     assert "UsePreviousAppDir=no" in installer
     assert "UsePreviousGroup=no" in installer
     assert 'Excludes: "zapret\\exe\\*.sys,portable"' in installer
@@ -104,3 +105,24 @@ def test_only_current_brand_assets_are_tracked() -> None:
     assert (build_qml.ASSETS_DIR / "Lumen.png").is_file()
     assert not (build_qml.ASSETS_DIR / "LumenKVN.ico").exists()
     assert not (build_qml.ASSETS_DIR / "LumenKVN.png").exists()
+
+
+def test_packaged_launcher_runs_without_forced_elevation() -> None:
+    spec = build_qml.SPEC_FILE.read_text(encoding="utf-8")
+    manifest = (build_qml.ROOT / "app.manifest").read_text(encoding="utf-8")
+
+    assert "uac_admin=False" in spec
+    assert 'manifest=str(root / "app.manifest")' in spec
+    assert "requireAdministrator" not in manifest
+    assert 'requestedExecutionLevel level="asInvoker"' in manifest
+    assert "win32comext" not in spec
+
+
+def test_release_workflow_replaces_existing_assets() -> None:
+    workflow = (build_qml.REPO_ROOT / ".github" / "workflows" / "build.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "softprops/action-gh-release@v3" in workflow
+    assert "overwrite_files: true" in workflow
+    assert "RELEASE_EXISTS" not in workflow

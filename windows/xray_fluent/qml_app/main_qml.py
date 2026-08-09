@@ -422,6 +422,14 @@ def _notify_primary_instance(
         from PyQt6.QtNetwork import QLocalSocket
     except Exception:
         return False
+    if sys.platform == "win32":
+        try:
+            # The process that the user just launched is allowed to put a window
+            # in the foreground. Transfer that permission before asking the
+            # already-running instance to restore its window from the tray.
+            ctypes.windll.user32.AllowSetForegroundWindow(ctypes.c_uint(0xFFFFFFFF))
+        except Exception:
+            pass
     socket = QLocalSocket()
     socket.connectToServer(server_name, QIODevice.OpenModeFlag.WriteOnly)
     if not socket.waitForConnected(250):
@@ -430,11 +438,42 @@ def _notify_primary_instance(
     try:
         socket.write(encode_instance_message(launch_arguments))
         socket.flush()
-        socket.waitForBytesWritten(250)
+        if not socket.waitForBytesWritten(500) and socket.bytesToWrite() > 0:
+            socket.abort()
+            return False
+    except Exception:
+        socket.abort()
+        return False
+    try:
+        # The primary closes the connection after it has read the activation
+        # request. Waiting briefly prevents the launcher from disappearing
+        # before Windows has granted and consumed foreground permission.
+        if socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
+            socket.waitForDisconnected(750)
     except Exception:
         pass
-    socket.disconnectFromServer()
+    if socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
+        socket.disconnectFromServer()
     return True
+
+
+def _show_single_instance_unavailable() -> None:
+    """Explain a stale or inaccessible primary instance instead of exiting silently."""
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            (
+                "Другой экземпляр Lumen уже запущен, но не отвечает.\n\n"
+                "Закройте Lumen через значок в области уведомлений или Диспетчер задач, "
+                "затем запустите эту копию снова."
+            ),
+            "Lumen уже запущен",
+            0x30,
+        )
+    except Exception:
+        pass
 
 
 def _create_windows_single_instance_mutex() -> tuple[object | None, bool]:
@@ -506,35 +545,47 @@ def _create_single_instance(app, launch_arguments=None):
     arguments = list(launch_arguments if launch_arguments is not None else sys.argv)
     relaunching = any(flag in arguments[1:] for flag in ("--relaunch-as-admin", "--relaunched"))
 
-    if _legacy_single_instance_running() or _notify_primary_instance("LumenKVN.SingleInstance", arguments):
+    legacy_running = _legacy_single_instance_running()
+    legacy_notified = _notify_primary_instance("LumenKVN.SingleInstance", arguments)
+    if legacy_running or legacy_notified:
         deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            if _notify_primary_instance("LumenKVN.SingleInstance", arguments):
+        while not legacy_notified and time.monotonic() < deadline:
+            legacy_notified = _notify_primary_instance("LumenKVN.SingleInstance", arguments)
+            if legacy_notified:
                 break
             time.sleep(0.1)
+        if not legacy_notified:
+            _show_single_instance_unavailable()
         return None, False
 
     mutex_handle, owns_mutex = _acquire_single_instance_mutex(relaunching)
     if not owns_mutex:
         _close_mutex_handle(mutex_handle)
         deadline = time.monotonic() + 5.0
+        notified = False
         while time.monotonic() < deadline:
-            if _notify_primary_instance(server_name, arguments):
+            notified = _notify_primary_instance(server_name, arguments)
+            if notified:
                 break
             time.sleep(0.1)
+        if not notified:
+            _show_single_instance_unavailable()
         return None, False
 
     lock = QLockFile(str(Path(tempfile.gettempdir()) / "Lumen.SingleInstance.lock"))
     lock.setStaleLockTime(30_000)
     deadline = time.monotonic() + (20.0 if relaunching else 0.5)
+    notified = False
 
     while not lock.tryLock(0):
         if relaunching:
             lock.removeStaleLockFile()
         else:
-            _notify_primary_instance(server_name, arguments)
+            notified = _notify_primary_instance(server_name, arguments) or notified
         if time.monotonic() >= deadline:
             _close_mutex_handle(mutex_handle)
+            if not notified:
+                _show_single_instance_unavailable()
             return None, False
         time.sleep(0.1)
 
@@ -554,7 +605,8 @@ def _create_single_instance(app, launch_arguments=None):
     if not server.listen(server_name):
         lock.unlock()
         _close_mutex_handle(mutex_handle)
-        _notify_primary_instance(server_name, arguments)
+        if not _notify_primary_instance(server_name, arguments):
+            _show_single_instance_unavailable()
         return None, False
     server._single_instance_lock = lock
     server._single_instance_mutex_handle = mutex_handle
@@ -562,10 +614,25 @@ def _create_single_instance(app, launch_arguments=None):
 
 
 def _activate_window(window) -> None:
+    hwnd = 0
     try:
+        window.setVisible(True)
+        window.showNormal()
         window.show()
         window.raise_()
         window.requestActivate()
+    except Exception:
+        pass
+    if sys.platform != "win32":
+        return
+    try:
+        hwnd = int(window.winId())
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
     except Exception:
         pass
 

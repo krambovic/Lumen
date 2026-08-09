@@ -10,6 +10,8 @@
 - fix: fixed VPN client conflict handling and false own-Xray detection
 - fix: fixed Windows 10 autostart visibility, Mica logging and window frame layout
 - fix: prevented PowerShell cleanup errors during Windows shutdown
+- fix: fixed portable startup, single-instance activation and non-admin launch
+- fix: fixed installer builds and replacement of existing release assets
 - security: protected stored proxy credentials with Windows DPAPI
 - security: hardened updates, resource hashes and diagnostics redaction
 

@@ -59,9 +59,6 @@ a = Analysis(
         "PyQt6.QtOpenGL",
         "PyQt6.QtSvg",
         "PyQt6.QtNetwork",
-        "win32comext",
-        "win32comext.shell",
-        "win32comext.shell.shellcon",
         "encodings.idna",
         "qrcode",
         "qrcode.image.pil",
@@ -93,10 +90,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    uac_admin=True,
+    # Lumen can browse/import/test servers without elevation. Operations that
+    # change system proxy, TUN or zapret request an explicit admin relaunch in
+    # the UI, so the portable launcher itself must remain usable asInvoker.
+    uac_admin=False,
     icon=[str(root / "assets" / "Lumen.ico")],
     version=str(root / "build" / "Lumen-version-info.txt"),
-    manifest=str(root / "uac_admin.manifest"),
+    manifest=str(root / "app.manifest"),
 )
 coll = COLLECT(
     exe,
