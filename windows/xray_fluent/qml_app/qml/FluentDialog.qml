@@ -13,6 +13,9 @@ Dialog {
     property bool showOkButton: true
     property bool showCancelButton: true
     property bool okEnabled: true
+    property string dangerText: ""
+    property bool showDangerButton: dangerText.length > 0
+    signal dangerClicked()
 
     parent: Overlay.overlay
     anchors.centerIn: parent
@@ -58,6 +61,16 @@ Dialog {
             kind: "ghost"
             text: control.cancelText
             onClicked: control.reject()
+            Layout.rightMargin: control.showOkButton ? 0 : 20
+            Layout.topMargin: 6
+            Layout.bottomMargin: 18
+        }
+
+        AccentButton {
+            visible: control.showDangerButton
+            kind: "danger"
+            text: control.dangerText
+            onClicked: control.dangerClicked()
             Layout.rightMargin: control.showOkButton ? 0 : 20
             Layout.topMargin: 6
             Layout.bottomMargin: 18

@@ -481,15 +481,23 @@ def _create_windows_single_instance_mutex() -> tuple[object | None, bool]:
         return None, True
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
+        # Win32 BOOL is a 32-bit integer (not ctypes' one-byte c_bool).
+        kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
         kernel32.CreateMutexW.restype = ctypes.c_void_p
+        # CreateMutexW only promises ERROR_ALREADY_EXISTS when the named
+        # object was already present.  Clear the thread-local last-error value
+        # first; otherwise a previous Win32 call can make a newly-created
+        # mutex look occupied on some Windows startup paths.
+        ctypes.set_last_error(0)
         handle = kernel32.CreateMutexW(None, True, "Local\\Lumen.SingleInstance")
         if not handle:
-            return None, True
+            return None, False
         already_exists = ctypes.get_last_error() == 183
         return handle, not already_exists
     except Exception:
-        return None, True
+        # Failing to create/check the mutex must never be treated as ownership:
+        # doing so would allow two independent Lumen instances to run.
+        return None, False
 
 
 def _close_mutex_handle(handle: object | None) -> None:
@@ -508,7 +516,7 @@ def _legacy_single_instance_running() -> bool:
         return False
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenMutexW.argtypes = (ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p)
+        kernel32.OpenMutexW.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p)
         kernel32.OpenMutexW.restype = ctypes.c_void_p
         handle = kernel32.OpenMutexW(0x00100000, False, r"Local\LumenKVN.SingleInstance")
         if not handle:
@@ -520,17 +528,12 @@ def _legacy_single_instance_running() -> bool:
 
 
 def _acquire_single_instance_mutex(relaunching: bool) -> tuple[object | None, bool]:
-    handle, owns = _create_windows_single_instance_mutex()
-    if owns or not relaunching:
-        return handle, owns
-    deadline = time.monotonic() + 20.0
-    while time.monotonic() < deadline:
-        _close_mutex_handle(handle)
-        time.sleep(0.1)
-        handle, owns = _create_windows_single_instance_mutex()
-        if owns:
-            break
-    return handle, owns
+    # The caller performs the retry/forwarding loop.  Keeping this operation
+    # non-blocking is important during Windows startup: a second launch must
+    # be able to notify a primary instance as soon as its local server appears,
+    # while still taking over if that primary dies before listening.
+    del relaunching
+    return _create_windows_single_instance_mutex()
 
 
 def _create_single_instance(app, launch_arguments=None):
@@ -560,34 +563,55 @@ def _create_single_instance(app, launch_arguments=None):
 
     mutex_handle, owns_mutex = _acquire_single_instance_mutex(relaunching)
     if not owns_mutex:
-        _close_mutex_handle(mutex_handle)
-        deadline = time.monotonic() + 5.0
+        # A process may have acquired the mutex and then stalled before
+        # QLocalServer.listen().  Conversely, it may have crashed and left no
+        # live owner at all.  Forward while probing the server and re-create
+        # the mutex after every failed probe so a crashed primary can be
+        # replaced instead of producing a permanent false-positive dialog.
+        deadline = time.monotonic() + (20.0 if relaunching else 5.0)
         notified = False
         while time.monotonic() < deadline:
             notified = _notify_primary_instance(server_name, arguments)
             if notified:
-                break
+                _close_mutex_handle(mutex_handle)
+                return None, False
+            _close_mutex_handle(mutex_handle)
             time.sleep(0.1)
-        if not notified:
-            _show_single_instance_unavailable()
-        return None, False
-
-    lock = QLockFile(str(Path(tempfile.gettempdir()) / "Lumen.SingleInstance.lock"))
-    lock.setStaleLockTime(30_000)
-    deadline = time.monotonic() + (20.0 if relaunching else 0.5)
-    notified = False
-
-    while not lock.tryLock(0):
-        if relaunching:
-            lock.removeStaleLockFile()
-        else:
-            notified = _notify_primary_instance(server_name, arguments) or notified
-        if time.monotonic() >= deadline:
+            mutex_handle, owns_mutex = _create_windows_single_instance_mutex()
+            if owns_mutex:
+                break
+        if not owns_mutex:
+            # Give a just-started primary one final chance before showing the
+            # actionable warning.  The warning is now reserved for a mutex
+            # that remains occupied and genuinely does not answer.
+            notified = _notify_primary_instance(server_name, arguments)
             _close_mutex_handle(mutex_handle)
             if not notified:
                 _show_single_instance_unavailable()
             return None, False
-        time.sleep(0.1)
+
+    # On Windows the named mutex is the authoritative, kernel-owned lock.  A
+    # QLockFile can survive a crash/reboot and block recovery even when no
+    # Lumen process exists, so do not put it in the Windows startup path.  It
+    # remains in use on other platforms where no equivalent mutex is present.
+    lock = None
+    if sys.platform != "win32":
+        lock = QLockFile(str(Path(tempfile.gettempdir()) / "Lumen.SingleInstance.lock"))
+        lock.setStaleLockTime(30_000)
+        deadline = time.monotonic() + (20.0 if relaunching else 0.5)
+        notified = False
+
+        while not lock.tryLock(0):
+            if relaunching:
+                lock.removeStaleLockFile()
+            else:
+                notified = _notify_primary_instance(server_name, arguments) or notified
+            if time.monotonic() >= deadline:
+                _close_mutex_handle(mutex_handle)
+                if not notified:
+                    _show_single_instance_unavailable()
+                return None, False
+            time.sleep(0.1)
 
     try:
         QLocalServer.removeServer(server_name)
@@ -603,7 +627,8 @@ def _create_single_instance(app, launch_arguments=None):
     except Exception:
         pass
     if not server.listen(server_name):
-        lock.unlock()
+        if lock is not None:
+            lock.unlock()
         _close_mutex_handle(mutex_handle)
         if not _notify_primary_instance(server_name, arguments):
             _show_single_instance_unavailable()

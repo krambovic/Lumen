@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import xray_fluent.process_conflicts as process_conflicts
 from xray_fluent.process_conflicts import (
@@ -38,6 +39,29 @@ def test_scan_reports_foreign_cores_but_ignores_current_lumen_core(monkeypatch) 
 
     assert snapshot["apps"] == ["sing-box", "v2rayN"]
     assert {item["pid"] for item in snapshot["processes"]} == {202, 303}
+
+
+def test_scan_ignores_lumen_core_by_executable_path_during_pid_race(monkeypatch) -> None:
+    own_path = Path(r"C:\Lumen\core\xray.exe")
+    monkeypatch.setattr(
+        process_conflicts,
+        "_running_processes",
+        lambda: {101: "xray.exe", 202: "sing-box.exe"},
+    )
+    monkeypatch.setattr(
+        process_conflicts,
+        "_process_executable_path",
+        lambda pid: own_path if pid == 101 else Path(r"C:\Other\sing-box.exe"),
+    )
+    monkeypatch.setattr(process_conflicts, "find_listening_port_conflicts", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(process_conflicts, "has_foreign_system_proxy", lambda **_kwargs: False)
+
+    snapshot = process_conflicts.scan_network_conflicts(
+        {10808}, ignored_executable_paths={own_path}
+    )
+
+    assert snapshot["apps"] == ["sing-box"]
+    assert {item["pid"] for item in snapshot["processes"]} == {202}
 
 
 def test_native_windows_process_snapshot_contains_current_process() -> None:

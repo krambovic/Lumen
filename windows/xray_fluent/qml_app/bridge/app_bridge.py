@@ -1158,6 +1158,11 @@ class AppBridge(QObject):
                 DEFAULT_DISCORD_SOCKS_PORT,
             },
             ignored_pids=self._own_engine_pids(),
+            ignored_executable_paths=(
+                self.controller.owned_core_executable_paths()
+                if hasattr(self.controller, "owned_core_executable_paths")
+                else set()
+            ),
         )
 
     def _request_network_mode(self, mode: str) -> bool:

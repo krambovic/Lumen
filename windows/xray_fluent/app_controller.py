@@ -151,13 +151,16 @@ from .constants import (
     LOG_DIR,
     PROXY_HOST,
     ROUTING_MODES,
+    SINGBOX_PATH_DEFAULT,
     SINGBOX_CONFIGS_DIR,
     SINGBOX_DEFAULT_CONFIG_NAME,
     SINGBOX_TEMPLATES_DIR,
     XRAY_CONFIGS_DIR,
     XRAY_DEFAULT_CONFIG_NAME,
     XRAY_TEMPLATES_DIR,
+    XRAY_PATH_DEFAULT,
 )
+from .path_utils import resolve_configured_path
 from .diagnostics import export_diagnostics
 from .discord_proxy_manager import DiscordProxyManager
 from .live_metrics_worker import LiveMetricsWorker
@@ -935,6 +938,31 @@ class AppController(QObject):
                 if pid > 0:
                     pids.add(pid)
         return pids
+
+    def owned_core_executable_paths(self) -> set[Path]:
+        """Return configured core paths used by this Lumen instance.
+
+        PID snapshots can briefly lag while Xray/sing-box is being replaced.
+        The canonical image path is a second ownership signal that prevents
+        our own core from being reported as a foreign VPN client in that gap.
+        """
+        paths: set[Path] = set()
+        settings = self.state.settings
+        for manager, configured, default in (
+            (self.xray, getattr(settings, "xray_path", ""), XRAY_PATH_DEFAULT),
+            (self.singbox, getattr(settings, "singbox_path", ""), SINGBOX_PATH_DEFAULT),
+        ):
+            path = getattr(manager, "_exe_path", None)
+            if path is None:
+                path = resolve_configured_path(
+                    configured,
+                    default_path=default,
+                    use_default_if_empty=True,
+                    migrate_default_location=False,
+                )
+            if path is not None:
+                paths.add(Path(path))
+        return paths
 
     def _cache_singbox_document_state(self, path: Path, text: str) -> SingboxDocumentState:
         state = self._singbox_documents.cache_state(path, text)
@@ -1813,6 +1841,7 @@ class AppController(QObject):
                     DEFAULT_DISCORD_SOCKS_PORT,
                 },
                 ignored_pids=ignored_pids,
+                ignored_executable_paths=self.owned_core_executable_paths(),
             )
             conflicts = list(snapshot.get("apps") or [])
             if conflicts or snapshot.get("unknown_client"):

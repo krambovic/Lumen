@@ -84,6 +84,8 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         _cleanup_orphaned_lumen_engines(controller)
 
         ignored_pids = controller.owned_core_process_pids()
+        owned_paths = getattr(controller, "owned_core_executable_paths", None)
+        ignored_paths = set(owned_paths()) if callable(owned_paths) else set()
         settings = getattr(getattr(controller, "state", None), "settings", None)
         # Initial connections must reject another VPN client. A reconnect has
         # already passed that validation; while switching servers, Windows can
@@ -98,6 +100,7 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
                     10818,
                 },
                 ignored_pids=ignored_pids,
+                ignored_executable_paths=ignored_paths,
             )
         conflicting_apps = list(conflicts.get("apps") or [])
         unknown_client = bool(conflicts.get("unknown_client"))

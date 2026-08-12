@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from .subprocess_utils import decode_output
@@ -81,7 +82,6 @@ def _running_processes_win32() -> dict[int, str] | None:
     """Enumerate process names through Toolhelp without spawning tasklist."""
     if os.name != "nt":
         return None
-
     class PROCESSENTRY32W(ctypes.Structure):
         _fields_ = [
             ("dwSize", ctypes.c_ulong),
@@ -126,6 +126,46 @@ def _running_processes_win32() -> dict[int, str] | None:
         return None
 
 
+def _process_executable_path(pid: int) -> Path | None:
+    """Return a process image path when Windows allows a limited query."""
+    if os.name != "nt" or pid <= 0:
+        return None
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.QueryFullProcessImageNameW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_wchar_p,
+            ctypes.POINTER(ctypes.c_uint32),
+        )
+        kernel32.QueryFullProcessImageNameW.restype = ctypes.c_int
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        handle = kernel32.OpenProcess(0x1000, 0, pid)
+        if not handle:
+            return None
+        try:
+            size = ctypes.c_uint32(32768)
+            buffer = ctypes.create_unicode_buffer(size.value)
+            if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+                return None
+            return Path(buffer.value)
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return None
+
+
+def _same_executable_path(left: Path | None, right: Path | None) -> bool:
+    if left is None or right is None:
+        return False
+    try:
+        return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
+    except OSError:
+        return os.path.normcase(str(left)) == os.path.normcase(str(right))
+
+
 def find_conflicting_network_apps(processes: dict[int, str] | None = None) -> list[str]:
     processes = processes if processes is not None else _running_processes()
     found: set[str] = set()
@@ -144,11 +184,14 @@ def is_process_name_running(process_name: str) -> bool:
 
 
 def find_listening_port_conflicts(
-    ports: set[int], *, ignored_pids: set[int] | None = None, processes: dict[int, str] | None = None
+    ports: set[int], *, ignored_pids: set[int] | None = None,
+    ignored_executable_paths: set[str | Path] | None = None,
+    processes: dict[int, str] | None = None
 ) -> list[PortConflict]:
     if os.name != "nt" or not ports:
         return []
     ignored = set(ignored_pids or ())
+    ignored_paths = {Path(path) for path in (ignored_executable_paths or ()) if str(path).strip()}
     processes = processes if processes is not None else _running_processes()
     try:
         result = subprocess.run(
@@ -176,7 +219,10 @@ def find_listening_port_conflicts(
             pid = int(parts[-1])
         except ValueError:
             continue
-        if pid in ignored:
+        if pid in ignored or any(
+            _same_executable_path(_process_executable_path(pid), path)
+            for path in ignored_paths
+        ):
             continue
         found[port] = PortConflict(port, pid, processes.get(pid, "неизвестный процесс"))
     return [found[port] for port in sorted(found)]
@@ -216,7 +262,10 @@ def _local_proxy_ports(proxy_server: str) -> set[int]:
 
 
 def has_foreign_system_proxy(
-    *, ignored_pids: set[int] | None = None, processes: dict[int, str] | None = None
+    *,
+    ignored_pids: set[int] | None = None,
+    ignored_executable_paths: set[str | Path] | None = None,
+    processes: dict[int, str] | None = None,
 ) -> bool:
     server = _system_proxy_server()
     if not server:
@@ -228,14 +277,23 @@ def has_foreign_system_proxy(
         find_listening_port_conflicts(
             ports,
             ignored_pids=ignored_pids,
+            ignored_executable_paths=ignored_executable_paths,
             processes=processes,
         )
     )
 
 
-def scan_network_conflicts(ports: set[int], *, ignored_pids: set[int] | None = None) -> dict:
+def scan_network_conflicts(
+    ports: set[int],
+    *,
+    ignored_pids: set[int] | None = None,
+    ignored_executable_paths: set[str | Path] | None = None,
+) -> dict:
     processes = _running_processes()
     ignored = set(ignored_pids or ())
+    ignored_paths = {
+        Path(path) for path in (ignored_executable_paths or ()) if str(path).strip()
+    }
     conflicting_processes: dict[int, dict[str, object]] = {}
     for pid, process_name in processes.items():
         if pid in ignored or pid <= 4 or pid == os.getpid():
@@ -243,16 +301,31 @@ def scan_network_conflicts(ports: set[int], *, ignored_pids: set[int] | None = N
         normalized_name = process_name.strip().lower()
         label = _KNOWN_CONFLICTS.get(normalized_name) or _CORE_CONFLICTS.get(normalized_name)
         if label:
+            # The process manager can briefly hold an old Popen object while
+            # its replacement has already inherited the same Lumen core path.
+            # Match by canonical executable path as well as PID so our own
+            # Xray/sing-box is never presented as a foreign VPN client.
+            process_path = _process_executable_path(pid)
+            if any(_same_executable_path(process_path, path) for path in ignored_paths):
+                continue
             conflicting_processes[pid] = {
                 "pid": pid,
                 "name": process_name,
                 "label": label,
             }
     port_conflicts = find_listening_port_conflicts(
-        ports, ignored_pids=ignored, processes=processes
+        ports,
+        ignored_pids=ignored,
+        ignored_executable_paths=ignored_paths,
+        processes=processes,
     )
     for conflict in port_conflicts:
         if conflict.pid <= 4 or conflict.pid == os.getpid():
+            continue
+        if any(
+            _same_executable_path(_process_executable_path(conflict.pid), path)
+            for path in ignored_paths
+        ):
             continue
         conflicting_processes.setdefault(
             conflict.pid,
@@ -276,6 +349,7 @@ def scan_network_conflicts(ports: set[int], *, ignored_pids: set[int] | None = N
                 port_conflicts
                 or has_foreign_system_proxy(
                     ignored_pids=ignored_pids,
+                    ignored_executable_paths=ignored_paths,
                     processes=processes,
                 )
             )

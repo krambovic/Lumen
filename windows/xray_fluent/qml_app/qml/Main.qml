@@ -464,61 +464,29 @@ ApplicationWindow {
 
     ToastHost {}
 
-    Dialog {
+    FluentDialog {
         id: networkConflictDialog
-        anchors.centerIn: Overlay.overlay
         width: Math.min(560, win.width - 40)
-        modal: true
-        closePolicy: Popup.CloseOnEscape
         property string mode: ""
         property string message: ""
         property bool canTerminate: false
         onRejected: App.cancelNetworkConflict()
-        background: Rectangle {
-            color: Theme.flyout
-            border.width: 1
-            border.color: Theme.flyoutBorder
-            radius: Theme.radius
-        }
-        header: Text {
-            text: I18n.t("Обнаружен другой VPN/прокси")
-            color: Theme.text
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontStrong
-            font.weight: Font.DemiBold
-            leftPadding: 20; rightPadding: 20
-            topPadding: 18; bottomPadding: 8
-        }
+        title: I18n.t("Обнаружен другой VPN/прокси")
+        cancelText: I18n.t("Закрыть")
+        showOkButton: false
+        dangerText: networkConflictDialog.canTerminate
+            ? I18n.t("Закрыть процессы и продолжить") : ""
         contentItem: Text {
             text: I18n.t(networkConflictDialog.message)
             color: Theme.textMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontNormal
             wrapMode: Text.WordWrap
-            leftPadding: 20; rightPadding: 20
-            topPadding: 8; bottomPadding: 12
+            lineHeight: 1.2
         }
-        footer: RowLayout {
-            spacing: 8
-            Item { Layout.fillWidth: true }
-            AccentButton {
-                kind: "ghost"
-                text: I18n.t("Закрыть")
-                onClicked: {
-                    App.cancelNetworkConflict()
-                    networkConflictDialog.close()
-                }
-            }
-            AccentButton {
-                visible: networkConflictDialog.canTerminate
-                kind: "danger"
-                text: I18n.t("Закрыть процессы и продолжить")
-                onClicked: {
-                    if (App.closeNetworkConflictsAndContinue())
-                        networkConflictDialog.close()
-                }
-            }
-            Item { Layout.preferredWidth: 12 }
+        onDangerClicked: {
+            if (App.closeNetworkConflictsAndContinue())
+                networkConflictDialog.close()
         }
     }
 
