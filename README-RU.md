@@ -71,18 +71,41 @@
 ## Скриншоты
 
 <details>
-<summary><b>Windows — панель управления, темы и обход DPI</b></summary>
+<summary><b>Скриншоты Windows</b></summary>
 <br>
 
-<img src="windows/assets/screenshots/dashboard-dark.png" alt="Панель управления в тёмной теме" width="100%">
+<img src="windows/assets/screenshots/windows-dashboard-dark.png" alt="Панель управления Windows в тёмной теме" width="100%">
 <br><br>
-<img src="windows/assets/screenshots/dashboard-red.png" alt="Панель управления с красным акцентом" width="100%">
+<img src="windows/assets/screenshots/windows-zapret-dark.png" alt="Экран обхода DPI Windows в тёмной теме" width="100%">
 <br><br>
-<img src="windows/assets/screenshots/settings-rose-pine.png" alt="Настройки в теме Rose Pine" width="100%">
+<img src="windows/assets/screenshots/windows-dashboard-light.png" alt="Панель управления Windows в светлой теме" width="100%">
 <br><br>
-<img src="windows/assets/screenshots/dashboard-light.png" alt="Панель управления в светлой теме" width="100%">
+<img src="windows/assets/screenshots/windows-routing-light.png" alt="Настройки маршрутизации Windows в светлой теме" width="100%">
 <br><br>
-<img src="windows/assets/screenshots/zapret-dark.png" alt="Экран обхода DPI через zapret" width="100%">
+<img src="windows/assets/screenshots/windows-dashboard-rose-wallpaper.png" alt="Панель управления Windows в розовой теме" width="100%">
+<br><br>
+<img src="windows/assets/screenshots/windows-appearance-rose-wallpaper.png" alt="Настройки внешнего вида Windows в розовой теме" width="100%">
+
+</details>
+
+<details>
+<summary><b>Скриншоты Android</b></summary>
+<br>
+
+<p align="center">
+  <img src="android/assets/screenshots/android-dashboard-dark.jpg" alt="Панель управления Android в тёмной теме" width="380">
+  <img src="android/assets/screenshots/android-nodes-dark.jpg" alt="Список серверов Android в тёмной теме" width="380">
+</p>
+
+<p align="center">
+  <img src="android/assets/screenshots/android-dashboard-light.jpg" alt="Панель управления Android в светлой теме" width="380">
+  <img src="android/assets/screenshots/android-settings-light.jpg" alt="Настройки Android в светлой теме" width="380">
+</p>
+
+<p align="center">
+  <img src="android/assets/screenshots/android-dashboard-rose.jpg" alt="Панель управления Android в розовой теме" width="380">
+  <img src="android/assets/screenshots/android-settings-rose.jpg" alt="Настройки Android в розовой теме" width="380">
+</p>
 
 </details>
 
@@ -96,12 +119,9 @@
 | :--- | :--- | :--- |
 | Windows | `Lumen-Setup-windows-x64.exe` | Рекомендуемый установщик |
 | Windows | `Lumen-portable-windows-x64.zip` | Работает без установки |
+| Android | `Lumen-<версия>-universal.apk` | Все поддерживаемые ABI в одном файле, крупнее |
 | Android | `Lumen-<версия>-arm64-v8a.apk` | Почти все современные телефоны |
-| Android | `Lumen-<версия>-x86_64.apk` | Эмуляторы и устройства на x86 |
-| Android | `Lumen-<версия>-universal.apk` | Обе архитектуры в одном файле, крупнее |
-
-> [!NOTE]
-> Сборок под `armeabi-v7a` и `x86` нет: нативное ядро sing-box-extended под эти ABI не собирается, поэтому такой пакет всё равно не смог бы подключиться.
+| Android | `Lumen-<версия>-armeabi-v7a.apk` | 32-битные ARM-устройства |
 
 ---
 
@@ -137,7 +157,16 @@ cd android
 
 ```
 windows/   Десктопный клиент на Python + PyQt6/QML, xray-core, sing-box-extended, zapret
+  assets/           ресурсы Windows и скриншоты для README
+  run_qml.py       запуск приложения
+  xray_fluent/     сервисы приложения и десктопный интерфейс
+    application/   оркестрация сервисов
+    engines/       бэкенды xray-core и sing-box
+    qml_app/       мост Python/QML и представления
+  zapret/          компоненты обхода DPI
+  tests/           тесты Windows-клиента
 android/   Клиент на Jetpack Compose
+  assets/           ресурсы Android и скриншоты для README
   app/            навигация, view-модели, виджеты
   ui/             экраны Compose, темы, дизайн-токены
   core/config     разбор ссылок, сборка конфигов, нормализация AmneziaWG

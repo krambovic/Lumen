@@ -71,18 +71,41 @@ Raw **Xray** and **sing-box** JSON configs import as-is, including whole multi-p
 ## Screenshots
 
 <details>
-<summary><b>Windows — dashboard, themes and DPI bypass</b></summary>
+<summary><b>Windows screenshots</b></summary>
 <br>
 
-<img src="windows/assets/screenshots/dashboard-dark.png" alt="Dashboard in dark theme" width="100%">
+<img src="windows/assets/screenshots/windows-dashboard-dark.png" alt="Windows dashboard in dark theme" width="100%">
 <br><br>
-<img src="windows/assets/screenshots/dashboard-red.png" alt="Dashboard with red accent theme" width="100%">
+<img src="windows/assets/screenshots/windows-zapret-dark.png" alt="Windows DPI bypass screen in dark theme" width="100%">
 <br><br>
-<img src="windows/assets/screenshots/settings-rose-pine.png" alt="Settings in Rose Pine theme" width="100%">
+<img src="windows/assets/screenshots/windows-dashboard-light.png" alt="Windows dashboard in light theme" width="100%">
 <br><br>
-<img src="windows/assets/screenshots/dashboard-light.png" alt="Dashboard in light theme" width="100%">
+<img src="windows/assets/screenshots/windows-routing-light.png" alt="Windows routing settings in light theme" width="100%">
 <br><br>
-<img src="windows/assets/screenshots/zapret-dark.png" alt="Zapret DPI bypass screen" width="100%">
+<img src="windows/assets/screenshots/windows-dashboard-rose-wallpaper.png" alt="Windows dashboard in rose theme" width="100%">
+<br><br>
+<img src="windows/assets/screenshots/windows-appearance-rose-wallpaper.png" alt="Windows appearance settings in rose theme" width="100%">
+
+</details>
+
+<details>
+<summary><b>Android screenshots</b></summary>
+<br>
+
+<p align="center">
+  <img src="android/assets/screenshots/android-dashboard-dark.jpg" alt="Android dashboard in dark theme" width="380">
+  <img src="android/assets/screenshots/android-nodes-dark.jpg" alt="Android server list in dark theme" width="380">
+</p>
+
+<p align="center">
+  <img src="android/assets/screenshots/android-dashboard-light.jpg" alt="Android dashboard in light theme" width="380">
+  <img src="android/assets/screenshots/android-settings-light.jpg" alt="Android settings in light theme" width="380">
+</p>
+
+<p align="center">
+  <img src="android/assets/screenshots/android-dashboard-rose.jpg" alt="Android dashboard in rose theme" width="380">
+  <img src="android/assets/screenshots/android-settings-rose.jpg" alt="Android settings in rose theme" width="380">
+</p>
 
 </details>
 
@@ -96,12 +119,9 @@ Grab the latest build from the **[Releases](https://github.com/krambovic/Lumen/r
 | :--- | :--- | :--- |
 | Windows | `Lumen-Setup-windows-x64.exe` | Recommended installer |
 | Windows | `Lumen-portable-windows-x64.zip` | Runs without installing |
+| Android | `Lumen-<version>-universal.apk` | All supported ABIs in one larger file |
 | Android | `Lumen-<version>-arm64-v8a.apk` | Almost every modern phone |
-| Android | `Lumen-<version>-x86_64.apk` | Emulators and x86 devices |
-| Android | `Lumen-<version>-universal.apk` | Both ABIs in one larger file |
-
-> [!NOTE]
-> There are no `armeabi-v7a` or `x86` builds: the native sing-box-extended core is not compiled for those ABIs, so such a package could never connect.
+| Android | `Lumen-<version>-armeabi-v7a.apk` | 32-bit ARM devices |
 
 ---
 
@@ -137,7 +157,16 @@ Release signing reads `keystore.properties` next to `settings.gradle.kts`; witho
 
 ```
 windows/   Python + PyQt6/QML desktop client, xray-core, sing-box-extended, zapret
+  assets/           Windows assets and README screenshots
+  run_qml.py       application launcher
+  xray_fluent/     application services and desktop UI
+    application/   service orchestration
+    engines/       xray-core and sing-box backends
+    qml_app/       Python/QML bridge and views
+  zapret/          DPI bypass components
+  tests/           Windows client tests
 android/   Jetpack Compose client
+  assets/           Android assets and README screenshots
   app/            navigation, view models, widgets
   ui/             Compose screens, themes, design tokens
   core/config     link parsing, config builders, AmneziaWG normalisation
