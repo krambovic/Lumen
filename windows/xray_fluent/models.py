@@ -317,6 +317,8 @@ class AppSettings:
     launch_on_startup: bool = False
     launch_in_tray_on_startup: bool = True
     always_run_as_admin: bool = False
+    # Block connecting when another VPN/proxy client is detected.
+    block_vpn_conflicts: bool = True
     reconnect_on_network_change: bool = True
     regional_preset: str = "russia"  # russia | china | iran
     prefer_ipv6: bool = False
@@ -436,6 +438,7 @@ class AppSettings:
             "launch_on_startup": self.launch_on_startup,
             "launch_in_tray_on_startup": self.launch_in_tray_on_startup,
             "always_run_as_admin": self.always_run_as_admin,
+            "block_vpn_conflicts": self.block_vpn_conflicts,
             "reconnect_on_network_change": self.reconnect_on_network_change,
             "regional_preset": self.regional_preset,
             "prefer_ipv6": self.prefer_ipv6,
@@ -540,6 +543,7 @@ class AppSettings:
             launch_on_startup=bool(data.get("launch_on_startup", False)),
             launch_in_tray_on_startup=bool(data.get("launch_in_tray_on_startup", True)),
             always_run_as_admin=bool(data.get("always_run_as_admin", False)),
+            block_vpn_conflicts=bool(data.get("block_vpn_conflicts", True)),
             reconnect_on_network_change=bool(data.get("reconnect_on_network_change", True)),
             regional_preset=str(data.get("regional_preset") or "russia"),
             prefer_ipv6=bool(data.get("prefer_ipv6", False)),

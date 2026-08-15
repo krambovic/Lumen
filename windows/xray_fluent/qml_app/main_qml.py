@@ -863,20 +863,6 @@ def main(argv: list[str] | None = None) -> int:
 
     launch_arguments = list(argv if argv is not None else sys.argv)
     initial_deep_link = find_lumen_deep_link(launch_arguments)
-    if "--tray" in launch_arguments[1:] and not initial_deep_link:
-        try:
-            from ..startup import (
-                STARTUP_STATE_DISABLED,
-                build_startup_command,
-                get_startup_state,
-                set_startup_enabled,
-            )
-
-            if get_startup_state(APP_NAME) == STARTUP_STATE_DISABLED:
-                set_startup_enabled(APP_NAME, False, build_startup_command(in_tray=True))
-                return 0
-        except Exception:
-            pass
     app = QApplication(launch_arguments)
     from .native_context_menu_filter import QmlNativeContextMenuFilter
 

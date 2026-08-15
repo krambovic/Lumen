@@ -188,6 +188,12 @@ def get_startup_state(app_name: str) -> str:
     except FileNotFoundError:
         return STARTUP_STATE_ENABLED
     if isinstance(value, (bytes, bytearray)) and value and value[0] == 0x03:
+        # Elevated installations intentionally keep a discoverable Run entry
+        # beside the real highest-privilege task.  Windows can mark that
+        # helper entry as disabled after replacing the executable, while the
+        # task remains the effective startup mechanism.
+        if app_name == TASK_NAME and _startup_task_exists():
+            return STARTUP_STATE_ENABLED
         return STARTUP_STATE_DISABLED
     return STARTUP_STATE_ENABLED
 

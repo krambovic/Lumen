@@ -1078,6 +1078,10 @@ Item {
                     Switch { checked: App.autoConnectLast; onToggled: App.setAutoConnectLast(checked) }
                 }
                 SettingRow {
+                    glyph: "\uE72E"; title: I18n.t("Проверка VPN"); subtitle: I18n.t("Не запускать Lumen при работающем другом VPN или прокси")
+                    Switch { checked: App.blockVpnConflicts; onToggled: App.setBlockVpnConflicts(checked) }
+                }
+                SettingRow {
                     glyph: "\uE896"; title: I18n.t("Автоподключение при импорте"); subtitle: I18n.t("Сразу подключаться к импортированному серверу")
                     Switch { checked: App.autoConnectOnImport; onToggled: App.setAutoConnectOnImport(checked) }
                 }

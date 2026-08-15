@@ -10,6 +10,7 @@ import pytest
 
 from xray_fluent import app_updater, update_checker
 from xray_fluent.app_updater import AppUpdate
+import run_qml
 
 
 def test_update_interpreter_is_launched_from_an_absolute_system_path() -> None:
@@ -79,9 +80,27 @@ def test_elevated_update_script_reverifies_the_installer_hash(monkeypatch) -> No
         script_text = launched[0].read_bytes().decode("utf-8-sig")
         assert "Get-FileHash -LiteralPath $setupPath -Algorithm SHA256" in script_text
         assert update.digest_sha256 in script_text
+        assert "& $exePath '--version-file' $versionFile" in script_text
+        assert "Start-Process -FilePath $exePath -ArgumentList '--version-file',$versionFile" not in script_text
+        assert "continuing because installer finished successfully" not in script_text
     finally:
         for script in launched:
             shutil.rmtree(script.parent, ignore_errors=True)
+
+
+def test_version_probe_rejects_drive_root_output(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "runtime" / "version.txt"
+    monkeypatch.setattr(run_qml.sys, "argv", ["run_qml.py", "--version-file", r"C:\Program"])
+    assert run_qml._run() == 2
+    assert not target.exists()
+
+
+def test_version_probe_accepts_nested_output(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "folder with spaces" / "runtime" / "version.txt"
+    target.parent.mkdir(parents=True)
+    monkeypatch.setattr(run_qml.sys, "argv", ["run_qml.py", "--version-file", str(target)])
+    assert run_qml._run() == 0
+    assert target.read_text(encoding="utf-8") == "1.9.9"
 
 
 def test_update_feed_url_must_use_https() -> None:

@@ -107,3 +107,33 @@ def test_legacy_task_deletion_cannot_hang_forever(monkeypatch) -> None:
     startup.cleanup_legacy_system_entries()
 
     assert timeouts and all(value == startup.SCHTASKS_TIMEOUT for value in timeouts)
+
+
+def test_disabled_run_entry_does_not_hide_an_active_elevated_task(monkeypatch) -> None:
+    monkeypatch.setattr(startup.sys, "platform", "win32")
+    monkeypatch.setattr(startup, "_legacy_cleanup_done", True)
+    monkeypatch.setattr(startup, "_registry_startup_exists", lambda _name: True)
+    monkeypatch.setattr(startup, "_startup_task_exists", lambda: True)
+
+    class _Key:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class _Winreg:
+        HKEY_CURRENT_USER = 0
+        KEY_READ = 0
+
+        @staticmethod
+        def OpenKey(*_args, **_kwargs):
+            return _Key()
+
+        @staticmethod
+        def QueryValueEx(*_args):
+            return bytes([0x03]) + bytes(11), 0
+
+    monkeypatch.setattr(startup, "winreg", _Winreg)
+
+    assert startup.get_startup_state(startup.TASK_NAME) == startup.STARTUP_STATE_ENABLED

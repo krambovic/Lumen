@@ -42,7 +42,7 @@ from ...node_transport import node_transport
 from ...process_conflicts import scan_network_conflicts, terminate_scanned_conflicts
 from ...qthread_utils import retain_thread_until_finished, stop_and_wait_for_thread
 from ...routing_rule_import import parse_routing_rules
-from ...startup import STARTUP_STATE_DISABLED, get_startup_state, is_process_elevated, relaunch_as_admin
+from ...startup import is_process_elevated, relaunch_as_admin
 from .log_model import LogFilterModel, LogModel
 from .node_list_model import NodeListModel
 from .process_model import ProcessModel
@@ -1166,6 +1166,10 @@ class AppBridge(QObject):
         )
 
     def _request_network_mode(self, mode: str) -> bool:
+        # The guard is opt-out.  A missing field in an old state file keeps
+        # the historic safe behavior until the user explicitly disables it.
+        if not bool(getattr(self.controller.state.settings, "block_vpn_conflicts", True)):
+            return True
         snapshot = self._network_conflicts()
         apps = [str(name) for name in snapshot.get("apps") or []]
         unknown = bool(snapshot.get("unknown_client"))
@@ -1206,7 +1210,15 @@ class AppBridge(QObject):
     def closeNetworkConflictsAndContinue(self) -> bool:
         mode = self._pending_network_mode
         scanned = list(self._pending_conflict_processes)
-        if not mode or not scanned:
+        if not mode:
+            self.cancelNetworkConflict()
+            return False
+        if not bool(getattr(self.controller.state.settings, "block_vpn_conflicts", True)):
+            self._pending_network_mode = ""
+            self._pending_conflict_processes = []
+            self._apply_network_mode(mode)
+            return True
+        if not scanned:
             self.cancelNetworkConflict()
             return False
         _closed, failed = terminate_scanned_conflicts(scanned)
@@ -2092,6 +2104,12 @@ class AppBridge(QObject):
         self.controller.update_settings(settings)
 
     @pyqtSlot(bool)
+    def setBlockVpnConflicts(self, enabled: bool) -> None:
+        settings = deepcopy(self.controller.state.settings)
+        settings.block_vpn_conflicts = bool(enabled)
+        self.controller.update_settings(settings)
+
+    @pyqtSlot(bool)
     def setZapretAutostart(self, enabled: bool) -> None:
         settings = deepcopy(self.controller.state.settings)
         settings.zapret_autostart = bool(enabled)
@@ -2635,7 +2653,14 @@ class AppBridge(QObject):
         except Exception:
             proxy_url = None
         self.appUpdateState.emit({"phase": "downloading", "percent": 0})
-        downloader = UpdateDownloader(update, proxy_url=proxy_url, restart_in_tray=False, parent=self)
+        downloader = UpdateDownloader(
+            update,
+            proxy_url=proxy_url,
+            restart_in_tray=bool(
+                getattr(self.controller.state.settings, "launch_in_tray_on_startup", True)
+            ),
+            parent=self,
+        )
         self._app_update_downloader = downloader
         downloader.progress.connect(self._on_app_download_progress)
         downloader.status.connect(self._on_app_download_status)
@@ -3896,8 +3921,6 @@ class AppBridge(QObject):
     @pyqtProperty(bool, notify=settingsChanged)
     def launchOnStartup(self) -> bool:
         try:
-            if bool(self.controller.state.settings.launch_on_startup) and get_startup_state(APP_NAME) == STARTUP_STATE_DISABLED:
-                return False
             return bool(self.controller.state.settings.launch_on_startup)
         except Exception:
             return False
@@ -3906,6 +3929,13 @@ class AppBridge(QObject):
     def launchInTrayOnStartup(self) -> bool:
         try:
             return bool(getattr(self.controller.state.settings, "launch_in_tray_on_startup", True))
+        except Exception:
+            return True
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def blockVpnConflicts(self) -> bool:
+        try:
+            return bool(getattr(self.controller.state.settings, "block_vpn_conflicts", True))
         except Exception:
             return True
 

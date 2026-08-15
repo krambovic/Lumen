@@ -239,6 +239,8 @@
   "Запускать Zapret при старте приложения": "Start Zapret when the app starts",
   "Запускать автозапуск в трей": "Start on login to tray",
   "Запускать при входе": "Start on login",
+  "Проверка VPN": "VPN check",
+  "Не запускать Lumen при работающем другом VPN или прокси": "Do not start Lumen while another VPN or proxy is running",
   "При входе в Windows не показывать окно, только иконку в трее": "When signing in to Windows, keep the window hidden and show only the tray icon",
   "Запустить": "Start",
   "Запустить ": "Start ",

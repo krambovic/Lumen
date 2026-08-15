@@ -62,6 +62,16 @@ def find_free_api_port(preferred: int | None = None, excluded: set[int] | None =
     raise RuntimeError(f"No free port in range {preferred}-{preferred + 100}")
 
 
+def should_block_vpn_conflicts(controller: AppController) -> bool:
+    """Return the persisted conflict guard setting, defaulting safely to on.
+
+    Older state files do not have this field.  Treating a missing value as
+    enabled preserves the pre-existing safety behavior after an upgrade.
+    """
+    settings = getattr(getattr(controller, "state", None), "settings", None)
+    return bool(getattr(settings, "block_vpn_conflicts", True))
+
+
 def connect_selected(controller: AppController, allow_during_reconnect: bool = False) -> bool:
     if controller._connecting:
         controller._set_connection_status("starting", "Подключение уже выполняется...", level="info")
@@ -92,7 +102,7 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
         # briefly retain the previous Lumen core in its process snapshot after
         # the manager released it, which must not be reported as foreign Xray.
         conflicts = {"apps": [], "unknown_client": False}
-        if not controller._reconnecting:
+        if should_block_vpn_conflicts(controller) and not controller._reconnecting:
             conflicts = scan_network_conflicts(
                 {
                     int(getattr(settings, "local_socks_port", 10808) or 10808),

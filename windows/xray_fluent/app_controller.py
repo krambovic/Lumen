@@ -572,10 +572,11 @@ class AppController(QObject):
                 return False
             if get_startup_state(APP_NAME) != STARTUP_STATE_DISABLED:
                 return False
-            self.state.settings.launch_on_startup = False
-            self.settings_changed.emit(self.state.settings)
-            self.schedule_save()
-            set_startup_enabled(APP_NAME, False, command)
+            # StartupApproved can be reset by Windows when an executable is
+            # replaced, especially when an elevated task is also registered.
+            # The persisted user preference is authoritative: repair the
+            # registration instead of silently turning autostart off.
+            set_startup_enabled(APP_NAME, True, command)
             return True
         except Exception as exc:
             self._logger.warning("Failed to sync startup state from Windows: %s", exc)
@@ -1828,7 +1829,7 @@ class AppController(QObject):
         if enabled and (self.state.settings.tun_mode or (self._active_session is not None and self._active_session.tun_mode)):
             self.status.emit("warning", "Discord Voice недоступен при включенном TUN: трафик Discord уже идет через VPN.")
             return
-        if enabled:
+        if enabled and getattr(self.state.settings, "block_vpn_conflicts", True):
             ignored_pids = {
                 int(proc.pid)
                 for manager in (self.xray, self.singbox)

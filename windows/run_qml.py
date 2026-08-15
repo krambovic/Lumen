@@ -13,12 +13,17 @@ Dev usage:
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import sys
+import tempfile
+import time
 import traceback
 from pathlib import Path
 
 
 SUBSCRIPTION_FETCHER_EXE_NAME = "lumen-subscription-fetcher.exe"
+_VERSION_TEXT_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
 
 def _startup_log_path() -> Path:
@@ -94,6 +99,35 @@ def _argument_value(name: str) -> str | None:
         return None
 
 
+def _quarantine_misplaced_version_file(app_version: str) -> None:
+    """Recover the root-level file created by the pre-fix updater.
+
+    The old PowerShell version probe split paths at the first space and could
+    write the version to ``C:\\Program``.  Only quarantine an exact semver
+    payload matching the running application; arbitrary user files at the
+    drive root must never be touched.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        drive_root = Path(Path(sys.executable).resolve().anchor or r"C:\\")
+        misplaced = drive_root / "Program"
+        if not misplaced.is_file() or misplaced.stat().st_size > 128:
+            return
+        value = misplaced.read_text(encoding="utf-8-sig").strip()
+        if not _VERSION_TEXT_RE.fullmatch(value):
+            return
+        if value.lstrip("v") != str(app_version).strip().lstrip("v"):
+            return
+        recovery_dir = Path(tempfile.gettempdir()) / "Lumen-recovered"
+        recovery_dir.mkdir(parents=True, exist_ok=True)
+        destination = recovery_dir / f"Program-{os.getpid()}-{time.time_ns()}.txt"
+        shutil.move(str(misplaced), str(destination))
+    except Exception:
+        # Recovery is best-effort and must never prevent normal startup.
+        pass
+
+
 def _run() -> int:
     from xray_fluent.constants import APP_VERSION
 
@@ -101,12 +135,16 @@ def _run() -> int:
         from xray_fluent.subscription_fetcher import cli_main
 
         return int(cli_main())
+    _quarantine_misplaced_version_file(APP_VERSION)
     if "--version-file" in sys.argv[1:]:
         try:
             output = _argument_value("--version-file")
             if not output:
                 return 2
-            Path(output).write_text(APP_VERSION, encoding="utf-8")
+            target = Path(output).expanduser()
+            if not target.is_absolute() or target.parent == Path(target.anchor):
+                return 2
+            target.write_text(APP_VERSION, encoding="utf-8")
             return 0
         except Exception:
             return 2
