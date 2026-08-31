@@ -72,7 +72,8 @@ class VpnStartIntentFactoryTest {
                 VpnStartIntentFactory.KEY_OBFS_PORT to 8443
             ),
             booleans = mapOf(
-                VpnStartIntentFactory.KEY_RECONNECT_ON_NETWORK_CHANGE to false
+                VpnStartIntentFactory.KEY_RECONNECT_ON_NETWORK_CHANGE to false,
+                VpnStartIntentFactory.KEY_PROXY_ONLY to true
             ),
             stringSets = mapOf(
                 VpnStartIntentFactory.KEY_SPLIT_PACKAGES to setOf("com.example.browser")
@@ -88,6 +89,7 @@ class VpnStartIntentFactoryTest {
         assertEquals("ALLOW_LIST", params.splitMode)
         assertEquals(setOf("com.example.browser"), params.splitPackages)
         assertEquals(1400, params.mtu)
+        assertTrue(params.proxyOnly)
         // The tile used to drop these four, silently breaking custom ports,
         // the DNS mode, the reconnect setting and obfs bridges.
         assertEquals(20808, params.localSocksPort)
@@ -117,6 +119,7 @@ class VpnStartIntentFactoryTest {
         assertEquals(VpnStartIntentFactory.DEFAULT_LOCAL_SOCKS_PORT, params.localSocksPort)
         assertEquals(LumenVpnService.DEFAULT_MTU, params.mtu)
         assertTrue(params.reconnectOnNetworkChange)
+        assertFalse(params.proxyOnly)
         assertTrue(params.obfsType.isEmpty())
     }
 

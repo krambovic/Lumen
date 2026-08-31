@@ -60,23 +60,16 @@ class LumenVpnService : VpnService() {
     private var sessionUploaded = 0L
     private var sessionDownloaded = 0L
 
-    // Everything needed to bring the tunnel back up on a different network. AWG/WireGuard
-    // are UDP based: after a Wi-Fi <-> mobile switch the core keeps sockets bound to the
-    // dead network and silently stops passing traffic, so the runtime has to be rebuilt.
     private data class StartParams(
         val engineType: EngineType,
-        // Resolved from [configPath] on the IO thread; an intent from an older
-        // install may still carry it inline.
         val configJson: String,
         val configPath: String,
         val mtu: Int,
         val localSocksPort: Int,
+        val proxyOnly: Boolean,
         val dnsMode: String,
         val splitConfig: SplitTunnelingConfig,
-        // Applies to every protocol; can be switched off in the settings.
         val reconnectOnNetworkChange: Boolean,
-        // OpenVPN "Use proxy" with obfs2/obfs3: the transport is terminated by the
-        // in-app relay, so the core only sees a plain loopback SOCKS5 detour.
         val obfsType: String = "",
         val obfsHost: String = "",
         val obfsPort: Int = 0
@@ -143,6 +136,7 @@ class LumenVpnService : VpnService() {
                         configPath = intent.getStringExtra(EXTRA_CONFIG_PATH).orEmpty(),
                         mtu = intent.getIntExtra(EXTRA_MTU, DEFAULT_MTU).coerceIn(1280, 9000),
                         localSocksPort = intent.getIntExtra(EXTRA_LOCAL_SOCKS_PORT, LOCAL_SOCKS_PORT).coerceIn(1024, 65535),
+                        proxyOnly = intent.getBooleanExtra(EXTRA_PROXY_ONLY, false),
                         dnsMode = intent.getStringExtra(EXTRA_DNS_MODE) ?: "automatic",
                         splitConfig = SplitTunnelingConfig(
                             splitMode,
@@ -280,8 +274,9 @@ class LumenVpnService : VpnService() {
     }
 
     /**
-     * Builds the TUN interface, starts the proxy core and the tun2socks bridge. Used both for
-     * the initial connection and for re-establishing the tunnel on a different network.
+     * Starts the proxy core and, unless proxy-only mode is selected, the TUN/tun2socks bridge.
+     * Used both for the initial connection and for re-establishing the runtime on a different
+     * network.
      */
     private suspend fun bringUpRuntime(params: StartParams) = runtimeMutex.withLock {
         bringUpRuntimeLocked(params)
@@ -316,65 +311,68 @@ class LumenVpnService : VpnService() {
         // obfs2/obfs3 "Use proxy": the local transport must listen before the core
         // dials its loopback detour.
         startObfsRelay(runtimeParams)
-        enforcePrivateDnsPolicy(dnsMode)
+        if (!params.proxyOnly) {
+            enforcePrivateDnsPolicy(dnsMode)
+        }
 
         VpnLogBus.info("CORE", "Starting proxy core")
         val localSocksPort = startCoreOnFreeLocalPort(runtimeParams)
 
-        val builder = Builder()
-            .setMtu(mtu)
-            .addAddress(DEFAULT_IPV4_ADDRESS, DEFAULT_IPV4_PREFIX)
-            .addAddress(DEFAULT_IPV6_ADDRESS, DEFAULT_IPV6_PREFIX)
-            .addRoute("0.0.0.0", 0)
-            .addRoute("::", 0)
-            .setSession("Lumen VPN")
-            .setBlocking(true)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Inherit metered/unmetered state from the real network instead of
-            // making every Lumen connection metered on Android 10+.
-            builder.setMetered(false)
-        }
-        // Do not call setUnderlyingNetworks() here. The core process is excluded from
-        // the VPN and follows Android's default physical network; it does not bind its
-        // sockets with Network.bindSocket(). Android specifies null (the Builder
-        // default) for this case. Pinning one Network here prevents a replacement
-        // Wi-Fi/mobile network from becoming the usable default until the VPN stops.
-        val vpnDnsServers = if (dnsMode.lowercase() in setOf("android", "system")) {
-            physicalDnsServers
-        } else {
-            listOf(INTERNAL_DNS_ADDRESS)
-        }
-        vpnDnsServers.forEach(builder::addDnsServer)
-        // The core's outbound sockets must bypass this VPN to avoid a routing loop.
-        // ALLOW_LIST caveats: our own package must never be allowed, and an
-        // empty allow-list would make Android capture ALL apps.
-        val effectiveSplit = SplitTunnelingManager.withoutOwnPackage(splitConfig, packageName)
-        SplitTunnelingManager.requireSafeAllowList(effectiveSplit)
-        val appliedSplit = SplitTunnelingManager.applySplitTunneling(builder, effectiveSplit)
-        SplitTunnelingManager.requireSafeAllowList(effectiveSplit, appliedSplit)
-        if (SplitTunnelingManager.requiresSelfDisallow(effectiveSplit.mode, appliedSplit)) {
-            builder.addDisallowedApplication(packageName)
-        }
-
-        val pfd = checkNotNull(builder.establish()) { "Failed to establish VPN interface" }
-        vpnInterface = pfd
-        if (blockingInterface != null && blockingInterface !== pfd) {
-            runCatching { blockingInterface.close() }
-        }
-        VpnLogBus.info("VPN", "TUN interface established; starting tun2socks")
-
-        // The shipped libhev-socks5-tunnel only knows misc.log-level / misc.log-file:
-        // a top-level `log:` section parses but is dropped, so the level never applied.
-        // With Socks5 authorization on, the core rejects an anonymous client, so
-        // the tunnel has to present the very credentials that are in the config.
         val socksCredentials = socksCredentialsOf(runtimeParams.configJson)
         activeSocksCredentials = socksCredentials
-        val hevAuthLines = socksCredentials?.let { (user, password) ->
-            "  username: '$user'\n  password: '$password'\n"
-        }.orEmpty()
-        val hevConfig = File(cacheDir, "hev-tunnel.yaml").apply {
-            writeText(
-                """tunnel:
+        if (!params.proxyOnly) {
+            val builder = Builder()
+                .setMtu(mtu)
+                .addAddress(DEFAULT_IPV4_ADDRESS, DEFAULT_IPV4_PREFIX)
+                .addAddress(DEFAULT_IPV6_ADDRESS, DEFAULT_IPV6_PREFIX)
+                .addRoute("0.0.0.0", 0)
+                .addRoute("::", 0)
+                .setSession("Lumen VPN")
+                .setBlocking(true)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Inherit metered/unmetered state from the real network instead of
+                // making every Lumen connection metered on Android 10+.
+                builder.setMetered(false)
+            }
+            // Do not call setUnderlyingNetworks() here. The core process is excluded from
+            // the VPN and follows Android's default physical network; it does not bind its
+            // sockets with Network.bindSocket(). Android specifies null (the Builder
+            // default) for this case. Pinning one Network here prevents a replacement
+            // Wi-Fi/mobile network from becoming the usable default until the VPN stops.
+            val vpnDnsServers = if (dnsMode.lowercase() in setOf("android", "system")) {
+                physicalDnsServers
+            } else {
+                listOf(INTERNAL_DNS_ADDRESS)
+            }
+            vpnDnsServers.forEach(builder::addDnsServer)
+            // The core's outbound sockets must bypass this VPN to avoid a routing loop.
+            // ALLOW_LIST caveats: our own package must never be allowed, and an
+            // empty allow-list would make Android capture ALL apps.
+            val effectiveSplit = SplitTunnelingManager.withoutOwnPackage(splitConfig, packageName)
+            SplitTunnelingManager.requireSafeAllowList(effectiveSplit)
+            val appliedSplit = SplitTunnelingManager.applySplitTunneling(builder, effectiveSplit)
+            SplitTunnelingManager.requireSafeAllowList(effectiveSplit, appliedSplit)
+            if (SplitTunnelingManager.requiresSelfDisallow(effectiveSplit.mode, appliedSplit)) {
+                builder.addDisallowedApplication(packageName)
+            }
+
+            val pfd = checkNotNull(builder.establish()) { "Failed to establish VPN interface" }
+            vpnInterface = pfd
+            if (blockingInterface != null && blockingInterface !== pfd) {
+                runCatching { blockingInterface.close() }
+            }
+            VpnLogBus.info("VPN", "TUN interface established; starting tun2socks")
+
+            // The shipped libhev-socks5-tunnel only knows misc.log-level / misc.log-file:
+            // a top-level `log:` section parses but is dropped, so the level never applied.
+            // With Socks5 authorization on, the core rejects an anonymous client, so
+            // the tunnel has to present the very credentials that are in the config.
+            val hevAuthLines = socksCredentials?.let { (user, password) ->
+                "  username: '$user'\n  password: '$password'\n"
+            }.orEmpty()
+            val hevConfig = File(cacheDir, "hev-tunnel.yaml").apply {
+                writeText(
+                    """tunnel:
   mtu: $mtu
 socks5:
   port: $localSocksPort
@@ -387,32 +385,33 @@ ${hevAuthLines}misc:
   connect-timeout: 5000
   read-write-timeout: 60000
 """
-            )
-        }
-        tunnelStarted.set(false)
-        VpnLogBus.info("TUN2SOCKS", "Starting hev-socks5-tunnel on fd=${pfd.fd}")
-        try {
-            // Current upstream JNI reports pthread creation and exposes worker
-            // liveness. The old void ABI made a dead native worker look Connected.
-            check(TProxyService.TProxyStartService(hevConfig.absolutePath, pfd.fd)) {
-                "hev-socks5-tunnel could not create its native worker"
+                )
             }
-            tunnelStarted.set(true)
-        } catch (t: Throwable) {
             tunnelStarted.set(false)
-            runCatching { TProxyService.TProxyStopService() }
-            throw IllegalStateException("hev-socks5-tunnel failed to start", t)
-        }
-        delay(TUN_STARTUP_GRACE_MS)
-        check(tunnelStarted.get()) { "hev-socks5-tunnel failed to start" }
-        check(TProxyService.TProxyIsRunning()) {
-            "hev-socks5-tunnel native worker exited during startup"
-        }
-        checkNotNull(readHevTrafficCounters()) {
-            "hev-socks5-tunnel did not expose a valid runtime status"
+            VpnLogBus.info("TUN2SOCKS", "Starting hev-socks5-tunnel on fd=${pfd.fd}")
+            try {
+                // Current upstream JNI reports pthread creation and exposes worker
+                // liveness. The old void ABI made a dead native worker look Connected.
+                check(TProxyService.TProxyStartService(hevConfig.absolutePath, pfd.fd)) {
+                    "hev-socks5-tunnel could not create its native worker"
+                }
+                tunnelStarted.set(true)
+            } catch (t: Throwable) {
+                tunnelStarted.set(false)
+                runCatching { TProxyService.TProxyStopService() }
+                throw IllegalStateException("hev-socks5-tunnel failed to start", t)
+            }
+            delay(TUN_STARTUP_GRACE_MS)
+            check(tunnelStarted.get()) { "hev-socks5-tunnel failed to start" }
+            check(TProxyService.TProxyIsRunning()) {
+                "hev-socks5-tunnel native worker exited during startup"
+            }
+            checkNotNull(readHevTrafficCounters()) {
+                "hev-socks5-tunnel did not expose a valid runtime status"
+            }
         }
         check(engineManager.singboxEngine.isRunning) {
-            "Proxy core stopped before the VPN tunnel became ready"
+            "Proxy core stopped before the connection became ready"
         }
         val validateDataPath = getSharedPreferences(VpnStartIntentFactory.PREFS_NAME, MODE_PRIVATE)
             .getBoolean(PREF_VALIDATE_PROXY_DATA_PATH, false)
@@ -436,7 +435,14 @@ ${hevAuthLines}misc:
         reportNotificationVisibility()
         notifyWidgets()
         observeEngineState()
-        VpnLogBus.info("VPN", "Connected (${engineType.name}); traffic is handled by sing-box + tun2socks")
+        VpnLogBus.info(
+            "VPN",
+            if (params.proxyOnly) {
+                "Connected (${engineType.name}) in proxy-only mode; local proxy is ready"
+            } else {
+                "Connected (${engineType.name}); traffic is handled by sing-box + tun2socks"
+            }
+        )
         Log.i(TAG, "VPN started with ${engineType.name}")
     }
 
@@ -1024,33 +1030,43 @@ ${hevAuthLines}misc:
     }
 
     /**
-     * Read the actual TUN counters exported by bundled hev. Android UID counters
-     * remain a compatibility fallback, but include subscription/telemetry traffic
-     * and therefore must not be the primary VPN speed source.
+     * Read the actual TUN counters exported by bundled hev. Proxy-only mode has no
+     * TUN, so it falls back to Android UID counters for the local proxy process.
+     * UID counters include subscription/telemetry traffic and therefore are not the
+     * primary speed source for a regular VPN session.
      */
     private fun startTrafficStats() {
         trafficStatsJob?.cancel()
         trafficStatsJob = serviceScope.launch {
             val uid = Process.myUid()
-            var previous = readHevTrafficCounters() ?: readUidTrafficCounters(uid)
+            val proxyOnly = activeParams?.proxyOnly == true
+            var previous = if (proxyOnly) {
+                readUidTrafficCounters(uid)
+            } else {
+                readHevTrafficCounters() ?: readUidTrafficCounters(uid)
+            }
             var previousTime = SystemClock.elapsedRealtimeNanos()
             var nativeReadFailures = 0
             while (true) {
                 delay(1_000)
-                val nativeRunning = runCatching { TProxyService.TProxyIsRunning() }
-                    .onFailure {
-                        VpnLogBus.warning(
-                            "TUN2SOCKS",
-                            "Could not read native worker state: ${it.message}"
-                        )
-                    }
-                    .getOrDefault(false)
+                val nativeRunning = if (proxyOnly) {
+                    true
+                } else {
+                    runCatching { TProxyService.TProxyIsRunning() }
+                        .onFailure {
+                            VpnLogBus.warning(
+                                "TUN2SOCKS",
+                                "Could not read native worker state: ${it.message}"
+                            )
+                        }
+                        .getOrDefault(false)
+                }
                 if (tunnelStarted.get() && !nativeRunning) {
                     onTunnelFailure("hev-socks5-tunnel native worker exited")
                     return@launch
                 }
                 val now = SystemClock.elapsedRealtimeNanos()
-                val nativeCounters = readHevTrafficCounters()
+                val nativeCounters = if (proxyOnly) null else readHevTrafficCounters()
                 if (nativeCounters == null && tunnelStarted.get()) {
                     nativeReadFailures++
                     if (nativeReadFailures >= MAX_NATIVE_STATS_FAILURES) {
@@ -1281,6 +1297,7 @@ ${hevAuthLines}misc:
         const val EXTRA_SPLIT_PACKAGES = "extra_split_packages"
         const val EXTRA_MTU = "extra_mtu"
         const val EXTRA_LOCAL_SOCKS_PORT = "extra_local_socks_port"
+        const val EXTRA_PROXY_ONLY = "extra_proxy_only"
         const val EXTRA_DNS_MODE = "extra_dns_mode"
         const val EXTRA_RECONNECT_ON_NETWORK_CHANGE = "extra_reconnect_on_network_change"
         const val EXTRA_OBFS_TYPE = "extra_obfs_type"

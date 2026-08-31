@@ -225,8 +225,6 @@ data class SettingsUiState(
     val engine: String = "SINGBOX",
     val muxEnabled: Boolean = false,
     val muxConcurrency: Int = 8,
-    // Named exactly like the SingboxConfigOptions fields they feed, so the app layer
-    // maps them straight through. Defaults match the builder's own defaults.
     val multiplexProtocol: String = "smux",
     val multiplexMinStreams: Int = 4,
     val multiplexPadding: Boolean = true,
@@ -237,7 +235,6 @@ data class SettingsUiState(
     val fragmentPackets: String = "tlshello",
     val fragmentLength: String = "50-100",
     val fragmentDelay: String = "10-20",
-    // Dial options applied to every outbound / endpoint the builder emits.
     val outboundTcpFastOpen: Boolean = false,
     val outboundTcpMultiPath: Boolean = false,
     val outboundUdpFragment: Boolean = false,
@@ -247,11 +244,10 @@ data class SettingsUiState(
     val localSocksPort: Int = 10808,
     val localHttpPort: Int = 10809,
     val lanSharingEnabled: Boolean = false,
-    // Socks5 authorization for the local proxy, on by default like v2rayTUN.
-    // The credentials are generated once and only ever copied by the user.
     val socks5AuthEnabled: Boolean = true,
     val socks5Username: String = "",
     val socks5Password: String = "",
+    val proxyOnly: Boolean = false,
     val autoConnectOnBoot: Boolean = false,
     val enableSpeedStats: Boolean = true,
     val preferIpv6: Boolean = false,
@@ -261,11 +257,9 @@ data class SettingsUiState(
     val directDomains: String = DEFAULT_DIRECT_DOMAINS,
     val directIpCidrs: String = "",
     val geoResourceSource: String = "https://github.com/runetfreedom/russia-v2ray-rules-dat/",
-    // Legacy single-server fields are kept for preference migration.
     val proxyDnsServer: String = "cloudflare-dns.com",
     val directDnsServer: String = "1.1.1.1",
     val dnsMode: String = "automatic",
-    /** Exact sing-box-extended `dns` object used only by the explicit JSON mode. */
     val dnsCustomJson: String = "",
     val dnsDirectServers: String = "1.1.1.1\n8.8.8.8",
     val dnsProxyServers: String = "cloudflare-dns.com\ndns.google",
@@ -297,13 +291,9 @@ data class SettingsUiState(
     val subscriptionIncludeRegex: String = "",
     val subscriptionExcludeRegex: String = "",
     val subscriptionUseProxyTun: Boolean = false,
-    // Plain HTTP subscription URLs contain bearer tokens in clear text. Keep them
-    // disabled unless the user explicitly accepts that risk for a legacy panel.
     val subscriptionAllowHttp: Boolean = false,
     val subscriptionConverterEnabled: Boolean = false,
     val subscriptionConverterUrl: String = "",
-    // One switch for the whole logging pipeline: the core's verbosity, the in-app
-    // log bus and the persisted store. Off means nothing is recorded anywhere.
     val loggingEnabled: Boolean = true,
     val language: String = "en",
     val themeMode: ThemeMode = ThemeMode.DARK,
@@ -312,26 +302,19 @@ data class SettingsUiState(
     val useAmoledBlack: Boolean = false,
     val hapticsEnabled: Boolean = true,
     val telemetryEnabled: Boolean = true,
-    // Rebuild the tunnel on a Wi-Fi <-> mobile switch; applies to every protocol.
     val reconnectOnNetworkChange: Boolean = true,
-    // Optional end-to-end HTTPS probe through the local SOCKS inbound before TUN setup.
     val validateProxyDataPath: Boolean = false,
     val showNotification: Boolean = true,
     val showNotificationSpeed: Boolean = true,
-    // HTTP GET is the default: it measures a real request through the node and
-    // works for UDP-only protocols, where a TCP connect can never complete.
     val pingType: String = "http",
     val pingTimeoutMs: Int = 2000,
     val pingConcurrency: Int = 16,
     val pingUrl: String = "https://www.google.com/generate_204",
-    // How many probes are sent per server and how the samples are reduced.
     val pingAttempts: Int = 1,
     val pingAggregate: String = "min",
     val pingRetryDelayMs: Int = 200,
-    // Latency colour thresholds used by the server rows.
     val pingGoodMs: Int = 150,
     val pingFairMs: Int = 300,
-    // Start a check automatically when the server list opens.
     val pingAutoOnOpen: Boolean = false,
     val dashboardStyle: DashboardStyle = DashboardStyle.DEFAULT,
     val launcherIcon: LauncherIconOption = LauncherIconOption.SYSTEM

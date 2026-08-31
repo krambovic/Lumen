@@ -33,7 +33,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -174,17 +173,7 @@ fun ThemeSettingsScreen(
     ) {
         LumenScreenHeader(
             title = s.themeSettings,
-            onBack = onBack,
-            actions = {
-                TextButton(onClick = onBack) {
-                    Text(
-                        text = s.done,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
+            onBack = onBack
         )
 
         Spacer(Modifier.height(8.dp))

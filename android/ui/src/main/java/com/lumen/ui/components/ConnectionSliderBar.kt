@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -150,8 +151,7 @@ fun ConnectionSliderBar(
                     .background(animatedKnobBg)
             )
         }
-
-        // Center Label Text
+        val labelSafePadding = with(density) { (insetPx + knobSizePx + 8.dp.toPx()).toDp() }
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
@@ -160,10 +160,15 @@ fun ConnectionSliderBar(
                 text = labelText,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = if (effectiveOffsetPx > maxOffsetPx * 0.5f) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                color = if (effectiveOffsetPx >= maxOffsetPx * 0.5f) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                 fontSize = 17.sp,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 44.dp)
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = labelSafePadding)
             )
         }
 

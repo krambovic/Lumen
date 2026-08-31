@@ -54,6 +54,7 @@ class SettingsOptionsTest {
         assertEquals(0, state.urlTestIdleTimeoutMinutes)
         assertTrue(state.urlTestInterruptExistConnections)
         assertTrue(state.loggingEnabled)
+        assertFalse(state.proxyOnly)
     }
 
     private val newLabels = listOf(
@@ -62,7 +63,8 @@ class SettingsOptionsTest {
         "outboundSection", "tcpFastOpen", "tcpFastOpenDesc", "tcpMultiPath",
         "tcpMultiPathDesc", "udpFragmentLabel", "udpFragmentDesc", "udpOverTcpLabel",
         "udpOverTcpDesc", "connectTimeoutLabel", "urlTestIdleTimeoutLabel",
-        "urlTestInterrupt", "urlTestInterruptDesc", "loggingEnabled", "loggingEnabledDesc"
+        "urlTestInterrupt", "urlTestInterruptDesc", "loggingEnabled", "loggingEnabledDesc",
+        "proxyOnly", "proxyOnlyDesc"
     )
 
     @Test
@@ -96,5 +98,21 @@ class SettingsOptionsTest {
         fields.forEach {
             assertEquals("copyFrom skipped ${it.name}", "marker", it.get(copy))
         }
+    }
+
+    @Test
+    fun russianCountLabelsUseTheCorrectCases() {
+        val ru = stringsForLanguage("ru")
+
+        assertEquals("1 группа", ru.groupCountLabel(1))
+        assertEquals("2 группы", ru.groupCountLabel(2))
+        assertEquals("5 групп", ru.groupCountLabel(5))
+        assertEquals("21 группа", ru.groupCountLabel(21))
+        assertEquals("22 группы", ru.groupCountLabel(22))
+        assertEquals("25 групп", ru.groupCountLabel(25))
+
+        assertEquals("1 сервер", ru.serverCountLabel(1))
+        assertEquals("4 сервера", ru.serverCountLabel(4))
+        assertEquals("11 серверов", ru.serverCountLabel(11))
     }
 }

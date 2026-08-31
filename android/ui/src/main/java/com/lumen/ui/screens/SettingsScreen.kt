@@ -727,44 +727,6 @@ private fun TrafficSettings(
         }
         Spacer(Modifier.height(4.dp))
     }
-    // Socks5 authorization for the local proxy. On by default: without it the
-    // inbound is open to anything that can reach the device.
-    SectionHeader(s.socks5Auth)
-    SettingsCard {
-        Spacer(Modifier.height(4.dp))
-        ToggleRow(s.socks5Auth, s.socks5AuthDesc, state.socks5AuthEnabled) { enabled ->
-            onUpdate(
-                state.copy(
-                    socks5AuthEnabled = enabled,
-                    // Turning it on with empty credentials would publish an
-                    // inbound nothing can authenticate against.
-                    socks5Username = state.socks5Username.ifBlank { generateSocks5Username() },
-                    socks5Password = state.socks5Password.ifBlank { generateSocks5Password() }
-                )
-            )
-        }
-        if (state.socks5AuthEnabled) {
-            SettingsDivider()
-            Socks5CredentialRow(s.socks5Login, state.socks5Username)
-            SettingsDivider()
-            Socks5CredentialRow(s.socks5PasswordLabel, state.socks5Password)
-            SettingsDivider()
-            androidx.compose.material3.TextButton(
-                onClick = {
-                    onUpdate(
-                        state.copy(
-                            socks5Username = generateSocks5Username(),
-                            socks5Password = generateSocks5Password()
-                        )
-                    )
-                },
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-            ) {
-                Text(s.socks5Reset)
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-    }
 }
 
 /** Read-only credential row: the value can only be copied, never edited. */
@@ -991,7 +953,21 @@ private fun AppSettings(
     SectionHeader(s.localProxy)
     SettingsCard {
         Spacer(Modifier.height(4.dp))
-        ToggleRow(s.localInbound, s.localInboundDescription, state.localInboundEnabled) {
+        ToggleRow(s.proxyOnly, s.proxyOnlyDesc, state.proxyOnly) {
+            onUpdate(
+                state.copy(
+                    proxyOnly = it,
+                    localInboundEnabled = if (it) true else state.localInboundEnabled
+                )
+            )
+        }
+        SettingsDivider()
+        ToggleRow(
+            s.localInbound,
+            s.localInboundDescription,
+            state.localInboundEnabled,
+            enabled = !state.proxyOnly
+        ) {
             onUpdate(state.copy(localInboundEnabled = it))
         }
         if (state.localInboundEnabled) {
@@ -1012,6 +988,40 @@ private fun AppSettings(
             SettingsDivider()
             ToggleRow(s.allowLan, s.allowLanDescription, state.lanSharingEnabled) {
                 onUpdate(state.copy(lanSharingEnabled = it))
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+    SectionHeader(s.socks5Auth)
+    SettingsCard {
+        Spacer(Modifier.height(4.dp))
+        ToggleRow(s.socks5Auth, s.socks5AuthDesc, state.socks5AuthEnabled) { enabled ->
+            onUpdate(
+                state.copy(
+                    socks5AuthEnabled = enabled,
+                    socks5Username = state.socks5Username.ifBlank { generateSocks5Username() },
+                    socks5Password = state.socks5Password.ifBlank { generateSocks5Password() }
+                )
+            )
+        }
+        if (state.socks5AuthEnabled) {
+            SettingsDivider()
+            Socks5CredentialRow(s.socks5Login, state.socks5Username)
+            SettingsDivider()
+            Socks5CredentialRow(s.socks5PasswordLabel, state.socks5Password)
+            SettingsDivider()
+            androidx.compose.material3.TextButton(
+                onClick = {
+                    onUpdate(
+                        state.copy(
+                            socks5Username = generateSocks5Username(),
+                            socks5Password = generateSocks5Password()
+                        )
+                    )
+                },
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Text(s.socks5Reset)
             }
         }
         Spacer(Modifier.height(4.dp))
@@ -1102,17 +1112,38 @@ internal fun SettingsDivider() {
 }
 
 @Composable
-private fun ToggleRow(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun ToggleRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onChange: (Boolean) -> Unit
+) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                title,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                }
+            )
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                }
+            )
         }
-        LumenSwitch(checked = checked, onCheckedChange = onChange)
+        LumenSwitch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
 

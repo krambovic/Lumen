@@ -215,14 +215,9 @@ class LumenWidgetControlReceiver : BroadcastReceiver() {
             startVpnService(context, VpnStartIntentFactory.buildStopIntent(context))
             return
         }
-        // Starting a tunnel needs the VPN consent dialog on first use and a config
-        // that actually exists; both are only available in the app, so fall back to
-        // opening it instead of silently doing nothing.
         val params = VpnStartIntentFactory.startParamsFromPrefs(context)
-        // hasUsableConfig stats the stored file; onReceive runs on the main thread and
-        // params never carries the config itself. See VpnConfigStore.
         if (!VpnStartIntentFactory.hasUsableConfig(context) ||
-            android.net.VpnService.prepare(context) != null
+            (!params.proxyOnly && android.net.VpnService.prepare(context) != null)
         ) {
             openApp(context)
             return

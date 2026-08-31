@@ -55,7 +55,7 @@ class LumenTileService : TileService() {
         // hasUsableConfig stats the stored file; onClick runs on the main thread and
         // params never carries the config itself. See VpnConfigStore.
         if (!VpnStartIntentFactory.hasUsableConfig(this) ||
-            VpnService.prepare(this) != null
+            (!params.proxyOnly && VpnService.prepare(this) != null)
         ) {
             openApp()
             return

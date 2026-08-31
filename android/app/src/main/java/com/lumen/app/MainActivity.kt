@@ -136,7 +136,11 @@ class MainActivity : ComponentActivity() {
                 android.widget.Toast.makeText(this, "No servers available. Please import a server.", android.widget.Toast.LENGTH_SHORT).show()
                 return
             }
-            VpnService.prepare(this)?.let(vpnPermissionLauncher::launch) ?: startVpn()
+            if (viewModel.settings.value.proxyOnly) {
+                startVpn()
+            } else {
+                VpnService.prepare(this)?.let(vpnPermissionLauncher::launch) ?: startVpn()
+            }
         }
     }
 
@@ -166,6 +170,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestFirstRunVpnConsent() {
+        if (viewModel.settings.value.proxyOnly) return
         VpnService.prepare(this)?.let(firstRunVpnPermissionLauncher::launch)
     }
 
@@ -190,7 +195,11 @@ class MainActivity : ComponentActivity() {
                 return@launch
             }
             delay(250)
-            VpnService.prepare(this@MainActivity)?.let(vpnPermissionLauncher::launch) ?: startVpn()
+            if (viewModel.settings.value.proxyOnly) {
+                startVpn()
+            } else {
+                VpnService.prepare(this@MainActivity)?.let(vpnPermissionLauncher::launch) ?: startVpn()
+            }
         }
     }
 

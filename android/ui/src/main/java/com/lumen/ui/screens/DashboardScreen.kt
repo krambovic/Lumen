@@ -255,7 +255,12 @@ fun DashboardScreen(
                 }
             )
         } else {
-            LumenScreenHeader(title = "Lumen", subtitle = "v${LumenVersion.appVersion}", actions = {
+            LumenScreenHeader(
+                title = "Lumen",
+                subtitle = "v${LumenVersion.appVersion}",
+                stackSubtitleOnCompact = false,
+                modifier = Modifier.padding(horizontal = 16.dp),
+                actions = {
                 IconButton(onClick = { uriHandler.openUri("https://github.com/krambovic/Lumen") }) {
                     Icon(Icons.Filled.Code, contentDescription = "GitHub")
                 }
@@ -863,7 +868,7 @@ fun SubscriptionHeaderTile(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = if (group.isSubscription) "${group.nodes.size} ${strings.serverCount} | ${strings.autoUpdateOneHour}" else "${group.nodes.size} ${strings.serverCount}",
+                        text = if (group.isSubscription) "${strings.serverCountLabel(group.nodes.size)} | ${strings.autoUpdateOneHour}" else strings.serverCountLabel(group.nodes.size),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp
@@ -1062,7 +1067,7 @@ fun SubscriptionInfoBar(
         Spacer(Modifier.height(6.dp))
         Text(
             text = buildString {
-                append("${sub.nodeCount} ${strings.serverCount}")
+                append(strings.serverCountLabel(sub.nodeCount))
                 sub.updateIntervalHours?.let { append("  |  \u21bb ${it}h") }
             },
             style = MaterialTheme.typography.bodySmall,

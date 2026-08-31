@@ -5,15 +5,18 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -39,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.lumen.ui.theme.ConnectionDanger
 import com.lumen.ui.theme.ConnectionSuccess
 import com.lumen.ui.theme.ConnectionWarning
@@ -242,27 +246,30 @@ fun LumenScreenHeader(
     onBack: (() -> Unit)? = null,
     subtitle: String? = null,
     actions: (@Composable () -> Unit)? = null,
-    // Screens that already inset their own scroll container (Settings) pass false so the
-    // status bar gap is not applied twice and the header cannot slide under the clock.
+    stackSubtitleOnCompact: Boolean = true,
     applyStatusBarPadding: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    Row(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .then(if (applyStatusBarPadding) Modifier.statusBarsPadding() else Modifier)
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(vertical = 6.dp),
     ) {
+        val compactHeader = maxWidth < 520.dp &&
+            stackSubtitleOnCompact &&
+            !subtitle.isNullOrBlank()
         Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
         ) {
             if (onBack != null) {
                 IconButton(
                     onClick = onBack,
-                    modifier = Modifier.size(34.dp)
+                    modifier = Modifier
+                        .size(48.dp)
+                        .offset(x = (-2).dp)
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -272,27 +279,64 @@ fun LumenScreenHeader(
                 }
                 Spacer(Modifier.width(6.dp))
             }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            if (!subtitle.isNullOrBlank()) {
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+            if (compactHeader) {
+                Column(modifier = Modifier.weight(1f)) {
+                    HeaderTitle(title, Modifier.fillMaxWidth())
+                    Text(
+                        text = subtitle.orEmpty(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else {
+                if (subtitle.isNullOrBlank()) {
+                    HeaderTitle(title, Modifier.weight(1f))
+                } else {
+                    HeaderTitle(title, Modifier.wrapContentWidth())
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip,
+                        modifier = Modifier.wrapContentWidth()
+                    )
+                    Spacer(Modifier.weight(1f))
+                }
             }
-        }
-        if (actions != null) {
-            actions()
+            if (actions != null) {
+                actions()
+            }
         }
     }
 }
+
+@Composable
+private fun HeaderTitle(title: String, modifier: Modifier = Modifier) {
+    Text(
+        text = title,
+        style = headerTitleStyle(title),
+        fontWeight = FontWeight.ExtraBold,
+        color = MaterialTheme.colorScheme.onSurface,
+        maxLines = 2,
+        overflow = TextOverflow.Clip,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun headerTitleStyle(title: String) = MaterialTheme.typography.headlineSmall.copy(
+    fontSize = if (title.length >= 18) 24.sp else MaterialTheme.typography.headlineSmall.fontSize,
+    lineHeight = if (title.length >= 18) 30.sp else MaterialTheme.typography.headlineSmall.lineHeight
+)
 
 /**
  * True while the device itself plays touch feedback.

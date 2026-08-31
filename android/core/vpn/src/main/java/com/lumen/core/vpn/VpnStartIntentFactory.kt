@@ -27,6 +27,7 @@ data class VpnStartParams(
     val splitPackages: Set<String> = emptySet(),
     val mtu: Int = LumenVpnService.DEFAULT_MTU,
     val localSocksPort: Int = VpnStartIntentFactory.DEFAULT_LOCAL_SOCKS_PORT,
+    val proxyOnly: Boolean = false,
     val dnsMode: String = VpnStartIntentFactory.DEFAULT_DNS_MODE,
     val reconnectOnNetworkChange: Boolean = true,
     val obfsType: String = "",
@@ -242,6 +243,7 @@ object VpnStartIntentFactory {
     const val KEY_SPLIT_PACKAGES = "split_packages"
     const val KEY_MTU = "mtu"
     const val KEY_LOCAL_SOCKS_PORT = "local_socks_port"
+    const val KEY_PROXY_ONLY = "proxy_only"
     const val KEY_DNS_MODE = "dns_mode"
     const val KEY_RECONNECT_ON_NETWORK_CHANGE = "reconnect_on_network_change"
     const val KEY_OBFS_TYPE = "obfs_type"
@@ -309,6 +311,7 @@ object VpnStartIntentFactory {
             .putStringSet(KEY_SPLIT_PACKAGES, params.splitPackages)
             .putInt(KEY_MTU, params.mtu)
             .putInt(KEY_LOCAL_SOCKS_PORT, params.localSocksPort)
+            .putBoolean(KEY_PROXY_ONLY, params.proxyOnly)
             .putString(KEY_DNS_MODE, params.dnsMode)
             .putBoolean(KEY_RECONNECT_ON_NETWORK_CHANGE, params.reconnectOnNetworkChange)
             .putString(KEY_OBFS_TYPE, params.obfsType)
@@ -332,6 +335,7 @@ object VpnStartIntentFactory {
             splitPackages = prefs.getStringSet(KEY_SPLIT_PACKAGES, emptySet()) ?: emptySet(),
             mtu = prefs.getInt(KEY_MTU, LumenVpnService.DEFAULT_MTU),
             localSocksPort = prefs.getInt(KEY_LOCAL_SOCKS_PORT, DEFAULT_LOCAL_SOCKS_PORT),
+            proxyOnly = prefs.getBoolean(KEY_PROXY_ONLY, false),
             dnsMode = prefs.getString(KEY_DNS_MODE, null) ?: DEFAULT_DNS_MODE,
             reconnectOnNetworkChange = prefs.getBoolean(KEY_RECONNECT_ON_NETWORK_CHANGE, true),
             obfsType = prefs.getString(KEY_OBFS_TYPE, null).orEmpty(),
@@ -356,6 +360,7 @@ object VpnStartIntentFactory {
                 LumenVpnService.EXTRA_LOCAL_SOCKS_PORT,
                 params.localSocksPort.coerceIn(1024, 65535)
             )
+            putExtra(LumenVpnService.EXTRA_PROXY_ONLY, params.proxyOnly)
             putExtra(LumenVpnService.EXTRA_DNS_MODE, params.dnsMode)
             putExtra(
                 LumenVpnService.EXTRA_RECONNECT_ON_NETWORK_CHANGE,

@@ -2,7 +2,18 @@ package com.lumen.ui.screens
 
 import androidx.compose.runtime.staticCompositionLocalOf
 
+private fun russianPlural(count: Int, one: String, few: String, many: String): String {
+    val lastTwo = count % 100
+    val last = count % 10
+    return when {
+        last == 1 && lastTwo != 11 -> one
+        last in 2..4 && lastTwo !in 12..14 -> few
+        else -> many
+    }
+}
+
 class LumenStrings {
+    var localeCode = "en"
     var home = ""; var servers = ""; var routing = ""; var settings = ""; var logs = ""
     var noServer = ""; var fastest = ""; var addNode = ""; var searchServers = ""
     var pingAll = ""; var pinging = ""; var importClipboard = ""; var noServers = ""
@@ -17,7 +28,7 @@ class LumenStrings {
     var tlsFragmentation = ""; var tlsDescription = ""; var fragmentPackets = ""
     var fragmentLength = ""; var fragmentDelay = ""; var tunnelMtu = ""; var localProxy = ""
     var localInbound = ""; var localInboundDescription = ""; var allowLan = ""
-    var allowLanDescription = ""; var behavior = ""; var autoConnect = ""
+    var allowLanDescription = ""; var behavior = ""; var proxyOnly = ""; var proxyOnlyDesc = ""; var autoConnect = ""
     var autoConnectDescription = ""; var language = ""; var systemDefault = ""
     var speedTest = ""; var testing = ""; var runSpeedTest = ""; var export = ""
     var noLogs = ""; var connectingStatus = ""
@@ -234,6 +245,12 @@ class LumenStrings {
     var providerWebsite = "Website"
     var providerPremium = "Premium"
 
+    fun groupCountLabel(count: Int): String =
+        "$count ${if (localeCode == "ru") russianPlural(count, "группа", "группы", "групп") else groupsWord}"
+
+    fun serverCountLabel(count: Int): String =
+        "$count ${if (localeCode == "ru") russianPlural(count, "сервер", "сервера", "серверов") else serverCount}"
+
     fun copyFrom(src: LumenStrings): LumenStrings = apply {
         src.javaClass.declaredFields.forEach { f ->
             if (f.type == String::class.java) {
@@ -245,6 +262,7 @@ class LumenStrings {
 }
 
 private val EN = LumenStrings().apply {
+    localeCode = "en"
     home="Home"; servers="Servers"; routing="Routing"; settings="Settings"; logs="Logs"
     noServer="No server selected — tap to choose"; fastest="fastest available"; addNode="Add node"
     searchServers="Search servers…"; pingAll="Ping all"; pinging="Pinging…"
@@ -264,6 +282,7 @@ private val EN = LumenStrings().apply {
     tunnelMtu="Tunnel MTU"; localProxy="Local proxy"; localInbound="Local SOCKS/HTTP inbound"
     localInboundDescription="Ports 10808 (SOCKS5) and 10809 (HTTP)"; allowLan="Allow LAN connections"
     allowLanDescription="Share the local proxy on your network"; behavior="Behavior"
+    proxyOnly="Proxy only"; proxyOnlyDesc="Use the local proxy without routing device traffic through a VPN. Configure apps to use the local proxy. Applies on the next connection."
     autoConnect="Auto-connect on boot"; autoConnectDescription="Reconnect after reboot"
     speedStats="Speed statistics"; speedStatsDesc="Track live VPN speed and bandwidth. Turn off to save battery and resources."
     language="Language"; systemDefault="System default"; speedTest="Speed test"; testing="Testing…"
@@ -392,6 +411,7 @@ private val EN = LumenStrings().apply {
 }
 
 private val RU = LumenStrings().apply {
+    localeCode = "ru"
     home="Главная"; servers="Серверы"; routing="Маршрутизация"; settings="Настройки"; logs="Логи"
     noServer="Сервер не выбран — нажмите, чтобы выбрать"; fastest="самый быстрый"; addNode="Добавить сервер"
     searchServers="Поиск серверов…"; pingAll="Проверить все"; pinging="Проверка…"
@@ -411,6 +431,7 @@ private val RU = LumenStrings().apply {
     localProxy="Локальный прокси"; localInbound="Локальный SOCKS/HTTP"
     localInboundDescription="Порты 10808 (SOCKS5) и 10809 (HTTP)"; allowLan="Разрешить подключения из LAN"
     allowLanDescription="Открыть локальный прокси в сети"; behavior="Поведение"
+    proxyOnly="Только прокси"; proxyOnlyDesc="Использовать локальный прокси без маршрутизации трафика устройства через VPN. Настройте приложения на локальный прокси. Применяется при следующем подключении."
     autoConnect="Подключаться при запуске"; autoConnectDescription="Переподключаться после перезагрузки"
     speedStats="Статистика скорости"; speedStatsDesc="Отслеживание и измерение скорости трафика VPN. Отключите для экономии энергии."
     language="Язык"; systemDefault="Как в системе"; speedTest="Тест скорости"; testing="Проверка…"
@@ -591,6 +612,7 @@ private val RU = LumenStrings().apply {
 }
 
 private val ZH = LumenStrings().copyFrom(EN).apply {
+    localeCode = "zh"
     home="主页"; servers="服务器"; routing="路由"; settings="设置"; logs="日志"
     subscriptions="订阅"; addSubscription="添加订阅"; searchServers="搜索服务器…"
     hideSystem="隐藏系统应用"; autoSelect="自动选择"; clear="清除"
@@ -665,6 +687,7 @@ private val ZH = LumenStrings().copyFrom(EN).apply {
     tunnelMtu="隔离道 MTU"; localProxy="本地代理"; localInbound="本地 SOCKS/HTTP 入口"
     localInboundDescription="端口 10808 (SOCKS5) 和 10809 (HTTP)"; allowLan="允许局域网连接"
     allowLanDescription="在网络中共享本地代理"; behavior="行为"
+    proxyOnly="仅代理"; proxyOnlyDesc="仅使用本地代理，不通过 VPN 路由设备流量。请将应用配置为使用本地代理。下次连接时生效。"
     autoConnect="开机自动连接"; autoConnectDescription="重启后重新连接"
     speedStats="速度统计"; speedStatsDesc="跟踪并测量 VPN 实时流量速度。关闭以节省电量和资源。"
     testing="测试中…"; export="导出"; noLogs="暂无日志。"
@@ -772,6 +795,7 @@ private val ZH = LumenStrings().copyFrom(EN).apply {
 }
 
 private val FA = LumenStrings().apply {
+    localeCode = "fa"
     home="خانه"; servers="سرورها"; routing="مسیریابی"; settings="تنظیمات"; logs="گزارش‌ها"
     subscriptions="اشتراک‌ها"; addSubscription="افزودن اشتراک"; hideSystem="پنهان کردن برنامه‌های سیستمی"
     autoSelect="انتخاب خودکار"; clear="پاک کردن"; language="زبان"; systemDefault="پیش‌فرض سیستم"
@@ -850,6 +874,7 @@ private val FA = LumenStrings().apply {
     localProxy="پروکسی محلی"; localInbound="ورودی محلی SOCKS/HTTP"
     localInboundDescription="پورت‌های 10808 (SOCKS5) و 10809 (HTTP)"; allowLan="اجازه اتصال از شبکه محلی"
     allowLanDescription="اشتراک پروکسی محلی در شبکه"; behavior="رفتار"
+    proxyOnly="فقط پروکسی"; proxyOnlyDesc="از پروکسی محلی بدون مسیریابی ترافیک دستگاه از طریق وی‌پی‌ان استفاده کنید. برنامه‌ها را برای استفاده از پروکسی محلی تنظیم کنید. در اتصال بعدی اعمال می‌شود."
     autoConnect="اتصال خودکار در روشن شدن"; autoConnectDescription="اتصال دوباره پس از راه‌اندازی مجدد"
     speedStats="آمار سرعت"; speedStatsDesc="اندازه‌گیری و پیگیری سرعت ترافیک وی‌پن. برای کاهش مصرف باتری خاموش کنید."
     speedTest="تست سرعت"; testing="در حال تست…"; runSpeedTest="شروع تست"; export="خروجی"

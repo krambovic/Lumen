@@ -530,14 +530,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         fragmentPackets = prefs.getString("fragment_packets", "tlshello") ?: "tlshello",
         fragmentLength = prefs.getString("fragment_length", "50-100") ?: "50-100",
         fragmentDelay = prefs.getString("fragment_delay", "10-20") ?: "10-20",
-        localInboundEnabled = prefs.getBoolean("local_inbound", true),
+        localInboundEnabled = prefs.getBoolean("local_inbound", true) ||
+            prefs.getBoolean("proxy_only", false),
         localSocksPort = prefs.getInt("local_socks_port", 10808),
         localHttpPort = prefs.getInt("local_http_port", 10809),
         lanSharingEnabled = prefs.getBoolean("lan_sharing", false),
-        // Generated on first read so the switch is usable the moment it is seen.
         socks5AuthEnabled = prefs.getBoolean("socks5_auth_enabled", true),
         socks5Username = ensureSocks5Username(),
         socks5Password = ensureSocks5Password(),
+        proxyOnly = prefs.getBoolean("proxy_only", false),
         autoConnectOnBoot = prefs.getBoolean("boot_auto_connect", false),
         enableSpeedStats = prefs.getBoolean("enable_speed_stats", true),
         showNotification = prefs.getBoolean("show_notification", true),
@@ -675,6 +676,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("socks5_auth_enabled", s.socks5AuthEnabled)
             .putString("socks5_username", s.socks5Username.trim().take(64))
             .putString("socks5_password", s.socks5Password.trim().take(128))
+            .putBoolean("proxy_only", s.proxyOnly)
             .putBoolean("boot_auto_connect", s.autoConnectOnBoot)
             .putBoolean("enable_speed_stats", s.enableSpeedStats)
             .putBoolean("show_notification", s.showNotification)
@@ -3143,6 +3145,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // The tun device itself must respect the same OpenVPN ceiling as the config.
             mtu = tunMtuFor(parsedSelected, s.mtu),
             localSocksPort = s.localSocksPort,
+            proxyOnly = s.proxyOnly,
             dnsMode = s.dnsMode,
             reconnectOnNetworkChange = s.reconnectOnNetworkChange,
             obfsType = bridge?.first.orEmpty(),

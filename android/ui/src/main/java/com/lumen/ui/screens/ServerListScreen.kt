@@ -333,7 +333,7 @@ fun ServerListScreen(
         (if (onlyReachable) 1 else 0) + (if (maxPing > 0) 1 else 0)
 
     val groupCount = subscriptions.size + serverGroups.size + 1
-    val countsSubtitle = "$groupCount ${s.groupsWord} \u2022 ${nodes.size} ${s.serversWord}"
+    val countsSubtitle = "${s.groupCountLabel(groupCount)} \u2022 ${s.serverCountLabel(nodes.size)}"
 
     Column(modifier = modifier.fillMaxSize()) {
         if (isSelectionMode) {
@@ -360,6 +360,7 @@ fun ServerListScreen(
             LumenScreenHeader(
                 title = s.servers,
                 subtitle = countsSubtitle,
+                modifier = Modifier.padding(horizontal = 16.dp),
                 actions = {
                 Box {
                     val shape = RoundedCornerShape(14.dp)
