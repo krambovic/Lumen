@@ -1,8 +1,8 @@
 package com.lumen.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import com.lumen.ui.screens.LocalStrings
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @Composable
@@ -112,42 +114,59 @@ fun ConnectionSliderBar(
         var dragPx by remember {
             mutableFloatStateOf(if (connectionState == ConnectionState.Connected) maxOffsetPx else 0f)
         }
+        val offsetAnimation = remember {
+            Animatable(if (connectionState == ConnectionState.Connected) maxOffsetPx else 0f)
+        }
+        val sliderScope = rememberCoroutineScope()
 
-        // Keep dragPx in sync smoothly when connectionState changes externally
+        // Keep the visual target in sync with settled external state. Connecting
+        // is intentionally ignored here: a successful swipe has already chosen
+        // the destination, while the service is still transitioning to it.
+        val settledStateOffsetPx = when (connectionState) {
+            ConnectionState.Connected -> maxOffsetPx
+            ConnectionState.Disconnected,
+            ConnectionState.Error -> 0f
+            ConnectionState.Connecting -> null
+        }
         androidx.compose.runtime.LaunchedEffect(connectionState, maxOffsetPx) {
             if (!isDragging) {
-                dragPx = if (connectionState == ConnectionState.Connected) maxOffsetPx else 0f
+                settledStateOffsetPx?.let { offsetPx ->
+                    dragPx = offsetPx
+                    offsetAnimation.animateTo(
+                        targetValue = offsetPx,
+                        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                    )
+                }
             }
         }
 
-        val animatedReleaseOffsetPx by animateFloatAsState(
-            targetValue = if (connectionState == ConnectionState.Connected) maxOffsetPx else 0f,
-            animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-            label = "slider_release_offset"
-        )
-
-        // When dragging: follow finger 1:1 instantly. When released: animate smoothly to target
-        val effectiveOffsetPx = if (isDragging) dragPx else animatedReleaseOffsetPx
+        // While dragging, follow the finger exactly. Once released, the
+        // Animatable starts from the actual release point rather than from the
+        // old connection-state position.
+        val effectiveOffsetPx = if (isDragging) dragPx else offsetAnimation.value
 
         val draggableState = rememberDraggableState { delta ->
             isDragging = true
             dragPx = (dragPx + delta).coerceIn(0f, maxOffsetPx)
         }
 
-        // Active fill bar ends precisely at knob's right edge
-        val fillWidthDp = if (effectiveOffsetPx <= 0.5f) {
-            0.dp
-        } else {
-            with(density) { (insetPx + effectiveOffsetPx + knobSizePx).toDp() }
-        }
-
-        if (fillWidthDp > 0.dp) {
+        val fillBoundsPx = sliderFillBounds(
+            trackWidthPx = constraints.maxWidth.toFloat(),
+            thumbOffsetPx = effectiveOffsetPx,
+            thumbSizePx = knobSizePx,
+            insetPx = insetPx
+        )
+        if (fillBoundsPx != null) {
+            val fillWidthDp = with(density) {
+                (fillBoundsPx.second - fillBoundsPx.first).toDp()
+            }
             Box(
                 modifier = Modifier
                     .height(56.dp)
                     .width(fillWidthDp)
                     .align(Alignment.CenterStart)
-                    .clip(RoundedCornerShape(24.dp))
+                    .offset { IntOffset(fillBoundsPx.first.roundToInt(), 0) }
+                    .clip(RoundedCornerShape(28.dp))
                     .background(animatedKnobBg)
             )
         }
@@ -194,15 +213,29 @@ fun ConnectionSliderBar(
                         buzz(HapticFeedbackType.TextHandleMove)
                     },
                     onDragStopped = {
-                        isDragging = false
-                        if (dragPx > maxOffsetPx * 0.4f && connectionState == ConnectionState.Disconnected) {
+                        val release = sliderReleaseTarget(
+                            connectionState = connectionState,
+                            dragOffsetPx = dragPx,
+                            maxOffsetPx = maxOffsetPx
+                        )
+                        val releaseOffsetPx = dragPx
+                        // Keep drag mode active until the animation has captured
+                        // the release point. This prevents a one-frame jump to
+                        // the previous state while the service changes state.
+                        sliderScope.launch {
+                            offsetAnimation.snapTo(releaseOffsetPx)
+                            isDragging = false
+                            offsetAnimation.animateTo(
+                                targetValue = release.targetOffsetPx,
+                                animationSpec = tween(
+                                    durationMillis = 220,
+                                    easing = FastOutSlowInEasing
+                                )
+                            )
+                        }
+                        if (release.togglesConnection) {
                             buzz(HapticFeedbackType.LongPress)
                             onToggleConnection()
-                        } else if (dragPx < maxOffsetPx * 0.6f && connectionState == ConnectionState.Connected) {
-                            buzz(HapticFeedbackType.LongPress)
-                            onToggleConnection()
-                        } else {
-                            dragPx = if (connectionState == ConnectionState.Connected) maxOffsetPx else 0f
                         }
                     }
                 ),
@@ -221,4 +254,50 @@ fun ConnectionSliderBar(
             )
         }
     }
+}
+
+/**
+ * Returns the inner fill bounds in pixels. The fill shares the same 4.dp inset
+ * as the thumb, so the outer track border remains visible on every side.
+ */
+internal fun sliderFillBounds(
+    trackWidthPx: Float,
+    thumbOffsetPx: Float,
+    thumbSizePx: Float,
+    insetPx: Float
+): Pair<Float, Float>? {
+    if (thumbOffsetPx <= 0.5f) return null
+
+    val startPx = insetPx
+    val endPx = (startPx + thumbOffsetPx + thumbSizePx)
+        .coerceAtMost(trackWidthPx - insetPx)
+    return startPx to endPx
+}
+
+internal data class SliderReleaseTarget(
+    val targetOffsetPx: Float,
+    val togglesConnection: Boolean
+)
+
+internal fun sliderReleaseTarget(
+    connectionState: ConnectionState,
+    dragOffsetPx: Float,
+    maxOffsetPx: Float
+): SliderReleaseTarget = when (connectionState) {
+    ConnectionState.Disconnected -> {
+        if (dragOffsetPx > maxOffsetPx * 0.4f) {
+            SliderReleaseTarget(maxOffsetPx, togglesConnection = true)
+        } else {
+            SliderReleaseTarget(0f, togglesConnection = false)
+        }
+    }
+    ConnectionState.Connected -> {
+        if (dragOffsetPx < maxOffsetPx * 0.6f) {
+            SliderReleaseTarget(0f, togglesConnection = true)
+        } else {
+            SliderReleaseTarget(maxOffsetPx, togglesConnection = false)
+        }
+    }
+    ConnectionState.Connecting,
+    ConnectionState.Error -> SliderReleaseTarget(0f, togglesConnection = false)
 }
