@@ -49,6 +49,7 @@ android/**/.gradle/
 android/build/
 android/**/build/
 android/.idea/
+android/local.properties
 *.apk
 *.aar
 
