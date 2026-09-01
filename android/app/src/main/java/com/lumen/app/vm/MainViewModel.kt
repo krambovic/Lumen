@@ -372,6 +372,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         com.lumen.core.vpn.TelemetryManager.appVersion = net.kramb.lumen.BuildConfig.VERSION_NAME
         // Keep Android visible in the same 45-minute "online now" window as desktop.
         com.lumen.core.vpn.TelemetryManager.startHeartbeatLoop(app, viewModelScope)
+        com.lumen.core.vpn.TelemetryManager.startErrorUploadLoop(app, viewModelScope)
         reconcileLauncherIcon()
     }
 

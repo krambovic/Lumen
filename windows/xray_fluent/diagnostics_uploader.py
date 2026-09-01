@@ -7,6 +7,8 @@ unreachable, the application is completely unaffected.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac as _hmac
 import json
 import logging
 import queue
@@ -15,7 +17,10 @@ import time
 import urllib.request
 from pathlib import Path
 
-from .constants import APP_VERSION as _APP_VERSION
+from .constants import (
+    APP_VERSION as _APP_VERSION,
+    DIAGNOSTICS_SECRET as _SECRET,
+)
 from .data_paths import get_install_id
 
 _USER_AGENT = f"Lumen-Diagnostics/{_APP_VERSION}"
@@ -95,13 +100,28 @@ class HttpDiagnosticsHandler(logging.Handler):
         super().close()
 
 
+def _sign_headers(body: bytes) -> dict:
+    """Return the HMAC headers required by the diagnostics ingest server."""
+    if not _SECRET:
+        return {}
+    ts = str(int(time.time()))
+    digest = hashlib.sha256(body).hexdigest()
+    signature = _hmac.new(
+        _SECRET.encode("utf-8"),
+        f"{ts}.{digest}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        "X-Diag-Timestamp": ts,
+        "X-Diag-Signature": signature,
+    }
+
+
 def _send(url: str, body: bytes, content_type: str, timeout: int,
           headers: dict | None = None) -> None:
-    # Requests are deliberately unsigned: a shared secret shipped inside every
-    # client authenticates nothing, so the ingest side must treat all traffic as
-    # untrusted rather than trust a signature anyone can reproduce.
     try:
         all_headers = {"Content-Type": content_type, "User-Agent": _USER_AGENT}
+        all_headers.update(_sign_headers(body))
         if headers:
             all_headers.update(headers)
         req = urllib.request.Request(

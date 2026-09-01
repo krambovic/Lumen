@@ -9,9 +9,13 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 
 enum class VpnLogLevel { DEBUG, INFO, WARNING, ERROR }
@@ -97,6 +101,15 @@ object VpnLogBus {
 
     private val _entries = MutableStateFlow<List<VpnLogEntry>>(emptyList())
     val entries: StateFlow<List<VpnLogEntry>> = _entries.asStateFlow()
+
+    // The diagnostics uploader consumes only new WARNING/ERROR entries. This is
+    // deliberately separate from the live ring and persisted log: restoring an
+    // old log after process start must not resend the same events forever.
+    private val diagnosticEntries = Channel<VpnLogEntry>(
+        capacity = MAX_PENDING_WRITES,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    internal val diagnosticEntriesFlow: Flow<VpnLogEntry> = diagnosticEntries.receiveAsFlow()
 
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
@@ -236,9 +249,17 @@ object VpnLogBus {
     fun clear() {
         _entries.value = emptyList()
         _lastError.value = null
+        discardDiagnosticEntries()
         synchronized(pendingEntries) { pendingEntries.clear() }
         val store = logStore ?: return
         submit { store.clear() }
+    }
+
+    /** Drops events that were generated while telemetry was disabled or logs were cleared. */
+    internal fun discardDiagnosticEntries() {
+        while (diagnosticEntries.tryReceive().isSuccess) {
+            // Drain the bounded channel without ever blocking the VPN thread.
+        }
     }
 
     /**
@@ -312,6 +333,9 @@ object VpnLogBus {
             component = component,
             message = normalized
         )
+        if (level.ordinal >= VpnLogLevel.WARNING.ordinal) {
+            diagnosticEntries.trySend(entry)
+        }
         persist(entry)
         // Coalesce non-error logs to max 4 emissions/sec: buffer instead of dropping,
         // otherwise bursty core output silently loses lines needed for diagnosis.

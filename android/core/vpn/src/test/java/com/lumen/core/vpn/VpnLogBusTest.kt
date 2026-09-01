@@ -7,6 +7,8 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 class VpnLogBusTest {
 
@@ -62,6 +64,18 @@ class VpnLogBusTest {
 
         VpnLogBus.debug("CORE", "debug error message")
         assertNull(VpnLogBus.lastError.value)
+    }
+
+    @Test
+    fun testWarningAndErrorEntriesArePublishedForDiagnostics() = runBlocking {
+        VpnLogBus.discardDiagnosticEntries()
+
+        VpnLogBus.info("APP", "routine")
+        VpnLogBus.warning("APP", "attention")
+        VpnLogBus.error("APP", "fatal")
+
+        assertEquals("attention", VpnLogBus.diagnosticEntriesFlow.first().message)
+        assertEquals("fatal", VpnLogBus.diagnosticEntriesFlow.first().message)
     }
 
     @Test

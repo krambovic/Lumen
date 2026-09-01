@@ -15,6 +15,8 @@ import re
 import time
 from pathlib import Path
 
+from .log_utils import is_routine_core_log
+
 ROOT_LOGGER_NAME = "xray_fluent"
 CORE_LOGGER_NAME = "xray_fluent.core"
 TRAFFIC_LOGGER_NAME = "xray_fluent.traffic"
@@ -27,7 +29,6 @@ _MAX_BYTES = 2 * 1024 * 1024
 _BACKUP_COUNT = 3
 _HUMAN_FMT = "%(asctime)s | %(levelname)-7s | %(xdomain)-7s | %(name)s | %(message)s"
 _DATEFMT = "%Y-%m-%d %H:%M:%S"
-
 _configured = False
 _upload_handler: logging.Handler | None = None
 _heartbeat_sender = None  # HeartbeatSender | None
@@ -66,8 +67,14 @@ class _DiagnosticFilter(logging.Filter):
     """Filter out noisy connection/handshake/timeout logs from errors.log and diagnostics upload."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        msg = str(record.msg or "").lower()
-        if any(token in msg for token in ("connection:", "handshake", "dial tcp", "unexpected http response status", "unexpected response status")):
+        msg = str(record.getMessage() or "").lower()
+        if any(token in msg for token in (
+            "connection:",
+            "handshake",
+            "dial tcp",
+            "unexpected http response status",
+            "unexpected response status",
+        )) or is_routine_core_log(msg):
             return False
         return True
 
@@ -103,7 +110,7 @@ class _EngineNoiseFilter(logging.Filter):
         low = msg.lower()
         if self._ENGINE_LINE_RE.search(msg):
             return False
-        if any(tok in low for tok in self._ENGINE_TOKENS):
+        if any(tok in low for tok in self._ENGINE_TOKENS) or is_routine_core_log(msg):
             return False
         return True
 

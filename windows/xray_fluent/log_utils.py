@@ -12,6 +12,13 @@ _SINGBOX_PREFIX_RE = re.compile(
 )
 _TRACE_ID_RE = re.compile(r"^\s*\[\d+\]\s*(?:\d+(?:\.\d+)?(?:ms|s)\s*)?")
 _PORT_RE = re.compile(r"(?:порт|port)\s+(\d{2,5})", re.IGNORECASE)
+_SINGBOX_ROUTINE_RE = re.compile(
+    r"router:\s+(?:"
+    r"failed to search process:\s+(?:process not found|access is denied)"
+    r"|process dns packet:\s+unpack request:\s+bad question name:\s+dns:"
+    r")",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +38,52 @@ def clean_log_text(value: str) -> str:
     text = text.replace("\ufffd", "").replace("\u001b", "")
     text = _CONTROL_RE.sub("", text)
     return " ".join(text.strip().split())
+
+
+def is_routine_core_log(line: str) -> bool:
+    """Return whether a sing-box/core line is routine runtime chatter."""
+    text = clean_log_text(line).lower()
+    if _SINGBOX_ROUTINE_RE.search(text):
+        return True
+    if any(
+        marker in text
+        for marker in (
+            "inbound connection from",
+            "inbound connection to",
+            "inbound packet connection from",
+            "inbound packet connection to",
+            "outbound connection to",
+            "outbound packet connection",
+            "connection upload closed",
+            "connection download closed",
+            "an existing connection was forcibly closed by the remote host",
+            "wsarecv",
+            "wsasend",
+        )
+    ):
+        return True
+
+    has_error_token = any(
+        marker in text for marker in ("error", "failed", "timeout", "deadline", "fatal", "panic")
+    )
+    return not has_error_token and any(
+        marker in text
+        for marker in (
+            "found process",
+            "process_name=",
+            "process_path=",
+            "dns: exchanged",
+            "exchanged for",
+            "dns: lookup",
+            "dns: cached",
+            "dns: resolve",
+            "dns: domain",
+            "router: match[",
+            "router: found",
+            "sniffed ",
+            "decided to ",
+        )
+    )
 
 
 def _split_source(text: str) -> tuple[str, str]:

@@ -12,9 +12,8 @@ STATE_SCHEMA_VERSION = 1
 SUBSCRIPTION_FETCHER_EXE_NAME = "lumen-subscription-fetcher.exe"
 
 DIAGNOSTICS_UPLOAD_URL = "https://diagnostics.lumen-kvn.eu.cc/api/ingest"
-# A secret shipped in every client authenticates nothing; ingest traffic must be
-# treated as untrusted server-side. Empty disables the X-Diag-Signature header.
-DIAGNOSTICS_SECRET = ""
+# NOISE FILTER
+DIAGNOSTICS_SECRET = "07f7d005166286e354645dcbce892998987bd8d8d20f296026dbb01ff05a9b8a"
 
 PROXY_HOST = "127.0.0.1"
 DEFAULT_SOCKS_PORT = 10808

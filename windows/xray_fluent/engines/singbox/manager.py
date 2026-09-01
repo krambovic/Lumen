@@ -26,6 +26,7 @@ from ...constants import (
 )
 from ...path_utils import resolve_configured_path
 from ...process_conflicts import is_process_name_running
+from ...log_utils import is_routine_core_log
 from ...subprocess_utils import (
     decode_output,
     is_windows_shutting_down,
@@ -907,53 +908,7 @@ class SingBoxManager(QObject):
 
     @staticmethod
     def _is_noisy_runtime_line(line: str) -> bool:
-        text = line.lower()
-        if any(
-            marker in text
-            for marker in (
-                "inbound connection from",
-                "inbound connection to",
-                "inbound packet connection from",
-                "inbound packet connection to",
-                "outbound connection to",
-                "outbound packet connection",
-            )
-        ):
-            return True
-        if "connection upload closed" in text or "connection download closed" in text:
-            return True
-        if "an existing connection was forcibly closed by the remote host" in text:
-            return True
-        if "wsarecv" in text or "wsasend" in text:
-            return True
-        # Routine sing-box-extended info chatter that v2rayN never surfaces:
-        # process matching and successful DNS exchanges. Keep this above the
-        # error guard so genuine failures (handled below) are still shown.
-        has_error_token = any(
-            marker in text for marker in ("error", "failed", "timeout", "deadline", "fatal", "panic")
-        )
-        if not has_error_token and any(
-            marker in text
-            for marker in (
-                "found process",
-                "process_name=",
-                "process_path=",
-                "dns: exchanged",
-                "exchanged for",
-                "dns: lookup",
-                "dns: cached",
-                "dns: resolve",
-                "dns: domain",
-                "router: match[",
-                "router: found",
-                "sniffed ",
-                "decided to ",
-            )
-        ):
-            return True
-        if has_error_token:
-            return False
-        return False
+        return is_routine_core_log(line)
 
     @classmethod
     def _is_startup_routine_line(cls, line: str) -> bool:

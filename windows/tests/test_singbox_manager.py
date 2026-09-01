@@ -54,10 +54,19 @@ def test_repeated_dns_runtime_errors_stay_visible() -> None:
     lines = [
         "ERROR [1 10.0s] dns: exchange failed for www.msftconnecttest.com. IN A: context deadline exceeded",
         "WARN dns: bad question size: 0",
-        "ERROR router: process DNS packet: unpack request: bad question name: dns: bad rdata",
     ]
 
     assert not any(SingBoxManager._is_noisy_runtime_line(line) for line in lines)
+
+
+def test_singbox_process_lookup_and_bad_question_noise_is_suppressed() -> None:
+    lines = [
+        "ERROR router: process DNS packet: unpack request: bad question name: dns: bad rdata",
+        "INFO router: failed to search process: process not found for 172.18.0.1:63918",
+        "INFO router: failed to search process: Access is denied.",
+    ]
+
+    assert all(SingBoxManager._is_noisy_runtime_line(line) for line in lines)
 
 
 def test_windows_tun_readiness_uses_single_persistent_probe(monkeypatch) -> None:

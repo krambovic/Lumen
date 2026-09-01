@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 import hashlib
+import hmac
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +14,6 @@ from xray_fluent import (
     win_proc_monitor,
     zapret_manager,
 )
-from xray_fluent.constants import DIAGNOSTICS_SECRET
 from xray_fluent.diagnostics import _sanitize_state
 from xray_fluent.discord_proxy_manager import DiscordInstall
 from xray_fluent.proxy_manager import ProxyManager
@@ -146,13 +146,50 @@ def test_sanitize_state_drops_the_security_block_and_hashed_secrets() -> None:
     assert "c2FsdA==" not in json.dumps(safe)
 
 
-def test_diagnostics_ingest_is_not_falsely_authenticated() -> None:
-    # A secret shipped inside every client authenticates nothing, so neither the
-    # constant nor the signing helper may come back.
-    assert DIAGNOSTICS_SECRET == ""
-    assert not hasattr(diagnostics_uploader, "_sign_headers")
-    source = Path(diagnostics_uploader.__file__).read_text(encoding="utf-8")
-    assert "X-Diag-Signature" not in source
+def test_diagnostics_ingest_uses_the_server_hmac_contract(monkeypatch) -> None:
+    monkeypatch.setattr(diagnostics_uploader, "_SECRET", "test-secret")
+    monkeypatch.setattr(diagnostics_uploader.time, "time", lambda: 1_700_000_000)
+    body = b'{"kind":"error-batch"}'
+    digest = hashlib.sha256(body).hexdigest()
+    expected = hmac.new(
+        b"test-secret",
+        f"1700000000.{digest}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    assert diagnostics_uploader._sign_headers(body) == {
+        "X-Diag-Timestamp": "1700000000",
+        "X-Diag-Signature": expected,
+    }
+
+
+def test_diagnostics_send_attaches_signature_headers(monkeypatch) -> None:
+    captured = {}
+    monkeypatch.setattr(diagnostics_uploader, "_SECRET", "test-secret")
+    monkeypatch.setattr(diagnostics_uploader.time, "time", lambda: 1_700_000_000)
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(diagnostics_uploader.urllib.request, "urlopen", fake_urlopen)
+    body = b"signed body"
+    diagnostics_uploader._send("https://diagnostics.example.test", body, "application/json", 10)
+
+    request = captured["request"]
+    assert request.data == body
+    assert request.get_header("X-diag-timestamp") == "1700000000"
+    assert request.get_header("X-diag-signature") == diagnostics_uploader._sign_headers(body)[
+        "X-Diag-Signature"
+    ]
 
 
 # ── discord: privilege boundary and payload integrity ───────────
