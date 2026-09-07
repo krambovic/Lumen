@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from PyQt6.QtCore import QObject, QThread, Qt, pyqtSlot
+from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSlot
 
 
 class _ThreadCleanup(QObject):
@@ -25,6 +25,10 @@ class _ThreadCleanup(QObject):
 
     @pyqtSlot()
     def run(self) -> None:
+        # finished can precede thread-local teardown; never destroy too early.
+        if self._worker.isRunning() or not self._worker.wait(0):
+            QTimer.singleShot(10, self.run)
+            return
         try:
             self._callback()
         finally:
@@ -53,6 +57,8 @@ def _connect_cleanup(
     guard = _ThreadCleanup(owner, worker, callback, delete_worker=delete_worker)
     guards.append(guard)
     worker.finished.connect(guard.run, Qt.ConnectionType.QueuedConnection)
+    if worker.isFinished():
+        QTimer.singleShot(0, guard.run)
 
 
 def bind_thread_reference(owner: QObject, attribute: str, worker: QThread) -> None:
@@ -89,6 +95,20 @@ def retain_thread_until_finished(
     _connect_cleanup(owner, worker, _release, delete_worker=delete_worker)
 
 
+_late_shutdown_threads: set = set()
+
+
+def has_pending_shutdown_threads() -> bool:
+    for worker in list(_late_shutdown_threads):
+        try:
+            finished = not worker.isRunning() and worker.wait(0)
+        except RuntimeError:
+            finished = True
+        if finished:
+            _late_shutdown_threads.discard(worker)
+    return bool(_late_shutdown_threads)
+
+
 def stop_and_wait_for_thread(
     worker: QThread | None,
     *,
@@ -96,28 +116,31 @@ def stop_and_wait_for_thread(
     label: str = "worker",
     logger: logging.Logger | None = None,
     timeout: float = 5.0,
+    deadline: float | None = None,
 ) -> bool:
-    """Cooperatively stop and join a QThread without unsafe termination."""
+    # A false result transfers lifetime responsibility, never a deletion permit.
     if worker is None:
         return True
+    end = deadline if deadline is not None else time.monotonic() + max(0.0, timeout)
     if stop is not None:
         try:
             stop()
         except Exception:
             if logger is not None:
-                logger.warning("[app] Failed to request %s shutdown", label, exc_info=True)
-    if not worker.isRunning():
-        return True
-
-    started = time.monotonic()
-    deadline = started + max(0.1, timeout)
-    while not worker.wait(250):
-        if time.monotonic() >= deadline:
+                logger.warning("[app] Failed to cancel %s", label, exc_info=True)
+    while True:
+        if worker.wait(0):
+            _late_shutdown_threads.discard(worker)
+            return True
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            _late_shutdown_threads.add(worker)
+            # Parent destruction must not destroy a still-running QThread.
+            if isinstance(worker, QThread) and worker.thread() == QThread.currentThread():
+                worker.setParent(None)
             if logger is not None:
-                logger.warning(
-                    "[app] Timed out waiting for %s to stop after %.1fs; shutdown continues",
-                    label,
-                    time.monotonic() - started,
-                )
+                logger.warning("[app] %s still finishing; retained for asynchronous shutdown", label)
             return False
-    return True
+        if worker.wait(max(1, min(250, int(remaining * 1000)))):
+            _late_shutdown_threads.discard(worker)
+            return True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import base64
 import subprocess
 import sys
 from pathlib import Path
@@ -31,7 +32,7 @@ for target in (QQuickItem(), QQuickWindow()):
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
     result = subprocess.run(
-        [sys.executable, "-c", script],
+        [sys.executable, str(ROOT / "scripts" / "run_safe_tests.py"), "--exec-fixture", base64.b64encode(script.encode("utf-8")).decode("ascii")],
         cwd=ROOT,
         env=env,
         capture_output=True,

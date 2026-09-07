@@ -14,11 +14,22 @@ _XRAY_OBSERVATORY_STRATEGIES = {"leastping", "leastload"}
 
 
 def validate_server_preflight(node: Node | None, settings: AppSettings) -> str | None:
-    return None
+    if node is None:
+        return None
     outbound = node.outbound if isinstance(node.outbound, dict) else {}
     protocol = str(outbound.get("protocol") or node.scheme or "").strip().lower()
     stream = outbound.get("streamSettings") if isinstance(outbound.get("streamSettings"), dict) else {}
     tun_singbox = bool(settings.tun_mode)
+    if not outbound or not protocol:
+        return "Профиль не содержит outbound/protocol."
+    if protocol not in {"singbox_config", "xray_config", "masque", "warp", "awg", "wireguard"}:
+        from ..link_parser import validate_node_outbound
+        try:
+            problem = validate_node_outbound(node)
+        except (TypeError, ValueError, KeyError):
+            return "Некорректная структура или обязательные поля профиля."
+        if problem:
+            return problem
 
     if str(stream.get("network") or "").strip().lower() == "xhttp":
         problem = _validate_xhttp(stream)
@@ -61,9 +72,11 @@ def validate_server_preflight(node: Node | None, settings: AppSettings) -> str |
         if not isinstance(full_config.get("outbounds"), list):
             return "AUTO-профиль Xray должен содержать список outbounds."
         routing = full_config.get("routing")
-        if not isinstance(routing, dict) or not isinstance(routing.get("balancers"), list):
-            return "AUTO-профиль Xray не содержит routing.balancers."
-        balancers = routing["balancers"]
+        if not isinstance(routing, dict):
+            routing = {}
+        balancers = routing.get("balancers", [])
+        if not isinstance(balancers, list):
+            return "routing.balancers должен быть списком."
         has_observer = isinstance(full_config.get("observatory"), dict) or isinstance(
             full_config.get("burstObservatory"), dict
         )
@@ -110,9 +123,7 @@ def _validate_xhttp(stream: dict[str, Any]) -> str | None:
 
 def _validate_reality(stream: dict[str, Any]) -> str | None:
     reality = stream.get("realitySettings") if isinstance(stream.get("realitySettings"), dict) else {}
-    if not str(reality.get("serverName") or "").strip():
-        return "Сервер Reality без SNI/serverName не может быть запущен корректно."
-    if not str(reality.get("publicKey") or "").strip():
+    if not str(reality.get("publicKey") or reality.get("password") or "").strip():
         return "Сервер Reality без publicKey не может быть запущен корректно."
     return None
 

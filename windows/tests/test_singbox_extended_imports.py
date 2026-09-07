@@ -489,6 +489,7 @@ def test_awg31_wgquick_config_preserves_the_extended_transport_fields() -> None:
     assert validate_node_outbound(nodes[0]) is None
 
 
+@pytest.mark.native_helper
 def test_awg3_runtime_config_is_accepted_by_delivered_singbox_core(tmp_path) -> None:
     core = Path(__file__).parents[1] / "core" / "sing-box.exe"
     if not core.is_file():

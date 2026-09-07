@@ -75,6 +75,7 @@ class Node:
     group: str = "Default"
     tags: list[str] = field(default_factory=list)
     ping_ms: int | None = None
+    ping_kind: str = ""  # proxy / tcping_endpoint / icmp_endpoint / unavailable
     last_used_at: str | None = None
     created_at: str = field(default_factory=utc_now_iso)
     country_code: str = ""
@@ -102,6 +103,7 @@ class Node:
             "group": self.group,
             "tags": list(self.tags),
             "ping_ms": self.ping_ms,
+            "ping_kind": self.ping_kind,
             "last_used_at": self.last_used_at,
             "created_at": self.created_at,
             "country_code": self.country_code,
@@ -128,11 +130,13 @@ class Node:
             group=str(data.get("group") or "Default"),
             tags=list(data.get("tags") or []),
             ping_ms=data.get("ping_ms"),
+            ping_kind=str(data.get("ping_kind") or ""),
             last_used_at=data.get("last_used_at"),
             created_at=str(data.get("created_at") or utc_now_iso()),
             country_code=str(data.get("country_code") or ""),
             speed_mbps=data.get("speed_mbps"),
-            is_alive=data.get("is_alive"),
+            # Old endpoint pings were incorrectly persisted as profile health.
+            is_alive=data.get("is_alive") if data.get("ping_kind") == "proxy" else None,
             ping_history=data.get("ping_history", []),
             speed_history=data.get("speed_history", []),
             sort_order=int(data.get("sort_order", 0)),

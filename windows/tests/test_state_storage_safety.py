@@ -171,6 +171,7 @@ def test_app_controller_save_uses_background_writer() -> None:
     controller = AppController()
     storage = _SlowStorage()
     controller.storage = storage
+    controller._load_state = "loaded"
     controller.state = AppState(
         nodes=[
             Node(id=str(index), name=f"node-{index}", server=f"{index}.example.com")
@@ -196,6 +197,7 @@ def test_worker_thread_save_does_not_wait_for_gui_event_loop() -> None:
     controller = AppController()
     storage = _SlowStorage()
     controller.storage = storage
+    controller._load_state = "loaded"
     controller.state = AppState(
         nodes=[
             Node(id=str(index), name=f"node-{index}", server=f"{index}.example.com")

@@ -313,6 +313,8 @@ class ProxyManager:
         if not self.is_supported:
             return
         backup = self._backup or self._load_persisted_backup()
+        if backup is None:
+            return
         if restore_previous and backup:
             self._write_settings(dict(backup))
         else:

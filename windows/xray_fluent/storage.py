@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import threading
 
 from .constants import (
     CONFIGS_DIR,
@@ -47,6 +48,8 @@ class StateStorage:
         self.state_file = state_file
         self._passphrase: str = ""
         self._encoding: str = "plain"
+        self._load_state = "unloaded"
+        self._write_lock = threading.RLock()
         self._ensure_dirs()
 
     @property
@@ -55,7 +58,8 @@ class StateStorage:
 
     @passphrase.setter
     def passphrase(self, value: str) -> None:
-        self._passphrase = value
+        with self._write_lock:
+            self._passphrase = value
 
     def _ensure_dirs(self) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -223,7 +227,12 @@ class StateStorage:
         if is_passphrase_encrypted(raw_text):
             if not self._passphrase:
                 raise PassphraseRequired()
-            decrypted = decrypt_with_passphrase(raw_text, self._passphrase)
+            try:
+                decrypted = decrypt_with_passphrase(raw_text, self._passphrase)
+            except Exception as exc:
+                # Authentication failure is not corruption. Never quarantine the
+                # primary or restore an older/plain backup on a wrong password.
+                raise PassphraseRequired("Неверный пароль или повреждённый зашифрованный профиль") from exc
             payload = json.loads(decrypted.decode("utf-8"))
             encoding = "passphrase"
         elif raw_text.startswith("{"):
@@ -332,6 +341,20 @@ class StateStorage:
         return is_passphrase_encrypted(raw)
 
     def load(self) -> AppState:
+        with self._write_lock:
+            self._load_state = "unloaded"
+            try:
+                state = self._load_impl()
+            except PassphraseRequired:
+                self._load_state = "locked"
+                raise
+            except Exception:
+                self._load_state = "error"
+                raise
+            self._load_state = "loaded"
+            return state
+
+    def _load_impl(self) -> AppState:
         self._ensure_dirs()
         candidates = [
             self.state_file,
@@ -348,9 +371,7 @@ class StateStorage:
                 raw_text = candidate.read_text(encoding="utf-8")
                 state, paths_migrated, encoding = self._decode_state_details(raw_text)
             except PassphraseRequired:
-                if candidate == self.state_file:
-                    raise
-                continue
+                raise
             except Exception as exc:
                 errors.append(f"{candidate.name}: {exc}")
                 continue
@@ -389,6 +410,16 @@ class StateStorage:
         return "plain"
 
     def save(self, state: AppState) -> None:
+        with self._write_lock:
+            if self._load_state != "loaded":
+                candidates = [self.state_file, self._tmp_path(), *(self._backup_path(i) for i in range(1, self._BACKUP_COUNT + 1))]
+                if self._load_state != "unloaded" or any(p.exists() for p in candidates):
+                    raise StateLoadError("Профиль не загружен: запись заблокирована")
+                # A genuinely new store has no existing data to overwrite.
+                self._load_state = "loaded"
+            self._save_loaded(state)
+
+    def _save_loaded(self, state: AppState) -> None:
         self._ensure_dirs()
         content = self._encode_state(state, self._save_encoding(state))
 

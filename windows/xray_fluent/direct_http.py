@@ -21,6 +21,8 @@ import urllib.request
 from functools import partial
 
 from .http_utils import get_ssl_context
+from .route_leases import acquire_route, release_route
+from .http_redirect_policy import SafeRedirectHandler
 from .network_route_context import get_windows_default_route_context
 from .subprocess_utils import CREATE_NO_WINDOW, run_text_pumped
 
@@ -54,7 +56,12 @@ def _resolve_a_direct(host: str, dns_server: str, timeout: float = 2.5) -> str:
     transaction_id = secrets.randbits(16)
     labels = [part for part in host.rstrip(".").split(".") if part]
     try:
-        qname = b"".join(bytes([len(label)]) + label.encode("idna") for label in labels) + b"\x00"
+        encoded = [label.encode("idna") for label in labels]
+        if not encoded or any(not 0 < len(label) <= 63 for label in encoded):
+            return ""
+        qname = b"".join(bytes([len(label)]) + label for label in encoded) + b"\x00"
+        if len(qname) > 255:
+            return ""
     except (UnicodeError, ValueError):
         return ""
     packet = struct.pack(">HHHHHH", transaction_id, 0x0100, 1, 0, 0, 0)
@@ -62,14 +69,21 @@ def _resolve_a_direct(host: str, dns_server: str, timeout: float = 2.5) -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(timeout)
-            sock.sendto(packet, (dns_server, 53))
-            data, _ = sock.recvfrom(4096)
+            # Connected UDP rejects datagrams from a different source/port.
+            sock.connect((dns_server, 53))
+            sock.send(packet)
+            data = sock.recv(4096)
     except OSError:
         return ""
     try:
         if len(data) < 12 or struct.unpack(">H", data[:2])[0] != transaction_id:
             return ""
+        flags = struct.unpack(">H", data[2:4])[0]
+        if not flags & 0x8000 or flags & 0x020F:
+            return ""
         question_count, answer_count = struct.unpack(">HH", data[4:8])
+        if question_count != 1 or data[12:12+len(qname)+4] != packet[12:]:
+            return ""
         offset = 12
         for _ in range(question_count):
             offset = _skip_dns_name(data, offset) + 4
@@ -123,7 +137,8 @@ class WindowsDirectRoute:
             )
         self._interface_index = context.interface_index
         self._gateway = context.next_hop
-        candidates = tuple(context.dns_servers) + _FALLBACK_DNS_SERVERS
+        # Never silently send provider domains to an unrelated public DNS.
+        candidates = tuple(context.dns_servers)
         self._dns_servers = tuple(dict.fromkeys(item for item in candidates if _is_ipv4(item)))
         return self
 
@@ -149,21 +164,28 @@ class WindowsDirectRoute:
     def _ensure_route(self, ip: str) -> bool:
         if not self._enabled or not self._bypass_required:
             return True
-        if ip in self._added_routes or self._has_exact_route(ip):
+        if ip in self._added_routes:
             return True
-        try:
-            result = run_text_pumped(
-                [
-                    "route", "add", ip, "mask", "255.255.255.255", self._gateway,
-                    "metric", "1", "if", str(self._interface_index),
-                ],
-                timeout=4,
-                creationflags=CREATE_NO_WINDOW,
-            )
-        except Exception:
+        def create():
+            try:
+                result = run_text_pumped(
+                    ["route", "add", ip, "mask", "255.255.255.255", self._gateway, "metric", "1", "if", str(self._interface_index)],
+                    timeout=3, creationflags=CREATE_NO_WINDOW,
+                )
+                return result.returncode == 0
+            except Exception:
+                return False
+        def delete():
+            try:
+                run_text_pumped(
+                    ["route", "delete", ip, "mask", "255.255.255.255", self._gateway, "if", str(self._interface_index)],
+                    timeout=3, creationflags=CREATE_NO_WINDOW,
+                )
+            except Exception:
+                pass
+        key = (self._gateway, ip, self._interface_index)
+        if not acquire_route(key, create, lambda: self._has_exact_route(ip), delete):
             return False
-        if result.returncode != 0:
-            return self._has_exact_route(ip)
         self._added_routes.add(ip)
         return True
 
@@ -199,16 +221,8 @@ class WindowsDirectRoute:
         )
 
     def __exit__(self, *_exc) -> None:
-        if self._enabled and self._bypass_required:
-            for ip in tuple(self._added_routes):
-                try:
-                    run_text_pumped(
-                        ["route", "delete", ip, "mask", "255.255.255.255", self._gateway],
-                        timeout=4,
-                        creationflags=CREATE_NO_WINDOW,
-                    )
-                except Exception:
-                    pass
+        for ip in tuple(self._added_routes):
+            release_route((self._gateway, ip, self._interface_index))
         self._added_routes.clear()
         self._resolved.clear()
 
@@ -279,6 +293,7 @@ class DirectUrlOpener:
         self._route.__enter__()
         self._opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
+            SafeRedirectHandler(),
             _DirectHTTPHandler(self._route),
             _DirectHTTPSHandler(self._route),
         )

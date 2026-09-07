@@ -80,6 +80,7 @@ def test_bridge_updates_resume_setting(tmp_path: Path) -> None:
 
     bridge = AppBridge()
     bridge.controller.storage = StateStorage(tmp_path / "state.json")
+    bridge.controller._load_state = "loaded"
     try:
         bridge.setReconnectAfterSleep(False)
         assert bridge.reconnectAfterSleep is False
@@ -106,6 +107,7 @@ def test_resume_reconnect_does_not_arm_when_app_is_locked_or_shutting_down() -> 
 def test_controller_forces_reconnect_even_when_core_process_still_looks_alive() -> None:
     QCoreApplication.instance() or QCoreApplication([])
     controller = AppController()
+    controller._load_state = "loaded"
     try:
         controller.connected = True
         controller._desired_connected = True
@@ -126,6 +128,7 @@ def test_controller_forces_reconnect_even_when_core_process_still_looks_alive() 
 def test_manual_disconnect_cancels_resume_before_worker_starts() -> None:
     QCoreApplication.instance() or QCoreApplication([])
     controller = AppController()
+    controller._load_state = "loaded"
     completed: list[tuple[bool, str, str, int]] = []
     controller._transition_completed.connect(lambda *args: completed.append(args))
     try:

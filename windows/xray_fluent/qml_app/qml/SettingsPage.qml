@@ -1271,6 +1271,25 @@ Item {
                 Text { text: I18n.t("Данные"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
+                    glyph: "\uE72E"
+                    title: I18n.t("Пароль профиля")
+                    subtitle: App.profileLoaded
+                        ? I18n.t("Защитить настройки и серверы паролем")
+                        : I18n.t("Профиль не открыт. Введите пароль; изменения и подключение заблокированы.")
+                    StyledField {
+                        id: profilePasswordField
+                        Layout.preferredWidth: 200
+                        placeholderText: I18n.t("Пароль")
+                        echoMode: TextInput.Password
+                        onAccepted: { App.setEncryptionPassword(text); clear() }
+                    }
+                    AccentButton {
+                        text: App.profileLoaded ? I18n.t("Задать пароль") : I18n.t("Открыть профиль")
+                        onClicked: { App.setEncryptionPassword(profilePasswordField.text); profilePasswordField.clear() }
+                    }
+                }
+
+                SettingRow {
                     glyph: "\uE74E"; title: I18n.t("Резервная копия"); subtitle: I18n.t("Экспорт и импорт настроек и серверов")
                     AccentButton { kind: "ghost"; glyph: "\uE74E"; text: I18n.t("Экспорт"); onClicked: App.exportBackup() }
                     AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Импорт"); onClicked: App.importBackup() }

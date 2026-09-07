@@ -75,6 +75,7 @@ def test_decrypts_public_crypt5_vector() -> None:
     assert decrypt_happ_link(CRYPT5_LINK) == CRYPT5_EXPECTED
 
 
+@pytest.mark.native_helper
 def test_decrypts_crypt51_vector() -> None:
     import shutil
     expected = "https://heaver.tgmru.ru/6f81573aa5ab4ce46075b7ac2d91a186de26f77b688bb9f5/json?template=default-xray-json"

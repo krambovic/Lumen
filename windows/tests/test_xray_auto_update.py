@@ -35,6 +35,7 @@ def _controller(*, connected: bool) -> SimpleNamespace:
         xray_update_result=_Signal(),
         _log=lambda _message: None,
         get_effective_http_proxy_port=lambda: 10809,
+        get_effective_http_proxy_url=lambda: "http://127.0.0.1:10809",
     )
 
 

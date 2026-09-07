@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import base64
 from pathlib import Path
 import subprocess
 import sys
@@ -57,7 +58,7 @@ def test_fluent_combo_reapplies_bound_index_after_model_population() -> None:
     env = os.environ.copy()
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
     result = subprocess.run(
-        [sys.executable, "-c", script],
+        [sys.executable, str(ROOT / "scripts" / "run_safe_tests.py"), "--exec-fixture", base64.b64encode(script.encode("utf-8")).decode("ascii")],
         cwd=ROOT,
         env=env,
         capture_output=True,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+import time
 
 from PyQt6.QtCore import QMetaObject, QThread, Qt
 
@@ -157,10 +158,24 @@ def handle_unexpected_disconnect(controller: AppController) -> None:
 
 
 def on_core_state_changed(controller: AppController, _running: bool) -> None:
+    if getattr(controller, "_shutting_down", False):
+        return
     was_connected, is_connected = controller._refresh_connected_state()
     if not controller._switching and was_connected != is_connected:
         controller.connection_changed.emit(is_connected)
-    if is_connected and not controller._switching and not was_connected:
+    # The core can publish its running signal before connect_current() has
+    # captured the active session (and, for sing-box, before the Clash bearer
+    # secret is available).  Starting here with an empty secret permanently
+    # disables /connections polling and used to make TUN statistics/history
+    # stay at zero.  connect_current() starts the worker immediately after the
+    # session snapshot is committed.
+    if (
+        is_connected
+        and controller._active_session is not None
+        and controller._metrics_worker is None
+        and not controller._switching
+        and not was_connected
+    ):
         start_metrics_worker(controller)
     elif not is_connected:
         stop_metrics_worker(controller)
@@ -183,6 +198,8 @@ def on_core_state_changed(controller: AppController, _running: bool) -> None:
 
 
 def on_live_metrics(controller: AppController, payload: dict[str, object]) -> None:
+    if getattr(controller, "_shutting_down", False):
+        return
     controller.live_metrics_updated.emit(payload)
     down_bps = float(payload.get("down_bps") or 0.0)
     latency_raw = payload.get("latency_ms")
@@ -206,32 +223,36 @@ def on_live_metrics(controller: AppController, payload: dict[str, object]) -> No
             controller._traffic_save_counter = 0
 
 
-def shutdown(controller: AppController) -> None:
+def shutdown(controller: AppController, *, deadline: float | None = None) -> None:
+    deadline = time.monotonic() + 5.0 if deadline is None else deadline
     logger = controller._logger
-
-    def _join(worker, label: str, *, cancel: bool = False, quit_thread: bool = False) -> None:
-        stop = None
-        if cancel and worker is not None and hasattr(worker, "cancel"):
-            stop = worker.cancel
-        elif quit_thread and worker is not None:
-            stop = worker.quit
-        stop_and_wait_for_thread(worker, stop=stop, label=label, logger=logger)
-
-    _join(controller._country_resolver, "country resolver", cancel=True)
-    _join(controller._ping_worker, "ping worker", cancel=True)
-    _join(controller._connectivity_worker, "connectivity worker", cancel=True)
+    _call_in_qobject_thread(controller.network_monitor, "stop")
+    _call_in_qobject_thread(controller._lock_timer, "stop")
     stop_metrics_worker(controller)
-    for retired_worker in list(controller._retired_metrics_workers):
-        _join(retired_worker, "retired metrics worker", cancel=True)
-    controller._retired_metrics_workers.clear()
-    for retired_worker in list(controller._retired_workers):
-        _join(retired_worker, "retired worker", cancel=True)
-    controller._retired_workers.clear()
-    _join(controller._speed_worker, "speed worker", cancel=True)
-    _join(controller._xray_update_worker, "Xray updater", cancel=True)
-    for worker in list(controller._resource_update_workers):
-        _join(worker, f"{getattr(worker, '_kind', 'resource')} updater", cancel=True)
-
+    workers = [
+        (controller._country_resolver, "country resolver"),
+        (controller._ping_worker, "ping worker"),
+        (controller._connectivity_worker, "connectivity worker"),
+        (controller._speed_worker, "speed worker"),
+        (controller._xray_update_worker, "Xray updater"),
+        *((w, "retired metrics") for w in controller._retired_metrics_workers),
+        *((w, "retired worker") for w in controller._retired_workers),
+        *((w, "resource updater") for w in controller._resource_update_workers),
+    ]
+    unique = {id(worker): (worker, label) for worker, label in workers if worker is not None}
+    # Cancel everybody before spending the shared budget on any one join.
+    for worker, label in unique.values():
+        stop = getattr(worker, "cancel", None) or getattr(worker, "stop", None) or getattr(worker, "quit", None)
+        if stop is not None:
+            try:
+                stop()
+            except Exception:
+                logger.warning("Failed to cancel %s", label, exc_info=True)
+    for worker, label in unique.values():
+        stop_and_wait_for_thread(worker, label=label, logger=logger, deadline=deadline)
+    # Keep timed-out references; normal finished cleanup releases them safely.
+    controller._retired_metrics_workers[:] = [w for w in controller._retired_metrics_workers if w.isRunning() or not w.wait(0)]
+    controller._retired_workers[:] = [w for w in controller._retired_workers if w.isRunning() or not w.wait(0)]
     controller.disconnect_current(fast=True)
     if controller.singbox.is_running:
         controller.singbox.stop(fast=True)
@@ -239,10 +260,9 @@ def shutdown(controller: AppController) -> None:
         controller.xray.stop(fast=True)
     if controller.zapret.running:
         controller.zapret.stop(fast=True)
-    if controller.proxy.is_enabled():
-        controller.proxy.disable(restore_previous=True)
-    if not getattr(controller, "_system_shutdown", False) and not is_windows_shutting_down():
-        controller._cleanup_tun_adapter(max_wait=1.0)
-    _call_in_qobject_thread(controller.network_monitor, "stop")
-    _call_in_qobject_thread(controller._lock_timer, "stop")
+    # disable() itself requires an owned backup; never resets a borrowed proxy.
+    controller.proxy.disable(restore_previous=True)
+    remaining = max(0.0, deadline - time.monotonic())
+    if remaining and not getattr(controller, "_system_shutdown", False) and not is_windows_shutting_down():
+        controller._cleanup_tun_adapter(max_wait=min(1.0, remaining))
     controller.save()

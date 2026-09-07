@@ -236,7 +236,8 @@ class LinkParserTest {
               "host": "test.server.com",
               "path": "/path",
               "tls": "tls",
-              "sni": "test.server.com"
+              "sni": "test.server.com",
+              "allowInsecure": "1"
             }
         """.trimIndent()
         val b64 = Base64.getEncoder().encodeToString(jsonPayload.toByteArray(Charsets.UTF_8))
@@ -248,6 +249,9 @@ class LinkParserTest {
         assertEquals("1.2.3.4", node.server)
         assertEquals(8443, node.port)
         assertEquals("vmess", node.outbound["protocol"])
+        val stream = node.outbound["streamSettings"] as Map<*, *>
+        val tls = stream["tlsSettings"] as Map<*, *>
+        assertEquals(true, tls["allowInsecure"])
     }
 
     @Test

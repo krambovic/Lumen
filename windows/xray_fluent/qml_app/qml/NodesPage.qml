@@ -9,6 +9,14 @@ import "."
 // Servers tab.
 Item {
     id: page
+    enabled: App.profileLoaded
+
+    Timer {
+        id: searchFilterDebounce
+        interval: 180
+        repeat: false
+        onTriggered: page.applyFilters()
+    }
 
     // ── selection state ──────────────────────────
     property var sel: ({})        // nodeId -> true
@@ -644,7 +652,8 @@ Item {
                     color: Theme.text
                     font.family: Theme.fontFamily
                     font.pixelSize: page.cellFont
-                    onTextChanged: { page.filterText = text; page.applyFilters() }
+                    onTextChanged: { page.filterText = text; searchFilterDebounce.restart() }
+                    onEditingFinished: { searchFilterDebounce.stop(); page.applyFilters() }
                 }
 
                 Behavior on y {
@@ -981,6 +990,7 @@ Item {
                             required property bool pinging
                             required property real speed
                             required property bool isAlive
+                            required property string pingKind
                             required property bool tested
                             required property bool selected
                             required property bool runtimeSupported
@@ -1266,6 +1276,14 @@ Item {
 
                         MouseArea {
                             id: listSelectionArea
+                            property var hoveredNode: page.hoverRow >= 0 ? App.nodeRowAt(page.hoverRow) : null
+                            ToolTip.visible: containsMouse && hoveredNode && hoveredNode.pingKind !== ""
+                            ToolTip.delay: 1000
+                            ToolTip.text: hoveredNode && hoveredNode.pingKind === "proxy"
+                                ? I18n.t("Проверено подключение через профиль VPN")
+                                : (hoveredNode && hoveredNode.pingKind === "unavailable"
+                                    ? I18n.t("Проверка не выполнена: проверьте ядро и прямой маршрут")
+                                    : ((hoveredNode && hoveredNode.pingKind === "icmp_endpoint" ? "ICMP. " : "TCP. ") + I18n.t("Проверена доступность адреса, а не профиль VPN")))
                             anchors.fill: parent
                             z: 100
                             acceptedButtons: Qt.LeftButton | Qt.RightButton

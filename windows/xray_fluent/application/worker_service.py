@@ -6,13 +6,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..connectivity_test import ConnectivityTestWorker
-from ..constants import DEFAULT_HTTP_PORT, XRAY_PATH_DEFAULT
+from ..constants import XRAY_PATH_DEFAULT
 from ..i18n import tr
 from ..path_utils import resolve_configured_path
 from ..ping_worker import PingWorker
 from ..qthread_utils import bind_thread_reference, retain_thread_until_finished
 from ..speed_test_worker import SpeedTestWorker
-from .node_runtime_service import is_native_singbox_only_node
+from ..probe_capabilities import NATIVE_PROTOCOLS, XRAY_PROTOCOLS, probe_backend, probe_capability
+from ..constants import SINGBOX_PATH_DEFAULT
 
 if TYPE_CHECKING:
     from ..app_controller import AppController
@@ -60,6 +61,11 @@ def _port_number(value: object) -> int:
 
 
 def _outbound_endpoint(outbound: dict) -> tuple[str, int]:
+    if isinstance(outbound.get("singbox"), dict):
+        outbound = outbound["singbox"]
+    peers = outbound.get("peers")
+    if isinstance(peers, list) and peers and isinstance(peers[0], dict):
+        outbound = peers[0]
     server = str(outbound.get("server") or outbound.get("address") or "").strip()
     port = _port_number(outbound.get("server_port") or outbound.get("port"))
     settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
@@ -84,7 +90,7 @@ def _auto_candidate_outbounds(node: Node) -> list[dict]:
     config = outbound.get(config_key)
     if protocol not in _AUTO_CONFIG_PROTOCOLS or not isinstance(config, dict):
         return []
-    outbounds = [item for item in config.get("outbounds", []) if isinstance(item, dict)]
+    outbounds = [item for item in [*config.get("outbounds", []), *config.get("endpoints", [])] if isinstance(item, dict)]
     if not outbounds:
         return []
 
@@ -136,42 +142,30 @@ def _auto_candidate_outbounds(node: Node) -> list[dict]:
 def _auto_candidate_supports(candidate: dict, test: str, *, ping_method: str) -> bool:
     protocol = _outbound_protocol(candidate)
     server, port = _outbound_endpoint(candidate)
-    if not server or port <= 0:
-        return False
-    if test == "speed":
-        return protocol not in _XRAY_TEST_UNSUPPORTED and protocol not in {
-            "awg", "hysteria", "hysteria2", "hy", "hy2", "masque", "mieru",
-            "openvpn", "naive", "tuic", "warp", "wireguard",
-        }
-    return protocol not in _ENDPOINT_PING_UNSUPPORTED
+    if test == "speed" or ping_method in {"http", "real"}:
+        return protocol in XRAY_PROTOCOLS or protocol in NATIVE_PROTOCOLS
+    return bool(server and port > 0 and (protocol in XRAY_PROTOCOLS or protocol in NATIVE_PROTOCOLS))
 
 
 def _node_supports_test(node: Node, test: str, *, ping_method: str = "tcping") -> bool:
     protocol = _node_protocol(node)
     if protocol in _AUTO_CONFIG_PROTOCOLS:
-        if protocol == "singbox_config" and (test == "speed" or ping_method in {"http", "real"}):
-            return False
-        return any(
-            _auto_candidate_supports(candidate, test, ping_method=ping_method)
-            for candidate in _auto_candidate_outbounds(node)
-        )
-    if test == "speed":
-        return not is_native_singbox_only_node(node) and protocol not in _XRAY_TEST_UNSUPPORTED
-    if protocol in _ENDPOINT_PING_UNSUPPORTED:
-        server, port = _outbound_endpoint(node.outbound if isinstance(node.outbound, dict) else {})
-        if not server:
-            server = str(node.server or "").strip()
-        if port <= 0:
-            port = _port_number(node.port)
-        return bool(server and port > 0)
-    return bool(node.server and _port_number(node.port) > 0)
+        candidates = _auto_candidate_outbounds(node)
+        if test == "speed" or ping_method in {"http", "real"}:
+            allowed = XRAY_PROTOCOLS if protocol == "xray_config" else XRAY_PROTOCOLS | NATIVE_PROTOCOLS
+            return bool(candidates) and all(_outbound_protocol(c) in allowed for c in candidates)
+        allowed = XRAY_PROTOCOLS if protocol == "xray_config" else XRAY_PROTOCOLS | NATIVE_PROTOCOLS
+        return any(_outbound_protocol(c) in allowed and _auto_candidate_supports(c, test, ping_method=ping_method) for c in candidates)
+    return probe_capability(node, "speed" if test == "speed" else ping_method).supported
 
 
 def _node_for_test(node: Node, test: str, *, ping_method: str) -> Node:
     protocol = _node_protocol(node)
-    if protocol not in _AUTO_CONFIG_PROTOCOLS or test == "speed":
+    if protocol not in _AUTO_CONFIG_PROTOCOLS or test == "speed" or ping_method in {"http", "real"}:
         return node
     for candidate in _auto_candidate_outbounds(node):
+        if protocol == "xray_config" and _outbound_protocol(candidate) not in XRAY_PROTOCOLS:
+            continue
         if not _auto_candidate_supports(candidate, test, ping_method=ping_method):
             continue
         server, port = _outbound_endpoint(candidate)
@@ -181,7 +175,8 @@ def _node_for_test(node: Node, test: str, *, ping_method: str) -> Node:
         candidate_protocol = _outbound_protocol(candidate)
         if candidate_protocol:
             prepared.scheme = candidate_protocol
-            prepared.outbound = {"protocol": candidate_protocol, "singbox": deepcopy(candidate)}
+            prepared.outbound = (deepcopy(candidate) if protocol == "xray_config" else
+                                 {"protocol": candidate_protocol, "singbox": deepcopy(candidate)})
         return prepared
     return node
 
@@ -286,7 +281,7 @@ def ping_nodes(
 
     xray_test_executable = None
     if resolved_method in {"http", "real"}:
-        if any(not SpeedTestWorker._uses_direct_ping_fallback(node) for node in nodes):
+        if any(probe_backend(node) == "xray" for node in nodes):
             xray_test_executable = _resolve_xray_test_executable(controller)
             if xray_test_executable is None:
                 return
@@ -306,12 +301,13 @@ def ping_nodes(
     controller._ping_completed = 0
     state_node_map = {node.id: node for node in controller.state.nodes}
     controller._ping_node_map = {node.id: state_node_map.get(node.id, node) for node in nodes}
+    controller._ping_kind_map = {node.id: probe_capability(node, resolved_method).method for node in nodes}
     _clear_ping_measurements(controller, list(controller._ping_node_map.values()))
     controller.bulk_task_progress.emit("ping", 0, controller._ping_total, False)
 
     if resolved_method in {"http", "real"}:
         # Реальная задержка измеряется через временный xray-прокси (как в v2rayN).
-        xray_path = str(xray_test_executable)
+        xray_path = str(xray_test_executable or "")
         controller._log("[ping] Измеряю реальную задержку через временные прокси")
         real_active_session = controller._active_session
         real_bypass_tun = bool(
@@ -322,6 +318,7 @@ def ping_nodes(
         worker = SpeedTestWorker(
             nodes,
             xray_path=xray_path,
+            singbox_path=str(resolve_configured_path(getattr(controller.state.settings, "singbox_path", ""), default_path=SINGBOX_PATH_DEFAULT, use_default_if_empty=True) or ""),
             routing=controller.state.routing,
             mode="ping",
             concurrency=controller.state.settings.speed_test_concurrency,
@@ -362,10 +359,10 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
     if not nodes:
         return False
 
-    xray_test_executable = _resolve_xray_test_executable(controller)
-    if xray_test_executable is None:
+    xray_test_executable = _resolve_xray_test_executable(controller) if any(probe_backend(n) == "xray" for n in nodes) else None
+    if any(probe_backend(n) == "xray" for n in nodes) and xray_test_executable is None:
         return False
-    xray_path = str(xray_test_executable)
+    xray_path = str(xray_test_executable or "")
 
     controller._speed_total = len(nodes)
     controller._speed_completed = 0
@@ -380,6 +377,7 @@ def speed_test_nodes(controller: AppController, node_ids: set[str] | None = None
     controller._speed_worker = SpeedTestWorker(
         nodes,
         xray_path=xray_path,
+        singbox_path=str(resolve_configured_path(getattr(controller.state.settings, "singbox_path", ""), default_path=SINGBOX_PATH_DEFAULT, use_default_if_empty=True) or ""),
         routing=controller.state.routing,
         test_url=controller.state.settings.speed_test_url,
         concurrency=controller.state.settings.speed_test_concurrency,
@@ -431,7 +429,9 @@ def on_ping_result(controller: AppController, node_id: str, ping_ms: int | None)
     node = getattr(controller, "_ping_node_map", {}).get(node_id)
     if node is not None:
         node.ping_ms = ping_ms
-        node.is_alive = ping_ms is not None
+        unavailable = node_id in getattr(controller._ping_worker, "unavailable_nodes", ())
+        node.ping_kind = "unavailable" if unavailable else getattr(controller, "_ping_kind_map", {}).get(node_id, "endpoint")
+        node.is_alive = (ping_ms is not None) if node.ping_kind == "proxy" else None
         ts = datetime.now(timezone.utc).isoformat()
         node.ping_history.append((ts, ping_ms))
         if len(node.ping_history) > 50:
@@ -460,7 +460,9 @@ def on_speed_result(controller: AppController, node_id: str, speed_mbps: float |
     node = getattr(controller, "_speed_node_map", {}).get(node_id)
     if node is not None:
         node.speed_mbps = speed_mbps
-        node.is_alive = is_alive
+        unavailable = node_id in getattr(controller._speed_worker, "unavailable_nodes", ())
+        node.ping_kind = "unavailable" if unavailable else "proxy"
+        node.is_alive = None if unavailable else is_alive
         ts = datetime.now(timezone.utc).isoformat()
         node.speed_history.append((ts, speed_mbps))
         if len(node.speed_history) > 50:

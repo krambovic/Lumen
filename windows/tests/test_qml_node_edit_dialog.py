@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import base64
 from pathlib import Path
 import subprocess
 import sys
@@ -54,7 +55,7 @@ def test_protocol_aware_node_edit_dialog_compiles() -> None:
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
     env.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
     result = subprocess.run(
-        [sys.executable, "-c", script],
+        [sys.executable, str(ROOT / "scripts" / "run_safe_tests.py"), "--exec-fixture", base64.b64encode(script.encode("utf-8")).decode("ascii")],
         cwd=ROOT,
         env=env,
         capture_output=True,

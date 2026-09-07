@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import threading
 from types import SimpleNamespace
 
@@ -35,19 +36,63 @@ def test_routine_process_and_dns_info_noise_is_suppressed() -> None:
         "INFO [12345 1ms] dns: exchanged chatgpt.com. IN A 104.18.0.1",
         "INFO [12345 2ms] dns: lookup succeeded for claude.ai",
         "INFO [12345 0ms] dns: cached gemini.google.com. IN A",
+        "WARNING inbound/tun[tun-in]: open interface take too much time to finish!",
     ]
 
     assert all(SingBoxManager._is_noisy_runtime_line(line) for line in lines)
 
 
+def test_tun_cleanup_scripts_include_configured_interface(monkeypatch) -> None:
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command[-1])
+        return SimpleNamespace(returncode=0, stdout=b"0\n", stderr=b"")
+
+    monkeypatch.setattr(manager_module.os, "name", "nt")
+    monkeypatch.setattr(manager_module, "is_windows_shutting_down", lambda: False)
+    monkeypatch.setattr(manager_module, "run_text_pumped", fake_run)
+    SingBoxManager.cleanup_orphaned_tun_adapters(interface_name="Lumen-TUN 1")
+    SingBoxManager()._purge_stale_wintun_devices(interface_name="Lumen-TUN 1")
+
+    assert len(calls) == 2
+    assert all("Lumen-TUN 1" in script for script in calls)
+
+
+def test_tun_interface_name_is_restricted_before_powershell_embedding() -> None:
+    # Quotes, separators and newlines must never be accepted as an adapter
+    # alias, even when they came from an imported raw sing-box profile.
+    assert "bad'" not in manager_module._managed_tun_names_ps("bad'; Get-Process")
+    assert "good_name" in manager_module._managed_tun_names_ps("good_name")
+
+
 def test_error_lines_win_over_info_noise_markers() -> None:
     # A line carrying an error token must never be suppressed even if it also
     # contains an info-noise marker like "dns:" or "found process".
-    line = "ERROR [1 5.0s] dns: lookup failed for api.openai.com: i/o timeout context deadline"
+    repeated = "ERROR [1 5.0s] dns: lookup failed for api.openai.com: i/o timeout context deadline"
     # This specific shape is recognised as repeated DNS runtime noise, but a
     # plain unexpected error with the same markers stays visible:
+    assert SingBoxManager._is_noisy_runtime_line(repeated) is False
     plain = "ERROR router: found process failed unexpectedly"
     assert SingBoxManager._is_noisy_runtime_line(plain) is False
+
+
+def test_runtime_reader_hides_process_path_but_keeps_actionable_errors() -> None:
+    manager = SingBoxManager()
+    received = []
+    manager.log_received.connect(received.append)
+    proc = SimpleNamespace(
+        stdout=io.BytesIO(
+            b"INFO router: found process path: C:\\\\Program Files\\\\app.exe\n"
+            b"ERROR dns: exchange failed: context deadline exceeded\n"
+        ),
+        returncode=1,
+        poll=lambda: 1,
+        wait=lambda: 1,
+    )
+    manager._read_output(proc)
+    assert not any("found process path" in line for line in received)
+    assert any("context deadline exceeded" in line for line in received)
 
 
 def test_repeated_dns_runtime_errors_stay_visible() -> None:
@@ -168,6 +213,10 @@ def test_proxy_runtime_ports_are_detected_without_tun() -> None:
 
     assert SingBoxManager._extract_tun_interface_name(config) == ""
     assert SingBoxManager._extract_local_proxy_ports(config) == (10808, 10809)
+
+
+def test_empty_tun_interface_uses_lumen_default_alias() -> None:
+    assert SingBoxManager._extract_tun_interface_name({"inbounds": [{"type": "tun"}]}) == "singbox_tun"
 
 
 def test_custom_warp_and_masque_require_runtime_readiness() -> None:

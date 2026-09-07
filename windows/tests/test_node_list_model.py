@@ -13,7 +13,7 @@ def _app() -> QCoreApplication:
     return QCoreApplication.instance() or QCoreApplication(sys.argv)
 
 
-def test_failed_ping_marks_node_as_tested_and_offline() -> None:
+def test_endpoint_ping_does_not_claim_profile_was_tested() -> None:
     _app()
     node = Node(name="dead", server="203.0.113.1", port=443)
     model = NodeListModel()
@@ -25,7 +25,8 @@ def test_failed_ping_marks_node_as_tested_and_offline() -> None:
 
     model.update_ping(node.id, None)
 
-    assert model.data(idx, NodeListModel.TestedRole) is True
+    assert node.is_alive is None
+    assert model.data(idx, NodeListModel.TestedRole) is False
     assert model.data(idx, NodeListModel.AliveRole) is False
     assert model.data(idx, NodeListModel.PingRole) == -1
 
@@ -37,6 +38,9 @@ def test_failed_speed_can_override_previous_alive_status() -> None:
     model.set_nodes([node], selected_id=None)
     idx = model.index(0, 0)
 
+    # The profile worker owns the authoritative health result.
+    node.ping_kind = "proxy"
+    node.is_alive = False
     model.update_speed(node.id, None)
     model.update_alive(node.id, False)
 

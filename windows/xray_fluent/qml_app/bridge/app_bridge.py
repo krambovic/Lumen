@@ -12,6 +12,7 @@ Design goals:
 """
 from __future__ import annotations
 
+from collections import deque
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
@@ -53,6 +54,7 @@ from ..toast import set_toasts_enabled, show_toast
 from ..window_geometry import fit_window_geometry
 from ...i18n import active_map, available_languages, language_name, set_language, tr, translate_dynamic
 from ...log_utils import parse_log_line
+from ...secret_scrubber import scrub_text
 
 
 def _server_display_name_without_country_prefix(name: str, country: str) -> str:
@@ -87,7 +89,7 @@ class _ApplicationLogHandler(logging.Handler):
             if getattr(record, "from_controller", False):
                 return
             source = record.name.rsplit(".", 1)[-1] or "app"
-            self._emitter.line.emit(f"[{source}] {self.format(record)}")
+            self._emitter.line.emit(scrub_text(f"[{source}] {self.format(record)}"))
         except Exception:
             pass
 
@@ -175,6 +177,10 @@ class AppBridge(QObject):
     settingsChanged = pyqtSignal()
     subscriptionsChanged = pyqtSignal()    # subscription list changed
     nodeFiltersChanged = pyqtSignal()      # distinct group option list changed
+    nodeSortChanged = pyqtSignal()
+    nodeFilterChanged = pyqtSignal()
+    nodeTableLayoutChanged = pyqtSignal()
+    selectedSubscriptionChanged = pyqtSignal()
     lockedChanged = pyqtSignal()           # app lock/unlock state changed
     trayAvailableChanged = pyqtSignal()    # system tray availability resolved
     trayMessageRequested = pyqtSignal()    # ask the tray to show its balloon
@@ -196,6 +202,11 @@ class AppBridge(QObject):
         self._node_model = NodeListModel(self)
         self._log_source_model = LogModel(parent=self)
         self._log_model = LogFilterModel(self._log_source_model, parent=self)
+        self._pending_ui_logs: deque[str] = deque(maxlen=2000)
+        self._log_flush_timer = QTimer(self)
+        self._log_flush_timer.setSingleShot(True)
+        self._log_flush_timer.setInterval(100)
+        self._log_flush_timer.timeout.connect(self._flush_ui_logs)
         self._process_model = ProcessModel(self)
         self._missing_wallpaper_clear_pending = ""
 
@@ -280,9 +291,20 @@ class AppBridge(QObject):
     @pyqtSlot(str)
     def _capture_application_log(self, line: str) -> None:
         self.controller.recent_logs.append(line)
-        if len(self.controller.recent_logs) > 5000:
-            self.controller.recent_logs = self.controller.recent_logs[-5000:]
-        self._log_source_model.append_line(self._localized_log_line(line))
+        self._queue_ui_log(line)
+
+    def _queue_ui_log(self, line: str) -> None:
+        self._pending_ui_logs.append(self._localized_log_line(line))
+        if not self._log_flush_timer.isActive():
+            self._log_flush_timer.start()
+
+    @pyqtSlot()
+    def _flush_ui_logs(self) -> None:
+        if not self._pending_ui_logs:
+            return
+        pending = list(self._pending_ui_logs)
+        self._pending_ui_logs.clear()
+        self._log_source_model.append_lines(pending)
 
     # ── notifications ──────────────────────────────────────
     def _notify(self, level: str, message: str) -> None:
@@ -308,7 +330,9 @@ class AppBridge(QObject):
     def load(self) -> None:
         """Load persisted state and push initial snapshots into QML."""
         try:
-            self.controller.load()
+            if self.controller.load() is False:
+                self._push_initial_snapshot()
+                return
         except Exception as exc:  # pragma: no cover - defensive
             self._notify("error", tr("Ошибка загрузки: {error}", error=exc))
         saved_settings = self.controller.state.settings
@@ -361,75 +385,53 @@ class AppBridge(QObject):
     @pyqtSlot()
     def startDeferred(self) -> None:
         self._flush_pending_toasts()
-        if self._deferred_started:
+        if not self.controller.profile_loaded or self._deferred_started:
             return
         self._deferred_started = True
         self.controller.start_deferred_services()
         QTimer.singleShot(150, self.controller.auto_connect_if_needed)
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, deadline: float | None = None) -> None:
+        if getattr(self, "_shutdown_started", False):
+            return
+        self._shutdown_started = True
+        self._log_flush_timer.stop()
+        self._flush_ui_logs()
+        import time
+        deadline = time.monotonic() + 5.0 if deadline is None else deadline
         logger = logging.getLogger("xray_fluent.app")
         logger.info("[app] AppBridge shutting down...")
         self.prepareQuit()
-        try:
-            self._sub_timer.stop()
-            self._app_update_timer.stop()
-        except Exception:
-            pass
-        thread = self._sub_thread
-        if thread is not None:
-            logger.info("[app] Stopping subscription thread...")
-            stopped = False
-            try:
-                worker = self._sub_worker
-                if worker is not None:
-                    worker.stop()
-                thread.quit()
-                stopped = stop_and_wait_for_thread(
-                    thread,
-                    label="subscription thread",
-                    logger=logger,
-                )
-            except Exception as exc:
-                logger.error(f"[app] Error stopping subscription thread: {exc}")
-            if stopped:
-                self._sub_thread = None
-                self._sub_worker = None
-                thread.deleteLater()
-
-        for retired_thread in list(self._retired_sub_threads):
-            retired_worker = self._retired_sub_workers.get(retired_thread)
-            if retired_worker is not None:
-                retired_worker.stop()
-            retired_thread.quit()
-            stop_and_wait_for_thread(
-                retired_thread,
-                label="cancelled subscription thread",
-                logger=logger,
-            )
-
-        for attribute, label in (
-            ("_app_update_checker", "application update checker"),
-            ("_startup_resource_worker", "startup resource checker"),
-            ("_app_update_downloader", "application update downloader"),
-        ):
+        self._sub_timer.stop()
+        self._app_update_timer.stop()
+        waiting = []
+        if self._sub_thread is not None:
+            if self._sub_worker is not None:
+                self._sub_worker.stop()
+            self._sub_thread.quit()
+            waiting.append((self._sub_thread, "subscription thread"))
+        for thread in list(self._retired_sub_threads):
+            worker = self._retired_sub_workers.get(thread)
+            if worker is not None:
+                worker.stop()
+            thread.quit()
+            waiting.append((thread, "cancelled subscription thread"))
+        for attribute in ("_app_update_checker", "_startup_resource_worker", "_app_update_downloader"):
             worker = getattr(self, attribute, None)
-            if worker is None:
-                continue
-            stop = worker.cancel if hasattr(worker, "cancel") else None
-            stopped = stop_and_wait_for_thread(worker, stop=stop, label=label, logger=logger)
-            if stopped:
-                if getattr(self, attribute, None) is worker:
-                    setattr(self, attribute, None)
-                worker.deleteLater()
+            if worker is not None:
+                if hasattr(worker, "cancel"):
+                    worker.cancel()
+                waiting.append((worker, attribute))
         try:
-            self.controller.shutdown()
+            # Everybody above is already cancelled before controller joins begin.
+            self.controller.shutdown(deadline=deadline)
         except Exception:
-            pass
-        try:
-            logging.getLogger("xray_fluent").removeHandler(self._application_log_handler)
-        except Exception:
-            pass
+            logger.exception("[app] Controller shutdown needs final cleanup")
+        for worker, label in waiting:
+            stop_and_wait_for_thread(worker, label=label, logger=logger, deadline=deadline)
+        # Never discard a live worker on timeout. Quit coordination keeps this
+        # owner alive, and finished callbacks release the individual references.
+        logging.getLogger("xray_fluent").removeHandler(self._application_log_handler)
 
     # ── Авто-обновление подписок ────────────────────────
     def _reconfigure_sub_timer(self) -> None:
@@ -516,7 +518,7 @@ class AppBridge(QObject):
 
     def _dispatch_sub_jobs(self, jobs: list, kind: str) -> None:
         """Передаёт задачи в фоновый поток; тосты покажем по завершению батча."""
-        if self._quitting:
+        if self._quitting or not self.controller.profile_loaded:
             return
         if not jobs:
             if kind in ("update", "update_all"):
@@ -539,6 +541,8 @@ class AppBridge(QObject):
         if bool(getattr(settings, "subscription_converter_enabled", False)):
             converter_url = str(getattr(settings, "subscription_converter_url", "") or "").strip()
         for job in jobs:
+            job.include_regex = str(getattr(settings, "subscription_include_regex", "") or "")
+            job.exclude_regex = str(getattr(settings, "subscription_exclude_regex", "") or "")
             job.user_agent = user_agent
             job.hwid = hwid
             job.use_real_hwid = use_real_hwid
@@ -583,7 +587,7 @@ class AppBridge(QObject):
     ) -> None:
         """Применяет результат одной подписки. Всегда GUI-поток (queued)."""
         batch = self._sub_batches.get(batch_id)
-        if batch is None:
+        if batch is None or self._quitting or not self.controller.profile_loaded:
             return
         before_subscription_ids = {
             str(item.get("id") or "")
@@ -660,6 +664,10 @@ class AppBridge(QObject):
     @pyqtProperty(bool, notify=trayAvailableChanged)
     def trayAvailable(self) -> bool:
         return self._tray_available
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def profileLoaded(self) -> bool:
+        return self.controller.profile_loaded
 
     @pyqtProperty(bool, constant=True)
     def uiBackdropAvailable(self) -> bool:
@@ -883,7 +891,7 @@ class AppBridge(QObject):
 
     @pyqtSlot(str)
     def _on_controller_log_line(self, line: str) -> None:
-        self._log_source_model.append_line(self._localized_log_line(line))
+        self._queue_ui_log(line)
 
     def _on_status_message(self, level: str, message: str) -> None:
         localized = self._localized_backend_message(message)
@@ -1041,6 +1049,9 @@ class AppBridge(QObject):
         self._tun_mode = bool(settings.tun_mode)
         self._proxy_enabled = bool(settings.enable_system_proxy)
         self._discord_proxy = bool(getattr(settings, "discord_proxy_enabled", False))
+        self._filter_group = str(getattr(settings, "node_filter_group", "") or "")
+        self._sort_key = str(getattr(settings, "node_sort_key", "manual") or "manual")
+        self._sort_asc = bool(getattr(settings, "node_sort_ascending", True))
         self._theme = settings.theme
         new_language = getattr(settings, "language", "en")
         _language_changed = new_language != self._language
@@ -1055,6 +1066,13 @@ class AppBridge(QObject):
         self._accent = settings.accent_color or "#0078D4"
         self._node_model.set_runtime_support(True)
         self.settingsChanged.emit()
+        # These values are exposed as independently bindable properties in
+        # QML.  Keep their notify signals in sync when a profile load/import
+        # or another settings update replaces the whole settings object.
+        self.nodeSortChanged.emit()
+        self.nodeFilterChanged.emit()
+        self.nodeTableLayoutChanged.emit()
+        self.selectedSubscriptionChanged.emit()
 
     def _on_subscriptions_changed(self, _subscriptions=None) -> None:
         self.subscriptionsChanged.emit()
@@ -2181,7 +2199,7 @@ class AppBridge(QObject):
     # ── Security: master password / auto-lock ────────────────────
     @pyqtSlot(str)
     def setMasterPassword(self, password: str) -> None:
-        pw = (password or "").strip()
+        pw = str(password or "")
         if not pw:
             self.toast.emit("warning", "Введите пароль")
             return
@@ -2191,7 +2209,7 @@ class AppBridge(QObject):
 
     @pyqtSlot(str, result=bool)
     def disableMasterPassword(self, password: str) -> bool:
-        pw = (password or "").strip()
+        pw = str(password or "")
         if not pw:
             self.toast.emit("warning", "Введите текущий пароль")
             return False
@@ -2213,11 +2231,15 @@ class AppBridge(QObject):
     # ── Data: encryption + backup ────────────────────────────────
     @pyqtSlot(str)
     def setEncryptionPassword(self, password: str) -> None:
-        pw = (password or "").strip()
+        pw = str(password or "")
         if not pw:
             self.toast.emit("warning", "Введите пароль шифрования")
             return
-        self.controller.set_data_passphrase(pw)
+        if self.controller.set_data_passphrase(pw):
+            self._push_initial_snapshot()
+            self._reconfigure_sub_timer()
+            self._reconfigure_app_update_timer()
+            self.startDeferred()
         self.settingsChanged.emit()
 
     @pyqtSlot()
@@ -3393,6 +3415,7 @@ class AppBridge(QObject):
     @pyqtSlot(str, bool)
     def setNodeSort(self, key: str, ascending: bool) -> None:
         """Set the active sort key/direction for the node list and re-push it."""
+        old_key, old_asc = self._sort_key, self._sort_asc
         self._sort_key = key or "manual"
         self._sort_asc = bool(ascending)
         settings = self.controller.state.settings
@@ -3403,32 +3426,37 @@ class AppBridge(QObject):
             settings.node_sort_key = self._sort_key
             settings.node_sort_ascending = self._sort_asc
             self.controller.schedule_save()
+        if old_key != self._sort_key or old_asc != self._sort_asc:
+            self.nodeSortChanged.emit()
         self._apply_node_model()
 
     @pyqtSlot(str, str)
     def setNodeFilter(self, group: str, text: str) -> None:
         """Set the active group/text filter and re-push the node list so the
         model holds only visible rows (keeps ListView count/contentHeight correct)."""
+        old_group = self._filter_group
         self._filter_group = group or ""
         self._filter_text = text or ""
         if self.controller.state.settings.node_filter_group != self._filter_group:
             self.controller.state.settings.node_filter_group = self._filter_group
             self.controller.schedule_save()
+        if old_group != self._filter_group:
+            self.nodeFilterChanged.emit()
         self._apply_node_model()
 
-    @pyqtProperty(str)
+    @pyqtProperty(str, notify=nodeSortChanged)
     def nodeSortKey(self) -> str:
         return str(self._sort_key or "manual")
 
-    @pyqtProperty(bool)
+    @pyqtProperty(bool, notify=nodeSortChanged)
     def nodeSortAscending(self) -> bool:
         return bool(self._sort_asc)
 
-    @pyqtProperty(str)
+    @pyqtProperty(str, notify=nodeFilterChanged)
     def nodeFilterGroup(self) -> str:
         return str(self._filter_group or "")
 
-    @pyqtProperty(str)
+    @pyqtProperty(str, notify=selectedSubscriptionChanged)
     def selectedSubscriptionId(self) -> str:
         return str(self.controller.state.settings.selected_subscription_id or "")
 
@@ -3440,8 +3468,9 @@ class AppBridge(QObject):
             return
         settings.selected_subscription_id = value
         self.controller.schedule_save()
+        self.selectedSubscriptionChanged.emit()
 
-    @pyqtProperty("QVariantMap")
+    @pyqtProperty("QVariantMap", notify=nodeTableLayoutChanged)
     def nodeTableLayout(self) -> dict:
         return dict(self.controller.state.settings.node_table_layout)
 
@@ -3470,6 +3499,7 @@ class AppBridge(QObject):
             return
         settings.node_table_layout = normalized
         self.controller.schedule_save()
+        self.nodeTableLayoutChanged.emit()
 
     @pyqtSlot(str, result=bool)
     def createManualGroup(self, name: str) -> bool:

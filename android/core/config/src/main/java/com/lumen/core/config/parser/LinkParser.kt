@@ -553,6 +553,7 @@ object LinkParser {
         }
 
         val params = mutableMapOf<String, String>()
+        params["allowinsecure"] = json.optString("allowInsecure").ifBlank { json.optString("insecure") }
         params["type"] = json.optString("net", "tcp")
         params["security"] = json.optString("tls", "none")
         params["host"] = json.optString("host")

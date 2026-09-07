@@ -58,6 +58,9 @@ def _install_message_filter() -> None:
             or "Unable to obtain clipboard" in text
         ) or (
             "qt.qpa.mime" in text and "clipboard" in text
+        ) or (
+            "mica backdrop unavailable" in text.lower()
+            and "requires windows 11" in text.lower()
         ):
             return
         if text.startswith("QWindowsWindow::setGeometry: Unable to set geometry"):
@@ -773,7 +776,7 @@ def _load_bundled_fonts() -> None:
         if font_path.is_file():
             font_id = QFontDatabase.addApplicationFont(str(font_path))
             if font_id == -1:
-                print(f"Failed to load bundled icon font: QFontDatabase returned -1", file=sys.stderr)
+                print("Failed to load bundled icon font: QFontDatabase returned -1", file=sys.stderr)
         else:
             print(f"Bundled icon font file not found at: {font_path}", file=sys.stderr)
     except Exception as exc:
@@ -787,9 +790,6 @@ def _attach_qwindowkit(window) -> None:
         import os
         import ctypes
         import PyQt6
-        from PyQt6 import sip
-        from PyQt6.QtQuick import QQuickItem
-
         if getattr(sys, "frozen", False):
             qwk_dir = os.path.join(sys._MEIPASS, "qwk")
         else:
@@ -890,6 +890,9 @@ def main(argv: list[str] | None = None) -> int:
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
     bridge = AppBridge()
+    from .shutdown_coordinator import ShutdownCoordinator
+    shutdown_coordinator = ShutdownCoordinator(bridge, app)
+    app.installEventFilter(shutdown_coordinator)
     bridge._single_instance_server = single_server
     bridge.load()
     power_event_filter = None
@@ -1026,7 +1029,7 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(500, reveal.reveal_if_pending)
 
     window._lumen_reveal = lambda: _request_reveal(activate=True)
-    tray = (
+    _tray = (
         QmlTray(app, window, bridge, show_window=lambda: _request_reveal(activate=True))
         if tray_available
         else None
@@ -1044,7 +1047,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     app.aboutToQuit.connect(bridge.shutdown)
 
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        app.removeEventFilter(shutdown_coordinator)
+        shutdown_coordinator.close()
 
 
 if __name__ == "__main__":

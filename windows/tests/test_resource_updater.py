@@ -485,6 +485,7 @@ def test_resource_checks_for_different_components_can_run_together(monkeypatch) 
         _on_update_disconnect_request=lambda: None,
     )
 
+    controller.profile_loaded = True
     assert AppController.run_resource_update(
         controller,
         "geodata",

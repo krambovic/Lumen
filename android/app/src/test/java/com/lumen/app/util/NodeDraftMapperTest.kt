@@ -224,4 +224,67 @@ class NodeDraftMapperTest {
         assertTrue(saved.outboundJson.startsWith("{"))
         assertEquals("vless", JSONObject(saved.outboundJson).getString("protocol"))
     }
+
+    @Test
+    fun proxyCredentialsKeepLiteralPlusAndCanBeClearedWithoutLosingExtensions() {
+        val entity = NodeEntity(
+            id = "http-1",
+            name = "HTTP proxy",
+            protocol = "http",
+            server = "proxy.example.com",
+            port = 8080,
+            link = "http://alice:p+ass@proxy.example.com:8080#HTTP",
+            outboundJson = """
+                {
+                  "protocol":"http",
+                  "settings":{"servers":[{
+                    "address":"proxy.example.com",
+                    "port":8080,
+                    "users":[{"user":"alice","pass":"p+ass"}],
+                    "provider_extension":"keep-me"
+                  }]}
+                }
+            """.trimIndent()
+        )
+
+        val draft = NodeDraftMapper.draftFromEntity(entity)!!
+        assertEquals("alice:p+ass", draft.secret)
+        val saved = NodeDraftMapper.entityFromDraft(draft.copy(secret = ""))
+        val server = JSONObject(saved.outboundJson)
+            .getJSONObject("settings").getJSONArray("servers").getJSONObject(0)
+        assertFalse(server.has("users"))
+        assertEquals("keep-me", server.getString("provider_extension"))
+    }
+
+    @Test
+    fun vlessEncryptionExtensionSurvivesAnUnrelatedEdit() {
+        val encryption = "mlkem768x25519plus.native.0rtt.payload"
+        val entity = NodeEntity(
+            id = "vless-1",
+            name = "Encrypted VLESS",
+            protocol = "vless",
+            server = "vless.example.com",
+            port = 443,
+            link = "vless://11111111-2222-3333-4444-555555555555@vless.example.com:443" +
+                "?encryption=$encryption&security=tls#VLESS",
+            outboundJson = """
+                {
+                  "protocol":"vless",
+                  "settings":{"vnext":[{"address":"vless.example.com","port":443,"users":[{
+                    "id":"11111111-2222-3333-4444-555555555555",
+                    "encryption":"$encryption"
+                  }]}]},
+                  "streamSettings":{"network":"tcp","security":"tls","tlsSettings":{}}
+                }
+            """.trimIndent()
+        )
+
+        val saved = NodeDraftMapper.entityFromDraft(
+            NodeDraftMapper.draftFromEntity(entity)!!.copy(name = "Renamed")
+        )
+        val user = JSONObject(saved.outboundJson).getJSONObject("settings")
+            .getJSONArray("vnext").getJSONObject(0)
+            .getJSONArray("users").getJSONObject(0)
+        assertEquals(encryption, user.getString("encryption"))
+    }
 }

@@ -57,4 +57,5 @@ def test_xray_auto_accepts_supported_observers(
 @pytest.mark.parametrize("strategy_type", ["leastPing", "leastLoad"])
 def test_xray_auto_requires_observer_for_probe_strategies(strategy_type: str) -> None:
     problem = validate_server_preflight(_xray_auto_node(strategy_type), SETTINGS)
-    assert problem is None
+    assert problem is not None
+    assert "observatory" in problem

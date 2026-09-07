@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from PyQt6.QtCore import QAbstractListModel, QModelIndex, Qt, pyqtSlot
+from PyQt6.QtCore import QAbstractListModel, QModelIndex, Qt
 
 from ...models import Node
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri, _STRIPES as _FLAG_STRIPES
@@ -43,6 +43,7 @@ class NodeListModel(QAbstractListModel):
     TestedRole = Qt.ItemDataRole.UserRole + 21
     DescriptionRole = Qt.ItemDataRole.UserRole + 22
     PingingRole = Qt.ItemDataRole.UserRole + 23
+    PingKindRole = Qt.ItemDataRole.UserRole + 24
 
     _ROLE_NAMES = {
         IdRole: b"nodeId",
@@ -67,6 +68,7 @@ class NodeListModel(QAbstractListModel):
         TestedRole: b"tested",
         DescriptionRole: b"description",
         PingingRole: b"pinging",
+        PingKindRole: b"pingKind",
     }
 
     def __init__(self, parent=None) -> None:
@@ -120,6 +122,8 @@ class NodeListModel(QAbstractListModel):
             return node.group or ""
         if role == self.PingRole:
             return -1 if node.ping_ms is None else int(node.ping_ms)
+        if role == self.PingKindRole:
+            return node.ping_kind
         if role == self.PingingRole:
             return node.id in self._pinging_ids
         if role == self.SpeedRole:
@@ -127,7 +131,7 @@ class NodeListModel(QAbstractListModel):
         if role == self.AliveRole:
             return bool(node.is_alive)
         if role == self.TestedRole:
-            return bool(node.is_alive is not None or node.ping_history or node.speed_history)
+            return node.is_alive is not None
         if role == self.CountryRole:
             return self._country_for(node).lower()
         if role == self.FlagEmojiRole:
@@ -174,16 +178,35 @@ class NodeListModel(QAbstractListModel):
 
     # ── Bulk + incremental updates ──────────────────────────────
     def set_nodes(self, nodes: Iterable[Node], selected_id: str | None) -> None:
-        self.beginResetModel()
-        self._nodes = list(nodes)
+        incoming = list(nodes)
+        old_ids = [node.id for node in self._nodes]
+        new_ids = [node.id for node in incoming]
+        old_nodes = {node.id: node for node in self._nodes}
+        if old_ids != new_ids:
+            prefix = 0
+            while prefix < min(len(old_ids), len(new_ids)) and old_ids[prefix] == new_ids[prefix]:
+                prefix += 1
+            suffix = 0
+            while suffix < min(len(old_ids), len(new_ids)) - prefix and old_ids[-suffix-1] == new_ids[-suffix-1]:
+                suffix += 1
+            old_end, new_end = len(old_ids)-suffix, len(new_ids)-suffix
+            if old_end > prefix:
+                self.beginRemoveRows(QModelIndex(), prefix, old_end-1)
+                del self._nodes[prefix:old_end]
+                self.endRemoveRows()
+            if new_end > prefix:
+                self.beginInsertRows(QModelIndex(), prefix, new_end-1)
+                self._nodes[prefix:prefix] = incoming[prefix:new_end]
+                self.endInsertRows()
+        self._nodes = incoming
         self._selected_id = selected_id
-        self._index_by_id = {n.id: i for i, n in enumerate(self._nodes)}
-        self._speed_progress.clear()
-        live_ids = set(self._index_by_id)
-        self._country_cache = {
-            nid: cc for nid, cc in self._country_cache.items() if nid in live_ids
-        }
-        self.endResetModel()
+        self._index_by_id = {node.id: i for i, node in enumerate(incoming)}
+        live_ids = set(new_ids)
+        self._speed_progress = {k: v for k, v in self._speed_progress.items() if k in live_ids}
+        self._pinging_ids.intersection_update(live_ids)
+        self._country_cache = {k: v for k, v in self._country_cache.items() if k in live_ids and old_nodes.get(k) is incoming[self._index_by_id[k]]}
+        if incoming:
+            self.dataChanged.emit(self.index(0, 0), self.index(len(incoming)-1, 0), list(self._ROLE_NAMES))
 
     def set_selected(self, selected_id: str | None) -> None:
         if selected_id == self._selected_id:
@@ -210,11 +233,10 @@ class NodeListModel(QAbstractListModel):
         if row is None:
             return
         self._nodes[row].ping_ms = ping_ms
-        self._nodes[row].is_alive = ping_ms is not None
         self._pinging_ids.discard(node_id)
         self._emit_row_changed(
             node_id,
-            [self.PingRole, self.AliveRole, self.TestedRole, self.PingingRole],
+            [self.PingRole, self.AliveRole, self.TestedRole, self.PingingRole, self.PingKindRole],
         )
 
     def set_pinging_ids(self, node_ids: Iterable[str]) -> None:
@@ -239,7 +261,6 @@ class NodeListModel(QAbstractListModel):
         row = self._index_by_id.get(node_id)
         if row is None:
             return
-        self._nodes[row].is_alive = is_alive
         self._emit_row_changed(node_id, [self.AliveRole, self.TestedRole])
 
     def update_speed_progress(self, node_id: str, percent: int) -> None:
@@ -266,6 +287,7 @@ class NodeListModel(QAbstractListModel):
                 "server": node.server or "",
                 "group": node.group or "",
                 "transport": node_transport(node),
+                "pingKind": node.ping_kind or "",
             }
         return None
 

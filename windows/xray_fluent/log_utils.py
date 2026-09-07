@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from .secret_scrubber import scrub_text
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -34,7 +35,7 @@ class LogEntry:
 
 
 def clean_log_text(value: str) -> str:
-    text = _ANSI_RE.sub("", str(value or ""))
+    text = _ANSI_RE.sub("", scrub_text(value))
     text = text.replace("\ufffd", "").replace("\u001b", "")
     text = _CONTROL_RE.sub("", text)
     return " ".join(text.strip().split())
@@ -59,6 +60,7 @@ def is_routine_core_log(line: str) -> bool:
             "an existing connection was forcibly closed by the remote host",
             "wsarecv",
             "wsasend",
+            "open interface take too much time to finish",
         )
     ):
         return True
@@ -120,7 +122,7 @@ def classify_log_level(text: str) -> str:
         return "warning"
     if any(token in low for token in ("connection:", "handshake", "dial tcp", "unexpected http response status", "unexpected response status")):
         return "warning"
-    if re.search(r"\b(error|critical|fatal|panic)\b", low) and not "common/errors" in low:
+    if re.search(r"\b(error|critical|fatal|panic)\b", low) and "common/errors" not in low:
         return "error"
     if re.search(r"\b(warning|warn)\b", low):
         return "warning"

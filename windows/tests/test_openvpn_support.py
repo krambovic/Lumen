@@ -70,8 +70,10 @@ KEY
     assert node.port == 1194
     assert node_transport(node) == "TCP"
     assert is_native_singbox_only_node(node) is True
-    assert _node_supports_test(node, "ping", ping_method="tcping") is False
-    assert _node_supports_test(node, "speed") is False
+    assert _node_supports_test(node, "ping", ping_method="tcping") is True
+    # Native sing-box profiles are tested through an isolated loopback mixed
+    # inbound; the worker does not create TUN or modify the system proxy.
+    assert _node_supports_test(node, "speed") is True
     outbound = build_singbox_outbound(node)
     assert outbound["type"] == "openvpn"
     assert outbound["servers"] == [

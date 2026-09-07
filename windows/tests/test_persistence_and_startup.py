@@ -25,11 +25,18 @@ def test_history_is_written_through_a_temporary_file(monkeypatch, tmp_path: Path
     monkeypatch.setattr(traffic_history.os, "replace", _record)
 
     storage = TrafficHistoryStorage()
-    storage.start_session("node", "proxy")
+    try:
+        storage.start_session("node", "proxy")
+        assert storage.flush(3)
 
-    assert replaced == [(f".{target.name}.tmp", target.name)]
-    assert json.loads(target.read_text(encoding="utf-8"))["sessions"]
-    assert not list(tmp_path.glob(".*tmp"))
+        assert len(replaced) == 1
+        staged, destination = replaced[0]
+        assert staged.startswith(f".{target.name}.") and staged.endswith(".tmp")
+        assert destination == target.name
+        assert json.loads(target.read_text(encoding="utf-8"))["sessions"]
+        assert not list(tmp_path.glob(".*tmp"))
+    finally:
+        storage.close(3)
 
 
 def test_corrupt_history_is_kept_aside_instead_of_being_overwritten(monkeypatch, tmp_path: Path) -> None:
@@ -37,12 +44,16 @@ def test_corrupt_history_is_kept_aside_instead_of_being_overwritten(monkeypatch,
     target.write_text('{"sessions": [{"id": "half', encoding="utf-8")
 
     storage = TrafficHistoryStorage()
-    storage.start_session("node", "proxy")
+    try:
+        storage.start_session("node", "proxy")
+        assert storage.flush(3)
 
-    backups = list(tmp_path.glob(f"{target.name}.corrupt-*"))
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == '{"sessions": [{"id": "half'
-    assert json.loads(target.read_text(encoding="utf-8"))["sessions"]
+        backups = list(tmp_path.glob(f"{target.name}.corrupt-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text(encoding="utf-8") == '{"sessions": [{"id": "half'
+        assert json.loads(target.read_text(encoding="utf-8"))["sessions"]
+    finally:
+        storage.close(3)
 
 
 def test_legacy_migration_runs_only_once_per_process(monkeypatch) -> None:

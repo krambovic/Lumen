@@ -1320,12 +1320,15 @@ def _mark_subscription_fetch_metadata(
     """Persist validators/timestamps and bounded exponential retry backoff."""
     now = _utc_now_iso()
     normalized_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
-    if normalized_headers.get("etag"):
-        subscription["etag"] = normalized_headers["etag"]
-    if normalized_headers.get("last-modified"):
-        subscription["last_modified"] = normalized_headers["last-modified"]
+    if success or not_modified:
+        for header, key in (("etag", "etag"), ("last-modified", "last_modified")):
+            if normalized_headers.get(header):
+                subscription[key] = normalized_headers[header]
+            elif success and not not_modified:
+                subscription.pop(key, None)
     subscription["last_checked_at"] = now
-    subscription["parser_revision"] = SUBSCRIPTION_PARSER_REVISION
+    if success and not not_modified:
+        subscription["parser_revision"] = SUBSCRIPTION_PARSER_REVISION
     subscription["last_status"] = int(status or 0)
     if success or not_modified:
         subscription["last_success_at"] = now
@@ -1339,13 +1342,27 @@ def _mark_subscription_fetch_metadata(
         except (TypeError, ValueError):
             failures = 1
         subscription["failure_count"] = failures
-        # 15m, 30m, 60m ... capped at six hours; Retry-After is handled by
-        # callers as a status-specific error but never disables manual retry.
-        delay_minutes = min(360, 15 * (2 ** min(failures - 1, 5)))
+        import random
+        from email.utils import parsedate_to_datetime
+        delay_seconds = min(21600, 900 * (2 ** min(failures - 1, 5))) * random.uniform(0.8, 1.2)
+        retry_after = normalized_headers.get("retry-after", "").strip()
+        if retry_after:
+            try:
+                retry_seconds = float(retry_after)
+            except ValueError:
+                try:
+                    retry_date = parsedate_to_datetime(retry_after)
+                    if retry_date.tzinfo is None:
+                        retry_date = retry_date.replace(tzinfo=timezone.utc)
+                    retry_seconds = (retry_date - datetime.fromisoformat(now)).total_seconds()
+                except (TypeError, ValueError, OverflowError):
+                    retry_seconds = 0
+            delay_seconds = max(delay_seconds, min(86400, max(0, retry_seconds)))
         subscription["backoff_until"] = (
-            datetime.fromisoformat(now) + timedelta(minutes=delay_minutes)
+            datetime.fromisoformat(now) + timedelta(seconds=min(86400, delay_seconds))
         ).isoformat()
-        subscription["last_error"] = str(error)[:500]
+        from ..secret_scrubber import scrub_text
+        subscription["last_error"] = scrub_text(error)[:500]
 
 
 def _fetch_with_optional_meta(
@@ -1659,73 +1676,40 @@ def _happ_enabled(value: object) -> bool:
 
 
 def _apply_happ_premium_settings(controller: AppController, info: dict) -> list[str]:
-    """Apply only Happ commands that have a direct, safe Windows equivalent."""
-    premium = info.get("premiumFeatures") if isinstance(info, dict) else None
-    if not isinstance(premium, dict) or not premium:
-        return []
-    settings = getattr(getattr(controller, "state", None), "settings", None)
-    if settings is None:
-        return []
-    applied: list[str] = []
+    # A provider can suggest client features, not change global routing,
+    # hardware-ID consent, autoconnect, updater or transport preferences.
+    # premiumFeatures stays in subscription metadata for user inspection.
+    return []
 
-    def assign(key: str, attribute: str, value: object) -> None:
-        if key not in premium:
-            return
-        if getattr(settings, attribute, None) != value:
-            setattr(settings, attribute, value)
-        applied.append(key)
 
-    if "subscription-always-hwid-enable" in premium and _happ_enabled(
-        premium["subscription-always-hwid-enable"]
-    ):
-        assign("subscription-always-hwid-enable", "subscription_use_real_hwid", True)
-    if "subscription-autoconnect" in premium:
-        assign("subscription-autoconnect", "auto_connect_last", _happ_enabled(premium["subscription-autoconnect"]))
-    if "subscription-auto-update-enable" in premium:
-        enabled = _happ_enabled(premium["subscription-auto-update-enable"])
-        current = int(getattr(settings, "subscription_auto_update_minutes", 240) or 0)
-        assign("subscription-auto-update-enable", "subscription_auto_update_minutes", max(1, current or 240) if enabled else 0)
-    if "fragmentation-enable" in premium:
-        enabled = _happ_enabled(premium["fragmentation-enable"])
-        assign("fragmentation-enable", "enable_xray_fragment", enabled)
-        settings.enable_final_fragment = enabled
-    assign("fragmentation-packets", "fragment_packets", str(premium.get("fragmentation-packets") or "tlshello").strip())
-    assign("fragmentation-length", "fragment_length", str(premium.get("fragmentation-length") or "50-100").strip())
-    assign("fragmentation-interval", "fragment_delay", str(premium.get("fragmentation-interval") or "10-20").strip())
-    if "ping-type" in premium:
-        ping_method = {
-            "proxy": "real",
-            "http": "http",
-            "tcp": "tcping",
-            "icmp": "icmp",
-        }.get(str(premium["ping-type"]).strip().lower())
-        if ping_method:
-            assign("ping-type", "ping_method", ping_method)
-    if "change-user-agent" in premium:
-        assign("change-user-agent", "subscription_user_agent", str(premium["change-user-agent"]).strip())
-    if "mux-enable" in premium:
-        assign("mux-enable", "multiplex_enabled", _happ_enabled(premium["mux-enable"]))
-    if "mux-tcp-connections" in premium:
-        try:
-            concurrency = max(-1, min(1024, int(str(premium["mux-tcp-connections"]).strip())))
-        except (TypeError, ValueError):
-            concurrency = None
-        if concurrency is not None:
-            assign("mux-tcp-connections", "multiplex_concurrency", concurrency)
-    if "exclude-routes" in premium:
-        routing = getattr(getattr(controller, "state", None), "routing", None)
-        if routing is not None:
-            values = [
-                value
-                for value in re.split(r"[\s,;]+", str(premium["exclude-routes"] or "").strip())
-                if value
-            ]
-            routing.tun_route_exclude_address = values
-            applied.append("exclude-routes")
-    # Sniffing is part of both generated Xray and sing-box runtime configs.
-    if "sniffing-enable" in premium and _happ_enabled(premium["sniffing-enable"]):
-        applied.append("sniffing-enable")
-    return list(dict.fromkeys(applied))
+@dataclass(frozen=True, slots=True)
+class PreparedSubscription:
+    nodes: tuple
+    errors: tuple[str, ...]
+    filter_signature: tuple[str, str]
+    text_digest: str
+
+
+def prepare_subscription_payload(text: str, include_regex: str = "", exclude_regex: str = "") -> PreparedSubscription:
+    from hashlib import sha256
+    from types import SimpleNamespace
+    nodes, errors = parse_links_text(text)
+    view = SimpleNamespace(state=SimpleNamespace(settings=SimpleNamespace(
+        subscription_include_regex=include_regex, subscription_exclude_regex=exclude_regex,
+    )))
+    nodes, filter_errors = _filter_subscription_nodes(view, nodes)
+    errors = [*errors, *filter_errors]
+    prepared = []
+    for node in nodes:
+        normalize_node_outbound(node)
+        problem = validate_node_outbound(node)
+        if problem:
+            errors.append(problem)
+            continue
+        if not node.country_code:
+            node.country_code = detect_country(node.name, node.server)
+        prepared.append(node)
+    return PreparedSubscription(tuple(prepared), tuple(errors), (include_regex, exclude_regex), sha256(text.encode("utf-8")).hexdigest())
 
 
 def _apply_subscription_payload(
@@ -1746,6 +1730,15 @@ def _apply_subscription_payload(
     ):
         subscription = _find_subscription(controller, url)
         if subscription is not None:
+            try:
+                revision_matches = int(subscription.get("parser_revision") or 0) == SUBSCRIPTION_PARSER_REVISION
+            except (TypeError, ValueError):
+                revision_matches = False
+            if not revision_matches:
+                error = "Ответ 304 не обновляет устаревший результат парсера; требуется полная загрузка"
+                _mark_subscription_fetch_metadata(subscription, status=304, error=error)
+                result_info["_lumen_not_modified"] = False
+                return 0, [error], result_info
             headers = (response_meta or {}).get("headers")
             _mark_subscription_fetch_metadata(
                 subscription,
@@ -1765,16 +1758,29 @@ def _apply_subscription_payload(
         return 0, list(chosen_errors), result_info
 
     subscription_id = _subscription_id(controller, url)
-    parsed_nodes, parse_errors = parse_links_text(chosen_text)
-    parsed_nodes, filter_errors = _filter_subscription_nodes(controller, parsed_nodes)
+    snapshot = (response_meta or {}).get("prepared")
+    already_prepared = isinstance(snapshot, PreparedSubscription)
+    if already_prepared:
+        from hashlib import sha256
+        signature = (
+            str(getattr(controller.state.settings, "subscription_include_regex", "") or ""),
+            str(getattr(controller.state.settings, "subscription_exclude_regex", "") or ""),
+        )
+        if snapshot.filter_signature != signature or snapshot.text_digest != sha256(chosen_text.encode("utf-8")).hexdigest():
+            return 0, ["Фильтры или содержимое изменились: повторите обновление подписки"], result_info
+        parsed_nodes, parse_errors, filter_errors = list(snapshot.nodes), list(snapshot.errors), []
+    else:
+        parsed_nodes, parse_errors = parse_links_text(chosen_text)
+        parsed_nodes, filter_errors = _filter_subscription_nodes(controller, parsed_nodes)
     if filter_errors:
         return 0, [*chosen_errors, *parse_errors, *filter_errors], result_info
     prepared = []
     validation_errors: list[str] = []
     seen_links: set[str] = set()
     for node in parsed_nodes:
-        normalize_node_outbound(node)
-        problem = validate_node_outbound(node)
+        if not already_prepared:
+            normalize_node_outbound(node)
+        problem = None if already_prepared else validate_node_outbound(node)
         if problem:
             validation_errors.append(problem)
             continue
@@ -1868,11 +1874,13 @@ def _apply_subscription_payload(
             node.id = previous.id
             node.source_key = _subscription_source_key(node)
             node.sort_order = previous.sort_order
-            node.ping_ms = previous.ping_ms
-            node.speed_mbps = previous.speed_mbps
-            node.is_alive = previous.is_alive
-            node.ping_history = list(previous.ping_history)
-            node.speed_history = list(previous.speed_history)
+            unchanged = previous_outbound == incoming_outbound
+            node.ping_kind = previous.ping_kind if unchanged else ""
+            node.ping_ms = previous.ping_ms if unchanged else None
+            node.speed_mbps = previous.speed_mbps if unchanged else None
+            node.is_alive = previous.is_alive if unchanged else None
+            node.ping_history = list(previous.ping_history) if unchanged else []
+            node.speed_history = list(previous.speed_history) if unchanged else []
             node.last_used_at = previous.last_used_at
             node.created_at = previous.created_at
             node.tags = list(previous.tags)
@@ -1896,10 +1904,12 @@ def _apply_subscription_payload(
 
     if selected_old is not None:
         selected_key = _subscription_source_key(selected_old)
-        replacement = next(
-            (node for node in prepared if _subscription_source_key(node) == selected_key),
-            None,
-        )
+        replacement = next((node for node in prepared if node.id == selected_old.id), None)
+        if replacement is None:
+            replacement = next(
+                (node for node in prepared if _subscription_source_key(node) == selected_key),
+                None,
+            )
         if replacement is None:
             replacement = next((node for node in prepared if node.link == selected_old.link), None)
         if replacement is None:
@@ -1911,7 +1921,7 @@ def _apply_subscription_payload(
     controller.selection_changed.emit(controller.selected_node)
     result_info["_lumen_applied"] = True
     if response_meta:
-        result_info["_lumen_response_meta"] = dict(response_meta)
+        result_info["_lumen_response_meta"] = {key: value for key, value in response_meta.items() if key != "prepared"}
     if reconnect_needed and (controller.connected or controller._desired_connected):
         controller._desired_connected = True
         controller._request_transition("active subscription updated")

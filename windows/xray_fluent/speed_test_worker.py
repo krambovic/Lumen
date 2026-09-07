@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from urllib.request import ProxyHandler, Request
+from urllib.request import Request
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -30,9 +30,12 @@ from .constants import (
     SPEED_TEST_STARTUP_TIMEOUT,
     SPEED_TEST_TIMEOUT,
 )
-from .http_utils import build_opener
 from .models import Node, RoutingSettings
-from .ping_worker import _WindowsPingBypass, endpoint_ping
+from .ping_worker import _WindowsPingBypass
+from .probe_capabilities import probe_backend, node_protocol
+from .native_test_config import build_native_test_config
+from .strict_proxy import proxy_opener
+from .secret_scrubber import scrub_text
 from .xray_fragments import apply_xray_final_fragment
 
 
@@ -58,6 +61,8 @@ class SpeedTestWorker(QThread):
     progress = pyqtSignal(int, int)          # current, total
     node_progress = pyqtSignal(str, int)     # node_id, percent 0..100
     completed = pyqtSignal()
+    failure = pyqtSignal(str, str)
+    tests_profile = True
 
     def __init__(
         self,
@@ -70,11 +75,14 @@ class SpeedTestWorker(QThread):
         test_url: str = "",
         concurrency: int = 0,
         bypass_tun: bool = False,
+        singbox_path: str = "",
     ):
         super().__init__()
         self.setObjectName("lumen-speed-test" if mode == "speed" else "lumen-real-ping")
         self._nodes = list(nodes)
         self._xray_path = xray_path
+        from .constants import SINGBOX_PATH_DEFAULT
+        self._singbox_path = singbox_path or str(SINGBOX_PATH_DEFAULT)
         self._routing = routing or RoutingSettings()
         self._timeout = timeout
         self._mode = mode if mode in ("speed", "ping") else "speed"
@@ -85,6 +93,7 @@ class SpeedTestWorker(QThread):
         self._completed_nodes = 0
         self._processes: set[subprocess.Popen] = set()
         self._process_lock = threading.Lock()
+        self._unavailable_nodes: set[str] = set()
         self._responses: list[object] = []
         self._response_lock = threading.Lock()
 
@@ -134,19 +143,11 @@ class SpeedTestWorker(QThread):
         total = len(self._nodes)
         self._completed_nodes = 0
         try:
-            needs_core = any(not self._uses_direct_ping_fallback(node) for node in self._nodes)
-            if needs_core and not Path(self._xray_path).is_file():
-                for node in self._nodes:
-                    if self._cancelled:
-                        break
-                    self._emit_node_result(node, None, False, total)
-                return
-
             for node in self._nodes:
                 self.node_progress.emit(node.id, 0)
 
             max_workers = _resolve_speed_test_concurrency(len(self._nodes), self._concurrency)
-            with _WindowsPingBypass(self._bypass_targets(), self._bypass_tun) as bypass:
+            with _WindowsPingBypass(self._bypass_targets(), self._bypass_tun, cancelled=lambda: self._cancelled) as bypass:
                 self._bypass = bypass
                 executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="speed-test")
                 pending: set[Future[tuple[Node, float | None, bool]]] = set()
@@ -195,43 +196,89 @@ class SpeedTestWorker(QThread):
         self._completed_nodes += 1
         self.node_progress.emit(node.id, 100)
         if self._mode == "ping":
-            delay = int(value) if (value is not None and value > 0) else None
+            delay = int(value) if (value is not None and value >= 0) else None
             self.ping_result.emit(node.id, delay)
         else:
             self.result.emit(node.id, value, alive)
         self.progress.emit(self._completed_nodes, total)
 
     def _bypass_targets(self) -> list[Node]:
-        targets = list(self._nodes)
+        targets = []
         for node in self._nodes:
-            outbound = node.outbound if isinstance(node.outbound, dict) else {}
-            full_config = outbound.get("xray_config")
-            if str(outbound.get("protocol") or "").strip().lower() != "xray_config" or not isinstance(full_config, dict):
-                continue
-            for candidate in full_config.get("outbounds", []):
-                if not isinstance(candidate, dict):
-                    continue
-                host = self._xray_outbound_host(candidate)
-                if not host:
-                    continue
+            for host in self._profile_hosts(node):
                 target = deepcopy(node)
                 target.server = host
                 targets.append(target)
         return targets
 
-    def _test_node(self, node: Node) -> tuple[Node, float | None, bool]:
-        if self._mode == "ping" and self._uses_direct_ping_fallback(node):
-            protocol = self._node_protocol(node)
-            target = node.server
-            bypass = getattr(self, "_bypass", None)
-            if bypass is not None:
-                direct = bypass.direct_ip(node.server)
-                if direct:
-                    target = direct
-            method = "http" if protocol not in {"hysteria", "hysteria2", "hy", "hy2"} else "real"
-            delay = endpoint_ping(target, node.port, protocol, method, self._timeout)
-            return node, float(delay or 0), delay is not None
+    @staticmethod
+    def _profile_hosts(node: Node) -> list[str]:
+        hosts = set()
+        def walk(value):
+            if isinstance(value, dict):
+                for key in ("server", "address"):
+                    host = value.get(key)
+                    if isinstance(host, str) and host and "/" not in host:
+                        hosts.add(host)
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+        walk(node.outbound)
+        if node.server and node_protocol(node) not in {"xray_config", "singbox_config"}:
+            hosts.add(node.server)
+        return sorted(hosts)
 
+    def _pin_native_targets(self, config: dict) -> None:
+        bypass = getattr(self, "_bypass", None)
+        if bypass is None:
+            return
+        for item in [*config.get("outbounds", []), *config.get("endpoints", [])]:
+            if not isinstance(item, dict):
+                continue
+            host = str(item.get("server") or "")
+            ip = bypass.direct_ip(host) if host else ""
+            if ip and ip != host:
+                tls = item.get("tls")
+                if isinstance(tls, dict) and tls.get("enabled"):
+                    tls.setdefault("server_name", host)
+                transport = item.get("transport")
+                if isinstance(transport, dict):
+                    if transport.get("type") == "ws":
+                        transport.setdefault("headers", {}).setdefault("Host", host)
+                    elif transport.get("type") in {"http", "httpupgrade", "xhttp"}:
+                        transport.setdefault("host", host)
+                item["server"] = ip
+            for peer in item.get("peers", []):
+                if isinstance(peer, dict):
+                    host = str(peer.get("address") or peer.get("server") or "")
+                    ip = bypass.direct_ip(host) if host else ""
+                    if ip:
+                        peer["address" if "address" in peer else "server"] = ip
+
+    @property
+    def unavailable_nodes(self) -> frozenset[str]:
+        with self._process_lock:
+            return frozenset(self._unavailable_nodes)
+
+    def _unavailable(self, node: Node, reason: str):
+        with self._process_lock:
+            self._unavailable_nodes.add(node.id)
+        self.failure.emit(node.id, scrub_text(reason))
+        return node, None, False
+
+    def _test_node(self, node: Node) -> tuple[Node, float | None, bool]:
+        if self._cancelled:
+            return node, None, False
+        backend = probe_backend(node)
+        executable = self._singbox_path if backend == "singbox" else self._xray_path
+        if not backend or not Path(executable).is_file():
+            return self._unavailable(node, "Совместимое ядро для теста не найдено")
+
+        bypass = getattr(self, "_bypass", None)
+        if bypass is not None and any(not bypass.prepare_host(host) for host in self._profile_hosts(node)):
+            return self._unavailable(node, "Не удалось подготовить прямой маршрут для изолированного теста")
         reservation: socket.socket | None = None
         tmp = None
         proc = None
@@ -254,7 +301,7 @@ class SpeedTestWorker(QThread):
             reservation = None
 
             proc = subprocess.Popen(
-                [self._xray_path, "run", "-c", tmp.name],
+                [executable, "run", "-c", tmp.name],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=0x08000000,  # CREATE_NO_WINDOW
@@ -262,12 +309,12 @@ class SpeedTestWorker(QThread):
             self._register_process(proc)
 
             if not self._wait_for_ready(proc, target):
-                return node, None, False
+                return self._unavailable(node, "Временное ядро не запустилось: профиль не проверен")
 
             delay_ms = self._real_ping(target)
             if self._cancelled:
                 return node, None, False
-            if delay_ms <= 0:
+            if delay_ms < 0:
                 return node, None, False
 
             if self._mode == "ping":
@@ -278,8 +325,8 @@ class SpeedTestWorker(QThread):
             speed = self._measure_speed(target)
             return node, speed, bool(speed and speed > 0)
 
-        except Exception:
-            return node, None, False
+        except Exception as exc:
+            return self._unavailable(node, str(exc))
 
         finally:
             if reservation is not None:
@@ -305,11 +352,8 @@ class SpeedTestWorker(QThread):
 
     @classmethod
     def _uses_direct_ping_fallback(cls, node: Node) -> bool:
-        return cls._node_protocol(node) in {
-            "awg", "wireguard", "warp", "hysteria", "hysteria2", "hy", "hy2",
-            "tuic", "masque", "openvpn", "mieru", "naive", "anytls", "snell",
-            "singbox_config",
-        }
+        # Compatibility shim: a real test never falls back to endpoint ping.
+        return False
 
     def _apply_direct_ip_to_outbound(self, outbound: dict, host: str) -> None:
         # While TUN is up, point the temp xray outbound at the server's real
@@ -323,6 +367,17 @@ class SpeedTestWorker(QThread):
         ip = bypass.direct_ip(host)
         if not ip or ip == host:
             return
+        stream = outbound.get("streamSettings")
+        if isinstance(stream, dict):
+            security = str(stream.get("security") or "")
+            if security in {"tls", "reality"}:
+                stream.setdefault(security + "Settings", {}).setdefault("serverName", host)
+            network = str(stream.get("network") or "tcp")
+            if network == "ws":
+                stream.setdefault("wsSettings", {}).setdefault("headers", {}).setdefault("Host", host)
+            elif network in {"http", "h2", "xhttp", "httpupgrade"}:
+                key = "httpSettings" if network == "h2" else network + "Settings"
+                stream.setdefault(key, {}).setdefault("host", host)
         settings = outbound.get("settings")
         if not isinstance(settings, dict):
             return
@@ -335,6 +390,10 @@ class SpeedTestWorker(QThread):
                     entry["address"] = ip
 
     def _build_config(self, target: _SpeedTestTarget) -> dict:
+        if probe_backend(target.node) == "singbox":
+            config = build_native_test_config(target.node, target.http_port)
+            self._pin_native_targets(config)
+            return config
         inbound_tag = "speed-http"
         outbound_tag = "speed-proxy"
         stored_outbound = target.node.outbound if isinstance(target.node.outbound, dict) else {}
@@ -418,15 +477,26 @@ class SpeedTestWorker(QThread):
                 if isinstance(balancer, dict) and str(balancer.get("tag") or "").strip():
                     balancer_tag = str(balancer["tag"]).strip()
                     break
-        if not balancer_tag:
-            raise ValueError("AUTO profile has no balancer tag")
-        routing["rules"] = [
-            {
-                "type": "field",
-                "inboundTag": [inbound_tag],
-                "balancerTag": balancer_tag,
-            }
-        ]
+        outbounds = config.get("outbounds", [])
+        by_tag = {str(o.get("tag") or ""): o for o in outbounds if isinstance(o, dict)}
+        if balancer_tag:
+            balancer = next((b for b in routing.get("balancers", []) if isinstance(b, dict) and b.get("tag") == balancer_tag), None)
+            if not balancer:
+                raise ValueError("Missing AUTO balancer")
+            selectors = balancer.get("selector", [])
+            candidates = [o for tag, o in by_tag.items() if any(tag.startswith(str(prefix)) for prefix in selectors)]
+            fallback = str(balancer.get("fallbackTag") or "")
+            if fallback:
+                candidates.append(by_tag.get(fallback, {}))
+            if not candidates or any(str(o.get("protocol") or "") in {"", "freedom", "blackhole", "dns"} for o in candidates):
+                raise ValueError("AUTO test cannot bypass the profile through direct/unknown members")
+            target_rule = {"balancerTag": balancer_tag}
+        else:
+            first = next((o for o in outbounds if isinstance(o, dict)), {})
+            if str(first.get("protocol") or "") in {"", "freedom", "blackhole", "dns"} or not first.get("tag"):
+                raise ValueError("Full profile default is not a testable proxy")
+            target_rule = {"outboundTag": first["tag"]}
+        routing["rules"] = [{"type": "field", "inboundTag": [inbound_tag], **target_rule}]
 
         outbounds = config.get("outbounds") if isinstance(config.get("outbounds"), list) else []
         for outbound in outbounds:
@@ -463,7 +533,7 @@ class SpeedTestWorker(QThread):
             if elapsed_ms > SPEED_TEST_MAX_PING_MS:
                 return -1
             self.node_progress.emit(target.node.id, 30)
-            return max(1, elapsed_ms)
+            return elapsed_ms
         except Exception:
             return -1
 
@@ -547,8 +617,7 @@ class SpeedTestWorker(QThread):
 
     @staticmethod
     def _build_proxy_opener(http_port: int):
-        proxy_url = f"http://{PROXY_HOST}:{http_port}"
-        return build_opener(ProxyHandler({"http": proxy_url, "https": proxy_url}))
+        return proxy_opener("http://" + PROXY_HOST + ":" + str(http_port))
 
     def _register_process(self, proc: subprocess.Popen) -> None:
         with self._process_lock:

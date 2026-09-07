@@ -14,6 +14,7 @@ from typing import Callable
 from .constants import BASE_DIR, SUBSCRIPTION_FETCHER_EXE_NAME
 from .direct_http import DirectNetworkUnavailable, DirectUrlOpener
 from .http_utils import get_ssl_context
+from .http_redirect_policy import SafeRedirectHandler
 from .subprocess_utils import CREATE_NO_WINDOW
 
 
@@ -154,6 +155,7 @@ def _download_in_current_process(
         # prepared at that exact moment.
         opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
+            SafeRedirectHandler(),
             urllib.request.HTTPSHandler(context=get_ssl_context()),
         )
         try:
@@ -182,10 +184,10 @@ def _download_via_proxy_or_tun(
 ) -> SubscriptionHttpPayload:
     """Use the active Lumen proxy/TUN path instead of the direct helper."""
     request = urllib.request.Request(url, headers=dict(headers))
-    handlers: list[object] = []
+    handlers: list[object] = [SafeRedirectHandler(), urllib.request.ProxyHandler({})]
     normalized_proxy = str(proxy_url or "").strip()
     if normalized_proxy:
-        handlers.append(
+        handlers[1] = (
             urllib.request.ProxyHandler(
                 {"http": normalized_proxy, "https": normalized_proxy}
             )

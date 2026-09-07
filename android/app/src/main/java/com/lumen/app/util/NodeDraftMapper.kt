@@ -53,7 +53,7 @@ object NodeDraftMapper {
     }
 
     private fun decode(v: String): String =
-        runCatching { java.net.URLDecoder.decode(v, "UTF-8") }.getOrDefault(v)
+        runCatching { java.net.URLDecoder.decode(v.replace("+", "%2B"), "UTF-8") }.getOrDefault(v)
 
     private fun queryOf(raw: String): Map<String, String> {
         val q = raw.substringAfter('?', "").substringBefore('#')
@@ -64,14 +64,23 @@ object NodeDraftMapper {
         }.toMap()
     }
 
+    private fun flag(value: String?): Boolean = value?.lowercase() in setOf("1", "true", "yes", "on")
+
     private fun fillUri(base: NodeDraft, raw: String): NodeDraft {
         val afterScheme = raw.substringAfter("://")
         val authority = afterScheme.substringBefore('?').substringBefore('#')
         val userinfo = if (authority.contains('@')) authority.substringBeforeLast('@') else ""
         val q = queryOf(raw)
-        val security = q["security"] ?: if (q["tls"] == "1") "tls" else "none"
+        val security = q["security"] ?: if (flag(q["tls"]) || base.protocol == "trojan") "tls" else "none"
+        val secret = decode(userinfo).ifEmpty {
+            when (base.protocol) {
+                "masque" -> q["auth_token"] ?: q["token"] ?: ""
+                "hysteria", "hysteria2" -> q["auth"] ?: q["auth_str"] ?: q["authstr"] ?: q["password"] ?: ""
+                else -> ""
+            }
+        }
         return base.copy(
-            secret = decode(userinfo),
+            secret = secret,
             flow = q["flow"] ?: "",
             network = q["type"] ?: q["net"] ?: base.network,
             security = security,
@@ -87,7 +96,7 @@ object NodeDraftMapper {
             obfs = q["obfs"] ?: "",
             obfsPassword = q["obfs-password"] ?: q["obfs_password"] ?: "",
             congestionControl = q["congestion_control"] ?: base.congestionControl,
-            insecure = q["allowinsecure"] == "1" || q["insecure"] == "1" || q["allow_insecure"] == "1"
+            insecure = flag(q["allowinsecure"]) || flag(q["insecure"]) || flag(q["allow_insecure"])
         )
     }
 
@@ -97,7 +106,9 @@ object NodeDraftMapper {
         return base.copy(
             secret = json.optString("id"),
             network = json.optString("net").ifBlank { base.network },
-            security = if (json.optString("tls").isNotBlank()) "tls" else "none",
+            security = if (json.optString("tls").lowercase() in setOf("tls", "1", "true")) "tls" else "none",
+            insecure = json.optString("allowInsecure").lowercase() in setOf("1", "true") ||
+                json.optString("insecure").lowercase() in setOf("1", "true"),
             path = json.optString("path"),
             host = json.optString("host"),
             sni = json.optString("sni"),
@@ -110,14 +121,13 @@ object NodeDraftMapper {
     }
 
     private fun fillShadowsocks(base: NodeDraft, raw: String): NodeDraft {
-        val body = raw.substringAfter("://").substringBefore('#')
-        val userinfo = if (body.contains('@')) body.substringBeforeLast('@') else body
-        val decoded = runCatching {
-            String(Base64.getUrlDecoder().decode(padB64(userinfo)), Charsets.UTF_8)
-        }.getOrDefault(decode(userinfo))
-        val method = decoded.substringBefore(':', base.method)
-        val password = decoded.substringAfter(':', "")
-        return base.copy(method = method.ifBlank { base.method }, secret = password)
+        val node = LinkParser.parseLinksText(raw).first.firstOrNull() ?: return base
+        val settings = node.outbound["settings"] as? Map<*, *> ?: return base
+        val server = (settings["servers"] as? List<*>)?.firstOrNull() as? Map<*, *> ?: return base
+        return base.copy(
+            method = server["method"]?.toString()?.ifBlank { base.method } ?: base.method,
+            secret = server["password"]?.toString().orEmpty()
+        )
     }
 
     private fun fillWireGuard(base: NodeDraft, raw: String): NodeDraft {
@@ -177,10 +187,15 @@ object NodeDraftMapper {
         val link = buildLink(draft)
         val parsed = LinkParser.parseLinksText(link).first.firstOrNull()
             ?: throw IllegalArgumentException("Could not parse node configuration")
-        val preservedOutbound = parseStoredOutbound(draft.rawConfig)
+        val preservedOutbound = parseStoredOutbound(draft.rawConfig)?.takeIf {
+            normalizeProtocol(it["protocol"]?.toString().orEmpty()) == normalizeProtocol(parsed.scheme)
+        }
         val outbound = if (preservedOutbound == null) {
             parsed.outbound
         } else {
+            require((preservedOutbound["singbox"] is Map<*, *>) == (parsed.outbound["singbox"] is Map<*, *>)) {
+                "This native profile cannot be safely edited as a share link; import the edited JSON instead"
+            }
             @Suppress("UNCHECKED_CAST")
             deepMerge(preservedOutbound, parsed.outbound) as Map<String, Any?>
         }
@@ -202,7 +217,7 @@ object NodeDraftMapper {
             "vless" -> {
                 val params = buildParams(
                     "type" to d.network,
-                    "encryption" to "none",
+                    "encryption" to storedUserOption(d.rawConfig, "encryption", "none"),
                     "security" to d.security.takeIf { it != "none" },
                     "flow" to d.flow,
                     "path" to d.path,
@@ -216,7 +231,7 @@ object NodeDraftMapper {
                     "sid" to d.shortId,
                     "allowInsecure" to if (d.insecure) "1" else null
                 )
-                "vless://${d.secret.trim()}@${d.server.trim()}:${d.port.trim()}?$params#$name"
+                "vless://${d.secret.trim()}@${uriHost(d.server)}:${d.port.trim()}?$params#$name"
             }
             "vmess" -> {
                 val json = JSONObject()
@@ -225,8 +240,9 @@ object NodeDraftMapper {
                 json.put("add", d.server.trim())
                 json.put("port", d.port.trim())
                 json.put("id", d.secret.trim())
-                json.put("aid", "0")
-                json.put("scy", "auto")
+                json.put("aid", storedUserOption(d.rawConfig, "alterId", "0"))
+                json.put("scy", storedUserOption(d.rawConfig, "security", "auto"))
+                json.put("allowInsecure", if (d.insecure) "1" else "0")
                 json.put("net", d.network)
                 json.put("type", "none")
                 json.put("host", d.host)
@@ -241,7 +257,7 @@ object NodeDraftMapper {
             "trojan" -> {
                 val params = buildParams(
                     "type" to d.network,
-                    "security" to d.security.takeIf { it != "none" },
+                    "security" to d.security,
                     "path" to d.path,
                     "host" to d.host,
                     "serviceName" to d.serviceName,
@@ -253,41 +269,46 @@ object NodeDraftMapper {
                     "sid" to d.shortId,
                     "allowInsecure" to if (d.insecure) "1" else null
                 )
-                "trojan://${encUserinfo(d.secret)}@${d.server.trim()}:${d.port.trim()}?$params#$name"
+                "trojan://${encUserinfo(d.secret)}@${uriHost(d.server)}:${d.port.trim()}?$params#$name"
             }
-            "ss" -> "ss://" + b64url("${d.method}:${d.secret}") + "@${d.server.trim()}:${d.port.trim()}#$name"
+            "ss" -> "ss://" + b64url("${d.method}:${d.secret}") + "@${uriHost(d.server)}:${d.port.trim()}#$name"
             "hysteria" -> {
                 val params = buildParams(
                     "sni" to d.sni,
+                    "alpn" to d.alpn,
+                    "fp" to d.fingerprint,
                     "pinSHA256" to d.certificateSha256,
                     "insecure" to if (d.insecure) "1" else null,
                     "obfs" to d.obfsPassword.ifBlank { d.obfs }
                 )
-                "hysteria://${encUserinfo(d.secret)}@${d.server.trim()}:${d.port.trim()}?$params#$name"
+                "hysteria://${encUserinfo(d.secret)}@${uriHost(d.server)}:${d.port.trim()}?$params#$name"
             }
             "hysteria2" -> {
                 val params = buildParams(
                     "sni" to d.sni,
+                    "alpn" to d.alpn,
+                    "fp" to d.fingerprint,
                     "pinSHA256" to d.certificateSha256,
                     "insecure" to if (d.insecure) "1" else null,
                     "obfs" to d.obfs,
                     "obfs-password" to d.obfsPassword
                 )
-                "hysteria2://${encUserinfo(d.secret)}@${d.server.trim()}:${d.port.trim()}?$params#$name"
+                "hysteria2://${encUserinfo(d.secret)}@${uriHost(d.server)}:${d.port.trim()}?$params#$name"
             }
             "tuic" -> {
                 val params = buildParams(
                     "sni" to d.sni,
+                    "fp" to d.fingerprint,
                     "alpn" to d.alpn,
                     "pinSHA256" to d.certificateSha256,
                     "congestion_control" to d.congestionControl,
                     "allow_insecure" to if (d.insecure) "1" else null
                 )
-                "tuic://${encUserinfo(d.secret)}@${d.server.trim()}:${d.port.trim()}?$params#$name"
+                "tuic://${encUserinfo(d.secret)}@${uriHost(d.server)}:${d.port.trim()}?$params#$name"
             }
             "socks", "http" -> {
-                val userinfo = if (d.secret.isBlank()) "" else encUserinfo(d.secret) + "@"
-                "${d.protocol}://$userinfo${d.server.trim()}:${d.port.trim()}#$name"
+                val userinfo = if (d.secret.isEmpty()) "" else encUserinfo(d.secret) + "@"
+                "${d.protocol}://$userinfo${uriHost(d.server)}:${d.port.trim()}#$name"
             }
             // masque://<auth token>@<profile id>?sni=&insecure=, the shape LinkParser.parseMasque reads.
             "masque" -> {
@@ -298,7 +319,7 @@ object NodeDraftMapper {
                     ),
                     masqueExtraParams(d.rawConfig)
                 ).filter { it.isNotBlank() }.joinToString("&")
-                val userinfo = if (d.secret.isBlank()) "" else enc(d.secret.trim()) + "@"
+                val userinfo = if (d.secret.isEmpty()) "" else enc(d.secret) + "@"
                 val query = if (params.isBlank()) "" else "?$params"
                 "masque://$userinfo${d.server.trim()}$query#$name"
             }
@@ -317,29 +338,62 @@ object NodeDraftMapper {
         return runCatching { LinkParser.jsonToMap(JSONObject(raw)) }.getOrNull()
     }
 
-    private fun deepMerge(base: Any?, overlay: Any?): Any? = when {
+    private val EDITOR_FIELDS = mapOf(
+        "" to setOf("protocol", "settings", "streamSettings", "singbox", "tls"),
+        "settings" to setOf("vnext", "servers"),
+        "settings.vnext[]" to setOf("address", "port", "users"),
+        "settings.vnext[].users[]" to setOf("id", "flow", "encryption", "alterId", "security"),
+        "settings.servers[]" to setOf("address", "port", "password", "method", "users"),
+        "settings.servers[].users[]" to setOf("user", "pass"),
+        "streamSettings" to setOf("network", "security", "tlsSettings", "realitySettings", "tcpSettings", "wsSettings", "grpcSettings", "xhttpSettings", "httpSettings", "quicSettings", "httpupgradeSettings"),
+        "streamSettings.tlsSettings" to setOf("allowInsecure", "serverName", "alpn", "fingerprint", "pinSHA256", "pinnedPeerCertSha256", "certificatePublicKeySha256"),
+        "streamSettings.realitySettings" to setOf("serverName", "fingerprint", "publicKey", "shortId"),
+        "streamSettings.wsSettings" to setOf("path"),
+        "streamSettings.wsSettings.headers" to setOf("Host"),
+        "streamSettings.grpcSettings" to setOf("serviceName"),
+        "streamSettings.xhttpSettings" to setOf("path", "host"),
+        "streamSettings.httpSettings" to setOf("path", "host"),
+        "streamSettings.httpupgradeSettings" to setOf("path", "host"),
+        "singbox" to setOf("type", "server", "server_port", "password", "auth_str", "uuid", "method", "tls", "transport", "obfs", "obfs_password", "congestion_control"),
+        "singbox.tls" to setOf("enabled", "server_name", "insecure", "alpn", "utls", "reality", "certificate_public_key_sha256"),
+        "singbox.tls.utls" to setOf("enabled", "fingerprint"),
+        "singbox.tls.reality" to setOf("enabled", "public_key", "short_id"),
+        "singbox.transport" to setOf("type", "path", "host", "service_name"),
+        "singbox.transport.headers" to setOf("Host")
+    )
+
+    private fun controlledBelow(path: String): Boolean = EDITOR_FIELDS.keys.any {
+        it == path || it.startsWith("$path.") || it.startsWith("$path[]")
+    }
+
+    private fun deepMerge(base: Any?, overlay: Any?, path: String = ""): Any? = when {
         base is Map<*, *> && overlay is Map<*, *> -> {
+            val owned = EDITOR_FIELDS[path].orEmpty()
             val merged = linkedMapOf<String, Any?>()
-            base.forEach { (key, value) -> key?.toString()?.let { merged[it] = value } }
+            fun child(key: String) = if (path.isEmpty()) key else "$path.$key"
+            base.forEach { (key, value) ->
+                val k = key?.toString() ?: return@forEach
+                if (overlay.containsKey(k)) {
+                    merged[k] = value
+                } else if (k !in owned) {
+                    val remaining = if (value is Map<*, *> && controlledBelow(child(k))) {
+                        deepMerge(value, emptyMap<String, Any?>(), child(k))
+                    } else value
+                    if (remaining !is Map<*, *> || remaining.isNotEmpty()) merged[k] = remaining
+                }
+            }
             overlay.forEach { (key, value) ->
-                val textKey = key?.toString() ?: return@forEach
-                merged[textKey] = if (merged.containsKey(textKey)) {
-                    deepMerge(merged[textKey], value)
-                } else {
-                    value
+                val k = key?.toString() ?: return@forEach
+                merged[k] = when {
+                    !merged.containsKey(k) -> value
+                    k !in owned && !controlledBelow(child(k)) -> merged[k]
+                    else -> deepMerge(merged[k], value, child(k))
                 }
             }
             merged
         }
-        base is List<*> && overlay is List<*> -> {
-            val size = maxOf(base.size, overlay.size)
-            List(size) { index ->
-                when {
-                    index >= overlay.size -> base[index]
-                    index >= base.size -> overlay[index]
-                    else -> deepMerge(base[index], overlay[index])
-                }
-            }
+        base is List<*> && overlay is List<*> -> overlay.mapIndexed { index, value ->
+            if (index < base.size) deepMerge(base[index], value, "$path[]") else value
         }
         else -> overlay
     }
@@ -429,18 +483,30 @@ object NodeDraftMapper {
         sb.appendLine("PublicKey = ${d.publicKey.trim()}")
         if (d.presharedKey.isNotBlank()) sb.appendLine("PresharedKey = ${d.presharedKey.trim()}")
         sb.appendLine("AllowedIPs = ${d.allowedIps.ifBlank { "0.0.0.0/0" }}")
-        sb.appendLine("Endpoint = ${d.server.trim()}:${d.port.trim()}")
+        sb.appendLine("Endpoint = ${uriHost(d.server)}:${d.port.trim()}")
         if (d.persistentKeepalive.isNotBlank()) sb.appendLine("PersistentKeepalive = ${d.persistentKeepalive.trim()}")
         if (d.reserved.isNotBlank()) sb.appendLine("Reserved = ${d.reserved.trim()}")
         extras["peer"]?.forEach { sb.appendLine(it) }
         return sb.toString()
     }
 
+    private fun uriHost(value: String): String {
+        val host = value.trim().removeSurrounding("[", "]")
+        return if (host.contains(":")) "[$host]" else host
+    }
+
+    private fun storedUserOption(raw: String, key: String, fallback: String): String =
+        runCatching {
+            JSONObject(raw).optJSONObject("settings")?.optJSONArray("vnext")
+                ?.optJSONObject(0)?.optJSONArray("users")?.optJSONObject(0)
+                ?.optString(key, fallback)?.ifBlank { fallback } ?: fallback
+        }.getOrDefault(fallback)
+
     private fun enc(v: String): String = URLEncoder.encode(v, "UTF-8").replace("+", "%20")
 
     /** Encodes each userinfo segment separately so "user:pass" keeps its colon. */
     private fun encUserinfo(v: String): String =
-        v.trim().split(":", limit = 2).joinToString(":") { enc(it) }
+        v.split(":", limit = 2).joinToString(":") { enc(it) }
 
     private fun b64(v: String): String =
         Base64.getEncoder().encodeToString(v.toByteArray(Charsets.UTF_8))
@@ -450,5 +516,5 @@ object NodeDraftMapper {
 
     private fun buildParams(vararg pairs: Pair<String, String?>): String =
         pairs.filter { !it.second.isNullOrBlank() }
-            .joinToString("&") { "${it.first}=${enc(it.second!!.trim())}" }
+            .joinToString("&") { "${it.first}=${enc(it.second!!)}" }
 }

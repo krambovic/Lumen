@@ -5,13 +5,18 @@ import socket
 import os
 import threading
 import time
-from urllib.request import Request, urlopen
+from urllib.request import Request, ProxyHandler
+from .http_utils import build_opener
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .constants import ICMP_PING_TIMEOUT_MS
 from .models import Node
+from .probe_capabilities import endpoint_method
+from .network_route_context import get_windows_default_route_context
+from .route_leases import acquire_route, release_route
+from .direct_http import _resolve_a_direct
 from .subprocess_utils import CREATE_NO_WINDOW, result_output_text, run_text_pumped
 
 
@@ -74,11 +79,13 @@ def http_get_ping(host: str, port: int, timeout: float = 3.0) -> int | None:
     """Measure an endpoint with a direct HTTP(S) GET, without a proxy core."""
     if not host or not port:
         return None
+    authority = "[" + host.strip("[]") + "]" if ":" in host else host
+    opener = build_opener(ProxyHandler({}))
     for scheme in ("https", "http"):
         started = time.perf_counter()
         try:
-            request = Request(f"{scheme}://{host}:{int(port)}/", method="GET")
-            with urlopen(request, timeout=timeout) as response:
+            request = Request(f"{scheme}://{authority}:{int(port)}/", method="GET")
+            with opener.open(request, timeout=timeout) as response:
                 response.read(1)
             return int((time.perf_counter() - started) * 1000.0)
         except Exception:
@@ -88,10 +95,12 @@ def http_get_ping(host: str, port: int, timeout: float = 3.0) -> int | None:
 
 def endpoint_ping(host: str, port: int, protocol: str, method: str, timeout: float) -> int | None:
     """Best-effort transport ping for protocols without an Xray test adapter."""
+    if method == "real":
+        return None  # A real probe requires an authenticated proxy core.
     if method == "icmp":
         return icmp_ping(host, int(timeout * 1000))
     if method == "http":
-        return http_get_ping(host, port, timeout) or icmp_ping(host, int(timeout * 1000))
+        return http_get_ping(host, port, timeout)
     if protocol in {"hysteria", "hysteria2", "hy", "hy2", "tuic", "awg", "wireguard", "warp", "masque"}:
         return hysteria_ping(host, port, timeout)
     return tcp_ping(host, port, timeout)
@@ -185,12 +194,12 @@ def _looks_like_tun_gateway(gateway: str) -> bool:
     return gateway.startswith(("172.18.", "172.19.", "198.18.", "198.19."))
 
 
-def _has_direct_host_route(ip: str, gateway: str) -> bool:
+def _has_direct_host_route(ip: str, gateway: str, interface_index: int = 0) -> bool:
     if os.name != "nt" or not ip or not gateway:
         return False
     script = (
         f"$routes = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '{ip}/32' -ErrorAction SilentlyContinue; "
-        f"$route = $routes | Where-Object {{ $_.NextHop -eq '{gateway}' }} | Select-Object -First 1; "
+        f"$route = $routes | Where-Object {{ $_.NextHop -eq '{gateway}' -and ({interface_index} -eq 0 -or $_.InterfaceIndex -eq {interface_index}) }} | Select-Object -First 1; "
         "if ($route) { exit 0 } else { exit 1 }"
     )
     try:
@@ -223,102 +232,58 @@ def _skip_dns_name(data: bytes, idx: int) -> int:
         idx += length + 1
 
 
-def _direct_dns_resolve_a(domain: str, dns_server: str, timeout: float = 3.0) -> str:
-    """Resolve an A record by querying dns_server directly over UDP.
-
-    While the TUN is up, this is paired with a temporary host route to
-    dns_server via the physical gateway, so the query bypasses sing-box DNS
-    hijacking / fake-ip and returns the real public IP.
-    """
-    import struct
-
-    try:
-        header = struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
-        qname = b"".join(
-            bytes([len(label)]) + label.encode("ascii")
-            for label in domain.rstrip(".").split(".")
-            if label
-        ) + b"\x00"
-        packet = header + qname + struct.pack(">HH", 1, 1)
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(timeout)
-            sock.sendto(packet, (dns_server, 53))
-            data, _ = sock.recvfrom(2048)
-    except Exception:
-        return ""
-    try:
-        ancount = struct.unpack(">H", data[6:8])[0]
-        if ancount <= 0:
-            return ""
-        idx = _skip_dns_name(data, 12) + 4  # question name + qtype/qclass
-        for _ in range(ancount):
-            idx = _skip_dns_name(data, idx)
-            rtype, _rclass, _ttl, rdlen = struct.unpack(">HHIH", data[idx:idx + 10])
-            idx += 10
-            if rtype == 1 and rdlen == 4:
-                return ".".join(str(b) for b in data[idx:idx + 4])
-            idx += rdlen
-    except Exception:
-        return ""
-    return ""
+def _direct_dns_resolve_a(domain: str, dns_server: str, timeout: float = 1.5) -> str:
+    return _resolve_a_direct(domain, dns_server, timeout)
 
 
-# A ping run and a speed test can hold a bypass at the same time, so temporary
-# host routes are refcounted process-wide: an IP is only deleted once the last
-# holder releases it.
-_ROUTE_REFS_LOCK = threading.Lock()
-_ROUTE_REFS: dict[tuple[str, str], int] = {}
+_DNS_CACHE: dict[tuple, tuple[float, str]] = {}
+_DNS_CACHE_LOCK = threading.Lock()
 
 
 class _WindowsPingBypass:
-    def __init__(self, nodes: list[Node], enabled: bool):
+    def __init__(self, nodes: list[Node], enabled: bool, *, cancelled=None, dns_servers=None):
         self._nodes = nodes
         self._enabled = bool(enabled and os.name == "nt")
         self._gateway = ""
+        self._interface_index = 0
+        self._cancelled = cancelled or (lambda: False)
+        self._requested_dns = dns_servers
+        self._dns_servers = ()
+        self._prepare_lock = threading.Lock()
+        self._preparing: dict[str, threading.Event] = {}
         self._added_ips: set[str] = set()
         self._dns_routes: set[str] = set()
         self._covered_ips: set[str] = set()
         self._host_ips: dict[str, str] = {}
 
     def _route_add(self, ip: str) -> bool:
+        if self._cancelled():
+            return False
         try:
             result = run_text_pumped(
-                ["route", "add", ip, "mask", "255.255.255.255", self._gateway, "metric", "1"],
+                ["route", "add", ip, "mask", "255.255.255.255", self._gateway, "metric", "1"] + (["if", str(self._interface_index)] if self._interface_index else []),
                 timeout=4,
                 creationflags=CREATE_NO_WINDOW,
             )
         except Exception:
             return False
-        if result.returncode == 0:
-            return True
-        return _has_direct_host_route(ip, self._gateway)
+        return result.returncode == 0
 
     def _acquire_route(self, ip: str) -> bool:
-        key = (self._gateway, ip)
-        with _ROUTE_REFS_LOCK:
-            refs = _ROUTE_REFS.get(key, 0)
-            if refs <= 0:
-                if not self._route_add(ip):
-                    return False
-                _ROUTE_REFS[key] = 1
-                return True
-            _ROUTE_REFS[key] = refs + 1
-            return True
+        return acquire_route(
+            (self._gateway, ip, self._interface_index),
+            lambda: self._route_add(ip),
+            lambda: _has_direct_host_route(ip, self._gateway, self._interface_index),
+            lambda: self._route_delete(ip),
+        )
 
     def _release_route(self, ip: str) -> None:
-        key = (self._gateway, ip)
-        with _ROUTE_REFS_LOCK:
-            refs = _ROUTE_REFS.get(key, 0)
-            if refs > 1:
-                _ROUTE_REFS[key] = refs - 1
-                return
-            _ROUTE_REFS.pop(key, None)
-            self._route_delete(ip)
+        release_route((self._gateway, ip, self._interface_index))
 
     def _route_delete(self, ip: str) -> None:
         try:
             run_text_pumped(
-                ["route", "delete", ip, "mask", "255.255.255.255", self._gateway],
+                ["route", "delete", ip, "mask", "255.255.255.255", self._gateway] + (["if", str(self._interface_index)] if self._interface_index else []),
                 timeout=4,
                 creationflags=CREATE_NO_WINDOW,
             )
@@ -328,50 +293,82 @@ class _WindowsPingBypass:
     def _resolve_real_ip(self, host: str) -> str:
         if _is_ipv4_address(host):
             return host
-        for dns_server in _DIRECT_DNS_SERVERS:
-            if dns_server not in self._dns_routes:
-                continue
-            ip = _direct_dns_resolve_a(host, dns_server)
-            if ip and _is_ipv4_address(ip) and not _looks_like_fake_ip(ip):
-                return ip
-        # Fallback: system resolver (may be hijacked to a fake-ip while TUN is up).
-        ip = _resolve_ipv4(host)
-        if ip and not _looks_like_fake_ip(ip):
-            return ip
-        return ""
+        key = (self._gateway, self._interface_index, host.lower(), self._dns_servers)
+        now = time.monotonic()
+        with _DNS_CACHE_LOCK:
+            cached = _DNS_CACHE.get(key)
+            if cached and cached[0] > now:
+                return cached[1]
+        ip = ""
+        for dns_server in self._dns_servers:
+            if self._cancelled():
+                break
+            with self._prepare_lock:
+                if dns_server not in self._added_ips:
+                    if not self._acquire_route(dns_server):
+                        continue
+                    self._added_ips.add(dns_server)
+                    self._dns_routes.add(dns_server)
+            ip = _direct_dns_resolve_a(host, dns_server, timeout=1.0)
+            if ip and not _looks_like_fake_ip(ip):
+                break
+            ip = ""
+        with _DNS_CACHE_LOCK:
+            if len(_DNS_CACHE) >= 1024:
+                _DNS_CACHE.pop(next(iter(_DNS_CACHE)))
+            _DNS_CACHE[key] = (time.monotonic() + (60 if ip else 5), ip)
+        return ip
 
     def __enter__(self):
+        if not self._enabled or self._cancelled():
+            return self
+        context = get_windows_default_route_context()
+        if context is None or not context.is_physical or self._cancelled():
+            return self
+        self._gateway = context.next_hop
+        self._interface_index = context.interface_index
+        if not _is_ipv4_address(self._gateway) or _looks_like_tun_gateway(self._gateway):
+            self._gateway = ""
+            return self
+        # Bootstrap uses only the physical adapter DNS (or explicit config),
+        # never hard-coded public fallback resolvers or TUN/system DNS.
+        candidates = context.dns_servers if self._requested_dns is None else self._requested_dns
+        self._dns_servers = tuple(dict.fromkeys(ip for ip in candidates if _is_ipv4_address(ip)))[:3]
+        return self
+
+    def prepare_host(self, host: str) -> bool:
         if not self._enabled:
-            return self
-        self._gateway = _detect_direct_gateway()
-        if not self._gateway or _looks_like_tun_gateway(self._gateway):
-            return self
-
-        # Route the public resolvers directly so DNS lookups bypass the TUN
-        # (and sing-box fake-ip) while we resolve the real server addresses.
-        for dns_server in _DIRECT_DNS_SERVERS:
-            if self._acquire_route(dns_server):
-                self._added_ips.add(dns_server)
-                self._dns_routes.add(dns_server)
-
-        ips: set[str] = set()
-        for node in self._nodes:
-            host = str(node.server or "").strip()
-            if not host or host in self._host_ips:
-                continue
+            return not self._cancelled()
+        host = str(host or "").strip().strip("[]")
+        if not host or not self._gateway or self._cancelled():
+            return False
+        # The IPv4 bypass must fail closed for IPv6 instead of silently using TUN.
+        if ":" in host:
+            return False
+        with self._prepare_lock:
+            event = self._preparing.get(host)
+            owner = event is None
+            if owner:
+                event = threading.Event()
+                self._preparing[host] = event
+        if not owner:
+            while not event.wait(0.1):
+                if self._cancelled():
+                    return False
+            return self.can_ping_direct(host)
+        try:
             ip = self._resolve_real_ip(host)
-            if ip and not ip.startswith(("127.", "0.", "169.254.")):
-                self._host_ips[host] = ip
-                ips.add(ip)
-
-        for ip in ips:
-            if ip in self._added_ips or ip in self._covered_ips:
-                self._covered_ips.add(ip)
-                continue
-            if self._acquire_route(ip):
+            if not ip or self._cancelled() or ip.startswith(("127.", "0.", "169.254.")):
+                return False
+            with self._prepare_lock:
+                if ip not in self._added_ips and not self._acquire_route(ip):
+                    return False
                 self._added_ips.add(ip)
                 self._covered_ips.add(ip)
-        return self
+                self._host_ips[host] = ip
+            return True
+        finally:
+            event.set()
 
     def direct_ip(self, host: str) -> str:
         host = str(host or "").strip()
@@ -416,25 +413,20 @@ class PingWorker(QThread):
         self._cancelled = False
 
     def _measure(self, node: Node) -> int | None:
+        if self._cancelled:
+            return None
         target = node.server
         bypass = getattr(self, "_bypass", None)
         if bypass is not None:
-            direct = bypass.direct_ip(node.server)
-            if direct:
-                target = direct
-        if self._method == "icmp":
-            return icmp_ping(target, int(self._timeout * 1000))
-        outbound = node.outbound if isinstance(node.outbound, dict) else {}
-        protocol = str(
-            outbound.get("protocol")
-            or outbound.get("type")
-            or node.scheme
-            or ""
-        ).strip().lower()
-        if protocol in {"hysteria", "hysteria2", "hy", "hy2"}:
-            return hysteria_ping(target, node.port, self._timeout)
+            if not bypass.prepare_host(node.server):
+                return None
+            target = bypass.direct_ip(node.server) or node.server
         if self._method in {"http", "real"}:
-            return endpoint_ping(target, node.port, protocol, self._method, self._timeout)
+            # These methods require SpeedTestWorker and a full core profile.
+            return None
+        actual = endpoint_method(node, self._method)
+        if actual == "icmp":
+            return icmp_ping(target, int(self._timeout * 1000))
         return tcp_ping(target, node.port, self._timeout)
 
     def cancel(self) -> None:
@@ -453,16 +445,11 @@ class PingWorker(QThread):
         exhausted = False
         completed = 0
 
-        bypass = _WindowsPingBypass(self._nodes, self._bypass_tun)
+        bypass = _WindowsPingBypass(self._nodes, self._bypass_tun, cancelled=lambda: self._cancelled)
         self._bypass = bypass
 
         def submit_node(node: Node) -> None:
             nonlocal completed
-            if not bypass.can_ping_direct(node.server):
-                completed += 1
-                self.result.emit(node.id, None)
-                self.progress.emit(completed, total)
-                return
             future = executor.submit(self._measure, node)
             pending[future] = node.id
 

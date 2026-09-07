@@ -7,7 +7,6 @@ from xray_fluent.application.worker_service import (
     _clear_speed_measurements,
     _filter_testable_nodes,
     _node_supports_test,
-    ping_nodes,
     speed_test_nodes,
 )
 from xray_fluent.models import Node
@@ -89,8 +88,8 @@ def test_awg_and_masque_endpoint_ping_are_supported() -> None:
     assert all(_node_supports_test(node, "ping", ping_method="tcping") for node in nodes)
 
 
-def test_native_speed_warning_is_emitted_once_for_bulk_selection() -> None:
-    nodes = [_native_node("awg", "awg"), _native_node("masque", "masque")]
+def test_unknown_protocol_warning_is_emitted_once_for_bulk_selection() -> None:
+    nodes = [_native_node("unknown1", "future-unknown"), _native_node("unknown2", "future-unknown")]
     controller = _CompatibilityController(nodes)
 
     assert speed_test_nodes(controller, {node.id for node in nodes}) is False
@@ -102,13 +101,13 @@ def test_native_speed_warning_is_emitted_once_for_bulk_selection() -> None:
     assert all(node.is_alive is None and node.speed_mbps is None for node in nodes)
 
 
-def test_hysteria2_and_tuic_real_ping_are_supported_by_endpoint_fallback() -> None:
+def test_hysteria2_and_tuic_real_ping_have_native_profile_adapters() -> None:
     nodes = [_native_node("hy2", "hysteria2"), _native_node("tuic", "tuic")]
 
     assert all(_node_supports_test(node, "ping", ping_method="real") for node in nodes)
 
 
-def test_hysteria_protocol_ping_uses_udp_probe_with_icmp_fallback(monkeypatch) -> None:
+def test_hysteria_endpoint_probe_uses_honestly_labelled_icmp(monkeypatch) -> None:
     calls: list[tuple[str, int, float]] = []
 
     monkeypatch.setattr(ping_worker, "udp_ping", lambda host, port, timeout: calls.append((host, port, timeout)) or None)
@@ -118,7 +117,7 @@ def test_hysteria_protocol_ping_uses_udp_probe_with_icmp_fallback(monkeypatch) -
     worker = ping_worker.PingWorker([node], timeout=1.5, method="tcping")
 
     assert worker._measure(node) == 37
-    assert calls == [("203.0.113.10", 443, 1.5)]
+    assert calls == []  # An unauthenticated UDP socket is not a profile check.
 
 
 def _xray_auto_node(*outbounds: dict) -> Node:

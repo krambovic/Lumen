@@ -48,31 +48,16 @@ def test_failed_route_add_is_not_refcounted(monkeypatch) -> None:
     assert ping_worker._ROUTE_REFS == {}
 
 
-def _patch_clash_connections(monkeypatch, payload: bytes) -> None:
-    class _Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_exc):
-            return False
-
-        @staticmethod
-        def read() -> bytes:
-            return payload
-
-    monkeypatch.setattr(
-        process_traffic_collector.urllib.request,
-        "urlopen",
-        lambda *_args, **_kwargs: _Response(),
-    )
-
-
 def test_collector_holds_the_lock_while_mutating_shared_state(monkeypatch) -> None:
     process_traffic_collector.reset_connection_tracking()
-    _patch_clash_connections(
-        monkeypatch,
-        b'{"connections": [{"id": "c1", "upload": 1, "download": 2, "metadata": {"processName": "app.exe"}}]}',
-    )
+    document = {
+        "connections": [{
+            "id": "c1",
+            "upload": 1,
+            "download": 2,
+            "metadata": {"processName": "app.exe"},
+        }],
+    }
     original = process_traffic_collector._process_name_from_metadata
     locked: list[bool] = []
 
@@ -85,7 +70,7 @@ def test_collector_holds_the_lock_while_mutating_shared_state(monkeypatch) -> No
 
     monkeypatch.setattr(process_traffic_collector, "_process_name_from_metadata", _probe)
 
-    process_traffic_collector.collect_process_stats(clash_api_secret="secret")
+    process_traffic_collector.collect_process_stats(connections_document=document)
 
     assert locked == [True]
 

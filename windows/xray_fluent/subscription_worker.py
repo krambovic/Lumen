@@ -12,6 +12,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from .application.node_service import (
     SubscriptionFetchCancelled,
     fetch_subscription_payload_result,
+    prepare_subscription_payload,
 )
 from .http_utils import abort_http_response
 
@@ -31,6 +32,8 @@ class SubscriptionJob:
     converter_url: str = ""
     etag: str = ""
     last_modified: str = ""
+    include_regex: str = ""
+    exclude_regex: str = ""
 
 
 class SubscriptionFetchWorker(QObject):
@@ -93,6 +96,12 @@ class SubscriptionFetchWorker(QObject):
             except Exception as exc:  # никогда не роняем рабочий поток
                 text, userinfo, errors = "", {}, [str(exc)]
                 metadata = {"headers": {}, "status": 0, "not_modified": False}
+            if self._stopped.is_set():
+                return
+            if text and not metadata.get("not_modified"):
+                metadata["prepared"] = prepare_subscription_payload(
+                    text, job.include_regex, job.exclude_regex,
+                )
             if self._stopped.is_set():
                 return
             self.fetched.emit(batch_id, job, text, userinfo, list(errors), metadata)

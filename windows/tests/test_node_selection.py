@@ -317,6 +317,64 @@ def test_subscription_update_reselects_when_active_group_is_replaced() -> None:
     assert controller.transition_reasons == ["active subscription updated"]
 
 
+def test_subscription_update_keeps_selected_server_when_credentials_change() -> None:
+    controller = _Controller([], None)
+    original = "\n".join((
+        "vless://00000000-0000-0000-0000-000000000001@a.example:443?encryption=none&type=tcp#A",
+        "vless://00000000-0000-0000-0000-000000000002@b.example:443?encryption=none&type=tcp#B",
+    ))
+    added, errors = node_service.apply_fetched_subscription(
+        controller, "https://example.com/sub", "Sub", "import", original, {}, [],
+    )
+    assert (added, errors) == (2, [])
+    selected = next(node for node in controller.state.nodes if node.name == "B")
+    selected.ping_ms = 25
+    selected.ping_kind = "proxy"
+    selected.is_alive = True
+    selected.ping_history = [25]
+    controller.state.selected_node_id = selected.id
+
+    updated = original.replace(
+        "00000000-0000-0000-0000-000000000002@b.example",
+        "00000000-0000-0000-0000-000000000099@b.example",
+    )
+    added, errors = node_service.apply_fetched_subscription(
+        controller, "https://example.com/sub", "Sub", "update", updated, {}, [],
+    )
+
+    assert (added, errors) == (2, [])
+    replacement = next(node for node in controller.state.nodes if node.name == "B")
+    assert replacement.id == selected.id
+    assert controller.state.selected_node_id == selected.id
+    # A materially changed credential invalidates old health measurements.
+    assert replacement.ping_ms is None
+    assert replacement.is_alive is None
+    assert replacement.ping_history == []
+
+
+def test_failed_fetch_never_marks_cached_nodes_as_new_parser_revision(monkeypatch) -> None:
+    subscription = {"parser_revision": 1, "etag": "old"}
+    monkeypatch.setattr("random.uniform", lambda _low, _high: 1.0)
+
+    node_service._mark_subscription_fetch_metadata(
+        subscription,
+        headers={"etag": "untrusted-new", "retry-after": "60"},
+        status=503,
+        error="temporary failure",
+    )
+
+    assert subscription["parser_revision"] == 1
+    assert subscription["etag"] == "old"
+    node_service._mark_subscription_fetch_metadata(
+        subscription,
+        headers={"etag": "fresh"},
+        status=200,
+        success=True,
+    )
+    assert subscription["parser_revision"] == node_service.SUBSCRIPTION_PARSER_REVISION
+    assert subscription["etag"] == "fresh"
+
+
 def test_subscription_hwid_never_leaks_the_raw_machine_guid(monkeypatch) -> None:
     machine_guid = "72b21638-4934-4a0a-ad11-bf13a9612c0e"
     node_service._windows_machine_hwid.cache_clear()

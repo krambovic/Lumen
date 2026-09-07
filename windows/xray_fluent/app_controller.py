@@ -6,11 +6,12 @@ import logging
 import socket
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 import json
 from pathlib import Path
 
 from .constants import APP_VERSION, DIAGNOSTICS_UPLOAD_URL
+from .bounded_logs import LogRing
 from .logging_setup import configure_diagnostics_upload, configure_logging, get_logger
 from .diagnostics_uploader import upload_bundle
 from typing import TYPE_CHECKING, Any
@@ -179,7 +180,8 @@ from .routing_presets import (
     repair_builtin_preset_service_routes,
 )
 from .security import create_password_hash, get_idle_seconds, verify_password
-from .storage import PassphraseRequired, StateLoadError, StateStorage
+from .storage import PassphraseRequired, StateStorage
+from .state_snapshot import snapshot_state
 from .startup import (
     STARTUP_STATE_ABSENT,
     STARTUP_STATE_DISABLED,
@@ -303,6 +305,8 @@ class AppController(QObject):
     resource_update_progress = pyqtSignal(str, int)
     lock_state_changed = pyqtSignal(bool)
     passphrase_required = pyqtSignal()
+    _save_failed = pyqtSignal(str)
+    _startup_disabled = pyqtSignal(int)
     auto_switch_triggered = pyqtSignal(str)  # node name we're switching to
     transition_state_changed = pyqtSignal(bool, str)
     _transition_completed = pyqtSignal(bool, str, str, int)
@@ -325,7 +329,8 @@ class AppController(QObject):
         self.network_monitor = NetworkMonitor(parent=self)
 
         self.state = AppState()
-        self.recent_logs: list[str] = []
+        self._load_state = "unloaded"
+        self.recent_logs: LogRing[str] = LogRing(maxlen=5000)
         self.connected = False
         self.locked = False
 
@@ -421,6 +426,8 @@ class AppController(QObject):
         self._save_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="state-save")
         self._save_futures: set[Future] = set()
         self._save_futures_lock = threading.Lock()
+        self._pending_save_snapshot = None
+        self._save_worker_running = False
         self._save_executor_shutdown = False
 
         self.xray.log_received.connect(lambda line: self._on_core_log("xray", line))
@@ -455,21 +462,31 @@ class AppController(QObject):
         )
         self._metrics_request.connect(self._on_metrics_request, Qt.ConnectionType.QueuedConnection)
         self._startup_sync_active = False
+        self._startup_settings_generation = 0
+        self._startup_disabled.connect(self._accept_external_startup_disable, Qt.ConnectionType.QueuedConnection)
+        self._save_failed.connect(self._on_save_failure, Qt.ConnectionType.QueuedConnection)
         self._startup_sync_timer = QTimer(self)
         self._startup_sync_timer.setInterval(120_000)
         self._startup_sync_timer.timeout.connect(self._schedule_startup_state_sync)
 
+    @property
+    def profile_loaded(self) -> bool:
+        return self._load_state == "loaded"
+
     def load(self) -> bool:
+        self._load_state = "unloaded"
         try:
             self.state = self.storage.load()
         except PassphraseRequired:
+            self._load_state = "locked"
             self.passphrase_required.emit()
             return False
-        except StateLoadError as exc:
-            self.status.emit("error", str(exc))
-            self.state = self.storage._default_state()
+        except Exception as exc:
+            self._load_state = "error"
+            self.status.emit("error", "Не удалось открыть профиль: " + str(exc))
             return False
 
+        self._load_state = "loaded"
         self._migrate_sort_order()
         region = normalize_regional_preset(self.state.settings.regional_preset)
         current_preset = str(self.state.routing.preset_id or "").strip().lower()
@@ -513,7 +530,7 @@ class AppController(QObject):
 
     def start_deferred_services(self) -> None:
         """Start non-visual work only after the first QML frame is available."""
-        if self._deferred_services_started:
+        if not self.profile_loaded or self._deferred_services_started:
             return
         self._deferred_services_started = True
         self.network_monitor.start()
@@ -527,15 +544,33 @@ class AppController(QObject):
         self._start_background_task(self._prewarm_connection_context, "connection-context-prewarm")
 
         if self.state.settings.always_run_as_admin:
-            try:
-                set_always_run_as_admin(True)
-            except Exception as exc:
-                self.status.emit("error", f"Ошибка настройки запуска от администратора: {exc}")
-        self._reconcile_startup_registration()
+            self._start_background_task(self._configure_admin_startup, "admin-startup")
+        self._start_background_task(self._reconcile_startup_registration, "startup-reconcile")
         self._startup_sync_timer.start()
         # Restrictions are explained by the relevant controls when clicked.
         # A delayed global warning here could surface during an unrelated
         # server switch and incorrectly make that switch look rejected.
+
+    def _configure_admin_startup(self) -> None:
+        if self._shutting_down or not self.state.settings.always_run_as_admin:
+            return
+        try:
+            set_always_run_as_admin(True)
+        except Exception as exc:
+            self.status.emit("error", "Ошибка настройки запуска от администратора: " + str(exc))
+
+    @pyqtSlot(int)
+    def _accept_external_startup_disable(self, generation: int) -> None:
+        if generation != self._startup_settings_generation or self._shutting_down or not self.profile_loaded:
+            return
+        if self.state.settings.launch_on_startup:
+            self.state.settings.launch_on_startup = False
+            self.settings_changed.emit(self.state.settings)
+            self.schedule_save()
+
+    @pyqtSlot(str)
+    def _on_save_failure(self, message: str) -> None:
+        self.status.emit("error", "Профиль не сохранён: " + message)
 
     def _reconcile_startup_registration(self) -> None:
         try:
@@ -565,6 +600,7 @@ class AppController(QObject):
             self._startup_sync_active = False
 
     def _sync_startup_state_from_windows(self) -> bool:
+        generation = getattr(self, "_startup_settings_generation", 0)
         try:
             command = build_startup_command(
                 in_tray=bool(getattr(self.state.settings, "launch_in_tray_on_startup", True))
@@ -575,11 +611,11 @@ class AppController(QObject):
                 return False
             if get_startup_state(APP_NAME) != STARTUP_STATE_DISABLED:
                 return False
-            # StartupApproved can be reset by Windows when an executable is
-            # replaced, especially when an elevated task is also registered.
-            # The persisted user preference is authoritative: repair the
-            # registration instead of silently turning autostart off.
-            set_startup_enabled(APP_NAME, True, command)
+            # Respect an explicit external disable. Repairing stale/missing
+            # registration must not silently override Task Manager.
+            signal = getattr(self, "_startup_disabled", None)
+            if signal is not None:
+                signal.emit(generation)
             return True
         except Exception as exc:
             self._logger.warning("Failed to sync startup state from Windows: %s", exc)
@@ -619,7 +655,7 @@ class AppController(QObject):
     def _join_background_tasks(self, timeout: float = 3.0) -> None:
         with self._background_threads_lock:
             threads = list(self._background_threads)
-        deadline = time.monotonic() + max(0.1, timeout)
+        deadline = time.monotonic() + max(0.0, timeout)
         for thread in threads:
             if thread is not threading.current_thread():
                 remaining = deadline - time.monotonic()
@@ -627,23 +663,39 @@ class AppController(QObject):
                     break
                 thread.join(timeout=remaining)
 
-    def set_data_passphrase(self, passphrase: str) -> None:
+    def set_data_passphrase(self, passphrase: str) -> bool:
+        previous = self.storage.passphrase
         self.storage.passphrase = passphrase
+        if not self.profile_loaded:
+            if not self.load():
+                self.storage.passphrase = previous
+                self.status.emit("error", "Не удалось открыть профиль: проверьте пароль")
+                return False
+            self.status.emit("success", "Зашифрованный профиль открыт")
+            return True
         self.save()
-        self.status.emit("success", "Шифрование данных включено")
+        self.status.emit("info", "Сохранение профиля с паролем запрошено")
+        return True
 
-    def clear_data_passphrase(self) -> None:
+    def clear_data_passphrase(self) -> bool:
+        if not self.profile_loaded:
+            self.status.emit("error", "Сначала откройте зашифрованный профиль")
+            return False
         self.storage.passphrase = ""
         self.save()
-        self.status.emit("info", "Шифрование данных отключено (портативный режим)")
+        self.status.emit("info", "Сохранение профиля без пароля запрошено")
+        return True
 
     def is_data_encrypted(self) -> bool:
         return self.storage.is_encrypted()
 
     @pyqtSlot()
     def save(self) -> None:
+        if not self.profile_loaded:
+            return
         if self.thread() != QThread.currentThread():
-            self._enqueue_state_save()
+            self._save_pending = True
+            QMetaObject.invokeMethod(self, "schedule_save", Qt.ConnectionType.QueuedConnection)
             return
         if self._save_timer.isActive():
             self._save_timer.stop()
@@ -652,6 +704,8 @@ class AppController(QObject):
 
     @pyqtSlot()
     def schedule_save(self) -> None:
+        if not self.profile_loaded or self._save_executor_shutdown:
+            return
         if self.thread() != QThread.currentThread():
             QMetaObject.invokeMethod(self, "schedule_save", Qt.ConnectionType.QueuedConnection)
             return
@@ -665,15 +719,23 @@ class AppController(QObject):
         self._enqueue_state_save()
 
     def _enqueue_state_save(self) -> Future | None:
-        if self._save_executor_shutdown:
+        if not self.profile_loaded or self._save_executor_shutdown:
+            return None
+        if self.thread() != QThread.currentThread():
+            self.save()
             return None
         try:
-            snapshot = deepcopy(self.state)
+            snapshot = snapshot_state(self.state)
         except Exception as exc:
-            self._logger.error(f"[state] Failed to snapshot state for saving: {exc}")
+            self._logger.error("[state] Failed to snapshot state: %s", exc)
             return None
-        future = self._save_executor.submit(self.storage.save, snapshot)
         with self._save_futures_lock:
+            # One in-flight write and at most one latest pending snapshot.
+            self._pending_save_snapshot = snapshot
+            if self._save_worker_running:
+                return next(iter(self._save_futures), None)
+            self._save_worker_running = True
+            future = self._save_executor.submit(self._write_pending_states)
             self._save_futures.add(future)
 
         def _cleanup(done: Future) -> None:
@@ -682,10 +744,29 @@ class AppController(QObject):
             try:
                 done.result()
             except Exception as exc:
-                self._logger.error(f"[state] Failed to save state: {exc}")
+                self._logger.error("[state] Failed to save state: %s", exc)
 
         future.add_done_callback(_cleanup)
         return future
+
+    def _write_pending_states(self) -> None:
+        while True:
+            with self._save_futures_lock:
+                snapshot = self._pending_save_snapshot
+                self._pending_save_snapshot = None
+                if snapshot is None:
+                    self._save_worker_running = False
+                    return
+            try:
+                self.storage.save(snapshot)
+            except Exception as exc:
+                from .secret_scrubber import scrub_text
+                message = scrub_text(str(exc))
+                self._logger.error("[state] Failed to save state: %s", message)
+                try:
+                    self._save_failed.emit(message)
+                except RuntimeError:
+                    pass
 
     def _flush_state_saves(self, timeout: float = 5.0) -> None:
         if self.thread() == QThread.currentThread():
@@ -694,13 +775,13 @@ class AppController(QObject):
             if self._save_pending:
                 self._save_pending = False
                 self._enqueue_state_save()
-        deadline = datetime.now(timezone.utc).timestamp() + max(0.0, timeout)
+        deadline = time.monotonic() + max(0.0, timeout)
         while True:
             with self._save_futures_lock:
                 futures = list(self._save_futures)
             if not futures:
                 return
-            remaining = deadline - datetime.now(timezone.utc).timestamp()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 self._logger.warning("[state] Timed out waiting for pending state saves")
                 return
@@ -1548,7 +1629,7 @@ class AppController(QObject):
             worker = self._transition_worker_thread
         if worker is None or worker is threading.current_thread():
             return
-        worker.join(timeout=max(0.1, timeout))
+        worker.join(timeout=max(0.0, timeout))
         if worker.is_alive():
             self._logger.warning("[app] Transition worker did not stop before shutdown timeout")
             return
@@ -1567,7 +1648,17 @@ class AppController(QObject):
         was_connected, is_connected = self._refresh_connected_state()
         if was_connected != is_connected:
             self.connection_changed.emit(is_connected)
-            self._on_metrics_request(is_connected)
+            # Never start a worker without the session snapshot: a core can
+            # briefly report running after a failed transition, before its
+            # Clash secret / Xray inbound tags were captured.
+            self._on_metrics_request(is_connected and self._active_session is not None)
+        elif ok and is_connected and self._active_session is not None and self._metrics_worker is None:
+            # The core's state_changed signal can arrive before
+            # connect_selected() has captured the active session.  Start the
+            # worker from the GUI thread once the Clash bearer secret / Xray
+            # inbound tags are available; otherwise it would run forever with
+            # an empty metrics contract and history would remain at zero.
+            self._start_metrics_worker()
         if (
             ok
             and action in ("proxy_hot_swap", "connect", "reconnect")
@@ -1622,11 +1713,13 @@ class AppController(QObject):
     def _on_countries_resolved(self, results: dict[str, str]) -> None:
         on_countries_resolved_operation(self, results)
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, deadline: float | None = None) -> None:
         if self._shutting_down:
             return
         self._shutting_down = True
+        deadline = time.monotonic() + 5.0 if deadline is None else deadline
         self._logger.info("[app] AppController shutting down...")
+        self._startup_sync_timer.stop()
         self._transition_timer.stop()
         self._transition_pending = False
         self._transition_scheduled = False
@@ -1636,16 +1729,31 @@ class AppController(QObject):
             self._confirm_update_disconnect(worker, False)
         self._pending_update_disconnects.clear()
         if not getattr(self, "_system_shutdown", False):
-            self._join_background_tasks()
-            self._join_transition_worker()
+            self._join_background_tasks(timeout=max(0.0, deadline - time.monotonic()))
+            self._join_transition_worker(timeout=max(0.0, deadline - time.monotonic()))
         try:
-            self._flush_state_saves(timeout=5.0)
-            shutdown_operation(self)
+            shutdown_operation(self, deadline=deadline)
         finally:
-            self._flush_state_saves(timeout=5.0)
+            self._flush_state_saves(timeout=max(0.0, deadline - time.monotonic()))
             self._save_executor_shutdown = True
-            self._save_executor.shutdown(wait=False, cancel_futures=True)
+            self._save_executor.shutdown(wait=False, cancel_futures=False)
             configure_diagnostics_upload(upload_url="", app_version=APP_VERSION)
+
+    def finalize_shutdown(self) -> None:
+        # A transition that was already in native IO can finish after the first
+        # deadline. Stop only our own runtimes once that transition is drained.
+        self._stop_active_connection_processes(disable_proxy=True, fast=True)
+        if self.zapret.running:
+            self.zapret.stop(fast=True)
+
+    def has_pending_shutdown_work(self) -> bool:
+        from .qthread_utils import has_pending_shutdown_threads
+        with self._save_futures_lock:
+            saving = any(not future.done() for future in self._save_futures)
+        with self._background_threads_lock:
+            background = any(thread.is_alive() for thread in self._background_threads)
+        transition = self._transition_worker_thread
+        return bool(saving or background or (transition is not None and transition.is_alive()) or has_pending_shutdown_threads())
 
     @staticmethod
     def _cleanup_tun_adapter(max_wait: float = 3.0) -> None:
@@ -1716,6 +1824,9 @@ class AppController(QObject):
         auto_connect: bool | None = None,
         select_imported: bool = False,
     ) -> tuple[int, list[str]]:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return (0, ["Сначала откройте зашифрованный профиль"])
         return import_nodes_from_text_operation(
             self,
             text,
@@ -1725,12 +1836,21 @@ class AppController(QObject):
         )
 
     def import_subscription(self, url: str, name: str | None = None) -> tuple[int, list[str]]:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return (0, ["Сначала откройте зашифрованный профиль"])
         return import_subscription_operation(self, url, name)
 
     def update_subscription(self, url: str) -> tuple[int, list[str]]:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return (0, ["Сначала откройте зашифрованный профиль"])
         return update_subscription_operation(self, url)
 
     def update_all_subscriptions(self) -> tuple[int, list[str]]:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return (0, ["Сначала откройте зашифрованный профиль"])
         return update_all_subscriptions_operation(self)
 
     def apply_fetched_subscription(
@@ -1743,6 +1863,9 @@ class AppController(QObject):
         errors: list[str] | None,
         response_meta: dict | None = None,
     ) -> tuple[int, list[str]]:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return (0, ["Сначала откройте зашифрованный профиль"])
         return apply_fetched_subscription_operation(
             self, url, name, kind, text, userinfo, errors, response_meta
         )
@@ -1751,18 +1874,30 @@ class AppController(QObject):
         remove_subscription_operation(self, url, delete_nodes=delete_nodes)
 
     def remove_nodes(self, node_ids: set[str]) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         remove_nodes_operation(self, node_ids)
 
     def delete_group(self, group: str) -> bool:
         return delete_group_operation(self, group)
 
     def update_node(self, node_id: str, updates: dict) -> bool:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return False
         return update_node_operation(self, node_id, updates)
 
     def add_manual_node(self, node: Node) -> str:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return ""
         return add_manual_node_operation(self, node)
 
     def bulk_update_nodes(self, node_ids: set[str], operations: dict) -> int:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return 0
         return bulk_update_nodes_operation(self, node_ids, operations)
 
     def get_all_groups(self) -> list[str]:
@@ -1775,9 +1910,15 @@ class AppController(QObject):
             self.save()
 
     def reorder_nodes(self, node_id: str, direction: str) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         reorder_nodes_operation(self, node_id, direction)
 
     def set_selected_node(self, node_id: str) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         set_selected_node_operation(self, node_id)
         node = self._get_node_by_id(node_id)
         if node is not None:
@@ -1832,10 +1973,16 @@ class AppController(QObject):
         handle_unexpected_disconnect_operation(self)
 
     def connect_selected(self, allow_during_reconnect: bool = False) -> bool:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return False
         return connect_selected_operation(self, allow_during_reconnect=allow_during_reconnect)
 
     def request_resume_reconnect(self, reason: str = "system resume") -> bool:
         """Queue a reconnect for a session that was active before system sleep."""
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return False
         settings = self.state.settings
         if self._shutting_down or getattr(self, "_system_shutdown", False) or self.locked:
             return False
@@ -1861,6 +2008,9 @@ class AppController(QObject):
         return self._traffic_history
 
     def toggle_connection(self) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         current_target = self._desired_connected if (self._transition_active or self._transition_pending) else self.connected
         if not current_target and self.state.settings.tun_mode and not is_process_elevated():
             self.status.emit("warning", "VPN (TUN) недоступен без прав администратора. Переключитесь на режим прокси.")
@@ -1934,6 +2084,9 @@ class AppController(QObject):
         self.status.emit("success" if result.ok else "error", result.message)
 
     def switch_next_node(self) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         if not self.state.nodes:
             return
         current_id = self.state.selected_node_id
@@ -1947,6 +2100,9 @@ class AppController(QObject):
         self.set_selected_node(self.state.nodes[index].id)
 
     def switch_prev_node(self) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         if not self.state.nodes:
             return
         current_id = self.state.selected_node_id
@@ -1960,6 +2116,9 @@ class AppController(QObject):
         self.set_selected_node(self.state.nodes[index].id)
 
     def update_routing(self, routing: RoutingSettings, *, restart_runtime: bool = True) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         if routing.mode not in ROUTING_MODES:
             routing.mode = "rule"
         self.state.routing = routing
@@ -1970,6 +2129,9 @@ class AppController(QObject):
             self._request_transition("routing changed")
 
     def apply_routing_preset(self, preset_id: str, *, restart_runtime: bool = True) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         region = normalize_regional_preset(self.state.settings.regional_preset)
         requested_preset = str(preset_id or "").strip().lower()
         preset_id = normalize_routing_preset_for_region(requested_preset, region)
@@ -2048,6 +2210,9 @@ class AppController(QObject):
         return "downloading"
 
     def update_settings(self, settings: AppSettings) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         old_settings = self.state.settings
         old_launch = old_settings.launch_on_startup
         old_launch_in_tray = getattr(old_settings, "launch_in_tray_on_startup", True)
@@ -2111,14 +2276,23 @@ class AppController(QObject):
 
     def reset_settings_to_defaults(self) -> None:
         """Reset application and routing settings while preserving servers and subscriptions."""
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         defaults = self.storage.default_state()
         self.update_settings(defaults.settings)
         self.update_routing(defaults.routing)
 
     def ping_nodes(self, node_ids: set[str] | None = None, method: str | None = None) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         ping_nodes_operation(self, node_ids, method)
 
     def speed_test_nodes(self, node_ids: set[str] | None = None) -> bool:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return False
         return speed_test_nodes_operation(self, node_ids)
 
     def cancel_speed_test(self) -> bool:
@@ -2128,9 +2302,15 @@ class AppController(QObject):
         return get_fastest_alive_node_operation(self)
 
     def test_connectivity(self, url: str | None = None) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         test_connectivity_operation(self, url)
 
     def run_xray_core_update(self, apply_update: bool, silent: bool = False) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         run_xray_core_update_operation(self, apply_update, silent=silent)
 
     def run_resource_update(
@@ -2140,6 +2320,9 @@ class AppController(QObject):
         apply_update: bool = True,
         region: str | None = None,
     ) -> bool:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return False
         from .core_resource_updater import ResourceUpdateWorker
         from .qthread_utils import retain_thread_until_finished
 
@@ -2334,6 +2517,9 @@ class AppController(QObject):
         return bundle
 
     def auto_connect_if_needed(self) -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         if not self.state.settings.auto_connect_last or self.locked:
             return
         if self.selected_node is None and not self._can_connect_without_selected_node():
@@ -2390,8 +2576,6 @@ class AppController(QObject):
         if not line:
             return
         self.recent_logs.append(line)
-        if len(self.recent_logs) > 5000:
-            self.recent_logs = self.recent_logs[-5000:]
         domain, level = self._classify_log(line)
         self._domain_loggers.get(domain, self._logger).log(level, line, extra={"from_controller": True})
         self.log_line.emit(line)
@@ -2556,9 +2740,15 @@ class AppController(QObject):
         return reconnect_operation(self, reason)
 
     def export_backup(self, path: Path, passphrase: str = "") -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         self.storage.export_backup(path, passphrase)
 
     def import_backup(self, path: Path, passphrase: str = "") -> None:
+        if not self.profile_loaded:
+            self.status.emit("warning", "Сначала откройте зашифрованный профиль")
+            return None
         self.state = self.storage.import_backup(path, passphrase)
         self.save()
         self.nodes_changed.emit(self.state.nodes)

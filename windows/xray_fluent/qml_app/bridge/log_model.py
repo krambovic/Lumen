@@ -71,13 +71,29 @@ class LogModel(QAbstractListModel):
 
     @pyqtSlot(str)
     def append_line(self, line: str) -> None:
-        if len(self._lines) >= self._max_lines:
-            self.beginRemoveRows(QModelIndex(), 0, 0)
-            self._lines.popleft()
+        self.append_lines([line])
+
+    def append_lines(self, lines) -> None:
+        """Append a burst with at most one remove and one insert notification."""
+        entries = [parse_log_line(str(line)) for line in lines if str(line).strip()]
+        if not entries:
+            return
+        if len(entries) >= self._max_lines:
+            self.beginResetModel()
+            self._lines.clear()
+            self._lines.extend(entries[-self._max_lines:])
+            self.endResetModel()
+            return
+
+        overflow = max(0, len(self._lines) + len(entries) - self._max_lines)
+        if overflow:
+            self.beginRemoveRows(QModelIndex(), 0, overflow - 1)
+            for _ in range(overflow):
+                self._lines.popleft()
             self.endRemoveRows()
-        row = len(self._lines)
-        self.beginInsertRows(QModelIndex(), row, row)
-        self._lines.append(parse_log_line(line))
+        first = len(self._lines)
+        self.beginInsertRows(QModelIndex(), first, first + len(entries) - 1)
+        self._lines.extend(entries)
         self.endInsertRows()
 
     def clear(self) -> None:

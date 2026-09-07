@@ -238,6 +238,7 @@ def test_reset_settings_preserves_servers_and_subscriptions(tmp_path) -> None:
     controller.update_settings = lambda value: setattr(controller.state, "settings", value)
     controller.update_routing = lambda value: setattr(controller.state, "routing", value)
 
+    controller.profile_loaded = True
     AppController.reset_settings_to_defaults(controller)
 
     assert state.nodes == [node]
