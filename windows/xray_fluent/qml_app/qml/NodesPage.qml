@@ -165,7 +165,14 @@ Item {
 
     // Keep subscription banners in a QML model so the view can update without
     // recreating the servers page or leaving stale banner rows behind.
-    ListModel { id: providerBanners }
+    QtObject {
+        id: providerBanners
+        property var rows: []
+        readonly property int count: rows.length
+        function clear() { rows = []; }
+        function append(row) { rows = rows.concat([row]); }
+        function itemAt(index) { return rows[index] || null; }
+    }
     function syncProviderBanners() {
         providerBanners.clear();
         var banners = page.providerView.banners || [];
