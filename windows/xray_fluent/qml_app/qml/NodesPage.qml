@@ -162,6 +162,23 @@ Item {
     onVisibleChanged: providerClock++
     readonly property var activeSub: { var tick = providerClock; return selectedSub(); }
     readonly property var providerView: activeSub && activeSub.presentation ? activeSub.presentation : ({})
+
+    // Keep subscription banners in a QML model so the view can update without
+    // recreating the servers page or leaving stale banner rows behind.
+    ListModel { id: providerBanners }
+    function syncProviderBanners() {
+        providerBanners.clear();
+        var banners = page.providerView.banners || [];
+        for (var i = 0; i < banners.length; ++i) {
+            var banner = banners[i] || {};
+            providerBanners.append({
+                text: String(banner.text || banner.title || ""),
+                visible: banner.visible !== false
+            });
+        }
+    }
+    onProviderViewChanged: syncProviderBanners()
+    Component.onCompleted: syncProviderBanners()
     function selectedSub() {
         var wanted = String(App.selectedSubscriptionId || "");
         var subs = App.subscriptions || [];
