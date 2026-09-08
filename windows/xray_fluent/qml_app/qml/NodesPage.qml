@@ -178,7 +178,6 @@ Item {
         }
     }
     onProviderViewChanged: syncProviderBanners()
-    Component.onCompleted: syncProviderBanners()
     function selectedSub() {
         var wanted = String(App.selectedSubscriptionId || "");
         var subs = App.subscriptions || [];
@@ -487,7 +486,10 @@ Item {
         page.restoreSubscriptionSelection();
     }
 
-    Component.onCompleted: Qt.callLater(page.restoreServerViewState)
+    Component.onCompleted: {
+        syncProviderBanners();
+        Qt.callLater(page.restoreServerViewState);
+    }
 
     function applySort(key) {
         if (!key) return;
