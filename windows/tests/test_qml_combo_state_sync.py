@@ -62,7 +62,7 @@ def test_fluent_combo_reapplies_bound_index_after_model_population() -> None:
         cwd=ROOT,
         env=env,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=30,
         check=False,
     )

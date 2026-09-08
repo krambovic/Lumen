@@ -87,7 +87,7 @@ object NodeDraftMapper {
             path = q["path"] ?: "",
             host = q["host"] ?: "",
             serviceName = q["servicename"] ?: "",
-            sni = q["sni"] ?: q["peer"] ?: "",
+            sni = q["sni"] ?: q["peer"] ?: q["server_name"] ?: q["servername"] ?: "",
             alpn = q["alpn"] ?: "",
             fingerprint = q["fp"] ?: "",
             certificateSha256 = q["pinsha256"] ?: q["certificate_public_key_sha256"] ?: "",
@@ -96,7 +96,8 @@ object NodeDraftMapper {
             obfs = q["obfs"] ?: "",
             obfsPassword = q["obfs-password"] ?: q["obfs_password"] ?: "",
             congestionControl = q["congestion_control"] ?: base.congestionControl,
-            insecure = flag(q["allowinsecure"]) || flag(q["insecure"]) || flag(q["allow_insecure"])
+            insecure = listOf("insecure", "allowinsecure", "allow_insecure").mapNotNull { q[it] }
+                .let { values -> values.isNotEmpty() && values.all { flag(it) } }
         )
     }
 
@@ -231,7 +232,7 @@ object NodeDraftMapper {
                     "sid" to d.shortId,
                     "allowInsecure" to if (d.insecure) "1" else null
                 )
-                "vless://${d.secret.trim()}@${uriHost(d.server)}:${d.port.trim()}?$params#$name"
+                "vless://${enc(d.secret)}@${uriHost(d.server)}:${d.port.trim()}?$params#$name"
             }
             "vmess" -> {
                 val json = JSONObject()
@@ -239,7 +240,7 @@ object NodeDraftMapper {
                 json.put("ps", d.name.ifBlank { d.server })
                 json.put("add", d.server.trim())
                 json.put("port", d.port.trim())
-                json.put("id", d.secret.trim())
+                json.put("id", d.secret)
                 json.put("aid", storedUserOption(d.rawConfig, "alterId", "0"))
                 json.put("scy", storedUserOption(d.rawConfig, "security", "auto"))
                 json.put("allowInsecure", if (d.insecure) "1" else "0")
@@ -400,7 +401,7 @@ object NodeDraftMapper {
 
     /** Query keys the masque editor owns; the WARP extras of the imported link survive as-is. */
     private val MASQUE_MANAGED_PARAMS = setOf(
-        "sni", "server_name", "servername", "insecure", "allowinsecure",
+        "sni", "server_name", "servername", "insecure", "allowinsecure", "allow_insecure",
         "id", "profile_id", "auth_token", "token"
     )
 

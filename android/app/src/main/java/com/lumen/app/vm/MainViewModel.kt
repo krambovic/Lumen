@@ -229,6 +229,10 @@ internal fun switchAutomaticGeoRegion(settings: SettingsUiState, code: String): 
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
+    private val subscriptionRefreshEpoch = java.util.concurrent.atomic.AtomicLong()
+    private val subscriptionRefreshClaims = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val subscriptionMutations = Mutex()
+
     private val _androidUpdateState = MutableStateFlow(AndroidUpdateState())
     internal val androidUpdateState: StateFlow<AndroidUpdateState> = _androidUpdateState
 
@@ -619,7 +623,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         subscriptionSendHwid = prefs.getBoolean("subscription_send_hwid", true),
         subscriptionDirect = prefs.getBoolean("subscription_direct", true),
         allowSubscriptionOverrides = prefs.getBoolean("allow_subscription_overrides", true),
-        subscriptionAutoUpdateMinutes = prefs.getInt("subscription_auto_update_minutes", 240),
+        subscriptionAutoUpdateMinutes = normalizedSubscriptionAutoUpdateMinutes(
+            prefs.getInt("subscription_auto_update_minutes", 240)
+        ),
         subscriptionIncludeRegex = prefs.getString("subscription_include_regex", "") ?: "",
         subscriptionExcludeRegex = prefs.getString("subscription_exclude_regex", "") ?: "",
         subscriptionUseProxyTun = prefs.getBoolean("subscription_use_proxy_tun", false),
@@ -677,11 +683,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = VpnLogBus.loadSettings(getApplication<Application>())
 
 
+    private fun subscriptionRequestSettings(s: SettingsUiState): List<Any> = listOf(
+        normalizedSubscriptionAutoUpdateMinutes(s.subscriptionAutoUpdateMinutes),
+        s.subscriptionUserAgent, s.subscriptionHwid, s.subscriptionSendHwid,
+        s.subscriptionDirect, s.subscriptionAllowHttp, s.subscriptionUseProxyTun,
+        s.subscriptionIncludeRegex, s.subscriptionExcludeRegex,
+        s.localSocksPort, s.socks5AuthEnabled, s.socks5Username, s.socks5Password
+    )
+
     fun updateSettings(s: SettingsUiState) {
+        if (!com.lumen.ui.screens.isValidSocks5Credential(s.socks5Username) ||
+            !com.lumen.ui.screens.isValidSocks5Credential(s.socks5Password)) {
+            log("SOCKS5 credentials were not saved: invalid byte length or control characters")
+            return
+        }
+        if (subscriptionRequestSettings(_settings.value) != subscriptionRequestSettings(s)) {
+            subscriptionRefreshEpoch.incrementAndGet()
+        }
         val telemetryChanged = _settings.value.telemetryEnabled != s.telemetryEnabled
         val launcherIconChanged = _settings.value.launcherIcon != s.launcherIcon
         val autoUpdatesEnabled = !_settings.value.autoCheckUpdates && s.autoCheckUpdates
-        _settings.value = s
+        _settings.value = s.copy(
+            subscriptionAutoUpdateMinutes = normalizedSubscriptionAutoUpdateMinutes(s.subscriptionAutoUpdateMinutes)
+        )
         prefs.edit()
             .putString("engine_type", s.engine)
             .putBoolean("mux_enabled", s.muxEnabled)
@@ -706,8 +730,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("local_http_port", s.localHttpPort.coerceIn(1024, 65535))
             .putBoolean("lan_sharing", s.lanSharingEnabled)
             .putBoolean("socks5_auth_enabled", s.socks5AuthEnabled)
-            .putString("socks5_username", s.socks5Username.trim().take(64))
-            .putString("socks5_password", s.socks5Password.trim().take(128))
+            .putString("socks5_username", s.socks5Username)
+            .putString("socks5_password", s.socks5Password)
             .putBoolean("proxy_only", s.proxyOnly)
             .putBoolean("boot_auto_connect", s.autoConnectOnBoot)
             .putBoolean("enable_speed_stats", s.enableSpeedStats)
@@ -750,7 +774,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("subscription_send_hwid", s.subscriptionSendHwid)
             .putBoolean("subscription_direct", s.subscriptionDirect)
             .putBoolean("allow_subscription_overrides", s.allowSubscriptionOverrides)
-            .putInt("subscription_auto_update_minutes", s.subscriptionAutoUpdateMinutes.coerceIn(15, 1440))
+            .putInt("subscription_auto_update_minutes", normalizedSubscriptionAutoUpdateMinutes(s.subscriptionAutoUpdateMinutes))
             .putString("subscription_include_regex", s.subscriptionIncludeRegex.trim().take(512))
             .putString("subscription_exclude_regex", s.subscriptionExcludeRegex.trim().take(512))
             .putBoolean("subscription_use_proxy_tun", s.subscriptionUseProxyTun)
@@ -819,16 +843,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // The credentials live in preferences and are generated once, so the local
     // proxy keeps the same login between restarts until the user resets it.
     private fun ensureSocks5Username(): String {
-        val stored = prefs.getString("socks5_username", null)?.trim().orEmpty()
-        if (stored.isNotEmpty()) return stored
+        val stored = prefs.getString("socks5_username", null).orEmpty()
+        if (com.lumen.ui.screens.isValidSocks5Credential(stored)) return stored
         val generated = com.lumen.ui.screens.generateSocks5Username()
         prefs.edit().putString("socks5_username", generated).apply()
         return generated
     }
 
     private fun ensureSocks5Password(): String {
-        val stored = prefs.getString("socks5_password", null)?.trim().orEmpty()
-        if (stored.isNotEmpty()) return stored
+        val stored = prefs.getString("socks5_password", null).orEmpty()
+        if (com.lumen.ui.screens.isValidSocks5Credential(stored)) return stored
         val generated = com.lumen.ui.screens.generateSocks5Password()
         prefs.edit().putString("socks5_password", generated).apply()
         return generated
@@ -1846,11 +1870,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             allowHttp = _settings.value.subscriptionAllowHttp
         ) ?: return false
         viewModelScope.launch(Dispatchers.IO) {
-            val current = subEntities.value.firstOrNull { it.id == model.id } ?: return@launch
-            subscriptionDao.updateSubscription(
-                current.copy(name = edit.name, url = edit.url)
-            )
-            log("Updated subscription ${edit.name}")
+            subscriptionMutations.withLock {
+                val current = subscriptionDao.getSubscriptionSnapshot(model.id) ?: return@withLock
+                subscriptionDao.updateSubscription(current.copy(name = edit.name, url = edit.url))
+                log("Updated subscription ${edit.name}")
+            }
         }
         return true
     }
@@ -1871,27 +1895,47 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun refreshSubscriptionInternal(
         sub: SubscriptionEntity,
         rethrow: Boolean = false,
-        adoptProfileTitle: Boolean = false
+        adoptProfileTitle: Boolean = false,
+        automatic: Boolean = false
     ): Int {
-        _refreshingIds.value = _refreshingIds.value + sub.id
+        // Claim atomically: a StateFlow read+write does not serialize concurrent imports.
+        if (!subscriptionRefreshClaims.add(sub.id)) return 0
+        _refreshingIds.update { it + sub.id }
+        val startedEpoch = subscriptionRefreshEpoch.get()
         var importedCount = 0
         try {
+            val requested = subscriptionDao.getSubscriptionSnapshot(sub.id) ?: return 0
+            if (requested.url != sub.url) return 0
+            fun accepts(current: SubscriptionEntity?): Boolean = canApplySubscriptionRefresh(
+                automatic, startedEpoch, subscriptionRefreshEpoch.get(),
+                _settings.value.subscriptionAutoUpdateMinutes,
+                current?.autoUpdateEnabled == true, requested.url, current?.url
+            )
+            if (!accepts(requested)) return 0
+            currentCoroutineContext().ensureActive()
             val subscriptionSettings = _settings.value
+            val fetchJob = currentCoroutineContext()[Job]
+            val fetchEpoch = subscriptionRefreshEpoch.get()
             val payload = SubscriptionClient.fetch(
-                rawUrl = sub.url,
+                rawUrl = requested.url,
                 hwid = subscriptionSettings.subscriptionHwid.trim()
                     .takeIf { subscriptionSettings.subscriptionSendHwid && it.isNotBlank() },
                 customUserAgent = subscriptionSettings.subscriptionUserAgent.trim().ifBlank { null },
                 direct = subscriptionSettings.subscriptionDirect,
                 allowHttp = subscriptionSettings.subscriptionAllowHttp,
-                // Lumen itself is deliberately excluded from VpnService to avoid
-                // feeding the core's sockets back into its own TUN. The setting can
-                // therefore only mean an explicit request through the core's local
-                // SOCKS inbound; a header alone never changed the Android route.
                 proxyPort = subscriptionSettings.localSocksPort.takeIf {
                     subscriptionSettings.subscriptionUseProxyTun && LumenVpnService.isRunning.value
+                },
+                proxyUsername = subscriptionSettings.socks5Username.takeIf { subscriptionSettings.socks5AuthEnabled },
+                proxyPassword = subscriptionSettings.socks5Password.takeIf { subscriptionSettings.socks5AuthEnabled },
+                cancelled = {
+                    fetchJob?.isActive == false || (automatic &&
+                        (subscriptionRefreshEpoch.get() != fetchEpoch ||
+                            normalizedSubscriptionAutoUpdateMinutes(_settings.value.subscriptionAutoUpdateMinutes) == 0))
                 }
             )
+            currentCoroutineContext().ensureActive()
+            if (!accepts(subscriptionDao.getSubscriptionSnapshot(sub.id))) return 0
             val (parsed, errors) = LinkParser.parseLinksText(payload.body)
             errors.take(3).forEach { log("Subscription warning: $it") }
             val valid = parsed.filter {
@@ -1899,111 +1943,90 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     (it.scheme == "auto" || it.server.isNotBlank()) &&
                     (it.scheme == "auto" || it.port in 1..65535) && it.link.length <= 65_536
             }.take(LinkParser.MAX_IMPORT_NODES)
-            if (valid.isNotEmpty()) {
-                // Diff before the delete+insert transaction: afterwards the previous rows
-                // are gone, and the user has no way to tell what the refresh actually did.
-                val previous = nodeEntities.value.filter { it.subscriptionId == sub.id }
-                val previousByKey = previous.associateBy {
-                    subscriptionNodeKey(it.server, it.port, it.protocol, it.name)
-                }
-                val incomingByKey = valid.associateBy {
-                    subscriptionNodeKey(it.server, it.port, it.scheme, it.name)
-                }
-                val added = incomingByKey.keys.count { it !in previousByKey }
-                val removed = previousByKey.keys.count { it !in incomingByKey }
-                // "Updated" means the same endpoint came back with a different link or
-                // display name: a re-keyed server or a renamed location.
-                val updated = incomingByKey.count { (key, node) ->
-                    val old = previousByKey[key]
-                    old != null && (old.link != node.link || old.name != node.name)
-                }
+            if (valid.isEmpty()) {
+                noteSubscriptionFailure(sub.id)
+                log("Subscription ${requested.name}: no nodes found; existing nodes kept")
+                return 0
+            }
+            subscriptionMutations.withLock {
+                val current = subscriptionDao.getSubscriptionSnapshot(sub.id)
+                if (current == null || !accepts(current)) return@withLock
+                var committed: SubscriptionReconciliation? = null
                 db.withTransaction {
-                    nodeDao.deleteNodesBySubscription(sub.id)
-                    nodeDao.insertNodes(valid.map { parsedNode ->
-                        val previousNode = previousByKey[
-                            subscriptionNodeKey(
-                                parsedNode.server,
-                                parsedNode.port,
-                                parsedNode.scheme,
-                                parsedNode.name
-                            )
-                        ]
-                        parsedNode.toEntity(sub.id).let { refreshed ->
-                            if (previousNode == null) refreshed else refreshed.copy(
-                                id = previousNode.id,
-                                pingMs = previousNode.pingMs
-                            )
+                    val latest = subscriptionDao.getSubscriptionSnapshot(sub.id)
+                    if (latest == null || !accepts(latest)) return@withTransaction
+                    val previous = nodeDao.getSubscriptionNodesSnapshot(sub.id)
+                    // A partial parse must never turn a parser/format failure into data deletion.
+                    if (!canReplaceSubscriptionNodes(previous.size, parsed.size, valid.size, errors.size)) {
+                        noteSubscriptionFailure(sub.id)
+                        log("Subscription ${latest.name}: incomplete response; existing nodes kept")
+                        return@withTransaction
+                    }
+                    val result = reconcileSubscriptionNodes(previous, valid.map { it.toEntity(sub.id) })
+                    val replacementUrl = (payload.effectiveUrl
+                        ?: SubscriptionClient.replaceDomain(latest.url, payload.premiumFeatures["new-domain"]))
+                        ?.takeIf { candidate ->
+                            subscriptionSettings.subscriptionAllowHttp ||
+                                !latest.url.startsWith("https://", true) || candidate.startsWith("https://", true)
                         }
-                    })
-                }
-                _subscriptionSummaries.tryEmit(
-                    SubscriptionUpdateSummary(
-                        subscriptionName = sub.name,
-                        added = added,
-                        updated = updated,
-                        removed = removed,
-                        total = valid.size
+                    nodeDao.deleteNodesBySubscription(sub.id)
+                    nodeDao.insertNodes(result.nodes)
+                    subscriptionDao.updateSubscription(
+                        mergeSubscriptionMetadata(
+                            latest, payload.metadata, payload.updateIntervalHours?.takeIf { it in 1..8760 }
+                        ).copy(
+                            name = refreshedSubscriptionName(latest.name, payload.profileTitle, adoptProfileTitle),
+                            url = replacementUrl ?: latest.url,
+                            lastUpdated = System.currentTimeMillis(),
+                            // A provider header is not permission to override a user's opt-out.
+                            autoUpdateEnabled = latest.autoUpdateEnabled
+                        )
                     )
+                    currentCoroutineContext().ensureActive()
+                    if (!accepts(latest)) throw CancellationException("Subscription settings changed")
+                    committed = result
+                }
+                val result = committed ?: return@withLock
+                importedCount = result.nodes.size
+                _subscriptionSummaries.tryEmit(
+                    SubscriptionUpdateSummary(current.name, result.added, result.updated, result.removed, importedCount)
                 )
-                importedCount = valid.size
-                _subscriptionPremium.value = _subscriptionPremium.value + (sub.id to payload.premiumFeatures)
+                _subscriptionPremium.update { it + (sub.id to payload.premiumFeatures) }
                 mergeSubscriptionUsage(sub.id, payload.userInfo)
                 val premiumApplied = applyCompatiblePremiumFeatures(payload.premiumFeatures)
-                // The subscription URL is a bearer credential: never let a provider
-                // response move an https subscription to plaintext http.
-                val replacementUrl = (payload.effectiveUrl
-                    ?: SubscriptionClient.replaceDomain(sub.url, payload.premiumFeatures["new-domain"]))
-                    ?.takeIf { candidate ->
-                        subscriptionSettings.subscriptionAllowHttp ||
-                            !sub.url.startsWith("https://", true) ||
-                            candidate.startsWith("https://", true)
-                    }
-                val autoUpdate = payload.premiumFeatures["subscription-auto-update-enable"]
-                    ?.let(::premiumEnabled) ?: sub.autoUpdateEnabled
-                subscriptionDao.updateSubscription(
-                    mergeSubscriptionMetadata(
-                        sub,
-                        payload.metadata,
-                        payload.updateIntervalHours?.takeIf { it in 1..8760 }
-                    ).copy(
-                        // A provider title is a useful default on first import, but it must
-                        // not undo a name the user deliberately set in the group editor.
-                        name = refreshedSubscriptionName(
-                            currentName = sub.name,
-                            providerTitle = payload.profileTitle,
-                            adoptProviderTitle = adoptProfileTitle
-                        ),
-                        url = replacementUrl ?: sub.url,
-                        lastUpdated = System.currentTimeMillis(),
-                        autoUpdateEnabled = autoUpdate
-                    )
-                )
                 subscriptionFailures.remove(sub.id)
                 subscriptionRetryAfter.remove(sub.id)
-                log("Subscription ${sub.name}: ${parsed.size} node(s), profile ${payload.clientProfile}")
+                log("Subscription ${current.name}: $importedCount node(s), profile ${payload.clientProfile}")
                 if (premiumApplied.isNotEmpty()) log("Applied premium settings: ${premiumApplied.joinToString()}")
-            } else {
-                noteSubscriptionFailure(sub.id)
-                log("Subscription ${sub.name}: no nodes found")
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             noteSubscriptionFailure(sub.id)
             log("Subscription refresh failed: ${e.message}")
             if (rethrow) throw e
         } finally {
-            _refreshingIds.value = _refreshingIds.value - sub.id
+            _refreshingIds.update { it - sub.id }
+            subscriptionRefreshClaims.remove(sub.id)
         }
         return importedCount
     }
 
     fun deleteSubscription(model: SubscriptionUiModel) {
         viewModelScope.launch(Dispatchers.IO) {
-            val keys = nodeEntities.value.filter { it.subscriptionId == model.id }.map { it.groupKey() }
-            nodeDao.deleteNodesBySubscription(model.id)
-            subscriptionDao.deleteSubscriptionById(model.id)
-            if (keys.isNotEmpty()) serverGroupDao.assignNodes(keys, null)
-            forgetSubscriptionUsage(model.id)
-            log("Deleted subscription ${model.name}")
+            subscriptionMutations.withLock {
+                db.withTransaction {
+                    val keys = nodeDao.getSubscriptionNodesSnapshot(model.id).map { it.groupKey() }
+                    nodeDao.deleteNodesBySubscription(model.id)
+                    subscriptionDao.deleteSubscriptionById(model.id)
+                    if (keys.isNotEmpty()) serverGroupDao.assignNodes(keys, null)
+                }
+                forgetSubscriptionUsage(model.id)
+                _subscriptionPremium.update { it - model.id }
+                subscriptionFailures.remove(model.id)
+                subscriptionRetryAfter.remove(model.id)
+                log("Deleted subscription ${model.name}")
+            }
         }
     }
 
@@ -2012,24 +2035,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         deleteSubscription(model)
     }
 
-    // Subscriptions always auto-update; there is no per-subscription switch anymore.
-    // Cadence priority: interval requested by the provider (profile-update-interval),
-    // otherwise the interval configured in app settings.
+    // Global OFF and a disabled subscription are hard vetoes, even with provider cadence.
     private fun startSubscriptionAutoUpdate() {
         viewModelScope.launch(Dispatchers.IO) {
             while (true) {
-                kotlinx.coroutines.delay(60_000L)
-                if (!hasNetworkConnection()) continue
-                val configuredMinutes = _settings.value.subscriptionAutoUpdateMinutes
-                    .takeIf { it > 0 } ?: 240
+                delay(60_000L)
+                if (_settings.value.subscriptionAutoUpdateMinutes <= 0 || !hasNetworkConnection()) continue
                 val now = System.currentTimeMillis()
-                subEntities.value.forEach { sub ->
-                    val providerMinutes = sub.updateIntervalHours.takeIf { it in 1..8760 }?.times(60)
-                    val intervalMinutes = providerMinutes ?: configuredMinutes
+                for (sub in subEntities.value) {
+                    val intervalMinutes = subscriptionAutomaticIntervalMinutes(
+                        _settings.value.subscriptionAutoUpdateMinutes, sub.autoUpdateEnabled, sub.updateIntervalHours
+                    ) ?: continue
                     val due = now - sub.lastUpdated >= intervalMinutes * 60_000L
                     val backedOff = now < (subscriptionRetryAfter[sub.id] ?: 0L)
-                    if (due && !backedOff && sub.id !in _refreshingIds.value) {
-                        runCatching { refreshSubscriptionInternal(sub) }
+                    if (due && !backedOff && sub.id !in subscriptionRefreshClaims) {
+                        try {
+                            refreshSubscriptionInternal(sub, automatic = true)
+                        } catch (cancelled: CancellationException) {
+                            // A settings epoch cancellation ends this request, not the scheduler.
+                            currentCoroutineContext().ensureActive()
+                        }
                     }
                 }
             }

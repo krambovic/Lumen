@@ -1,0 +1,27 @@
+name: Audit regression tests
+'on':
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/**'
+permissions:
+  contents: read
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: windows/requirements.txt
+      - name: Install test dependencies
+        run: python -m pip install -r windows/requirements.txt pytest
+      - name: Guarded Windows regression tests
+        env:
+          PYTHONUTF8: '1'
+        run: python -B windows/scripts/run_safe_tests.py tests -q --tb=short

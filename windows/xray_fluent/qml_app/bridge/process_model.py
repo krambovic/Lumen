@@ -31,6 +31,7 @@ class ProcessModel(QAbstractListModel):
     TopHostRole = Qt.ItemDataRole.UserRole + 9
     TotalRole = Qt.ItemDataRole.UserRole + 10
     RouteRole = Qt.ItemDataRole.UserRole + 11
+    UnknownBytesRole = Qt.ItemDataRole.UserRole + 12
 
     _ROLE_NAMES = {
         NameRole: b"name",
@@ -44,6 +45,7 @@ class ProcessModel(QAbstractListModel):
         TopHostRole: b"topHost",
         TotalRole: b"total",
         RouteRole: b"route",
+        UnknownBytesRole: b"unknownBytes",
     }
 
     _CHANGED_ROLES = list(_ROLE_NAMES.keys())
@@ -85,7 +87,9 @@ class ProcessModel(QAbstractListModel):
         if role == self.TotalRole:
             return float(row.get("total", 0.0))
         if role == self.RouteRole:
-            return row.get("route", "direct")
+            return row.get("route", "unknown")
+        if role == self.UnknownBytesRole:
+            return float(row.get("unknown_bytes", 0.0))
         return None
 
     def set_stats(self, stats: Sequence[Any]) -> None:
@@ -126,11 +130,15 @@ class ProcessModel(QAbstractListModel):
                     "pid": int(_get(item, "pid", default=0)),
                     "proxy_bytes": float(_get(item, "proxy_bytes", default=0.0)),
                     "direct_bytes": float(_get(item, "direct_bytes", default=0.0)),
+                    "unknown_bytes": float(_get(item, "unknown_bytes", default=max(
+                        0.0, total - float(_get(item, "proxy_bytes", default=0.0))
+                        - float(_get(item, "direct_bytes", default=0.0)),
+                    ))),
                     "connections": int(_get(item, "connections", default=0)),
                     "total_connections": int(_get(item, "total_connections", default=0)),
                     "top_host": str(_get(item, "top_host", "host", default="")),
                     "total": total,
-                    "route": str(_get(item, "route", default="direct")),
+                    "route": str(_get(item, "route", default="unknown")),
                 }
             )
         return rows

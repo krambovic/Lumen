@@ -73,6 +73,48 @@ _AWG_UINT32_MAX = 0xFFFFFFFF
 _AWG_RANGE_RE = re.compile(r"^(\d+)-(\d+)$")
 
 
+_IMPORT_SCHEME_RE = re.compile(
+    r"(?i)(?:vless|vmess|trojan|ss|ssr|hysteria2|hysteria|hy2|hy|tuic|wireguard|wg|awg|"
+    r"amneziawg|warp|naive\+https|naive\+quic|naive|mierus|mieru|masque|socks5|socks|"
+    r"https|http|happ|snell|juicity|anytls)://"
+)
+
+
+def _decode_subscription_blob(text: str) -> str | None:
+    clean = "".join(text.split())
+    if len(clean) < 16 or not re.fullmatch(r"[A-Za-z0-9+/_=-]+", clean):
+        return None
+    try:
+        decoded = base64.b64decode(clean + "=" * (-len(clean) % 4), altchars=b"-_", validate=True).decode("utf-8-sig").strip()
+    except (ValueError, UnicodeError, binascii.Error):
+        return None
+    if decoded != text and ("://" in decoded or decoded.startswith(("{", "[")) or "proxies:" in decoded):
+        return decoded
+    return None
+
+
+def _split_subscription_entries(text: str) -> list[str]:
+    result: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("- "):
+            line = line[2:].strip()
+        if line.startswith(("{", "[", chr(34))):
+            result.append(line)
+            continue
+        starts = [m.start() for m in _IMPORT_SCHEME_RE.finditer(line)
+                  if not m.group().lower().startswith("http") or m.start() == 0
+                  or line[m.start() - 1].isspace() or line[m.start() - 1] in ",;|"]
+        if len(starts) > 1:
+            # Preserve spaces in display names; split only at another actual URI.
+            result.extend(line[start:end].strip().rstrip(",;|") for start, end in zip(starts, starts[1:] + [len(line)]))
+        else:
+            result.append(line)
+    return result
+
+
 def parse_links_text(
     text: str,
     *,
@@ -80,7 +122,7 @@ def parse_links_text(
 ) -> tuple[list[Node], list[str]]:
     if len(text.encode("utf-8", errors="replace")) > MAX_IMPORT_BYTES:
         return [], [f"Import data exceeds the {MAX_IMPORT_BYTES}-byte limit"]
-    stripped = text.strip()
+    stripped = text.strip().lstrip("\ufeff").strip()
     source_path: Path | None = None
     try:
         file_reference = (
@@ -92,7 +134,7 @@ def parse_links_text(
         file_text, source_path = file_reference
         stripped = file_text.strip()
         text = file_text
-    if stripped.startswith(("{", "[")):
+    if stripped.startswith(("{", "[", chr(34))):
         try:
             return _parse_json_nodes_text(stripped)
         except Exception as exc:
@@ -100,6 +142,8 @@ def parse_links_text(
                 json_lines = _try_parse_json_lines(stripped)
                 if json_lines is not None:
                     return json_lines
+                return [], [f"JSON: {exc}"]
+            if not stripped.lower().startswith("[interface]"):
                 return [], [f"JSON: {exc}"]
     if _looks_like_clash_yaml(stripped):
         try:
@@ -138,7 +182,10 @@ def parse_links_text(
         except Exception as exc:
             return [], [f"Config: {exc}"]
 
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    decoded = _decode_subscription_blob(stripped)
+    if decoded is not None:
+        return parse_links_text(decoded)
+    lines = _split_subscription_entries(stripped)
     if len(lines) > MAX_IMPORT_LINES:
         return [], [f"Import contains more than {MAX_IMPORT_LINES} non-empty lines"]
     nodes: list[Node] = []
@@ -146,9 +193,20 @@ def parse_links_text(
 
     for idx, line in enumerate(lines, start=1):
         try:
-            node = parse_single(line)
-            _apply_happ_server_metadata(node, line)
-            nodes.append(node)
+            if line.startswith(("{", "[", chr(34))):
+                inner, inner_errors = _parse_json_nodes_text(line)
+                nodes.extend(inner)
+                errors.extend(f"Line {idx}: {error}" for error in inner_errors)
+            elif (decoded_line := _decode_subscription_blob(line)) is not None:
+                inner, inner_errors = parse_links_text(decoded_line)
+                nodes.extend(inner)
+                errors.extend(f"Line {idx}: {error}" for error in inner_errors)
+            else:
+                node = parse_single(line)
+                _apply_happ_server_metadata(node, line)
+                nodes.append(node)
+            if len(nodes) > MAX_IMPORT_NODES:
+                return [], [f"Import contains more than {MAX_IMPORT_NODES} nodes"]
         except Exception as exc:
             errors.append(f"Line {idx}: {exc}")
 
@@ -1340,56 +1398,73 @@ def _try_parse_json_lines(text: str) -> tuple[list[Node], list[str]] | None:
     return nodes, errors
 
 
-def _parse_json_nodes_payload(payload: Any) -> tuple[list[Node], list[str]]:
+def _parse_json_nodes_payload(payload: Any, *, _depth: int = 0) -> tuple[list[Node], list[str]]:
+    if _depth > 16:
+        raise LinkParseError("JSON subscription nesting exceeds 16 levels")
     nodes: list[Node] = []
     errors: list[str] = []
-
+    if isinstance(payload, str):
+        return parse_links_text(payload)
     if isinstance(payload, dict) and "proxy" in payload and not any(
         key in payload for key in ("type", "protocol", "outbounds", "endpoints", "proxies")
     ):
         return _parse_naiveproxy_config_payload(payload)
 
+    label = ""
     if isinstance(payload, list):
         items = payload
     elif isinstance(payload, dict):
-        links = payload.get("links")
-        if isinstance(links, list):
-            items = links
-        elif isinstance(payload.get("configs"), list):
-            items = payload["configs"]
-        elif isinstance(payload.get("nodes"), list):
-            items = payload["nodes"]
-        elif isinstance(payload.get("items"), list):
-            items = payload["items"]
-        elif _is_singbox_wireguard_config_payload(payload) or _is_singbox_openvpn_config_payload(payload):
-            items = [payload]
-        elif isinstance(payload.get("providers"), list) and isinstance(payload.get("outbounds"), list):
-            items = [payload]
-        elif _is_xray_auto_config_payload(payload):
-            items = [payload]
-        elif isinstance(payload.get("outbounds"), list):
-            items = _json_proxy_outbounds(payload["outbounds"])
-        elif _json_payload_can_be_node(payload):
-            items = [payload]
-        else:
-            raise LinkParseError("JSON must contain links, configs, nodes, items, protocol, type, endpoints, or outbounds")
+        # Keep whole native graphs where flattening would destroy dependencies or AUTO.
+        native_graph = (
+            _is_singbox_wireguard_config_payload(payload) or _is_singbox_openvpn_config_payload(payload)
+            or _is_xray_auto_config_payload(payload)
+            or (isinstance(payload.get("providers"), list) and isinstance(payload.get("outbounds"), list))
+        )
+        if native_graph or "protocol" in payload or "type" in payload:
+            return [_parse_json_outbound_payload(payload)], []
+        items = []
+        if isinstance(payload.get("outbounds"), list):
+            items.extend(_json_proxy_outbounds(payload["outbounds"]))
+        if isinstance(payload.get("endpoints"), list):
+            items.extend(payload["endpoints"])
+        # These are independent containers, not an if/elif choice that loses siblings.
+        for key in ("proxies", "servers", "nodes", "configs", "links", "subs", "items"):
+            if isinstance(payload.get(key), list):
+                items.extend(payload[key])
+            elif isinstance(payload.get(key), (dict, str)):
+                items.append(payload[key])
+        label = next((str(payload[key]) for key in ("remarks", "name") if payload.get(key)), "")
+        if not items:
+            if isinstance(payload.get("outbound"), dict):
+                items = [payload["outbound"]]
+            else:
+                value = next((payload.get(key) for key in ("link", "uri", "url", "config", "data", "content") if isinstance(payload.get(key), (dict, list, str))), None)
+                if value is not None:
+                    items = [value]
+                elif {"add", "id", "port"} <= payload.keys():
+                    compact = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("ascii")
+                    return [parse_single("vmess://" + compact)], []
+                else:
+                    raise LinkParseError("JSON contains no supported node or subscription container")
     else:
-        raise LinkParseError("JSON subscription must be an object or an array")
-
+        raise LinkParseError("JSON subscription must be an object, array or encoded string")
     if len(items) > MAX_IMPORT_NODES:
         raise LinkParseError(f"JSON contains more than {MAX_IMPORT_NODES} nodes")
-
     for idx, item in enumerate(items, start=1):
         try:
-            if isinstance(item, str):
-                nodes.append(parse_single(item))
-            elif isinstance(item, dict):
-                nodes.append(_parse_json_outbound_payload(item))
-            else:
-                raise LinkParseError(f"unsupported JSON item type: {type(item).__name__}")
+            inner, inner_errors = _parse_json_nodes_payload(item, _depth=_depth + 1)
+            nodes.extend(inner)
+            errors.extend(f"JSON item {idx}: {error}" for error in inner_errors)
         except Exception as exc:
             errors.append(f"JSON item {idx}: {exc}")
-
+        if len(nodes) > MAX_IMPORT_NODES:
+            return [], [f"JSON contains more than {MAX_IMPORT_NODES} nodes"]
+    if label:
+        for node in nodes:
+            if len(nodes) == 1:
+                node.name = label
+            elif node.name != label:
+                node.name = f"{label} · {node.name}"
     return nodes, errors
 
 
@@ -3419,7 +3494,7 @@ def _validate_awg3_header_key(value: str) -> str:
         raw = base64.b64decode(text, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise LinkParseError(
-            f"некорректный HeaderProtectionKey: ожидается base64 ключ длиной 32 байта"
+            "некорректный HeaderProtectionKey: ожидается base64 ключ длиной 32 байта"
         ) from exc
     if len(raw) != 32:
         raise LinkParseError(

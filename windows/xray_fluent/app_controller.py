@@ -13,7 +13,7 @@ from pathlib import Path
 from .constants import APP_VERSION, DIAGNOSTICS_UPLOAD_URL
 from .bounded_logs import LogRing
 from .logging_setup import configure_diagnostics_upload, configure_logging, get_logger
-from .diagnostics_uploader import upload_bundle
+from .diagnostics_uploader import get_upload_epoch, uploads_allowed, upload_bundle
 from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtCore import QMetaObject, QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
@@ -182,8 +182,8 @@ from .routing_presets import (
 from .security import create_password_hash, get_idle_seconds, verify_password
 from .storage import PassphraseRequired, StateStorage
 from .state_snapshot import snapshot_state
+from .secret_scrubber import StreamingSecretScrubber, scrub_text
 from .startup import (
-    STARTUP_STATE_ABSENT,
     STARTUP_STATE_DISABLED,
     build_startup_command,
     get_startup_state,
@@ -307,6 +307,7 @@ class AppController(QObject):
     passphrase_required = pyqtSignal()
     _save_failed = pyqtSignal(str)
     _startup_disabled = pyqtSignal(int)
+    _admin_setting_applied = pyqtSignal(bool, bool, str)
     auto_switch_triggered = pyqtSignal(str)  # node name we're switching to
     transition_state_changed = pyqtSignal(bool, str)
     _transition_completed = pyqtSignal(bool, str, str, int)
@@ -430,17 +431,23 @@ class AppController(QObject):
         self._save_worker_running = False
         self._save_executor_shutdown = False
 
-        self.xray.log_received.connect(lambda line: self._on_core_log("xray", line))
+        self._core_log_streams = {name: StreamingSecretScrubber() for name in ("xray", "singbox", "zapret")}
+        self._pending_core_logs = LogRing(maxlen=2000)
+        self._core_log_timer = QTimer(self)
+        self._core_log_timer.setInterval(50)
+        self._core_log_timer.timeout.connect(self._flush_core_logs)
+        self._core_log_timer.start()
+        self.xray.log_received.connect(lambda line: self._queue_core_log("xray", line), Qt.ConnectionType.DirectConnection)
         self.xray.error.connect(self._on_xray_error)
         self.xray.state_changed.connect(self._on_core_state_changed)
         self.xray.stopped.connect(lambda code: self._on_core_stopped("xray", code))
 
-        self.singbox.log_received.connect(lambda line: self._on_core_log("singbox", line))
+        self.singbox.log_received.connect(lambda line: self._queue_core_log("singbox", line), Qt.ConnectionType.DirectConnection)
         self.singbox.error.connect(self._on_singbox_error)
         self.singbox.state_changed.connect(self._on_core_state_changed)
         self.singbox.stopped.connect(lambda code: self._on_core_stopped("singbox", code))
 
-        self.zapret.log_line.connect(lambda line: self._on_core_log("zapret", line))
+        self.zapret.log_line.connect(lambda line: self._queue_core_log("zapret", line), Qt.ConnectionType.DirectConnection)
 
         self.network_monitor.network_changed.connect(self._on_network_changed)
 
@@ -463,6 +470,11 @@ class AppController(QObject):
         self._metrics_request.connect(self._on_metrics_request, Qt.ConnectionType.QueuedConnection)
         self._startup_sync_active = False
         self._startup_settings_generation = 0
+        self._startup_io_lock = threading.Lock()
+        self._windows_pref_lock = threading.Lock()
+        self._windows_pref_pending = None
+        self._windows_pref_running = False
+        self._admin_setting_applied.connect(self._on_admin_setting_applied, Qt.ConnectionType.QueuedConnection)
         self._startup_disabled.connect(self._accept_external_startup_disable, Qt.ConnectionType.QueuedConnection)
         self._save_failed.connect(self._on_save_failure, Qt.ConnectionType.QueuedConnection)
         self._startup_sync_timer = QTimer(self)
@@ -552,12 +564,68 @@ class AppController(QObject):
         # server switch and incorrectly make that switch look rejected.
 
     def _configure_admin_startup(self) -> None:
-        if self._shutting_down or not self.state.settings.always_run_as_admin:
+        generation = self._startup_settings_generation
+        with self._startup_io_lock:
+            if self._shutting_down or generation != self._startup_settings_generation or not self.state.settings.always_run_as_admin:
+                return
+            try:
+                set_always_run_as_admin(True)
+            except Exception as exc:
+                self.status.emit("error", "Ошибка настройки запуска от администратора: " + scrub_text(str(exc)))
+
+    def _queue_windows_preferences(self, *, startup: bool, admin: bool) -> None:
+        if self._shutting_down:
             return
+        settings = self.state.settings
+        values = (bool(settings.launch_on_startup), bool(settings.launch_in_tray_on_startup), bool(settings.always_run_as_admin))
+        with self._windows_pref_lock:
+            pending = self._windows_pref_pending
+            if pending is not None:
+                startup, admin = startup or pending[3], admin or pending[4]
+            self._windows_pref_pending = (*values, startup, admin)
+            if self._windows_pref_running:
+                return
+            self._windows_pref_running = True
         try:
-            set_always_run_as_admin(True)
-        except Exception as exc:
-            self.status.emit("error", "Ошибка настройки запуска от администратора: " + str(exc))
+            self._start_background_task(self._drain_windows_preferences, "windows-preferences")
+        except Exception:
+            with self._windows_pref_lock:
+                self._windows_pref_running = False
+            raise
+
+    def _drain_windows_preferences(self) -> None:
+        # One writer, latest pending snapshot; the GUI never waits on OS IO.
+        while True:
+            with self._windows_pref_lock:
+                pending, self._windows_pref_pending = self._windows_pref_pending, None
+                if pending is None:
+                    self._windows_pref_running = False
+                    return
+            launch, tray, enabled, startup, admin = pending
+            with self._startup_io_lock:
+                if startup:
+                    try:
+                        set_startup_enabled(APP_NAME, launch, build_startup_command(in_tray=tray))
+                    except Exception as exc:
+                        self.status.emit("error", "Ошибка настройки автозапуска: " + scrub_text(str(exc)))
+                if admin:
+                    try:
+                        set_always_run_as_admin(enabled)
+                        self._admin_setting_applied.emit(enabled, is_process_elevated(), "")
+                    except Exception as exc:
+                        self._admin_setting_applied.emit(enabled, False, scrub_text(str(exc)))
+
+    @pyqtSlot(bool, bool, str)
+    def _on_admin_setting_applied(self, enabled: bool, elevated: bool, error: str) -> None:
+        if self._shutting_down or enabled != bool(self.state.settings.always_run_as_admin):
+            return
+        if error:
+            self.status.emit("error", "Ошибка настройки запуска от администратора: " + error)
+        elif enabled and not elevated:
+            self.status.emit("warning", "Запуск от имени администратора включён. Перезапускаю Lumen с повышенными правами.")
+            self.admin_relaunch_requested.emit()
+        else:
+            self.status.emit("success" if enabled else "info", "Запуск от имени администратора включён" if enabled else "Запуск от имени администратора отключён")
 
     @pyqtSlot(int)
     def _accept_external_startup_disable(self, generation: int) -> None:
@@ -573,18 +641,22 @@ class AppController(QObject):
         self.status.emit("error", "Профиль не сохранён: " + message)
 
     def _reconcile_startup_registration(self) -> None:
+        generation = self._startup_settings_generation
+        settings = self.state.settings
+        launch, tray = bool(settings.launch_on_startup), bool(settings.launch_in_tray_on_startup)
         try:
-            if self._sync_startup_state_from_windows():
-                return
-            set_startup_enabled(
-                APP_NAME,
-                bool(self.state.settings.launch_on_startup),
-                build_startup_command(
-                    in_tray=bool(getattr(self.state.settings, "launch_in_tray_on_startup", True))
-                ),
-            )
+            with self._startup_io_lock:
+                if self._shutting_down or generation != self._startup_settings_generation:
+                    return
+                external = get_startup_state(APP_NAME)
+                if generation != self._startup_settings_generation:
+                    return
+                if launch and external == STARTUP_STATE_DISABLED:
+                    self._startup_disabled.emit(generation)
+                    return
+                set_startup_enabled(APP_NAME, launch, build_startup_command(in_tray=tray))
         except Exception as exc:
-            self._logger.warning("Failed to reconcile startup registration: %s", exc)
+            self._logger.warning("Failed to reconcile startup registration: %s", scrub_text(str(exc)))
 
     def _schedule_startup_state_sync(self) -> None:
         # Registry + schtasks probing must never run on the GUI thread.
@@ -600,26 +672,20 @@ class AppController(QObject):
             self._startup_sync_active = False
 
     def _sync_startup_state_from_windows(self) -> bool:
-        generation = getattr(self, "_startup_settings_generation", 0)
+        # Periodic observation is read-only. Only accepted user intent writes.
+        generation = self._startup_settings_generation
+        launch = bool(self.state.settings.launch_on_startup)
         try:
-            command = build_startup_command(
-                in_tray=bool(getattr(self.state.settings, "launch_in_tray_on_startup", True))
-            )
-            if not bool(self.state.settings.launch_on_startup):
-                if get_startup_state(APP_NAME) != STARTUP_STATE_ABSENT:
-                    set_startup_enabled(APP_NAME, False, command)
+            with self._startup_io_lock:
+                external = get_startup_state(APP_NAME)
+            if generation != self._startup_settings_generation:
                 return False
-            if get_startup_state(APP_NAME) != STARTUP_STATE_DISABLED:
-                return False
-            # Respect an explicit external disable. Repairing stale/missing
-            # registration must not silently override Task Manager.
-            signal = getattr(self, "_startup_disabled", None)
-            if signal is not None:
-                signal.emit(generation)
-            return True
+            if launch and external == STARTUP_STATE_DISABLED:
+                self._startup_disabled.emit(generation)
+                return True
         except Exception as exc:
-            self._logger.warning("Failed to sync startup state from Windows: %s", exc)
-            return False
+            self._logger.warning("Failed to sync startup state from Windows: %s", scrub_text(str(exc)))
+        return False
 
     def _probe_core_versions(self) -> None:
         version = get_xray_version(self.state.settings.xray_path)
@@ -638,6 +704,8 @@ class AppController(QObject):
             prime_endpoint_resolution(node.server)
 
     def _start_background_task(self, target, name: str) -> None:
+        if self._shutting_down:
+            return
         def _run() -> None:
             try:
                 target()
@@ -650,7 +718,12 @@ class AppController(QObject):
         thread = threading.Thread(target=_run, name=name)
         with self._background_threads_lock:
             self._background_threads.add(thread)
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            with self._background_threads_lock:
+                self._background_threads.discard(thread)
+            raise
 
     def _join_background_tasks(self, timeout: float = 3.0) -> None:
         with self._background_threads_lock:
@@ -727,7 +800,9 @@ class AppController(QObject):
         try:
             snapshot = snapshot_state(self.state)
         except Exception as exc:
-            self._logger.error("[state] Failed to snapshot state: %s", exc)
+            message = scrub_text(str(exc))
+            self._logger.error("[state] Failed to snapshot state: %s", message)
+            self._save_failed.emit(message)
             return None
         with self._save_futures_lock:
             # One in-flight write and at most one latest pending snapshot.
@@ -1345,6 +1420,7 @@ class AppController(QObject):
         protect_ss_password: str = "",
         ping_host: str = "",
         ping_port: int = 0,
+        health_proxy_url: str = "",
     ) -> None:
         settings = self.state.settings
         routing = self.state.routing
@@ -1385,7 +1461,15 @@ class AppController(QObject):
             ping_port=int(ping_port),
             clash_api_selector=str(clash_api_selector),
             clash_api_node_signatures=tuple(clash_api_node_signatures),
+            health_proxy_url=health_proxy_url,
         )
+        self._health_session_started_at = time.monotonic()
+        worker = self._metrics_worker
+        if worker is not None:
+            worker.set_active_profile(
+                str(node.id) if node else "", outbound_tag=clash_api_selector or "proxy",
+                health_proxy_url=health_proxy_url,
+            )
         self._blocked_transition_signature = ""
 
     def _clear_active_session(self) -> None:
@@ -1434,6 +1518,7 @@ class AppController(QObject):
                 socks_port=socks_port,
                 http_port=http_port,
                 xray_inbound_tags=session.xray_inbound_tags if session is not None else (),
+                health_proxy_url=session.health_proxy_url if session is not None else "",
                 sidecar_relay_port=session.sidecar_relay_port if session is not None else 0,
                 protect_ss_port=session.protect_ss_port if session is not None else 0,
                 protect_ss_password=session.protect_ss_password if session is not None else "",
@@ -1684,6 +1769,8 @@ class AppController(QObject):
 
     def _on_metrics_request(self, start: bool) -> None:
         # Always runs on the GUI thread (owns the metrics worker / its QThread).
+        if self._shutting_down:
+            return
         if start:
             self._start_metrics_worker()
         else:
@@ -1720,6 +1807,7 @@ class AppController(QObject):
         deadline = time.monotonic() + 5.0 if deadline is None else deadline
         self._logger.info("[app] AppController shutting down...")
         self._startup_sync_timer.stop()
+        self._core_log_timer.stop()
         self._transition_timer.stop()
         self._transition_pending = False
         self._transition_scheduled = False
@@ -1734,6 +1822,8 @@ class AppController(QObject):
         try:
             shutdown_operation(self, deadline=deadline)
         finally:
+            if not self._traffic_history.close(timeout=max(0.0, deadline - time.monotonic())):
+                self._logger.warning("[history] final write pending or failed: %s", self._traffic_history.last_save_error)
             self._flush_state_saves(timeout=max(0.0, deadline - time.monotonic()))
             self._save_executor_shutdown = True
             self._save_executor.shutdown(wait=False, cancel_futures=False)
@@ -1745,6 +1835,12 @@ class AppController(QObject):
         self._stop_active_connection_processes(disable_proxy=True, fast=True)
         if self.zapret.running:
             self.zapret.stop(fast=True)
+        self._core_log_timer.stop()
+        while self._pending_core_logs:
+            self._flush_core_logs()
+        from .logging_setup import shutdown_logging
+        if not shutdown_logging(timeout=1.0):
+            self._logger.warning("[logs] final file flush still pending")
 
     def has_pending_shutdown_work(self) -> bool:
         from .qthread_utils import has_pending_shutdown_threads
@@ -1753,7 +1849,8 @@ class AppController(QObject):
         with self._background_threads_lock:
             background = any(thread.is_alive() for thread in self._background_threads)
         transition = self._transition_worker_thread
-        return bool(saving or background or (transition is not None and transition.is_alive()) or has_pending_shutdown_threads())
+        return bool(saving or background or (transition is not None and transition.is_alive())
+                    or self._traffic_history.writer_running or has_pending_shutdown_threads())
 
     @staticmethod
     def _cleanup_tun_adapter(max_wait: float = 3.0) -> None:
@@ -1945,7 +2042,9 @@ class AppController(QObject):
         self._auto_switch_low_since = 0.0
         self._auto_switch_high_ticks = 0
         self._auto_switch_active_download = False
-        self._health_down_since = 0.0
+        from .application.auto_switch_service import reset_health_tracking
+        reset_health_tracking(self)
+        self._health_session_started_at = time.monotonic()
         if reset_cycle:
             self._auto_switch_cycle_attempts = 0
             self._auto_switch_exhausted = False
@@ -2214,6 +2313,11 @@ class AppController(QObject):
             self.status.emit("warning", "Сначала откройте зашифрованный профиль")
             return None
         old_settings = self.state.settings
+        # Reject delayed Windows reconciliation of superseded user intent.
+        if any(getattr(old_settings, key, None) != getattr(settings, key, None) for key in (
+            "launch_on_startup", "launch_in_tray_on_startup", "always_run_as_admin",
+        )):
+            self._startup_settings_generation += 1
         old_launch = old_settings.launch_on_startup
         old_launch_in_tray = getattr(old_settings, "launch_in_tray_on_startup", True)
         old_admin = old_settings.always_run_as_admin
@@ -2235,37 +2339,12 @@ class AppController(QObject):
         elif old_firefox_proxy and not settings.firefox_proxy_integration:
             self.proxy.disable_necko_overrides()
 
-        if (
-            old_launch != settings.launch_on_startup
-            or (
-                settings.launch_on_startup
-                and old_launch_in_tray != getattr(settings, "launch_in_tray_on_startup", True)
-            )
-        ):
-            try:
-                set_startup_enabled(
-                    APP_NAME,
-                    settings.launch_on_startup,
-                    build_startup_command(
-                        in_tray=bool(getattr(settings, "launch_in_tray_on_startup", True))
-                    ),
-                )
-            except Exception as exc:
-                self.status.emit("error", f"Ошибка настройки автозапуска: {exc}")
-
-        if old_admin != settings.always_run_as_admin:
-            try:
-                set_always_run_as_admin(settings.always_run_as_admin)
-                if settings.always_run_as_admin:
-                    if is_process_elevated():
-                        self.status.emit("success", "Запуск от имени администратора включён")
-                    else:
-                        self.status.emit("warning", "Запуск от имени администратора включён. Перезапускаю Lumen с повышенными правами.")
-                        self.admin_relaunch_requested.emit()
-                else:
-                    self.status.emit("info", "Запуск от имени администратора отключён")
-            except Exception as exc:
-                self.status.emit("error", f"Ошибка настройки запуска от администратора: {exc}")
+        startup_changed = old_launch != settings.launch_on_startup or (
+            settings.launch_on_startup and old_launch_in_tray != settings.launch_in_tray_on_startup
+        )
+        admin_changed = old_admin != settings.always_run_as_admin
+        if startup_changed or admin_changed:
+            self._queue_windows_preferences(startup=startup_changed, admin=admin_changed)
 
         if self.connected or self._desired_connected:
             if old_tun != settings.tun_mode:
@@ -2508,12 +2587,20 @@ class AppController(QObject):
         self._resume_reconnect_pending = False
         self._request_transition("app locked")
 
-    def build_diagnostics(self, *, include: dict | None = None, upload: bool = True) -> Path:
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    def build_diagnostics(self, *, include: dict | None = None, upload: bool = True,
+                          epoch: int | None = None, state: AppState | None = None, logs=None) -> Path:
+        epoch = get_upload_epoch() if epoch is None else epoch
+        source = self.state if state is None else state
+        will_upload = bool(upload and DIAGNOSTICS_UPLOAD_URL and source.settings.diagnostics_upload_enabled and uploads_allowed(epoch))
+        log_snapshot = tuple(self.recent_logs) if logs is None else logs
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         output = LOG_DIR / f"diagnostics_{stamp}.zip"
-        bundle = export_diagnostics(output, self.state, self.recent_logs, include=include)
-        if upload and DIAGNOSTICS_UPLOAD_URL and self.state.settings.diagnostics_upload_enabled:
-            upload_bundle(DIAGNOSTICS_UPLOAD_URL, bundle, app_version=APP_VERSION)
+        bundle = export_diagnostics(
+            output, source, log_snapshot, include=include,
+            cancelled=lambda: self._shutting_down or (will_upload and not uploads_allowed(epoch)),
+        )
+        if will_upload:
+            upload_bundle(DIAGNOSTICS_UPLOAD_URL, bundle, app_version=APP_VERSION, epoch=epoch)
         return bundle
 
     def auto_connect_if_needed(self) -> None:
@@ -2592,6 +2679,16 @@ class AppController(QObject):
                 self._core_logger.info("[tun] %d internal/noisy logs hidden", self._tun_log_count)
             return
         self._log(line)
+
+    def _queue_core_log(self, source: str, line: str) -> None:
+        # Scrub complete producer lines before truncation/drop and before Qt.
+        safe = self._core_log_streams[source].scrub(line)
+        self._pending_core_logs.append((source, safe))
+
+    @pyqtSlot()
+    def _flush_core_logs(self) -> None:
+        for source, line in self._pending_core_logs.drain(256):
+            self._on_core_log(source, line)
 
     def _on_core_log(self, source: str, line: str) -> None:
         clean = str(line or "").strip()
@@ -2691,13 +2788,16 @@ class AppController(QObject):
         on_connectivity_result_operation(self, ok, message, elapsed_ms)
 
     def _on_live_metrics(self, payload: dict[str, object]) -> None:
+        sender = self.sender()
+        if self._shutting_down or sender is None or sender is not self._metrics_worker:
+            return  # Retired/deleted sender, or a sample queued before shutdown.
         on_live_metrics_operation(self, payload)
 
     _AUTO_SWITCH_HIGH_TICKS_REQUIRED = 10
     _AUTO_SWITCH_IDLE_BPS = 1024.0
 
-    def _check_auto_switch(self, down_bps: float, latency_ms: int | None = None) -> None:
-        check_auto_switch_operation(self, down_bps, latency_ms)
+    def _check_auto_switch(self, down_bps: float, latency_ms: int | None = None, **health) -> None:
+        check_auto_switch_operation(self, down_bps, latency_ms, **health)
 
     def _get_next_node_for_auto_switch(self) -> Node | None:
         return get_next_node_for_auto_switch_operation(self)

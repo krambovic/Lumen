@@ -65,6 +65,13 @@ def _safe_stdio_fixture(args) -> bool:
 
 
 def _guard(event, args):
+    if event == "ctypes.dlsym" and args[1] in {
+        "InternetSetOptionW", "InternetSetOptionA", "ShellExecuteW", "ShellExecuteExW",
+        "CreateIpForwardEntry", "CreateIpForwardEntry2", "DeleteIpForwardEntry", "DeleteIpForwardEntry2",
+        "SetIpForwardEntry", "RasSetEntryPropertiesW", "RegSetValueExW",
+        "SetPerTcpConnectionEStats", "SetPerTcp6ConnectionEStats",
+    }:
+        raise PermissionError("Unit-test isolation blocked a native system mutation; mock this boundary")
     if event == "subprocess.Popen" and _safe_stdio_fixture(args):
         return
     if event == "subprocess.Popen" or event in {

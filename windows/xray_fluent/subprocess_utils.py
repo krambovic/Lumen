@@ -172,24 +172,7 @@ def is_same_path(left: str | Path | None, right: str | Path | None) -> bool:
 
 
 def kill_processes_by_path(process_name: str, executable_path: str | Path, *, timeout: float = 5.0) -> bool:
-    if os.name != "nt":
-        return False
-    try:
-        target = Path(executable_path).resolve()
-    except Exception:
-        target = Path(executable_path)
-    target_text = str(target).replace("/", "\\").replace("'", "''")
-    script = (
-        "$matches = @(Get-CimInstance Win32_Process | "
-        f"Where-Object {{ $_.Name -eq '{process_name}' -and ($_.ExecutablePath -replace '/', '\\') -eq '{target_text}' }}); "
-        "$matches | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; "
-        "Write-Output $matches.Count"
-    )
-    result = run_text_pumped(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-        timeout=timeout,
-        creationflags=CREATE_NO_WINDOW,
-    )
-    if result.returncode != 0:
-        return False
-    return result_output_text(result).strip() not in {"", "0"}
+    # Compatibility shim: a path/name is not process ownership. Runtime managers
+    # already terminate/wait on their retained Popen handles. Do not kill a
+    # different instance or a concurrent probe as an "orphan" fallback.
+    return False

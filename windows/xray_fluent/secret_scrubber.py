@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import traceback
 from collections.abc import Mapping
 
@@ -32,12 +33,17 @@ _KEY_EXACT = {"id", "pass", "pwd", "psk", "uuid", "shortid", "sid", "username", 
 # Match the assignment syntax first, then classify its key. This also handles
 # quoted keys inside multiply escaped JSON embedded in otherwise plain text.
 _ASSIGNMENT = re.compile(
-    r"(?P<key>[\w.-]+)(?:\\*[\"'])?[ \t]*[:=][ \t]*", re.UNICODE
+    # Start only at a key boundary; retrying inside a long token is quadratic.
+    r"(?<![\w.-])(?P<key>[\w.-]+)(?:\\*[\"'])?[ \t]*[:=][ \t]*", re.UNICODE
 )
 _PEM = re.compile(
     r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?(?:-----END [^-\r\n]*PRIVATE KEY-----|\Z)",
     re.DOTALL | re.IGNORECASE,
 )
+_PEM_BOUNDARY = re.compile(
+    r"-----((?:BEGIN)|(?:END)) [^-\r\n]*PRIVATE KEY-----", re.IGNORECASE
+)
+_AUTH_SCHEME = re.compile(r"(?i)\b(?:bearer|basic)[ \t]+")
 _HTTP_PATH = re.compile(
     r"(?i)(\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT)\s+)/(?:[^\s\"'<>]+)"
 )
@@ -78,6 +84,10 @@ def _assignment_end(text: str, start: int) -> int:
     a quote with three backslashes belongs to the value. A token-only regular
     expression is unsafe here and for 'Authorization: Bearer <credential>'.
     """
+    # A Unicode-escaped quote in an otherwise malformed JSON fragment has
+    # ambiguous boundaries. Never stop at a comma inside its private value.
+    if re.match(r"\\+u00(?:22|27)", text[start:], re.IGNORECASE):
+        return len(text)
     quote_at = start
     while quote_at < len(text) and text[quote_at] == "\\":
         quote_at += 1
@@ -97,6 +107,9 @@ def _assignment_end(text: str, start: int) -> int:
             if (escape_depth == 0 and backslashes % 2 == 0) or (
                 escape_depth > 0 and backslashes == escape_depth
             ):
+                following = text[index + 1:].lstrip(" \t")
+                if following and following[0] not in ",;}]\r\n":
+                    return len(text)  # Malformed unescaped quote: hide the tail.
                 return index + 1
             index += 1
         return len(text)
@@ -122,6 +135,18 @@ def _scrub_assignments(text: str) -> str:
         delimiter = quote.group(0) if quote else '"'
         pieces.append(delimiter + _REDACTED + delimiter)
         cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _scrub_auth_schemes(text: str) -> str:
+    pieces, cursor = [], 0
+    for match in _AUTH_SCHEME.finditer(text):
+        if match.start() < cursor:
+            continue
+        pieces.append(text[cursor:match.start()])
+        pieces.append("[REDACTED AUTH]")
+        cursor = _assignment_end(text, match.end())
     pieces.append(text[cursor:])
     return "".join(pieces)
 
@@ -153,6 +178,7 @@ def scrub_text(value: object, *, _depth: int = 0) -> str:
     text = _HTTP_PATH.sub(r"\1/[REDACTED]", text)
     text = _HOME_PATH.sub("[REDACTED HOME]", text)
     text = _scrub_assignments(text)
+    text = _scrub_auth_schemes(text)
     text = _UUID.sub("[REDACTED ID]", text)
     return _LONG_ID.sub("[REDACTED ID]", text)
 
@@ -179,6 +205,43 @@ def scrub_value(value: object, *, _depth: int = 0):
     if isinstance(value, bytes):
         return scrub_text(value.decode("utf-8", errors="replace"), _depth=_depth + 1)
     return "[REDACTED OBJECT]"
+
+
+class StreamingSecretScrubber:
+    """Scrub complete raw lines BEFORE any stateless scrubber removes markers.
+
+    Own one instance per raw producer (not per line). An unterminated PEM
+    suppresses subsequent lines until its END; no timeout guesses or raw
+    buffering. Nested/interleaved blocks fail closed. Delimiter fragments
+    split across calls are not supported: frame complete lines upstream.
+    """
+    def __init__(self) -> None:
+        self._open_keys = 0
+        self._lock = threading.RLock()
+
+    def scrub(self, value: object) -> str:
+        text = _CONTROLS.sub("", _ANSI.sub("", safe_text(value)))
+        with self._lock:
+            pieces, cursor = [], 0
+            for match in _PEM_BOUNDARY.finditer(text):
+                if not self._open_keys:
+                    pieces.append(scrub_text(text[cursor:match.start()]))
+                pieces.append("[REDACTED KEY]")
+                if match.group(1).upper() == "BEGIN":
+                    self._open_keys += 1
+                elif self._open_keys:
+                    self._open_keys -= 1
+                cursor = match.end()
+            pieces.append("[REDACTED KEY]" if self._open_keys else scrub_text(text[cursor:]))
+            safe = "".join(pieces)
+            # Track/redact the ENTIRE input before bounding a queued UI line.
+            return safe[:_MAX_RECORD_CHARS] + " [TRUNCATED]" if len(safe) > _MAX_RECORD_CHARS else safe
+
+
+# Shared upstream policy: records are mutated before fan-out, so a per-handler
+# policy would miss BEGIN already scrubbed by the previous handler. Prefer
+# producer-owned streams for raw core/UI lines that bypass logging records.
+_RECORD_STREAM = StreamingSecretScrubber()
 
 
 def _record_text(value: object) -> str:
@@ -212,12 +275,12 @@ def scrub_record(record: logging.LogRecord) -> logging.LogRecord:
             # Do not call __str__ on application objects or keep nested secrets
             # alive in a queue. Placeholder values also keep custom formatters usable.
             record.__dict__[key] = "[REDACTED FIELD]"
-    record.msg = _record_text(message)
+    record.msg = _record_text(_RECORD_STREAM.scrub(message))
     record.args = ()
     record.message = record.msg
     record.exc_info = None
-    record.exc_text = _record_text(exception) if exception else None
-    record.stack_info = _record_text(stack) if stack else None
+    record.exc_text = _record_text(_RECORD_STREAM.scrub(exception)) if exception else None
+    record.stack_info = _record_text(_RECORD_STREAM.scrub(stack)) if stack else None
     record.__dict__.pop("asctime", None)
     return record
 

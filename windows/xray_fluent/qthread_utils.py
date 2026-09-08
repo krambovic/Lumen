@@ -22,13 +22,22 @@ class _ThreadCleanup(QObject):
         self._worker = worker
         self._callback = callback
         self._delete_worker = delete_worker
+        self._done = False
 
     @pyqtSlot()
     def run(self) -> None:
+        if self._done:
+            return
         # finished can precede thread-local teardown; never destroy too early.
-        if self._worker.isRunning() or not self._worker.wait(0):
+        try:
+            pending = self._worker.isRunning() or not self._worker.wait(0)
+        except RuntimeError:
+            pending = False
+            self._delete_worker = False
+        if pending:
             QTimer.singleShot(10, self.run)
             return
+        self._done = True
         try:
             self._callback()
         finally:
@@ -98,6 +107,13 @@ def retain_thread_until_finished(
 _late_shutdown_threads: set = set()
 
 
+def is_thread_pending(worker) -> bool:
+    try:
+        return worker.isRunning() or not worker.wait(0)
+    except RuntimeError:
+        return False
+
+
 def has_pending_shutdown_threads() -> bool:
     for worker in list(_late_shutdown_threads):
         try:
@@ -128,8 +144,15 @@ def stop_and_wait_for_thread(
         except Exception:
             if logger is not None:
                 logger.warning("[app] Failed to cancel %s", label, exc_info=True)
+    if isinstance(worker, QThread) and worker == QThread.currentThread():
+        _late_shutdown_threads.add(worker)
+        return False
     while True:
-        if worker.wait(0):
+        try:
+            finished = worker.wait(0)
+        except RuntimeError:
+            finished = True
+        if finished:
             _late_shutdown_threads.discard(worker)
             return True
         remaining = end - time.monotonic()
@@ -141,6 +164,10 @@ def stop_and_wait_for_thread(
             if logger is not None:
                 logger.warning("[app] %s still finishing; retained for asynchronous shutdown", label)
             return False
-        if worker.wait(max(1, min(250, int(remaining * 1000)))):
+        try:
+            finished = worker.wait(max(1, min(250, int(remaining * 1000))))
+        except RuntimeError:
+            finished = True
+        if finished:
             _late_shutdown_threads.discard(worker)
             return True

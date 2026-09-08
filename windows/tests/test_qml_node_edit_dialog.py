@@ -59,7 +59,7 @@ def test_protocol_aware_node_edit_dialog_compiles() -> None:
         cwd=ROOT,
         env=env,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=30,
         check=False,
     )

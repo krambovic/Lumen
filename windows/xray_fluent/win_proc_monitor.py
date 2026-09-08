@@ -9,6 +9,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 import os
+import time
 from dataclasses import dataclass
 
 # TCP_TABLE_OWNER_PID_CONNECTIONS = 4
@@ -23,6 +24,18 @@ _iphlpapi = ctypes.windll.iphlpapi  # type: ignore[attr-defined]
 _kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
 
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+# HANDLE is pointer-sized on 64-bit Windows; ctypes defaults to a truncating int.
+_kernel32.OpenProcess.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD]
+_kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+_kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+_kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+_kernel32.GetProcessTimes.argtypes = [ctypes.wintypes.HANDLE] + [ctypes.POINTER(ctypes.wintypes.FILETIME)] * 4
+_kernel32.GetProcessTimes.restype = ctypes.wintypes.BOOL
+_kernel32.QueryFullProcessImageNameW.argtypes = [
+    ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD, ctypes.wintypes.LPWSTR,
+    ctypes.POINTER(ctypes.wintypes.DWORD),
+]
+_kernel32.QueryFullProcessImageNameW.restype = ctypes.wintypes.BOOL
 
 
 class _MIB_TCPROW_OWNER_PID(ctypes.Structure):
@@ -86,6 +99,7 @@ class _TCP_ESTATS_DATA_ROD_v0(ctypes.Structure):
 # Cache PID → (creation time, exe name); the creation time detects recycled PIDs
 _pid_cache: dict[int, tuple[int, str]] = {}
 _PID_CACHE_MAX = 512
+_estats_retry_after = 0.0
 
 # Track connections with estats already enabled — avoid redundant Set calls
 _estats_enabled: set[tuple[int, int, int, int]] = set()  # (localAddr, localPort, remoteAddr, remotePort)
@@ -113,14 +127,14 @@ def _pid_to_exe(pid: int) -> str:
     try:
         h = _kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not h:
-            # The process is gone, so the PID cannot have been reused by a
-            # different live process — the cached name is still the right one.
-            cached = _pid_cache.get(pid)
-            return cached[1] if cached else ""
+            # Access denied can also mean a different protected process reused
+            # the PID. Do not return a former program without creation-time proof.
+            _pid_cache.pop(pid, None)
+            return ""
         try:
             created = _process_creation_time(h)
             cached = _pid_cache.get(pid)
-            if cached is not None and cached[0] == created:
+            if created and cached is not None and cached[0] == created:
                 return cached[1]
             buf = ctypes.create_unicode_buffer(260)
             size = ctypes.wintypes.DWORD(260)
@@ -128,7 +142,8 @@ def _pid_to_exe(pid: int) -> str:
                 exe = os.path.basename(buf.value)
                 if len(_pid_cache) >= _PID_CACHE_MAX:
                     _pid_cache.clear()
-                _pid_cache[pid] = (created, exe)
+                if created:
+                    _pid_cache[pid] = (created, exe)
                 return exe
         finally:
             _kernel32.CloseHandle(h)
@@ -167,6 +182,9 @@ def _conn_key(row: _MIB_TCPROW_OWNER_PID) -> tuple[int, int, int, int]:
 
 def _enable_estats(row: _MIB_TCPROW_OWNER_PID) -> bool:
     """Enable per-connection byte tracking. Requires admin. Idempotent."""
+    global _estats_retry_after
+    if time.monotonic() < _estats_retry_after:
+        return False
     key = _conn_key(row)
     if key in _estats_enabled:
         return True
@@ -179,6 +197,8 @@ def _enable_estats(row: _MIB_TCPROW_OWNER_PID) -> bool:
     if ret == 0:
         _estats_enabled.add(key)
         return True
+    if ret in (5, 50):  # access denied / unsupported: retry once, not for every socket
+        _estats_retry_after = time.monotonic() + 60.0
     return False
 
 
@@ -236,6 +256,7 @@ def get_proxy_connections(socks_port: int = 10808, http_port: int = 10809) -> li
     ).contents
 
     by_exe: dict[str, ProxyProcessInfo] = {}
+    pid_names: dict[int, str] = {}
     live_keys: set[tuple[int, int, int, int]] = set()
     for i in range(n):
         row = row_array[i]
@@ -248,13 +269,14 @@ def get_proxy_connections(socks_port: int = 10808, http_port: int = 10809) -> li
             continue
 
         pid = row.dwOwningPid
-        exe = _pid_to_exe(pid)
+        if pid not in pid_names:
+            pid_names[pid] = _pid_to_exe(pid)
+        exe = pid_names[pid]
         if not exe or exe.lower() in ("xray.exe", "sing-box.exe"):
             continue
 
         live_keys.add(_conn_key(row))
-        _enable_estats(row)
-        estats = _get_estats_bytes(row)
+        estats = _get_estats_bytes(row) if _enable_estats(row) else None
 
         if exe not in by_exe:
             by_exe[exe] = ProxyProcessInfo(exe=exe, connections=0, pids=set())
@@ -273,5 +295,7 @@ def get_proxy_connections(socks_port: int = 10808, http_port: int = 10809) -> li
 
 def clear_pid_cache() -> None:
     """Clear PID→exe cache and estats tracking. Call on disconnect."""
+    global _estats_retry_after
     _pid_cache.clear()
     _estats_enabled.clear()
+    _estats_retry_after = 0.0

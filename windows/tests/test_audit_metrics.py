@@ -112,12 +112,12 @@ def test_collector_mutations_hold_the_shared_lock(monkeypatch):
     original = collector._process_name_from_metadata
     checked = []
 
-    def inspect(meta):
+    def inspect(meta, pid_names=None):
         free = collector._lock.acquire(blocking=False)
         if free:
             collector._lock.release()
         checked.append(not free)
-        return original(meta)
+        return original(meta, pid_names)
 
     monkeypatch.setattr(collector, "_process_name_from_metadata", inspect)
     collect(document())

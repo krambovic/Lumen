@@ -197,7 +197,8 @@ def _copy_tree_merge(src: Path, dst: Path) -> None:
             try:
                 shutil.copy2(str(item), str(target))
             except PermissionError:
-                _print(f"  skipped (locked): {target.name}")
+                _print(f"ERROR: Cannot replace locked build file: {target.name}")
+                raise
 
 
 def _remove_legacy_files(root: Path, names: tuple[str, ...]) -> None:
@@ -288,7 +289,8 @@ def clean() -> None:
                 else:
                     child.unlink()
             except PermissionError:
-                _print(f"WARNING: Cannot remove {child}, skipping")
+                _print(f"ERROR: Cannot remove locked build file: {child}")
+                raise
         _print(f"Cleaned {APP_DIR} (data/, core/, zapret/ preserved)")
 
 
@@ -358,7 +360,32 @@ def build_exe() -> None:
     _print(f"Build complete: {APP_DIR / (APP_NAME + '.exe')}")
 
 
+def _validate_release_data_tree(app_dir: Path) -> None:
+    # A previous portable run can leave private profiles in dist/data. Refuse
+    # packaging; never delete user data to make a release succeed.
+    data = app_dir / "data"
+    if not data.exists():
+        return
+    if data.is_symlink() or data.is_junction():
+        raise RuntimeError("Linked application data cannot be packaged")
+    for item in data.rglob("*"):
+        if item.is_symlink() or item.is_junction():
+            raise RuntimeError("Linked application data cannot be packaged")
+        if not item.is_file():
+            continue
+        relative = item.relative_to(data)
+        if relative.parts[0] == "templates":
+            source = DATA_TEMPLATES_DIR.joinpath(*relative.parts[1:])
+        elif relative.parts[:2] == ("external", "droute"):
+            source = DROUTE_BUNDLE_DIR.joinpath(*relative.parts[2:])
+        else:
+            raise RuntimeError("Personal or stale data found in build output; use a clean output directory. No user data was deleted.")
+        if not source.is_file() or hashlib.sha256(item.read_bytes()).digest() != hashlib.sha256(source.read_bytes()).digest():
+            raise RuntimeError("Unrecognized or modified data found in build output; packaging refused")
+
+
 def _pack_zip(path: Path) -> None:
+    _validate_release_data_tree(APP_DIR)
     if path.exists():
         path.unlink()
     _print(f"Creating {path} ...")
@@ -381,6 +408,7 @@ def pack_portable_zip() -> None:
 
 
 def build_installer() -> None:
+    _validate_release_data_tree(APP_DIR)
     iscc = _find_iscc()
     if iscc is None:
         raise SystemExit(

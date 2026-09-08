@@ -38,6 +38,7 @@ from ...xray_fragments import apply_xray_final_fragment
 from ...wireguard_normalization import normalize_singbox_wireguard_endpoints
 from ...openvpn_normalization import normalize_openvpn_outbound
 from .config_builder import (
+    _normalize_shadowsocks_methods,
     _normalize_vless_vision,
     _preserve_or_reject_semantic_fields,
     _strip_removed_transport_fields,
@@ -217,6 +218,7 @@ def plan_singbox_runtime(
         _preserve_or_reject_semantic_fields(runtime_config)
         _strip_removed_transport_fields(runtime_config)
         _normalize_vless_vision(runtime_config)
+        _normalize_shadowsocks_methods(runtime_config)
         normalize_singbox_wireguard_endpoints(runtime_config)
         # Keep legacy AWG 1.5 imports readable on disk, but never pass their
         # removed members to the strict extended 2.6.x decoder.  Full imported
@@ -274,6 +276,7 @@ def plan_singbox_runtime(
     _preserve_or_reject_semantic_fields(runtime_config)
     _strip_removed_transport_fields(runtime_config)
     _normalize_vless_vision(runtime_config)
+    _normalize_shadowsocks_methods(runtime_config)
     normalize_singbox_wireguard_endpoints(runtime_config)
     _normalize_openvpn_outbounds(runtime_config)
     strip_singbox_proxy_inbounds(runtime_config)

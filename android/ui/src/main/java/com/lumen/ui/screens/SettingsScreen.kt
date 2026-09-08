@@ -1029,30 +1029,23 @@ private fun AppSettings(
             onUpdate(
                 state.copy(
                     socks5AuthEnabled = enabled,
-                    socks5Username = state.socks5Username.ifBlank { generateSocks5Username() },
-                    socks5Password = state.socks5Password.ifBlank { generateSocks5Password() }
+                    socks5Username = state.socks5Username.ifEmpty { generateSocks5Username() },
+                    socks5Password = state.socks5Password.ifEmpty { generateSocks5Password() }
                 )
             )
         }
         if (state.socks5AuthEnabled) {
             SettingsDivider()
-            Socks5CredentialRow(s.socks5Login, state.socks5Username)
-            SettingsDivider()
-            Socks5CredentialRow(s.socks5PasswordLabel, state.socks5Password)
-            SettingsDivider()
-            androidx.compose.material3.TextButton(
-                onClick = {
-                    onUpdate(
-                        state.copy(
-                            socks5Username = generateSocks5Username(),
-                            socks5Password = generateSocks5Password()
-                        )
-                    )
+            Socks5CredentialsEditor(
+                username = state.socks5Username,
+                password = state.socks5Password,
+                onSave = { username, password ->
+                    onUpdate(state.copy(socks5Username = username, socks5Password = password))
                 },
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-            ) {
-                Text(s.socks5Reset)
-            }
+                onReset = {
+                    onUpdate(state.copy(socks5Username = generateSocks5Username(), socks5Password = generateSocks5Password()))
+                }
+            )
         }
         Spacer(Modifier.height(4.dp))
     }

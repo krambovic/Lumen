@@ -22,6 +22,7 @@ datas = [
     (str(fonts_dir), "xray_fluent/qml_app/assets/fonts"),
     (str(root / "xray_fluent" / "happ_emulator"), "xray_fluent/happ_emulator"),
 ]
+datas += collect_data_files("grpc")
 datas += collect_data_files(
     "PyQt6",
     includes=[
@@ -50,7 +51,7 @@ a = Analysis(
     pathex=[str(root)],
     binaries=qwk_binaries,
     datas=datas,
-    hiddenimports=collect_submodules("truststore") + [
+    hiddenimports=collect_submodules("truststore") + collect_submodules("grpc") + [
         "PyQt6.QtCore",
         "PyQt6.QtGui",
         "PyQt6.QtWidgets",

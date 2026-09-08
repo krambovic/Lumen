@@ -73,6 +73,7 @@ def build_singbox_outbound(
     # Sanitize native/imported payloads before validation as well.
     _strip_removed_transport_fields(outbound)
     _normalize_vless_vision(outbound)
+    _normalize_shadowsocks_methods(outbound)
     unsupported_transport = str(outbound.pop("_unsupported_transport", "") or "").strip()
     if unsupported_transport:
         raise ValueError(
@@ -183,6 +184,30 @@ def _convert_outbound(xray_ob: dict[str, Any], *, tag: str = "proxy") -> dict[st
         sb.pop("tls", None)
         sb["_unsupported_transport"] = f"{protocol} with TLS"
     return sb
+
+
+def _normalize_shadowsocks_methods(value: Any) -> None:
+    """Translate the Xray/SIP002 ChaCha20 AEAD alias only for Shadowsocks.
+
+    Apply this to runtime copies, including every outbound in a full imported
+    config. A bad non-selected outbound otherwise aborts sing-box initialization.
+    Do not rewrite VMess security, legacy ChaCha20 stream ciphers, SS2022 methods,
+    unknown methods or passwords; there is no fallback to a different cipher.
+    """
+    if isinstance(value, list):
+        for nested in value:
+            _normalize_shadowsocks_methods(nested)
+        return
+    if not isinstance(value, dict):
+        return
+
+    if str(value.get("type") or "").strip().lower() == "shadowsocks":
+        method = value.get("method")
+        if isinstance(method, str) and method.strip().lower() == "chacha20-poly1305":
+            value["method"] = "chacha20-ietf-poly1305"
+
+    for nested in value.values():
+        _normalize_shadowsocks_methods(nested)
 
 
 def _normalize_vless_vision(value: Any) -> None:

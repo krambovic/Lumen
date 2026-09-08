@@ -425,6 +425,13 @@ class TrafficHistoryStorage:
                 self._save_locked()
         return self._writer.flush(timeout)
 
+    @property
+    def writer_running(self) -> bool:
+        # Process lifetime, not write success: a failed disk must not hang quit.
+        with self._writer._condition:
+            thread = self._writer._thread
+            return thread is not None and thread.is_alive()
+
     def close(self, timeout: float = 2.0) -> bool:
         with self._lock:
             if not self._closed:

@@ -36,7 +36,8 @@ def _check_profile_health(
     controller: AppController, now: float, down_bps: float, up_bps: float,
     status: str | None, checked_at: float | None, profile_id: str | None,
 ) -> bool:
-    selected_id = str(controller.state.selected_node_id or "")
+    session = getattr(controller, "_active_session", None)
+    selected_id = str(session.node_id or "") if session is not None else str(controller.state.selected_node_id or "")
     if getattr(controller, "_health_profile_id", "") != selected_id:
         reset_health_tracking(controller)
         controller._health_profile_id = selected_id
@@ -55,7 +56,8 @@ def _check_profile_health(
     state = str(status or "UNKNOWN").upper()
     if (not fresh or not selected_id or str(profile_id or "") != selected_id
             or state not in {"HEALTHY", "FAILED"}
-            or sampled <= getattr(controller, "_health_traffic_seen_at", 0.0)):
+            or sampled <= getattr(controller, "_health_traffic_seen_at", 0.0)
+            or sampled <= getattr(controller, "_health_session_started_at", 0.0)):
         controller._health_down_since = 0.0
         controller._health_failure_count = 0
         return False

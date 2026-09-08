@@ -21,6 +21,7 @@ from ..data_paths import get_install_id
 from ..happ_crypt import HappDecryptError, decrypt_happ_link, is_happ_crypt_link, is_happ_link
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
 from ..models import DEFAULT_SUBSCRIPTION_HWID, Node
+from ..subscription_presentation import EXTRA_PROVIDER_PARAMETERS
 from ..subscription_fetcher import (
     SubscriptionFetcherCancelled,
     fetch_subscription_http,
@@ -84,7 +85,7 @@ HAPP_PREMIUM_PARAMETERS: tuple[str, ...] = (
     "mux-xudp-connections",
     "mux-quic",
     "exclude-routes",
-)
+) + EXTRA_PROVIDER_PARAMETERS
 _HAPP_BODY_METADATA_KEYS = {
     "providerid",
     "provider-id",
@@ -111,6 +112,7 @@ _HAPP_BODY_METADATA_KEYS = {
     "hide-url",
     "sort-order",
     "profile-update-interval",
+    "subscription-userinfo",
     *HAPP_PREMIUM_PARAMETERS,
 }
 
@@ -540,7 +542,7 @@ def _subscription_flag(value: object) -> bool | None:
 
 def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
     """Если тело — JSON вида {"user": {...}, "links": [...]}, достаёт инфо и ссылки."""
-    stripped = (text or "").strip()
+    stripped = (text or "").strip().lstrip("\ufeff").strip()
     if not stripped.startswith("{"):
         return text, {}
     try:
@@ -578,7 +580,7 @@ def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
         "hideUrl",
         "sortOrder",
     ):
-        if key in data and data.get(key) not in (None, ""):
+        if key in data and data.get(key) is not None:
             info[key] = data.get(key)
     for key, telegram in (
         ("supportUrl", False),
@@ -607,17 +609,29 @@ def _extract_userinfo_from_body(text: str) -> tuple[str, dict]:
     direct_premium = {
         key: str(data.get(key))
         for key in HAPP_PREMIUM_PARAMETERS
-        if data.get(key) not in (None, "")
+        if key in data and data.get(key) is not None
     }
     if direct_premium:
         info["premiumFeatures"] = {
             **dict(info.get("premiumFeatures") or {}),
             **direct_premium,
         }
-    links = data.get("links")
-    if isinstance(links, list) and links:
-        links_text = "\n".join(str(item) for item in links if item)
-        return links_text, info
+    # Accept already-delivered provider config only; no external Premium API,
+    # private decryption keys, device registration or implicit network requests.
+    config = data.get("premiumConfig", data)
+    if isinstance(config, dict):
+        for key in ("isPremium", "deviceLimitExceeded", "hide_url", "logoUrl"):
+            if key in config:
+                info[key] = config[key]
+        for source, target in (("providerSettings", "providerSettings"), ("providerTheme", "providerTheme")):
+            if isinstance(config.get(source), dict):
+                info[target] = config[source]
+        if "isPremium" in config:
+            for source, target in (("settings", "providerSettings"), ("theme", "providerTheme")):
+                if isinstance(config.get(source), dict):
+                    info[target] = config[source]
+    # Preserve structured nodes and every sibling container for the parser.
+    # str(dict) is not JSON and choosing only links silently drops other nodes.
     return text, info
 
 
@@ -659,6 +673,8 @@ def _extract_happ_body_metadata(text: str) -> tuple[str, dict]:
             info["providerId"] = value
         elif key in {"profile-title", "subscription-name"}:
             info["profileTitle"] = _decode_profile_header(value)
+        elif key == "subscription-userinfo":
+            info.update(_parse_userinfo_header(value))
         elif key == "profile-description":
             info["profileDescription"] = _decode_profile_header(value)
         elif key in {"support-url", "support"}:
@@ -688,7 +704,7 @@ def _extract_happ_body_metadata(text: str) -> tuple[str, dict]:
                 "sort-order": "sortOrder",
                 "profile-update-interval": "profileUpdateInterval",
             }[key]
-            normalized_value = value.lower() if key == "sort-order" else value
+            normalized_value = value.lower() if key == "sort-order" else (_decode_profile_header(value) if key in {"banner-text", "banner-button-text"} else value)
             if key != "sort-order" or normalized_value in {"ping", "name", "none"}:
                 info[target_key] = normalized_value
         elif key == "hide-url":
@@ -863,6 +879,10 @@ def _decode_profile_header(value: str) -> str:
 def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
     info: dict = {"clientProfile": profile_name}
     try:
+        present = {str(k).lower() for k in headers.keys()}
+    except (AttributeError, TypeError):
+        present = set()
+    try:
         profile_title = _decode_profile_header(
             _first_header(headers, "profile-title", "profile_title", "subscription-name", "subscription_name")
         )
@@ -879,6 +899,7 @@ def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
             "panel_url",
             "sub-web-page-url",
             "subscription-url",
+            "homepage",
         )
         telegram_url = _first_header(headers, "telegram-url", "telegram_url", "telegram-link", "telegram")
         announcement = _decode_profile_header(_first_header(headers, "announce", "announcement"))
@@ -951,18 +972,34 @@ def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
         key: _first_header(headers, key, key.replace("-", "_"))
         for key in HAPP_PREMIUM_PARAMETERS
     }
-    premium = {key: value for key, value in premium.items() if value != ""}
+    premium = {key: value for key, value in premium.items()
+               if value != "" or key in present or key.replace("-", "_") in present}
+    # Empty explicit header fields disable/clear the corresponding body/panel
+    # value instead of resurrecting an older provider banner or button.
+    for meta_key, header in (("bannerText", "banner-text"), ("bannerButtonText", "banner-button-text"),
+                          ("bannerButtonUrl", "banner-button-url"), ("bannerBgColor", "banner-bg-color"),
+                          ("bannerButtonColor", "banner-button-color"), ("premiumUrl", "premium-url")):
+        if (header in present or header.replace("-", "_") in present) and meta_key not in info:
+            info[meta_key] = ""
+    if "hide-url" in present or "hide_url" in present:
+        info["hideUrl"] = str(hide_url).strip().lower() in {"1", "true", "yes"}
     if premium:
         info["premiumFeatures"] = premium
     return info
 
 
 def _first_header(headers: object, *names: str) -> str:
+    try:
+        lowered = {str(k).lower(): str(v if v is not None else "").strip() for k, v in headers.items()}
+    except (AttributeError, TypeError, ValueError):
+        lowered = {}
     for name in names:
-        try:
-            value = str(headers.get(name, "") or "").strip()
-        except Exception:
-            value = ""
+        value = lowered.get(name.lower(), "")
+        if not value:
+            try:
+                value = str(headers.get(name, "") or "").strip()
+            except (AttributeError, TypeError, ValueError):
+                value = ""
         if value:
             return value
     return ""
@@ -1026,14 +1063,14 @@ def _fetch_subscription_with_headers(
     if urlparse(url).scheme.lower() == "https" and urlparse(effective_url).scheme.lower() != "https":
         raise RuntimeError("Subscription redirect from HTTPS to an insecure URL was blocked")
     raw = response.body
-    header_value = response.headers.get("subscription-userinfo", "")
+    header_value = _first_header(response.headers, "subscription-userinfo")
     metadata = _extract_subscription_metadata(response.headers, profile_name)
     userinfo = _merge_subscription_info(_parse_userinfo_header(header_value), metadata)
     text = raw.decode("utf-8", errors="replace").strip()
     text, directive_info = _extract_happ_body_metadata(text)
     # JSON-тело (например, формат с {"user": {...}, "links": [...]}).
     text, body_info = _extract_userinfo_from_body(text)
-    # Данные из тела приоритетнее заголовка.
+    # Explicit HTTP metadata takes priority; body metadata is the fallback.
     userinfo = _merge_subscription_info(userinfo, directive_info, body_info, metadata)
     if int(getattr(response, "status", 0) or 0) == 304:
         # A conditional hit deliberately has no body.  The outer fetch loop
@@ -1776,7 +1813,6 @@ def _apply_subscription_payload(
         return 0, [*chosen_errors, *parse_errors, *filter_errors], result_info
     prepared = []
     validation_errors: list[str] = []
-    seen_links: set[str] = set()
     for node in parsed_nodes:
         if not already_prepared:
             normalize_node_outbound(node)
@@ -1784,9 +1820,8 @@ def _apply_subscription_payload(
         if problem:
             validation_errors.append(problem)
             continue
-        if not node.link or node.link in seen_links:
+        if not node.link:
             continue
-        seen_links.add(node.link)
         node.group = group
         node.subscription_id = subscription_id
         node.source_key = _subscription_source_key(node)
@@ -1810,6 +1845,9 @@ def _apply_subscription_payload(
             and (node.group or "Default") == group
         )
     ]
+    if old_nodes and (parse_errors or validation_errors):
+        return 0, [*chosen_errors, *parse_errors, *validation_errors,
+                   "Неполный разбор подписки: прежние серверы сохранены"], result_info
     old_ids = {node.id for node in old_nodes}
     old_by_key: dict[str, list[Node]] = {}
     old_by_link = {node.link: node for node in old_nodes if node.link}
@@ -1837,6 +1875,12 @@ def _apply_subscription_payload(
         default=0,
     )
     used_old_ids: set[str] = set()
+    incoming_keys = {node.source_key for node in prepared}
+    incoming_links = {node.link for node in prepared}
+    reserved_exact_ids = {
+        old.id for key, candidates in old_by_key.items() for old in candidates
+        if key in incoming_keys or old.link in incoming_links
+    }
     reconnect_needed = False
     for node in prepared:
         previous = next(
@@ -1851,7 +1895,7 @@ def _apply_subscription_payload(
             candidates = [
                 candidate
                 for candidate in old_by_fallback.get(_subscription_fallback_key(node), [])
-                if candidate.id not in used_old_ids
+                if candidate.id not in used_old_ids and candidate.id not in reserved_exact_ids
             ]
             if len(candidates) == 1:
                 previous = candidates[0]

@@ -23,6 +23,7 @@ def _isolated_proxy_manager(monkeypatch) -> tuple[ProxyManager, _FailingFirefoxP
     firefox = _FailingFirefoxProxy()
     manager._firefox_proxy = firefox
     manager._backup = {}
+    monkeypatch.setattr(manager, "_persist_backup", lambda _values: None)
     monkeypatch.setattr(manager, "_write_settings", lambda _values: None)
     monkeypatch.setattr(manager, "_set_wininet_connection_proxy", lambda *_args: True)
     return manager, firefox

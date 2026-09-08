@@ -3,15 +3,10 @@ package com.lumen.app.subscription
 import com.lumen.core.config.crypto.HappCrypt
 import com.lumen.core.config.parser.LinkParser
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.InetSocketAddress
-import java.net.Proxy
 import java.net.URI
 import java.net.URL
 import java.util.Locale
-import java.util.zip.GZIPInputStream
 
 internal data class SubscriptionPayload(
     val body: String,
@@ -117,105 +112,92 @@ internal object SubscriptionClient {
         customUserAgent: String? = null,
         direct: Boolean = true,
         allowHttp: Boolean = false,
-        proxyPort: Int? = null
+        proxyPort: Int? = null,
+        proxyUsername: String? = null,
+        proxyPassword: String? = null,
+        cancelled: () -> Boolean = { false }
     ): SubscriptionPayload {
+        SubscriptionHttp.checkCancelled(cancelled)
         require(hwid == null || (hwid.length <= 256 && '\r' !in hwid && '\n' !in hwid)) { "Invalid HWID" }
-        require(customUserAgent == null ||
-            (customUserAgent.length <= 256 && '\r' !in customUserAgent && '\n' !in customUserAgent)
-        ) { "Invalid User-Agent" }
+        require(customUserAgent == null || (customUserAgent.length <= 256 && '\r' !in customUserAgent && '\n' !in customUserAgent)) { "Invalid User-Agent" }
+        require(proxyPort == null || proxyPort in 1..65535) { "Invalid local proxy port" }
         var target = rawUrl.trim()
         if (HappCrypt.isHappCryptLink(target)) {
             val decrypted = HappCrypt.decryptHappLink(target).trim()
-            // A happ payload is not something the user typed, so it may not point the
-            // subscription (token in the path, X-Hwid header) at a plaintext endpoint.
-            require(!decrypted.startsWith("http://")) { "Happ subscription URL must use HTTPS" }
-            if (!decrypted.startsWith("https://")) {
-                val normalized = normalize(decrypted, emptyMap())
-                return normalized.copy(clientProfile = "Happ crypt")
+            require(!decrypted.startsWith("http://", true)) { "Happ subscription URL must use HTTPS" }
+            if (!decrypted.startsWith("https://", true)) {
+                SubscriptionHttp.checkCancelled(cancelled)
+                return normalize(decrypted, emptyMap()).copy(clientProfile = "Happ crypt")
             }
             target = decrypted
         }
-        require(target.startsWith("http://") || target.startsWith("https://")) { "Subscription URL must use HTTP(S)" }
-        require(allowHttp || target.startsWith("https://")) {
-            "HTTP subscription links are disabled in Subscription settings"
-        }
-
-        val profiles = clientProfiles(customUserAgent)
-        var lastError: Throwable? = null
-        for ((profile, userAgent) in profiles) {
+        val initialUrl = URL(target)
+        require(initialUrl.protocol in setOf("http", "https")) { "Subscription URL must use HTTP(S)" }
+        require(allowHttp || initialUrl.protocol == "https") { "HTTP subscriptions are disabled in settings" }
+        var lastError: Exception? = null
+        for ((profile, userAgent) in clientProfiles(customUserAgent)) {
+            SubscriptionHttp.checkCancelled(cancelled)
             try {
-                val connectionProxy = proxyPort?.takeIf { it in 1..65535 }?.let {
-                    Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", it))
-                }
-                val conn = (connectionProxy?.let { URL(target).openConnection(it) }
-                    ?: URL(target).openConnection()) as HttpURLConnection
-                conn.connectTimeout = 15_000
-                conn.readTimeout = 20_000
-                conn.instanceFollowRedirects = true
-                conn.setRequestProperty("User-Agent", userAgent)
-                conn.setRequestProperty("Accept", "text/yaml,application/yaml,application/json,text/plain,*/*")
-                conn.setRequestProperty("Accept-Encoding", "gzip")
-                conn.setRequestProperty("Profile-Update-Interval", "24")
-                if (!hwid.isNullOrBlank()) conn.setRequestProperty("X-Hwid", hwid)
-                if (direct) conn.setRequestProperty("X-Lumen-Route", "direct")
-                try {
-                    val code = conn.responseCode
-                    require(allowHttp || conn.url.protocol.equals("https", true)) {
-                        "Subscription redirect to HTTP is disabled in Subscription settings"
-                    }
-                    val rawStream = if (code in 200..299) conn.inputStream else conn.errorStream
-                    val stream = rawStream?.let {
-                        if (conn.getHeaderField("Content-Encoding")?.contains("gzip", ignoreCase = true) == true) {
-                            GZIPInputStream(it)
-                        } else it
-                    }
-                    val bytes = stream?.use { input ->
-                        val output = ByteArrayOutputStream()
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var total = 0
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            total += count
-                            if (total > MAX_BYTES) throw IOException("Subscription exceeds 8 MiB")
-                            output.write(buffer, 0, count)
+                var current = initialUrl
+                var redirects = 0
+                var forwardHwid = true
+                while (true) {
+                    SubscriptionHttp.checkCancelled(cancelled)
+                    val requestHeaders = linkedMapOf(
+                        "User-Agent" to userAgent,
+                        "Accept" to "text/yaml,application/yaml,application/json,text/plain,*/*",
+                        "Accept-Encoding" to "gzip",
+                        "Profile-Update-Interval" to "24"
+                    )
+                    if (forwardHwid && !hwid.isNullOrBlank()) requestHeaders["X-Hwid"] = hwid
+                    if (direct) requestHeaders["X-Lumen-Route"] = "direct"
+                    val response = SubscriptionHttp.get(current, requestHeaders, proxyPort, proxyUsername, proxyPassword, cancelled)
+                    val code = response.code
+                    if (code in setOf(301, 302, 303, 307, 308)) {
+                        if (++redirects > 5) throw PermanentSubscriptionException("Too many subscription redirects")
+                        val location = response.headers["location"] ?: throw PermanentSubscriptionException("Redirect has no Location")
+                        val next = URL(current, location)
+                        if (next.protocol !in setOf("http", "https") || next.userInfo != null ||
+                            (!allowHttp && next.protocol != "https") || (current.protocol == "https" && next.protocol != "https")) {
+                            throw PermanentSubscriptionException("Unsafe subscription redirect rejected")
                         }
-                        output.toByteArray()
-                    } ?: ByteArray(0)
-                    val body = bytes.toString(Charsets.UTF_8)
-                    if (code !in 200..299) {
-                        val message = "HTTP $code: ${body.take(160)}"
-                        if (code in setOf(404, 410)) throw PermanentSubscriptionException(message)
-                        // 400/401/403/422 can depend on the client profile. Try the next User-Agent.
-                        throw IOException(message)
+                        forwardHwid = forwardHwid && sameOrigin(current, next)
+                        current = next
+                        continue
                     }
-                    val headers = conn.headerFields
-                        .filterKeys { it != null }
-                        .mapKeys { it.key.lowercase(Locale.US) }
-                        .mapValues { it.value.firstOrNull().orEmpty() }
-                    val normalized = normalize(body, headers).copy(clientProfile = profile)
-                    val (nodes, _) = runCatching { LinkParser.parseLinksText(normalized.body) }
-                        .getOrDefault(Pair(emptyList(), emptyList()))
+                    if (code !in 200..299) {
+                        // Provider error bodies can echo access tokens or credentials.
+                        if (code in setOf(404, 410, 429)) throw PermanentSubscriptionException("Subscription HTTP $code")
+                        throw IOException("Subscription HTTP $code")
+                    }
+                    val normalized = normalize(response.body.toString(Charsets.UTF_8), response.headers).copy(clientProfile = profile)
+                    SubscriptionHttp.checkCancelled(cancelled)
+                    val (nodes, _) = LinkParser.parseLinksText(normalized.body)
                     if (nodes.isEmpty()) throw IOException("No supported servers in response")
                     if (nodes.size <= 2 && looksLikePlaceholder(normalized.body)) {
-                        // The panel answered with a stub for this client profile; try the next User-Agent.
-                        throw IOException("Subscription returned a placeholder for the \"$profile\" profile")
+                        throw IOException("Subscription returned a compatibility placeholder")
                     }
+                    SubscriptionHttp.checkCancelled(cancelled)
                     return normalized
-                } finally {
-                    conn.disconnect()
                 }
+            } catch (error: java.util.concurrent.CancellationException) {
+                throw error
             } catch (error: PermanentSubscriptionException) {
                 throw error
-            } catch (error: Throwable) {
+            } catch (error: Exception) {
+                SubscriptionHttp.checkCancelled(cancelled)
                 lastError = error
             }
         }
         throw IOException(lastError?.message ?: "Subscription download failed", lastError)
     }
 
+    internal fun sameOrigin(first: URL, second: URL): Boolean =
+        first.protocol.equals(second.protocol, true) && first.host.equals(second.host, true) &&
+            (if (first.port > 0) first.port else first.defaultPort) == (if (second.port > 0) second.port else second.defaultPort)
+
     internal fun normalize(body: String, rawHeaders: Map<String, String>): SubscriptionPayload {
-        var linksBody = body.trim()
+        var linksBody = body.trim().removePrefix("\uFEFF").trim()
         val premium = linkedMapOf<String, String>()
         // Header names are case-insensitive and panels spell them with either separator.
         val headers = rawHeaders.entries.associate { (key, value) ->
@@ -247,11 +229,8 @@ internal object SubscriptionClient {
                         else if (raw >= 0L) userInfo[key] = raw
                     }
                 }
-                json.optJSONArray("links")?.let { links ->
-                    linksBody = buildString {
-                        for (index in 0 until links.length()) appendLine(links.optString(index))
-                    }.trim()
-                }
+                // Keep the complete structured body. Flattening only `links` loses
+                // sibling containers and stringifies object nodes into damaged URIs.
             }
         }
 

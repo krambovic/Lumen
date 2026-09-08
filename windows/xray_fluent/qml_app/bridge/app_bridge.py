@@ -12,7 +12,6 @@ Design goals:
 """
 from __future__ import annotations
 
-from collections import deque
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
@@ -27,6 +26,7 @@ from PyQt6.QtCore import QPoint, QRect, QObject, Qt, QThread, QTimer, QUrl, pyqt
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 
 from ...app_controller import AppController
+from ...bounded_logs import LogRing
 from ...application.node_runtime_service import proxy_core_for_node
 from ...subscription_worker import SubscriptionFetchWorker, SubscriptionJob
 from ...constants import (
@@ -54,7 +54,7 @@ from ..toast import set_toasts_enabled, show_toast
 from ..window_geometry import fit_window_geometry
 from ...i18n import active_map, available_languages, language_name, set_language, tr, translate_dynamic
 from ...log_utils import parse_log_line
-from ...secret_scrubber import scrub_text
+from ...secret_scrubber import prepare_record, scrub_text
 
 
 def _server_display_name_without_country_prefix(name: str, country: str) -> str:
@@ -88,8 +88,9 @@ class _ApplicationLogHandler(logging.Handler):
         try:
             if getattr(record, "from_controller", False):
                 return
-            source = record.name.rsplit(".", 1)[-1] or "app"
-            self._emitter.line.emit(scrub_text(f"[{source}] {self.format(record)}"))
+            safe = prepare_record(record)
+            source = safe.name.rsplit(".", 1)[-1] or "app"
+            self._emitter.line.emit(scrub_text(f"[{source}] {self.format(safe)}"))
         except Exception:
             pass
 
@@ -196,15 +197,16 @@ class AppBridge(QObject):
 
     # Внутренний: запуск фоновой загрузки подписок (jobs, batch_id)
     _sub_fetch_run = pyqtSignal(object, int)
+    _diagnostics_finished = pyqtSignal(str, str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._node_model = NodeListModel(self)
         self._log_source_model = LogModel(parent=self)
         self._log_model = LogFilterModel(self._log_source_model, parent=self)
-        self._pending_ui_logs: deque[str] = deque(maxlen=2000)
+        self._pending_ui_logs = LogRing[str](maxlen=2000)
         self._log_flush_timer = QTimer(self)
-        self._log_flush_timer.setSingleShot(True)
+        self._log_flush_timer.setSingleShot(False)
         self._log_flush_timer.setInterval(100)
         self._log_flush_timer.timeout.connect(self._flush_ui_logs)
         self._process_model = ProcessModel(self)
@@ -215,7 +217,7 @@ class AppBridge(QObject):
         self.controller.resource_update_result.connect(self._on_resource_update_result)
         self.controller.resource_update_progress.connect(self._on_resource_update_progress)
         self._application_log_emitter = _ApplicationLogEmitter(self)
-        self._application_log_emitter.line.connect(self._capture_application_log, type=Qt.ConnectionType.QueuedConnection)
+        self._application_log_emitter.line.connect(self._capture_application_log, type=Qt.ConnectionType.DirectConnection)
         self._application_log_handler = _ApplicationLogHandler(self._application_log_emitter)
         self._application_log_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
         logging.getLogger("xray_fluent").addHandler(self._application_log_handler)
@@ -242,6 +244,10 @@ class AppBridge(QObject):
         self._down_bps = 0.0
         self._up_bps = 0.0
         self._latency_ms = -1
+        self._traffic_available = False
+        self._traffic_reason = "not connected"
+        self._health_status = "UNKNOWN"
+        self._health_reason = "not sampled"
         self._selected_id = ""
         self._selected_name = ""
         self._selected_flag = ""
@@ -286,7 +292,10 @@ class AppBridge(QObject):
         self._app_update_timer.timeout.connect(
             lambda: self._start_app_update_check(silent=True)
         )
+        self._diagnostics_exporting = False
+        self._diagnostics_finished.connect(self._on_diagnostics_finished, Qt.ConnectionType.QueuedConnection)
         self._wire_controller()
+        self._log_flush_timer.start()
 
     @pyqtSlot(str)
     def _capture_application_log(self, line: str) -> None:
@@ -294,17 +303,16 @@ class AppBridge(QObject):
         self._queue_ui_log(line)
 
     def _queue_ui_log(self, line: str) -> None:
-        self._pending_ui_logs.append(self._localized_log_line(line))
-        if not self._log_flush_timer.isActive():
-            self._log_flush_timer.start()
+        # Producer-thread path: bounded Python storage BEFORE Qt event delivery.
+        # Localization and all QObject/model operations belong to the timer.
+        self._pending_ui_logs.append(line)
 
     @pyqtSlot()
     def _flush_ui_logs(self) -> None:
         if not self._pending_ui_logs:
             return
-        pending = list(self._pending_ui_logs)
-        self._pending_ui_logs.clear()
-        self._log_source_model.append_lines(pending)
+        pending = self._pending_ui_logs.drain(512)
+        self._log_source_model.append_lines([self._localized_log_line(line) for line in pending])
 
     # ── notifications ──────────────────────────────────────
     def _notify(self, level: str, message: str) -> None:
@@ -779,7 +787,7 @@ class AppBridge(QObject):
         c.subscriptions_changed.connect(self._on_subscriptions_changed)
         c.transition_state_changed.connect(self._on_transition)
         c.status.connect(self._on_status_message)
-        c.log_line.connect(self._on_controller_log_line, type=Qt.ConnectionType.QueuedConnection)
+        c.log_line.connect(self._on_controller_log_line, type=Qt.ConnectionType.DirectConnection)
         c.ping_updated.connect(self._on_ping)
         c.speed_updated.connect(self._on_speed)
         c.speed_progress_updated.connect(self._node_model.update_speed_progress)
@@ -1001,6 +1009,11 @@ class AppBridge(QObject):
         if not connected:
             self._down_bps = self._up_bps = 0.0
             self._latency_ms = -1
+            self._traffic_available = False
+            self._traffic_reason = "not connected"
+            self._health_status = "UNKNOWN"
+            self._health_reason = "not connected"
+            self._process_model.set_stats([])
             self.metricsChanged.emit()
         self.connectedChanged.emit()
 
@@ -1095,11 +1108,31 @@ class AppBridge(QObject):
         self._node_model.update_speed(node_id, speed_mbps)
         self._node_model.update_alive(node_id, is_alive)
 
+    @pyqtProperty(bool, notify=metricsChanged)
+    def trafficAvailable(self) -> bool:
+        return self._traffic_available
+
+    @pyqtProperty(str, notify=metricsChanged)
+    def trafficReason(self) -> str:
+        return self._traffic_reason
+
+    @pyqtProperty(str, notify=metricsChanged)
+    def healthStatus(self) -> str:
+        return self._health_status
+
+    @pyqtProperty(str, notify=metricsChanged)
+    def healthReason(self) -> str:
+        return self._health_reason
+
     def _on_live_metrics(self, payload: dict) -> None:
         self._down_bps = float(payload.get("down_bps") or 0.0)
         self._up_bps = float(payload.get("up_bps") or 0.0)
         latency = payload.get("latency_ms")
         self._latency_ms = int(latency) if isinstance(latency, int) else -1
+        self._traffic_available = bool(payload.get("traffic_available", False))
+        self._traffic_reason = str(payload.get("traffic_reason") or "unavailable")
+        self._health_status = str(payload.get("health_status") or "UNKNOWN")
+        self._health_reason = str(payload.get("health_reason") or "not sampled")
         self.metricsChanged.emit()
         stats = payload.get("process_stats")
         if stats is not None:
@@ -3551,14 +3584,32 @@ class AppBridge(QObject):
 
     @pyqtSlot()
     def exportDiagnostics(self) -> None:
-        """Build a diagnostics zip and reveal it in the file manager."""
-        try:
-            path = self.controller.build_diagnostics()
-        except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", tr("Не удалось собрать диагностику: {error}", error=exc))
+        if self._diagnostics_exporting or self._quitting:
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
-        self.toast.emit("success", tr("Диагностика сохранена: {name}", name=path.name))
+        from ...diagnostics_uploader import get_upload_epoch
+        epoch = get_upload_epoch()  # BEFORE work can be queued across OFF -> ON.
+        state, logs = deepcopy(self.controller.state), tuple(self.controller.recent_logs)
+        self._diagnostics_exporting = True
+
+        def work():
+            try:
+                path = self.controller.build_diagnostics(upload=False, epoch=epoch, state=state, logs=logs)
+                self._diagnostics_finished.emit(str(path), "")
+            except Exception as exc:
+                self._diagnostics_finished.emit("", scrub_text(str(exc)))
+        self.controller._start_background_task(work, "diagnostics-export")
+
+    @pyqtSlot(str, str)
+    def _on_diagnostics_finished(self, path: str, error: str) -> None:
+        self._diagnostics_exporting = False
+        if self._quitting:
+            return
+        if error:
+            self.toast.emit("error", tr("Не удалось собрать диагностику: {error}", error=error))
+            return
+        output = Path(path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(output.parent)))
+        self.toast.emit("success", tr("Диагностика сохранена: {name}", name=output.name))
 
     @pyqtSlot("QVariantMap")
     def runDiagnosticsExport(self, options) -> None:
@@ -4428,10 +4479,15 @@ class AppBridge(QObject):
 
     @pyqtProperty("QVariantList", notify=subscriptionsChanged)
     def subscriptions(self) -> list:
-        try:
-            return [dict(item) for item in self.controller.state.subscriptions]
-        except Exception:
-            return []
+        from ...subscription_presentation import present_subscription
+        rows = []
+        for item in self.controller.state.subscriptions:
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            row["presentation"] = present_subscription(row)
+            rows.append(row)
+        return sorted(rows, key=lambda row: not row["presentation"]["pinned"])
 
     # ── Security / data mirrors ──────────────────────────────────
     @pyqtProperty(int, notify=settingsChanged)

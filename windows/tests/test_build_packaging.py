@@ -43,8 +43,13 @@ def test_portable_zip_has_flat_root_for_legacy_updater(tmp_path: Path, monkeypat
     app_dir = tmp_path / "Lumen"
     app_dir.mkdir()
     (app_dir / "Lumen.exe").write_bytes(b"binary")
-    (app_dir / "data").mkdir()
-    (app_dir / "data" / "version.txt").write_text("1", encoding="utf-8")
+    templates = app_dir / "data" / "templates"
+    templates.mkdir(parents=True)
+    (templates / "example.json").write_text("{}", encoding="utf-8")
+    source_templates = tmp_path / "source-templates"
+    source_templates.mkdir()
+    (source_templates / "example.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(build_qml, "DATA_TEMPLATES_DIR", source_templates)
     archive = tmp_path / "portable.zip"
     monkeypatch.setattr(build_qml, "APP_DIR", app_dir)
 
@@ -53,7 +58,7 @@ def test_portable_zip_has_flat_root_for_legacy_updater(tmp_path: Path, monkeypat
     with zipfile.ZipFile(archive) as zf:
         names = set(zf.namelist())
     assert "Lumen.exe" in names
-    assert "data/version.txt" in names
+    assert "data/templates/example.json" in names
     assert not any(name.startswith("Lumen/") for name in names)
 
 

@@ -42,7 +42,7 @@ def test_routine_process_and_dns_info_noise_is_suppressed() -> None:
     assert all(SingBoxManager._is_noisy_runtime_line(line) for line in lines)
 
 
-def test_tun_cleanup_scripts_include_configured_interface(monkeypatch) -> None:
+def test_legacy_tun_aliases_never_authorize_adapter_deletion(monkeypatch) -> None:
     calls = []
 
     def fake_run(command, **kwargs):
@@ -55,8 +55,7 @@ def test_tun_cleanup_scripts_include_configured_interface(monkeypatch) -> None:
     SingBoxManager.cleanup_orphaned_tun_adapters(interface_name="Lumen-TUN 1")
     SingBoxManager()._purge_stale_wintun_devices(interface_name="Lumen-TUN 1")
 
-    assert len(calls) == 2
-    assert all("Lumen-TUN 1" in script for script in calls)
+    assert calls == []
 
 
 def test_tun_interface_name_is_restricted_before_powershell_embedding() -> None:
@@ -90,6 +89,7 @@ def test_runtime_reader_hides_process_path_but_keeps_actionable_errors() -> None
         poll=lambda: 1,
         wait=lambda: 1,
     )
+    manager._proc = proc
     manager._read_output(proc)
     assert not any("found process path" in line for line in received)
     assert any("context deadline exceeded" in line for line in received)

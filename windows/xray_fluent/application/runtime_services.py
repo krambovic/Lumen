@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..qthread_utils import is_thread_pending
+
 from typing import TYPE_CHECKING
 import time
 
@@ -27,6 +29,8 @@ def _call_in_qobject_thread(obj: object, method_name: str) -> None:
 
 
 def start_metrics_worker(controller: AppController) -> None:
+    if getattr(controller, "_shutting_down", False):
+        return
     session = controller._active_session
     node = controller.selected_node
     ping_host = session.ping_host if session is not None else (node.server if node else "")
@@ -52,6 +56,9 @@ def start_metrics_worker(controller: AppController) -> None:
         socks_port=socks_port,
         http_port=http_port,
         xray_inbound_tags=list(inbound_tags),
+        active_profile_id=str(session.node_id or "") if session else "",
+        active_outbound_tag=(session.clash_api_selector or "proxy") if session else "proxy",
+        health_proxy_url=getattr(session, "health_proxy_url", "") if session else "",
     )
     controller._metrics_worker.metrics.connect(controller._on_live_metrics)
     controller._metrics_worker.start()
@@ -204,22 +211,26 @@ def on_live_metrics(controller: AppController, payload: dict[str, object]) -> No
     down_bps = float(payload.get("down_bps") or 0.0)
     latency_raw = payload.get("latency_ms")
     latency_ms = int(latency_raw) if isinstance(latency_raw, (int, float)) else None
-    controller._check_auto_switch(down_bps, latency_ms)
+    controller._check_auto_switch(
+        down_bps, latency_ms, up_bps=float(payload.get("up_bps") or 0.0),
+        health_status=payload.get("health_status"),
+        health_checked_at=payload.get("health_checked_at"),
+        health_profile_id=payload.get("health_profile_id"),
+    )
     process_stats = payload.get("process_stats")
     if process_stats:
         stats_dict = {}
         for ps in process_stats:
-            stats_dict[ps.exe] = (ps.upload, ps.download, ps.route)
+            stats_dict[ps.exe] = (
+                ps.upload, ps.download, ps.route,
+                getattr(ps, "proxy_bytes", 0), getattr(ps, "direct_bytes", 0),
+                getattr(ps, "unknown_bytes", 0),
+            )
         controller._traffic_history.update_session(stats_dict)
         controller._traffic_save_counter += 1
         if controller._traffic_save_counter >= 15:
-            # Serialising a year of history must not run on the GUI thread. The
-            # write is atomic and TrafficHistoryStorage is lock-guarded, so it is
-            # safe on the same single-threaded executor used for state saves.
-            if getattr(controller, "_save_executor_shutdown", True):
-                controller._traffic_history.save_periodic()
-            else:
-                controller._save_executor.submit(controller._traffic_history.save_periodic)
+            # History owns its ordered/coalesced writer; do not cross queues.
+            controller._traffic_history.save_periodic()
             controller._traffic_save_counter = 0
 
 
@@ -251,8 +262,8 @@ def shutdown(controller: AppController, *, deadline: float | None = None) -> Non
     for worker, label in unique.values():
         stop_and_wait_for_thread(worker, label=label, logger=logger, deadline=deadline)
     # Keep timed-out references; normal finished cleanup releases them safely.
-    controller._retired_metrics_workers[:] = [w for w in controller._retired_metrics_workers if w.isRunning() or not w.wait(0)]
-    controller._retired_workers[:] = [w for w in controller._retired_workers if w.isRunning() or not w.wait(0)]
+    controller._retired_metrics_workers[:] = [w for w in controller._retired_metrics_workers if is_thread_pending(w)]
+    controller._retired_workers[:] = [w for w in controller._retired_workers if is_thread_pending(w)]
     controller.disconnect_current(fast=True)
     if controller.singbox.is_running:
         controller.singbox.stop(fast=True)

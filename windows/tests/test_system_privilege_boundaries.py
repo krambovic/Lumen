@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
+import os
 from types import SimpleNamespace
 
 from xray_fluent import (
@@ -35,6 +36,10 @@ def _proxy_manager(tmp_path: Path, monkeypatch, registry: dict) -> tuple[ProxyMa
     monkeypatch.setattr(manager, "_read_settings", lambda: dict(registry))
     monkeypatch.setattr(manager, "_write_settings", lambda values: written.append(dict(values)))
     monkeypatch.setattr(manager, "_set_wininet_connection_proxy", lambda *_args: True)
+    monkeypatch.setattr(manager, "_query_connection_flags", lambda: 3)
+    monkeypatch.setattr(manager, "_set_connection_proxy", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(manager, "_refresh_system_proxy", lambda: None)
+    monkeypatch.setattr("xray_fluent.proxy_manager._process_creation_time", lambda _pid: 12345)
     return manager, written
 
 
@@ -55,15 +60,17 @@ def test_enable_keeps_the_persisted_backup_after_an_abnormal_exit(tmp_path, monk
         "ProxyOverride": "",
         "AutoConfigURL": "http://corp/proxy.pac",
     }
-    manager._backup_file.write_text(json.dumps(original), encoding="utf-8")
+    original["WinInetFlags"] = 13
+    receipt = {"version": 2, "original": original, "applied": {**stale_registry, "WinInetFlags": 3}, "owner": [os.getpid(), 12345]}
+    manager._backup_file.write_text(json.dumps(receipt), encoding="utf-8")
 
     manager.enable(10809, 10808)
 
     assert manager._backup == original
-    assert json.loads(manager._backup_file.read_text(encoding="utf-8")) == original
+    assert json.loads(manager._backup_file.read_text(encoding="utf-8"))["original"] == original
 
 
-def test_enable_never_snapshots_lumens_own_proxy_endpoint(tmp_path, monkeypatch) -> None:
+def test_enable_preserves_localhost_proxy_without_an_ownership_receipt(tmp_path, monkeypatch) -> None:
     stale_registry = {
         "ProxyEnable": 1,
         "ProxyServer": "http=127.0.0.1:10808;https=127.0.0.1:10808",
@@ -74,8 +81,8 @@ def test_enable_never_snapshots_lumens_own_proxy_endpoint(tmp_path, monkeypatch)
 
     manager.enable(10809, 10808)
 
-    assert manager._backup["ProxyEnable"] == 0
-    assert manager._backup["ProxyServer"] == ""
+    assert manager._backup["ProxyEnable"] == stale_registry["ProxyEnable"]
+    assert manager._backup["ProxyServer"] == stale_registry["ProxyServer"]
 
 
 def test_enable_snapshots_a_foreign_proxy_unchanged(tmp_path, monkeypatch) -> None:
@@ -89,7 +96,7 @@ def test_enable_snapshots_a_foreign_proxy_unchanged(tmp_path, monkeypatch) -> No
 
     manager.enable(10809, 10808)
 
-    assert manager._backup == registry
+    assert manager._backup == {**registry, "WinInetFlags": 3}
 
 
 def test_reconcile_stale_state_restores_the_persisted_backup(tmp_path, monkeypatch) -> None:
@@ -106,7 +113,9 @@ def test_reconcile_stale_state_restores_the_persisted_backup(tmp_path, monkeypat
         "ProxyOverride": "",
         "AutoConfigURL": "http://corp/proxy.pac",
     }
-    manager._backup_file.write_text(json.dumps(original), encoding="utf-8")
+    original["WinInetFlags"] = 13
+    receipt = {"version": 2, "original": original, "applied": {**stale_registry, "WinInetFlags": 3}, "owner": [os.getpid(), 12345]}
+    manager._backup_file.write_text(json.dumps(receipt), encoding="utf-8")
 
     assert manager.reconcile_stale_state() is True
     assert written == [original]
@@ -139,9 +148,11 @@ def test_sanitize_state_drops_the_security_block_and_hashed_secrets() -> None:
     )
 
     assert "security" not in safe
-    assert safe["settings"]["subscription_token"] == "***"
-    assert safe["settings"]["proxy_allow_lan"] is False
-    assert safe["nodes"] == [{"name": "n1"}]
+    # Unknown settings and node labels are omitted, not merely masked.
+    assert "subscription_token" not in safe["settings"]
+    assert "proxy_allow_lan" not in safe["settings"]
+    assert "nodes" not in safe
+    assert safe["node_count"] == 1
     assert "aGFzaA==" not in json.dumps(safe)
     assert "c2FsdA==" not in json.dumps(safe)
 
@@ -180,16 +191,34 @@ def test_diagnostics_send_attaches_signature_headers(monkeypatch) -> None:
         captured["timeout"] = timeout
         return _Response()
 
-    monkeypatch.setattr(diagnostics_uploader.urllib.request, "urlopen", fake_urlopen)
-    body = b"signed body"
-    diagnostics_uploader._send("https://diagnostics.example.test", body, "application/json", 10)
+    def fake_build_opener(*handlers):
+        assert any(isinstance(item, diagnostics_uploader._NoRedirect) for item in handlers)
+        assert any(isinstance(item, diagnostics_uploader.urllib.request.ProxyHandler)
+                   and item.proxies == {} for item in handlers)
+        return SimpleNamespace(open=fake_urlopen)
 
-    request = captured["request"]
-    assert request.data == body
-    assert request.get_header("X-diag-timestamp") == "1700000000"
-    assert request.get_header("X-diag-signature") == diagnostics_uploader._sign_headers(body)[
-        "X-Diag-Signature"
-    ]
+    monkeypatch.setattr(diagnostics_uploader.urllib.request, "build_opener", fake_build_opener)
+    body = json.dumps({"kind": "error-batch", "app_version": "1.2.3",
+                       "events": [{"msg": "token=private-value", "secret": "private-extra"}]}).encode()
+    epoch = diagnostics_uploader.set_uploads_enabled(True)
+    try:
+        assert diagnostics_uploader._send("https://diagnostics.example.test", body,
+                                          "application/json", 10, epoch=epoch)
+        request = captured["request"]
+        assert b"private-value" not in request.data and b"private-extra" not in request.data
+        assert json.loads(request.data)["kind"] == "error-batch"
+        assert captured["timeout"] == 10
+        assert request.get_header("X-diag-timestamp") == "1700000000"
+        assert request.get_header("X-diag-signature") == diagnostics_uploader._sign_headers(request.data)[
+            "X-Diag-Signature"
+        ]
+        diagnostics_uploader.set_uploads_enabled(False)
+        captured.clear()
+        assert not diagnostics_uploader._send("https://diagnostics.example.test", body,
+                                              "application/json", 10, epoch=epoch)
+        assert captured == {}
+    finally:
+        diagnostics_uploader.set_uploads_enabled(False)
 
 
 # ── discord: privilege boundary and payload integrity ───────────

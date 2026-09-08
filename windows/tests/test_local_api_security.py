@@ -25,6 +25,8 @@ from xray_fluent.process_traffic_collector import collect_process_stats
 class _Response:
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = json.dumps(payload).encode("utf-8")
+        self._offset = 0
+        self.status = 200
 
     def __enter__(self) -> _Response:
         return self
@@ -34,6 +36,34 @@ class _Response:
 
     def read(self) -> bytes:
         return self._payload
+
+    def read1(self, size: int) -> bytes:
+        chunk = self._payload[self._offset:self._offset + size]
+        self._offset += len(chunk)
+        return chunk
+
+
+def _stub_loopback_connection(monkeypatch, requests, payload):
+    import xray_fluent.metrics_api as api
+
+    class Connection:
+        sock = None
+
+        def __init__(self, host, port, timeout):
+            assert host == "127.0.0.1"
+            self.timeout = timeout
+
+        def request(self, method, path, *, headers):
+            assert method == "GET" and path == "/connections"
+            requests.append((SimpleNamespace(get_header=lambda name: headers.get(name)), self.timeout))
+
+        def getresponse(self):
+            return _Response(payload)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(api.http.client, "HTTPConnection", Connection)
 
 
 def _xray_controller() -> SimpleNamespace:
@@ -190,15 +220,9 @@ def test_singbox_clash_api_secret_is_strong_rotated_and_overwrites_imported_valu
 def test_live_metrics_worker_uses_bearer_auth_and_fails_closed_without_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import xray_fluent.live_metrics_worker as metrics_module
-
     requests = []
 
-    def fake_urlopen(request, *, timeout: int):
-        requests.append((request, timeout))
-        return _Response({"uploadTotal": 12, "downloadTotal": 34})
-
-    monkeypatch.setattr(metrics_module, "urlopen", fake_urlopen)
+    _stub_loopback_connection(monkeypatch, requests, {"uploadTotal": 12, "downloadTotal": 34})
     worker = LiveMetricsWorker("", 0, mode="singbox", clash_api_secret="runtime-secret")
 
     assert worker._query_clash_api_totals() == (12, 34)
@@ -213,15 +237,9 @@ def test_live_metrics_worker_uses_bearer_auth_and_fails_closed_without_secret(
 def test_process_traffic_collector_uses_bearer_auth_and_fails_closed_without_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import xray_fluent.process_traffic_collector as collector_module
-
     requests = []
 
-    def fake_urlopen(request, *, timeout: int):
-        requests.append((request, timeout))
-        return _Response({"connections": []})
-
-    monkeypatch.setattr(collector_module.urllib.request, "urlopen", fake_urlopen)
+    _stub_loopback_connection(monkeypatch, requests, {"connections": []})
 
     assert collect_process_stats(clash_api_secret="runtime-secret") == []
     assert requests[0][0].get_header("Authorization") == "Bearer runtime-secret"

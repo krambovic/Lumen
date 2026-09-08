@@ -78,7 +78,7 @@ class NodeListModel(QAbstractListModel):
         self._index_by_id: dict[str, int] = {}
         self._speed_progress: dict[str, int] = {}
         self._pinging_ids: set[str] = set()
-        self._country_cache: dict[str, str] = {}
+        self._country_cache: dict[str, tuple[tuple[str, str], str]] = {}
         self._allow_native_singbox_only = False
 
     # ── Qt model API ────────────────────────────────────────────
@@ -156,14 +156,16 @@ class NodeListModel(QAbstractListModel):
 
     # ── Country detection (cached per node id) ──────────────────
     def _country_for(self, node: Node) -> str:
-        code = (node.country_code or "").upper()
+        code = str(node.country_code or "").strip().upper()
         if code:
             return code
+        # Nodes are mutable: identity alone cannot invalidate a cached miss.
+        signature = (str(node.name or ""), str(node.server or ""))
         cached = self._country_cache.get(node.id)
-        if cached is None:
-            cached = detect_country(node.name or "", node.server or "")
+        if cached is None or cached[0] != signature:
+            cached = (signature, detect_country(*signature))
             self._country_cache[node.id] = cached
-        return cached
+        return cached[1]
 
     @staticmethod
     def _format_last_used(value: str | None) -> str:
@@ -179,34 +181,23 @@ class NodeListModel(QAbstractListModel):
     # ── Bulk + incremental updates ──────────────────────────────
     def set_nodes(self, nodes: Iterable[Node], selected_id: str | None) -> None:
         incoming = list(nodes)
-        old_ids = [node.id for node in self._nodes]
         new_ids = [node.id for node in incoming]
-        old_nodes = {node.id: node for node in self._nodes}
-        if old_ids != new_ids:
-            prefix = 0
-            while prefix < min(len(old_ids), len(new_ids)) and old_ids[prefix] == new_ids[prefix]:
-                prefix += 1
-            suffix = 0
-            while suffix < min(len(old_ids), len(new_ids)) - prefix and old_ids[-suffix-1] == new_ids[-suffix-1]:
-                suffix += 1
-            old_end, new_end = len(old_ids)-suffix, len(new_ids)-suffix
-            if old_end > prefix:
-                self.beginRemoveRows(QModelIndex(), prefix, old_end-1)
-                del self._nodes[prefix:old_end]
-                self.endRemoveRows()
-            if new_end > prefix:
-                self.beginInsertRows(QModelIndex(), prefix, new_end-1)
-                self._nodes[prefix:prefix] = incoming[prefix:new_end]
-                self.endInsertRows()
+        structural = [node.id for node in self._nodes] != new_ids
+        # A subscription replacement is one atomic model transaction, not a
+        # remove/insert pair with intermediate IDs and ListView coordinates.
+        if structural:
+            self.beginResetModel()
         self._nodes = incoming
         self._selected_id = selected_id
         self._index_by_id = {node.id: i for i, node in enumerate(incoming)}
         live_ids = set(new_ids)
         self._speed_progress = {k: v for k, v in self._speed_progress.items() if k in live_ids}
         self._pinging_ids.intersection_update(live_ids)
-        self._country_cache = {k: v for k, v in self._country_cache.items() if k in live_ids and old_nodes.get(k) is incoming[self._index_by_id[k]]}
-        if incoming:
-            self.dataChanged.emit(self.index(0, 0), self.index(len(incoming)-1, 0), list(self._ROLE_NAMES))
+        self._country_cache = {k: v for k, v in self._country_cache.items() if k in live_ids}
+        if structural:
+            self.endResetModel()
+        elif incoming:
+            self.dataChanged.emit(self.index(0, 0), self.index(len(incoming) - 1, 0), list(self._ROLE_NAMES))
 
     def set_selected(self, selected_id: str | None) -> None:
         if selected_id == self._selected_id:

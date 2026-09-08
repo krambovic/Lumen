@@ -236,25 +236,16 @@ begin
 end;
 
 procedure StopZapretDrivers;
-var
-  ResultCode: Integer;
 begin
+  { Do not stop/delete shared WinDivert services or kill other clients by name.
+    Restart Manager and the per-file restartreplace flags handle locked files. }
   CleanLegacySystemEntries;
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM LumenKVN.exe >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM LumenKVN-qml.exe >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM Lumen.exe >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM winws.exe >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM winws2.exe >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{cmd}'), '/C for %S in (Monkey WinDivert WinDivert14 WinDivert64 WinDivert2) do @sc stop %S >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{cmd}'), '/C for %S in (Monkey WinDivert WinDivert14 WinDivert64 WinDivert2) do @sc delete %S >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{cmd}'), '/C del /F /Q "{app}\zapret\exe\Monkey64.sys" "{app}\zapret\exe\WinDivert*.sys" >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
     StopZapretDrivers;
-  if (CurStep = ssPostInstall) and (PreviousInstallDir <> '') and
-     (CompareText(RemoveBackslashUnlessRoot(PreviousInstallDir), RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) <> 0) then
-    DelTree(PreviousInstallDir, True, True, True);
+  { Preserve the previous install directory: it may contain a portable profile
+    which has not yet been imported/unlocked by the new application. }
 end;

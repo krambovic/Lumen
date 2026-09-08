@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
-import QtQuick.Effects
 import App 1.0
 import "."
 
@@ -37,13 +36,22 @@ Item {
     property string sortKey: App.nodeSortKey
     property bool sortAsc: App.nodeSortAscending
 
-    readonly property var groupModel: [I18n.t("Все группы")].concat(App.groupOptions)
+    readonly property var groupModel: {
+        var groups = (App.groupOptions || []).slice();
+        var subs = App.subscriptions || [];
+        for (var i = 0; i < subs.length; ++i) {
+            var group = String(subs[i].group || subs[i].name || "Default");
+            if (groups.indexOf(group) < 0) groups.push(group);
+        }
+        return [I18n.t("Все группы")].concat(groups);
+    }
     readonly property var sortLabels: [I18n.t("Вручную"), I18n.t("Имя"), I18n.t("Группа"), I18n.t("Тип"), I18n.t("Транспорт"), I18n.t("Пинг"), I18n.t("Скорость"), I18n.t("Последнее использование")]
     readonly property var sortKeys: ["manual", "name", "group", "scheme", "transport", "ping", "speed", "last"]
     readonly property bool hasSubscriptionMeta: page.subscriptionMeta(page.selectedSub()) !== null
 
+    property bool viewStateRestored: false
     // ── sizing ───────────────────────────────
-    // Closer to the original compact rows (was 36/44).
+    // Original compact server-row sizing.
     readonly property int rowH: compact ? 30 : 34
     readonly property int cellFont: 13
 
@@ -149,12 +157,28 @@ Item {
     function selectedIds() { return Object.keys(sel); }
     function firstSelected() { var k = Object.keys(sel); return k.length ? k[0] : ""; }
     function testTargets() { return page.selCount > 0 ? page.selectedIds() : []; }
+    property int providerClock: 0
+    Timer { interval: 60000; repeat: true; running: page.visible; onTriggered: page.providerClock++ }
+    onVisibleChanged: providerClock++
+    readonly property var activeSub: { var tick = providerClock; return selectedSub(); }
+    readonly property var providerView: activeSub && activeSub.presentation ? activeSub.presentation : ({})
     function selectedSub() {
-        var subs = App.subscriptions;
-        if (!subs || subs.length === 0) return null;
-        var i = subCombo.currentIndex - 1;
-        if (i < 0 || i >= subs.length) return null;
-        return subs[i];
+        var wanted = String(App.selectedSubscriptionId || "");
+        var subs = App.subscriptions || [];
+        for (var i = 0; i < subs.length; ++i) {
+            if (String(subs[i].id || "") === wanted && wanted.length) return subs[i];
+        }
+        return null;
+    }
+    function subscriptionSummary(sub) {
+        if (!sub) return "";
+        var ui = sub.userinfo || {};
+        var parts = [];
+        var used = ui.trafficUsedBytes !== undefined ? Number(ui.trafficUsedBytes) : Number(ui.upload || 0) + Number(ui.download || 0);
+        var total = ui.trafficLimitBytes !== undefined ? Number(ui.trafficLimitBytes) : Number(ui.total);
+        if (isFinite(total)) parts.push(I18n.t("Трафик") + ": " + page.fmtBytes(used) + " / " + (total <= 0 ? I18n.t("Безлимитный трафик") : page.fmtBytes(total)));
+        if (ui.expiresAt || Number(ui.expire) > 0) parts.push(I18n.t("Истекает") + ": " + page.fmtTime(ui.expiresAt || ui.expire));
+        return parts.join("  ·  ");
     }
     // Подписка, выбранная в диалоге свойств (может отличаться от subCombo).
     function infoSub() {
@@ -177,10 +201,10 @@ Item {
     function fmtTime(v) {
         if (v === undefined || v === null || v === "") return "";
         var d;
-        if (typeof v === "number") d = new Date(v * 1000);
+        if (typeof v === "number") d = new Date(v > 32000000000 ? v : v * 1000);
         else {
             var s = String(v).trim();
-            if (/^\d{9,}$/.test(s)) d = new Date(parseInt(s, 10) * 1000);
+            if (/^\d{9,}$/.test(s)) d = new Date(Number(s) > 32000000000 ? Number(s) : Number(s) * 1000);
             else d = new Date(s);
         }
         if (isNaN(d.getTime())) return String(v);
@@ -191,7 +215,7 @@ Item {
         var rows = [];
         if (!sub) return rows;
         rows.push([I18n.t("Группа"), (sub.name && sub.name.length ? sub.name : "—")]);
-        if (sub.url) rows.push(["URL", sub.url]);
+        if (sub.url) rows.push(sub.presentation && sub.presentation.hideUrl ? [I18n.t("Ссылка подписки"), I18n.t("Скрыта провайдером")] : ["URL", sub.url]);
         if (sub.updated_at) rows.push([I18n.t("Обновлено"), fmtTime(sub.updated_at)]);
         rows.push([I18n.t("Серверов"), String(sub.node_count || 0)]);
         var ui = sub.userinfo;
@@ -201,7 +225,7 @@ Item {
             else if (ui.isActive !== undefined) rows.push([I18n.t("Статус"), ui.isActive ? I18n.t("Активна") : I18n.t("Неактивна")]);
             if (ui.daysLeft !== undefined) rows.push([I18n.t("Осталось дней"), String(ui.daysLeft)]);
             var usedB = (ui.trafficUsedBytes !== undefined) ? Number(ui.trafficUsedBytes)
-                      : ((ui.total !== undefined) ? Number((ui.upload || 0) + (ui.download || 0)) : undefined);
+                      : ((ui.total !== undefined) ? (Number(ui.upload || 0) + Number(ui.download || 0)) : undefined);
             var limitB = (ui.trafficLimitBytes !== undefined) ? Number(ui.trafficLimitBytes)
                        : ((ui.total !== undefined) ? Number(ui.total) : undefined);
             if (usedB !== undefined || limitB !== undefined) {
@@ -226,13 +250,14 @@ Item {
             if (ui.providerId) rows.push(["Provider ID", String(ui.providerId)]);
             if (ui.announcement) rows.push([I18n.t("Объявление"), String(ui.announcement)]);
             if (ui.profileUpdateInterval) rows.push([I18n.t("Интервал обновления"), String(ui.profileUpdateInterval)]);
-            var premium = ui.premiumFeatures;
-            if (premium && typeof premium === "object") {
-                var keys = Object.keys(premium).sort();
-                for (var p = 0; p < keys.length; p++) {
-                    rows.push([page.premiumFeatureLabel(keys[p]), String(premium[keys[p]])]);
-                }
+            var extra = [["Описание", "profileDescription"], ["Баннер", "bannerText"], ["Кнопка баннера", "bannerButtonText"], ["Ссылка баннера", "bannerButtonUrl"], ["Цвет баннера", "bannerBgColor"], ["Premium", "premiumUrl"], ["Email", "supportEmail"], ["Поддержка", "supportUrl"], ["Сайт", "profileUrl"]];
+            for (var e = 0; e < extra.length; ++e) {
+                if (ui[extra[e][1]] !== undefined && ui[extra[e][1]] !== "") rows.push([I18n.t(extra[e][0]), String(ui[extra[e][1]])]);
             }
+        }
+        var features = sub.presentation ? sub.presentation.featureRows || [] : [];
+        for (var p = 0; p < features.length; ++p) {
+            rows.push([page.premiumFeatureLabel(features[p].key), String(features[p].value) + " · " + I18n.t(features[p].status)]);
         }
         return rows;
     }
@@ -280,6 +305,16 @@ Item {
         if (!ui.profileTitle && !ui.supportUrl && !ui.profileUrl && !ui.telegramUrl
                 && !ui.announcement && !ui.announcementUrl && !ui.providerId && !premium) return null;
         return ui;
+    }
+    function subscriptionActionUrl(key) {
+        var meta = page.subscriptionMeta(page.selectedSub());
+        if (!meta) return "";
+        var wanted = String(meta[key] || "").trim();
+        var links = page.providerView.links || [];
+        for (var i = 0; i < links.length; ++i) {
+            if (String(links[i].url) === wanted) return wanted;
+        }
+        return "";
     }
     function menuNodeId() { return App.nodeIdAt(page.menuRow); }
 
@@ -332,7 +367,7 @@ Item {
         }
         if (delta === 0) return;
         listScrollAnim.stop();
-        list.contentY = Math.max(0, Math.min(listVbarTrack.maxY, list.contentY + delta));
+        list.contentY = Math.max(listVbarTrack.minY, Math.min(listVbarTrack.maxY, list.contentY + delta));
         listVbarTrack.flash();
         updateDragSelection();
     }
@@ -398,6 +433,7 @@ Item {
     }
 
     function restoreSubscriptionSelection() {
+        if (!App.profileLoaded) return;
         var wanted = String(App.selectedSubscriptionId || "");
         var subs = App.subscriptions || [];
         for (var i = 0; i < subs.length; i++) {
@@ -412,6 +448,11 @@ Item {
     }
 
     function restoreServerViewState() {
+        if (!App.profileLoaded) return;
+        page.viewStateRestored = true;
+        var restoredSub = page.selectedSub();
+        if (restoredSub)
+            page.filterGroup = String(restoredSub.group || restoredSub.name || "Default");
         var groupIndex = page.groupModel.indexOf(page.filterGroup);
         if (groupIndex < 0) {
             page.filterGroup = "";
@@ -452,6 +493,7 @@ Item {
 
     // ── reusable cell / header text ───────────────────
     component CellText: Text {
+        textFormat: Text.PlainText
         property int w: 80
         width: w
         height: parent ? parent.height : 0
@@ -542,6 +584,8 @@ Item {
             spacing: Theme.spacing
 
             Text {
+
+                textFormat: Text.PlainText
                 text: I18n.t("Серверы")
                 color: Theme.text
                 font.family: Theme.fontFamily
@@ -549,6 +593,7 @@ Item {
                 font.bold: true
             }
             Text {
+                textFormat: Text.PlainText
                 visible: page.selCount > 0
                 text: I18n.t("· выбрано: ") + page.selCount
                 color: Theme.textMuted
@@ -580,7 +625,7 @@ Item {
                     width: 160
                     height: Theme.controlHeight
                     model: page.groupModel
-                    onActivated: { page.filterGroup = (currentIndex <= 0 ? "" : currentText); page.applyFilters() }
+                    onActivated: { page.filterGroup = (currentIndex <= 0 ? "" : currentText); page.applyFilters(); page.selectSubscriptionByGroup(page.filterGroup); }
                 }
                 FilterCombo {
                     id: sortCombo
@@ -629,6 +674,8 @@ Item {
                 border.color: searchInput.activeFocus ? Theme.accent : Theme.borderSolid
 
                 Text {
+
+                    textFormat: Text.PlainText
                     id: searchGlyph
                     anchors.left: parent.left
                     anchors.leftMargin: 10
@@ -678,6 +725,7 @@ Item {
 
                 Item { Layout.fillWidth: true }
                 Text {
+                    textFormat: Text.PlainText
                     Layout.maximumWidth: Math.max(120, subMetaRow.width - Theme.controlHeight * 4 - 30)
                     Layout.preferredHeight: 20
                     text: {
@@ -697,53 +745,53 @@ Item {
                 AccentButton {
                     Layout.preferredWidth: Theme.controlHeight
                     Layout.preferredHeight: Theme.controlHeight
-                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.announcementUrl); }
+                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return page.subscriptionActionUrl("announcementUrl").length > 0; }
                     kind: "ghost"
                     iconOnly: true
                     glyph: "\uE7F4"
                     text: I18n.t("Объявление подписки")
                     onClicked: {
                         var meta = page.subscriptionMeta(page.selectedSub());
-                        if (meta && meta.announcementUrl) App.openUrl(meta.announcementUrl);
+                        if (page.subscriptionActionUrl("announcementUrl")) App.openUrl(page.subscriptionActionUrl("announcementUrl"));
                     }
                 }
                 AccentButton {
                     Layout.preferredWidth: Theme.controlHeight
                     Layout.preferredHeight: Theme.controlHeight
-                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.supportUrl); }
+                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return page.subscriptionActionUrl("supportUrl").length > 0; }
                     kind: "ghost"
                     iconOnly: true
                     glyph: "\uE8F2"
                     text: I18n.t("Поддержка подписки")
                     onClicked: {
                         var meta = page.subscriptionMeta(page.selectedSub());
-                        if (meta && meta.supportUrl) App.openUrl(meta.supportUrl);
+                        if (page.subscriptionActionUrl("supportUrl")) App.openUrl(page.subscriptionActionUrl("supportUrl"));
                     }
                 }
                 AccentButton {
                     Layout.preferredWidth: Theme.controlHeight
                     Layout.preferredHeight: Theme.controlHeight
-                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.telegramUrl); }
+                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return page.subscriptionActionUrl("telegramUrl").length > 0; }
                     kind: "ghost"
                     iconOnly: true
                     glyph: "\uE8BD"
                     text: "Telegram"
                     onClicked: {
                         var meta = page.subscriptionMeta(page.selectedSub());
-                        if (meta && meta.telegramUrl) App.openUrl(meta.telegramUrl);
+                        if (page.subscriptionActionUrl("telegramUrl")) App.openUrl(page.subscriptionActionUrl("telegramUrl"));
                     }
                 }
                 AccentButton {
                     Layout.preferredWidth: Theme.controlHeight
                     Layout.preferredHeight: Theme.controlHeight
-                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.profileUrl); }
+                    visible: { var meta = page.subscriptionMeta(page.selectedSub()); return page.subscriptionActionUrl("profileUrl").length > 0; }
                     kind: "ghost"
                     iconOnly: true
                     glyph: "\uE774"
                     text: I18n.t("Страница подписки")
                     onClicked: {
                         var meta = page.subscriptionMeta(page.selectedSub());
-                        if (meta && meta.profileUrl) App.openUrl(meta.profileUrl);
+                        if (page.subscriptionActionUrl("profileUrl")) App.openUrl(page.subscriptionActionUrl("profileUrl"));
                     }
                 }
             }
@@ -758,6 +806,7 @@ Item {
 
             Item { Layout.fillWidth: true }
             Text {
+                textFormat: Text.PlainText
                 Layout.maximumWidth: Math.max(220, page.width * 0.42)
                 text: {
                     var meta = page.subscriptionMeta(page.selectedSub());
@@ -773,25 +822,25 @@ Item {
                 verticalAlignment: Text.AlignVCenter
             }
             AccentButton {
-                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.supportUrl); }
+                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return page.subscriptionActionUrl("supportUrl").length > 0; }
                 kind: "ghost"
                 iconOnly: true
                 glyph: "\uE8F2"
                 text: I18n.t("Поддержка подписки")
                 onClicked: {
                     var meta = page.subscriptionMeta(page.selectedSub());
-                    if (meta && meta.supportUrl) App.openUrl(meta.supportUrl);
+                    if (page.subscriptionActionUrl("supportUrl")) App.openUrl(page.subscriptionActionUrl("supportUrl"));
                 }
             }
             AccentButton {
-                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return !!(meta && meta.profileUrl); }
+                visible: { var meta = page.subscriptionMeta(page.selectedSub()); return page.subscriptionActionUrl("profileUrl").length > 0; }
                 kind: "ghost"
                 iconOnly: true
                 glyph: "\uE774"
                 text: I18n.t("Страница подписки")
                 onClicked: {
                     var meta = page.subscriptionMeta(page.selectedSub());
-                    if (meta && meta.profileUrl) App.openUrl(meta.profileUrl);
+                    if (page.subscriptionActionUrl("profileUrl")) App.openUrl(page.subscriptionActionUrl("profileUrl"));
                 }
             }
         }
@@ -850,12 +899,16 @@ Item {
                         id: subCombo
                         Layout.preferredWidth: Math.round(Math.max(150, Math.min(260, page.width * 0.20)))
                         model: [I18n.t("Нет подписки")].concat(
-                            App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : s.url) + " (" + (s.node_count || 0) + ")"; })
+                            App.subscriptions.map(function(s) { return (s.name && s.name.length ? s.name : I18n.t("Подписка")) + " (" + (s.node_count || 0) + ")"; })
                         )
                         onActivated: {
                             var subs = App.subscriptions || [];
                             var i = currentIndex - 1;
-                            App.setSelectedSubscriptionId(i >= 0 && i < subs.length ? String(subs[i].id || "") : "");
+                            var subscription = i >= 0 && i < subs.length ? subs[i] : null;
+                            App.setSelectedSubscriptionId(subscription ? String(subscription.id || "") : "");
+                            page.filterGroup = subscription ? String(subscription.group || subscription.name || "Default") : "";
+                            groupCombo.currentIndex = Math.max(0, page.groupModel.indexOf(page.filterGroup));
+                            page.applyFilters();
                         }
                     }
                     AccentButton { kind: "ghost"; iconOnly: true; glyph: "\uE72C"; text: I18n.t("Обновить подписку"); enabled: page.selectedSub() !== null; onClicked: { var s = page.selectedSub(); if (s) App.updateSubscription(s.url) } }
@@ -867,6 +920,7 @@ Item {
 
         // ── table ────────────────────────────
         Card {
+            objectName: "serverTableCard"
             Layout.fillWidth: true
             Layout.fillHeight: true
 
@@ -919,7 +973,9 @@ Item {
                     ListView {
                         id: list
                         width: page.tableWidth
-                        height: parent.height - headerRow.height
+                        height: Math.max(0, parent.height - headerRow.height - (hbar.visible ? 12 : 0))
+                        objectName: "serverList"
+                        reuseItems: true
                         model: App.nodeModel
                         onCountChanged: {
                             if (page.selCount === 0)
@@ -943,12 +999,15 @@ Item {
                         Connections {
                             target: App.nodeModel
                             function onModelAboutToBeReset() {
-                                page.savedListContentY = list.contentY;
+                                listScrollAnim.stop();
+                                page.savedListContentY = list.contentY - list.originY;
                             }
                             function onModelReset() {
                                 Qt.callLater(function() {
-                                    var maxY = Math.max(0, list.contentHeight - list.height);
-                                    list.contentY = Math.max(0, Math.min(maxY, page.savedListContentY));
+                                    list.forceLayout();
+                                    var origin = list.originY;
+                                    var range = Math.max(0, list.contentHeight - list.height);
+                                    list.contentY = origin + Math.max(0, Math.min(range, page.savedListContentY));
                                 });
                             }
                         }
@@ -963,11 +1022,12 @@ Item {
                         WheelHandler {
                             acceptedDevices: PointerDevice.Mouse
                             onWheel: (ev) => {
-                                var maxY = Math.max(0, list.contentHeight - list.height)
-                                if (maxY <= 0) { ev.accepted = true; return }
+                                var minY = list.originY
+                                var maxY = minY + Math.max(0, list.contentHeight - list.height)
+                                if (maxY <= minY) { ev.accepted = true; return }
                                 var step = Math.max(60, page.rowH * 3)
                                 var base = listScrollAnim.running ? listScrollAnim.to : list.contentY
-                                var target = Math.max(0, Math.min(maxY, base - (ev.angleDelta.y / 120) * step))
+                                var target = Math.max(minY, Math.min(maxY, base - (ev.angleDelta.y / 120) * step))
                                 listScrollAnim.to = target
                                 listScrollAnim.restart()
                                 listVbarTrack.flash()
@@ -977,6 +1037,7 @@ Item {
 
                         delegate: Rectangle {
                             id: nodeRow
+                            objectName: "serverRow_" + nodeId
                             required property int index
                             required property string nodeId
                             required property string name
@@ -1041,11 +1102,9 @@ Item {
                                         Item {
                                             id: flagBox
                                             readonly property bool imageReady: !!nodeRow.flagSource && flagImg.status === Image.Ready
-                                            readonly property bool hasShapeFallback: !imageReady
-                                                && nodeRow.flagColors && nodeRow.flagColors.length > 0
+                                            readonly property bool hasShapeFallback: nodeRow.flagColors && nodeRow.flagColors.length > 0
                                                 && !!nodeRow.flagOrient
-                                            readonly property bool showEmojiFallback: !imageReady
-                                                && !hasShapeFallback && !!nodeRow.flagEmoji
+                                            readonly property bool showEmojiFallback: !hasShapeFallback && !!nodeRow.flagEmoji
                                             width: (nodeRow.flagSource || nodeRow.flagEmoji || (nodeRow.flagColors && nodeRow.flagColors.length > 0)) ? 24 : 0
                                             height: 18
                                             anchors.verticalCenter: parent.verticalCenter
@@ -1053,8 +1112,10 @@ Item {
                                             clip: true
                                             Image {
                                                 id: flagImg
+                                                objectName: "serverFlagImage"
                                                 anchors.fill: parent
-                                                visible: false
+                                                z: 1
+                                                visible: flagBox.imageReady
                                                 source: nodeRow.flagSource
                                                 fillMode: Image.PreserveAspectFit
                                                 sourceSize.width: Math.round(flagBox.width * Screen.devicePixelRatio)
@@ -1063,31 +1124,6 @@ Item {
                                                 mipmap: true
                                                 asynchronous: true
                                                 cache: true
-                                            }
-                                            Rectangle {
-                                                id: flagMask
-                                                anchors.fill: parent
-                                                radius: 3
-                                                visible: false
-                                                antialiasing: true
-                                                layer.enabled: true
-                                                layer.smooth: true
-                                                layer.samples: 4
-                                                layer.textureSize: Qt.size(Math.round(flagBox.width * 3), Math.round(flagBox.height * 3))
-                                            }
-                                            MultiEffect {
-                                                anchors.fill: parent
-                                                visible: flagBox.imageReady
-                                                source: flagImg
-                                                maskEnabled: true
-                                                maskSource: flagMask
-                                                maskThresholdMin: 0.5
-                                                maskSpreadAtMin: 0.5
-                                                antialiasing: true
-                                                layer.enabled: true
-                                                layer.smooth: true
-                                                layer.samples: 4
-                                                layer.textureSize: Qt.size(Math.round(flagBox.width * 3), Math.round(flagBox.height * 3))
                                             }
                                             Text {
                                                 anchors.centerIn: parent
@@ -1182,6 +1218,7 @@ Item {
                                             Text {
                                                 width: parent.width
                                                 text: nodeRow.name
+                                                textFormat: Text.PlainText
                                                 color: Theme.text
                                                 font.family: Theme.fontFamily
                                                 font.pixelSize: page.cellFont
@@ -1191,6 +1228,7 @@ Item {
                                                 visible: nodeRow.description.length > 0
                                                 width: parent.width
                                                 text: nodeRow.description
+                                                textFormat: Text.PlainText
                                                 color: Theme.textMuted
                                                 font.family: Theme.fontFamily
                                                 font.pixelSize: Math.max(9, page.cellFont - 3)
@@ -1356,8 +1394,10 @@ Item {
                         y: headerRow.height
                         height: Math.max(0, hflick.height - headerRow.height - (hbar.visible ? 10 : 0))
                         property bool forcedVisible: false
-                        readonly property real maxY: Math.max(0, list.contentHeight - list.height)
-                        readonly property bool scrollable: maxY > 1
+                        readonly property real minY: list.originY
+                        readonly property real rangeY: Math.max(0, list.contentHeight - list.height)
+                        readonly property real maxY: minY + rangeY
+                        readonly property bool scrollable: rangeY > 1
                         readonly property bool shown: scrollable
 
                         function flash() {
@@ -1385,7 +1425,7 @@ Item {
                             width: listThumbMouse.drag.active || listBarHover.hovered ? 8 : 4
                             height: Math.max(36, listVbarTrack.height * ratio)
                             x: Math.round((listVbarTrack.width - width) / 2)
-                            y: listVbarTrack.maxY <= 0 ? 0 : (listVbarTrack.height - height) * (list.contentY / listVbarTrack.maxY)
+                            y: listVbarTrack.rangeY <= 0 ? 0 : (listVbarTrack.height - height) * Math.max(0, Math.min(1, (list.contentY - listVbarTrack.minY) / listVbarTrack.rangeY))
                             radius: width / 2
                             color: listThumbMouse.drag.active ? Theme.textMuted : Theme.textFaint
                             opacity: listThumbMouse.drag.active ? 0.9 : (listBarHover.hovered ? 0.68 : 0.38)
@@ -1408,7 +1448,7 @@ Item {
                                     if (!drag.active)
                                         return
                                     var denom = Math.max(1, listVbarTrack.height - listThumb.height)
-                                    list.contentY = Math.max(0, Math.min(listVbarTrack.maxY, (listThumb.y / denom) * listVbarTrack.maxY))
+                                    list.contentY = listVbarTrack.minY + Math.max(0, Math.min(listVbarTrack.rangeY, (listThumb.y / denom) * listVbarTrack.rangeY))
                                     listVbarTrack.flash()
                                 }
                                 onReleased: listVbarTrack.flash()
@@ -1419,33 +1459,34 @@ Item {
                 }
             }
 
-            // empty state
+            // A single empty/loading state; no overlapping placeholder texts.
             ColumnLayout {
                 anchors.centerIn: parent
+                width: Math.max(0, Math.min(parent.width - 24, 390))
                 visible: list.count === 0
-                spacing: 6
+                spacing: 8
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "\uE9D9"
+                    text: "\uEC05"
                     font.family: "Segoe Fluent Icons"
-                    font.pixelSize: 40
+                    font.pixelSize: 28
                     color: Theme.textFaint
                 }
                 Text {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: I18n.t("Список серверов пуст")
-                    color: Theme.textFaint
+                    Layout.fillWidth: true
+                    text: !App.profileLoaded ? I18n.t("Загрузка профиля и серверов…")
+                        : (page.filterGroup.length || page.filterText.length
+                           ? I18n.t("Нет серверов по выбранным фильтрам")
+                           : I18n.t("Добавьте подписку или импортируйте конфигурации"))
+                    textFormat: Text.PlainText
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontNormal
                 }
-                Text {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: I18n.t("Скопируйте ссылки и нажмите «Импорт»")
-                    color: Theme.textFaint
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSmall
-                }
             }
+
         }
     }
 
@@ -1534,7 +1575,9 @@ Item {
     }
 
     // ── keyboard shortcuts ───────────────────────
-    readonly property bool _kbReady: page.visible
+    readonly property bool _kbReady: page.visible && page.enabled
+        && !subUrlMenu.opened && !groupCombo.popup.opened && !sortCombo.popup.opened && !subCombo.popup.opened
+        && !subDialog.opened && !infoDialog.opened && !deleteGroupDialog.opened && !qrDialog.opened && !importProgressDialog.opened
         && !searchInput.activeFocus
         && !editDialog.opened
         && !bulkDialog.opened
@@ -1821,6 +1864,7 @@ Item {
                         readonly property bool isUrlRow: String(modelData[0]).toLowerCase() === "url"
                         Text {
                             text: modelData[0]
+                            textFormat: Text.PlainText
                             color: Theme.textMuted
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
@@ -1830,6 +1874,7 @@ Item {
                         Text {
                             visible: !infoRow.isUrlRow
                             text: modelData[1]
+                            textFormat: Text.PlainText
                             color: Theme.text
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
@@ -2021,8 +2066,15 @@ Item {
             page.selectGroupByName(groupName);
             page.selectSubscriptionByGroup(groupName);
         }
+        function onSettingsChanged() {
+            if (!page.viewStateRestored && App.profileLoaded)
+                Qt.callLater(page.restoreServerViewState);
+        }
         function onSubscriptionsChanged() {
-            Qt.callLater(page.restoreSubscriptionSelection);
+            if (!page.viewStateRestored && App.profileLoaded)
+                Qt.callLater(page.restoreServerViewState);
+            else
+                Qt.callLater(page.restoreSubscriptionSelection);
         }
         function onNodeQrReady(dataUri, name) {
             qrDialog.qrSource = dataUri;

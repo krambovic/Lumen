@@ -3,13 +3,14 @@ from __future__ import annotations
 import threading
 import time
 
-from xray_fluent import ping_worker, process_traffic_collector
+from xray_fluent import ping_worker, process_traffic_collector, route_leases
 from xray_fluent.models import Node
 from xray_fluent.ping_worker import _WindowsPingBypass
 from xray_fluent.speed_test_worker import SpeedTestWorker
 
 
 def _bypass(monkeypatch, added: list[str], deleted: list[str]) -> _WindowsPingBypass:
+    monkeypatch.setattr(ping_worker, "_has_direct_host_route", lambda *_args: False)
     bypass = _WindowsPingBypass([], True)
     bypass._gateway = "192.168.0.1"
     monkeypatch.setattr(bypass, "_route_add", lambda ip: added.append(ip) or True)
@@ -18,7 +19,7 @@ def _bypass(monkeypatch, added: list[str], deleted: list[str]) -> _WindowsPingBy
 
 
 def test_concurrent_bypasses_do_not_delete_each_others_routes(monkeypatch) -> None:
-    ping_worker._ROUTE_REFS.clear()
+    route_leases._leases.clear()
     added: list[str] = []
     deleted: list[str] = []
     first = _bypass(monkeypatch, added, deleted)
@@ -33,19 +34,20 @@ def test_concurrent_bypasses_do_not_delete_each_others_routes(monkeypatch) -> No
 
     second._release_route("8.8.8.8")
     assert deleted == ["8.8.8.8"]
-    assert ping_worker._ROUTE_REFS == {}
+    assert route_leases._leases == {}
 
 
 def test_failed_route_add_is_not_refcounted(monkeypatch) -> None:
-    ping_worker._ROUTE_REFS.clear()
+    route_leases._leases.clear()
     deleted: list[str] = []
+    monkeypatch.setattr(ping_worker, "_has_direct_host_route", lambda *_args: False)
     bypass = _WindowsPingBypass([], True)
     bypass._gateway = "192.168.0.1"
     monkeypatch.setattr(bypass, "_route_add", lambda _ip: False)
     monkeypatch.setattr(bypass, "_route_delete", lambda ip: deleted.append(ip))
 
     assert bypass._acquire_route("1.1.1.1") is False
-    assert ping_worker._ROUTE_REFS == {}
+    assert route_leases._leases == {}
 
 
 def test_collector_holds_the_lock_while_mutating_shared_state(monkeypatch) -> None:
@@ -61,12 +63,12 @@ def test_collector_holds_the_lock_while_mutating_shared_state(monkeypatch) -> No
     original = process_traffic_collector._process_name_from_metadata
     locked: list[bool] = []
 
-    def _probe(meta):
+    def _probe(meta, pid_names=None):
         free = process_traffic_collector._lock.acquire(blocking=False)
         if free:
             process_traffic_collector._lock.release()
         locked.append(not free)
-        return original(meta)
+        return original(meta, pid_names)
 
     monkeypatch.setattr(process_traffic_collector, "_process_name_from_metadata", _probe)
 

@@ -152,12 +152,12 @@ ApplicationWindow {
     // Ordered page entries. Index == StackLayout child index.
     readonly property var nav: [
         { index: 0, label: I18n.t("Панель"),     glyph: "\uE80F", section: "top"    },
-        { index: 1, label: I18n.t("Серверы"),    glyph: "\uEC05", section: "top"    },
-        { index: 2, label: I18n.t("Маршруты"),   glyph: "\uE774", section: "top"    },
-        { index: 3, label: I18n.t("Конфиги"),    glyph: "\uE943", section: "top",    hideOnCompact: true },
-        { index: 4, label: "Zapret",     glyph: "\uE945", section: "top"    },
-        { index: 5, label: I18n.t("Логи"),       glyph: "\uE8FD", section: "top",    hideOnCompact: true },
-        { index: 6, label: I18n.t("История"),    glyph: "\uE81C", section: "top",    hideOnCompact: true },
+        { index: 1, iconName: "servers", label: I18n.t("Серверы"),    glyph: "\uEC05", section: "top"    },
+        { index: 2, iconName: "routing", label: I18n.t("Маршруты"),   glyph: "\uE774", section: "top"    },
+        { index: 3, iconName: "configs", label: I18n.t("Конфиги"),    glyph: "\uE943", section: "top",    hideOnCompact: true },
+        { index: 4, iconName: "zapret", label: "Zapret",     glyph: "\uE945", section: "top"    },
+        { index: 5, iconName: "logs", label: I18n.t("Логи"),       glyph: "\uE8FD", section: "top",    hideOnCompact: true },
+        { index: 6, iconName: "history", label: I18n.t("История"),    glyph: "\uE81C", section: "top",    hideOnCompact: true },
         { index: 9, label: I18n.t("О проекте"),  glyph: "\uE946", section: "bottom" },
         { index: 7, label: I18n.t("Обновления"), glyph: "\uE777", section: "bottom" },
         { index: 8, label: I18n.t("Настройки"),  glyph: "\uE713", section: "bottom" }
@@ -323,6 +323,7 @@ ApplicationWindow {
                             visible: modelData.section === "top" && !(App.compactMode && modelData.hideOnCompact === true)
                             label: modelData.label
                             glyph: modelData.glyph
+                            iconName: modelData.iconName || ""
                             iconFont: win.iconFont
                             compact: win.railCollapsed
                             selected: win.currentIndex === modelData.index
@@ -339,6 +340,7 @@ ApplicationWindow {
                             visible: modelData.section === "bottom" && !(App.compactMode && modelData.hideOnCompact === true)
                             label: modelData.label
                             glyph: modelData.glyph
+                            iconName: modelData.iconName || ""
                             iconFont: win.iconFont
                             compact: win.railCollapsed
                             selected: win.currentIndex === modelData.index

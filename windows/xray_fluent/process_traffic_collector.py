@@ -78,7 +78,7 @@ def _metadata_value(meta: Mapping[str, Any], *keys: str) -> Any:
     return ""
 
 
-def _process_name_from_metadata(meta: Mapping[str, Any]) -> tuple[str, str]:
+def _process_name_from_metadata(meta: Mapping[str, Any], pid_names: dict[str, str] | None = None) -> tuple[str, str]:
     process_path = str(_metadata_value(meta, "processPath", "process_path", "process") or "").strip()
     explicit_name = str(_metadata_value(meta, "processName", "process_name", "program", "exe") or "").strip()
     if process_path or explicit_name:
@@ -90,7 +90,12 @@ def _process_name_from_metadata(meta: Mapping[str, Any]) -> tuple[str, str]:
         # win_proc_monitor owns the PID cache and keys it by process creation
         # time. A second PID-only cache here would return the previous program
         # after Windows recycles the numeric PID.
-        name = process_name_from_pid(pid_key)
+        if pid_names is None:
+            name = process_name_from_pid(pid_key)
+        else:
+            if pid_key not in pid_names:
+                pid_names[pid_key] = process_name_from_pid(pid_key)
+            name = pid_names[pid_key]
         if name:
             return name.lower(), name
     host = str(_metadata_value(meta, "host", "destinationIP", "destination_ip", "dstIP", "dst_ip") or "").strip()
@@ -144,13 +149,14 @@ def collect_process_stats(
         max_delta = int(_MAX_REASONABLE_BYTES_PER_SEC * dt)
         active_ids: set[str] = set()
         by_proc: dict[str, dict[str, Any]] = {}
+        pid_names: dict[str, str] = {}  # snapshot-local, never stale across PID generations
         for conn in connections:
             if not isinstance(conn, Mapping):
                 continue
             meta = conn.get("metadata")
             if not isinstance(meta, Mapping):
                 meta = {}
-            exe, display_exe = _process_name_from_metadata(meta)
+            exe, display_exe = _process_name_from_metadata(meta, pid_names)
             if exe in _HIDDEN_PROCESSES:
                 continue
             _proc_display_names[exe] = display_exe

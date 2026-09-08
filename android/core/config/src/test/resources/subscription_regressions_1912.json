@@ -1,0 +1,159 @@
+{
+  "cases": [
+    {
+      "name": "plain URI list",
+      "text": "vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\nvless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012",
+      "count": 2,
+      "error": false,
+      "names": [
+        "Обход 11",
+        "Обход 12"
+      ]
+    },
+    {
+      "name": "inline URI list",
+      "text": "vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\tvless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "JSON string array",
+      "text": "[\"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\", \"vless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\"]",
+      "count": 2,
+      "error": false,
+      "names": [
+        "Обход 11",
+        "Обход 12"
+      ]
+    },
+    {
+      "name": "JSON URL wrappers do not swallow network fields",
+      "text": "{\"links\": [{\"url\": \"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\", \"network\": \"ws\"}, {\"link\": \"vless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\", \"name\": \"My node\"}]}",
+      "count": 2,
+      "error": false,
+      "names": [
+        "Обход 11",
+        "My node"
+      ]
+    },
+    {
+      "name": "independent sibling containers",
+      "text": "{\"links\": [\"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\"], \"nodes\": [{\"uri\": \"vless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\"}]}",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "nested arrays and containers",
+      "text": "{\"items\": [{\"configs\": [\"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\"]}, [\"vless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\"]]}",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "complete NDJSON documents",
+      "text": "{\"links\": [\"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\"]}\n{\"nodes\": [\"vless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\"]}",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "malformed JSON must not become dirty URI names",
+      "text": "[{\"url\": \"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\", \"network\": \"ws\"}, {\"url\": \"vless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\", \"network\": \"ws\"}",
+      "count": 0,
+      "error": true
+    },
+    {
+      "name": "base64 JSON",
+      "text": "WyJ2bGVzczovLzExMTExMTExLTExMTEtMTExMS0xMTExLTExMTExMTExMTExMUBvbmUuZXhhbXBsZTo0NDM/c2VjdXJpdHk9dGxzJnR5cGU9d3MjJUQwJTlFJUQwJUIxJUQxJTg1JUQwJUJFJUQwJUI0JTIwMTEiLCAidmxlc3M6Ly8yMjIyMjIyMi0yMjIyLTIyMjItMjIyMi0yMjIyMjIyMjIyMjJAdHdvLmV4YW1wbGU6NDQzP3NlY3VyaXR5PXRscyZ0eXBlPXdzIyVEMCU5RSVEMCVCMSVEMSU4NSVEMCVCRSVEMCVCNCUyMDEyIl0=",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "base64 YAML",
+      "text": "cHJveGllczoKICAtIG5hbWU6IG9uZQogICAgdHlwZTogdmxlc3MKICAgIHNlcnZlcjogb25lLmV4YW1wbGUKICAgIHBvcnQ6IDQ0MwogICAgdXVpZDogMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExCiAgICB0bHM6IHRydWUKICAtIG5hbWU6IHR3bwogICAgdHlwZTogdHJvamFuCiAgICBzZXJ2ZXI6IHR3by5leGFtcGxlCiAgICBwb3J0OiA0NDMKICAgIHBhc3N3b3JkOiBzeW50aGV0aWMtcGFzc3dvcmQK",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "Clash YAML",
+      "text": "proxies:\n  - name: one\n    type: vless\n    server: one.example\n    port: 443\n    uuid: 11111111-1111-1111-1111-111111111111\n    tls: true\n  - name: two\n    type: trojan\n    server: two.example\n    port: 443\n    password: synthetic-password\n",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "JSON encoded text",
+      "text": "\"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\\nvless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\"",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "base64 per line",
+      "text": "dmxlc3M6Ly8xMTExMTExMS0xMTExLTExMTEtMTExMS0xMTExMTExMTExMTFAb25lLmV4YW1wbGU6NDQzP3NlY3VyaXR5PXRscyZ0eXBlPXdzIyVEMCU5RSVEMCVCMSVEMSU4NSVEMCVCRSVEMCVCNCUyMDEx\ndmxlc3M6Ly8yMjIyMjIyMi0yMjIyLTIyMjItMjIyMi0yMjIyMjIyMjIyMjJAdHdvLmV4YW1wbGU6NDQzP3NlY3VyaXR5PXRscyZ0eXBlPXdzIyVEMCU5RSVEMCVCMSVEMSU4NSVEMCVCRSVEMCVCNCUyMDEy",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "compact VMess JSON",
+      "text": "{\"v\": \"2\", \"ps\": \"compact\", \"add\": \"vm.example\", \"port\": \"443\", \"id\": \"33333333-3333-3333-3333-333333333333\", \"aid\": \"0\", \"net\": \"ws\", \"path\": \"/ws\", \"tls\": \"tls\"}",
+      "count": 1,
+      "error": false
+    },
+    {
+      "name": "array of full Xray configs",
+      "text": "[{\"remarks\": \"bundle\", \"outbounds\": [{\"protocol\": \"vless\", \"tag\": \"one\", \"settings\": {\"vnext\": [{\"address\": \"one.example\", \"port\": 443, \"users\": [{\"id\": \"11111111-1111-1111-1111-111111111111\", \"encryption\": \"none\"}]}]}}, {\"protocol\": \"vless\", \"tag\": \"two\", \"settings\": {\"vnext\": [{\"address\": \"two.example\", \"port\": 443, \"users\": [{\"id\": \"22222222-2222-2222-2222-222222222222\", \"encryption\": \"none\"}]}]}}, {\"protocol\": \"freedom\", \"tag\": \"direct\"}]}]",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "Xray AUTO graph retained",
+      "text": "{\"outbounds\": [{\"protocol\": \"vless\", \"tag\": \"one\", \"settings\": {\"vnext\": [{\"address\": \"one.example\", \"port\": 443, \"users\": [{\"id\": \"11111111-1111-1111-1111-111111111111\", \"encryption\": \"none\"}]}]}}, {\"protocol\": \"vless\", \"tag\": \"two\", \"settings\": {\"vnext\": [{\"address\": \"two.example\", \"port\": 443, \"users\": [{\"id\": \"22222222-2222-2222-2222-222222222222\", \"encryption\": \"none\"}]}]}}, {\"protocol\": \"freedom\", \"tag\": \"direct\"}], \"routing\": {\"balancers\": [{\"tag\": \"best\", \"selector\": [\"one\", \"two\"]}]}, \"observatory\": {\"subjectSelector\": [\"one\", \"two\"]}}",
+      "count": 1,
+      "error": false
+    },
+    {
+      "name": "singbox native outbounds",
+      "text": "{\"outbounds\": [{\"type\": \"hysteria2\", \"tag\": \"hy\", \"server\": \"hy.example\", \"server_port\": 443, \"password\": \"synthetic-pass\", \"tls\": {\"enabled\": true}}, {\"type\": \"socks\", \"tag\": \"socks\", \"server\": \"socks.example\", \"server_port\": 1080}, {\"type\": \"direct\", \"tag\": \"direct\"}]}",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "node record with preserved outbound",
+      "text": "{\"nodes\": [{\"name\": \"Record\", \"outbound\": {\"protocol\": \"vless\", \"tag\": \"one\", \"settings\": {\"vnext\": [{\"address\": \"one.example\", \"port\": 443, \"users\": [{\"id\": \"11111111-1111-1111-1111-111111111111\", \"encryption\": \"none\"}]}]}}, \"link\": \"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\"}]}",
+      "count": 1,
+      "error": false,
+      "names": [
+        "Record"
+      ]
+    },
+    {
+      "name": "WireGuard INI is not malformed JSON",
+      "text": "[Interface]\nPrivateKey = YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=\nAddress = 10.1.2.3/32\n[Peer]\nPublicKey = YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=\nEndpoint = wg.example:51820\nAllowedIPs = 0.0.0.0/0\n",
+      "count": 1,
+      "error": false
+    },
+    {
+      "name": "BOM UTF8 JSON",
+      "text": "﻿[\"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\", \"vless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\"]",
+      "count": 2,
+      "error": false
+    },
+    {
+      "name": "subscription metadata preserves node display names",
+      "text": "{\"profileTitle\": \"Subscription title\", \"links\": [\"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\", \"vless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\"]}",
+      "count": 2,
+      "error": false,
+      "names": [
+        "Обход 11",
+        "Обход 12"
+      ]
+    },
+    {
+      "name": "BOM followed by whitespace and JSON",
+      "text": "﻿ \n[\"vless://11111111-1111-1111-1111-111111111111@one.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2011\", \"vless://22222222-2222-2222-2222-222222222222@two.example:443?security=tls&type=ws#%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%2012\"]",
+      "count": 2,
+      "error": false,
+      "names": [
+        "Обход 11",
+        "Обход 12"
+      ]
+    }
+  ]
+}

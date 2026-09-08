@@ -13,6 +13,8 @@ def test_server_flags_keep_a_fallback_visible_until_svg_is_ready() -> None:
     assert "flagImg.status === Image.Ready" in nodes_qml
     assert "visible: flagBox.imageReady" in nodes_qml
     assert "visible: flagBox.showEmojiFallback" in nodes_qml
+    assert "id: flagMask" not in nodes_qml
+    assert "source: flagImg" not in nodes_qml
     assert "visible: flagBox.hasShapeFallback && nodeRow.flagOrient" in nodes_qml
 
 
@@ -21,4 +23,6 @@ def test_dashboard_flag_keeps_emoji_visible_until_svg_is_ready() -> None:
 
     assert "readonly property bool imageReady: hasSource && flagImg.status === Image.Ready" in dashboard_qml
     assert "visible: flagBox.imageReady" in dashboard_qml
-    assert "visible: !flagBox.imageReady && flagBox.hasEmoji" in dashboard_qml
+    assert "visible: flagBox.hasEmoji" in dashboard_qml
+    assert "id: flagMask" not in dashboard_qml
+    assert "source: flagImg" not in dashboard_qml

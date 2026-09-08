@@ -191,10 +191,15 @@ object SingboxConfigBuilder {
 
         // Socks5 authorization. Only complete credentials switch it on, so an
         // empty preference can never publish an inbound nothing can reach.
-        val socksUsername = options.socksUsername.trim()
-        val socksPassword = options.socksPassword.trim()
-        val socksAuthActive =
-            options.socksAuthEnabled && socksUsername.isNotEmpty() && socksPassword.isNotEmpty()
+        val socksUsername = options.socksUsername
+        val socksPassword = options.socksPassword
+        if (options.socksAuthEnabled) {
+            require(listOf(socksUsername, socksPassword).all { value ->
+                value.length in 1..255 && value.none { it.code < 32 || it.code == 127 } &&
+                    Charsets.UTF_8.newEncoder().canEncode(value) && value.toByteArray(Charsets.UTF_8).size <= 255
+            }) { "SOCKS5 credentials must each contain 1–255 UTF-8 bytes and no control characters" }
+        }
+        val socksAuthActive = options.socksAuthEnabled
 
         if (options.localSocksPort > 0) {
             val socksIn = mutableMapOf<String, Any?>(
@@ -1511,6 +1516,7 @@ object SingboxConfigBuilder {
                 result[k] = v
             }
         }
+        normalizeShadowsocksMethod(result)
         // Imported configs often carry legacy dial fields; sing-box 1.12+ aborts
         // on them, so migrate domain_strategy into a domain_resolver object.
         val legacyStrategy = result.remove("domain_strategy") as? String
@@ -1627,6 +1633,7 @@ object SingboxConfigBuilder {
             dependency["type"] = type
             if (type == "masque") sanitizeMasqueOutbound(dependency)
             normalizeOpenVpnOutbound(dependency)
+            normalizeShadowsocksMethod(dependency)
             normalizeShadowsocks2022(dependency)
             applyMultiplexOptions(dependency, options)
             outbounds += dependency
@@ -1748,6 +1755,7 @@ object SingboxConfigBuilder {
                 sanitizeMasqueOutbound(normalized)
             }
             normalizeOpenVpnOutbound(normalized)
+            normalizeShadowsocksMethod(normalized)
             normalizeShadowsocks2022(normalized)
             applyMultiplexOptions(normalized, options)
             requireOpenVpnCredentials(normalized, node)
@@ -1989,6 +1997,7 @@ object SingboxConfigBuilder {
             sanitizeMasqueOutbound(result)
         }
         normalizeOpenVpnOutbound(result)
+        normalizeShadowsocksMethod(result)
         normalizeShadowsocks2022(result)
 
         return result
@@ -2173,6 +2182,16 @@ object SingboxConfigBuilder {
             )
             val tls = rawTls.filterKeys(accepted::contains).toMutableMap()
             if (tls.isEmpty()) result.remove("tls") else result["tls"] = tls
+        }
+    }
+
+    private fun normalizeShadowsocksMethod(result: MutableMap<String, Any?>) {
+        if (result["type"]?.toString()?.trim()?.lowercase() != "shadowsocks") return
+        val method = result["method"] as? String ?: return
+        // The equivalent Xray/SIP002 alias is not accepted by sing-box. Restrict
+        // this to SS: VMess security, SS2022, stream ciphers and passwords stay intact.
+        if (method.trim().equals("chacha20-poly1305", ignoreCase = true)) {
+            result["method"] = "chacha20-ietf-poly1305"
         }
     }
 

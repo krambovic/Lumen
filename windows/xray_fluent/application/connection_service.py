@@ -7,16 +7,12 @@ from typing import TYPE_CHECKING
 
 from ..constants import (
     DEFAULT_XRAY_STATS_API_PORT,
-    SINGBOX_PATH_DEFAULT,
-    XRAY_PATH_DEFAULT,
 )
 from ..engines.singbox import SingboxRuntimePlan, start_proxy as start_singbox_proxy, start_tun as start_singbox_tun
 from ..engines.xray import start_proxy as start_xray_proxy
 from ..core_resource_updater import regional_geodata_installed
-from ..path_utils import resolve_configured_path
 from ..process_conflicts import scan_network_conflicts
 from ..routing_presets import normalize_regional_preset, preset_requires_regional_geodata
-from ..subprocess_utils import kill_processes_by_path
 from .server_preflight import validate_server_preflight
 from .node_runtime_service import proxy_core_for_node
 
@@ -26,25 +22,9 @@ if TYPE_CHECKING:
 
 
 def _cleanup_orphaned_lumen_engines(controller: AppController) -> None:
-    settings = getattr(getattr(controller, "state", None), "settings", None)
-    for manager, cfg_path, def_path in (
-        (getattr(controller, "xray", None), getattr(settings, "xray_path", None), XRAY_PATH_DEFAULT),
-        (getattr(controller, "singbox", None), getattr(settings, "singbox_path", None), SINGBOX_PATH_DEFAULT),
-    ):
-        if manager is not None and getattr(manager, "_proc", None) is None:
-            exe = getattr(manager, "_exe_path", None)
-            if exe is None:
-                exe = resolve_configured_path(
-                    cfg_path,
-                    default_path=def_path,
-                    use_default_if_empty=True,
-                    migrate_default_location=True,
-                )
-            if exe is not None:
-                try:
-                    kill_processes_by_path(exe.name, exe, timeout=1.5)
-                except Exception:
-                    pass
+    # An executable path is not ownership. Managers stop only their retained
+    # process handles; an unknown port/process conflict must never be killed.
+    return
 
 
 def find_free_api_port(preferred: int | None = None, excluded: set[int] | None = None) -> int:
@@ -258,6 +238,7 @@ def connect_selected(controller: AppController, allow_during_reconnect: bool = F
             socks_port=runtime_xray.socks_port if runtime_xray is not None else None,
             http_port=runtime_xray.http_port if runtime_xray is not None else None,
             xray_inbound_tags=runtime_xray.inbound_tags if runtime_xray is not None else (),
+            health_proxy_url=runtime_xray.health_proxy_url if runtime_xray is not None else "",
             sidecar_relay_port=singbox_plan.xray_sidecar.relay_port if singbox_plan and singbox_plan.xray_sidecar else 0,
             protect_ss_port=controller._protect_ss_port,
             protect_ss_password=controller._protect_ss_password,

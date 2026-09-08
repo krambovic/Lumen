@@ -467,3 +467,55 @@ def test_restored_server_selection_does_not_show_manual_toast(monkeypatch) -> No
     app_bridge.AppBridge._on_selection_changed(bridge, selected)
 
     assert not any(event and event[0] == "info" for event in events)
+
+
+def test_release_1912_subscription_preserves_958_credentials_on_250_endpoints(monkeypatch):
+    from uuid import UUID
+    monkeypatch.setattr(node_service, "detect_country", lambda *_a: "")
+    controller = _Controller([], None)
+    links = [f"vless://{UUID(int=i + 1)}@server-{i % 250}.example:443?encryption=none&type=tcp#node" for i in range(958)]
+    added, errors = node_service.apply_fetched_subscription(controller, "https://example.test/sub", "Sub", "import", "\n".join(links), {}, [])
+    assert (added, errors) == (958, [])
+    original = {node.link: node.id for node in controller.state.nodes}
+    for order in (list(reversed(links)), links):
+        added, errors = node_service.apply_fetched_subscription(controller, "https://example.test/sub", "Sub", "update", "\n".join(order), {}, [])
+        assert (added, errors) == (958, [])
+        assert len({node.id for node in controller.state.nodes}) == 958
+        assert {node.link: node.id for node in controller.state.nodes} == original
+
+
+def test_release_1912_duplicate_provider_entries_do_not_accumulate_or_disappear():
+    controller = _Controller([], None)
+    uri = "vless://00000000-0000-0000-0000-000000000001@one.example:443?encryption=none&type=tcp#one"
+    body = uri + "\n" + uri
+    added, errors = node_service.apply_fetched_subscription(controller, "https://example.test/sub", "Sub", "import", body, {}, [])
+    assert (added, errors) == (2, [])
+    ids = {node.id for node in controller.state.nodes}
+    assert len(ids) == 2
+    added, errors = node_service.apply_fetched_subscription(controller, "https://example.test/sub", "Sub", "update", body, {}, [])
+    assert (added, errors) == (2, [])
+    assert {node.id for node in controller.state.nodes} == ids
+
+
+def test_release_1912_rekey_cannot_steal_the_id_of_a_later_exact_match():
+    controller = _Controller([], None)
+    original = "vless://00000000-0000-0000-0000-000000000001@one.example:443?encryption=none&type=tcp#shared"
+    replacement = original.replace("000000000001@", "000000000002@")
+    assert node_service.apply_fetched_subscription(controller, "https://example.test/sub", "Sub", "import", original, {}, []) == (1, [])
+    selected = controller.state.nodes[0]
+    controller.state.selected_node_id = selected.id
+    added, errors = node_service.apply_fetched_subscription(controller, "https://example.test/sub", "Sub", "update", replacement + "\n" + original, {}, [])
+    assert (added, errors) == (2, [])
+    assert controller.selected_node.id == selected.id
+    assert controller.selected_node.link == original
+
+
+def test_release_1912_partial_parse_cannot_replace_existing_subscription():
+    controller = _Controller([], None)
+    uri = "vless://00000000-0000-0000-0000-000000000001@one.example:443?encryption=none&type=tcp#one"
+    assert node_service.apply_fetched_subscription(controller, "https://example.test/sub", "Sub", "import", uri, {}, []) == (1, [])
+    before = list(controller.state.nodes)
+    added, errors = node_service.apply_fetched_subscription(controller, "https://example.test/sub", "Sub", "update", uri + "\nnot-a-valid-node", {}, [])
+    assert added == 0
+    assert errors
+    assert controller.state.nodes == before

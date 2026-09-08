@@ -156,6 +156,7 @@ def restart_proxy_core(controller: AppController, reason: str) -> bool:
             socks_port=runtime.socks_port,
             http_port=runtime.http_port,
             xray_inbound_tags=runtime.inbound_tags,
+            health_proxy_url=runtime.health_proxy_url,
             ping_host=runtime.ping_host,
             ping_port=runtime.ping_port,
         )

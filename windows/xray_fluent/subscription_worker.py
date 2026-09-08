@@ -15,6 +15,7 @@ from .application.node_service import (
     prepare_subscription_payload,
 )
 from .http_utils import abort_http_response
+from .secret_scrubber import scrub_text
 
 
 @dataclass
@@ -94,14 +95,22 @@ class SubscriptionFetchWorker(QObject):
             except SubscriptionFetchCancelled:
                 return
             except Exception as exc:  # никогда не роняем рабочий поток
-                text, userinfo, errors = "", {}, [str(exc)]
+                text, userinfo, errors = "", {}, [scrub_text(str(exc))]
                 metadata = {"headers": {}, "status": 0, "not_modified": False}
             if self._stopped.is_set():
                 return
             if text and not metadata.get("not_modified"):
-                metadata["prepared"] = prepare_subscription_payload(
-                    text, job.include_regex, job.exclude_regex,
-                )
+                try:
+                    metadata["prepared"] = prepare_subscription_payload(
+                        text, job.include_regex, job.exclude_regex,
+                    )
+                except SubscriptionFetchCancelled:
+                    return
+                except Exception as exc:
+                    # Do not reparse a failed preparation on the GUI thread.
+                    text, userinfo = "", {}
+                    errors = [*errors, scrub_text(str(exc))]
+                    metadata = {"headers": {}, "status": 0, "not_modified": False}
             if self._stopped.is_set():
                 return
             self.fetched.emit(batch_id, job, text, userinfo, list(errors), metadata)

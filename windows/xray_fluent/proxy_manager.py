@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import ctypes
 import json
+import logging
 import os
+import re
+import tempfile
+
 from pathlib import Path
 import sys
 from ctypes import wintypes
@@ -20,6 +24,9 @@ INTERNET_SETTINGS_KEY = r"Software\Microsoft\Windows\CurrentVersion\Internet Set
 INTERNET_PER_CONN_FLAGS = 1
 INTERNET_PER_CONN_PROXY_SERVER = 2
 INTERNET_PER_CONN_PROXY_BYPASS = 3
+INTERNET_PER_CONN_AUTOCONFIG_URL = 4
+_PROXY_FIELDS = ("ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL")
+_logger = logging.getLogger(__name__)
 PROXY_TYPE_DIRECT = 0x00000001
 PROXY_TYPE_PROXY = 0x00000002
 RAS_MAX_ENTRY_NAME = 256
@@ -66,9 +73,35 @@ class _RasEntryName(ctypes.Structure):
     ]
 
 
+def _process_creation_time(pid: int) -> int | None:
+    # Query one known process, never enumerate/kill by path. No new dependency.
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, *([ctypes.POINTER(wintypes.FILETIME)] * 4)]
+    kernel.GetProcessTimes.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x1000, False, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == 87:  # ERROR_INVALID_PARAMETER: PID no longer exists.
+            return None
+        raise OSError(error, "Cannot verify proxy owner")
+    try:
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not kernel.GetProcessTimes(handle, *(ctypes.byref(value) for value in times)):
+            raise OSError(ctypes.get_last_error(), "Cannot verify process generation")
+        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+    finally:
+        kernel.CloseHandle(handle)
+
+
 class ProxyManager:
     def __init__(self) -> None:
         self._backup: dict[str, str | int] | None = None
+        self._applied: dict[str, str | int] | None = None
+        self._owner: tuple[int, int] | None = None
         self._backup_file = RUNTIME_DIR / "system_proxy_backup.json"
         self._firefox_proxy = FirefoxProxyManager()
 
@@ -119,49 +152,100 @@ class ProxyManager:
         return False
 
     def _snapshot_settings(self) -> dict[str, str | int]:
+        # Localhost may belong to another client. Never infer ownership from it.
         values = self._read_settings()
-        if self._is_lumen_proxy(values.get("ProxyServer")):
-            # Values left in the registry by an abnormal exit are Lumen's own,
-            # never the user's originals — restoring them would point the system
-            # at a dead local port.
-            values["ProxyEnable"] = 0
-            values["ProxyServer"] = ""
+        flags = self._query_connection_flags()
+        if flags is None:
+            raise RuntimeError("Не удалось сохранить исходные параметры WinINET")
+        values["WinInetFlags"] = flags
         return values
 
-    def reconcile_stale_state(self) -> bool:
-        """Undo a system proxy left enabled by an abnormal exit. Call on startup."""
+    def _query_connection_flags(self) -> int | None:
         if not self.is_supported:
+            return None
+        options = (_InternetPerConnOption * 1)()
+        options[0].m_Option = INTERNET_PER_CONN_FLAGS
+        payload = _InternetPerConnOptionList(ctypes.sizeof(_InternetPerConnOptionList), None, 1, 0, options)
+        size = wintypes.DWORD(ctypes.sizeof(payload))
+        try:
+            query = ctypes.windll.Wininet.InternetQueryOptionW
+            query.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, ctypes.POINTER(wintypes.DWORD)]
+            query.restype = wintypes.BOOL
+            if query(0, INTERNET_OPTION_PER_CONNECTION_OPTION, ctypes.byref(payload), ctypes.byref(size)):
+                return int(options[0].m_Value.m_Int)
+        except Exception:
+            pass
+        return None
+
+    def _matches_settings(self, expected: dict[str, str | int] | None) -> bool:
+        if expected is None:
             return False
-        backup = self._load_persisted_backup()
-        if backup is None and not self._is_lumen_proxy(self._read_settings().get("ProxyServer")):
+        current = self._read_settings()
+        return all(current.get(key) == expected.get(key) for key in _PROXY_FIELDS) and self._query_connection_flags() == expected.get("WinInetFlags")
+
+    def _owner_is_live_elsewhere(self) -> bool:
+        if self._owner is None:
             return False
-        self.disable(restore_previous=True)
-        return True
+        pid, created = self._owner
+        try:
+            return pid != os.getpid() and _process_creation_time(pid) == created
+        except (OSError, AttributeError):
+            return True
+
+    def reconcile_stale_state(self) -> bool:
+        if not self.is_supported or self._load_persisted_backup() is None:
+            return False
+        return self.disable(restore_previous=True)
 
     def _load_persisted_backup(self) -> dict[str, str | int] | None:
+        if self._backup is None:
+            self._applied = self._owner = None
         if not self._backup_file.exists():
             return None
         try:
             payload = json.loads(self._backup_file.read_text(encoding="utf-8"))
-        except Exception:
+            if not isinstance(payload, dict) or payload.get("version") != 2:
+                raise ValueError("unproven legacy ownership")
+            original, applied, owner = payload["original"], payload["applied"], payload["owner"]
+            for snapshot in (original, applied):
+                if not isinstance(snapshot, dict) or any(key not in snapshot for key in (*_PROXY_FIELDS, "WinInetFlags")):
+                    raise ValueError("invalid proxy snapshot")
+                if type(snapshot["ProxyEnable"]) is not int or snapshot["ProxyEnable"] not in (0, 1):
+                    raise ValueError("invalid proxy flag")
+                if type(snapshot["WinInetFlags"]) is not int or not 0 <= snapshot["WinInetFlags"] <= 15:
+                    raise ValueError("invalid WinINET flags")
+                if any(not isinstance(snapshot[key], str) for key in _PROXY_FIELDS[1:]):
+                    raise ValueError("invalid proxy strings")
+            if not isinstance(owner, list) or len(owner) != 2 or type(owner[0]) is not int or not 0 < owner[0] <= 0xFFFFFFFF:
+                raise ValueError("invalid proxy owner")
+            if type(owner[1]) is not int or owner[1] <= 0:
+                raise ValueError("invalid owner generation")
+            self._applied, self._owner = dict(applied), (owner[0], owner[1])
+            if self._owner_is_live_elsewhere():
+                return None
+            return dict(original)
+        except (OSError, ValueError, KeyError, TypeError):
+            _logger.warning("[proxy] Unproven or legacy backup retained; manual recovery required")
             return None
-        if not isinstance(payload, dict):
-            return None
-        result: dict[str, str | int] = {}
-        for key in ("ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL"):
-            if key in payload:
-                result[key] = payload[key]
-        return result or None
 
     def _persist_backup(self, values: dict[str, str | int] | None) -> None:
+        if values is None:
+            self._backup_file.unlink(missing_ok=True)
+            return
+        # Recovery must be durable BEFORE any system mutation. Never swallow failure.
+        payload = {"version": 2, "original": values, "applied": self._applied, "owner": self._owner}
+        self._backup_file.parent.mkdir(parents=True, exist_ok=True)
+        staged = None
         try:
-            if values:
-                self._backup_file.parent.mkdir(parents=True, exist_ok=True)
-                self._backup_file.write_text(json.dumps(values, ensure_ascii=True, indent=2), encoding="utf-8")
-            elif self._backup_file.exists():
-                self._backup_file.unlink()
-        except Exception:
-            pass
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self._backup_file.parent, prefix=".proxy-", suffix=".tmp", delete=False) as stream:
+                staged = Path(stream.name)
+                json.dump(payload, stream, ensure_ascii=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(staged, self._backup_file)
+        finally:
+            if staged is not None:
+                staged.unlink(missing_ok=True)
 
     def _refresh_system_proxy(self) -> None:
         if not self.is_supported:
@@ -178,49 +262,35 @@ class ProxyManager:
         if not self.is_supported:
             return False
         result = self._set_connection_proxy(None, proxy_server, override, enabled)
-        for connection_name in self._enumerate_ras_entries():
-            result = self._set_connection_proxy(connection_name, proxy_server, override, enabled) or result
+        # Do not mutate RAS connections without per-connection snapshots.
         if result:
             self._refresh_system_proxy()
         return result
 
-    def _set_connection_proxy(
-        self,
-        connection_name: str | None,
-        proxy_server: str,
-        override: str,
-        enabled: bool,
-    ) -> bool:
-        options_count = 3 if enabled and override else 2 if enabled else 1
-        options_array_type = _InternetPerConnOption * options_count
-        options = options_array_type()
+    def _set_connection_proxy(self, connection_name: str | None, proxy_server: str, override: str,
+                              enabled: bool, *, flags: int | None = None, auto_config_url: str = "") -> bool:
+        options = (_InternetPerConnOption * 4)()
         options[0].m_Option = INTERNET_PER_CONN_FLAGS
-        options[0].m_Value.m_Int = PROXY_TYPE_DIRECT | (PROXY_TYPE_PROXY if enabled else 0)
-        if enabled:
-            options[1].m_Option = INTERNET_PER_CONN_PROXY_SERVER
-            options[1].m_Value.m_StringPtr = proxy_server
-            if override:
-                options[2].m_Option = INTERNET_PER_CONN_PROXY_BYPASS
-                options[2].m_Value.m_StringPtr = override
-        payload = _InternetPerConnOptionList(
-            ctypes.sizeof(_InternetPerConnOptionList),
-            connection_name,
-            options_count,
-            0,
-            options,
-        )
-        wininet = ctypes.windll.Wininet
-        wininet.InternetSetOptionW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD]
-        wininet.InternetSetOptionW.restype = wintypes.BOOL
-        ok = bool(
-            wininet.InternetSetOptionW(
-                0,
-                INTERNET_OPTION_PER_CONNECTION_OPTION,
-                ctypes.byref(payload),
-                ctypes.sizeof(payload),
-            )
-        )
-        return ok
+        options[0].m_Value.m_Int = flags if flags is not None else PROXY_TYPE_DIRECT | (PROXY_TYPE_PROXY if enabled else 0)
+        for index, option, value in ((1, INTERNET_PER_CONN_PROXY_SERVER, proxy_server),
+                                     (2, INTERNET_PER_CONN_PROXY_BYPASS, override),
+                                     (3, INTERNET_PER_CONN_AUTOCONFIG_URL, auto_config_url)):
+            options[index].m_Option = option
+            options[index].m_Value.m_StringPtr = value
+        payload = _InternetPerConnOptionList(ctypes.sizeof(_InternetPerConnOptionList), connection_name, 4, 0, options)
+        setter = ctypes.windll.Wininet.InternetSetOptionW
+        setter.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD]
+        setter.restype = wintypes.BOOL
+        return bool(setter(0, INTERNET_OPTION_PER_CONNECTION_OPTION, ctypes.byref(payload), ctypes.sizeof(payload)))
+
+    def _restore_settings(self, values: dict[str, str | int]) -> None:
+        self._write_settings(values)
+        if not self._set_connection_proxy(None, str(values["ProxyServer"]), str(values["ProxyOverride"]),
+                                          bool(values["ProxyEnable"]), flags=int(values["WinInetFlags"]),
+                                          auto_config_url=str(values["AutoConfigURL"])):
+            self._refresh_system_proxy()
+            raise RuntimeError("Не удалось полностью восстановить параметры WinINET; резервная копия сохранена")
+        self._refresh_system_proxy()
 
     def _enumerate_ras_entries(self) -> list[str]:
         try:
@@ -267,11 +337,14 @@ class ProxyManager:
     ) -> None:
         if not self.is_supported:
             return
+        previous = (self._backup, self._applied, self._owner)
         if self._backup is None:
-            # The persisted snapshot survives a crash; the registry at this point
-            # may still hold Lumen's own values from the previous run.
-            self._backup = self._load_persisted_backup() or self._snapshot_settings()
-            self._persist_backup(self._backup)
+            saved = self._load_persisted_backup()
+            if saved is None and self._backup_file.exists():
+                raise RuntimeError("Сохранённые настройки прокси требуют проверки: другой экземпляр или неподтверждённая резервная копия")
+            self._backup = saved if saved is not None else self._snapshot_settings()
+        if self._owner_is_live_elsewhere() or (self._applied is not None and not self._matches_settings(self._applied)):
+            raise RuntimeError("Системный прокси изменён вне Lumen; автоматическая перезапись отменена")
 
         # v2rayN-style system proxy: WinINET points at the local mixed inbound.
         # Xray `mixed` accepts both HTTP and SOCKS on this port, which is more
@@ -282,16 +355,28 @@ class ProxyManager:
         if bypass_lan:
             override = DEFAULT_PROXY_BYPASS
 
-        self._write_settings(
-            {
-                "ProxyEnable": 1,
-                "ProxyServer": proxy_server,
-                "ProxyOverride": override,
-                "AutoConfigURL": "",
-            }
-        )
-        if not self._set_wininet_connection_proxy(proxy_server, override, True):
-            self._refresh_system_proxy()
+        self._applied = {"ProxyEnable": 1, "ProxyServer": proxy_server, "ProxyOverride": override,
+                         "AutoConfigURL": "", "WinInetFlags": PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY}
+        try:
+            created = _process_creation_time(os.getpid())
+            if created is None:
+                raise RuntimeError("Не удалось определить владельца системного прокси")
+            self._owner = (os.getpid(), created)
+            self._persist_backup(self._backup)
+        except Exception:
+            self._backup, self._applied, self._owner = previous
+            raise
+        try:
+            self._write_settings(self._applied)
+            if not self._set_wininet_connection_proxy(proxy_server, override, True):
+                raise RuntimeError("Не удалось применить параметры WinINET")
+        except Exception:
+            # Roll back only the values just written by this operation.
+            if all(self._read_settings().get(key) == self._applied.get(key) for key in _PROXY_FIELDS):
+                self._restore_settings(self._backup)
+                self._persist_backup(None)
+                self._backup = self._applied = self._owner = None
+            raise
         # Firefox profile integration is optional.  WinINET is already fully
         # configured above, so a locked/read-only browser profile must never
         # turn a successful system-proxy operation into a connection failure.
@@ -309,21 +394,25 @@ class ProxyManager:
         except Exception:
             pass
 
-    def disable(self, restore_previous: bool = True) -> None:
+    def disable(self, restore_previous: bool = True) -> bool:
         if not self.is_supported:
-            return
-        backup = self._backup or self._load_persisted_backup()
-        if backup is None:
-            return
-        if restore_previous and backup:
-            self._write_settings(dict(backup))
-        else:
-            self._write_settings({"ProxyEnable": 0, "ProxyServer": "", "ProxyOverride": "", "AutoConfigURL": ""})
-        self._backup = None
+            return False
+        backup = self._backup if self._backup is not None else self._load_persisted_backup()
+        if backup is None or self._owner_is_live_elsewhere():
+            return False
+        if not self._matches_settings(self._applied):
+            _logger.warning("[proxy] External changes detected; proxy and recovery snapshot left untouched")
+            return False
+        desired = backup if restore_previous else {"ProxyEnable": 0, "ProxyServer": "", "ProxyOverride": "",
+                                                   "AutoConfigURL": "", "WinInetFlags": PROXY_TYPE_DIRECT}
+        self._restore_settings(desired)
         self._persist_backup(None)
-        self._firefox_proxy.disable()
-        if not self._set_wininet_connection_proxy("", "", False):
-            self._refresh_system_proxy()
+        self._backup = self._applied = self._owner = None
+        try:
+            self._firefox_proxy.disable()
+        except Exception:
+            _logger.warning("[proxy] Firefox recovery remains pending", exc_info=True)
+        return True
 
     def disable_necko_overrides(self) -> None:
         """Restore only Firefox-family browser proxy prefs managed by Lumen."""
@@ -370,6 +459,8 @@ class FirefoxProxyManager:
                     }
                     # Persist originals before attempting to modify either file.
                     self._save_backup(backup)
+                backup[key]["__applied"] = self._build_proxy_block(mixed_port=int(socks_port), bypass_lan=bypass_lan)
+                self._save_backup(backup)
                 self._write_profile_prefs(profile, mixed_port=int(socks_port), bypass_lan=bypass_lan)
                 changed = True
             except Exception:
@@ -381,30 +472,74 @@ class FirefoxProxyManager:
 
     def disable(self) -> None:
         backup = self._load_backup()
-        if not backup:
-            return
+        remaining = {}
         for profile_text, original in backup.items():
             profile = Path(profile_text)
             files = {"user.js": original} if not isinstance(original, dict) else original
+            failed = {}
+            applied = files.get("__applied", "")
             for file_name, content in files.items():
                 if file_name not in {"user.js", "prefs.js"}:
                     continue
                 target = profile / file_name
                 try:
-                    if content is None:
-                        if target.exists():
-                            remaining = self._strip_managed_block(
-                                target.read_text(encoding="utf-8", errors="replace")
-                            ).strip()
-                            if remaining:
-                                target.write_text(remaining + "\n", encoding="utf-8")
-                            else:
-                                target.unlink()
-                    else:
-                        target.write_text(str(content), encoding="utf-8")
+                    if not target.exists():
+                        continue  # Respect an external deletion.
+                    current = target.read_text(encoding="utf-8", errors="replace")
+                    expected = applied
+                    if not expected:
+                        start, end = current.find(self._MARKER_BEGIN), current.find(self._MARKER_END)
+                        if start < 0 or end < start:
+                            failed[file_name] = content
+                            continue  # Legacy recovery without ownership is manual.
+                        expected = current[start:end + len(self._MARKER_END)]
+                    restored = self._restore_profile_text(current, str(content or ""), expected)
+                    if restored != current:
+                        if content is None and not restored.strip():
+                            target.unlink()
+                        else:
+                            target.write_text(restored, encoding="utf-8")
                 except Exception:
-                    continue
-        self._save_backup({})
+                    failed[file_name] = content
+            if failed:
+                if applied:
+                    failed["__applied"] = applied
+                remaining[profile_text] = failed
+        self._save_backup(remaining)
+
+    @staticmethod
+    def _preference_lines(text: str) -> dict[str, tuple[object, str]]:
+        result = {}
+        for line in text.splitlines():
+            match = re.fullmatch(r"\s*user_pref\((.*)\);\s*", line)
+            if match is None:
+                continue
+            try:
+                pair = json.loads("[" + match.group(1) + "]")
+                if len(pair) == 2 and isinstance(pair[0], str):
+                    result[pair[0]] = (pair[1], line)
+            except (ValueError, TypeError):
+                continue
+        return result
+
+    def _restore_profile_text(self, current: str, original: str, applied: str) -> str:
+        expected = self._preference_lines(applied)
+        live = self._preference_lines(current)
+        # Treat the configuration as one lease. A changed proxy key can indicate
+        # a different client; unrelated browser preference changes are preserved.
+        if not expected or any(key not in live or live[key][0] != value[0] for key, value in expected.items()):
+            return current
+        before = self._preference_lines(original)
+        lines = []
+        for line in current.splitlines(keepends=True):
+            if line.strip() in {self._MARKER_BEGIN, self._MARKER_END}:
+                continue
+            if any(key in expected for key in self._preference_lines(line)):
+                continue
+            lines.append(line)
+        restored = "".join(lines).rstrip()
+        originals = [before[key][1] for key in expected if key in before]
+        return "\n".join(part for part in (restored, *originals) if part) + ("\n" if restored or originals else "")
 
     def _find_profiles(self) -> list[Path]:
         roots: list[Path] = []
@@ -490,7 +625,9 @@ class FirefoxProxyManager:
                 result[key] = value
             elif isinstance(key, str) and isinstance(value, dict):
                 clean: dict[str, str | None] = {}
-                for file_name in ("user.js", "prefs.js"):
+                for file_name in ("user.js", "prefs.js", "__applied"):
+                    if file_name not in value:
+                        continue
                     content = value.get(file_name)
                     if content is None or isinstance(content, str):
                         clean[file_name] = content
@@ -498,11 +635,18 @@ class FirefoxProxyManager:
         return result
 
     def _save_backup(self, backup: dict[str, object]) -> None:
+        if not backup:
+            self._backup_file.unlink(missing_ok=True)
+            return
+        self._backup_file.parent.mkdir(parents=True, exist_ok=True)
+        staged = None
         try:
-            if backup:
-                self._backup_file.parent.mkdir(parents=True, exist_ok=True)
-                self._backup_file.write_text(json.dumps(backup, ensure_ascii=True, indent=2), encoding="utf-8")
-            elif self._backup_file.exists():
-                self._backup_file.unlink()
-        except Exception:
-            pass
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self._backup_file.parent, prefix=".firefox-", suffix=".tmp", delete=False) as stream:
+                staged = Path(stream.name)
+                json.dump(backup, stream, ensure_ascii=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(staged, self._backup_file)
+        finally:
+            if staged is not None:
+                staged.unlink(missing_ok=True)

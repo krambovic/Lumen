@@ -345,6 +345,14 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
 
     socks_port, http_port, _ = extract_xray_runtime_ports(payload)
     ping_host, ping_port = controller._infer_xray_ping_target(payload, node if used_selected_node else None)
+    health_proxy_url = ""
+    if used_selected_node and not using_full_node_config:
+        from .health_listener import add_xray_health_listener
+        try:
+            health_port = find_free_api_port(excluded=controller._collect_xray_inbound_ports(payload))
+            health_proxy_url = add_xray_health_listener(payload, port=health_port)
+        except (OSError, RuntimeError):
+            controller._log("[metrics] dedicated health listener unavailable")
     return XrayRuntimeConfig(
         config=payload,
         source_path=source_path,
@@ -356,4 +364,5 @@ def build_runtime_xray_config(controller: AppController, node: Node | None = Non
         inbound_tags=inbound_tags,
         ping_host=ping_host,
         ping_port=ping_port,
+        health_proxy_url=health_proxy_url,
     )

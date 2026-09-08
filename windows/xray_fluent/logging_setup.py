@@ -55,8 +55,8 @@ class _EngineNoiseFilter(logging.Filter):
     _ENGINE_LINE_RE = re.compile(r"\[(info|warning|error|debug)\]", re.IGNORECASE)
     _ENGINE_TOKENS = ("common/errors", "infra/conf", "deprecated", "migrate to")
     _APP_TOKENS = (
-        "РїСЂР°РІР° Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°", "РїСЂР°РІ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°", "РїРѕРІС‹С€РµРЅРЅС‹РјРё РїСЂР°РІР°РјРё",
-        "windivert РјРѕРіСѓС‚ СЂР°Р±РѕС‚Р°С‚СЊ РЅРµСЃС‚Р°Р±РёР»СЊРЅРѕ", "select a server first", "СЃРЅР°С‡Р°Р»Р° РІС‹Р±РµСЂРёС‚Рµ СЃРµСЂРІРµСЂ",
+        "права администратора", "прав администратора", "повышенными правами",
+        "windivert могут работать нестабильно", "select a server first", "сначала выберите сервер",
     )
     def filter(self, record: logging.LogRecord) -> bool:
         msg = prepare_record(record).msg

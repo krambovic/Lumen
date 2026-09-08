@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls.Universal
-import QtQuick.Effects
 import QtQuick.Layouts
 import App 1.0
 import "."
@@ -8,7 +7,7 @@ import "."
 //   • Подключение   — state, VPN/proxy switches (Вкл/Выкл), start/stop button.
 //   • Маршрутизация — default and custom routing presets.
 //   • Трафик       — Загрузка/Выгрузка/RTT stacked, sparkline, peak.
-//   • Процессы     — only when the backend reports per-process stats (TUN).
+//   • Приложения   — one compact view for proxy and TUN process statistics.
 FluentScroll {
     id: page
     roundedClip: false
@@ -28,8 +27,9 @@ FluentScroll {
         if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB";
         return (b / 1073741824).toFixed(2) + " GB";
     }
-    function fmtConns(conn, total) {
-        return (total > conn) ? (conn + " (" + total + ")") : ("" + conn);
+    function processLabel(value) {
+        var name = String(value || "").replace(/\\/g, "/").split("/").pop();
+        return name.replace(/\.exe$/i, "") || I18n.t("Приложение");
     }
     function modeTitle(m) {
         return m === "global" ? I18n.t("Глобальный") : (m === "direct" ? I18n.t("Прямой") : I18n.t("Правила"));
@@ -65,8 +65,10 @@ FluentScroll {
 
         Image {
             id: flagImg
+            objectName: "dashboardFlagImage"
             anchors.fill: parent
-            visible: false
+            z: 1
+            visible: flagBox.imageReady
             source: App.selectedNodeFlagSource
             fillMode: Image.PreserveAspectFit
             sourceSize.width: 72
@@ -77,36 +79,9 @@ FluentScroll {
             cache: true
         }
 
-        Rectangle {
-            id: flagMask
-            anchors.fill: parent
-            radius: 3
-            visible: false
-            antialiasing: true
-            layer.enabled: true
-            layer.smooth: true
-            layer.samples: 4
-            layer.textureSize: Qt.size(72, 54)
-        }
-
-        MultiEffect {
-            anchors.fill: parent
-            visible: flagBox.imageReady
-            source: flagImg
-            maskEnabled: true
-            maskSource: flagMask
-            maskThresholdMin: 0.5
-            maskSpreadAtMin: 0.5
-            antialiasing: true
-            layer.enabled: true
-            layer.smooth: true
-            layer.samples: 4
-            layer.textureSize: Qt.size(72, 54)
-        }
-
         Text {
             anchors.centerIn: parent
-            visible: !flagBox.imageReady && flagBox.hasEmoji
+            visible: flagBox.hasEmoji
             text: App.selectedNodeFlag
             font.pixelSize: 18
             font.family: "Segoe UI Emoji"
@@ -363,59 +338,138 @@ FluentScroll {
                 Layout.fillWidth: true
                 Layout.columnSpan: page.twoColumns ? 2 : 1
                 padding: 16
-                visible: procRepeater.count > 0
-                readonly property int colProc: 170
-                readonly property int colSpeed: 152
-                readonly property int colVpn: 78
-                readonly property int colDirect: 78
-                readonly property int colConns: 72
-                readonly property int colTotal: 80
+                visible: App.connected || procRepeater.count > 0
+                readonly property int rateWidth: Math.round(110 * Theme.fontScale)
                 ColumnLayout {
                     width: parent.width
-                    spacing: 6
+                    spacing: 10
                     Text {
-                        text: I18n.t("Трафик по процессам")
-                        color: Theme.text; font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold
+                        text: I18n.t("Трафик приложений")
+                        textFormat: Text.PlainText
+                        color: Theme.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontStrong
+                        font.weight: Font.DemiBold
+                        ToolTip.visible: processHelp.hovered
+                        ToolTip.text: I18n.t("Доступная статистика приложений в текущем режиме. Объём за сеанс — в подсказке строки.")
+                        HoverHandler { id: processHelp }
                     }
-                    // ---- header row ----
                     RowLayout {
                         Layout.fillWidth: true
-                        Layout.topMargin: 2
-                        spacing: 10
-                        Text { text: I18n.t("Процесс"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colProc; elide: Text.ElideRight }
-                        Text { text: I18n.t("Скорость"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colSpeed; horizontalAlignment: Text.AlignRight }
-                        Text { text: "VPN"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colVpn; horizontalAlignment: Text.AlignRight }
-                        Text { text: I18n.t("Прямой"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colDirect; horizontalAlignment: Text.AlignRight }
-                        Text { text: I18n.t("Соед."); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colConns; horizontalAlignment: Text.AlignRight }
-                        Text { text: I18n.t("Хост"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
-                        Text { text: I18n.t("Всего"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: procCard.colTotal; horizontalAlignment: Text.AlignRight }
+                        spacing: 12
+                        Text {
+                            Layout.fillWidth: true
+                            text: I18n.t("Приложение")
+                            color: Theme.textFaint
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                        }
+                        Text {
+                            Layout.preferredWidth: procCard.rateWidth
+                            text: "↓ " + I18n.t("Загрузка")
+                            horizontalAlignment: Text.AlignRight
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                        }
+                        Text {
+                            Layout.preferredWidth: procCard.rateWidth
+                            Layout.rightMargin: 8
+                            text: "↑ " + I18n.t("Отправка")
+                            horizontalAlignment: Text.AlignRight
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                        }
                     }
-                    Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
-                    // ---- data rows ----
-                    Repeater {
+                    ListView {
                         id: procRepeater
+                        objectName: "dashboardProcessTraffic"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(count, 7) * Math.round(44 * Theme.fontScale)
                         model: App.processModel
-                        delegate: RowLayout {
+                        clip: true
+                        reuseItems: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: FluentScrollBar { }
+                        delegate: Item {
+                            id: processRow
                             required property string name
                             required property real downBps
                             required property real upBps
-                            required property real proxyBytes
-                            required property real directBytes
-                            required property int connections
-                            required property int totalConnections
-                            required property string topHost
                             required property real total
-                            Layout.fillWidth: true
-                            spacing: 10
-                            Text { text: I18n.t(name); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colProc; elide: Text.ElideRight }
-                            Text { text: "↓ " + page.fmtSpeed(downBps) + "  ↑ " + page.fmtSpeed(upBps); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colSpeed; horizontalAlignment: Text.AlignRight }
-                            Text { text: page.fmtBytes(proxyBytes); color: proxyBytes > 0 ? Theme.success : Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colVpn; horizontalAlignment: Text.AlignRight }
-                            Text { text: page.fmtBytes(directBytes); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colDirect; horizontalAlignment: Text.AlignRight }
-                            Text { text: page.fmtConns(connections, totalConnections); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colConns; horizontalAlignment: Text.AlignRight }
-                            Text { text: topHost; color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true; elide: Text.ElideRight }
-                            Text { text: page.fmtBytes(total); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; Layout.preferredWidth: procCard.colTotal; horizontalAlignment: Text.AlignRight }
+                            readonly property string displayName: page.processLabel(name)
+                            width: ListView.view ? ListView.view.width : 0
+                            height: Math.round(44 * Theme.fontScale)
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.rightMargin: 8
+                                radius: Theme.radiusSmall
+                                color: rowHover.hovered ? Theme.cardHover : "transparent"
+                            }
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.rightMargin: 8
+                                spacing: 12
+                                Rectangle {
+                                    Layout.preferredWidth: 28
+                                    Layout.preferredHeight: 28
+                                    radius: 8
+                                    color: Theme.accentSoft
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: processRow.displayName.slice(0, 1).toUpperCase()
+                                        textFormat: Text.PlainText
+                                        color: Theme.text
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSmall
+                                        font.bold: true
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 30
+                                    text: processRow.displayName
+                                    textFormat: Text.PlainText
+                                    elide: Text.ElideRight
+                                    color: Theme.text
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontNormal
+                                }
+                                Text {
+                                    Layout.preferredWidth: procCard.rateWidth
+                                    text: page.fmtSpeed(processRow.downBps)
+                                    horizontalAlignment: Text.AlignRight
+                                    color: processRow.downBps > 0 ? Theme.success : Theme.textFaint
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontNormal
+                                }
+                                Text {
+                                    Layout.preferredWidth: procCard.rateWidth
+                                    text: page.fmtSpeed(processRow.upBps)
+                                    horizontalAlignment: Text.AlignRight
+                                    color: processRow.upBps > 0 ? Theme.text : Theme.textFaint
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontNormal
+                                }
+                            }
+                            HoverHandler { id: rowHover }
+                            ToolTip.visible: rowHover.hovered
+                            ToolTip.delay: 550
+                            ToolTip.text: processRow.name + " · " + I18n.t("За сеанс") + ": " + page.fmtBytes(processRow.total)
                         }
+                    }
+                    Text {
+                        visible: procRepeater.count === 0
+                        Layout.fillWidth: true
+                        Layout.topMargin: 8
+                        Layout.bottomMargin: 8
+                        text: I18n.t("Статистика появится, когда приложения начнут передавать данные")
+                        textFormat: Text.PlainText
+                        color: Theme.textFaint
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSmall
                     }
                 }
             }
@@ -426,10 +480,10 @@ FluentScroll {
     Connections {
         target: App
         function onMetricsChanged() {
-            downLabel.text = I18n.t("Загрузка: ") + page.fmtSpeed(App.downBps);
-            upLabel.text   = I18n.t("Выгрузка: ") + page.fmtSpeed(App.upBps);
+            downLabel.text = I18n.t("Загрузка: ") + (App.trafficAvailable ? page.fmtSpeed(App.downBps) : "—");
+            upLabel.text   = I18n.t("Выгрузка: ") + (App.trafficAvailable ? page.fmtSpeed(App.upBps) : "—");
             rttLabel.text  = "RTT: " + page.fmtLatency(App.latencyMs);
-            graph.push(App.downBps, App.upBps);
+            if (App.trafficAvailable) graph.push(App.downBps, App.upBps);
             peakLabel.text = I18n.t("Пик: ") + page.fmtSpeed(graph.peak);
         }
         function onConnectedChanged() {

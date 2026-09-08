@@ -4,6 +4,7 @@ import com.lumen.core.config.normalizer.OpenVpnConfigNormalizer
 import com.lumen.core.config.crypto.HappCrypt
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import org.yaml.snakeyaml.Yaml
 import java.net.URI
 import java.net.URLDecoder
@@ -27,7 +28,7 @@ object LinkParser {
     private val WHITESPACE_REGEX = Regex("\\s+")
     // Used to split glued or space separated links inside a single line.
     private val SCHEME_SPLIT_REGEX = Regex(
-        "(?i)\\b(vless|vmess|trojan|ss|ssr|hysteria2|hysteria|hy2|hy|tuic|wireguard|wg|awg|" +
+        "(?i)(vless|vmess|trojan|ss|ssr|hysteria2|hysteria|hy2|hy|tuic|wireguard|wg|awg|" +
             "amneziawg|warp|naive\\+https|naive\\+quic|naive|mierus|mieru|masque|socks5|socks|" +
             "https|http|happ|snell|juicity|anytls)://"
     )
@@ -215,13 +216,14 @@ object LinkParser {
         }
     }
 
-    private fun parseLinksTextInternal(text: String): Pair<List<ParsedNode>, List<String>> {
+    private fun parseLinksTextInternal(text: String, depth: Int = 0): Pair<List<ParsedNode>, List<String>> {
+        if (depth > 16) return Pair(emptyList(), listOf("Subscription nesting exceeds 16 levels"))
         val bytes = text.toByteArray(Charsets.UTF_8)
         if (bytes.size > MAX_IMPORT_BYTES) {
             return Pair(emptyList(), listOf("Import data exceeds the $MAX_IMPORT_BYTES-byte limit"))
         }
 
-        var stripped = text.trim().removePrefix("\uFEFF")
+        var stripped = text.trim().removePrefix("\uFEFF").trim()
         if (HappCrypt.isHappCryptLink(stripped)) {
             try {
                 stripped = HappCrypt.decryptHappLink(stripped).trim()
@@ -233,17 +235,21 @@ object LinkParser {
             }
         }
 
-        if (stripped.startsWith("{") || stripped.startsWith("[")) {
+        if (stripped.startsWith("{") || stripped.startsWith("[") || stripped.startsWith(34.toChar())) {
             try {
-                return parseJsonNodesText(stripped)
+                return parseJsonNodesText(stripped, depth)
             } catch (e: Exception) {
                 // If the top-level JSON parse failed and input starts with '{',
                 // try NDJSON (newline-delimited JSON objects, one per line).
                 if (stripped.startsWith("{")) {
-                    val ndjson = tryParseJsonLines(stripped)
+                    val ndjson = tryParseJsonLines(stripped, depth)
                     if (ndjson != null) return ndjson
                 }
-                // Fall through to text lines
+                // Never scan JSON syntax as URI fragments: it corrupts display
+                // names and credentials. WireGuard INI is the only '[' exception.
+                if (!stripped.startsWith("[Interface]", ignoreCase = true)) {
+                    return Pair(emptyList(), listOf("JSON error: ${e.message}"))
+                }
             }
         }
 
@@ -274,12 +280,21 @@ object LinkParser {
             }
         }
 
+        // Distinguish independently encoded records from a wrapped Base64 body.
+        val encodedLines = stripped.lines().map(String::trim).filter(String::isNotEmpty)
+        if (encodedLines.size in 2..MAX_IMPORT_LINES && encodedLines.all { isBase64Blob(it) }) {
+            val decodedLines = encodedLines.map { runCatching { decodeB64(it).trim() }.getOrNull() }
+            if (decodedLines.all { it != null && (SCHEME_SPLIT_REGEX.find(it)?.range?.first == 0 ||
+                    (it.startsWith("{") && runCatching { parseCompleteJson(it) }.isSuccess)) }) {
+                return parseLinksTextInternal(decodedLines.filterNotNull().joinToString("\n"), depth + 1)
+            }
+        }
         // Check if entire stripped string is a Base64 subscription
         if (isBase64Blob(stripped)) {
             try {
                 val decoded = decodeB64(stripped).trim()
-                if (decoded.isNotEmpty() && (decoded.contains("://") || decoded.contains("\n"))) {
-                    return parseLinksTextInternal(decoded)
+                if (decoded.isNotEmpty()) {
+                    return parseLinksTextInternal(decoded, depth + 1)
                 }
             } catch (e: Exception) {
                 // Ignore base64 decoding failure, fall through to lines
@@ -301,16 +316,23 @@ object LinkParser {
                     currentLine = HappCrypt.decryptHappLink(currentLine).trim()
                     if (isSubscriptionUrl(currentLine)) throw LinkParseError(HAPP_SUBSCRIPTION_ERROR)
                 }
+                if (currentLine.startsWith("{") || currentLine.startsWith("[") || currentLine.startsWith(34.toChar())) {
+                    val (inner, innerErrors) = parseLinksTextInternal(currentLine, depth + 1)
+                    nodes.addAll(inner)
+                    errors.addAll(innerErrors.map { "Line ${idx + 1}: $it" })
+                    continue
+                }
                 val node = parseSingle(currentLine)
                 applyHappServerMetadata(node, currentLine)
                 nodes.add(node)
             } catch (e: Exception) {
                 // A single entry can itself be base64 (per-line encoded subscriptions).
                 val nested = if (isBase64Blob(line)) {
-                    runCatching { parseLinksTextInternal(decodeB64(line)) }.getOrNull()
+                    runCatching { parseLinksTextInternal(decodeB64(line), depth + 1) }.getOrNull()
                 } else null
                 if (nested != null && nested.first.isNotEmpty()) {
                     nodes.addAll(nested.first)
+                    errors.addAll(nested.second.map { "Line ${idx + 1}: $it" })
                 } else {
                     errors.add("Line ${idx + 1}: ${e.message}")
                 }
@@ -324,7 +346,7 @@ object LinkParser {
                 decodeB64(percentDecodeKeepPlus(stripped))
             }.getOrNull() ?: runCatching { decodeB64(stripped) }.getOrNull()
             if (!candidate.isNullOrBlank() && candidate.trim() != stripped) {
-                val salvaged = runCatching { parseLinksTextInternal(candidate) }.getOrNull()
+                val salvaged = runCatching { parseLinksTextInternal(candidate, depth + 1) }.getOrNull()
                 if (salvaged != null && salvaged.first.isNotEmpty()) return salvaged
             }
         }
@@ -333,7 +355,10 @@ object LinkParser {
     }
 
     fun parseLinksText(text: String): Pair<List<ParsedNode>, List<String>> {
-        return parseLinksTextInternal(text)
+        val result = parseLinksTextInternal(text)
+        return if (result.first.size > MAX_IMPORT_NODES) {
+            Pair(emptyList(), listOf("Import contains more than $MAX_IMPORT_NODES nodes"))
+        } else result
     }
 
     /**
@@ -346,7 +371,15 @@ object LinkParser {
             var line = rawLine.trim().trim('\uFEFF').removeSurrounding("\"").trim()
             if (line.startsWith("- ")) line = line.removePrefix("- ").trim()
             if (line.isEmpty() || line.startsWith("//") || line.startsWith("#") || line.startsWith(";")) continue
-            val starts = SCHEME_SPLIT_REGEX.findAll(line).map { it.range.first }.toList()
+            if (line.startsWith("{") || line.startsWith("[")) {
+                result += line
+                continue
+            }
+            val starts = SCHEME_SPLIT_REGEX.findAll(line).filter { match ->
+                val start = match.range.first
+                !match.value.startsWith("http", ignoreCase = true) || start == 0 ||
+                    line[start - 1].isWhitespace() || line[start - 1] in ",;|"
+            }.map { it.range.first }.toList()
             if (starts.size > 1) {
                 for ((i, start) in starts.withIndex()) {
                     val end = if (i + 1 < starts.size) starts[i + 1] else line.length
@@ -712,7 +745,7 @@ object LinkParser {
 
         val tls = mutableMapOf<String, Any?>("enabled" to true)
         tls["server_name"] = params["sni"] ?: params["peer"] ?: params["server_name"] ?: params["servername"] ?: server
-        (params["insecure"] ?: params["allowinsecure"])?.let { if (toBool(it)) tls["insecure"] = true }
+        if (tlsInsecure(params)) tls["insecure"] = true
         params["alpn"]?.takeIf { it.isNotEmpty() }?.let {
             tls["alpn"] = it.split(",").map { s -> s.trim() }.filter { s -> s.isNotEmpty() }
         }
@@ -738,13 +771,15 @@ object LinkParser {
     private fun parseHysteria2(link: String): ParsedNode {
         val uri = safeCreateUri(link)
         val fragment = extractFragment(link)
-        val auth = userInfoOf(uri) ?: ""
+        val params = parseQueryParams(uri.rawQuery)
+        val auth = userInfoOf(uri).orEmpty().ifEmpty {
+            params["auth"] ?: params["auth_str"] ?: params["authstr"] ?: params["password"] ?: ""
+        }
         val server = uri.host ?: throw LinkParseError("Invalid Hysteria2 link: missing host")
         val port = if (uri.port > 0) uri.port else 443
-        val params = parseQueryParams(uri.rawQuery)
 
         val sni = params["sni"] ?: params["peer"] ?: params["server_name"] ?: params["servername"] ?: server
-        val insecure = toBool(params["insecure"]) || toBool(params["allowinsecure"]) || toBool(params["allow_insecure"])
+        val insecure = tlsInsecure(params)
 
         val tls = mutableMapOf<String, Any?>(
             "enabled" to true,
@@ -800,7 +835,7 @@ object LinkParser {
             "server_name" to sni,
             "alpn" to alpn
         )
-        if (toBool(params["insecure"]) || toBool(params["allowinsecure"]) || toBool(params["allow_insecure"])) {
+        if (tlsInsecure(params)) {
             tls["insecure"] = true
         }
         certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
@@ -843,7 +878,7 @@ object LinkParser {
             "enabled" to true,
             "server_name" to (params["sni"] ?: params["peer"] ?: params["server_name"] ?: params["servername"] ?: server)
         )
-        if (toBool(params["insecure"]) || toBool(params["allowinsecure"]) || toBool(params["allow_insecure"])) {
+        if (tlsInsecure(params)) {
             tls["insecure"] = true
         }
         certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
@@ -891,6 +926,12 @@ object LinkParser {
         if (obfsType.isEmpty() && obfsPassword.isEmpty()) return null
         if (obfsType.equals("none", ignoreCase = true)) return null
         return Pair(obfsType, obfsPassword)
+    }
+
+    // Conflicting aliases must not silently disable certificate verification.
+    private fun tlsInsecure(params: Map<String, *>): Boolean {
+        val supplied = listOf("insecure", "allowinsecure", "allow_insecure").mapNotNull { params[it] }
+        return supplied.isNotEmpty() && supplied.all { toBool(it) }
     }
 
     private fun toBool(value: Any?): Boolean = when (value) {
@@ -1142,14 +1183,14 @@ object LinkParser {
         val withoutFragment = if (fragmentIdx != -1) trimmed.substring(0, fragmentIdx) else trimmed
         val afterScheme = withoutFragment.substring(schemeSep + 3)
         val queryIdx = afterScheme.indexOf('?')
-        val authority = (if (queryIdx != -1) afterScheme.substring(0, queryIdx) else afterScheme).substringBefore('/')
+        val authority = (if (queryIdx != -1) afterScheme.substring(0, queryIdx) else afterScheme)
         val rawQuery = if (queryIdx != -1) afterScheme.substring(queryIdx + 1) else null
         val params = parseQueryParams(rawQuery)
 
         val atIdx = authority.lastIndexOf('@')
         val authToken = (if (atIdx > 0) percentDecodeKeepPlus(authority.substring(0, atIdx)) else "")
             .ifEmpty { params["auth_token"] ?: params["token"] ?: "" }
-        val profileId = percentDecodeKeepPlus((if (atIdx >= 0) authority.substring(atIdx + 1) else authority).trim())
+        val profileId = percentDecodeKeepPlus((if (atIdx >= 0) authority.substring(atIdx + 1) else authority).substringBefore('/').trim())
             .ifEmpty { params["id"] ?: params["profile_id"] ?: "" }
 
         val profile = mutableMapOf<String, Any?>("detour" to "direct")
@@ -1173,11 +1214,11 @@ object LinkParser {
             singbox["allowed_ips"] = it.split(",").map { s -> s.trim() }.filter { s -> s.isNotEmpty() }
         }
         val serverName = params["sni"] ?: params["server_name"] ?: params["servername"] ?: ""
-        val insecure = params["insecure"] ?: params["allowinsecure"] ?: ""
+        val insecure = params["insecure"] ?: params["allowinsecure"] ?: params["allow_insecure"] ?: ""
         if (serverName.isNotEmpty() || insecure.isNotEmpty()) {
             val tls = mutableMapOf<String, Any?>()
             if (serverName.isNotEmpty()) tls["server_name"] = serverName
-            if (insecure.isNotEmpty()) tls["insecure"] = toBool(insecure)
+            if (insecure.isNotEmpty()) tls["insecure"] = tlsInsecure(params)
             singbox["tls"] = tls
         }
 
@@ -2612,12 +2653,15 @@ object LinkParser {
         }
     }
 
-    private fun parseJsonNodesText(text: String): Pair<List<ParsedNode>, List<String>> {
+    private fun parseJsonNodesText(text: String, depth: Int = 0): Pair<List<ParsedNode>, List<String>> {
+        if (depth > 16) throw LinkParseError("JSON subscription nesting exceeds 16 levels")
+        val root = parseCompleteJson(text)
+        if (root is String) return parseLinksTextInternal(root, depth + 1)
         val nodes = mutableListOf<ParsedNode>()
         val errors = mutableListOf<String>()
 
         if (text.startsWith("[")) {
-            val array = JSONArray(text)
+            val array = root as JSONArray
             for (i in 0 until array.length()) {
                 // One bad entry must not abort a whole array of configs.
                 try {
@@ -2625,7 +2669,7 @@ object LinkParser {
                         is JSONObject ->
                             // Panels ship arrays of whole client configs, not bare outbounds.
                             if (item.has("outbounds") || item.has("endpoints") || item.has("proxies") || item.has("inbounds")) {
-                                val (inner, innerErrors) = parseJsonNodesText(item.toString())
+                                val (inner, innerErrors) = parseJsonNodesText(item.toString(), depth + 1)
                                 val label = listOf("remarks", "profile_title", "name", "tag")
                                     .firstNotNullOfOrNull { key -> item.optString(key).takeIf { it.isNotBlank() } }
                                     .orEmpty()
@@ -2641,17 +2685,44 @@ object LinkParser {
                                 }
                                 errors += innerErrors.map { "Config ${i + 1}: $it" }
                             } else {
-                                nodes.add(parseJsonItem(item))
+                                val (inner, innerErrors) = parseJsonNodesText(item.toString(), depth + 1)
+                                nodes.addAll(inner)
+                                errors.addAll(innerErrors)
                             }
-                        is String -> nodes.add(parseSingle(item))
-                        else -> Unit
+                        is String -> {
+                            val (inner, innerErrors) = parseLinksTextInternal(item, depth + 1)
+                            nodes.addAll(inner)
+                            errors.addAll(innerErrors)
+                        }
+                        is JSONArray -> {
+                            val (inner, innerErrors) = parseJsonNodesText(item.toString(), depth + 1)
+                            nodes.addAll(inner)
+                            errors.addAll(innerErrors)
+                        }
+                        else -> errors.add("Item ${i + 1}: unsupported JSON value")
                     }
                 } catch (e: Exception) {
                     errors.add("Item ${i + 1}: ${e.message}")
                 }
             }
         } else if (text.startsWith("{")) {
-            val json = JSONObject(text)
+            val json = root as JSONObject
+            val containerKeys = listOf("outbounds", "endpoints", "proxies", "nodes", "configs", "links", "subs", "items")
+            if ((json.has("type") || json.has("protocol")) && containerKeys.none { json.has(it) }) {
+                return Pair(listOf(parseJsonItem(json)), emptyList())
+            }
+            if (containerKeys.none { json.has(it) } && !json.has("servers")) {
+                val nested: Any? = json.optJSONObject("outbound")
+                    ?: listOf("link", "uri", "url", "config", "data", "content")
+                        .firstNotNullOfOrNull { key -> json.opt(key)?.takeIf { it is String || it is JSONObject || it is JSONArray } }
+                if (nested != null) {
+                    val (inner, innerErrors) = if (nested is String) parseLinksTextInternal(nested, depth + 1)
+                        else parseJsonNodesText(nested.toString(), depth + 1)
+                    val label = listOf("name", "remarks", "profile_title")
+                        .firstNotNullOfOrNull { json.optString(it).takeIf(String::isNotBlank) }
+                    return Pair(if (label == null) inner else inner.map { it.copy(name = label) }, innerErrors)
+                }
+            }
             if (json.has("proxy") && !json.has("type") && !json.has("protocol") &&
                 !json.has("outbounds") && !json.has("endpoints") && !json.has("proxies")
             ) {
@@ -2729,6 +2800,23 @@ object LinkParser {
                     }
                 }
             }
+            for (arrayKey in listOf("proxies", "servers", "nodes", "configs", "links", "subs", "items")) {
+                if (!json.has(arrayKey)) continue
+                val nested = json.get(arrayKey)
+                if (nested !is JSONArray && nested !is JSONObject && nested !is String) {
+                    errors.add("$arrayKey: unsupported JSON container")
+                    continue
+                }
+                handled = true
+                try {
+                    val (inner, innerErrors) = if (nested is String) parseLinksTextInternal(nested, depth + 1)
+                        else parseJsonNodesText(nested.toString(), depth + 1)
+                    nodes.addAll(inner)
+                    errors.addAll(innerErrors.map { "$arrayKey: $it" })
+                } catch (e: Exception) {
+                    errors.add("$arrayKey: ${e.message}")
+                }
+            }
             attachSingboxDependencies(nodesByTag, nativeItemsByTag)
             // Xray represents an explicit automatic pool through routing balancers.
             // A selector is a tag prefix, so resolve it only after every outbound is parsed.
@@ -2770,22 +2858,6 @@ object LinkParser {
                     // Pool members live inside the AUTO node, never as separate servers.
                     val remaining = nodes.filterNot { node -> consumed.any { it === node } }
                     return Pair(autoNodes + remaining, errors)
-                }
-            }
-            for (arrayKey in listOf("proxies", "servers", "nodes", "configs", "links", "subs")) {
-                if (handled || !json.has(arrayKey)) continue
-                val array = json.optJSONArray(arrayKey) ?: continue
-                handled = true
-                for (i in 0 until array.length()) {
-                    try {
-                        when (val item = array.get(i)) {
-                            is JSONObject -> nodes.add(parseJsonItem(item))
-                            is String -> nodes.add(parseSingle(item))
-                            else -> Unit
-                        }
-                    } catch (e: Exception) {
-                        errors.add("$arrayKey ${i + 1}: ${e.message}")
-                    }
                 }
             }
             if (!handled) {
@@ -2873,20 +2945,29 @@ object LinkParser {
      * Used by some export tools and panel APIs.
      * Returns null if the text does not look like NDJSON (prevents false positives).
      */
-    private fun tryParseJsonLines(text: String): Pair<List<ParsedNode>, List<String>>? {
-        val jsonLines = text.lines().map { it.trim() }.filter { it.startsWith("{") && it.endsWith("}") }
-        if (jsonLines.isEmpty()) return null
+    private fun parseCompleteJson(text: String): Any {
+        val tokener = JSONTokener(text)
+        val value = tokener.nextValue()
+        if (tokener.nextClean().code != 0) throw LinkParseError("Trailing data after JSON document")
+        return value
+    }
+
+    private fun tryParseJsonLines(text: String, depth: Int = 0): Pair<List<ParsedNode>, List<String>>? {
+        val lines = text.lines().map(String::trim).filter(String::isNotEmpty)
+        if (lines.size !in 2..MAX_IMPORT_LINES) return null
+        if (lines.any { !it.startsWith("{") || !it.endsWith("}") }) return null
+        if (lines.any { runCatching { parseCompleteJson(it) }.getOrNull() !is JSONObject }) return null
         val nodes = mutableListOf<ParsedNode>()
         val errors = mutableListOf<String>()
-        for ((i, line) in jsonLines.withIndex()) {
+        lines.forEachIndexed { index, line ->
             try {
-                val obj = JSONObject(line)
-                nodes.add(parseJsonItem(obj))
+                val (inner, innerErrors) = parseJsonNodesText(line, depth + 1)
+                nodes.addAll(inner)
+                errors.addAll(innerErrors.map { "NDJSON line ${index + 1}: $it" })
             } catch (e: Exception) {
-                errors.add("NDJSON line ${i + 1}: ${e.message}")
+                errors.add("NDJSON line ${index + 1}: ${e.message}")
             }
         }
-        if (nodes.isEmpty()) return null
         return Pair(nodes, errors)
     }
 
@@ -2926,6 +3007,12 @@ object LinkParser {
 
         val typeValue = json.optString("type")
         val protocolValue = json.optString("protocol")
+        if (typeValue.isBlank() && protocolValue.isBlank()) {
+            if (json.has("add") && json.has("id") && json.has("port")) {
+                return parseVmess("vmess://" + Base64.getEncoder().encodeToString(json.toString().toByteArray(Charsets.UTF_8)))
+            }
+            throw LinkParseError("JSON object has no supported protocol or node container")
+        }
 
         if (protocolValue.isEmpty() && typeValue.isNotEmpty()) {
             // Native sing-box outbound/endpoint object: wrap it as a singbox
@@ -3190,7 +3277,7 @@ object LinkParser {
             certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
                 tls["certificatePublicKeySha256"] = it
             }
-            if (toBool(params["allowinsecure"]) || toBool(params["allow_insecure"]) || toBool(params["insecure"])) {
+            if (tlsInsecure(params)) {
                 tls["allowInsecure"] = true
             }
             stream["tlsSettings"] = tls

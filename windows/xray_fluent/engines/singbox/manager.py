@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections import deque
+from copy import deepcopy
 from ipaddress import ip_network
 import json
 import os
 import re
+import secrets
 import socket
 import subprocess
 import tempfile
@@ -25,7 +27,6 @@ from ...constants import (
     SINGBOX_TUN_INTERFACE_NAME,
 )
 from ...path_utils import resolve_configured_path
-from ...process_conflicts import is_process_name_running
 from ...log_utils import is_routine_core_log
 from ...subprocess_utils import (
     decode_output,
@@ -215,7 +216,14 @@ class SingBoxManager(QObject):
                 self.error.emit(f"sing-box does not accept the new config: {detail}")
                 return False
 
+        # Readiness and the core must use the same normalized alias. Never mutate
+        # a caller-owned profile while recovering a Windows adapter collision.
+        config = deepcopy(config)
         tun_interface_name = self._extract_tun_interface_name(config)
+        if tun_interface_name:
+            for inbound in config.get("inbounds") or []:
+                if isinstance(inbound, dict) and str(inbound.get("type", "")).lower() == "tun":
+                    inbound["interface_name"] = _normalize_tun_interface_name(inbound.get("interface_name"))
         proxy_ports = self._extract_local_proxy_ports(config)
         requires_profile_readiness = self._requires_profile_outbound_readiness(config)
         requires_profile_confirmation = self._requires_lumen_direct_masque(config)
@@ -225,11 +233,6 @@ class SingBoxManager(QObject):
             self.error.emit("sing-box config does not contain a TUN or local proxy inbound")
             return False
 
-        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-        SINGBOX_CONFIG_FILE.write_text(
-            json.dumps(config, ensure_ascii=True, indent=2), encoding="utf-8"
-        )
-
         if self._proc_alive():
             if not self.stop(expected=True, fast=True):
                 self.error.emit("failed to stop previous sing-box process")
@@ -238,9 +241,12 @@ class SingBoxManager(QObject):
             self._running = False
             self.state_changed.emit(False)
 
-        # Kill only orphaned processes before start. The stable TUN adapter is
-        # reused by Wintun; retry cleanup handles real conflicts.
-        self._kill_orphaned(exe)
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        SINGBOX_CONFIG_FILE.write_text(
+            json.dumps(config, ensure_ascii=True, indent=2), encoding="utf-8"
+        )
+        # Only a retained process handle proves ownership. Do not inspect/kill
+        # other instances by executable name, or sweep unrelated Wintun devices.
 
         # A freshly killed sing-box can still hold the clash-api port; wait for it.
         self._wait_clash_api_port_released()
@@ -343,39 +349,34 @@ class SingBoxManager(QObject):
                     )
 
             exited = not self._proc_alive()
-            retryable = exited and self._startup_error_is_retryable()
-            if not exited:
-                self.stop(expected=True, fast=True)
-                if self._tun_mode and attempt + 1 < max_attempts:
-                    if self._startup_error_is_stale_adapter():
-                        self._purge_stale_wintun_devices(interface_name=tun_interface_name)
-                    self.cleanup_orphaned_tun_adapters(interface_name=tun_interface_name)
-                    self._wait_tun_released(interface_name=tun_interface_name)
-                    self._wait_clash_api_port_released()
-                    self._starting = True
-                    continue
-
+            if exited:
+                # poll() can observe exit before the reader has drained the error.
+                self._join_reader(timeout=0.5)
+            elif not self.stop(expected=True, fast=True):
+                self._starting = False
+                self._report_startup_failure("Previous sing-box process is still running; retry cancelled")
+                return False
+            retryable = self._startup_error_is_retryable()
             if self._tun_mode and retryable and attempt + 1 < max_attempts:
-                self._kill_orphaned(exe)
                 if self._startup_error_is_ipv6_disabled():
                     self._disable_ipv6_in_singbox_config()
                 elif self._startup_error_is_stale_adapter():
-                    self._purge_stale_wintun_devices(
-                        interface_name=tun_interface_name
-                    )  # ghost Wintun device is invisible to Get-NetAdapter cleanup
-                self.cleanup_orphaned_tun_adapters(interface_name=tun_interface_name)
-                self._wait_tun_released(interface_name=tun_interface_name)
-                self._wait_clash_api_port_released()
+                    # A ghost adapter may be invisible even to Get-NetAdapter.
+                    # A fresh alias avoids its name/GUID collision without deleting
+                    # any device or modifying another VPN's routes.
+                    try:
+                        tun_interface_name = self._rotate_tun_interface_name(tun_interface_name)
+                    except Exception as exc:
+                        self._starting = False
+                        self._report_startup_failure(f"Cannot prepare TUN collision retry: {type(exc).__name__}")
+                        return False
+                    self._tun_interface_name = tun_interface_name
+                self._wait_clash_api_port_released(max_wait=1.0)
+                sleep_with_events(0.15 * (attempt + 1))
                 self._starting = True
                 continue
 
             self._starting = False
-            if self._tun_mode:
-                self.cleanup_orphaned_tun_adapters(interface_name=tun_interface_name)
-            if self._tun_mode and exited and self._startup_error_is_stale_adapter():
-                self._purge_stale_wintun_devices(
-                    interface_name=tun_interface_name
-                )  # clear the ghost so the next connect attempt can succeed
             if exited:
                 self._report_startup_failure(
                     self._unexpected_exit_message(self._last_exit_code, startup=True)
@@ -393,16 +394,8 @@ class SingBoxManager(QObject):
 
     @staticmethod
     def _kill_orphaned(exe: Path) -> None:
-        """Kill orphaned sing-box processes that hold the TUN adapter."""
-        if os.name != "nt":
-            return
-        if not is_process_name_running(exe.name):
-            return
-        try:
-            if kill_processes_by_path(exe.name, exe, timeout=5):
-                sleep_with_events(1.0)
-        except Exception:
-            pass
+        # Compatibility hook. An executable name/path does not establish ownership.
+        return None
 
     def stop(self, expected: bool = True, *, fast: bool = False) -> bool:
         already_stopped = False
@@ -485,8 +478,8 @@ class SingBoxManager(QObject):
             return
         adapter_names_ps = _managed_tun_names_ps(interface_name)
         step = 0.3
-        waited = 0.0
-        while waited < max_wait:
+        deadline = time.monotonic() + max(0.0, max_wait)
+        while time.monotonic() < deadline:
             try:
                 result = run_text_pumped(
                     [
@@ -501,7 +494,7 @@ class SingBoxManager(QObject):
                             "if ($active.Count -eq 0) { exit 0 } else { exit 1 }"
                         ),
                     ],
-                    timeout=3,
+                    timeout=max(0.1, min(3.0, deadline - time.monotonic())),
                     check=False,
                     creationflags=_CREATE_NO_WINDOW,
                 )
@@ -509,8 +502,7 @@ class SingBoxManager(QObject):
                     return
             except Exception:
                 return  # can't check, proceed anyway
-            sleep_with_events(step)
-            waited += step
+            sleep_with_events(min(step, max(0.0, deadline - time.monotonic())))
 
     @staticmethod
     def _wait_clash_api_port_released(max_wait: float = 5.0) -> None:
@@ -535,69 +527,31 @@ class SingBoxManager(QObject):
     def cleanup_orphaned_tun_adapters(
         max_wait: float = 5.0, interface_name: str = ""
     ) -> None:
-        """Remove routes from app-owned sing-box TUN adapters and disable them."""
-        if os.name != "nt" or is_windows_shutting_down():
-            return
-        adapter_names_ps = _managed_tun_names_ps(interface_name)
-        adapter_filter_ps = _managed_tun_adapter_filter_ps(interface_name)
-        script = (
-            "$ErrorActionPreference = 'SilentlyContinue'; "
-            f"$adapters = @(Get-NetAdapter -Name @({adapter_names_ps}) -ErrorAction SilentlyContinue "
-            f"| Where-Object {{ {adapter_filter_ps} }}); "
-            "foreach ($adapter in $adapters) { "
-            "$alias = $adapter.Name; "
-            "Get-NetRoute -InterfaceAlias $alias -ErrorAction SilentlyContinue "
-            "| Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue; "
-            "Disable-NetAdapter -Name $alias -Confirm:$false -ErrorAction SilentlyContinue; "
-            "}"
-        )
-        try:
-            run_text_pumped(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                timeout=max_wait,
-                check=False,
-                creationflags=_CREATE_NO_WINDOW,
-            )
-        except Exception:
-            pass
+        # No durable device ownership receipt exists for legacy aliases. Wintun
+        # tears down our live adapter with its owned process; never sweep by name.
+        return None
 
     def _purge_stale_wintun_devices(
         self, max_wait: float = 20.0, interface_name: str = ""
     ) -> None:
-        """Remove ghost Wintun device instances that block 'create adapter'."""
-        if os.name != "nt":
-            return
-        adapter_names_ps = _managed_tun_names_ps(interface_name)
-        adapter_filter_ps = _managed_tun_adapter_filter_ps(interface_name)
-        script = (
-            "$ErrorActionPreference = 'SilentlyContinue'; "
-            # A Wintun adapter can remain reported as Status=OK while its
-            # device instance is already detached.  Remove only aliases and
-            # descriptions owned by Lumen; unrelated VPN adapters are left
-            # untouched.  The method is called only after sing-box reported
-            # the characteristic create/open adapter race.
-            f"$adapters = @(Get-NetAdapter -Name @({adapter_names_ps}) -ErrorAction SilentlyContinue "
-            f"| Where-Object {{ {adapter_filter_ps} }}); "
-            "$removed = 0; "
-            "foreach ($adapter in $adapters) { "
-            "if ($adapter.PnPDeviceID) { pnputil /remove-device \"$($adapter.PnPDeviceID)\" | Out-Null; $removed++ } }; "
-            "$ghosts = @(Get-PnpDevice -Class Net -ErrorAction SilentlyContinue "
-            "| Where-Object { ($_.InstanceId -like 'SWD\\WINTUN*') -and ($_.Status -ne 'OK') }); "
-            "foreach ($dev in $ghosts) { pnputil /remove-device \"$($dev.InstanceId)\" | Out-Null }; "
-            "Write-Output ($removed + $ghosts.Count)"
-        )
-        try:
-            result = run_text_pumped(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                timeout=max_wait,
-                check=False,
-                creationflags=_CREATE_NO_WINDOW,
-            )
-            lines = result_output_text(result).strip().splitlines()
-            count = lines[-1].strip() if lines else "0"
-            self.log_received.emit(f"[tun] purged {count} stale Wintun device(s)")
-        except Exception:
-            pass
+        # A SWD/WINTUN prefix or a non-OK status is not evidence of Lumen ownership.
+        return None
+
+    def _rotate_tun_interface_name(self, previous: str) -> str:
+        config = json.loads(SINGBOX_CONFIG_FILE.read_text(encoding="utf-8"))
+        fresh = f"{SINGBOX_TUN_INTERFACE_NAME[:80]}-{os.getpid():x}-{secrets.token_hex(6)}"
+        changed = False
+        for inbound in config.get("inbounds") or []:
+            if not isinstance(inbound, dict) or str(inbound.get("type", "")).lower() != "tun":
+                continue
+            if _normalize_tun_interface_name(inbound.get("interface_name")) == previous:
+                inbound["interface_name"] = fresh
+                changed = True
+        if not changed:
+            raise RuntimeError("Cannot find the failed TUN inbound in the active config")
+        SINGBOX_CONFIG_FILE.write_text(json.dumps(config, ensure_ascii=True, indent=2), encoding="utf-8")
+        self.log_received.emit(f"[tun] adapter name collision; retrying with interface={fresh}")
+        return fresh
 
     def _read_output(self, proc: subprocess.Popen[bytes]) -> None:
         stream = proc.stdout
@@ -609,6 +563,8 @@ class SingBoxManager(QObject):
                         clean = line.rstrip()
                         if clean:
                             with self._lock:
+                                if proc is not self._proc:
+                                    break
                                 self._last_output_lines.append(clean)
                             self._observe_startup_line(clean)
                             # DNS/connection tracing and process-path lookups
@@ -861,7 +817,7 @@ class SingBoxManager(QObject):
             "-ErrorAction SilentlyContinue | Where-Object { "
             "$_.DestinationPrefix -in @('0.0.0.0/0','0.0.0.0/1','128.0.0.0/1') } "
             "| Select-Object -First 1 DestinationPrefix; "
-            "if ($ipv4 -and $route) { exit 0 }; Start-Sleep -Milliseconds 75 }; exit 1"
+            "if ($ipv4 -and $route) { exit 0 }; Start-Sleep -Milliseconds 500 }; exit 1"
         )
         try:
             result = run_text_pumped(

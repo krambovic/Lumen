@@ -23,6 +23,9 @@ interface NodeDao {
     @Query("SELECT * FROM nodes WHERE subscriptionId = :subscriptionId")
     fun getNodesForSubscription(subscriptionId: String): Flow<List<NodeEntity>>
 
+    @Query("SELECT * FROM nodes WHERE subscriptionId = :subscriptionId")
+    suspend fun getSubscriptionNodesSnapshot(subscriptionId: String): List<NodeEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNode(node: NodeEntity)
 

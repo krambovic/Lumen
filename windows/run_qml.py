@@ -59,10 +59,12 @@ def _startup_log_path() -> Path:
 def _report_startup_failure(exc: BaseException, *, show_dialog: bool = True) -> None:
     log_path = _startup_log_path()
     try:
-        log_path.write_text(
-            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
-            encoding="utf-8",
-        )
+        try:
+            from xray_fluent.secret_scrubber import scrub_text
+            detail = scrub_text("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+        except Exception:
+            detail = "Startup failed; safe diagnostic details unavailable."
+        log_path.write_text(detail, encoding="utf-8")
     except Exception:
         pass
 
@@ -156,6 +158,7 @@ def _run() -> int:
             output = _argument_value("--startup-probe-file")
             if not output:
                 return 2
+            import grpc  # noqa: F401 -- dynamically loaded metrics dependency must ship
             from PyQt6.QtQml import QQmlApplicationEngine  # noqa: F401
             from xray_fluent.qml_app.bridge import AppBridge  # noqa: F401
             from xray_fluent.qml_app.main_qml import main  # noqa: F401

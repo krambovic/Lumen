@@ -19,6 +19,12 @@ _MAX_REASONABLE_BYTES_PER_SEC = 256 * 1024 ** 2
 _MAX_PLAUSIBLE_CONN_BYTES = 1 * 1024 ** 5
 
 
+def _metrics_idle_delay(interval: float, wall_elapsed: float, cpu_elapsed: float) -> float:
+    # A slow machine must not run telemetry back-to-back forever. Native/JSON
+    # work that consumes CPU earns a rest; network wait is not counted as CPU.
+    return max(0.05, interval - wall_elapsed, min(30.0, max(0.0, cpu_elapsed) * 4.0))
+
+
 class LiveMetricsWorker(QThread):
     metrics = pyqtSignal(object)
 
@@ -48,6 +54,7 @@ class LiveMetricsWorker(QThread):
         self._stopped = False
         self._stop_event = threading.Event()
         self._config_lock = threading.Lock()
+        self._health_generation = 0
         self._active_profile_id = str(active_profile_id)
         self._active_outbound_tag = str(active_outbound_tag)
         self._health_proxy_url = str(health_proxy_url)
@@ -75,6 +82,7 @@ class LiveMetricsWorker(QThread):
     def set_active_profile(self, profile_id: str, *, outbound_tag: str = "proxy", health_proxy_url: str = "") -> None:
         """Invalidate old health when hot-switching without restarting this worker."""
         with self._config_lock:
+            self._health_generation += 1
             self._active_profile_id = str(profile_id)
             self._active_outbound_tag = str(outbound_tag)
             self._health_proxy_url = str(health_proxy_url)
@@ -98,6 +106,7 @@ class LiveMetricsWorker(QThread):
         try:
             while not self._stopped:
                 tick_started = time.monotonic()
+                cpu_started = time.thread_time()
                 uplink, downlink = self._query_inbound_totals()
                 sampled_at = time.monotonic()
                 available = uplink is not None and downlink is not None
@@ -113,6 +122,7 @@ class LiveMetricsWorker(QThread):
                 with self._config_lock:
                     profile_id, tag, proxy_url = self._active_profile_id, self._active_outbound_tag, self._health_proxy_url
                     last_health = self._last_health
+                    generation = self._health_generation
                 if sampled_at - last_health.checked_at >= self._ping_interval_sec:
                     if self._mode == "singbox":
                         try:
@@ -127,7 +137,7 @@ class LiveMetricsWorker(QThread):
                         outbound_graph=self._outbound_graph,
                     )
                     with self._config_lock:
-                        if profile_id == self._active_profile_id:
+                        if generation == self._health_generation and profile_id == self._active_profile_id:
                             self._last_health = sample
                 if self._stopped:
                     break
@@ -156,7 +166,10 @@ class LiveMetricsWorker(QThread):
                     "traffic_checked_at": sampled_at if available else 0.0,
                     "upload_total": uplink, "download_total": downlink, **health_payload,
                 })
-                delay = max(0.0, self._interval_ms / 1000.0 - (time.monotonic() - tick_started))
+                delay = _metrics_idle_delay(
+                    self._interval_ms / 1000.0, time.monotonic() - tick_started,
+                    time.thread_time() - cpu_started,
+                )
                 self._stop_event.wait(delay)
         finally:
             self._stats_client.close()
@@ -197,7 +210,8 @@ class LiveMetricsWorker(QThread):
             prev_bytes[process.exe] = current_in, current_out
             result.append(ProcessTrafficSnapshot(
                 exe=process.exe, upload=total_out, download=total_in, connections=process.connections,
-                route="proxy", proxy_bytes=total_in + total_out,
+                # A local proxy socket does not prove the core used a VPN exit.
+                route="unknown", unknown_bytes=total_in + total_out,
                 down_speed=delta_in / dt, up_speed=delta_out / dt,
             ))
         result.sort(key=lambda item: item.upload + item.download, reverse=True)

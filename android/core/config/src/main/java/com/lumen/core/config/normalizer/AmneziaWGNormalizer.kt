@@ -111,6 +111,17 @@ object AmneziaWGNormalizer {
         return emptyList()
     }
 
+    private fun removeLegacyAmneziaFields(endpoint: MutableMap<String, Any?>) {
+        // Extended 2.6+ removed AWG 1.5's J1-J3/Itime fields. Strip them only
+        // from runtime copies, matching Desktop; retain the stored import data.
+        val amnezia = endpoint["amnezia"] as? Map<*, *> ?: return
+        val removed = setOf("j1", "j2", "j3", "itime")
+        if (amnezia.keys.none { key -> key is String && key in removed }) return
+        val supported = amnezia.filterKeys { key -> key !is String || key !in removed }
+        if (supported.isEmpty()) endpoint.remove("amnezia")
+        else endpoint["amnezia"] = supported
+    }
+
     fun normalizeWireGuardEndpoint(endpoint: Map<String, Any?>): Map<String, Any?> {
         val result = endpoint.toMutableMap()
         val type = result["type"]?.toString()?.trim()?.lowercase() ?: ""
@@ -119,6 +130,7 @@ object AmneziaWGNormalizer {
             result["system"] = false
             // Core 2.5.1+ rejects an explicit "reserved" field on WARP endpoints.
             result.remove("reserved")
+            removeLegacyAmneziaFields(result)
             return result
         }
 
@@ -310,6 +322,7 @@ object AmneziaWGNormalizer {
                     warpEndpoint[extraKey] = extraValue
                 }
             }
+            removeLegacyAmneziaFields(warpEndpoint)
             return warpEndpoint
         }
 
@@ -328,6 +341,7 @@ object AmneziaWGNormalizer {
         if (result["mtu"] == null) {
             result["mtu"] = 1280
         }
+        removeLegacyAmneziaFields(result)
         return result
     }
 

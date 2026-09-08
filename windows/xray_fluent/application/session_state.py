@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,7 @@ class ActiveSessionSnapshot:
     ping_port: int
     clash_api_selector: str = ""
     clash_api_node_signatures: tuple[tuple[str, str], ...] = ()
+    health_proxy_url: str = field(default="", repr=False)
 
 
 @dataclass(slots=True)
@@ -46,6 +47,7 @@ class XrayRuntimeConfig:
     inbound_tags: tuple[str, ...]
     ping_host: str
     ping_port: int
+    health_proxy_url: str = field(default="", repr=False)
 
 
 def build_active_session_snapshot(
@@ -75,6 +77,7 @@ def build_active_session_snapshot(
     ping_port: int,
     clash_api_selector: str = "",
     clash_api_node_signatures: tuple[tuple[str, str], ...] = (),
+    health_proxy_url: str = "",
 ) -> ActiveSessionSnapshot:
     return ActiveSessionSnapshot(
         node_id=node_id,
@@ -102,4 +105,5 @@ def build_active_session_snapshot(
         ping_port=ping_port,
         clash_api_selector=clash_api_selector,
         clash_api_node_signatures=tuple(clash_api_node_signatures),
+        health_proxy_url=health_proxy_url,
     )
