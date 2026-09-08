@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import base64
 import ast
+import importlib
 from pathlib import Path
 import sys
 import tempfile
@@ -92,7 +93,12 @@ _original_seed = data_paths.seed_user_data
 data_paths.seed_user_data = lambda *_args, **_kwargs: None
 from xray_fluent import constants
 data_paths.seed_user_data = _original_seed
-assert Path(constants.DATA_DIR).is_relative_to(_sandbox.name)
+# Importing the package can initialize constants before the audit sandbox is
+# visible on some Windows runner images. Reload once so the guarded suite
+# always uses the isolated profile instead of a runner/user profile.
+if not Path(constants.DATA_DIR).resolve().is_relative_to(Path(_sandbox.name).resolve()):
+    constants = importlib.reload(constants)
+assert Path(constants.DATA_DIR).resolve().is_relative_to(Path(_sandbox.name).resolve())
 
 if __name__ == "__main__":
     os.chdir(ROOT)
