@@ -11,6 +11,7 @@ Item {
     property var down: []
     property var up: []
     property real peak: 1
+    property real sessionPeak: 0
 
     readonly property color colorDown: "#3AA0FF"
     readonly property color colorUp:   "#27D17C"
@@ -21,13 +22,14 @@ Item {
         var nd = down.slice(); nd.push(d); if (nd.length > capacity) nd.shift();
         var nu = up.slice();   nu.push(u); if (nu.length > capacity) nu.shift();
         down = nd; up = nu;
+        sessionPeak = Math.max(sessionPeak, Number(d) || 0, Number(u) || 0);
         var m = 1;
         for (var i = 0; i < nd.length; i++) { if (nd[i] > m) m = nd[i]; }
         for (var j = 0; j < nu.length; j++) { if (nu[j] > m) m = nu[j]; }
         peak = m;
         canvas.requestPaint();
     }
-    function reset() { down = []; up = []; peak = 1; canvas.requestPaint(); }
+    function reset() { down = []; up = []; peak = 1; sessionPeak = 0; canvas.requestPaint(); }
 
     Rectangle {
         anchors.fill: parent

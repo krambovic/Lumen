@@ -263,6 +263,20 @@ def test_empty_headers_disable_old_banners_and_body_userinfo_is_retained():
     assert body["expire"] == 1700000000
 
 
+def test_subscription_refresh_keeps_usage_fields_omitted_by_fallback_response():
+    stored = {"upload": 1024, "download": 2048, "total": 8192, "expire": 1700000000}
+    fresh = {"clientProfile": "Happ", "networkPath": "direct"}
+
+    merged = node_service._merge_stored_subscription_info(stored, fresh)
+
+    assert merged["upload"] == 1024
+    assert merged["download"] == 2048
+    assert merged["total"] == 8192
+    assert merged["clientProfile"] == "Happ"
+    assert merged["networkPath"] == "direct"
+    assert node_service._merge_stored_subscription_info(stored, {"upload": 0})["upload"] == 0
+
+
 def test_premium_is_not_inferred_from_native_runtime_settings():
     import json
     payload = {"settings": {"bannerEnabled": True}, "theme": {"enabled": True}, "outbounds": [{"type": "direct"}]}

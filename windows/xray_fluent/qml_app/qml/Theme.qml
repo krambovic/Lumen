@@ -26,7 +26,9 @@ QtObject {
     property bool wallpaperActive: false
 
     readonly property bool isTranslucent: backdropAvailable && backdrop !== "solid"
-    readonly property bool translucentStyle: backdropAvailable
+    // QML surface compositing works on every OS. Only the native backdrop
+    // depends on Mica; disabling these layers flattens the Win10 appearance.
+    readonly property bool translucentStyle: true
     readonly property bool amoled: preset === "midnight"
 
     // ---- Theme presets (surface palettes) ------------------------------
@@ -208,15 +210,27 @@ QtObject {
     readonly property real lightGlassControlPressedAlpha: 0.68
     readonly property color solidBackdropBase: dark ? (_pal.win !== "" ? _pal.win : _pal.d0) : _lightColor("bg", _lightPal.bg)
 
-    readonly property color windowBase: baseTint !== ""
+    // Approximate the native material with an opaque base when Mica is not
+    // available. Blend the SAME veil over the default material colour, rather
+    // than using the raw (often near-black) preset colour at full opacity.
+    function _overOpaque(foreground, background) {
+        var a = foreground.a
+        return Qt.rgba(foreground.r * a + background.r * (1 - a),
+                       foreground.g * a + background.g * (1 - a),
+                       foreground.b * a + background.b * (1 - a), 1)
+    }
+    readonly property color fallbackMaterial: dark ? _presetMap["default"].d0 : _presetMap["default"].lt
+    readonly property color windowBase: !backdropAvailable && backdrop !== "solid" && baseTint === ""
+        ? _overOpaque(windowVeil, fallbackMaterial) : windowVeil
+    readonly property color windowVeil: baseTint !== ""
         ? (dark ? _darkTint(baseTint) : _lightTint(baseTint))
         : (presetColored
             ? (dark
-                ? (isTranslucent
+                ? (backdrop !== "solid"
                     ? _hexWithAlpha((_pal.win !== "" ? _pal.win : _pal.d0), darkPaletteWindowAlpha)
                     : solidBackdropBase)
-                : (isTranslucent ? _hexWithAlpha(_pal.lt, lightPaletteWindowAlpha) : solidBackdropBase))
-            : (isTranslucent
+                : (backdrop !== "solid" ? _hexWithAlpha(_pal.lt, lightPaletteWindowAlpha) : solidBackdropBase))
+            : (backdrop !== "solid"
                 ? (dark ? _hexWithAlpha(_pal.d0, darkMicaVeilAlpha) : _hexWithAlpha(_lightPal.bg, lightMicaVeilAlpha))
                 : solidBackdropBase))
     readonly property color micaBase: "transparent"
@@ -226,9 +240,12 @@ QtObject {
     readonly property color railPanel: dark
         ? (translucentStyle ? _palLayer("control", Qt.rgba(1, 1, 1, 0.065), 0.72 * transparencyAlphaFactor) : _palColor("control", _pal.d1))
         : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.24) : _lightLayer("press", Qt.rgba(1, 1, 1, 0.34), 0.70 * transparencyAlphaFactor)) : _lightColor("layer", "#FFFFFF"))
+    // The title/navigation overlay is composited by Qt over windowBase (or
+    // wallpaper), even without native Mica. Gating it on backdropAvailable
+    // replaced the overlay with an opaque fill on Win10, hiding that effect.
     readonly property color chromePanel: dark
-        ? (translucentStyle ? _palLayer("control", Qt.rgba(1, 1, 1, 0.030), 0.26 * transparencyAlphaFactor) : _palColor("control", _pal.d1))
-        : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.22 * transparencyAlphaFactor)) : _lightColor("layer", "#FFFFFF"))
+        ? _palLayer("control", Qt.rgba(1, 1, 1, 0.030), 0.26 * transparencyAlphaFactor)
+        : (wallpaperActive ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.22 * transparencyAlphaFactor))
     readonly property color bgElevated: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.016) : _palColor("elevated", _pal.d1)) : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.55)) : _lightColor("layer", "#FFFFFF"))
     readonly property color card: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.040) : _palColor("card", _pal.d1)) : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.22) : Qt.rgba(1, 1, 1, 0.38)) : _lightColor("layer", "#FFFFFF"))
     readonly property color cardHover: dark ? (translucentStyle ? Qt.rgba(1, 1, 1, 0.0837) : _palColor("cardHover", Qt.lighter(_pal.d1, 1.12))) : (translucentStyle ? (wallpaperActive ? Qt.rgba(1, 1, 1, 0.32) : Qt.rgba(1, 1, 1, 0.48)) : _lightColor("hover", "#F4F4F4"))

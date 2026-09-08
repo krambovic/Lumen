@@ -650,6 +650,20 @@ def _merge_subscription_info(*parts: dict | None) -> dict:
     return result
 
 
+def _merge_stored_subscription_info(stored: object, fresh: object) -> dict:
+    """Merge a refresh without erasing quota fields omitted by a fallback reply.
+
+    Subscription panels are allowed to omit individual ``subscription-userinfo``
+    fields.  Every fetch still contributes service metadata such as
+    ``clientProfile`` and ``networkPath``, so replacing the whole mapping made a
+    metadata-only response reset known upload/download counters to zero.
+    Explicit zeroes remain meaningful and therefore do overwrite stored values.
+    """
+    previous = dict(stored) if isinstance(stored, dict) else {}
+    current = dict(fresh) if isinstance(fresh, dict) else {}
+    return _merge_subscription_info(previous, current)
+
+
 def _extract_happ_body_metadata(text: str) -> tuple[str, dict]:
     """Extract Happ directives from ``#key value`` subscription comments."""
     if not text or "#" not in text:
@@ -2062,7 +2076,9 @@ def _record_subscription(
         existing["node_count"] = node_count
         # Сохраняем старую инфо, если новая не пришла.
         if info:
-            existing["userinfo"] = info
+            existing["userinfo"] = _merge_stored_subscription_info(
+                existing.get("userinfo"), info
+            )
         elif "userinfo" not in existing:
             existing["userinfo"] = {}
         meta = response_meta or {}

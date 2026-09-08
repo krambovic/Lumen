@@ -20,7 +20,13 @@ from ..deeplinks import (
 def _enable_gpu_friendly_defaults() -> None:
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Universal")
     os.environ.setdefault("QSG_RENDER_LOOP", "threaded")  # threaded: GPU-sync рендер, плавные анимации; краш трея (0xc000041d) устранён откатом routing submenu в 69f86e4
-    os.environ.setdefault("QSG_RHI_BACKEND", "opengl")
+    backend = os.environ.setdefault("QSG_RHI_BACKEND", "opengl").strip().lower()
+    if sys.platform == "win32" and backend == "vulkan":
+        # QWindowKit cannot restore the native top frame reliably for a Qt
+        # Quick Vulkan swapchain on Windows 10.  Its documented failure mode is
+        # a solid black line when the window is maximized.  OpenGL is already
+        # Lumen's default and keeps the system-border workaround functional.
+        os.environ["QSG_RHI_BACKEND"] = "opengl"
 
 
 def _install_message_filter() -> None:
@@ -105,14 +111,25 @@ def _resolve_dark(app, theme_name: str) -> bool:
 
 
 def _apply_mica(window, dark: bool, backdrop_name: str = "mica") -> None:
-    """Enable the selected Windows 11 backdrop + dark/light title-bar colour."""
+    """Apply native frame colours on Windows 10 and the backdrop on Windows 11."""
     if sys.platform != "win32":
         return
     try:
         import ctypes
+        from ctypes import wintypes
 
-        hwnd = int(window.winId())
+        hwnd = wintypes.HWND(int(window.winId()))
         dwm = ctypes.windll.dwmapi
+        user32 = ctypes.windll.user32
+        uxtheme = ctypes.windll.uxtheme
+
+        dwm.DwmSetWindowAttribute.argtypes = [
+            wintypes.HWND,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        dwm.DwmSetWindowAttribute.restype = ctypes.c_long
 
         DWMWA_USE_IMMERSIVE_DARK_MODE = 20
         DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19  # builds < 18985
@@ -132,15 +149,53 @@ def _apply_mica(window, dark: bool, backdrop_name: str = "mica") -> None:
         if backdrop_name not in {"mica", "solid"}:
             backdrop_name = "mica"
 
-        dark_flag = ctypes.c_int(1 if dark else 0)
-        for attr in (DWMWA_USE_IMMERSIVE_DARK_MODE,
-                     DWMWA_USE_IMMERSIVE_DARK_MODE_OLD):
-            dwm.DwmSetWindowAttribute(
+        build = sys.getwindowsversion().build
+        dark_flag = wintypes.BOOL(bool(dark))
+        dark_mode_attributes = (
+            (DWMWA_USE_IMMERSIVE_DARK_MODE,)
+            if build >= 22000
+            else (DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD)
+        )
+        for attr in dark_mode_attributes:
+            result = dwm.DwmSetWindowAttribute(
                 hwnd, attr,
                 ctypes.byref(dark_flag), ctypes.sizeof(dark_flag),
             )
+            if result == 0:
+                break
 
-        build = sys.getwindowsversion().build
+        if build < 22000:
+            # The documented immersive-DWM attribute only became public on
+            # Windows 11.  QWindowKit's custom frame still needs the legacy
+            # Windows 10 composition flag; without it the resize frame remains
+            # light even when the QML application is dark.
+            class _WindowCompositionAttributeData(ctypes.Structure):
+                _fields_ = [
+                    ("attribute", ctypes.c_int),
+                    ("data", ctypes.c_void_p),
+                    ("size", ctypes.c_size_t),
+                ]
+
+            set_composition_attribute = getattr(user32, "SetWindowCompositionAttribute", None)
+            if set_composition_attribute is not None:
+                set_composition_attribute.argtypes = [
+                    wintypes.HWND,
+                    ctypes.POINTER(_WindowCompositionAttributeData),
+                ]
+                set_composition_attribute.restype = wintypes.BOOL
+                composition_data = _WindowCompositionAttributeData(
+                    26,  # WCA_USEDARKMODECOLORS (Windows 10 compatibility API)
+                    ctypes.cast(ctypes.byref(dark_flag), ctypes.c_void_p),
+                    ctypes.sizeof(dark_flag),
+                )
+                set_composition_attribute(hwnd, ctypes.byref(composition_data))
+
+            set_window_theme = getattr(uxtheme, "SetWindowTheme", None)
+            if set_window_theme is not None:
+                set_window_theme.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
+                set_window_theme.restype = ctypes.c_long
+                set_window_theme(hwnd, "DarkMode_Explorer" if dark else "Explorer", None)
+
         if build >= 22000:
             class _Margins(ctypes.Structure):
                 _fields_ = [
@@ -151,6 +206,11 @@ def _apply_mica(window, dark: bool, backdrop_name: str = "mica") -> None:
                 ]
 
             margins = _Margins(0, 0, 0, 0)
+            dwm.DwmExtendFrameIntoClientArea.argtypes = [
+                wintypes.HWND,
+                ctypes.POINTER(_Margins),
+            ]
+            dwm.DwmExtendFrameIntoClientArea.restype = ctypes.c_long
             dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
 
             # Prevent Windows from drawing the user's accent colour as a 1px
@@ -189,8 +249,17 @@ def _apply_mica(window, dark: bool, backdrop_name: str = "mica") -> None:
                     hwnd, DWMWA_MICA_EFFECT,
                     ctypes.byref(enable), ctypes.sizeof(enable),
                 )
-        # Windows 10 has no Mica API.  This is an expected capability fallback,
-        # not an error worth repeating in the user's console.
+
+        redraw_window = getattr(user32, "RedrawWindow", None)
+        if redraw_window is not None:
+            redraw_window.argtypes = [
+                wintypes.HWND,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                wintypes.UINT,
+            ]
+            redraw_window.restype = wintypes.BOOL
+            redraw_window(hwnd, None, None, 0x0001 | 0x0100 | 0x0400)  # INVALIDATE|UPDATENOW|FRAME
     except Exception:
         # A solid QML backdrop is already active, so DWM failures are harmless.
         pass
@@ -208,6 +277,8 @@ def _refresh_custom_frame(window) -> None:
     if sys.platform != "win32":
         return
     try:
+        from ctypes import wintypes
+
         hwnd = int(window.winId())
         user32 = ctypes.windll.user32
 
@@ -230,23 +301,55 @@ def _refresh_custom_frame(window) -> None:
                 ("cyBottomHeight", ctypes.c_int),
             ]
 
-        margins = _Margins(0, 0, 0, 0)
-        ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+        native_hwnd = wintypes.HWND(hwnd)
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(_Rect)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(_Point)]
+        user32.ClientToScreen.restype = wintypes.BOOL
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+        user32.SetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND,
+            wintypes.HWND,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        if hasattr(user32, "GetDpiForWindow"):
+            user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+            user32.GetDpiForWindow.restype = wintypes.UINT
+
+        # On Windows 10 QWindowKit owns the DWM margins: its native border
+        # painter needs a 1px top extension while active, and a larger one
+        # while inactive. Resetting it to zero exposes the painter's black
+        # pixel on the next repaint (often after a settingsChanged signal).
+        # Let its WM_ACTIVATE/WM_DPICHANGED handlers preserve that contract.
+        if sys.getwindowsversion().build >= 22000:
+            margins = _Margins(0, 0, 0, 0)
+            extend_frame = ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea
+            extend_frame.argtypes = [wintypes.HWND, ctypes.POINTER(_Margins)]
+            extend_frame.restype = ctypes.c_long
+            extend_frame(native_hwnd, ctypes.byref(margins))
         window_rect = _Rect()
         client_origin = _Point(0, 0)
-        if user32.GetWindowRect(hwnd, ctypes.byref(window_rect)) and user32.ClientToScreen(
-            hwnd, ctypes.byref(client_origin)
+        if user32.GetWindowRect(native_hwnd, ctypes.byref(window_rect)) and user32.ClientToScreen(
+            native_hwnd, ctypes.byref(client_origin)
         ):
-            dpi = int(user32.GetDpiForWindow(hwnd) or 96) if hasattr(user32, "GetDpiForWindow") else 96
+            dpi = int(user32.GetDpiForWindow(native_hwnd) or 96) if hasattr(user32, "GetDpiForWindow") else 96
             stale_caption_threshold = max(16, round(16 * dpi / 96))
             if client_origin.y - window_rect.top > stale_caption_threshold:
                 # QWindowKit occasionally misses the initial NCCALCSIZE pass.
                 # Strip only the native caption bits; thick-frame resizing and
                 # the existing QML title bar/buttons remain unchanged.
-                style = int(user32.GetWindowLongW(hwnd, -16))
-                user32.SetWindowLongW(hwnd, -16, style & ~0x00C00000)
+                style = int(user32.GetWindowLongW(native_hwnd, -16))
+                user32.SetWindowLongW(native_hwnd, -16, style & ~0x00C00000)
         flags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020  # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
-        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, flags)
+        user32.SetWindowPos(native_hwnd, None, 0, 0, 0, 0, flags)
     except Exception:
         pass
 
@@ -977,15 +1080,13 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     def _refresh_backdrop() -> None:
-        _refresh_custom_frame(window)
-        _apply_mica(window, _resolve_dark(app, _theme_name(bridge)), bridge.uiBackdrop)
-
-    def _apply_backdrop_only() -> None:
         _apply_mica(window, _resolve_dark(app, _theme_name(bridge)), bridge.uiBackdrop)
 
     def _schedule_backdrop_refresh(*_args) -> None:
-        QTimer.singleShot(0, _apply_backdrop_only)
-        QTimer.singleShot(150, _apply_backdrop_only)
+        # Reapply colours after QWindowKit handles activation/state changes.
+        # Do not force FRAMECHANGED or reset its Win10 DWM margins here.
+        QTimer.singleShot(0, _refresh_backdrop)
+        QTimer.singleShot(150, _refresh_backdrop)
 
     first_frame = {"done": False}
 
@@ -1011,7 +1112,8 @@ def main(argv: list[str] | None = None) -> int:
         bridge.settingsChanged.connect(_refresh_backdrop)
     except Exception:
         pass
-    for signal_name in ("visibilityChanged", "windowStateChanged"):
+    app.styleHints().colorSchemeChanged.connect(_schedule_backdrop_refresh)
+    for signal_name in ("visibilityChanged", "windowStateChanged", "activeChanged"):
         signal = getattr(window, signal_name, None)
         if signal is not None:
             try:

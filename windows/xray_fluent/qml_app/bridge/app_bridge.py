@@ -243,6 +243,10 @@ class AppBridge(QObject):
         self._runtime_message = ""
         self._down_bps = 0.0
         self._up_bps = 0.0
+        self._session_upload_total = 0
+        self._session_download_total = 0
+        self._session_raw_upload_last: int | None = None
+        self._session_raw_download_last: int | None = None
         self._latency_ms = -1
         self._traffic_available = False
         self._traffic_reason = "not connected"
@@ -1008,6 +1012,10 @@ class AppBridge(QObject):
             self._transition_target_connected = bool(connected)
         if not connected:
             self._down_bps = self._up_bps = 0.0
+            self._session_upload_total = 0
+            self._session_download_total = 0
+            self._session_raw_upload_last = None
+            self._session_raw_download_last = None
             self._latency_ms = -1
             self._traffic_available = False
             self._traffic_reason = "not connected"
@@ -1127,6 +1135,30 @@ class AppBridge(QObject):
     def _on_live_metrics(self, payload: dict) -> None:
         self._down_bps = float(payload.get("down_bps") or 0.0)
         self._up_bps = float(payload.get("up_bps") or 0.0)
+        upload_total = payload.get("upload_total")
+        download_total = payload.get("download_total")
+        if isinstance(upload_total, (int, float)) and not isinstance(upload_total, bool):
+            raw_upload = max(0, int(upload_total))
+            if self._session_raw_upload_last is None:
+                self._session_upload_total += raw_upload
+            else:
+                self._session_upload_total += (
+                    raw_upload - self._session_raw_upload_last
+                    if raw_upload >= self._session_raw_upload_last
+                    else raw_upload
+                )
+            self._session_raw_upload_last = raw_upload
+        if isinstance(download_total, (int, float)) and not isinstance(download_total, bool):
+            raw_download = max(0, int(download_total))
+            if self._session_raw_download_last is None:
+                self._session_download_total += raw_download
+            else:
+                self._session_download_total += (
+                    raw_download - self._session_raw_download_last
+                    if raw_download >= self._session_raw_download_last
+                    else raw_download
+                )
+            self._session_raw_download_last = raw_download
         latency = payload.get("latency_ms")
         self._latency_ms = int(latency) if isinstance(latency, int) else -1
         self._traffic_available = bool(payload.get("traffic_available", False))
@@ -3767,6 +3799,10 @@ class AppBridge(QObject):
     def processModel(self) -> ProcessModel:
         return self._process_model
 
+    @pyqtSlot(str, bool)
+    def setProcessTrafficSort(self, key: str, ascending: bool) -> None:
+        self._process_model.set_sort(key, ascending)
+
     @pyqtProperty(str, constant=True)
     def appName(self) -> str:
         return APP_NAME
@@ -3807,6 +3843,18 @@ class AppBridge(QObject):
     @pyqtProperty(float, notify=metricsChanged)
     def upBps(self) -> float:
         return self._up_bps
+
+    @pyqtProperty(float, notify=metricsChanged)
+    def sessionUploadTotal(self) -> float:
+        return float(self._session_upload_total)
+
+    @pyqtProperty(float, notify=metricsChanged)
+    def sessionDownloadTotal(self) -> float:
+        return float(self._session_download_total)
+
+    @pyqtProperty(float, notify=metricsChanged)
+    def sessionTrafficTotal(self) -> float:
+        return float(self._session_upload_total + self._session_download_total)
 
     @pyqtProperty(int, notify=metricsChanged)
     def latencyMs(self) -> int:
@@ -4452,6 +4500,7 @@ class AppBridge(QObject):
         target = (url or "").strip()
         if not target:
             return
+        self.toast.emit("info", tr("Подписка обновляется..."))
         job = SubscriptionJob(url=target, kind="update")
         self._dispatch_sub_jobs([job], "update")
 
@@ -4462,6 +4511,8 @@ class AppBridge(QObject):
             for s in self.controller.state.subscriptions
             if (s.get("url") or "").strip()
         ]
+        if jobs:
+            self.toast.emit("info", tr("Подписки обновляются..."))
         self._dispatch_sub_jobs(jobs, "update_all")
 
     @pyqtSlot(str)

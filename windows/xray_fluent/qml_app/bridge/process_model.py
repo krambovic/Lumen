@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from PyQt6.QtCore import QAbstractListModel, QModelIndex, Qt
+from PyQt6.QtCore import QAbstractListModel, QModelIndex, Qt, pyqtSlot
 
 
 def _get(d: Any, *keys: str, default: Any = 0) -> Any:
@@ -32,6 +32,8 @@ class ProcessModel(QAbstractListModel):
     TotalRole = Qt.ItemDataRole.UserRole + 10
     RouteRole = Qt.ItemDataRole.UserRole + 11
     UnknownBytesRole = Qt.ItemDataRole.UserRole + 12
+    DownloadTotalRole = Qt.ItemDataRole.UserRole + 13
+    UploadTotalRole = Qt.ItemDataRole.UserRole + 14
 
     _ROLE_NAMES = {
         NameRole: b"name",
@@ -46,6 +48,8 @@ class ProcessModel(QAbstractListModel):
         TotalRole: b"total",
         RouteRole: b"route",
         UnknownBytesRole: b"unknownBytes",
+        DownloadTotalRole: b"downloadTotal",
+        UploadTotalRole: b"uploadTotal",
     }
 
     _CHANGED_ROLES = list(_ROLE_NAMES.keys())
@@ -53,6 +57,8 @@ class ProcessModel(QAbstractListModel):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._rows: list[dict[str, Any]] = []
+        self._sort_key = "total"
+        self._sort_ascending = False
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.isValid():
@@ -90,6 +96,10 @@ class ProcessModel(QAbstractListModel):
             return row.get("route", "unknown")
         if role == self.UnknownBytesRole:
             return float(row.get("unknown_bytes", 0.0))
+        if role == self.DownloadTotalRole:
+            return float(row.get("download_total", 0.0))
+        if role == self.UploadTotalRole:
+            return float(row.get("upload_total", 0.0))
         return None
 
     def set_stats(self, stats: Sequence[Any]) -> None:
@@ -115,8 +125,26 @@ class ProcessModel(QAbstractListModel):
         self._rows = normalized
         self.endResetModel()
 
-    @staticmethod
-    def _normalize(stats: Sequence[Any]) -> list[dict[str, Any]]:
+    @pyqtSlot(str, bool)
+    def set_sort(self, key: str, ascending: bool) -> None:
+        normalized_key = key if key in {"download", "upload", "total"} else "total"
+        normalized_ascending = bool(ascending)
+        if (normalized_key, normalized_ascending) == (self._sort_key, self._sort_ascending):
+            return
+        self._sort_key = normalized_key
+        self._sort_ascending = normalized_ascending
+        self.beginResetModel()
+        self._sort_rows(self._rows)
+        self.endResetModel()
+
+    def _sort_rows(self, rows: list[dict[str, Any]]) -> None:
+        field = {"download": "download_total", "upload": "upload_total", "total": "total"}[
+            self._sort_key
+        ]
+        rows.sort(key=lambda row: str(row["name"]).casefold())
+        rows.sort(key=lambda row: float(row[field]), reverse=not self._sort_ascending)
+
+    def _normalize(self, stats: Sequence[Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for item in stats or []:
             upload = float(_get(item, "upload", default=0.0))
@@ -127,6 +155,8 @@ class ProcessModel(QAbstractListModel):
                     "name": str(_get(item, "name", "process", "image", "exe", default="")),
                     "down": float(_get(item, "down_bps", "down", "rx", "down_speed", default=0.0)),
                     "up": float(_get(item, "up_bps", "up", "tx", "up_speed", default=0.0)),
+                    "download_total": download,
+                    "upload_total": upload,
                     "pid": int(_get(item, "pid", default=0)),
                     "proxy_bytes": float(_get(item, "proxy_bytes", default=0.0)),
                     "direct_bytes": float(_get(item, "direct_bytes", default=0.0)),
@@ -141,4 +171,7 @@ class ProcessModel(QAbstractListModel):
                     "route": str(_get(item, "route", default="unknown")),
                 }
             )
+        # The collector normally sends the busiest processes first, but not every
+        # metrics backend guarantees that order. Keep the selected UI order stable.
+        self._sort_rows(rows)
         return rows

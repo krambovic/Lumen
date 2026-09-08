@@ -12,6 +12,21 @@ FluentScroll {
     id: page
     roundedClip: false
     readonly property bool twoColumns: width >= 960
+    property string processSortKey: "total"
+    property bool processSortAscending: false
+
+    function setProcessSort(key) {
+        if (processSortKey === key)
+            processSortAscending = !processSortAscending;
+        else {
+            processSortKey = key;
+            processSortAscending = false;
+        }
+        App.setProcessTrafficSort(processSortKey, processSortAscending);
+    }
+    function processSortSuffix(key) {
+        return processSortKey === key ? (processSortAscending ? "  ↑" : "  ↓") : "";
+    }
 
     // ---- formatting helpers (match dashboard_page.py) ----------------
     function fmtSpeed(bps) {
@@ -29,7 +44,7 @@ FluentScroll {
     }
     function processLabel(value) {
         var name = String(value || "").replace(/\\/g, "/").split("/").pop();
-        return name.replace(/\.exe$/i, "") || I18n.t("Приложение");
+        return name || I18n.t("Приложение");
     }
     function modeTitle(m) {
         return m === "global" ? I18n.t("Глобальный") : (m === "direct" ? I18n.t("Прямой") : I18n.t("Правила"));
@@ -328,6 +343,19 @@ FluentScroll {
                     Text { id: downLabel; text: I18n.t("Загрузка: 0 B/s"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                     Text { id: upLabel; text: I18n.t("Выгрузка: 0 B/s"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
                     Text { id: rttLabel; text: "RTT: -- "; color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                    Text {
+                        id: totalLabel
+                        text: I18n.t("Трафик сессии: ") + page.fmtBytes(App.sessionTrafficTotal)
+                        color: Theme.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontNormal
+                        HoverHandler { id: totalHover }
+                        FluentToolTip {
+                            visible: totalHover.hovered
+                            text: "↓ " + I18n.t("Загрузка") + ": " + page.fmtBytes(App.sessionDownloadTotal)
+                                  + "\n↑ " + I18n.t("Отправка") + ": " + page.fmtBytes(App.sessionUploadTotal)
+                        }
+                    }
                     TrafficGraph { id: graph; Layout.fillWidth: true; Layout.topMargin: 4 }
                     Text { id: peakLabel; text: I18n.t("Пик: 0 B/s"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall }
                 }
@@ -340,6 +368,7 @@ FluentScroll {
                 padding: 16
                 visible: App.connected || procRepeater.count > 0
                 readonly property int rateWidth: Math.round(110 * Theme.fontScale)
+                readonly property int totalWidth: Math.round(112 * Theme.fontScale)
                 ColumnLayout {
                     width: parent.width
                     spacing: 10
@@ -350,13 +379,10 @@ FluentScroll {
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontStrong
                         font.weight: Font.DemiBold
-                        ToolTip.visible: processHelp.hovered
-                        ToolTip.text: I18n.t("Доступная статистика приложений в текущем режиме. Объём за сеанс — в подсказке строки.")
-                        HoverHandler { id: processHelp }
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 12
+                        spacing: 10
                         Text {
                             Layout.fillWidth: true
                             text: I18n.t("Приложение")
@@ -364,22 +390,39 @@ FluentScroll {
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
                         }
+                        Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: Theme.divider }
                         Text {
                             Layout.preferredWidth: procCard.rateWidth
-                            text: "↓ " + I18n.t("Загрузка")
+                            text: "↓ " + I18n.t("Загрузка") + page.processSortSuffix("download")
                             horizontalAlignment: Text.AlignRight
-                            color: Theme.textMuted
+                            color: page.processSortKey === "download" ? Theme.accent : Theme.textMuted
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
+                            TapHandler { onTapped: page.setProcessSort("download") }
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
                         }
+                        Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: Theme.divider }
                         Text {
                             Layout.preferredWidth: procCard.rateWidth
-                            Layout.rightMargin: 8
-                            text: "↑ " + I18n.t("Отправка")
+                            text: "↑ " + I18n.t("Отправка") + page.processSortSuffix("upload")
                             horizontalAlignment: Text.AlignRight
-                            color: Theme.textMuted
+                            color: page.processSortKey === "upload" ? Theme.accent : Theme.textMuted
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSmall
+                            TapHandler { onTapped: page.setProcessSort("upload") }
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        }
+                        Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: Theme.divider }
+                        Text {
+                            Layout.preferredWidth: procCard.totalWidth
+                            Layout.rightMargin: 8
+                            text: I18n.t("Всего") + page.processSortSuffix("total")
+                            horizontalAlignment: Text.AlignRight
+                            color: page.processSortKey === "total" ? Theme.accent : Theme.textMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSmall
+                            TapHandler { onTapped: page.setProcessSort("total") }
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
                         }
                     }
                     ListView {
@@ -398,6 +441,14 @@ FluentScroll {
                             required property real downBps
                             required property real upBps
                             required property real total
+                            required property real proxyBytes
+                            required property real directBytes
+                            required property real unknownBytes
+                            required property real downloadTotal
+                            required property real uploadTotal
+                            required property int connections
+                            required property string topHost
+                            required property string route
                             readonly property string displayName: page.processLabel(name)
                             width: ListView.view ? ListView.view.width : 0
                             height: Math.round(44 * Theme.fontScale)
@@ -405,27 +456,21 @@ FluentScroll {
                                 anchors.fill: parent
                                 anchors.rightMargin: 8
                                 radius: Theme.radiusSmall
-                                color: rowHover.hovered ? Theme.cardHover : "transparent"
+                                color: "transparent"
+                            }
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.rightMargin: 8
+                                anchors.bottom: parent.bottom
+                                height: 1
+                                color: Theme.divider
+                                opacity: 0.5
                             }
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.rightMargin: 8
-                                spacing: 12
-                                Rectangle {
-                                    Layout.preferredWidth: 28
-                                    Layout.preferredHeight: 28
-                                    radius: 8
-                                    color: Theme.accentSoft
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: processRow.displayName.slice(0, 1).toUpperCase()
-                                        textFormat: Text.PlainText
-                                        color: Theme.text
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSmall
-                                        font.bold: true
-                                    }
-                                }
+                                spacing: 10
                                 Text {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 30
@@ -436,27 +481,34 @@ FluentScroll {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontNormal
                                 }
+                                Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: Theme.divider }
                                 Text {
                                     Layout.preferredWidth: procCard.rateWidth
-                                    text: page.fmtSpeed(processRow.downBps)
+                                    text: page.fmtBytes(processRow.downloadTotal)
                                     horizontalAlignment: Text.AlignRight
-                                    color: processRow.downBps > 0 ? Theme.success : Theme.textFaint
+                                    color: processRow.downloadTotal > 0 ? Theme.success : Theme.textFaint
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontNormal
                                 }
+                                Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: Theme.divider }
                                 Text {
                                     Layout.preferredWidth: procCard.rateWidth
-                                    text: page.fmtSpeed(processRow.upBps)
+                                    text: page.fmtBytes(processRow.uploadTotal)
                                     horizontalAlignment: Text.AlignRight
-                                    color: processRow.upBps > 0 ? Theme.text : Theme.textFaint
+                                    color: processRow.uploadTotal > 0 ? Theme.text : Theme.textFaint
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontNormal
+                                }
+                                Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: Theme.divider }
+                                Text {
+                                    Layout.preferredWidth: procCard.totalWidth
+                                    text: page.fmtBytes(processRow.total)
+                                    horizontalAlignment: Text.AlignRight
+                                    color: processRow.total > 0 ? Theme.text : Theme.textFaint
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontNormal
                                 }
                             }
-                            HoverHandler { id: rowHover }
-                            ToolTip.visible: rowHover.hovered
-                            ToolTip.delay: 550
-                            ToolTip.text: processRow.name + " · " + I18n.t("За сеанс") + ": " + page.fmtBytes(processRow.total)
                         }
                     }
                     Text {
@@ -482,15 +534,17 @@ FluentScroll {
         function onMetricsChanged() {
             downLabel.text = I18n.t("Загрузка: ") + (App.trafficAvailable ? page.fmtSpeed(App.downBps) : "—");
             upLabel.text   = I18n.t("Выгрузка: ") + (App.trafficAvailable ? page.fmtSpeed(App.upBps) : "—");
+            totalLabel.text = I18n.t("Трафик сессии: ") + page.fmtBytes(App.sessionTrafficTotal);
             rttLabel.text  = "RTT: " + page.fmtLatency(App.latencyMs);
             if (App.trafficAvailable) graph.push(App.downBps, App.upBps);
-            peakLabel.text = I18n.t("Пик: ") + page.fmtSpeed(graph.peak);
+            peakLabel.text = I18n.t("Пик: ") + page.fmtSpeed(graph.sessionPeak);
         }
         function onConnectedChanged() {
             if (!App.connected) {
                 graph.reset();
                 downLabel.text = I18n.t("Загрузка: 0 B/s");
                 upLabel.text = I18n.t("Выгрузка: 0 B/s");
+                totalLabel.text = I18n.t("Трафик сессии: ") + page.fmtBytes(0);
                 rttLabel.text = "RTT: -- ";
                 peakLabel.text = I18n.t("Пик: 0 B/s");
             }

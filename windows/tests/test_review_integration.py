@@ -101,6 +101,25 @@ def test_process_model_keeps_unclassified_bytes_unknown():
     assert model.data(model.index(0, 0), model.DirectBytesRole) == 0
 
 
+def test_process_model_sorts_by_consumed_bytes_and_exposes_direction_totals():
+    model = ProcessModel()
+    model.set_stats([
+        {"exe": "small.exe", "upload": 10, "download": 20},
+        {"exe": "large.exe", "upload": 700, "download": 300},
+    ])
+
+    first = model.index(0, 0)
+    assert model.data(first, model.NameRole) == "large.exe"
+    assert model.data(first, model.TotalRole) == 1000
+    assert model.data(first, model.UploadTotalRole) == 700
+    assert model.data(first, model.DownloadTotalRole) == 300
+
+    model.set_sort("download", True)
+    assert model.data(model.index(0, 0), model.NameRole) == "small.exe"
+    model.set_sort("upload", False)
+    assert model.data(model.index(0, 0), model.NameRole) == "large.exe"
+
+
 def test_local_proxy_socket_does_not_prove_vpn_route(monkeypatch):
     import xray_fluent.live_metrics_worker as live
     process = NS(exe="app", bytes_in=100, bytes_out=200, connections=1)
