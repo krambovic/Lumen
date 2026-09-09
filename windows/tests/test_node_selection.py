@@ -293,7 +293,7 @@ def test_subscription_update_preserves_selection_from_other_group() -> None:
     assert [node.id for node in controller.state.nodes] == ["active", "fresh-sub"]
 
 
-def test_subscription_update_reselects_when_active_group_is_replaced() -> None:
+def test_subscription_update_retains_active_server_when_provider_omits_it() -> None:
     old_sub = _node("old-sub", "Sub")
     fresh_sub = _node("fresh-sub", "Sub")
     controller = _Controller([old_sub], "old-sub")
@@ -312,9 +312,10 @@ def test_subscription_update_reselects_when_active_group_is_replaced() -> None:
     finally:
         _restore_import_patches(original)
 
-    assert added == 1
-    assert controller.state.selected_node_id == "fresh-sub"
-    assert controller.transition_reasons == ["active subscription updated"]
+    assert added == 2
+    assert controller.state.selected_node_id == "old-sub"
+    assert [node.id for node in controller.state.nodes] == ["fresh-sub", "old-sub"]
+    assert controller.transition_reasons == []
 
 
 def test_subscription_update_keeps_selected_server_when_credentials_change() -> None:

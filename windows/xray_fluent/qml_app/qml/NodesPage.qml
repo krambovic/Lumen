@@ -1341,13 +1341,14 @@ Item {
                         MouseArea {
                             id: listSelectionArea
                             property var hoveredNode: page.hoverRow >= 0 ? App.nodeRowAt(page.hoverRow) : null
-                            ToolTip.visible: containsMouse && hoveredNode && hoveredNode.pingKind !== ""
+                            ToolTip.visible: containsMouse
+                                && hoveredNode
+                                && hoveredNode.pingKind !== ""
+                                && hoveredNode.pingKind !== "proxy"
                             ToolTip.delay: 1000
-                            ToolTip.text: hoveredNode && hoveredNode.pingKind === "proxy"
-                                ? I18n.t("Проверено подключение через профиль VPN")
-                                : (hoveredNode && hoveredNode.pingKind === "unavailable"
-                                    ? I18n.t("Проверка не выполнена: проверьте ядро и прямой маршрут")
-                                    : ((hoveredNode && hoveredNode.pingKind === "icmp_endpoint" ? "ICMP. " : "TCP. ") + I18n.t("Проверена доступность адреса, а не профиль VPN")))
+                            ToolTip.text: hoveredNode && hoveredNode.pingKind === "unavailable"
+                                ? I18n.t("Проверка не выполнена: проверьте ядро и прямой маршрут")
+                                : ((hoveredNode && hoveredNode.pingKind === "icmp_endpoint" ? "ICMP. " : "TCP. ") + I18n.t("Проверена доступность адреса, а не профиль VPN"))
                             anchors.fill: parent
                             z: 100
                             acceptedButtons: Qt.LeftButton | Qt.RightButton

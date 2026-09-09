@@ -134,6 +134,11 @@ class SingBoxManager(QObject):
         self._core_ready_event = threading.Event()
         self._profile_ready_event = threading.Event()
         self._profile_error_event = threading.Event()
+        # sing-box emits this warning several seconds before the final Wintun
+        # ``already exists | Element not found`` failure.  Treat it as an
+        # internal retry boundary instead of making the UI wait for the core's
+        # full adapter-open timeout.
+        self._tun_startup_stalled_event = threading.Event()
 
     @property
     def is_running(self) -> bool:
@@ -281,6 +286,7 @@ class SingBoxManager(QObject):
             self._core_ready_event.clear()
             self._profile_ready_event.clear()
             self._profile_error_event.clear()
+            self._tun_startup_stalled_event.clear()
             self._stop_requested = False
             self._last_exit_code = None
 
@@ -635,6 +641,10 @@ class SingBoxManager(QObject):
             self._profile_ready_event.set()
         if "tunnel not initialized" in text or "endpoint not initialized" in text:
             self._profile_error_event.set()
+        if "open interface take too much time" in text or (
+            "create adapter" in text and "open existing adapter" in text
+        ):
+            self._tun_startup_stalled_event.set()
 
     @staticmethod
     def _extract_tun_interface_name(config: dict[str, Any]) -> str:
@@ -756,14 +766,20 @@ class SingBoxManager(QObject):
         # Get-NetIPAddress/Get-NetRoute probe returns, so use the native marker
         # as the primary readiness contract and keep the Windows probe only as
         # a compatibility fallback for cores that do not print it.
-        marker_wait = min(max_wait, 5.0)
+        # Wintun's slow-open warning is normally emitted at the five-second
+        # boundary.  Keep a short grace window around that boundary so the
+        # reader can signal an immediate alias retry before the compatibility
+        # PowerShell probe starts waiting on the doomed adapter.
+        marker_wait = min(max_wait, 6.5)
         deadline = time.monotonic() + marker_wait
         while time.monotonic() < deadline and proc.poll() is None:
+            if self._tun_startup_stalled_event.is_set():
+                return False
             if self._core_ready_event.wait(0.05):
                 return proc.poll() is None
             pump_qt_events()
 
-        if proc.poll() is not None:
+        if proc.poll() is not None or self._tun_startup_stalled_event.is_set():
             return False
         if os.name == "nt":
             remaining = max(0.2, max_wait - marker_wait)
@@ -845,6 +861,7 @@ class SingBoxManager(QObject):
             "address already in use",
             "bind:",
             "element not found",
+            "open interface take too much time",
         )
         for line in self._output_snapshot():
             text = line.lower()
@@ -870,6 +887,8 @@ class SingBoxManager(QObject):
         for line in self._output_snapshot():
             text = line.lower()
             if "create adapter" in text or "open existing adapter" in text:
+                return True
+            if "open interface take too much time" in text:
                 return True
             if "element not found" in text and any(
                 marker in text for marker in ("adapter", "wintun", "tun interface")

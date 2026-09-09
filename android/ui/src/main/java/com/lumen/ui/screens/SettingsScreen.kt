@@ -1041,29 +1041,23 @@ private fun AppSettings(
                 password = state.socks5Password,
                 onSave = { username, password ->
                     onUpdate(state.copy(socks5Username = username, socks5Password = password))
-                },
-                onReset = {
-                    onUpdate(state.copy(socks5Username = generateSocks5Username(), socks5Password = generateSocks5Password()))
                 }
             )
         }
         Spacer(Modifier.height(4.dp))
     }
     SectionHeader(s.language)
-    SettingsCard {
-        Spacer(Modifier.height(10.dp))
-        LumenDropdown(
-            label = "",
-            options = LANGUAGES,
-            selected = state.language.ifBlank { "en" },
-            onSelected = {
-                onUpdate(state.copy(language = it))
-                onLanguageChange(it)
-            },
-            optionLabel = { languageLabel(it) }
-        )
-        Spacer(Modifier.height(10.dp))
-    }
+    LumenDropdown(
+        label = "",
+        options = LANGUAGES,
+        selected = state.language.ifBlank { "en" },
+        onSelected = {
+            onUpdate(state.copy(language = it))
+            onLanguageChange(it)
+        },
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        optionLabel = { languageLabel(it) }
+    )
 }
 @Composable
 internal fun SettingsCard(content: @Composable () -> Unit) {

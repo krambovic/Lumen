@@ -20,6 +20,7 @@ import com.lumen.app.subscription.SubscriptionClient
 import com.lumen.app.subscription.SubscriptionMetadata
 import com.lumen.app.update.AndroidUpdateChecker
 import com.lumen.app.update.AndroidUpdateInstaller
+import com.lumen.app.update.AndroidRelease
 import com.lumen.app.update.AndroidUpdateState
 import com.lumen.app.util.NodeDraftMapper
 import com.lumen.core.config.builder.SingboxConfigBuilder
@@ -229,12 +230,55 @@ internal fun switchAutomaticGeoRegion(settings: SettingsUiState, code: String): 
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
+    private val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
     private val subscriptionRefreshEpoch = java.util.concurrent.atomic.AtomicLong()
     private val subscriptionRefreshClaims = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val subscriptionMutations = Mutex()
 
-    private val _androidUpdateState = MutableStateFlow(AndroidUpdateState())
+    private val _androidUpdateState = MutableStateFlow(restoredAndroidUpdateState())
     internal val androidUpdateState: StateFlow<AndroidUpdateState> = _androidUpdateState
+
+    private fun restoredAndroidUpdateState(): AndroidUpdateState {
+        val tag = prefs.getString(PREF_LATEST_ANDROID_UPDATE_TAG, null)
+            ?.trim()
+            .orEmpty()
+        val version = prefs.getString(PREF_LATEST_ANDROID_UPDATE_VERSION, null)
+            ?.trim()
+            .orEmpty()
+        val apkUrl = prefs.getString(PREF_LATEST_ANDROID_UPDATE_APK_URL, null)
+            ?.trim()
+            .orEmpty()
+        if (tag.isBlank() || version.isBlank() || apkUrl.isBlank()) {
+            return AndroidUpdateState()
+        }
+        val release = AndroidRelease(
+            tag = tag,
+            version = version,
+            releaseUrl = prefs.getString(PREF_LATEST_ANDROID_UPDATE_RELEASE_URL, "")
+                .orEmpty(),
+            apkName = prefs.getString(PREF_LATEST_ANDROID_UPDATE_APK_NAME, null),
+            apkUrl = apkUrl
+        )
+        return AndroidUpdateState(
+            latest = release,
+            updateAvailable = AndroidUpdateChecker.isNewer(
+                release.version,
+                BuildConfig.VERSION_NAME
+            ),
+            checked = true
+        )
+    }
+
+    private fun rememberAndroidRelease(release: AndroidRelease) {
+        prefs.edit()
+            .putString(PREF_LATEST_ANDROID_UPDATE_TAG, release.tag)
+            .putString(PREF_LATEST_ANDROID_UPDATE_VERSION, release.version)
+            .putString(PREF_LATEST_ANDROID_UPDATE_RELEASE_URL, release.releaseUrl)
+            .putString(PREF_LATEST_ANDROID_UPDATE_APK_NAME, release.apkName)
+            .putString(PREF_LATEST_ANDROID_UPDATE_APK_URL, release.apkUrl)
+            .apply()
+    }
 
     internal fun checkForAndroidUpdate(force: Boolean = false) {
         if (!force) {
@@ -262,6 +306,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             runCatching {
                 AndroidUpdateChecker.fetch(Build.SUPPORTED_ABIS.toList())
             }.onSuccess { release ->
+                rememberAndroidRelease(release)
                 _androidUpdateState.value = AndroidUpdateState(
                     isChecking = false,
                     latest = release,
@@ -272,15 +317,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     checked = true
                 )
             }.onFailure { error ->
-                _androidUpdateState.value = AndroidUpdateState(
-                    isChecking = false,
-                    error = if (userInitiated) {
-                        error.message ?: "Could not check GitHub releases"
-                    } else {
-                        null
-                    },
-                    checked = true
-                )
+                _androidUpdateState.update { state ->
+                    state.copy(
+                        isChecking = false,
+                        error = if (userInitiated) {
+                            error.message ?: "Could not check GitHub releases"
+                        } else {
+                            null
+                        },
+                        checked = true
+                    )
+                }
                 VpnLogBus.warning("UPDATE", "Android update check failed: ${error.message}")
             }
         }
@@ -383,7 +430,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val nodeDao = db.nodeDao()
     private val subscriptionDao = db.subscriptionDao()
     private val serverGroupDao = db.serverGroupDao()
-    private val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private var storedVpnConfigRefreshJob: Job? = null
     private val storedVpnConfigWriteMutex = Mutex()
     private val subscriptionHwid: String by lazy {
@@ -3659,6 +3705,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private const val STORED_CONFIG_RUNNING_RETRY_MS = 250L
         private const val GEO_RESOURCE_MAX_BYTES = 256L * 1024 * 1024
         private const val PREF_LAST_ANDROID_UPDATE_CHECK = "last_android_update_check_ms"
+        private const val PREF_LATEST_ANDROID_UPDATE_TAG = "latest_android_update_tag"
+        private const val PREF_LATEST_ANDROID_UPDATE_VERSION = "latest_android_update_version"
+        private const val PREF_LATEST_ANDROID_UPDATE_RELEASE_URL = "latest_android_update_release_url"
+        private const val PREF_LATEST_ANDROID_UPDATE_APK_NAME = "latest_android_update_apk_name"
+        private const val PREF_LATEST_ANDROID_UPDATE_APK_URL = "latest_android_update_apk_url"
         /** Last known subscription-userinfo figures, one `id|upload|download|total|expire` line each. */
         private const val KEY_SUBSCRIPTION_USAGE = "subscription_usage"
         private val USAGE_KEYS = listOf("upload", "download", "total", "expire")

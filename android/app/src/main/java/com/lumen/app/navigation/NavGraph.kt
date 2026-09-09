@@ -93,7 +93,6 @@ import com.lumen.core.vpn.LumenVpnService
 import com.lumen.app.vm.MainViewModel
 import com.lumen.ui.components.LumenDialog
 import com.lumen.ui.screens.DashboardScreen
-import com.lumen.ui.screens.AndroidUpdateNotice
 import com.lumen.ui.screens.DomainRoutingScreen
 import com.lumen.ui.screens.GeoResourcesScreen
 import com.lumen.ui.screens.ImportPhaseUi
@@ -218,7 +217,7 @@ fun LumenApp(
     }
 
     var settingsResetSignal by remember { mutableIntStateOf(0) }
-    var dismissedUpdateTag by rememberSaveable { mutableStateOf<String?>(null) }
+    var notifiedUpdateTag by rememberSaveable { mutableStateOf<String?>(null) }
 
     val mainTabRoutes = remember { listOf("dashboard", "servers", "settings") }
     val activity = context as? android.app.Activity
@@ -302,6 +301,32 @@ fun LumenApp(
                     "${strings.subscriptionUpdated} — ${summary.subscriptionName}: " + parts.joinToString(", ")
                 }
                 toastState.show(text)
+            }
+        }
+        val availableUpdateTag = updateState.latest?.tag
+        val availableUpdateVersion = updateState.latest?.version
+        LaunchedEffect(
+            settings.autoCheckUpdates,
+            updateState.updateAvailable,
+            availableUpdateTag,
+            availableUpdateVersion,
+            strings,
+            toastState
+        ) {
+            if (
+                settings.autoCheckUpdates &&
+                updateState.updateAvailable &&
+                !availableUpdateTag.isNullOrBlank() &&
+                availableUpdateTag != notifiedUpdateTag
+            ) {
+                val version = availableUpdateVersion
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { "v$it" }
+                    ?: availableUpdateTag
+                toastState.show(
+                    strings.updateAvailableVersion.replace("{version}", version)
+                )
+                notifiedUpdateTag = availableUpdateTag
             }
         }
 
@@ -457,16 +482,6 @@ fun LumenApp(
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentNavRoute = navBackStackEntry?.destination?.route
             Column(Modifier.fillMaxSize()) {
-                val updateTag = updateState.latest?.tag
-                if (updateState.updateAvailable && updateTag != null && updateTag != dismissedUpdateTag) {
-                    AndroidUpdateNotice(
-                        version = updateState.latest?.version?.let { "v$it" },
-                        isDownloading = updateState.isDownloading,
-                        progress = updateState.downloadProgress,
-                        onDownload = ::requestAndroidUpdate,
-                        onDismiss = { dismissedUpdateTag = updateTag }
-                    )
-                }
                 NavHost(
                     navController = navController,
                     startDestination = "dashboard",

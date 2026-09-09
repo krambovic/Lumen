@@ -4,12 +4,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.saveable.rememberSaveable
 
 fun isValidSocks5Credential(value: String): Boolean =
     value.length in 1..255 && value.none { it.code < 32 || it.code == 127 } &&
@@ -19,62 +17,53 @@ fun isValidSocks5Credential(value: String): Boolean =
 internal fun Socks5CredentialsEditor(
     username: String,
     password: String,
-    onSave: (String, String) -> Unit,
-    onReset: () -> Unit
+    onSave: (String, String) -> Unit
 ) {
     val s = LocalStrings.current
-    val clipboard = LocalClipboardManager.current
-    var editing by remember { mutableStateOf(false) }
-    var draftUsername by remember { mutableStateOf("") }
-    var draftPassword by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("${s.socks5Login}: $username", modifier = Modifier.weight(1f))
-            TextButton(onClick = { clipboard.setText(AnnotatedString(username)) }) { Text(s.socks5Copy) }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("${s.socks5PasswordLabel}: ••••••••", modifier = Modifier.weight(1f))
-            TextButton(onClick = { clipboard.setText(AnnotatedString(password)) }) { Text(s.socks5Copy) }
-        }
-        Row {
-            TextButton(onClick = {
-                draftUsername = username
-                draftPassword = password
-                editing = true
-            }) { Text(s.edit) }
-            TextButton(onClick = onReset) { Text(s.socks5Reset) }
-        }
-        Text(s.socks5ReconnectNote, style = MaterialTheme.typography.bodySmall)
-    }
-    if (editing) {
-        val valid = isValidSocks5Credential(draftUsername) && isValidSocks5Credential(draftPassword)
-        AlertDialog(
-            onDismissRequest = { editing = false },
-            title = { Text(s.socks5Auth) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = draftUsername, onValueChange = { draftUsername = it },
-                        label = { Text(s.socks5Login) }, singleLine = true,
-                        isError = !isValidSocks5Credential(draftUsername)
-                    )
-                    OutlinedTextField(
-                        value = draftPassword, onValueChange = { draftPassword = it },
-                        label = { Text(s.socks5PasswordLabel) }, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        isError = !isValidSocks5Credential(draftPassword)
-                    )
-                    if (!valid) Text(s.socks5CredentialError, color = MaterialTheme.colorScheme.error)
+    var draftUsername by rememberSaveable(username) { mutableStateOf(username) }
+    var draftPassword by rememberSaveable(password) { mutableStateOf(password) }
+    val valid = isValidSocks5Credential(draftUsername) &&
+        isValidSocks5Credential(draftPassword)
+
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        OutlinedTextField(
+            value = draftUsername,
+            onValueChange = { value ->
+                draftUsername = value
+                if (isValidSocks5Credential(value) && isValidSocks5Credential(draftPassword)) {
+                    onSave(value, draftPassword)
                 }
             },
-            confirmButton = {
-                TextButton(enabled = valid, onClick = {
-                    onSave(draftUsername, draftPassword)
-                    editing = false
-                }) { Text(s.saveAction) }
-            },
-            dismissButton = { TextButton(onClick = { editing = false }) { Text(s.cancel) } }
+            label = { Text(s.socks5Login) },
+            singleLine = true,
+            isError = !isValidSocks5Credential(draftUsername),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+            modifier = Modifier.fillMaxWidth()
         )
+        OutlinedTextField(
+            value = draftPassword,
+            onValueChange = { value ->
+                draftPassword = value
+                if (isValidSocks5Credential(draftUsername) && isValidSocks5Credential(value)) {
+                    onSave(draftUsername, value)
+                }
+            },
+            label = { Text(s.socks5PasswordLabel) },
+            singleLine = true,
+            isError = !isValidSocks5Credential(draftPassword),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (!valid) {
+            Text(
+                s.socks5CredentialError,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Text(s.socks5ReconnectNote, style = MaterialTheme.typography.bodySmall)
     }
 }

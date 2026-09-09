@@ -1,9 +1,12 @@
 from copy import deepcopy
 import json
+from copy import deepcopy
+
 import pytest
 from xray_fluent.engines.singbox import manager as mod
 
 ERROR = "start inbound/tun[tun-in]: configure tun interface: (create adapter: Cannot create a file when that file already exists. | open existing adapter: Element not found.)"
+SLOW_OPEN_WARNING = "inbound/tun[tun-in]: open interface take too much time to finish!"
 
 class FakeProcess:
     stdout = None
@@ -84,4 +87,50 @@ def test_missing_tun_alias_is_written_consistently(setup_manager, monkeypatch):
     assert manager.start(str(exe), payload, prevalidated=True)
     assert json.loads(path.read_text(encoding="utf-8"))["inbounds"][0]["interface_name"] == seen[0]
     assert "interface_name" not in payload["inbounds"][0]
+    assert manager.stop(fast=True)
+
+
+def test_slow_interface_warning_stops_the_long_readiness_wait(setup_manager):
+    manager, _, _ = setup_manager
+    proc = FakeProcess()
+
+    manager._last_output_lines.append(SLOW_OPEN_WARNING)
+    manager._observe_startup_line(SLOW_OPEN_WARNING)
+
+    started = mod.time.monotonic()
+    assert not manager._wait_until_tun_ready(proc, "singbox_tun", max_wait=20.0)
+    assert mod.time.monotonic() - started < 0.5
+    assert manager._startup_error_is_retryable()
+    assert manager._startup_error_is_stale_adapter()
+
+
+def test_slow_interface_warning_is_recovered_inside_one_connect_action(
+    setup_manager, monkeypatch
+):
+    manager, exe, path = setup_manager
+    aliases = []
+
+    def spawn(*args, **kwargs):
+        aliases.append(
+            json.loads(path.read_text(encoding="utf-8"))["inbounds"][0][
+                "interface_name"
+            ]
+        )
+        return FakeProcess()
+
+    monkeypatch.setattr(mod.subprocess, "Popen", spawn)
+
+    def ready(proc, alias):
+        if len(aliases) == 1:
+            manager._last_output_lines.append(SLOW_OPEN_WARNING)
+            manager._observe_startup_line(SLOW_OPEN_WARNING)
+            return False
+        return True
+
+    monkeypatch.setattr(manager, "_wait_until_tun_ready", ready)
+
+    assert manager.start(str(exe), config(), prevalidated=True)
+    assert len(aliases) == 2
+    assert aliases[0] == "LumenTun"
+    assert aliases[1].startswith(mod.SINGBOX_TUN_INTERFACE_NAME + "-")
     assert manager.stop(fast=True)

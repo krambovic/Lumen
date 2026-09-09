@@ -102,6 +102,7 @@ class ProxyManager:
         self._backup: dict[str, str | int] | None = None
         self._applied: dict[str, str | int] | None = None
         self._owner: tuple[int, int] | None = None
+        self._last_wininet_error: tuple[int, int] = (0, 0)
         self._backup_file = RUNTIME_DIR / "system_proxy_backup.json"
         self._firefox_proxy = FirefoxProxyManager()
 
@@ -182,6 +183,12 @@ class ProxyManager:
             return False
         current = self._read_settings()
         return all(current.get(key) == expected.get(key) for key in _PROXY_FIELDS) and self._query_connection_flags() == expected.get("WinInetFlags")
+
+    def _matches_registry_settings(self, expected: dict[str, str | int] | None) -> bool:
+        if expected is None:
+            return False
+        current = self._read_settings()
+        return all(current.get(key) == expected.get(key) for key in _PROXY_FIELDS)
 
     def _owner_is_live_elsewhere(self) -> bool:
         if self._owner is None:
@@ -269,19 +276,64 @@ class ProxyManager:
 
     def _set_connection_proxy(self, connection_name: str | None, proxy_server: str, override: str,
                               enabled: bool, *, flags: int | None = None, auto_config_url: str = "") -> bool:
-        options = (_InternetPerConnOption * 4)()
-        options[0].m_Option = INTERNET_PER_CONN_FLAGS
-        options[0].m_Value.m_Int = flags if flags is not None else PROXY_TYPE_DIRECT | (PROXY_TYPE_PROXY if enabled else 0)
-        for index, option, value in ((1, INTERNET_PER_CONN_PROXY_SERVER, proxy_server),
-                                     (2, INTERNET_PER_CONN_PROXY_BYPASS, override),
-                                     (3, INTERNET_PER_CONN_AUTOCONFIG_URL, auto_config_url)):
+        effective_flags = (
+            int(flags)
+            if flags is not None
+            else PROXY_TYPE_DIRECT | (PROXY_TYPE_PROXY if enabled else 0)
+        )
+        values: list[tuple[int, int | str]] = [(INTERNET_PER_CONN_FLAGS, effective_flags)]
+
+        # WinINET rejects an INTERNET_PER_CONN_OPTION_LIST on a number of
+        # Windows 10/11 builds when AUTOCONFIG_URL is supplied as an empty
+        # fourth option.  Send only options which are active.  The registry
+        # write performed by the caller still clears stale fields before this
+        # native notification, while a real PAC URL is restored explicitly.
+        if enabled or effective_flags & PROXY_TYPE_PROXY:
+            values.append((INTERNET_PER_CONN_PROXY_SERVER, str(proxy_server)))
+            if override:
+                values.append((INTERNET_PER_CONN_PROXY_BYPASS, str(override)))
+        if auto_config_url:
+            values.append((INTERNET_PER_CONN_AUTOCONFIG_URL, str(auto_config_url)))
+
+        options = (_InternetPerConnOption * len(values))()
+        string_buffers: list[ctypes.Array] = []
+        for index, (option, value) in enumerate(values):
             options[index].m_Option = option
-            options[index].m_Value.m_StringPtr = value
-        payload = _InternetPerConnOptionList(ctypes.sizeof(_InternetPerConnOptionList), connection_name, 4, 0, options)
+            if isinstance(value, int):
+                options[index].m_Value.m_Int = value
+            else:
+                # Keep native buffers alive through InternetSetOptionW.  A raw
+                # temporary Python string pointer is not a safe ownership
+                # boundary for the WinINET call.
+                buffer = ctypes.create_unicode_buffer(value)
+                string_buffers.append(buffer)
+                options[index].m_Value.m_StringPtr = ctypes.cast(buffer, wintypes.LPWSTR)
+        payload = _InternetPerConnOptionList(
+            ctypes.sizeof(_InternetPerConnOptionList),
+            connection_name,
+            len(values),
+            0,
+            options,
+        )
         setter = ctypes.windll.Wininet.InternetSetOptionW
         setter.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD]
         setter.restype = wintypes.BOOL
-        return bool(setter(0, INTERNET_OPTION_PER_CONNECTION_OPTION, ctypes.byref(payload), ctypes.sizeof(payload)))
+        ok = bool(setter(0, INTERNET_OPTION_PER_CONNECTION_OPTION, ctypes.byref(payload), ctypes.sizeof(payload)))
+        if ok:
+            self._last_wininet_error = (0, 0)
+            return True
+        try:
+            error_code = int(ctypes.windll.kernel32.GetLastError())
+        except Exception:
+            error_code = 0
+        self._last_wininet_error = (error_code, int(payload.dwOptionError))
+        _logger.warning(
+            "[proxy] InternetSetOptionW failed: error=%d option_error=%d option_count=%d",
+            error_code,
+            int(payload.dwOptionError),
+            len(values),
+        )
+        return False
 
     def _restore_settings(self, values: dict[str, str | int]) -> None:
         self._write_settings(values)
@@ -369,7 +421,26 @@ class ProxyManager:
         try:
             self._write_settings(self._applied)
             if not self._set_wininet_connection_proxy(proxy_server, override, True):
-                raise RuntimeError("Не удалось применить параметры WinINET")
+                # Some WinINET builds return FALSE even though the documented
+                # registry-backed LAN settings were accepted.  Refresh and
+                # verify both the complete registry snapshot and the effective
+                # PROXY flag before accepting that result.  Never continue on
+                # an unverified partial write.
+                self._refresh_system_proxy()
+                effective_flags = self._query_connection_flags()
+                if (
+                    not self._matches_registry_settings(self._applied)
+                    or effective_flags is None
+                    or not effective_flags & PROXY_TYPE_PROXY
+                ):
+                    error_code, option_error = self._last_wininet_error
+                    detail = f" (Win32={error_code}, option={option_error})" if error_code or option_error else ""
+                    raise RuntimeError(f"Не удалось применить параметры WinINET{detail}")
+                self._applied["WinInetFlags"] = int(effective_flags)
+                self._persist_backup(self._backup)
+                _logger.warning(
+                    "[proxy] WinINET returned failure, but verified registry settings and effective flags were applied"
+                )
         except Exception:
             # Roll back only the values just written by this operation.
             if all(self._read_settings().get(key) == self._applied.get(key) for key in _PROXY_FIELDS):

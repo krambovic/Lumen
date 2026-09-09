@@ -75,6 +75,31 @@ def _server_display_name_without_country_prefix(name: str, country: str) -> str:
     return cleaned or original
 
 
+def _subscription_snapshot_matches_local_nodes(
+    subscription: dict[str, Any], nodes: object
+) -> bool:
+    """Return whether the local subscription rows still match its last snapshot.
+
+    A locally deleted subscription node must invalidate ETag/Last-Modified.  A
+    provider can legitimately answer 304 because its payload did not change,
+    but that cached payload is still needed to restore the locally deleted row.
+    """
+    try:
+        expected = int(subscription.get("node_count"))
+    except (TypeError, ValueError):
+        return True
+    subscription_id = str(subscription.get("id") or "").strip()
+    if not subscription_id or expected < 0:
+        return True
+    actual = sum(
+        1
+        for node in (nodes or [])
+        if str(getattr(node, "subscription_id", "") or "").strip()
+        == subscription_id
+    )
+    return actual == expected
+
+
 class _ApplicationLogEmitter(QObject):
     line = pyqtSignal(str)
 
@@ -582,9 +607,22 @@ class AppBridge(QObject):
                 if cache_allowed:
                     job.etag = str(existing.get("etag") or "")
                     job.last_modified = str(existing.get("last_modified") or "")
+                    if not _subscription_snapshot_matches_local_nodes(
+                        existing,
+                        getattr(self.controller.state, "nodes", []),
+                    ):
+                        # Force a body download so a node deleted locally can
+                        # be reconciled back even when the provider returns 304.
+                        job.etag = ""
+                        job.last_modified = ""
         self._sub_batch_seq += 1
         batch_id = self._sub_batch_seq
-        self._sub_batches[batch_id] = {"kind": kind, "added": 0, "errors": []}
+        self._sub_batches[batch_id] = {
+            "kind": kind,
+            "added": 0,
+            "errors": [],
+            "changes": [],
+        }
         self._ensure_sub_worker()
         self._sub_fetch_run.emit(list(jobs), batch_id)
 
@@ -601,10 +639,54 @@ class AppBridge(QObject):
         batch = self._sub_batches.get(batch_id)
         if batch is None or self._quitting or not self.controller.profile_loaded:
             return
+        subscriptions_before = list(
+            getattr(self.controller.state, "subscriptions", [])
+        )
         before_subscription_ids = {
             str(item.get("id") or "")
-            for item in getattr(self.controller.state, "subscriptions", [])
+            for item in subscriptions_before
         }
+        source_url = str(getattr(job, "url", "") or "").strip()
+        existing_subscription = next(
+            (
+                item
+                for item in subscriptions_before
+                if str(item.get("url") or "").strip() == source_url
+            ),
+            None,
+        )
+        tracked_subscription_id = str(
+            (existing_subscription or {}).get("id") or ""
+        ).strip()
+        tracked_group = str(
+            (existing_subscription or {}).get("group")
+            or (existing_subscription or {}).get("name")
+            or ""
+        ).strip()
+        tracked_name = str(
+            (existing_subscription or {}).get("name")
+            or tracked_group
+            or getattr(job, "name", "")
+            or source_url
+        ).strip()
+
+        def _tracked_node_ids(subscription_id: str, group: str) -> set[str]:
+            return {
+                str(getattr(node, "id", "") or "")
+                for node in getattr(self.controller.state, "nodes", [])
+                if (
+                    subscription_id
+                    and str(getattr(node, "subscription_id", "") or "")
+                    == subscription_id
+                )
+                or (
+                    not str(getattr(node, "subscription_id", "") or "")
+                    and group
+                    and str(getattr(node, "group", "") or "") == group
+                )
+            }
+
+        before_node_ids = _tracked_node_ids(tracked_subscription_id, tracked_group)
         try:
             added, errs = self.controller.apply_fetched_subscription(
                 job.url,
@@ -619,7 +701,51 @@ class AppBridge(QObject):
             added, errs = 0, [str(exc)]
         batch["added"] += int(added or 0)
         if errs:
-            batch["errors"].extend(errs)
+            if getattr(job, "kind", "") == "update" and existing_subscription is not None:
+                batch["errors"].extend(
+                    f"{tracked_name}: {error}" for error in errs
+                )
+            else:
+                batch["errors"].extend(errs)
+        if getattr(job, "kind", "") == "update" and existing_subscription is not None:
+            subscriptions_after = list(
+                getattr(self.controller.state, "subscriptions", [])
+            )
+            current_subscription = next(
+                (
+                    item
+                    for item in subscriptions_after
+                    if tracked_subscription_id
+                    and str(item.get("id") or "").strip() == tracked_subscription_id
+                ),
+                None,
+            ) or next(
+                (
+                    item
+                    for item in subscriptions_after
+                    if str(item.get("url") or "").strip() == source_url
+                ),
+                existing_subscription,
+            )
+            current_subscription_id = str(
+                current_subscription.get("id") or tracked_subscription_id
+            ).strip()
+            current_group = str(
+                current_subscription.get("group")
+                or current_subscription.get("name")
+                or tracked_group
+            ).strip()
+            after_node_ids = _tracked_node_ids(current_subscription_id, current_group)
+            added_nodes = len(after_node_ids - before_node_ids)
+            removed_nodes = len(before_node_ids - after_node_ids)
+            if added_nodes or removed_nodes:
+                batch.setdefault("changes", []).append(
+                    {
+                        "name": tracked_name,
+                        "added": added_nodes,
+                        "removed": removed_nodes,
+                    }
+                )
         if getattr(job, "kind", "") == "import":
             created = next(
                 (
@@ -641,14 +767,40 @@ class AppBridge(QObject):
         kind = batch["kind"]
         added = batch["added"]
         errors = batch["errors"]
+        changes = batch.get("changes") or []
+
+        def _change_summary() -> str:
+            details = []
+            for item in changes:
+                deltas = []
+                if int(item.get("added") or 0) > 0:
+                    deltas.append(f"+{int(item['added'])}")
+                if int(item.get("removed") or 0) > 0:
+                    deltas.append(f"-{int(item['removed'])}")
+                details.append(
+                    f"{item.get('name') or 'Subscription'} ({' / '.join(deltas)})"
+                )
+            return ", ".join(details)
+
         if kind == "import":
             self._sub_importing = False
             self._sub_import_status = ""
             self.subscriptionImportingChanged.emit()
             self.subscriptionImportStatusChanged.emit()
         if kind == "auto":
-            if added:
-                self.toast.emit("info", tr("Авто-обновление подписок: +{count} серверов", count=added))
+            if changes:
+                self.toast.emit(
+                    "info",
+                    tr(
+                        "Авто-обновление подписок: {changes}",
+                        changes=_change_summary(),
+                    ),
+                )
+            if errors:
+                # Background refreshes stay quiet on success, but a provider
+                # failure must identify the subscription instead of looking
+                # like a successful refresh of another one.
+                self.toast.emit("warning", "; ".join(errors[:2]))
             return
         if kind == "import":
             if added:
@@ -658,13 +810,25 @@ class AppBridge(QObject):
             if not added and not errors:
                 self.toast.emit("info", "Новых серверов не найдено")
         elif kind == "update":
-            self.toast.emit("success", tr("Подписка обновлена: {count} серверов", count=added))
+            if changes:
+                self.toast.emit(
+                    "success",
+                    tr("Подписка обновлена: {changes}", changes=_change_summary()),
+                )
             if errors:
                 self.toast.emit("warning", "; ".join(errors[:2]))
+            elif not changes:
+                self.toast.emit("info", tr("Изменений в подписке нет"))
         else:  # update_all
-            self.toast.emit("success", tr("Подписки обновлены: {count} серверов", count=added))
+            if changes:
+                self.toast.emit(
+                    "success",
+                    tr("Подписки обновлены: {changes}", changes=_change_summary()),
+                )
             if errors:
                 self.toast.emit("warning", "; ".join(errors[:2]))
+            elif not changes:
+                self.toast.emit("info", tr("Изменений в подписках нет"))
 
     # ── Tray / background ───────────────────────────────────────
     def set_tray_available(self, value: bool) -> None:

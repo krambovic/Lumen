@@ -1,4 +1,5 @@
 from copy import deepcopy
+import ctypes
 import json
 from types import SimpleNamespace as NS
 import threading
@@ -33,6 +34,78 @@ def proxy_fixture(monkeypatch, tmp_path):
     monkeypatch.setattr(manager, "_enumerate_ras_entries", lambda: pytest.fail("RAS must remain untouched"))
     manager._firefox_proxy = NS(disable=lambda: None)
     return manager, original, current, flags, native, writes
+
+
+def _capture_wininet_options(monkeypatch):
+    calls = []
+
+    class Setter:
+        argtypes = None
+        restype = None
+
+        def __call__(self, _handle, option, payload_pointer, _size):
+            payload = ctypes.cast(
+                payload_pointer,
+                ctypes.POINTER(proxy_module._InternetPerConnOptionList),
+            ).contents
+            decoded = []
+            for index in range(payload.dwOptionCount):
+                item = payload.pOptions[index]
+                if item.m_Option == proxy_module.INTERNET_PER_CONN_FLAGS:
+                    value = int(item.m_Value.m_Int)
+                else:
+                    value = str(item.m_Value.m_StringPtr or "")
+                decoded.append((int(item.m_Option), value))
+            calls.append((int(option), decoded))
+            return True
+
+    monkeypatch.setattr(
+        proxy_module.ctypes.windll,
+        "Wininet",
+        NS(InternetSetOptionW=Setter()),
+    )
+    return calls
+
+
+def test_wininet_static_proxy_does_not_send_an_empty_pac_option(monkeypatch):
+    calls = _capture_wininet_options(monkeypatch)
+
+    assert ProxyManager()._set_connection_proxy(
+        None,
+        "127.0.0.1:10808",
+        "<local>;localhost",
+        True,
+        auto_config_url="",
+    ) is True
+
+    assert calls == [
+        (
+            proxy_module.INTERNET_OPTION_PER_CONNECTION_OPTION,
+            [
+                (proxy_module.INTERNET_PER_CONN_FLAGS, 3),
+                (proxy_module.INTERNET_PER_CONN_PROXY_SERVER, "127.0.0.1:10808"),
+                (proxy_module.INTERNET_PER_CONN_PROXY_BYPASS, "<local>;localhost"),
+            ],
+        )
+    ]
+
+
+def test_wininet_restore_sends_a_real_pac_url_without_empty_proxy_fields(monkeypatch):
+    calls = _capture_wininet_options(monkeypatch)
+
+    assert ProxyManager()._set_connection_proxy(
+        None,
+        "",
+        "",
+        False,
+        flags=13,
+        auto_config_url="https://corp.example/proxy.pac",
+    ) is True
+
+    assert calls[0][1] == [
+        (proxy_module.INTERNET_PER_CONN_FLAGS, 13),
+        (proxy_module.INTERNET_PER_CONN_AUTOCONFIG_URL, "https://corp.example/proxy.pac"),
+    ]
 
 
 def test_proxy_restores_static_pac_and_wpad_not_just_disabled(monkeypatch, tmp_path):
@@ -100,6 +173,24 @@ def test_proxy_without_complete_wininet_snapshot_is_not_enabled(monkeypatch, tmp
     with pytest.raises(RuntimeError):
         manager.enable(10809, 10808)
     assert not writes and not native
+
+
+def test_verified_registry_fallback_accepts_false_wininet_result(monkeypatch, tmp_path):
+    manager, _original, current, flags, _native, _writes = proxy_fixture(monkeypatch, tmp_path)
+
+    def false_after_effective_apply(*_args):
+        flags[0] = 3
+        return False
+
+    monkeypatch.setattr(manager, "_set_wininet_connection_proxy", false_after_effective_apply)
+
+    manager.enable(10809, 10808)
+
+    assert current["ProxyEnable"] == 1
+    assert current["ProxyServer"] == "127.0.0.1:10808"
+    assert manager._applied is not None
+    assert manager._applied["WinInetFlags"] == 3
+    assert json.loads(manager._backup_file.read_text())["applied"]["WinInetFlags"] == 3
 
 
 def firefox_fixture(monkeypatch, tmp_path):

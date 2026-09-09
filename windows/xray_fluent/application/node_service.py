@@ -1798,9 +1798,9 @@ def _apply_subscription_payload(
                 success=True,
                 not_modified=True,
             )
-            subscription["node_count"] = sum(
-                1 for node in controller.state.nodes if node.subscription_id == subscription.get("id")
-            )
+            # Keep the provider snapshot count.  Recomputing it from local rows
+            # would hide a locally deleted node and make a future 304 unable to
+            # trigger a restorative full fetch.
             controller.subscriptions_changed.emit(list(controller.state.subscriptions))
             controller.save()
         result_info["_lumen_not_modified"] = True
@@ -1971,8 +1971,16 @@ def _apply_subscription_payload(
         if replacement is None:
             replacement = next((node for node in prepared if node.link == selected_old.link), None)
         if replacement is None:
-            replacement = prepared[0]
-            reconnect_needed = True
+            # A provider may temporarily omit/re-key the active entry while a
+            # subscription is being regenerated.  Replacing it with the first
+            # response item makes an ordinary refresh unexpectedly switch the
+            # user's server.  Retain only the currently selected old entry;
+            # it is removed by a later refresh after the user selects another
+            # node, while all other stale entries are still reconciled away.
+            replacement = selected_old
+            prepared.append(selected_old)
+            controller.state.nodes.append(selected_old)
+            result_info["_lumen_retained_selected_node"] = True
         controller.state.selected_node_id = replacement.id
 
     controller.nodes_changed.emit(controller.state.nodes)
