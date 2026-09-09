@@ -1,12 +1,10 @@
 ## What's Changed
 
-- fix: keep the active server selected when a subscription temporarily omits it or returns 304
-- fix: report real subscription changes and name failed subscriptions without showing false success
-- fix: harden system proxy restoration and avoid interfering with proxy settings Lumen does not own
-- fix: recover slow or colliding TUN startup without deleting existing adapters
-- fix: restore subscription banner accessors and prevent duplicate QML page initialization
-- fix: improve updater, administrator relaunch and shutdown edge cases
-- test: add guarded regression coverage for subscription reconciliation, proxy safety and TUN recovery
-- ci: keep guarded Windows checks isolated before release builds
+- fix: fully support Shadowsocks SIP002, SIP003 and SIP008 links, JSON profiles and subscriptions
+- fix: normalize legacy, AEAD and Shadowsocks 2022 cipher names before starting sing-box extended
+- fix: preserve plugins, escaped options, native fields and credentials while editing or exporting Shadowsocks servers
+- fix: reject corrupted Shadowsocks credentials and unsupported methods without breaking the remaining subscription or AUTO group
+- fix: keep UDP-over-TCP and multiplex settings compatible and preserve dependency chains during hot-switches
+- test: add cross-platform regression coverage for Shadowsocks parsing, editing, exporting and sing-box configuration
 
-Full Changelog: https://github.com/krambovic/Lumen/compare/v1.9.12...v1.9.13
+Full Changelog: https://github.com/krambovic/Lumen/compare/v1.9.13...v1.9.14
