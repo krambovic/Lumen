@@ -480,5 +480,5 @@ val LocalHapticsEnabled = androidx.compose.runtime.staticCompositionLocalOf { tr
 /** Single source of version strings; the app layer fills [appVersion] from BuildConfig. */
 object LumenVersion {
     var appVersion: String = "0.7.0"
-    const val ENGINE: String = "1.13.14-extended-2.5.2"
+    const val ENGINE: String = "1.14.0-extended-2.7.1"
 }
