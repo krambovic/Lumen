@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from copy import deepcopy
 from typing import Any
 
@@ -33,6 +34,28 @@ _SUPPORTED_NATIVE_PROTOCOLS = {
 
 _DEFAULT_HYSTERIA_UP_MBPS = 50
 _DEFAULT_HYSTERIA_DOWN_MBPS = 200
+_SUPPORTED_SHADOWSOCKS_METHODS = {
+    "none",
+    "aes-128-gcm",
+    "aes-192-gcm",
+    "aes-256-gcm",
+    "chacha20-ietf-poly1305",
+    "xchacha20-ietf-poly1305",
+    "2022-blake3-aes-128-gcm",
+    "2022-blake3-aes-256-gcm",
+    "2022-blake3-chacha20-poly1305",
+    "aes-128-ctr",
+    "aes-192-ctr",
+    "aes-256-ctr",
+    "aes-128-cfb",
+    "aes-192-cfb",
+    "aes-256-cfb",
+    "rc4-md5",
+    "chacha20-ietf",
+    "xchacha20",
+}
+_SUPPORTED_SHADOWSOCKS_PLUGINS = {"obfs-local", "v2ray-plugin"}
+_SHADOWSOCKS_PLUGIN_ALIASES = {"obfs": "obfs-local", "simple-obfs": "obfs-local"}
 
 
 def _ensure_hysteria_speeds(sb: dict[str, Any]) -> None:
@@ -186,13 +209,128 @@ def _convert_outbound(xray_ob: dict[str, Any], *, tag: str = "proxy") -> dict[st
     return sb
 
 
+def _split_sip003_options(value: Any) -> list[str]:
+    """Split SIP003 options without breaking escaped separators."""
+    text = str(value or "").strip()
+    if not text:
+        return []
+    result: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for char in text:
+        if char == ";" and not escaped:
+            if current:
+                result.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+        if char == "\\" and not escaped:
+            escaped = True
+        else:
+            escaped = False
+    if current:
+        result.append("".join(current))
+    return result
+
+
+def _normalize_obfs_options(value: Any) -> str:
+    normalized: list[str] = []
+    for option in _split_sip003_options(value):
+        escaped = False
+        separator = -1
+        for index, char in enumerate(option):
+            if char == "=" and not escaped:
+                separator = index
+                break
+            if char == "\\" and not escaped:
+                escaped = True
+            else:
+                escaped = False
+        key = option if separator < 0 else option[:separator]
+        option_value = "" if separator < 0 else option[separator + 1 :]
+        mapped = {"mode": "obfs", "host": "obfs-host"}.get(key.strip().lower(), key)
+        normalized.append(mapped if separator < 0 else f"{mapped}={option_value}")
+    return ";".join(normalized)
+
+
+def _shadowsocks_2022_key_sizes(password: str) -> list[int]:
+    sizes: list[int] = []
+    for segment in password.split(":"):
+        clean = segment.strip()
+        if not clean:
+            raise ValueError("invalid Base64 key for Shadowsocks 2022")
+        clean += "=" * ((4 - len(clean) % 4) % 4)
+        try:
+            sizes.append(len(base64.b64decode(clean.encode("ascii"), altchars=b"-_", validate=True)))
+        except (UnicodeError, ValueError, binascii.Error) as exc:
+            raise ValueError("invalid Base64 key for Shadowsocks 2022") from exc
+    return sizes
+
+
+def _normalize_shadowsocks_outbound(value: dict[str, Any]) -> None:
+    raw_method = str(value.get("method") or "").strip()
+    if not raw_method:
+        raise ValueError("Shadowsocks node has no encryption method")
+    method = raw_method.lower()
+    if method == "chacha20-poly1305":
+        method = "chacha20-ietf-poly1305"
+    if method not in _SUPPORTED_SHADOWSOCKS_METHODS:
+        raise ValueError(f"Unsupported Shadowsocks method `{raw_method}`")
+
+    password = str(value.get("password") or "")
+    if not password and method != "none":
+        raise ValueError("Shadowsocks node has no password")
+
+    if method.startswith("2022-"):
+        expected = 16 if method == "2022-blake3-aes-128-gcm" else 32
+        sizes = _shadowsocks_2022_key_sizes(password)
+        corrected = None
+        if method == "2022-blake3-aes-128-gcm" and all(size == 32 for size in sizes):
+            corrected = "2022-blake3-aes-256-gcm"
+        elif method == "2022-blake3-aes-256-gcm" and all(size == 16 for size in sizes):
+            corrected = "2022-blake3-aes-128-gcm"
+        if not all(size == expected for size in sizes):
+            if corrected is None:
+                rendered = "/".join(str(size) for size in sizes)
+                raise ValueError(f"invalid key length for {method}: required {expected}, got {rendered}")
+            method = corrected
+
+    plugin = str(value.get("plugin") or "").strip().lower()
+    plugin = _SHADOWSOCKS_PLUGIN_ALIASES.get(plugin, plugin)
+    if plugin:
+        if plugin not in _SUPPORTED_SHADOWSOCKS_PLUGINS:
+            raise ValueError(f"Unsupported Shadowsocks plugin `{plugin}`")
+        value["plugin"] = plugin
+        options = str(value.get("plugin_opts") or "").strip()
+        if plugin == "obfs-local" and options:
+            options = _normalize_obfs_options(options)
+        if options:
+            value["plugin_opts"] = options
+        else:
+            value.pop("plugin_opts", None)
+    else:
+        value.pop("plugin", None)
+        value.pop("plugin_opts", None)
+
+    if _udp_over_tcp_enabled(value.get("udp_over_tcp")):
+        value.pop("multiplex", None)
+    value["method"] = method
+
+
+def _udp_over_tcp_enabled(value: Any) -> bool:
+    if isinstance(value, dict):
+        return value.get("enabled") is not False
+    return bool(value)
+
+
 def _normalize_shadowsocks_methods(value: Any) -> None:
     """Translate the Xray/SIP002 ChaCha20 AEAD alias only for Shadowsocks.
 
     Apply this to runtime copies, including every outbound in a full imported
     config. A bad non-selected outbound otherwise aborts sing-box initialization.
     Do not rewrite VMess security, legacy ChaCha20 stream ciphers, SS2022 methods,
-    unknown methods or passwords; there is no fallback to a different cipher.
+    passwords or similarly named VMess/Sudoku fields. Unsupported values are
+    rejected before the core can abort a several-hundred-node runtime.
     """
     if isinstance(value, list):
         for nested in value:
@@ -202,9 +340,7 @@ def _normalize_shadowsocks_methods(value: Any) -> None:
         return
 
     if str(value.get("type") or "").strip().lower() == "shadowsocks":
-        method = value.get("method")
-        if isinstance(method, str) and method.strip().lower() == "chacha20-poly1305":
-            value["method"] = "chacha20-ietf-poly1305"
+        _normalize_shadowsocks_outbound(value)
 
     for nested in value.values():
         _normalize_shadowsocks_methods(nested)

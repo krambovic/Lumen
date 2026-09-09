@@ -1,5 +1,6 @@
 package com.lumen.app.util
 
+import com.lumen.core.config.parser.LinkParser
 import com.lumen.core.database.model.NodeEntity
 import com.lumen.ui.screens.NodeDraft
 import org.json.JSONObject
@@ -205,6 +206,60 @@ class NodeDraftMapperTest {
         assertEquals("v2ray-plugin", server.getString("plugin"))
         assertEquals("mode=websocket;host=cdn.example.com", server.getString("plugin_opts"))
         assertEquals("v2ray-plugin", json.getJSONObject("clash").getString("plugin"))
+        assertTrue(saved.link.contains("/?plugin="))
+        assertEquals("v2ray-plugin", LinkParser.parseSingle(saved.link).outbound
+            .let { it["settings"] as Map<*, *> }
+            .let { it["servers"] as List<*> }
+            .first().let { it as Map<*, *> }["plugin"])
+    }
+
+    @Test
+    fun shadowsocks2022LinkUsesPlainSip022UserInfo() {
+        val key = java.util.Base64.getEncoder().encodeToString(ByteArray(16) { it.toByte() })
+        val link = NodeDraftMapper.buildLink(
+            NodeDraft(
+                name = "SS2022",
+                protocol = "ss",
+                server = "2001:db8::1",
+                port = "8388",
+                method = "2022-blake3-aes-128-gcm",
+                secret = key
+            )
+        )
+
+        assertTrue(link.startsWith("ss://2022-blake3-aes-128-gcm:"))
+        assertTrue(link.contains("@[2001:db8::1]:8388"))
+        val server = LinkParser.parseSingle(link).outbound
+            .let { it["settings"] as Map<*, *> }
+            .let { it["servers"] as List<*> }
+            .first() as Map<*, *>
+        assertEquals(key, server["password"])
+    }
+
+    @Test
+    fun sip008ShadowsocksCanBeEditedWithoutLosingNativeFields() {
+        val entity = NodeEntity(
+            id = "sip008",
+            name = "SIP008",
+            protocol = "ss",
+            server = "old.example",
+            port = 8388,
+            link = """{"remarks":"SIP008","server":"old.example","server_port":8388,"method":"aes-128-gcm","password":"old","plugin":"obfs-local","plugin_opts":"obfs=http"}""",
+            outboundJson = """{"protocol":"shadowsocks","singbox":{"type":"shadowsocks","server":"old.example","server_port":8388,"method":"aes-128-gcm","password":"old","plugin":"obfs-local","plugin_opts":"obfs=http","provider_extension":"keep"}}"""
+        )
+
+        val draft = NodeDraftMapper.draftFromEntity(entity)!!
+        val saved = NodeDraftMapper.entityFromDraft(
+            draft.copy(server = "new.example", port = "9443", method = "aes-256-gcm", secret = "new")
+        )
+        val native = JSONObject(saved.outboundJson).getJSONObject("singbox")
+
+        assertEquals("new.example", native.getString("server"))
+        assertEquals(9443, native.getInt("server_port"))
+        assertEquals("aes-256-gcm", native.getString("method"))
+        assertEquals("new", native.getString("password"))
+        assertEquals("keep", native.getString("provider_extension"))
+        assertTrue(saved.link.contains("/?plugin="))
     }
 
     @Test

@@ -1094,6 +1094,64 @@ class ConfigBuilderTest {
     }
 
     @Test
+    fun shadowsocksAeadAliasIsCanonicalizedBeforeCoreStartup() {
+        val node = ParsedNode(
+            name = "SS alias",
+            scheme = "shadowsocks",
+            server = "s.example",
+            port = 8388,
+            link = "",
+            outbound = mapOf("method" to " ChAcHa20-Poly1305 ", "password" to "secret")
+        )
+
+        val proxy = JSONObject(SingboxConfigBuilder.buildConfig(node))
+            .getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("chacha20-ietf-poly1305", proxy.getString("method"))
+    }
+
+    @Test
+    fun legacyShadowsocksStreamCipherIsAcceptedByBundledCore() {
+        val node = ParsedNode(
+            name = "Legacy SS",
+            scheme = "shadowsocks",
+            server = "s.example",
+            port = 8388,
+            link = "",
+            outbound = mapOf("method" to "aes-256-cfb", "password" to "secret")
+        )
+
+        val proxy = JSONObject(SingboxConfigBuilder.buildConfig(node))
+            .getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("aes-256-cfb", proxy.getString("method"))
+    }
+
+    @Test
+    fun malformedShadowsocksMethodDropsOnlyItsAutoMember() {
+        val broken = ParsedNode(
+            name = "Corrupted SS",
+            scheme = "shadowsocks",
+            server = "s.example",
+            port = 8388,
+            link = "",
+            outbound = mapOf("method" to "зЋщчЭщн{о", "password" to "secret")
+        )
+        val healthy = ParsedNode("Healthy", "trojan", "1.2.3.4", 443, "", mapOf("password" to "x"))
+        val auto = ParsedNode("AUTO", "auto", "", 0, "")
+
+        val outbounds = JSONObject(
+            SingboxConfigBuilder.buildConfig(listOf(healthy, broken, auto), auto)
+        ).getJSONArray("outbounds")
+        val poolTags = outbounds.getJSONObject(0).getJSONArray("outbounds")
+        assertEquals(1, poolTags.length())
+        assertTrue((0 until outbounds.length()).none {
+            outbounds.getJSONObject(it).optString("method") == "зЋщчЭщн{о"
+        })
+
+        val error = runCatching { SingboxConfigBuilder.buildConfig(broken) }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("Unsupported Shadowsocks method"))
+    }
+
+    @Test
     fun shadowsocksSip003PluginReachesSingbox() {
         val node = ParsedNode(
             name = "SS obfs",
@@ -1113,6 +1171,79 @@ class ConfigBuilderTest {
             .getJSONArray("outbounds").getJSONObject(0)
         assertEquals("obfs-local", proxy.getString("plugin"))
         assertEquals("obfs=http;obfs-host=bing.com", proxy.getString("plugin_opts"))
+    }
+
+    @Test
+    fun nativeShadowsocksValidatesPasswordAndPluginBeforeCoreStartup() {
+        fun native(password: String, plugin: String? = null) = ParsedNode(
+            name = "Native SS",
+            scheme = "shadowsocks",
+            server = "s.example",
+            port = 8388,
+            link = "",
+            outbound = mapOf(
+                "protocol" to "shadowsocks",
+                "singbox" to buildMap<String, Any?> {
+                    put("type", "shadowsocks")
+                    put("server", "s.example")
+                    put("server_port", 8388)
+                    put("method", "aes-256-gcm")
+                    put("password", password)
+                    if (plugin != null) put("plugin", plugin)
+                }
+            )
+        )
+
+        val missingPassword = runCatching { SingboxConfigBuilder.buildConfig(native("")) }.exceptionOrNull()
+        assertTrue(missingPassword?.message.orEmpty().contains("no password"))
+        val badPlugin = runCatching {
+            SingboxConfigBuilder.buildConfig(native("secret", "missing-plugin"))
+        }.exceptionOrNull()
+        assertTrue(badPlugin?.message.orEmpty().contains("Unsupported Shadowsocks plugin"))
+    }
+
+    @Test
+    fun shadowsocksPluginAliasAndEscapedOptionsAreNormalized() {
+        val node = ParsedNode(
+            name = "SS obfs alias",
+            scheme = "shadowsocks",
+            server = "s.example",
+            port = 8388,
+            link = "",
+            outbound = mapOf(
+                "method" to "aes-256-gcm",
+                "password" to "secret",
+                "plugin" to "simple-obfs",
+                "plugin_opts" to "mode=http;host=cdn\\;edge\\=example"
+            )
+        )
+
+        val proxy = JSONObject(SingboxConfigBuilder.buildConfig(node))
+            .getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("obfs-local", proxy.getString("plugin"))
+        assertEquals("obfs=http;obfs-host=cdn\\;edge\\=example", proxy.getString("plugin_opts"))
+    }
+
+    @Test
+    fun shadowsocksUdpOverTcpWinsOverMultiplex() {
+        val node = ParsedNode(
+            name = "SS UoT",
+            scheme = "shadowsocks",
+            server = "s.example",
+            port = 8388,
+            link = "",
+            outbound = mapOf("method" to "aes-256-gcm", "password" to "secret")
+        )
+
+        val proxy = JSONObject(
+            SingboxConfigBuilder.buildConfig(
+                node,
+                SingboxConfigOptions(udpOverTcp = true, multiplexEnabled = true)
+            )
+        ).getJSONArray("outbounds").getJSONObject(0)
+
+        assertTrue(proxy.has("udp_over_tcp"))
+        assertTrue(!proxy.has("multiplex"))
     }
 
     // --- Settings backed by verified sing-box-extended fields -----------------

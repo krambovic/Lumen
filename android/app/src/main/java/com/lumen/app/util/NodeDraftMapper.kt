@@ -123,8 +123,10 @@ object NodeDraftMapper {
 
     private fun fillShadowsocks(base: NodeDraft, raw: String): NodeDraft {
         val node = LinkParser.parseLinksText(raw).first.firstOrNull() ?: return base
-        val settings = node.outbound["settings"] as? Map<*, *> ?: return base
-        val server = (settings["servers"] as? List<*>)?.firstOrNull() as? Map<*, *> ?: return base
+        val native = node.outbound["singbox"] as? Map<*, *>
+        val settings = node.outbound["settings"] as? Map<*, *>
+        val server = native ?: (settings?.get("servers") as? List<*>)?.firstOrNull() as? Map<*, *>
+            ?: return base
         return base.copy(
             method = server["method"]?.toString()?.ifBlank { base.method } ?: base.method,
             secret = server["password"]?.toString().orEmpty()
@@ -193,6 +195,12 @@ object NodeDraftMapper {
         }
         val outbound = if (preservedOutbound == null) {
             parsed.outbound
+        } else if (
+            normalizeProtocol(parsed.scheme) == "ss" &&
+            preservedOutbound["singbox"] is Map<*, *> &&
+            parsed.outbound["singbox"] !is Map<*, *>
+        ) {
+            mergeNativeShadowsocks(preservedOutbound, parsed)
         } else {
             require((preservedOutbound["singbox"] is Map<*, *>) == (parsed.outbound["singbox"] is Map<*, *>)) {
                 "This native profile cannot be safely edited as a share link; import the edited JSON instead"
@@ -272,7 +280,17 @@ object NodeDraftMapper {
                 )
                 "trojan://${encUserinfo(d.secret)}@${uriHost(d.server)}:${d.port.trim()}?$params#$name"
             }
-            "ss" -> "ss://" + b64url("${d.method}:${d.secret}") + "@${uriHost(d.server)}:${d.port.trim()}#$name"
+            "ss" -> {
+                val method = d.method.trim()
+                val userInfo = if (method.lowercase().startsWith("2022-")) {
+                    "${enc(method)}:${enc(d.secret)}"
+                } else {
+                    b64url("$method:${d.secret}")
+                }
+                val plugin = storedShadowsocksPlugin(d.rawConfig)
+                val pluginQuery = if (plugin.isBlank()) "" else "/?plugin=${enc(plugin)}"
+                "ss://$userInfo@${uriHost(d.server)}:${d.port.trim()}$pluginQuery#$name"
+            }
             "hysteria" -> {
                 val params = buildParams(
                     "sni" to d.sni,
@@ -337,6 +355,48 @@ object NodeDraftMapper {
         val raw = rawConfig.trim()
         if (!raw.startsWith("{") || !raw.endsWith("}")) return null
         return runCatching { LinkParser.jsonToMap(JSONObject(raw)) }.getOrNull()
+    }
+
+    private fun mergeNativeShadowsocks(
+        preserved: Map<String, Any?>,
+        parsed: com.lumen.core.config.parser.ParsedNode
+    ): Map<String, Any?> {
+        val settings = parsed.outbound["settings"] as? Map<*, *>
+        val server = (settings?.get("servers") as? List<*>)?.firstOrNull() as? Map<*, *>
+            ?: throw IllegalArgumentException("Could not parse Shadowsocks server settings")
+        @Suppress("UNCHECKED_CAST")
+        val native = (preserved["singbox"] as Map<String, Any?>)
+        val patch = mapOf<String, Any?>(
+            "type" to "shadowsocks",
+            "server" to parsed.server,
+            "server_port" to parsed.port,
+            "method" to server["method"],
+            "password" to server["password"]
+        )
+        val result = preserved.toMutableMap()
+        result.remove("settings")
+        result["protocol"] = "shadowsocks"
+        result["singbox"] = deepMerge(native, patch, "singbox")
+        return result
+    }
+
+    private fun storedShadowsocksPlugin(rawConfig: String): String {
+        val stored = parseStoredOutbound(rawConfig)
+        val native = stored?.get("singbox") as? Map<*, *>
+        val settings = stored?.get("settings") as? Map<*, *>
+        val server = native ?: (settings?.get("servers") as? List<*>)?.firstOrNull() as? Map<*, *>
+        val plugin = server?.get("plugin")?.toString().orEmpty()
+        val options = server?.get("plugin_opts")?.toString().orEmpty()
+        if (plugin.isNotBlank()) return listOf(plugin, options).filter(String::isNotBlank).joinToString(";")
+        if (!rawConfig.trim().startsWith("ss://", ignoreCase = true)) return ""
+        val query = queryOf(rawConfig)
+        val rawPlugin = query["plugin"].orEmpty()
+        val separateOptions = query["plugin_opts"] ?: query["plugin-opts"] ?: ""
+        return if (rawPlugin.isBlank() || rawPlugin.contains(';') || separateOptions.isBlank()) {
+            rawPlugin
+        } else {
+            "$rawPlugin;$separateOptions"
+        }
     }
 
     private val EDITOR_FIELDS = mapOf(

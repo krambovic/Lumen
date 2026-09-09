@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import base64
 import json
 import pytest
 
 from xray_fluent.application import node_service
-from xray_fluent.link_parser import MAX_IMPORT_BYTES, parse_links_text, validate_node_outbound
+from xray_fluent.link_parser import (
+    LinkParseError,
+    MAX_IMPORT_BYTES,
+    parse_links_text,
+    parse_single,
+    validate_node_outbound,
+)
 from xray_fluent.subscription_fetcher import _read_http_response
 
 
@@ -684,6 +691,109 @@ def test_legacy_base64_shadowsocks_link_with_slash_is_imported() -> None:
     server = nodes[0].outbound["settings"]["servers"][0]
     assert (nodes[0].server, nodes[0].port) == ("example.com", 8388)
     assert (server["method"], server["password"]) == ("aes-256-gcm", "pw?x")
+
+
+def test_sip008_shadowsocks_server_is_imported_with_plugin_options() -> None:
+    payload = {
+        "id": "provider-record",
+        "remarks": "SIP008 node",
+        "server": "2001:db8::1",
+        "server_port": 8388,
+        "method": "none",
+        "password": "",
+        "plugin": "simple-obfs",
+        "plugin_opts": "mode=http;host=cdn.example.com",
+    }
+
+    nodes, errors = parse_links_text(json.dumps(payload))
+
+    assert errors == []
+    assert len(nodes) == 1
+    assert (nodes[0].server, nodes[0].port) == ("2001:db8::1", 8388)
+    native = nodes[0].outbound["singbox"]
+    assert native["method"] == "none"
+    assert native["password"] == ""
+    assert native["plugin"] == "obfs-local"
+    assert native["plugin_opts"] == "obfs=http;obfs-host=cdn.example.com"
+
+
+def test_sip008_subscription_keeps_valid_servers_when_one_entry_is_bad() -> None:
+    payload = {
+        "version": 1,
+        "servers": [
+            {
+                "remarks": "valid",
+                "server": "ss.example.com",
+                "server_port": 8388,
+                "method": "aes-256-gcm",
+                "password": "secret",
+            },
+            {
+                "remarks": "broken",
+                "server": "ss.example.com",
+                "server_port": "not-a-port",
+                "method": "aes-256-gcm",
+                "password": "secret",
+            },
+        ],
+    }
+
+    nodes, errors = parse_links_text(json.dumps(payload))
+
+    assert [node.name for node in nodes] == ["valid"]
+    assert len(errors) == 1
+    assert "server_port" in errors[0]
+
+
+def test_malformed_shadowsocks_ipv6_authority_returns_link_parse_error() -> None:
+    credentials = base64.urlsafe_b64encode(b"aes-256-gcm:secret").decode("ascii").rstrip("=")
+
+    with pytest.raises(LinkParseError, match="shadowsocks"):
+        parse_single(f"ss://{credentials}@[2001:db8::1]junk#bad")
+
+
+def test_malformed_shadowsocks_credentials_never_surface_urllib_port_error() -> None:
+    with pytest.raises(LinkParseError) as excinfo:
+        parse_single("ss://KYFtNXJrI3Jei35nSh9hMDqzlRdOjd6NIrtV6wyOVsw=:YBLEJXrk2Rh")
+
+    assert "Port could not be cast" not in str(excinfo.value)
+
+
+def test_legacy_shadowsocks_password_keeps_plus_and_percent_sequences() -> None:
+    raw_password = "p+ss%2Fword"
+    blob = base64.b64encode(
+        f"aes-256-gcm:{raw_password}@example.com:8388".encode("utf-8")
+    ).decode("ascii")
+
+    node = parse_single(f"ss://{blob}#legacy")
+    server = node.outbound["settings"]["servers"][0]
+
+    assert server["password"] == raw_password
+
+
+def test_legacy_shadowsocks_location_can_carry_a_plugin_query() -> None:
+    blob = base64.b64encode(b"aes-256-gcm:secret@example.com:8388").decode("ascii")
+
+    node = parse_single(
+        f"ss://{blob}?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Dcdn.example.com#legacy"
+    )
+    server = node.outbound["settings"]["servers"][0]
+
+    assert server["plugin"] == "obfs-local"
+    assert server["plugin_opts"] == "obfs=http;obfs-host=cdn.example.com"
+
+
+def test_shadowsocks_obfs_options_keep_escaped_separators() -> None:
+    credentials = base64.urlsafe_b64encode(b"aes-256-gcm:secret").decode("ascii").rstrip("=")
+
+    node = parse_single(
+        f"ss://{credentials}@example.com:8388/"
+        "?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Dcdn%5C%3Bedge%5C%3Dexample#escaped"
+    )
+
+    assert node.outbound["settings"]["servers"][0]["plugin_opts"] == (
+        "obfs=http;obfs-host=cdn\\;edge\\=example"
+    )
 
 
 def test_happ_crypt_direct_config_payload(monkeypatch) -> None:

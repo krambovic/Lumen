@@ -37,8 +37,16 @@ from ...subprocess_utils import (
     run_text_pumped,
     sleep_with_events,
 )
+from .config_builder import _normalize_shadowsocks_methods
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
+
+def _normalized_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the exact config that validation and startup must both use."""
+    normalized = deepcopy(config)
+    _normalize_shadowsocks_methods(normalized)
+    return normalized
 
 
 def _managed_tun_interface_names(interface_name: str = "") -> tuple[str, ...]:
@@ -157,6 +165,10 @@ class SingBoxManager(QObject):
         )
         if exe is None or not exe.is_file():
             return False, f"sing-box.exe not found: {exe or singbox_path}"
+        try:
+            config = _normalized_runtime_config(config)
+        except ValueError as exc:
+            return False, str(exc)
         compatibility_error = self._direct_masque_compatibility_error(exe, config)
         if compatibility_error:
             return False, compatibility_error
@@ -214,6 +226,14 @@ class SingBoxManager(QObject):
             return False
         self._exe_path = exe
 
+        try:
+            # Do this even for a prevalidated plan: validation intentionally works
+            # on a copy, while this is the object written to the runtime file.
+            config = _normalized_runtime_config(config)
+        except ValueError as exc:
+            self.error.emit(str(exc))
+            return False
+
         if not prevalidated:
             valid, validation_output = self.validate_config(str(exe), config)
             if not valid:
@@ -223,7 +243,6 @@ class SingBoxManager(QObject):
 
         # Readiness and the core must use the same normalized alias. Never mutate
         # a caller-owned profile while recovering a Windows adapter collision.
-        config = deepcopy(config)
         tun_interface_name = self._extract_tun_interface_name(config)
         if tun_interface_name:
             for inbound in config.get("inbounds") or []:

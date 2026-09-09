@@ -371,24 +371,36 @@ def _build_trojan_link(name: str, server: str, port: int, outbound: dict[str, An
 
 
 def _build_shadowsocks_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
+    def userinfo(method: Any, password: Any) -> str:
+        method_text = str(method or "").strip()
+        password_text = str(password or "")
+        if method_text.lower().startswith("2022-"):
+            return f"{quote(method_text, safe='')}:{quote(password_text, safe='')}"
+        credentials = f"{method_text}:{password_text}"
+        return base64.urlsafe_b64encode(credentials.encode("utf-8")).decode("ascii").rstrip("=")
+
+    def query_suffix(params: dict[str, str]) -> str:
+        query = _share_query(params)
+        return f"/?{query}" if query else ""
+
     native = _native_payload(outbound)
     if native:
-        credentials = f"{native.get('method') or ''}:{native.get('password') or ''}"
-        encoded = base64.urlsafe_b64encode(credentials.encode("utf-8")).decode("ascii").rstrip("=")
         params: dict[str, str] = {}
-        _set_param(params, "plugin", str(native.get("plugin") or ""))
+        plugin = str(native.get("plugin") or "")
+        plugin_opts = str(native.get("plugin_opts") or "")
+        _set_param(params, "plugin", ";".join(part for part in (plugin, plugin_opts) if part))
         fragment = quote(name, safe="")
-        query = _share_query(params)
-        return f"ss://{encoded}@{_share_host(native.get('server') or server)}:{int(native.get('server_port') or port)}{'?' + query if query else ''}#{fragment}"
+        credentials = userinfo(native.get("method"), native.get("password"))
+        return f"ss://{credentials}@{_share_host(native.get('server') or server)}:{int(native.get('server_port') or port)}{query_suffix(params)}#{fragment}"
     settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
     server_item = _first_dict(settings.get("servers"))
-    credentials = f"{server_item.get('method') or ''}:{server_item.get('password') or ''}"
-    encoded = base64.urlsafe_b64encode(credentials.encode("utf-8")).decode("ascii").rstrip("=")
     params: dict[str, str] = {}
-    _set_param(params, "plugin", str(server_item.get("plugin") or ""))
-    query = _share_query(params)
+    plugin = str(server_item.get("plugin") or "")
+    plugin_opts = str(server_item.get("plugin_opts") or "")
+    _set_param(params, "plugin", ";".join(part for part in (plugin, plugin_opts) if part))
     fragment = quote(name, safe="")
-    return f"ss://{encoded}@{_share_host(server)}:{port}{'?' + query if query else ''}#{fragment}"
+    credentials = userinfo(server_item.get("method"), server_item.get("password"))
+    return f"ss://{credentials}@{_share_host(server)}:{port}{query_suffix(params)}#{fragment}"
 
 
 def _build_socks_link(name: str, server: str, port: int, outbound: dict[str, Any]) -> str:
@@ -672,7 +684,8 @@ def _share_identity_present(protocol: str, outbound: dict[str, Any]) -> bool:
         if protocol == "trojan":
             return bool(native.get("password"))
         if protocol == "shadowsocks":
-            return bool(native.get("method") and native.get("password"))
+            method = str(native.get("method") or "").strip().lower()
+            return bool(method and (native.get("password") or method == "none"))
         if protocol in {"hysteria", "hysteria2"}:
             return bool(native.get("auth_str") or native.get("password"))
         if protocol == "tuic":
@@ -709,7 +722,8 @@ def _share_identity_present(protocol: str, outbound: dict[str, Any]) -> bool:
     if protocol == "shadowsocks":
         settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
         server_item = _first_dict(settings.get("servers"))
-        return bool(server_item.get("method") and server_item.get("password"))
+        method = str(server_item.get("method") or "").strip().lower()
+        return bool(method and (server_item.get("password") or method == "none"))
     return True
 
 
@@ -984,6 +998,7 @@ def _protocol_editor_fields(protocol: str, values: dict[str, Any], native: dict[
             _editor_field("method", "Метод шифрования", values.get("method", "")),
             _editor_field("password", "Пароль", values.get("password", "")),
             _editor_field("plugin", "Плагин", values.get("plugin", "")),
+            _editor_field("pluginOpts", "Параметры плагина", values.get("pluginOpts", "")),
         ])
     elif protocol in {"socks", "http"}:
         fields.extend([
@@ -1155,6 +1170,7 @@ def load_node_edit_fields(node) -> dict:
         "password": "",
         "method": "",
         "plugin": "",
+        "pluginOpts": "",
         "network": "tcp",
         "rawHeader": "none",
         "transportPath": "",
@@ -1198,6 +1214,7 @@ def load_node_edit_fields(node) -> dict:
         fields["password"] = str(server_item.get("password") or "")
         fields["method"] = str(server_item.get("method") or "")
         fields["plugin"] = str(server_item.get("plugin") or "")
+        fields["pluginOpts"] = str(server_item.get("plugin_opts") or "")
         user = _first_dict(server_item.get("users"))
         fields["username"] = str(user.get("user") or "")
         if protocol in {"socks", "http"}:
@@ -1273,7 +1290,14 @@ def load_node_edit_fields(node) -> dict:
         fields["sni"] = str(tls_native.get("server_name") or fields["sni"])
         fields["allowInsecure"] = bool(tls_native.get("insecure", False))
         fields["alpn"] = _text_list(tls_native.get("alpn"))
-        if protocol == "hysteria":
+        if protocol == "shadowsocks":
+            fields["server"] = str(native.get("server") or fields["server"])
+            fields["port"] = str(native.get("server_port") or fields["port"])
+            fields["method"] = str(native.get("method") or "")
+            fields["password"] = str(native.get("password") or "")
+            fields["plugin"] = str(native.get("plugin") or "")
+            fields["pluginOpts"] = str(native.get("plugin_opts") or "")
+        elif protocol == "hysteria":
             fields["auth"] = str(native.get("auth_str") or "")
             fields["hysteriaProtocol"] = str(native.get("protocol") or "")
             fields["upMbps"] = native.get("up_mbps", native.get("up", ""))
@@ -1615,7 +1639,8 @@ def build_node_updates(node, fields: dict) -> dict:
         updates["server"] = server
         updates["port"] = port
 
-    if protocol in {"vless", "vmess", "trojan", "shadowsocks", "socks", "http"}:
+    native_shadowsocks = protocol == "shadowsocks" and isinstance(outbound.get("singbox"), dict)
+    if protocol in {"vless", "vmess", "trojan", "shadowsocks", "socks", "http"} and not native_shadowsocks:
         settings = outbound.setdefault("settings", {})
         if protocol in {"vless", "vmess"}:
             vnext = _ensure_first_dict(settings, "vnext")
@@ -1639,6 +1664,7 @@ def build_node_updates(node, fields: dict) -> dict:
                 server_item["method"] = g("method")
                 server_item["password"] = g("password")
                 _set_optional(server_item, "plugin", g("plugin"))
+                _set_optional(server_item, "plugin_opts", g("pluginOpts"))
             else:
                 username = g("username")
                 if username:
@@ -1655,10 +1681,15 @@ def build_node_updates(node, fields: dict) -> dict:
             _update_stream_security(stream, g)
     else:
         native = _ensure_native(outbound, protocol)
-        if protocol in {"hysteria", "hysteria2", "tuic", "mieru", "naive"}:
+        if protocol in {"shadowsocks", "hysteria", "hysteria2", "tuic", "mieru", "naive"}:
             native["server"] = server
             native["server_port"] = port
-        if protocol == "hysteria":
+        if protocol == "shadowsocks":
+            native["method"] = g("method")
+            native["password"] = g("password")
+            _set_optional(native, "plugin", g("plugin"))
+            _set_optional(native, "plugin_opts", g("pluginOpts"))
+        elif protocol == "hysteria":
             native["auth_str"] = g("auth")
             _set_optional(native, "protocol", g("hysteriaProtocol"))
             _set_optional(native, "up_mbps", _editor_int(raw("upMbps"), None))

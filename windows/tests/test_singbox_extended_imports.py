@@ -1314,6 +1314,130 @@ def test_sip003_shadowsocks_plugin_is_split_from_options() -> None:
     assert outbound["plugin_opts"] == "tls;host=cdn.example.com"
 
 
+def test_shadowsocks_aead_alias_is_canonicalized_for_extended_core() -> None:
+    node = Node(
+        scheme="shadowsocks",
+        server="example.com",
+        port=8388,
+        outbound={
+            "protocol": "shadowsocks",
+            "singbox": {
+                "type": "shadowsocks",
+                "server": "example.com",
+                "server_port": 8388,
+                "method": " ChAcHa20-Poly1305 ",
+                "password": "secret",
+            },
+        },
+    )
+
+    assert build_singbox_outbound(node)["method"] == "chacha20-ietf-poly1305"
+
+
+def test_unknown_shadowsocks_method_is_rejected_before_core() -> None:
+    node = Node(
+        scheme="shadowsocks",
+        server="example.com",
+        port=8388,
+        outbound={
+            "protocol": "shadowsocks",
+            "singbox": {
+                "type": "shadowsocks",
+                "server": "example.com",
+                "server_port": 8388,
+                "method": "broken-cipher",
+                "password": "secret",
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match="Unsupported Shadowsocks method"):
+        build_singbox_outbound(node)
+
+
+def test_legacy_shadowsocks_stream_cipher_is_accepted_by_extended_core() -> None:
+    node = Node(
+        scheme="shadowsocks",
+        server="example.com",
+        port=8388,
+        outbound={
+            "protocol": "shadowsocks",
+            "singbox": {
+                "type": "shadowsocks",
+                "server": "example.com",
+                "server_port": 8388,
+                "method": "aes-256-cfb",
+                "password": "secret",
+            },
+        },
+    )
+
+    assert build_singbox_outbound(node)["method"] == "aes-256-cfb"
+
+
+def test_shadowsocks_2022_method_is_corrected_from_key_size() -> None:
+    key32 = base64.b64encode(bytes(range(32))).decode("ascii")
+    node = Node(
+        scheme="shadowsocks",
+        server="example.com",
+        port=8388,
+        outbound={
+            "protocol": "shadowsocks",
+            "singbox": {
+                "type": "shadowsocks",
+                "server": "example.com",
+                "server_port": 8388,
+                "method": "2022-blake3-aes-128-gcm",
+                "password": key32,
+            },
+        },
+    )
+
+    assert build_singbox_outbound(node)["method"] == "2022-blake3-aes-256-gcm"
+
+
+def test_invalid_shadowsocks_password_and_plugin_are_rejected_before_core() -> None:
+    base = {
+        "protocol": "shadowsocks",
+        "singbox": {
+            "type": "shadowsocks",
+            "server": "example.com",
+            "server_port": 8388,
+            "method": "aes-256-gcm",
+            "password": "",
+        },
+    }
+    with pytest.raises(ValueError, match="no password"):
+        build_singbox_outbound(Node(scheme="shadowsocks", server="example.com", port=8388, outbound=base))
+
+    base["singbox"]["password"] = "secret"
+    base["singbox"]["plugin"] = "missing-plugin"
+    with pytest.raises(ValueError, match="Unsupported Shadowsocks plugin"):
+        build_singbox_outbound(Node(scheme="shadowsocks", server="example.com", port=8388, outbound=base))
+
+
+def test_shadowsocks_uot_disables_conflicting_multiplex() -> None:
+    node = Node(
+        scheme="shadowsocks",
+        server="example.com",
+        port=8388,
+        outbound={
+            "protocol": "shadowsocks",
+            "singbox": {
+                "type": "shadowsocks",
+                "server": "example.com",
+                "server_port": 8388,
+                "method": "aes-256-gcm",
+                "password": "secret",
+                "udp_over_tcp": {"enabled": True, "version": 2},
+            },
+        },
+    )
+
+    outbound = build_singbox_outbound(node, multiplex_enabled=True)
+    assert "multiplex" not in outbound
+
+
 def test_xhttp_download_settings_use_exact_extended_core_schema() -> None:
     node = parse_single(
         "vless://00000000-0000-0000-0000-000000000000@example.com:443"

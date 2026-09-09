@@ -5,8 +5,66 @@ import io
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 import xray_fluent.engines.singbox.manager as manager_module
 from xray_fluent.engines.singbox.manager import SingBoxManager
+
+
+def test_last_mile_runtime_normalization_matches_validation_and_startup() -> None:
+    original = {
+        "outbounds": [
+            {
+                "type": "selector",
+                "tag": "proxy",
+                "outbounds": ["late-ss"],
+            },
+            {
+                "type": "shadowsocks",
+                "tag": "late-ss",
+                "method": "chacha20-poly1305",
+                "password": "secret",
+            },
+        ]
+    }
+
+    normalized = manager_module._normalized_runtime_config(original)
+
+    assert normalized["outbounds"][1]["method"] == "chacha20-ietf-poly1305"
+    assert original["outbounds"][1]["method"] == "chacha20-poly1305"
+
+
+def test_last_mile_runtime_rejects_corrupted_shadowsocks_method() -> None:
+    with pytest.raises(ValueError, match="Unsupported Shadowsocks method"):
+        manager_module._normalized_runtime_config(
+            {"outbounds": [{"type": "shadowsocks", "method": "зЋщчЭщн{о"}]}
+        )
+
+
+def test_last_mile_shadowsocks_normalization_covers_plugin_uot_and_2022() -> None:
+    import base64
+
+    key32 = base64.b64encode(bytes(range(32))).decode("ascii")
+    normalized = manager_module._normalized_runtime_config(
+        {
+            "outbounds": [
+                {
+                    "type": "shadowsocks",
+                    "method": "2022-blake3-aes-128-gcm",
+                    "password": key32,
+                    "plugin": "simple-obfs",
+                    "plugin_opts": "mode=http;host=cdn.example",
+                    "udp_over_tcp": {"enabled": True},
+                    "multiplex": {"enabled": True},
+                }
+            ]
+        }
+    )["outbounds"][0]
+
+    assert normalized["method"] == "2022-blake3-aes-256-gcm"
+    assert normalized["plugin"] == "obfs-local"
+    assert normalized["plugin_opts"] == "obfs=http;obfs-host=cdn.example"
+    assert "multiplex" not in normalized
 
 
 def test_routine_connection_logs_are_suppressed_when_not_normalized() -> None:

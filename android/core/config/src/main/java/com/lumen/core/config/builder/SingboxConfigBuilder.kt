@@ -138,6 +138,31 @@ data class SingboxConfigOptions(
 
 object SingboxConfigBuilder {
 
+    // Exact outbound methods accepted by the bundled sing-box-extended core.
+    // Keep this scoped to Shadowsocks: VMess and Sudoku intentionally use the
+    // otherwise similar `chacha20-poly1305` spelling.
+    private val SHADOWSOCKS_METHODS = setOf(
+        "none",
+        "aes-128-gcm",
+        "aes-192-gcm",
+        "aes-256-gcm",
+        "chacha20-ietf-poly1305",
+        "xchacha20-ietf-poly1305",
+        "2022-blake3-aes-128-gcm",
+        "2022-blake3-aes-256-gcm",
+        "2022-blake3-chacha20-poly1305",
+        "aes-128-ctr",
+        "aes-192-ctr",
+        "aes-256-ctr",
+        "aes-128-cfb",
+        "aes-192-cfb",
+        "aes-256-cfb",
+        "rc4-md5",
+        "chacha20-ietf",
+        "xchacha20"
+    )
+    private val SHADOWSOCKS_PLUGINS = setOf("obfs-local", "v2ray-plugin")
+
     fun buildConfig(
         node: ParsedNode,
         options: SingboxConfigOptions = SingboxConfigOptions()
@@ -281,19 +306,29 @@ object SingboxConfigBuilder {
                         tag = "proxy-${++tagIndex}"
                     }
                     // One broken server must not invalidate the whole auto pool.
+                    val candidateDependencyOutbounds = dependencyOutbounds.toMutableList()
+                    val candidateDependencyEndpoints = dependencyEndpoints.toMutableList()
                     val ob = try {
-                        buildOutboundMap(poolNode, tag, options)
+                        buildOutboundMap(poolNode, tag, options).also {
+                            // Build dependencies transactionally. A malformed nested
+                            // Shadowsocks hop must drop only this AUTO member, without
+                            // leaving half of its dependency chain in the document.
+                            collectSingboxDependencies(
+                                poolNode,
+                                candidateDependencyOutbounds,
+                                candidateDependencyEndpoints,
+                                options
+                            )
+                        }
                     } catch (e: Exception) {
                         failures += "${poolNode.name.ifBlank { poolNode.server }}: ${e.message ?: "invalid config"}"
                         null
                     }
                     if (ob == null || ob["type"] == null) continue
-                    collectSingboxDependencies(
-                        poolNode,
-                        dependencyOutbounds,
-                        dependencyEndpoints,
-                        options
-                    )
+                    dependencyOutbounds.clear()
+                    dependencyOutbounds.addAll(candidateDependencyOutbounds)
+                    dependencyEndpoints.clear()
+                    dependencyEndpoints.addAll(candidateDependencyEndpoints)
                     outbounds.add(ob)
                     poolTags.add(tag)
                 }
@@ -1390,6 +1425,9 @@ object SingboxConfigBuilder {
             // shadowsocks is the only type carrying udp_over_tcp in this core.
             if (options.udpOverTcp && type == "shadowsocks") {
                 result["udp_over_tcp"] = mapOf("enabled" to true, "version" to 2)
+                // sing-box rejects/does not support stacking UoT and multiplex on
+                // the same Shadowsocks outbound. Prefer the explicit UoT option.
+                result.remove("multiplex")
             }
             return result
         }
@@ -1517,6 +1555,12 @@ object SingboxConfigBuilder {
             }
         }
         normalizeShadowsocksMethod(result)
+        normalizeShadowsocks2022(result)
+        if (result["type"]?.toString()?.trim()?.lowercase() == "shadowsocks" &&
+            udpOverTcpEnabled(result["udp_over_tcp"])
+        ) {
+            result.remove("multiplex")
+        }
         // Imported configs often carry legacy dial fields; sing-box 1.12+ aborts
         // on them, so migrate domain_strategy into a domain_resolver object.
         val legacyStrategy = result.remove("domain_strategy") as? String
@@ -2009,9 +2053,13 @@ object SingboxConfigBuilder {
         result: MutableMap<String, Any?>,
         options: SingboxConfigOptions
     ) {
+        val type = result["type"]?.toString()?.trim()?.lowercase().orEmpty()
+        if (type == "shadowsocks" && udpOverTcpEnabled(result["udp_over_tcp"])) {
+            result.remove("multiplex")
+            return
+        }
         if (!options.multiplexEnabled ||
-            result["type"]?.toString()?.trim()?.lowercase() !in
-            setOf("vless", "vmess", "trojan", "shadowsocks")
+            type !in setOf("vless", "vmess", "trojan", "shadowsocks")
         ) {
             return
         }
@@ -2033,6 +2081,12 @@ object SingboxConfigBuilder {
             )
         }
         result["multiplex"] = multiplexMap
+    }
+
+    private fun udpOverTcpEnabled(value: Any?): Boolean = when (value) {
+        is Map<*, *> -> value["enabled"] != false
+        is Boolean -> value
+        else -> false
     }
 
     /**
@@ -2187,13 +2241,71 @@ object SingboxConfigBuilder {
 
     private fun normalizeShadowsocksMethod(result: MutableMap<String, Any?>) {
         if (result["type"]?.toString()?.trim()?.lowercase() != "shadowsocks") return
-        val method = result["method"] as? String ?: return
+        val rawMethod = result["method"]?.toString()?.trim().orEmpty()
+        require(rawMethod.isNotEmpty()) { "Shadowsocks node has no encryption method" }
         // The equivalent Xray/SIP002 alias is not accepted by sing-box. Restrict
         // this to SS: VMess security, SS2022, stream ciphers and passwords stay intact.
-        if (method.trim().equals("chacha20-poly1305", ignoreCase = true)) {
-            result["method"] = "chacha20-ietf-poly1305"
+        val method = when (rawMethod.lowercase()) {
+            "chacha20-poly1305" -> "chacha20-ietf-poly1305"
+            else -> rawMethod.lowercase()
+        }
+        require(method in SHADOWSOCKS_METHODS) {
+            "Unsupported Shadowsocks method `$rawMethod`"
+        }
+        result["method"] = method
+
+        val password = result["password"]?.toString().orEmpty()
+        require(password.isNotEmpty() || method == "none") { "Shadowsocks node has no password" }
+        result["password"] = password
+
+        val rawPlugin = result["plugin"]?.toString()?.trim()?.lowercase().orEmpty()
+        val plugin = when (rawPlugin) {
+            "obfs", "simple-obfs" -> "obfs-local"
+            else -> rawPlugin
+        }
+        if (plugin.isEmpty()) {
+            result.remove("plugin")
+            result.remove("plugin_opts")
+            return
+        }
+        require(plugin in SHADOWSOCKS_PLUGINS) { "Unsupported Shadowsocks plugin `$plugin`" }
+        result["plugin"] = plugin
+        val options = result["plugin_opts"]?.toString()?.trim().orEmpty()
+        if (options.isEmpty()) {
+            result.remove("plugin_opts")
+        } else if (plugin == "obfs-local") {
+            result["plugin_opts"] = normalizeObfsPluginOptions(options)
         }
     }
+
+    private fun splitSip003(value: String, delimiter: Char): List<String> {
+        val result = mutableListOf<String>()
+        val current = StringBuilder()
+        var escaped = false
+        value.forEach { char ->
+            if (char == delimiter && !escaped) {
+                result += current.toString()
+                current.clear()
+            } else {
+                current.append(char)
+            }
+            escaped = char == '\\' && !escaped
+        }
+        result += current.toString()
+        return result
+    }
+
+    private fun normalizeObfsPluginOptions(value: String): String = splitSip003(value, ';')
+        .filter(String::isNotEmpty)
+        .joinToString(";") { option ->
+            val parts = splitSip003(option, '=')
+            val key = when (parts.first().trim().lowercase()) {
+                "mode" -> "obfs"
+                "host" -> "obfs-host"
+                else -> parts.first()
+            }
+            if (parts.size == 1) key else "$key=${parts.drop(1).joinToString("=")}"
+        }
 
     /**
      * Shadowsocks 2022 AES methods encode each PSK as Base64 and require an exact

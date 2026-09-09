@@ -1,0 +1,65 @@
+diff --git a/dns/transport/dhcp/dhcp.go b/dns/transport/dhcp/dhcp.go
+index c1ab2ff..0f0aa10 100644
+--- a/dns/transport/dhcp/dhcp.go
++++ b/dns/transport/dhcp/dhcp.go
+@@ -109,7 +109,11 @@ func (t *Transport) Start(stage adapter.StartStage) error {
+ 		return nil
+ 	}
+ 	if t.interfaceName == "" {
+-		t.interfaceCallback = t.networkManager.InterfaceMonitor().RegisterCallback(t.interfaceUpdated)
++		interfaceMonitor := t.networkManager.InterfaceMonitor()
++		if interfaceMonitor == nil {
++			return E.New("missing monitor for auto DHCP, set route.auto_detect_interface")
++		}
++		t.interfaceCallback = interfaceMonitor.RegisterCallback(t.interfaceUpdated)
+ 	}
+ 	go func() {
+ 		err := t.fetch()
+diff --git a/protocol/direct/outbound.go b/protocol/direct/outbound.go
+index 1ca35af..020b3d6 100644
+--- a/protocol/direct/outbound.go
++++ b/protocol/direct/outbound.go
+@@ -99,7 +99,11 @@ func (h *Outbound) Start(stage adapter.StartStage) error {
+ }
+ 
+ func (h *Outbound) fetchMyAddresses() {
+-	myInterfaceNames := h.network.InterfaceMonitor().MyInterfaces()
++	interfaceMonitor := h.network.InterfaceMonitor()
++	if interfaceMonitor == nil {
++		return
++	}
++	myInterfaceNames := interfaceMonitor.MyInterfaces()
+ 	if len(myInterfaceNames) == 0 {
+ 		return
+ 	}
+diff --git a/route/rule/rule_default_interface_address.go b/route/rule/rule_default_interface_address.go
+index 2d7fdeb..611cb0d 100644
+--- a/route/rule/rule_default_interface_address.go
++++ b/route/rule/rule_default_interface_address.go
+@@ -29,6 +29,9 @@ func NewDefaultInterfaceAddressItem(networkManager adapter.NetworkManager, inter
+ }
+ 
+ func (r *DefaultInterfaceAddressItem) Match(metadata *adapter.InboundContext) bool {
++	if r.interfaceMonitor == nil {
++		return false
++	}
+ 	defaultInterface := r.interfaceMonitor.DefaultInterface()
+ 	if defaultInterface == nil {
+ 		return false
+diff --git a/route/rule/rule_network_interface_address.go b/route/rule/rule_network_interface_address.go
+index e331d62..d20e678 100644
+--- a/route/rule/rule_network_interface_address.go
++++ b/route/rule/rule_network_interface_address.go
+@@ -40,7 +40,11 @@ func NewNetworkInterfaceAddressItem(networkManager adapter.NetworkManager, inter
+ 
+ func (r *NetworkInterfaceAddressItem) Match(metadata *adapter.InboundContext) bool {
+ 	interfaces := r.networkManager.NetworkInterfaces()
+-	myInterfaces := r.networkManager.InterfaceMonitor().MyInterfaces()
++	var myInterfaces []string
++	interfaceMonitor := r.networkManager.InterfaceMonitor()
++	if interfaceMonitor != nil {
++		myInterfaces = interfaceMonitor.MyInterfaces()
++	}
+ match:
+ 	for ifType, addresses := range r.interfaceAddresses {
+ 		for _, networkInterface := range interfaces {

@@ -442,8 +442,13 @@ val NETWORK_TRANSPORTS: List<String> = listOf("tcp", "ws", "grpc", "xhttp", "htt
 val SECURITY_OPTIONS: List<String> = listOf("none", "tls", "reality")
 
 val SS_METHODS: List<String> = listOf(
-    "aes-256-gcm", "aes-128-gcm", "chacha20-ietf-poly1305",
-    "2022-blake3-aes-256-gcm", "2022-blake3-aes-128-gcm", "2022-blake3-chacha20-poly1305"
+    "none",
+    "aes-128-gcm", "aes-192-gcm", "aes-256-gcm",
+    "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305",
+    "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305",
+    "aes-128-ctr", "aes-192-ctr", "aes-256-ctr",
+    "aes-128-cfb", "aes-192-cfb", "aes-256-cfb",
+    "rc4-md5", "chacha20-ietf", "xchacha20"
 )
 
 val CONGESTION_OPTIONS: List<String> = listOf("bbr", "cubic", "new_reno")

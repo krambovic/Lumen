@@ -1,46 +1,45 @@
 {
   "component": "sing-box-extended",
-  "version": "1.14.0-extended-2.7.1",
+  "version": "1.14.0-extended-2.7.1-lumen.1",
   "source": "https://github.com/shtorm-7/sing-box-extended",
   "tag": "v1.14.0-extended-2.7.1",
+  "upstream_commit": "217f77643f19e915ea38ba2a9ac7e28e22a0cec5",
+  "patches": [
+    {
+      "path": "android/patches/sing-box-extended-interface-monitor.patch",
+      "upstream_commit": "288411b0b9044c11a00a8ab478000e3ec1133101",
+      "description": "Prevent nil interface-monitor crashes on Android"
+    }
+  ],
   "published_at": "2026-09-05T09:54:48Z",
-  "updated_at": "2026-09-08",
+  "updated_at": "2026-09-09",
   "binaries": [
     {
       "abi": "arm64-v8a",
-      "version": "1.14.0-extended-2.7.1",
-      "archive": "sing-box-1.14.0-extended-2.7.1-android-arm64.tar.gz",
-      "archive_sha256": "bf6570516cbe5e6919323c76ee5b7e97d57667f3d2e0f056ce939e87b69398a5",
-      "binary_sha256": "a20fc35dafafa79c2cf5bd007c4a921a34b0ed8e25c6a711352ad562de12ea8a",
-      "binary_size": 91304384,
+      "version": "1.14.0-extended-2.7.1-lumen.1",
+      "binary_sha256": "5870f16f60cb1dc0d917f69141bdd4d6a992881fbd45b682ebdf959c94020a0f",
+      "binary_size": 89773976,
       "elf_machine": 183,
       "elf_class": 2,
-      "path": "android/app/src/main/jniLibs/arm64-v8a/libsingbox.so",
-      "url": "https://github.com/shtorm-7/sing-box-extended/releases/download/v1.14.0-extended-2.7.1/sing-box-1.14.0-extended-2.7.1-android-arm64.tar.gz"
+      "path": "android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
     },
     {
       "abi": "armeabi-v7a",
-      "version": "1.14.0-extended-2.7.1",
-      "archive": "sing-box-1.14.0-extended-2.7.1-android-armv7.tar.gz",
-      "archive_sha256": "7bea81b5f5d931499c3d01852b025be9f325f347ce7ae4164e86323a95eeffcd",
-      "binary_sha256": "44abd2f1cc3d145b2490afccda756f19877c5b0f55cd899ddba0ac730b328800",
-      "binary_size": 86140580,
+      "version": "1.14.0-extended-2.7.1-lumen.1",
+      "binary_sha256": "2793a18e0665f365699da6d3295bd03e66fa744661f8905637284a22635f65fb",
+      "binary_size": 84611492,
       "elf_machine": 40,
       "elf_class": 1,
-      "path": "android/app/src/main/jniLibs/armeabi-v7a/libsingbox.so",
-      "url": "https://github.com/shtorm-7/sing-box-extended/releases/download/v1.14.0-extended-2.7.1/sing-box-1.14.0-extended-2.7.1-android-armv7.tar.gz"
+      "path": "android/app/src/main/jniLibs/armeabi-v7a/libsingbox.so"
     },
     {
       "abi": "x86_64",
-      "version": "1.14.0-extended-2.7.1",
-      "archive": "sing-box-1.14.0-extended-2.7.1-android-amd64.tar.gz",
-      "archive_sha256": "2edcc284a453f69d2c7da64af497a71d61d4556375e3fa927a1f5473a3e1a38e",
-      "binary_sha256": "48565d9e5d4fd5d4597e91f7d8ca0ce1a9ca76ff1594b8330e88942002592bec",
-      "binary_size": 97069536,
+      "version": "1.14.0-extended-2.7.1-lumen.1",
+      "binary_sha256": "87c5d9c7575c0882156c05f25160575f991de08843177d2c23611dfb930d709a",
+      "binary_size": 95536536,
       "elf_machine": 62,
       "elf_class": 2,
-      "path": "android/app/src/main/jniLibs/x86_64/libsingbox.so",
-      "url": "https://github.com/shtorm-7/sing-box-extended/releases/download/v1.14.0-extended-2.7.1/sing-box-1.14.0-extended-2.7.1-android-amd64.tar.gz"
+      "path": "android/app/src/main/jniLibs/x86_64/libsingbox.so"
     }
   ]
 }

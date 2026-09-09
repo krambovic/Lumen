@@ -32,7 +32,11 @@ def apply_xray_multiplex(outbound: dict[str, Any], *, enabled: bool, concurrency
 
 def apply_singbox_multiplex(outbound: dict[str, Any], *, enabled: bool, concurrency: int = 8) -> bool:
     outbound_type = str(outbound.get("type") or "").strip().lower()
-    if outbound_type not in _SUPPORTED_PROXY_TYPES or _uses_singbox_xtls_vision(outbound):
+    if (
+        outbound_type not in _SUPPORTED_PROXY_TYPES
+        or _uses_singbox_xtls_vision(outbound)
+        or (outbound_type == "shadowsocks" and _udp_over_tcp_enabled(outbound.get("udp_over_tcp")))
+    ):
         outbound.pop("multiplex", None)
         return False
 
@@ -49,6 +53,12 @@ def apply_singbox_multiplex(outbound: dict[str, Any], *, enabled: bool, concurre
         "max_streams": streams,
     }
     return True
+
+
+def _udp_over_tcp_enabled(value: Any) -> bool:
+    if isinstance(value, dict):
+        return value.get("enabled") is not False
+    return bool(value)
 
 
 def _uses_xtls_vision(outbound: dict[str, Any]) -> bool:

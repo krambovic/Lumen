@@ -8,6 +8,8 @@ import org.json.JSONTokener
 import org.yaml.snakeyaml.Yaml
 import java.net.URI
 import java.net.URLDecoder
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.util.Base64
 import java.util.regex.Pattern
 
@@ -495,6 +497,28 @@ object LinkParser {
         return String(bytes, Charsets.UTF_8)
     }
 
+    private fun decodeShadowsocksB64(data: String): String {
+        var clean = percentDecodeKeepPlus(data).filterNot(Char::isWhitespace)
+        if (clean.isEmpty() || clean.any { !it.isLetterOrDigit() && it !in "+/-_=" }) {
+            throw LinkParseError("invalid shadowsocks base64 credentials")
+        }
+        clean = clean.replace('-', '+').replace('_', '/')
+        clean += "=".repeat((4 - clean.length % 4) % 4)
+        val bytes = runCatching { Base64.getDecoder().decode(clean) }
+            .getOrElse { throw LinkParseError("invalid shadowsocks base64 credentials", it) }
+        val decoded = runCatching {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        }.getOrElse { throw LinkParseError("invalid shadowsocks base64 credentials", it) }
+        if (decoded.any { it.code < 0x20 || it.code == 0x7f }) {
+            throw LinkParseError("invalid shadowsocks credentials")
+        }
+        return decoded
+    }
+
     private fun parseQueryParams(queryString: String?): Map<String, String> {
         if (queryString.isNullOrEmpty()) return emptyMap()
         val params = mutableMapOf<String, String>()
@@ -649,16 +673,20 @@ object LinkParser {
     private fun parseShadowsocks(link: String): ParsedNode {
         val body = link.substringAfter("ss://").trim()
         val fragment = extractFragment(link)
-        val mainPart = body.substringBefore("#")
-        val params = parseQueryParams(mainPart.substringAfter("?", ""))
+        val location = body.substringBefore("#")
+        // '?' is not in either Base64 alphabet, so it is always safe to separate
+        // the query before decoding both SIP002 and legacy whole-location forms.
+        val mainPart = location.substringBefore("?")
+        val params = parseQueryParams(location.substringAfter("?", ""))
+        val hasSip002Authority = mainPart.contains("@")
 
         val server: String
         val port: Int
         var method = ""
         var password = ""
 
-        if (mainPart.contains("@")) {
-            val userAndHost = mainPart.substringBefore("?")
+        if (hasSip002Authority) {
+            val userAndHost = mainPart
             val userStr = userAndHost.substringBeforeLast("@")
             val hostStr = userAndHost.substringAfterLast("@")
 
@@ -672,13 +700,13 @@ object LinkParser {
                 method = percentDecodeKeepPlus(userStr.substringBefore(":"))
                 password = percentDecodeKeepPlus(userStr.substringAfter(":"))
             } else {
-                val decodedUser = try { decodeB64(userStr) } catch (e: Exception) { userStr }
+                val decodedUser = decodeShadowsocksB64(userStr)
                 if (!decodedUser.contains(":")) throw LinkParseError("invalid shadowsocks credentials")
                 method = decodedUser.substringBefore(":")
                 password = decodedUser.substringAfter(":")
             }
         } else {
-            val decoded = try { decodeB64(mainPart.substringBefore("?")) } catch (e: Exception) { "" }
+            val decoded = decodeShadowsocksB64(mainPart)
             if (decoded.contains("@") && decoded.contains(":")) {
                 val userStr = decoded.substringBeforeLast("@")
                 val hostAndPort = splitHostPort(decoded.substringAfterLast("@"), 8388, "Shadowsocks")
@@ -705,9 +733,11 @@ object LinkParser {
         // SIP003: the plugin query packs "<name>;<opts>" into one value, while the
         // core wants the name and the options in separate keys.
         params["plugin"]?.takeIf { it.isNotEmpty() }?.let { raw ->
-            serverMap["plugin"] = raw.substringBefore(";")
+            val plugin = normalizeShadowsocksPluginName(raw.substringBefore(";"))
+            serverMap["plugin"] = plugin
             val opts = (params["plugin_opts"] ?: params["plugin-opts"] ?: raw.substringAfter(";", ""))
-            if (opts.isNotEmpty()) serverMap["plugin_opts"] = opts
+            val normalizedOpts = if (plugin == "obfs-local") normalizeObfsPluginOptions(opts) else opts
+            if (normalizedOpts.isNotEmpty()) serverMap["plugin_opts"] = normalizedOpts
         }
 
         val outbound = mapOf<String, Any?>(
@@ -717,6 +747,72 @@ object LinkParser {
 
         val name = cleanName(fragment, "ss-$server:$port")
         return ParsedNode(name = name, scheme = "ss", server = server, port = port, link = link, outbound = outbound)
+    }
+
+    private fun normalizeShadowsocksPluginName(value: String): String = when (value.trim().lowercase()) {
+        "obfs", "simple-obfs" -> "obfs-local"
+        else -> value.trim().lowercase()
+    }
+
+    private fun splitSip003(value: String, delimiter: Char): List<String> {
+        val result = mutableListOf<String>()
+        val current = StringBuilder()
+        var escaped = false
+        value.forEach { char ->
+            if (char == delimiter && !escaped) {
+                result += current.toString()
+                current.clear()
+            } else {
+                current.append(char)
+            }
+            escaped = char == '\\' && !escaped
+        }
+        result += current.toString()
+        return result
+    }
+
+    private fun normalizeObfsPluginOptions(value: String): String = splitSip003(value.trim(), ';')
+        .filter(String::isNotEmpty)
+        .joinToString(";") { item ->
+            val parts = splitSip003(item, '=')
+            val key = parts.first().trim()
+            val mapped = when (key.lowercase()) {
+                "mode" -> "obfs"
+                "host" -> "obfs-host"
+                else -> key
+            }
+            if (parts.size > 1) "$mapped=${parts.drop(1).joinToString("=")}" else mapped
+        }
+
+    private fun sip003OptionsFromMapping(value: Map<*, *>, obfs: Boolean): String {
+        fun escape(component: Any?): String = component.toString()
+            .replace("\\", "\\\\").replace(";", "\\;").replace("=", "\\=")
+        return value.entries.joinToString(";") { (rawKey, rawValue) ->
+            val key = if (obfs) {
+                when (rawKey.toString().trim().lowercase()) {
+                    "mode" -> "obfs"
+                    "host" -> "obfs-host"
+                    else -> rawKey.toString()
+                }
+            } else rawKey.toString()
+            if (rawValue == true) escape(key) else "${escape(key)}=${escape(rawValue)}"
+        }
+    }
+
+    private fun shadowsocksUserInfo(method: String, password: String): String =
+        if (method.trim().lowercase().startsWith("2022-")) {
+            "${percentEncode(method.trim())}:${percentEncode(password)}"
+        } else {
+            Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("${method.trim()}:$password".toByteArray(Charsets.UTF_8))
+        }
+
+    private fun percentEncode(value: String): String =
+        java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+    private fun uriHost(value: String): String {
+        val host = value.trim().removePrefix("[").removeSuffix("]")
+        return if (host.contains(':')) "[$host]" else host
     }
 
     private fun parseHysteria1(link: String): ParsedNode {
@@ -1291,9 +1387,15 @@ object LinkParser {
             if (close <= 0) throw LinkParseError("Invalid $label link: missing host")
             host = trimmed.substring(1, close)
             val rest = trimmed.substring(close + 1).substringBefore('/')
+            if (rest.isNotEmpty() && !rest.startsWith(":")) {
+                throw LinkParseError("Invalid $label link: invalid host or port")
+            }
             portToken = if (rest.startsWith(":")) rest.substring(1) else ""
         } else {
             val authority = trimmed.substringBefore('/')
+            if (authority.count { it == ':' } > 1) {
+                throw LinkParseError("Invalid $label link: IPv6 hosts must be enclosed in brackets")
+            }
             val colonIdx = authority.lastIndexOf(':')
             if (colonIdx > 0) {
                 host = authority.substring(0, colonIdx)
@@ -2239,27 +2341,25 @@ object LinkParser {
                         "method" to method,
                         "password" to password
                     )
-                    val plugin = map["plugin"]?.toString().orEmpty()
+                    val plugin = normalizeShadowsocksPluginName(map["plugin"]?.toString().orEmpty())
                     val pluginOpts = (map["plugin-opts"] ?: map["plugin_opts"])?.let { raw ->
                         when (raw) {
-                            is Map<*, *> -> raw.entries.joinToString(";") { (key, value) ->
-                                if (value == true) key.toString() else "${key}=${value}"
-                            }
-                            else -> raw.toString()
+                            is Map<*, *> -> sip003OptionsFromMapping(raw, plugin == "obfs-local")
+                            else -> if (plugin == "obfs-local") normalizeObfsPluginOptions(raw.toString()) else raw.toString()
                         }
                     }.orEmpty()
                     if (plugin.isNotEmpty()) serverMap["plugin"] = plugin
                     if (pluginOpts.isNotEmpty()) serverMap["plugin_opts"] = pluginOpts
                     outbound["settings"] = mapOf("servers" to listOf(serverMap))
 
-                    val userPassB64 = Base64.getEncoder().encodeToString("$method:$password".toByteArray(Charsets.UTF_8))
+                    val userInfo = shadowsocksUserInfo(method, password)
                     val pluginQuery = if (plugin.isEmpty()) {
                         ""
                     } else {
                         val pluginValue = listOf(plugin, pluginOpts).filter(String::isNotEmpty).joinToString(";")
                         "/?plugin=${java.net.URLEncoder.encode(pluginValue, "UTF-8")}"
                     }
-                    "ss://$userPassB64@$server:$port$pluginQuery#$encodedName"
+                    "ss://$userInfo@${uriHost(server)}:$port$pluginQuery#$encodedName"
                 }
                 "hysteria2" -> {
                     val password = map["password"]?.toString() ?: map["auth"]?.toString() ?: ""
@@ -3008,6 +3108,51 @@ object LinkParser {
         val typeValue = json.optString("type")
         val protocolValue = json.optString("protocol")
         if (typeValue.isBlank() && protocolValue.isBlank()) {
+            if (isSip008ShadowsocksServer(json)) {
+                val server = json.optString("server").trim()
+                val rawPort = json.opt("server_port")
+                val port = when (rawPort) {
+                    is Number -> rawPort.toInt()
+                    is String -> rawPort.trim().toIntOrNull()
+                    else -> null
+                }
+                val method = json.optString("method").trim()
+                val password = json.optString("password")
+                if (
+                    server.isEmpty()
+                    || port == null
+                    || port !in 1..65535
+                    || method.isEmpty()
+                    || (password.isEmpty() && !method.equals("none", ignoreCase = true))
+                ) {
+                    throw LinkParseError("SIP008 Shadowsocks server has invalid required fields")
+                }
+                val plugin = normalizeShadowsocksPluginName(json.optString("plugin"))
+                val native = mutableMapOf<String, Any?>(
+                    "type" to "shadowsocks",
+                    "server" to server,
+                    "server_port" to port,
+                    "method" to method,
+                    "password" to password
+                )
+                if (plugin.isNotEmpty()) {
+                    native["plugin"] = plugin
+                    val rawOptions = json.optString("plugin_opts")
+                    val options = if (plugin == "obfs-local") normalizeObfsPluginOptions(rawOptions) else rawOptions
+                    if (options.isNotEmpty()) native["plugin_opts"] = options
+                }
+                val name = json.optString("remarks").ifEmpty {
+                    json.optString("name", "ss-$server:$port")
+                }
+                return ParsedNode(
+                    name = name,
+                    scheme = "ss",
+                    server = server,
+                    port = port,
+                    link = json.toString(),
+                    outbound = mapOf("protocol" to "shadowsocks", "singbox" to native)
+                )
+            }
             if (json.has("add") && json.has("id") && json.has("port")) {
                 return parseVmess("vmess://" + Base64.getEncoder().encodeToString(json.toString().toByteArray(Charsets.UTF_8)))
             }
@@ -3095,6 +3240,9 @@ object LinkParser {
         val map = jsonToMap(json)
         return ParsedNode(name = name, scheme = protocol, server = server, port = port, link = json.toString(), outbound = map)
     }
+
+    private fun isSip008ShadowsocksServer(json: JSONObject): Boolean =
+        listOf("server", "server_port", "method", "password").all(json::has)
 
     fun jsonToMap(json: JSONObject): Map<String, Any?> {
         val map = mutableMapOf<String, Any?>()

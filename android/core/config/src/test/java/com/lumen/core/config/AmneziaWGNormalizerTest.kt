@@ -41,8 +41,9 @@ class AmneziaWGNormalizerTest {
     @Test
     fun testAmneziaValueTypesMatchCoreSchema() {
         // Verified against core/sing-box-lumen.exe: amnezia.jc must decode as a
-        // number, amnezia.i1/j1 as a string, and h1..h4 are uint32 - so a value
+        // number, amnezia.i1 as a string, and h1..h4 are uint32 - so a value
         // above Int.MAX_VALUE must not be truncated into a negative number.
+        // J1-J3 were removed from the extended 2.6+ runtime schema.
         val normalized = AmneziaWGNormalizer.normalize(
             mapOf(
                 "type" to "awg",
@@ -58,7 +59,7 @@ class AmneziaWGNormalizerTest {
         assertEquals(4, amneziaMap!!["jc"])
         // Leading zeros and the string type are both load-bearing for i*/j*.
         assertEquals("0123456", amneziaMap["i1"])
-        assertEquals("42", amneziaMap["j1"])
+        assertFalse(amneziaMap.containsKey("j1"))
         assertEquals("3000000000", amneziaMap["h1"])
     }
 

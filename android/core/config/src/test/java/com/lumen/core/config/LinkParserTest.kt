@@ -990,6 +990,144 @@ class LinkParserTest {
     }
 
     @Test
+    fun malformedShadowsocksIpv6AuthorityReturnsLinkParseError() {
+        try {
+            LinkParser.parseSingle("ss://YWVzLTI1Ni1nY206c2VjcmV0@[2001:db8::1]junk#N")
+            fail("expected a LinkParseError")
+        } catch (e: LinkParseError) {
+            assertTrue(e.message.orEmpty().contains("Shadowsocks"))
+        }
+    }
+
+    @Test
+    fun shadowsocksPluginAliasesAndSeparateOptionsMatchDesktop() {
+        val node = LinkParser.parseSingle(
+            "ss://bm9uZTo@[2001:db8::1]:8388?plugin=obfs&plugin_opts=mode%3Dhttp%3Bhost%3Dcdn.example.com#N"
+        )
+        val server = firstServer(node)
+        assertEquals("2001:db8::1", node.server)
+        assertEquals("none", server["method"])
+        assertEquals("", server["password"])
+        assertEquals("obfs-local", server["plugin"])
+        assertEquals("obfs=http;obfs-host=cdn.example.com", server["plugin_opts"])
+    }
+
+    @Test
+    fun legacyBase64ShadowsocksLocationKeepsQuestionMarkInPassword() {
+        val encoded = Base64.getEncoder().encodeToString(
+            "aes-256-gcm:pw?x@example.com:8388".toByteArray(Charsets.UTF_8)
+        )
+        val node = LinkParser.parseSingle("ss://$encoded#legacy")
+        val server = firstServer(node)
+        assertEquals("example.com", node.server)
+        assertEquals(8388, node.port)
+        assertEquals("pw?x", server["password"])
+    }
+
+    @Test
+    fun legacyShadowsocksPasswordKeepsPlusAndPercentSequences() {
+        val rawPassword = "p+ss%2Fword"
+        val encoded = Base64.getEncoder().encodeToString(
+            "aes-256-gcm:$rawPassword@example.com:8388".toByteArray(Charsets.UTF_8)
+        )
+        val node = LinkParser.parseSingle("ss://$encoded#legacy")
+        assertEquals(rawPassword, firstServer(node)["password"])
+    }
+
+    @Test
+    fun legacyShadowsocksLocationCanCarryPluginQuery() {
+        val encoded = Base64.getEncoder().encodeToString(
+            "aes-256-gcm:secret@example.com:8388".toByteArray(Charsets.UTF_8)
+        )
+
+        val node = LinkParser.parseSingle(
+            "ss://$encoded?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Dcdn.example.com#legacy"
+        )
+        val server = firstServer(node)
+
+        assertEquals("obfs-local", server["plugin"])
+        assertEquals("obfs=http;obfs-host=cdn.example.com", server["plugin_opts"])
+    }
+
+    @Test
+    fun shadowsocksRejectsInvalidUtf8Credentials() {
+        try {
+            LinkParser.parseSingle("ss://_w@example.com:8388#broken")
+            fail("expected invalid Shadowsocks credentials")
+        } catch (e: LinkParseError) {
+            assertTrue(e.message.orEmpty().contains("shadowsocks"))
+        }
+    }
+
+    @Test
+    fun malformedShadowsocksCredentialsReturnProtocolError() {
+        try {
+            LinkParser.parseSingle("ss://KYFtNXJrI3Jei35nSh9hMDqzlRdOjd6NIrtV6wyOVsw=:YBLEJXrk2Rh")
+            fail("expected malformed Shadowsocks credentials")
+        } catch (e: LinkParseError) {
+            assertTrue(e.message.orEmpty().contains("shadowsocks", ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun shadowsocksObfsOptionsKeepEscapedSeparators() {
+        val node = LinkParser.parseSingle(
+            "ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388/" +
+                "?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Dcdn%5C%3Bedge%5C%3Dexample#escaped"
+        )
+
+        assertEquals(
+            "obfs=http;obfs-host=cdn\\;edge\\=example",
+            firstServer(node)["plugin_opts"]
+        )
+    }
+
+    @Test
+    fun sip008ShadowsocksServerMatchesDesktopImport() {
+        val json = """
+            {
+              "id": "provider-record",
+              "remarks": "SIP008 node",
+              "server": "2001:db8::1",
+              "server_port": 8388,
+              "method": "none",
+              "password": "",
+              "plugin": "simple-obfs",
+              "plugin_opts": "mode=http;host=cdn.example.com"
+            }
+        """.trimIndent()
+
+        val node = LinkParser.parseSingle(json)
+        val native = node.outbound["singbox"] as Map<*, *>
+        assertEquals("ss", node.scheme)
+        assertEquals("2001:db8::1", node.server)
+        assertEquals(8388, node.port)
+        assertEquals("none", native["method"])
+        assertEquals("", native["password"])
+        assertEquals("obfs-local", native["plugin"])
+        assertEquals("obfs=http;obfs-host=cdn.example.com", native["plugin_opts"])
+    }
+
+    @Test
+    fun sip008SubscriptionKeepsValidServersWhenOneEntryIsBad() {
+        val (nodes, errors) = LinkParser.parseLinksText(
+            """
+                {
+                  "version": 1,
+                  "servers": [
+                    {"remarks":"valid","server":"ss.example.com","server_port":8388,"method":"aes-256-gcm","password":"secret"},
+                    {"remarks":"broken","server":"ss.example.com","server_port":"bad","method":"aes-256-gcm","password":"secret"}
+                  ]
+                }
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("valid"), nodes.map { it.name })
+        assertEquals(1, errors.size)
+        assertTrue(errors.single().contains("SIP008"))
+    }
+
+    @Test
     fun allowInsecureIsHonouredForEverySpelling() {
         for (query in listOf("allowInsecure=true", "insecure=1", "allowInsecure=1", "insecure=true")) {
             val node = LinkParser.parseSingle("vless://$uuid@ip.example.com:443?security=tls&sni=example.com&$query#Self-signed")

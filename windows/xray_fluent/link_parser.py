@@ -267,7 +267,14 @@ def parse_single(raw: str) -> Node:
     if text.startswith("["):
         return _parse_wireguard_config(text)
 
-    scheme = urlsplit(text).scheme.lower()
+    scheme_text, separator, _ = text.partition("://")
+    if separator and scheme_text.lower() == "ss":
+        return _parse_shadowsocks(text)
+
+    try:
+        scheme = urlsplit(text).scheme.lower()
+    except ValueError as exc:
+        raise LinkParseError(f"invalid link: {exc}") from exc
     if scheme == "vless":
         return _parse_vless(text)
     if scheme == "vmess":
@@ -345,6 +352,134 @@ def _decode_b64(data: str) -> str:
         except UnicodeDecodeError:
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+def _decode_shadowsocks_b64(data: str) -> str:
+    """Decode one SIP002/legacy credential block without accepting mojibake."""
+    clean = "".join(unquote(str(data or "")).split())
+    if not clean:
+        raise LinkParseError("invalid shadowsocks base64 credentials")
+    clean += "=" * ((4 - len(clean) % 4) % 4)
+    try:
+        raw = base64.b64decode(clean.encode("ascii"), altchars=b"-_", validate=True)
+        decoded = raw.decode("utf-8")
+    except (UnicodeError, ValueError, binascii.Error) as exc:
+        raise LinkParseError("invalid shadowsocks base64 credentials") from exc
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in decoded):
+        raise LinkParseError("invalid shadowsocks credentials")
+    return decoded
+
+
+def _split_shadowsocks_host_port(authority: str) -> tuple[str, int]:
+    """Parse the SIP002 authority without touching ``urlsplit().port``."""
+    value = str(authority or "").strip()
+    if value.endswith("/"):
+        value = value[:-1]
+    host = ""
+    port_text = ""
+    if value.startswith("["):
+        close = value.find("]")
+        if close <= 1:
+            raise LinkParseError("invalid shadowsocks host")
+        host = value[1:close]
+        suffix = value[close + 1 :]
+        if suffix:
+            if not suffix.startswith(":"):
+                raise LinkParseError("invalid shadowsocks host or port")
+            port_text = suffix[1:]
+    else:
+        if value.count(":") > 1:
+            raise LinkParseError("IPv6 shadowsocks hosts must be enclosed in brackets")
+        host, separator, port_text = value.rpartition(":")
+        if not separator:
+            host, port_text = value, ""
+    host = unquote(host).strip().lower()
+    if not host:
+        raise LinkParseError("invalid shadowsocks host")
+    if not port_text:
+        return host, 8388
+    if not port_text.isdigit():
+        raise LinkParseError(f"invalid shadowsocks port `{port_text}`")
+    port = int(port_text)
+    if not 0 < port <= 65535:
+        raise LinkParseError(f"invalid shadowsocks port `{port_text}`")
+    return host, port
+
+
+def _shadowsocks_query(query: str) -> dict[str, str]:
+    """Parse SIP002 query values while preserving literal '+' characters."""
+    result: dict[str, str] = {}
+    for item in str(query or "").split("&"):
+        if not item:
+            continue
+        key, separator, value = item.partition("=")
+        decoded_key = unquote(key).strip().lower()
+        if decoded_key:
+            result[decoded_key] = unquote(value) if separator else ""
+    return result
+
+
+_SHADOWSOCKS_PLUGIN_ALIASES = {
+    "obfs": "obfs-local",
+    "simple-obfs": "obfs-local",
+}
+
+
+def _normalize_shadowsocks_plugin_name(value: Any) -> str:
+    plugin = str(value or "").strip().lower()
+    return _SHADOWSOCKS_PLUGIN_ALIASES.get(plugin, plugin)
+
+
+def _normalize_obfs_plugin_options(value: Any) -> str:
+    """Translate Clash simple-obfs option names to sing-box SIP003 names."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    def split_unescaped(source: str, delimiter: str) -> list[str]:
+        parts: list[str] = []
+        current: list[str] = []
+        escaped = False
+        for char in source:
+            if char == delimiter and not escaped:
+                parts.append("".join(current))
+                current = []
+                continue
+            current.append(char)
+            if char == "\\" and not escaped:
+                escaped = True
+            else:
+                escaped = False
+        parts.append("".join(current))
+        return parts
+
+    normalized: list[str] = []
+    for item in split_unescaped(text, ";"):
+        if not item:
+            continue
+        key_and_value = split_unescaped(item, "=")
+        key = key_and_value[0]
+        separator = "=" if len(key_and_value) > 1 else ""
+        option_value = "=".join(key_and_value[1:])
+        mapped = {"mode": "obfs", "host": "obfs-host"}.get(key.strip().lower(), key)
+        normalized.append(f"{mapped}={option_value}" if separator else mapped)
+    return ";".join(normalized)
+
+
+def _sip003_options_from_mapping(value: dict[Any, Any], *, obfs: bool) -> str:
+    def escape(component: Any) -> str:
+        return str(component).replace("\\", "\\\\").replace(";", "\\;").replace("=", "\\=")
+
+    options: list[str] = []
+    for raw_key, raw_value in value.items():
+        key = str(raw_key)
+        if obfs:
+            key = {"mode": "obfs", "host": "obfs-host"}.get(key.strip().lower(), key)
+        if raw_value is True:
+            options.append(escape(key))
+        else:
+            options.append(f"{escape(key)}={escape(raw_value)}")
+    return ";".join(options)
 
 
 def _clean_name(name: str, fallback: str) -> str:
@@ -1208,48 +1343,41 @@ def _parse_trojan(link: str) -> Node:
 
 
 def _parse_shadowsocks(link: str) -> Node:
-    parsed = urlsplit(link)
-    query = parse_qs(parsed.query, keep_blank_values=True)
+    body = link.split("://", 1)[-1].strip()
+    body_without_fragment, fragment_separator, fragment = body.partition("#")
+    main_part, query_separator, query_text = body_without_fragment.partition("?")
+    query = _shadowsocks_query(query_text if query_separator else "")
 
-    method = ""
-    password = ""
-    server = parsed.hostname or ""
-    port = parsed.port or 8388
-
-    if parsed.username and parsed.password:
-        method = unquote(parsed.username)
-        password = unquote(parsed.password)
-    elif parsed.username and not parsed.password:
-        decoded = _decode_b64(parsed.username)
-        if ":" not in decoded:
-            raise LinkParseError("invalid shadowsocks credentials")
-        method, password = decoded.split(":", 1)
+    if "@" in main_part:
+        credentials, host_port = main_part.rsplit("@", 1)
+        server, port = _split_shadowsocks_host_port(host_port)
+        if ":" in credentials:
+            # SIP022 requires this plaintext, percent-encoded form for 2022
+            # ciphers; accepting it for older methods is part of SIP002.
+            method_text, password_text = credentials.split(":", 1)
+            method = unquote(method_text)
+            password = unquote(password_text)
+        else:
+            decoded = _decode_shadowsocks_b64(credentials)
+            if ":" not in decoded:
+                raise LinkParseError("invalid shadowsocks credentials")
+            method, password = decoded.split(":", 1)
     else:
-        # urlsplit stops the netloc at the first `/`, which is a valid base64
-        # symbol, and the decoded credentials may contain `?`, so isolate the
-        # blob and split it without going through urlsplit again.
-        body = link.split("://", 1)[-1].split("#", 1)[0].split("?", 1)[0]
-        try:
-            decoded = _decode_b64(body)
-        except Exception as exc:
-            raise LinkParseError("invalid shadowsocks link") from exc
+        # Legacy URI: Base64(method:password@host:port).  Decode the complete
+        # location; '/' is part of standard Base64 and must not be treated as a
+        # URL path separator.
+        decoded = _decode_shadowsocks_b64(main_part)
         credentials, separator, host_port = decoded.rpartition("@")
-        host, port_separator, port_text = host_port.rpartition(":")
-        if not port_separator or not port_text.isdigit():
-            host, port_text = host_port, "8388"
-        host = host.strip().strip("[]").lower()
-        if not separator or ":" not in credentials or not host:
+        if not separator or ":" not in credentials:
             raise LinkParseError("invalid shadowsocks link")
+        server, port = _split_shadowsocks_host_port(host_port)
         method, password = credentials.split(":", 1)
-        method = unquote(method)
-        password = unquote(password)
-        server = host
-        port = int(port_text)
 
-    if not method or not password or not server:
+    method = method.strip()
+    if not method or not server or (not password and method.lower() != "none"):
         raise LinkParseError("invalid shadowsocks link")
 
-    plugin = _first(query, "plugin")
+    plugin = str(query.get("plugin") or "").strip()
     outbound_server: dict[str, Any] = {
         "address": server,
         "port": port,
@@ -1262,8 +1390,12 @@ def _parse_shadowsocks(link: str) -> Node:
         # two fields.  Passing the complete value as the executable name makes
         # an otherwise valid Shadowsocks server fail only when it is dialled.
         plugin_name, separator, plugin_opts = plugin.partition(";")
+        plugin_name = _normalize_shadowsocks_plugin_name(plugin_name)
         outbound_server["plugin"] = plugin_name
-        if separator and plugin_opts:
+        plugin_opts = str(query.get("plugin_opts") or query.get("plugin-opts") or plugin_opts)
+        if plugin_name == "obfs-local":
+            plugin_opts = _normalize_obfs_plugin_options(plugin_opts)
+        if plugin_opts:
             outbound_server["plugin_opts"] = plugin_opts
 
     outbound = {
@@ -1273,7 +1405,7 @@ def _parse_shadowsocks(link: str) -> Node:
         },
     }
 
-    name = _clean_name(parsed.fragment, f"ss-{server}:{port}")
+    name = _clean_name(fragment if fragment_separator else "", f"ss-{server}:{port}")
     return Node(
         name=name,
         scheme="ss",
@@ -1420,7 +1552,7 @@ def _parse_json_nodes_payload(payload: Any, *, _depth: int = 0) -> tuple[list[No
             or _is_xray_auto_config_payload(payload)
             or (isinstance(payload.get("providers"), list) and isinstance(payload.get("outbounds"), list))
         )
-        if native_graph or "protocol" in payload or "type" in payload:
+        if native_graph or "protocol" in payload or "type" in payload or _is_sip008_server(payload):
             return [_parse_json_outbound_payload(payload)], []
         items = []
         if isinstance(payload.get("outbounds"), list):
@@ -2069,19 +2201,22 @@ def _clash_to_xray_outbound(payload: dict[str, Any], kind: str) -> dict[str, Any
         settings = {"servers": [server_item]}
     else:
         plugin_options = payload.get("plugin-opts", payload.get("plugin_opts", ""))
+        plugin_name = _normalize_shadowsocks_plugin_name(payload.get("plugin"))
         if isinstance(plugin_options, dict):
-            plugin_options = ";".join(
-                str(key) if value is True else f"{key}={value}"
-                for key, value in plugin_options.items()
+            plugin_options = _sip003_options_from_mapping(
+                plugin_options,
+                obfs=plugin_name == "obfs-local",
             )
+        elif plugin_name == "obfs-local":
+            plugin_options = _normalize_obfs_plugin_options(plugin_options)
         server_item = {
             "address": server,
             "port": port,
             "method": str(payload.get("cipher") or payload.get("method") or "none"),
             "password": password,
         }
-        if payload.get("plugin"):
-            server_item["plugin"] = str(payload["plugin"])
+        if plugin_name:
+            server_item["plugin"] = plugin_name
         if plugin_options:
             server_item["plugin_opts"] = str(plugin_options)
         settings = {
@@ -2332,6 +2467,13 @@ def _json_payload_can_be_node(payload: dict[str, Any]) -> bool:
     )
 
 
+def _is_sip008_server(payload: Any) -> bool:
+    """Return whether *payload* is one server entry from a SIP008 document."""
+    return isinstance(payload, dict) and {
+        "server", "server_port", "method", "password"
+    } <= payload.keys() and not payload.get("type") and not payload.get("protocol")
+
+
 def _parse_json_outbound(text: str) -> Node:
     payload = json.loads(text)
     if not isinstance(payload, dict):
@@ -2344,7 +2486,41 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
 
     outbound: dict[str, Any]
     explicit_protocol = str(payload.get("protocol") or "").strip().lower()
-    if explicit_protocol == "singbox_config" and isinstance(payload.get("singbox_config"), dict):
+    if _is_sip008_server(payload):
+        try:
+            raw_server_port = payload.get("server_port")
+            if isinstance(raw_server_port, bool):
+                raise ValueError
+            server_port = int(raw_server_port)
+        except (TypeError, ValueError) as exc:
+            raise LinkParseError("SIP008 Shadowsocks server has an invalid server_port") from exc
+        server = str(payload.get("server") or "").strip()
+        method = str(payload.get("method") or "").strip()
+        password = str(payload.get("password") or "")
+        if (
+            not server
+            or not 0 < server_port <= 65535
+            or not method
+            or (not password and method.lower() != "none")
+        ):
+            raise LinkParseError("SIP008 Shadowsocks server has invalid required fields")
+        native: dict[str, Any] = {
+            "type": "shadowsocks",
+            "server": server,
+            "server_port": server_port,
+            "method": method,
+            "password": password,
+        }
+        plugin = _normalize_shadowsocks_plugin_name(payload.get("plugin"))
+        if plugin:
+            native["plugin"] = plugin
+            plugin_opts = str(payload.get("plugin_opts") or "")
+            if plugin == "obfs-local":
+                plugin_opts = _normalize_obfs_plugin_options(plugin_opts)
+            if plugin_opts:
+                native["plugin_opts"] = plugin_opts
+        outbound = _native_singbox_outbound(native)
+    elif explicit_protocol == "singbox_config" and isinstance(payload.get("singbox_config"), dict):
         inferred = _native_singbox_config(payload["singbox_config"])
         outbound = {**inferred, **dict(payload)}
         outbound["singbox_config"] = inferred["singbox_config"]

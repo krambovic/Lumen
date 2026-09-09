@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 
 import pytest
@@ -354,6 +355,104 @@ def test_editor_emits_portable_share_uri_not_json(
     reparsed = parse_single(updates["link"])
     assert reparsed.outbound == updates["outbound"]
     assert reparsed.name == "Shared"
+
+
+def test_shadowsocks_export_preserves_plugin_options_and_none_method() -> None:
+    node = Node(
+        name="SS obfs",
+        scheme="shadowsocks",
+        server="2001:db8::1",
+        port=8388,
+        link="{\"type\":\"shadowsocks\"}",
+        outbound={
+            "protocol": "shadowsocks",
+            "singbox": {
+                "type": "shadowsocks",
+                "server": "2001:db8::1",
+                "server_port": 8388,
+                "method": "none",
+                "password": "",
+                "plugin": "v2ray-plugin",
+                "plugin_opts": "tls;host=cdn.example.com",
+            },
+        },
+    )
+
+    exported = normalized_node_export_link(node)
+
+    assert exported.startswith("ss://")
+    reparsed = parse_single(exported)
+    server = reparsed.outbound["settings"]["servers"][0]
+    assert (reparsed.server, reparsed.port) == ("2001:db8::1", 8388)
+    assert server["method"] == "none"
+    assert server["password"] == ""
+    assert server["plugin"] == "v2ray-plugin"
+    assert server["plugin_opts"] == "tls;host=cdn.example.com"
+
+
+def test_shadowsocks_2022_export_uses_plain_sip022_userinfo() -> None:
+    key = base64.b64encode(bytes(range(16))).decode("ascii")
+    node = Node(
+        name="SS2022",
+        scheme="shadowsocks",
+        server="example.com",
+        port=8388,
+        outbound={
+            "protocol": "shadowsocks",
+            "singbox": {
+                "type": "shadowsocks",
+                "server": "example.com",
+                "server_port": 8388,
+                "method": "2022-blake3-aes-128-gcm",
+                "password": key,
+            },
+        },
+    )
+
+    exported = normalized_node_export_link(node)
+
+    assert exported.startswith("ss://2022-blake3-aes-128-gcm:")
+    assert parse_single(exported).outbound["settings"]["servers"][0]["password"] == key
+
+
+def test_native_shadowsocks_editor_updates_native_payload_and_plugin_options() -> None:
+    node = Node(
+        name="SIP008",
+        scheme="shadowsocks",
+        server="old.example",
+        port=8388,
+        outbound={
+            "protocol": "shadowsocks",
+            "singbox": {
+                "type": "shadowsocks",
+                "server": "old.example",
+                "server_port": 8388,
+                "method": "aes-128-gcm",
+                "password": "old",
+                "plugin": "obfs-local",
+                "plugin_opts": "obfs=http;obfs-host=old.example",
+            },
+        },
+    )
+
+    fields = load_node_edit_fields(node)
+    assert fields["pluginOpts"] == "obfs=http;obfs-host=old.example"
+    updates = build_node_updates(
+        node,
+        {
+            "server": "new.example",
+            "port": "9443",
+            "method": "aes-256-gcm",
+            "password": "new",
+            "pluginOpts": "obfs=tls;obfs-host=cdn.example",
+        },
+    )
+
+    native = updates["outbound"]["singbox"]
+    assert (native["server"], native["server_port"]) == ("new.example", 9443)
+    assert (native["method"], native["password"]) == ("aes-256-gcm", "new")
+    assert native["plugin_opts"] == "obfs=tls;obfs-host=cdn.example"
+    assert "/?plugin=" in updates["link"]
 
 
 def test_vmess_editor_emits_vmess_share_uri() -> None:
