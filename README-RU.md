@@ -7,7 +7,6 @@
   <a href="https://github.com/krambovic/Lumen/releases/tag/android-v1.1.3"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=android-v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Android&amp;labelColor=1C1C1C&amp;color=3DDC84" alt="Последний релиз Android"></a>
   <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=%D0%A1%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D1%8F&labelColor=1C1C1C&color=17A673" alt="Скачивания"></a>
   <img src="https://img.shields.io/badge/Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=1C1C1C&label=%D0%9F%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D0%B0" alt="Платформа">
-  <img src="https://img.shields.io/badge/GPL--3.0-F5A623?style=for-the-badge&labelColor=1C1C1C&label=%D0%9B%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F" alt="Лицензия">
 </p>
 
 <p align="center">
@@ -17,7 +16,6 @@
 ---
 
 <p align="center">
-  <b>Твоё подключение. Твои правила.</b><br>
   Открытый клиент для VPN, прокси и обхода блокировок на Windows и Android.
 </p>
 
@@ -87,7 +85,7 @@ TCP/ICMP проверяют доступность адреса; проверк�
 <details>
 <summary>Транспорты, защита и форматы импорта</summary>
 
-**Транспорты**
+### Транспорты
 
 TCP/RAW, WebSocket, gRPC, HTTP/2, HTTPUpgrade, XHTTP, mKCP и поддерживаемые QUIC-транспорты.
 
@@ -305,7 +303,5 @@ cd android
 Сообщения об ошибках и pull request приветствуются. При создании [issue](https://github.com/krambovic/Lumen/issues) укажите платформу, версию Lumen, режим подключения и приложите логи без конфиденциальных данных.
 
 ---
-
-Используются [Xray-core](https://github.com/XTLS/Xray-core), [sing-box extended](https://github.com/shtorm-7/sing-box-extended), [zapret-kvn](https://git.zapret.moe/zapretkvn/zapret-kvn), [Wintun](https://www.wintun.net/), [WinDivert](https://reqrypt.org/windivert.html) и [данные маршрутизации RuNetFreedom](https://github.com/runetfreedom/russia-v2ray-rules-dat).
 
 [GPL-3.0](LICENSE) · [Сторонние компоненты и лицензии](NOTICE.md) · [Релизы](https://github.com/krambovic/Lumen/releases) · [Ошибки и предложения](https://github.com/krambovic/Lumen/issues)

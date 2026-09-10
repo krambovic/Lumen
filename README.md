@@ -7,7 +7,6 @@
   <a href="https://github.com/krambovic/Lumen/releases/tag/android-v1.1.3"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=android-v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Android&amp;labelColor=1C1C1C&amp;color=3DDC84" alt="Latest Android release"></a>
   <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=Downloads&labelColor=1C1C1C&color=17A673" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=1C1C1C&label=Platform" alt="Platform">
-  <img src="https://img.shields.io/badge/GPL--3.0-F5A623?style=for-the-badge&labelColor=1C1C1C&label=License" alt="License">
 </p>
 
 <p align="center">
@@ -17,7 +16,6 @@
 ---
 
 <p align="center">
-  <b>Your connection. Your rules.</b><br>
   An open-source VPN, proxy and anti-censorship client for Windows and Android.
 </p>
 
@@ -87,7 +85,7 @@ TCP/ICMP checks measure address reachability; real-proxy checks test traffic thr
 <details>
 <summary>Transports, security & import formats</summary>
 
-**Transports**
+### Transports
 
 TCP/RAW, WebSocket, gRPC, HTTP/2, HTTPUpgrade, XHTTP, mKCP and supported QUIC transports.
 
@@ -305,7 +303,5 @@ To rebuild the patched sing-box extended core, use `android/tools/build_singbox_
 Bug reports and pull requests are welcome. Include your platform, Lumen version, connection mode and sanitized logs when opening an [issue](https://github.com/krambovic/Lumen/issues).
 
 ---
-
-Built with [Xray-core](https://github.com/XTLS/Xray-core), [sing-box extended](https://github.com/shtorm-7/sing-box-extended), [zapret-kvn](https://git.zapret.moe/zapretkvn/zapret-kvn), [Wintun](https://www.wintun.net/), [WinDivert](https://reqrypt.org/windivert.html) and [RuNetFreedom routing data](https://github.com/runetfreedom/russia-v2ray-rules-dat).
 
 [GPL-3.0](LICENSE) · [Third-party notices](NOTICE.md) · [Releases](https://github.com/krambovic/Lumen/releases) · [Issues](https://github.com/krambovic/Lumen/issues)
