@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/krambovic/Lumen/releases?q=v"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Desktop&amp;labelColor=1C1C1C&amp;color=8A2BE2" alt="Последний релиз Desktop"></a>
-  <a href="https://github.com/krambovic/Lumen/releases?q=android-v"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=android-v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Android&amp;labelColor=1C1C1C&amp;color=3DDC84" alt="Последний релиз Android"></a>
+  <a href="https://github.com/krambovic/Lumen/releases/tag/android-v1.1.3"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=android-v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Android&amp;labelColor=1C1C1C&amp;color=3DDC84" alt="Последний релиз Android"></a>
   <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=%D0%A1%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D1%8F&labelColor=1C1C1C&color=17A673" alt="Скачивания"></a>
   <img src="https://img.shields.io/badge/Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=1C1C1C&label=%D0%9F%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D0%B0" alt="Платформа">
   <img src="https://img.shields.io/badge/GPL--3.0-F5A623?style=for-the-badge&labelColor=1C1C1C&label=%D0%9B%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F" alt="Лицензия">
