@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?style=for-the-badge&label=%D0%A0%D0%B5%D0%BB%D0%B8%D0%B7&labelColor=1C1C1C&color=8A2BE2" alt="Релиз"></a>
+  <a href="https://github.com/krambovic/Lumen/releases?q=v"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Desktop&amp;labelColor=1C1C1C&amp;color=8A2BE2" alt="Последний релиз Desktop"></a>
+  <a href="https://github.com/krambovic/Lumen/releases?q=android-v"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=android-v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Android&amp;labelColor=1C1C1C&amp;color=3DDC84" alt="Последний релиз Android"></a>
   <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=%D0%A1%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D1%8F&labelColor=1C1C1C&color=17A673" alt="Скачивания"></a>
   <img src="https://img.shields.io/badge/Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=1C1C1C&label=%D0%9F%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D0%B0" alt="Платформа">
   <img src="https://img.shields.io/badge/GPL--3.0-F5A623?style=for-the-badge&labelColor=1C1C1C&label=%D0%9B%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F" alt="Лицензия">
@@ -15,168 +16,296 @@
 
 ---
 
-**Lumen** — клиент для VPN и обхода блокировок под **Windows** и **Android**. Одно приложение на всю цепочку: импортировать сервер или подписку, пустить через него только то, что нужно, и обойти DPI — с нормальным интерфейсом на обеих платформах вместо редактирования конфигов.
+<p align="center">
+  <b>Твоё подключение. Твои правила.</b><br>
+  Открытый клиент для VPN, прокси и обхода блокировок на Windows и Android.
+</p>
 
-На Windows одновременно работают **xray-core** и **sing-box-extended**, плюс обход DPI на уровне пакетов. Android — нативный клиент на Jetpack Compose поверх **sing-box-extended** и системного `VpnService`.
+<p align="center">
+  <a href="https://github.com/krambovic/Lumen/releases"><b>Скачать</b></a> ·
+  <a href="#возможности">Возможности</a> ·
+  <a href="#протоколы">Протоколы</a> ·
+  <a href="#настройки">Настройки</a> ·
+  <a href="#скриншоты">Скриншоты</a> ·
+  <a href="https://github.com/krambovic/Lumen/issues">Поддержка</a>
+</p>
 
-> [!IMPORTANT]
-> На Windows для режима TUN/VPN и обхода DPI (zapret) нужны права администратора.
+## Начало работы
 
----
+| | Windows | Android |
+| :--- | :--- | :--- |
+| **Требования** | Windows 10/11 · x64 | Android 8.0+ |
+| **Сборки** | Установщик или портативный ZIP | ARM64, ARMv7, x86_64 или универсальный APK |
+| **Режимы** | TUN · Системный прокси · Локальный прокси · Zapret | VPN устройства · Локальный прокси |
+| **Ядро** | sing-box extended + Xray-core | sing-box extended |
+
+1. Скачайте Lumen из [релизов](https://github.com/krambovic/Lumen/releases). Для портативной версии распакуйте архив целиком.
+2. Импортируйте ссылку на сервер, файл конфигурации или подписку.
+3. Выберите сервер, настройте пресет маршрутизации и подключитесь.
+
+<sub>Lumen не предоставляет VPN-серверы и подписки. Для большинства Android-смартфонов подходит APK для ARM64.</sub>
 
 ## Возможности
 
-| | Что делает | Windows | Android |
-| :--- | :--- | :---: | :---: |
-| **TUN / VPN** | Полный туннель через sing-box-extended, включая AmneziaWG (AWG 2.0) и WireGuard | ✅ | ✅ |
-| **Системный прокси** | Направляет всю систему через xray-core без туннеля | ✅ | — |
-| **Обход DPI** | zapret / WinDivert — разблокирует YouTube, Discord и другие сервисы на уровне пакетов | ✅ | — |
-| **Раздельное туннелирование** | Выбор приложений, которые идут через VPN | ✅ | ✅ |
-| **Редактор маршрутов** | Пресеты плюс свои домены, IP-правила и поведение отдельных сервисов | ✅ | ✅ |
-| **Discord Voice** | Пускает голос и стримы Discord через прокси без полного TUN | ✅ | — |
-| **AUTO-пулы серверов** | Группы `urltest` выбирают самый быстрый сервер и перепроверяют его по таймеру | ✅ | ✅ |
-| **Диагностика** | Замер задержки и реальной скорости; пинг по TCP, ICMP, HTTP GET и через сам прокси | ✅ | ✅ |
-| **Быстрый доступ** | Меню в трее на Windows; виджеты и плитка в шторке на Android | ✅ | ✅ |
-| **Темы** | Набор встроенных тем, а на Android ещё AMOLED-чёрный и Material You | ✅ | ✅ |
+### Направляйте трафик по своим правилам
 
----
+Используйте глобальный прокси, исключения для региона или собственные правила. Направляйте домены, диапазоны IP и приложения через **прокси**, **напрямую** или **блокируйте** их. Доступны GeoIP/GeoSite, обход локальной сети и блокировка рекламы.
 
-## Поддерживаемые протоколы
+В Windows есть региональные профили для **России, Китая и Ирана**, правила для сервисов и процессов, а также собственные пресеты маршрутизации. В Android — списки приложений, включённых в VPN или исключённых из него.
 
-| Группа | Протоколы |
+### Поддерживайте порядок среди серверов
+
+Импортируйте подписки, создавайте группы, ищите и фильтруйте серверы. Выбор и сортировка сохраняются после перезапуска. Группы AUTO позволяют выбирать сервер автоматически.
+
+Обновление по расписанию поддерживает **ETag/304**, увеличение интервала повторных попыток при ошибках и сверку списка серверов с подпиской. Выбранный сервер по возможности сохраняется, а уведомления указывают подписки с изменениями или ошибками. Расход трафика и срок действия отображаются, если провайдер передаёт эти данные.
+
+### Следите за качеством подключения
+
+Проверяйте **TCP**, **ICMP**, **HTTP GET**, реальную задержку через прокси и скорость загрузки. Просматривайте текущую скорость загрузки и отправки, трафик сессии, пиковую скорость и историю трафика. В поддерживаемых режимах доступна статистика по приложениям.
+
+TCP/ICMP проверяют доступность адреса; проверка через прокси показывает, передаёт ли трафик сам профиль.
+
+### Возможности каждой платформы
+
+**Windows** — переключение совместимых серверов sing-box без перезапуска ядра в TUN и системном прокси. Xray для профилей, которым он необходим, пресеты zapret для обхода DPI, маршрутизация Discord, управление из трея и резервные копии профиля.
+
+**Android** — VPN устройства или локальный прокси. Управление через виджеты и плитку быстрых настроек, авторизация SOCKS5 и ненавязчивые уведомления об обновлениях. Ручная смена сервера перезапускает подключение.
+
+**Обе платформы** — нативный интерфейс, готовые темы, автоматические обновления и переводы на **английский, русский, персидский и китайский**.
+
+## Протоколы
+
+| Семейство | Поддерживаемые протоколы |
 | :--- | :--- |
-| **Базовые** | VLESS · VMess · Trojan · Shadowsocks · SOCKS · HTTP |
-| **Современные** | Hysteria · Hysteria2 · TUIC · MASQUE · Mieru · AnyTLS · NaïveProxy |
-| **WireGuard** | WireGuard · AmneziaWG (AWG 1.5 и 2.0) · Cloudflare WARP |
-| **Прочее** | OpenVPN, в том числе через мосты obfs2/obfs3 |
-| **Транспорты** | TCP · WebSocket · gRPC · HTTP/2 · HTTPUpgrade · XHTTP · mKCP · REALITY · uTLS |
+| **V2Ray / Xray** | VLESS · VMess · Trojan |
+| **Shadowsocks** | Устаревшие методы · AEAD · Shadowsocks 2022 · Поддерживаемые плагины |
+| **QUIC и TLS** | Hysteria · Hysteria2 · TUIC · AnyTLS · Mieru |
+| **На основе HTTP** | NaïveProxy · MASQUE |
+| **WireGuard** | WireGuard · AmneziaWG, включая AWG 3.x · Cloudflare WARP |
+| **Другие** | OpenVPN · SOCKS4/4a/5 · HTTP/HTTPS · Snell через совместимые нативные конфиги |
 
-Сырые JSON-конфиги **Xray** и **sing-box** импортируются как есть, включая документы с несколькими профилями.
+<details>
+<summary>Транспорты, защита и форматы импорта</summary>
 
----
+**Транспорты**
 
-## Подписки
+TCP/RAW, WebSocket, gRPC, HTTP/2, HTTPUpgrade, XHTTP, mKCP и поддерживаемые QUIC-транспорты.
 
-- Обычные URL подписок и зашифрованные ссылки Happ: от `happ://crypt` до `happ://crypt5`.
-- Подписки с привязкой по HWID — можно отправлять идентификатор установки или свой собственный HWID.
-- Метаданные Happ Premium, остаток трафика и дата окончания видны прямо в списке серверов.
-- Автообновление по расписанию: сначала используется собственный User-Agent Lumen, а другие профили клиентов подставляются только для панелей, которые смотрят на имя клиента.
-- Сайт может передать подписку прямо в приложение:
-  ```
-  lumen://add?url=<URL-подписки-в-percent-encoding>&name=<необязательное-имя>
-  ```
+**Защита и параметры подключения**
 
----
+TLS, REALITY, отпечатки uTLS, Vision, поддерживаемые режимы VLESS Encryption, мультиплексирование и Shadowsocks UDP-over-TCP.
+
+Поддержка зависит от протокола, платформы и встроенного ядра: доступны не все сочетания параметров.
+
+**Импорт**
+
+- Ссылки на серверы и списки подписок в обычном тексте или Base64.
+- Clash/Mihomo YAML и Xray/sing-box JSON.
+- Ссылки Shadowsocks SIP002/SIP003 и JSON SIP008.
+- WireGuard/AmneziaWG `.conf` и OpenVPN `.ovpn`.
+- Поддерживаемые зашифрованные ссылки Happ и метаданные провайдера.
+- Буфер обмена, файлы, QR-коды и ссылки для открытия в приложении на поддерживаемых платформах.
+
+**Редактирование и экспорт**
+
+Редактор сохраняет специфичные для протокола поля. При экспорте создаётся стандартная ссылка, если она позволяет сохранить параметры профиля; иначе используется JSON или нативный формат конфигурации.
+
+</details>
+
+## Настройки
+
+Раскройте свою платформу, чтобы увидеть доступные параметры. Некоторые расширенные настройки появляются только при включении соответствующей функции или её поддержке выбранным ядром.
+
+<details>
+<summary><b>Windows</b> · Внешний вид, DNS, маршрутизация, TUN, запуск и другое</summary>
+
+### Внешний вид
+
+- Светлая, тёмная или системная тема; палитры, акцент и собственный базовый тон.
+- Обои с настройкой непрозрачности, размытия и яркости.
+- Плотность и масштаб интерфейса, скругление углов и анимации.
+- Компактный или полный режим настроек и язык интерфейса.
+- Системные эффекты фона Windows 11 и сила прозрачности.
+
+### Подписки
+
+- Интервал автообновления и загрузка через активный прокси/TUN.
+- Регулярные выражения для включения и исключения серверов.
+- Собственный User-Agent, настоящий HWID Windows или HWID, заданный вручную.
+- Включение конвертера подписок и адрес сервиса.
+
+### DNS
+
+- Системный DNS или DNS ядра.
+- Раздельные прямые и прокси-резолверы с транспортом UDP, TCP, TLS или HTTPS.
+- Независимые стратегии разрешения IPv4/IPv6.
+- Параллельные запросы, оптимистичный кэш и выбор DNS по GeoSite.
+- Перехват DNS в TUN, Fake DNS/FakeIP и переопределения hosts.
+
+### Маршрутизация и сеть
+
+- Региональный профиль России, Китая или Ирана и доступные для него быстрые пресеты.
+- Правила для доменов, IP/CIDR, GeoSite, GeoIP, сервисов и процессов.
+- Действия прокси/напрямую/блокировать, действие по умолчанию и собственные пресеты.
+- Обход локальной сети, блокировка рекламы и интеграция прокси Firefox.
+- Переподключение при смене сети, предпочтение IPv6 и kill-switch.
+- Фрагментирование TLS: выбор пакетов, длина фрагмента и задержка.
+- Включение мультиплексирования и число параллельных соединений.
+- Переключение при низкой скорости: включение, порог скорости, задержка и пауза между переключениями.
+
+### Локальный прокси и TUN
+
+- Порты SOCKS/mixed и HTTP.
+- Необязательная авторизация прокси со своим логином и паролем.
+- Доступ из локальной сети и sniffing только для маршрутизации.
+- Стек TUN: mixed, system или gVisor.
+- MTU, Strict Route, блокировка QUIC/HTTP3 и Endpoint-Independent NAT.
+
+### Запуск и тесты
+
+- Автозапуск Windows и запуск в трей при входе в систему.
+- Постоянный запрос прав администратора.
+- Автоподключение к последнему серверу или после импорта сервера.
+- Восстановление VPN после сна/гибернации и автозапуск zapret.
+- Проверка конфликтующих процессов VPN/прокси.
+- Метод пинга, URL/пресет теста скорости и число параллельных проверок.
+
+### Обновления и данные
+
+- Проверка обновлений приложения, автоматическая установка и канал stable/beta.
+- Проверка обновлений ядер и GeoIP/GeoSite; ручное обновление ресурсов.
+- Канал stable/beta для Xray и собственные пути к Xray/sing-box.
+- Пароль профиля, импорт и экспорт резервной копии.
+- Включение диагностической телеметрии.
+- Сброс настроек приложения и маршрутизации с сохранением серверов и подписок.
+
+</details>
+
+<details>
+<summary><b>Android</b> · Темы, DNS, трафик, пинг, AUTO и другое</summary>
+
+### Внешний вид
+
+- Светлые/тёмные темы, цвета Material You и чёрный фон AMOLED.
+- Вид дашборда: стандартный, со слайдером или по центру.
+- Иконка приложения: системная, светлая или тёмная.
+- Язык интерфейса и тактильный отклик.
+
+### Подписки
+
+- User-Agent и необязательный HWID с редактируемым значением.
+- Загрузка через активный VPN и разрешение HTTP-подписок.
+- Обновление по расписанию и его интервал.
+- Регулярные выражения для включения и исключения серверов.
+- Включение конвертера подписок и его URL.
+- Разрешение или запрет переопределения настроек данными подписки.
+
+### DNS
+
+- Автоматический режим, Android, защищённый DNS или собственный JSON.
+- Прямые и прокси-резолверы с транспортом UDP, TCP, TLS или HTTPS.
+- Независимые стратегии IPv4/IPv6 и режим «только IPv4» для прокси.
+- Перехват DNS, FakeIP, параллельные запросы и оптимистичный кэш.
+- Выбор DNS по Geo-правилам, hosts и привязка имени хоста к IPv4.
+
+### Трафик и подключение
+
+- Мультиплексирование: число параллельных соединений, минимум потоков, smux/yamux/h2mux и padding.
+- Включение TCP Brutal и скорости отправки/загрузки при наличии поддержки.
+- Фрагментирование TLS, MTU, предпочтение IPv6 и блокировка QUIC.
+- TCP Fast Open, TCP MultiPath и фрагментирование UDP.
+- Shadowsocks UDP-over-TCP и тайм-аут исходящего подключения.
+
+### Пинг и AUTO
+
+- TCPing, ICMP, HTTP GET или Real HTTP; URL теста и пресеты.
+- Тайм-аут, параллельность, число попыток и задержка повторов.
+- Лучший, средний или медианный результат; пороги хорошей и приемлемой задержки.
+- Проверка при открытии списка серверов и необязательное удаление недоступных серверов с настройкой порога.
+- Восстановление настроек пинга по умолчанию.
+- URL проверки AUTO, интервал, допуск переключения и тайм-аут простоя.
+- Прерывание существующих соединений при переключении AUTO.
+
+### Маршрутизация и локальный прокси
+
+- Правила доменов/IP, региональные пресеты, Geo-ресурсы, обход локальной сети и блокировка рекламы.
+- Списки приложений, включённых в VPN или исключённых из него.
+- Режим «только прокси» и включение локального прокси.
+- Порты SOCKS5/HTTP и доступ из локальной сети.
+- Включение авторизации SOCKS5 и редактируемые логин/пароль.
+
+### Приложение и обновления
+
+- Переподключение при смене сети и автоматическое подключение при загрузке устройства.
+- Проверка передачи данных через прокси.
+- Статистика скорости, уведомление VPN и отображение скорости в уведомлении.
+- Включение журналирования и диагностической телеметрии.
+- Автоматическая/ручная проверка обновлений, отображение версии приложения и встроенного ядра, выбор APK под архитектуру устройства.
+
+</details>
 
 ## Скриншоты
 
 <details>
-<summary><b>Скриншоты Windows</b></summary>
-<br>
+<summary>Windows и Android</summary>
 
-<img src="windows/assets/screenshots/windows-dashboard-dark.png" alt="Панель управления Windows в тёмной теме" width="100%">
-<br><br>
-<img src="windows/assets/screenshots/windows-zapret-dark.png" alt="Экран обхода DPI Windows в тёмной теме" width="100%">
-<br><br>
-<img src="windows/assets/screenshots/windows-dashboard-light.png" alt="Панель управления Windows в светлой теме" width="100%">
-<br><br>
-<img src="windows/assets/screenshots/windows-routing-light.png" alt="Настройки маршрутизации Windows в светлой теме" width="100%">
-<br><br>
-<img src="windows/assets/screenshots/windows-dashboard-rose-wallpaper.png" alt="Панель управления Windows в розовой теме" width="100%">
-<br><br>
-<img src="windows/assets/screenshots/windows-appearance-rose-wallpaper.png" alt="Настройки внешнего вида Windows в розовой теме" width="100%">
+**Windows**
 
-</details>
+<img src="windows/assets/screenshots/windows-dashboard-dark.png" alt="Lumen для Windows — дашборд" width="100%">
 
-<details>
-<summary><b>Скриншоты Android</b></summary>
-<br>
+<img src="windows/assets/screenshots/windows-routing-light.png" alt="Маршрутизация Windows в светлой теме" width="100%">
+
+<img src="windows/assets/screenshots/windows-zapret-dark.png" alt="Пресеты zapret в Windows" width="100%">
+
+<img src="windows/assets/screenshots/windows-dashboard-rose-wallpaper.png" alt="Собственная тема и обои в Windows" width="100%">
+
+**Android**
 
 <p align="center">
-  <img src="android/assets/screenshots/android-dashboard-dark.jpg" alt="Панель управления Android в тёмной теме" width="380">
-  <img src="android/assets/screenshots/android-nodes-dark.jpg" alt="Список серверов Android в тёмной теме" width="380">
-</p>
-
-<p align="center">
-  <img src="android/assets/screenshots/android-dashboard-light.jpg" alt="Панель управления Android в светлой теме" width="380">
-  <img src="android/assets/screenshots/android-settings-light.jpg" alt="Настройки Android в светлой теме" width="380">
-</p>
-
-<p align="center">
-  <img src="android/assets/screenshots/android-dashboard-rose.jpg" alt="Панель управления Android в розовой теме" width="380">
-  <img src="android/assets/screenshots/android-settings-rose.jpg" alt="Настройки Android в розовой теме" width="380">
+  <img src="android/assets/screenshots/android-dashboard-dark.jpg" alt="Дашборд Android" width="32%">
+  <img src="android/assets/screenshots/android-nodes-dark.jpg" alt="Серверы Android" width="32%">
+  <img src="android/assets/screenshots/android-settings-light.jpg" alt="Настройки Android" width="32%">
 </p>
 
 </details>
 
----
+## Полезно знать
 
-## Установка
+**Права и трафик.** TUN и zapret в Windows требуют прав администратора. Системный прокси охватывает только приложения, которые учитывают его настройки; остальной трафик и DNS могут идти напрямую. Android может потребовать разрешение на работу в фоне.
 
-Свежая сборка — на странице **[Releases](https://github.com/krambovic/Lumen/releases)**.
+**Профили и конфиденциальность.** Используйте проверенных провайдеров, не публикуйте экспортированные учётные данные и включайте авторизацию при доступе к прокси из локальной сети. Другие VPN-клиенты могут конфликтовать с Lumen.
 
-| Платформа | Файл | Примечание |
-| :--- | :--- | :--- |
-| Windows | `Lumen-Setup-windows-x64.exe` | Рекомендуемый установщик |
-| Windows | `Lumen-portable-windows-x64.zip` | Работает без установки |
-| Android | `Lumen-<версия>-universal.apk` | Все поддерживаемые ABI в одном файле, крупнее |
-| Android | `Lumen-<версия>-arm64-v8a.apk` | Почти все современные телефоны |
-| Android | `Lumen-<версия>-armeabi-v7a.apk` | 32-битные ARM-устройства |
-
----
-
-## Сборка
+## Разработка
 
 <details>
-<summary><b>Windows</b> — Python 3, PyQt6</summary>
+<summary>Сборка Windows или Android из исходников</summary>
+
+**Windows** использует Python и PyQt6/QML. Для полной сборки также необходимы сетевые ядра, геоданные и ресурсы упаковки.
 
 ```powershell
 cd windows
-pip install -r requirements.txt
-python build_qml.py   # установщик и портативный архив в windows/dist/
-python run_qml.py     # запуск из исходников
-pytest                # тесты
+python -m pip install -r requirements.txt
+python run_qml.py
+python build_qml.py
 ```
-</details>
 
-<details>
-<summary><b>Android</b> — JDK 17, Gradle</summary>
+**Android** использует Kotlin и Jetpack Compose. Настройте JDK 17 и Android SDK.
 
 ```powershell
 cd android
-./gradlew assembleRelease    # APK в app/build/outputs/apk/release/
-./gradlew testDebugUnitTest  # юнит-тесты
+./gradlew assembleDebug
 ```
 
-Подпись релиза берётся из `keystore.properties` рядом с `settings.gradle.kts`; без него сборка остаётся неподписанной.
+Для подписанного релиза настройте `android/keystore.properties` и выполните `./gradlew assembleRelease`.
+
+Для пересборки sing-box extended с патчами используйте `android/tools/build_singbox_extended.ps1`. Понадобятся Go, Git и Android NDK r28.
+
 </details>
 
----
-
-## Структура репозитория
-
-```
-windows/   Десктопный клиент на Python + PyQt6/QML, xray-core, sing-box-extended, zapret
-  assets/           ресурсы Windows и скриншоты для README
-  run_qml.py       запуск приложения
-  xray_fluent/     сервисы приложения и десктопный интерфейс
-    application/   оркестрация сервисов
-    engines/       бэкенды xray-core и sing-box
-    qml_app/       мост Python/QML и представления
-  zapret/          компоненты обхода DPI
-  tests/           тесты Windows-клиента
-android/   Клиент на Jetpack Compose
-  assets/           ресурсы Android и скриншоты для README
-  app/            навигация, view-модели, виджеты
-  ui/             экраны Compose, темы, дизайн-токены
-  core/config     разбор ссылок, сборка конфигов, нормализация AmneziaWG
-  core/engine     управление процессом ядра
-  core/vpn        VpnService, раздельное туннелирование, плитка в шторке
-  core/database   хранилище Room
-```
+Сообщения об ошибках и pull request приветствуются. При создании [issue](https://github.com/krambovic/Lumen/issues) укажите платформу, версию Lumen, режим подключения и приложите логи без конфиденциальных данных.
 
 ---
 
-## Лицензия
+Используются [Xray-core](https://github.com/XTLS/Xray-core), [sing-box extended](https://github.com/shtorm-7/sing-box-extended), [zapret-kvn](https://git.zapret.moe/zapretkvn/zapret-kvn), [Wintun](https://www.wintun.net/), [WinDivert](https://reqrypt.org/windivert.html) и [данные маршрутизации RuNetFreedom](https://github.com/runetfreedom/russia-v2ray-rules-dat).
 
-Lumen распространяется под **GPL-3.0**. Сторонние компоненты сохраняют свои лицензии — см. [LICENSE](LICENSE) и [NOTICE.md](NOTICE.md).
+[GPL-3.0](LICENSE) · [Сторонние компоненты и лицензии](NOTICE.md) · [Релизы](https://github.com/krambovic/Lumen/releases) · [Ошибки и предложения](https://github.com/krambovic/Lumen/issues)

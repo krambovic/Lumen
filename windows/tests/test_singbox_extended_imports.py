@@ -1314,6 +1314,17 @@ def test_sip003_shadowsocks_plugin_is_split_from_options() -> None:
     assert outbound["plugin_opts"] == "tls;host=cdn.example.com"
 
 
+def test_sip003_v2ray_plugin_boolean_mux_is_normalized_for_singbox() -> None:
+    credentials = base64.urlsafe_b64encode(b"aes-256-gcm:secret").decode("ascii").rstrip("=")
+    node = parse_single(
+        f"ss://{credentials}@example.com:8388"
+        "?plugin=v2ray-plugin%3Bmode%3Dwebsocket%3Bmux%3Dtrue%3Bhost%3Dcdn.example.com"
+    )
+    outbound = build_singbox_outbound(node)
+
+    assert outbound["plugin_opts"] == "mode=websocket;mux=1;host=cdn.example.com"
+
+
 def test_shadowsocks_aead_alias_is_canonicalized_for_extended_core() -> None:
     node = Node(
         scheme="shadowsocks",

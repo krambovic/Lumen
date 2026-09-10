@@ -195,6 +195,29 @@ proxies:
     ]
 
 
+def test_clash_shadowsocks_boolean_plugin_mux_is_normalized() -> None:
+    text = """
+proxies:
+  - name: ss-ws
+    type: ss
+    server: ss.example
+    port: 8388
+    cipher: aes-256-gcm
+    password: secret
+    plugin: v2ray-plugin
+    plugin-opts:
+      mode: websocket
+      mux: true
+      host: cdn.example
+"""
+
+    nodes, errors = parse_links_text(text)
+
+    assert errors == []
+    server = nodes[0].outbound["settings"]["servers"][0]
+    assert server["plugin_opts"] == "mode=websocket;mux=1;host=cdn.example"
+
+
 def test_clash_yaml_imports_authenticated_socks5_and_http_proxies() -> None:
     text = """
 proxies:
@@ -715,6 +738,25 @@ def test_sip008_shadowsocks_server_is_imported_with_plugin_options() -> None:
     assert native["password"] == ""
     assert native["plugin"] == "obfs-local"
     assert native["plugin_opts"] == "obfs=http;obfs-host=cdn.example.com"
+
+
+def test_sip008_v2ray_plugin_boolean_mux_is_normalized() -> None:
+    payload = {
+        "remarks": "SIP008 v2ray-plugin",
+        "server": "ss.example",
+        "server_port": 8388,
+        "method": "aes-256-gcm",
+        "password": "secret",
+        "plugin": "v2ray-plugin",
+        "plugin_opts": "mode=websocket;mux=true;host=cdn.example",
+    }
+
+    nodes, errors = parse_links_text(json.dumps(payload))
+
+    assert errors == []
+    assert nodes[0].outbound["singbox"]["plugin_opts"] == (
+        "mode=websocket;mux=1;host=cdn.example"
+    )
 
 
 def test_sip008_subscription_keeps_valid_servers_when_one_entry_is_bad() -> None:

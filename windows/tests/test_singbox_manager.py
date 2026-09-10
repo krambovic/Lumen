@@ -67,6 +67,32 @@ def test_last_mile_shadowsocks_normalization_covers_plugin_uot_and_2022() -> Non
     assert "multiplex" not in normalized
 
 
+def test_last_mile_normalizes_or_discards_invalid_v2ray_plugin_mux() -> None:
+    normalized = manager_module._normalized_runtime_config(
+        {
+            "outbounds": [
+                {
+                    "type": "shadowsocks",
+                    "method": "aes-256-gcm",
+                    "password": "secret",
+                    "plugin": "v2ray-plugin",
+                    "plugin_opts": "mode=websocket;mux=true;host=cdn.example",
+                },
+                {
+                    "type": "shadowsocks",
+                    "method": "aes-256-gcm",
+                    "password": "secret",
+                    "plugin": "v2ray-plugin",
+                    "plugin_opts": "mode=websocket;mux=invalid;host=other.example",
+                },
+            ]
+        }
+    )["outbounds"]
+
+    assert normalized[0]["plugin_opts"] == "mode=websocket;mux=1;host=cdn.example"
+    assert normalized[1]["plugin_opts"] == "mode=websocket;host=other.example"
+
+
 def test_routine_connection_logs_are_suppressed_when_not_normalized() -> None:
     lines = [
         "INFO inbound/tun[tun-in]: inbound connection from 172.18.0.1:12345",

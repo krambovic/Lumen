@@ -253,6 +253,48 @@ def _normalize_obfs_options(value: Any) -> str:
     return ";".join(normalized)
 
 
+def _normalize_v2ray_plugin_options(value: Any) -> str:
+    """Keep SIP003 v2ray-plugin mux compatible with sing-box.
+
+    The standalone plugin commonly accepts boolean-looking values, but
+    sing-box's built-in implementation parses ``mux`` with ``strconv.Atoi``.
+    Normalize the common boolean spellings and discard an otherwise invalid
+    mux option so one imported server cannot invalidate the whole runtime.
+    """
+    normalized: list[str] = []
+    for option in _split_sip003_options(value):
+        escaped = False
+        separator = -1
+        for index, char in enumerate(option):
+            if char == "=" and not escaped:
+                separator = index
+                break
+            if char == "\\" and not escaped:
+                escaped = True
+            else:
+                escaped = False
+
+        key = option if separator < 0 else option[:separator]
+        if key.strip().lower() != "mux":
+            normalized.append(option)
+            continue
+
+        raw_value = "" if separator < 0 else option[separator + 1 :].strip()
+        lowered = raw_value.lower()
+        if lowered in {"", "true", "yes", "on"}:
+            normalized.append(f"{key}=1")
+        elif lowered in {"false", "no", "off"}:
+            normalized.append(f"{key}=0")
+        else:
+            try:
+                normalized.append(f"{key}={int(raw_value)}")
+            except ValueError:
+                # Absence means the sing-box default (mux enabled with one
+                # stream) and is safer than failing every outbound at startup.
+                continue
+    return ";".join(normalized)
+
+
 def _shadowsocks_2022_key_sizes(password: str) -> list[int]:
     sizes: list[int] = []
     for segment in password.split(":"):
@@ -304,6 +346,8 @@ def _normalize_shadowsocks_outbound(value: dict[str, Any]) -> None:
         options = str(value.get("plugin_opts") or "").strip()
         if plugin == "obfs-local" and options:
             options = _normalize_obfs_options(options)
+        elif plugin == "v2ray-plugin" and options:
+            options = _normalize_v2ray_plugin_options(options)
         if options:
             value["plugin_opts"] = options
         else:

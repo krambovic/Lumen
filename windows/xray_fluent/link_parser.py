@@ -430,6 +430,38 @@ def _normalize_shadowsocks_plugin_name(value: Any) -> str:
     return _SHADOWSOCKS_PLUGIN_ALIASES.get(plugin, plugin)
 
 
+def _split_sip003_options(value: Any) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for char in str(value or ""):
+        if char == ";" and not escaped:
+            if current:
+                parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+        if char == "\\" and not escaped:
+            escaped = True
+        else:
+            escaped = False
+    if current:
+        parts.append("".join(current))
+    return parts
+
+
+def _split_sip003_option(value: str) -> tuple[str, str, str]:
+    escaped = False
+    for index, char in enumerate(value):
+        if char == "=" and not escaped:
+            return value[:index], "=", value[index + 1 :]
+        if char == "\\" and not escaped:
+            escaped = True
+        else:
+            escaped = False
+    return value, "", ""
+
+
 def _normalize_obfs_plugin_options(value: Any) -> str:
     """Translate Clash simple-obfs option names to sing-box SIP003 names."""
     text = str(value or "").strip()
@@ -463,6 +495,32 @@ def _normalize_obfs_plugin_options(value: Any) -> str:
         option_value = "=".join(key_and_value[1:])
         mapped = {"mode": "obfs", "host": "obfs-host"}.get(key.strip().lower(), key)
         normalized.append(f"{mapped}={option_value}" if separator else mapped)
+    return ";".join(normalized)
+
+
+def _normalize_v2ray_plugin_options(value: Any) -> str:
+    """Normalize v2ray-plugin mux values for sing-box's integer parser."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    normalized: list[str] = []
+    for item in _split_sip003_options(text):
+        key, separator, option_value = _split_sip003_option(item)
+        if key.strip().lower() != "mux":
+            normalized.append(item)
+            continue
+
+        lowered = option_value.strip().lower()
+        if not separator or lowered in {"", "true", "yes", "on"}:
+            normalized.append(f"{key}=1")
+        elif lowered in {"false", "no", "off"}:
+            normalized.append(f"{key}=0")
+        else:
+            try:
+                normalized.append(f"{key}={int(option_value.strip())}")
+            except ValueError:
+                continue
     return ";".join(normalized)
 
 
@@ -1395,6 +1453,8 @@ def _parse_shadowsocks(link: str) -> Node:
         plugin_opts = str(query.get("plugin_opts") or query.get("plugin-opts") or plugin_opts)
         if plugin_name == "obfs-local":
             plugin_opts = _normalize_obfs_plugin_options(plugin_opts)
+        elif plugin_name == "v2ray-plugin":
+            plugin_opts = _normalize_v2ray_plugin_options(plugin_opts)
         if plugin_opts:
             outbound_server["plugin_opts"] = plugin_opts
 
@@ -2207,8 +2267,10 @@ def _clash_to_xray_outbound(payload: dict[str, Any], kind: str) -> dict[str, Any
                 plugin_options,
                 obfs=plugin_name == "obfs-local",
             )
-        elif plugin_name == "obfs-local":
+        if plugin_name == "obfs-local":
             plugin_options = _normalize_obfs_plugin_options(plugin_options)
+        elif plugin_name == "v2ray-plugin":
+            plugin_options = _normalize_v2ray_plugin_options(plugin_options)
         server_item = {
             "address": server,
             "port": port,
@@ -2517,6 +2579,8 @@ def _parse_json_outbound_payload(payload: dict[str, Any]) -> Node:
             plugin_opts = str(payload.get("plugin_opts") or "")
             if plugin == "obfs-local":
                 plugin_opts = _normalize_obfs_plugin_options(plugin_opts)
+            elif plugin == "v2ray-plugin":
+                plugin_opts = _normalize_v2ray_plugin_options(plugin_opts)
             if plugin_opts:
                 native["plugin_opts"] = plugin_opts
         outbound = _native_singbox_outbound(native)
