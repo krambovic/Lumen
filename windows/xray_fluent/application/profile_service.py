@@ -267,6 +267,7 @@ def sync_singbox_routing_from_config(
     routing = deepcopy(current)
     routing.mode = "rule"
     routing.tun_default_outbound = requested
+    routing.tun_default_outbound_user_selected = True
     controller.update_routing(routing, restart_runtime=False)
     return True
 

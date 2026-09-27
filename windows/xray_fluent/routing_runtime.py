@@ -140,6 +140,18 @@ def effective_service_action(routing: RoutingSettings, service_id: str) -> str:
     return _routing_final_outbound(routing)
 
 
+def service_route_selection(routing: RoutingSettings, service_id: str) -> str:
+    """Return the user-selected service override, not its resolved fallback.
+
+    The UI must distinguish an explicit service route from traffic that simply
+    inherits the selected preset/default route. Otherwise changing the
+    unmatched-traffic fallback makes every inherited service look as though an
+    individual rule was changed.
+    """
+    explicit = str(routing.service_routes.get(service_id) or "").strip().lower()
+    return explicit if explicit in {"proxy", "direct"} else "default"
+
+
 def split_xray_domain_ip(items: list[str]) -> tuple[list[str], list[str]]:
     domains: list[str] = []
     ips: list[str] = []
@@ -233,12 +245,19 @@ def collect_service_route_domains(routing: RoutingSettings) -> tuple[list[str], 
     service_direct: list[str] = []
     service_proxy: list[str] = []
     service_block: list[str] = []
-    for svc_id, raw_action in routing.service_routes.items():
+    blocked_preset = str(routing.preset_id or "").strip().lower() in {
+        ROUTING_PRESET_BLOCKED,
+        ROUTING_PRESET_BLOCKED_CN,
+    }
+    for preset in SERVICE_PRESETS_BY_ID.values():
+        # A missing per-service override inherits the built-in blocked preset's
+        # catalog action. In every other preset it remains unmatched and uses
+        # route.final instead of becoming a synthetic explicit service rule.
+        raw_action = routing.service_routes.get(preset.id)
         action = str(raw_action or "").strip().lower()
+        if raw_action is None and blocked_preset:
+            action = preset.default_action
         if action not in {"direct", "proxy"}:
-            continue
-        preset = SERVICE_PRESETS_BY_ID.get(svc_id)
-        if not preset:
             continue
         if action == "direct":
             service_direct.extend(preset.domains)

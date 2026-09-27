@@ -175,7 +175,10 @@ class RoutingSettings:
     service_routes: dict[str, str] = field(default_factory=dict)  # {"youtube": "proxy", "steam": "direct", ...}
     # Fallback for unmatched TUN traffic.  This is user-configurable for custom
     # routing and must be preserved when a preset is saved and restored.
-    tun_default_outbound: str = "proxy"  # "proxy" | "direct"
+    tun_default_outbound: str = "direct"  # "proxy" | "direct"
+    # Distinguish a deliberate fallback override from the old blocked-preset
+    # default that accidentally sent every unmatched destination through proxy.
+    tun_default_outbound_user_selected: bool = False
 
     def __post_init__(self) -> None:
         bootstrap_defaults = ["1.1.1.1", "8.8.8.8"] if self.dns_bootstrap_server == "1.1.1.1" else [self.dns_bootstrap_server]
@@ -198,7 +201,8 @@ class RoutingSettings:
         # persisted UDP choice here silently overrode the user's DNS setting.
         self.dns_hosts = _normalize_dns_hosts(self.dns_hosts)
         default_outbound = str(self.tun_default_outbound or "").strip().lower()
-        self.tun_default_outbound = default_outbound if default_outbound in {"proxy", "direct"} else "proxy"
+        self.tun_default_outbound = default_outbound if default_outbound in {"proxy", "direct"} else "direct"
+        self.tun_default_outbound_user_selected = bool(self.tun_default_outbound_user_selected)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -229,6 +233,9 @@ class RoutingSettings:
             "process_preset_routes": dict(self.process_preset_routes),
             "service_routes": dict(self.service_routes),
             "tun_default_outbound": self.tun_default_outbound,
+            "tun_default_outbound_user_selected_v2": self.tun_default_outbound_user_selected,
+            # Retain the old marker for downgrade compatibility. Older builds
+            # treated every persisted value as an explicit user selection.
             "tun_default_outbound_explicit": True,
         }
 
@@ -278,15 +285,26 @@ class RoutingSettings:
             # the marker so an intentional UDP choice survives later loads.
             bootstrap_type = "https"
         raw_default_outbound = str(data.get("tun_default_outbound") or "").strip().lower()
-        if data.get("tun_default_outbound_explicit") is not True or raw_default_outbound not in {"proxy", "direct"}:
-            # Older builds persisted this value while ignoring it at runtime.
-            # Preserve their effective preset behavior until the user chooses a
-            # fallback in the restored UI or saves a new custom preset.
+        valid_default_outbound = raw_default_outbound in {"proxy", "direct"}
+        default_outbound_user_selected = data.get("tun_default_outbound_user_selected_v2") is True
+        if default_outbound_user_selected and valid_default_outbound:
+            pass
+        elif preset_id in {"blocked", "blocked_cn"}:
+            # Previous builds serialized the "explicit" marker even when users
+            # had never changed the fallback. The blocked-only preset promises
+            # direct routing for unmatched traffic, so migrate its old proxy
+            # fallback unless a new-version user-selection marker proves intent.
+            raw_default_outbound = "direct"
+            default_outbound_user_selected = False
+        elif data.get("tun_default_outbound_explicit") is True and valid_default_outbound:
+            # For other legacy/custom modes retain a valid saved override; the
+            # old marker is ambiguous only for the built-in blocked presets.
+            default_outbound_user_selected = False
+        else:
             raw_default_outbound = (
-                "direct"
-                if mode.strip().lower() == ROUTING_DIRECT or preset_id in {"blocked", "blocked_cn"}
-                else "proxy"
+                "direct" if mode.strip().lower() == ROUTING_DIRECT else "proxy"
             )
+            default_outbound_user_selected = False
         return RoutingSettings(
             mode=mode,
             preset_id=preset_id,
@@ -318,6 +336,7 @@ class RoutingSettings:
             process_preset_routes=dict(data.get("process_preset_routes") or {}),
             service_routes=dict(data.get("service_routes") or {}),
             tun_default_outbound=raw_default_outbound,
+            tun_default_outbound_user_selected=default_outbound_user_selected,
         )
 
 

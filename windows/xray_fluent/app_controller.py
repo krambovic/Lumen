@@ -514,7 +514,7 @@ class AppController(QObject):
         if repaired_routing is not self.state.routing:
             self.state.routing = repaired_routing
             migrated = True
-            self._log("[routing] restored missing service routes for the saved blocked preset")
+            self._log("[routing] migrated the unmatched-traffic fallback for the saved blocked preset")
         migrated = apply_masque_direct_update_once(self.state) or migrated
         migrated = apply_dns_defaults_update_once(self.state) or migrated
         if not is_process_elevated() and self.state.settings.tun_mode:

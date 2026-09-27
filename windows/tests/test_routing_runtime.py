@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from xray_fluent.constants import SUBSCRIPTION_FETCHER_EXE_NAME
 from xray_fluent.models import RoutingSettings
+from xray_fluent.routing_presets import repair_builtin_preset_service_routes
 from xray_fluent.routing_runtime import (
     apply_singbox_gui_routing,
     build_singbox_gui_dns_rules,
     build_singbox_gui_route_rules,
     build_xray_gui_routing_rules,
     routing_with_ip_preference,
+    service_route_selection,
 )
 
 
@@ -259,6 +261,111 @@ def test_routing_settings_restore_tun_default_and_migrate_legacy_blocked_state()
     assert legacy_blocked.tun_default_outbound == "direct"
     assert legacy_custom.tun_default_outbound == "proxy"
     assert legacy_blocked_with_stale_proxy.tun_default_outbound == "direct"
+
+
+def test_blocked_preset_migrates_old_serialized_proxy_fallback_unless_user_overrode_it() -> None:
+    old_default = RoutingSettings.from_dict(
+        {
+            "mode": "rule",
+            "preset_id": "blocked",
+            "tun_default_outbound": "proxy",
+            # 1.9.16 wrote this as true on every save, including untouched defaults.
+            "tun_default_outbound_explicit": True,
+        }
+    )
+    explicit_override = RoutingSettings.from_dict(
+        {
+            "mode": "rule",
+            "preset_id": "blocked",
+            "tun_default_outbound": "proxy",
+            "tun_default_outbound_user_selected_v2": True,
+        }
+    )
+
+    assert old_default.tun_default_outbound == "direct"
+    assert old_default.tun_default_outbound_user_selected is False
+    assert explicit_override.tun_default_outbound == "proxy"
+    assert explicit_override.to_dict()["tun_default_outbound_user_selected_v2"] is True
+
+
+def test_default_blocked_tun_routes_unmatched_traffic_direct() -> None:
+    routing = repair_builtin_preset_service_routes(RoutingSettings())
+    payload = {"route": {"rules": [], "final": "proxy"}}
+
+    apply_singbox_gui_routing(payload, routing)
+
+    assert routing.preset_id == "blocked"
+    assert routing.tun_default_outbound == "direct"
+    assert payload["route"]["final"] == "direct"
+
+
+def test_unmatched_tun_fallback_does_not_turn_inherited_services_into_overrides() -> None:
+    routing = RoutingSettings(
+        preset_id="custom",
+        service_routes={"youtube": "proxy"},
+        tun_default_outbound="direct",
+    )
+
+    assert service_route_selection(routing, "youtube") == "proxy"
+    assert service_route_selection(routing, "spotify") == "default"
+    assert service_route_selection(
+        RoutingSettings(
+            preset_id="custom",
+            service_routes={"youtube": "proxy"},
+            tun_default_outbound="proxy",
+        ),
+        "spotify",
+    ) == "default"
+
+    direct_rules, _ = build_singbox_gui_route_rules(routing)
+    proxy_fallback = RoutingSettings(
+        preset_id="custom",
+        service_routes={"youtube": "proxy"},
+        tun_default_outbound="proxy",
+    )
+    proxy_rules, _ = build_singbox_gui_route_rules(proxy_fallback)
+    youtube_rule = lambda rules: next(
+        rule
+        for rule in rules
+        if "youtube.com" in [str(item) for item in rule.get("domain_suffix") or []]
+    )
+    assert youtube_rule(direct_rules)["outbound"] == "proxy"
+    assert youtube_rule(proxy_rules)["outbound"] == "proxy"
+
+
+def test_changing_tun_fallback_changes_only_route_final_not_matching_rules() -> None:
+    routes_by_fallback = []
+    finals = []
+    for fallback in ("direct", "proxy"):
+        routing = RoutingSettings(
+            preset_id="blocked",
+            service_routes={},
+            tun_default_outbound=fallback,
+            tun_default_outbound_user_selected=True,
+        )
+        payload = {"route": {"rules": []}}
+        apply_singbox_gui_routing(payload, routing)
+        routes_by_fallback.append(payload["route"]["rules"])
+        finals.append(payload["route"]["final"])
+
+    assert finals == ["direct", "proxy"]
+    assert routes_by_fallback[0] == routes_by_fallback[1]
+
+
+def test_blocked_preset_inherited_service_rules_survive_removed_overrides() -> None:
+    routing = RoutingSettings(
+        preset_id="blocked",
+        service_routes={},
+        tun_default_outbound="direct",
+    )
+
+    rules, _ = build_singbox_gui_route_rules(routing)
+
+    assert any(
+        rule.get("outbound") == "proxy"
+        and "youtube.com" in [str(item) for item in rule.get("domain_suffix") or []]
+        for rule in rules
+    )
 
 
 def test_subscription_fetcher_is_always_routed_direct_before_user_process_rules() -> None:

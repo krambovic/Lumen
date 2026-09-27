@@ -4886,7 +4886,7 @@ class AppBridge(QObject):
 
     @pyqtProperty('QVariantList', notify=routingChanged)
     def serviceList(self):
-        from ...routing_runtime import effective_service_action
+        from ...routing_runtime import service_route_selection
         from ...service_presets import SERVICE_PRESETS
         routing = self.controller.state.routing
         return [
@@ -4895,9 +4895,9 @@ class AppBridge(QObject):
                 "name": s.name,
                 "description": s.description,
                 "defaultAction": s.default_action,
-                # defaultAction is catalog metadata.  The selected value must
-                # instead reflect the active preset's effective fallback.
-                "action": effective_service_action(routing, s.id),
+                # Keep inherited traffic distinct from an explicit per-service
+                # rule. The TUN fallback is not a route override for this row.
+                "action": service_route_selection(routing, s.id),
             }
             for s in SERVICE_PRESETS
         ]
@@ -4970,6 +4970,7 @@ class AppBridge(QObject):
 
         def apply(r: RoutingSettings) -> None:
             r.tun_default_outbound = value
+            r.tun_default_outbound_user_selected = True
             r.mode = "rule"
             # Keep preset_id: regional domain/rule-set membership is derived
             # from it, while this value only changes the unmatched fallback.

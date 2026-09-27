@@ -1,15 +1,9 @@
 ## What's Changed
 
-- feat: import Happ and INCY encrypted subscriptions without Node.js, with expanded crypt format and key support
-- feat: preserve and edit imported sing-box configuration fields instead of replacing them with GUI defaults
-- feat: import MagVPN subscriptions with both standard server links and Happ-compatible automatic groups
-- fix: normalize Shadowsocks plugin settings and mux values across links, subscription formats and runtime configs
-- fix: improve subscription refresh reconciliation, retain selected servers and avoid partial updates on provider errors
-- fix: restore missing Zapret strategy dependencies and validate preset assets before launch
-- fix: improve sing-box core packaging, runtime migration, routing and configuration compatibility
-- fix: preserve explicitly selected Xray DNS transports and keep direct-domain rules on bootstrap resolvers
-- fix: make subscription links easier to select and copy in the desktop UI
-- docs: refresh English and Russian project guides and release links
-- test: add regression coverage for encrypted imports, subscriptions, runtime configs and Zapret assets
+- fix: keep the TUN default route limited to unmatched traffic and show inherited service routes as “Default” instead of fake per-service overrides
+- fix: make the blocked-only TUN preset send unmatched traffic directly, while retaining explicit user fallback choices
+- fix: keep the built-in blocked-preset service routes active when a service is reset to “Default”
+- fix: replace the 32-bit Cygwin runtime with the matching x64 DLL required by winws2, fixing Zapret startup for all strategies
+- test: validate matching x64 architectures for winws2 and its runtime DLLs and cover the TUN fallback migration
 
-Full Changelog: https://github.com/krambovic/Lumen/compare/v1.9.15...v1.9.16
+Full Changelog: https://github.com/krambovic/Lumen/compare/v1.9.16...v1.9.17

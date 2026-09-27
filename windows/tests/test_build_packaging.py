@@ -112,6 +112,23 @@ def test_only_current_brand_assets_are_tracked() -> None:
     assert not (build_qml.ASSETS_DIR / "LumenKVN.png").exists()
 
 
+def test_zapret2_runtime_binaries_have_matching_x64_architecture() -> None:
+    exe_dir = build_qml.ROOT / "zapret" / "exe"
+
+    def pe_machine(path: Path) -> int:
+        image = path.read_bytes()
+        assert image[:2] == b"MZ"
+        pe_offset = int.from_bytes(image[0x3C:0x40], "little")
+        assert image[pe_offset : pe_offset + 4] == b"PE\0\0"
+        return int.from_bytes(image[pe_offset + 4 : pe_offset + 6], "little")
+
+    winws2 = (exe_dir / "winws2.exe").read_bytes()
+    assert b"cygwin1.dll" in winws2.lower()
+    assert pe_machine(exe_dir / "winws2.exe") == 0x8664
+    assert pe_machine(exe_dir / "cygwin1.dll") == 0x8664
+    assert pe_machine(exe_dir / "WinDivert.dll") == 0x8664
+
+
 def test_packaged_launcher_runs_without_forced_elevation() -> None:
     spec = build_qml.SPEC_FILE.read_text(encoding="utf-8")
     manifest = (build_qml.ROOT / "app.manifest").read_text(encoding="utf-8")

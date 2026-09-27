@@ -75,7 +75,7 @@ def test_quick_preset_keeps_application_routing(preset_id: str) -> None:
     assert routing.process_preset_routes == process_preset_routes
 
 
-def test_saved_blocked_preset_repairs_missing_service_defaults_without_overwriting_user_choice() -> None:
+def test_saved_blocked_preset_keeps_service_inheritance_and_user_choices() -> None:
     routing = RoutingSettings(
         preset_id="blocked",
         mode="rule",
@@ -85,7 +85,7 @@ def test_saved_blocked_preset_repairs_missing_service_defaults_without_overwriti
     repaired = repair_builtin_preset_service_routes(routing)
 
     assert repaired.service_routes["youtube"] == "direct"
-    assert repaired.service_routes["discord"] == "proxy"
+    assert "discord" not in repaired.service_routes
 
 
 def test_except_ru_uses_full_xray_geodata_and_custom_rule_wins() -> None:

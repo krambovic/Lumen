@@ -237,10 +237,15 @@ def _verify_packaged_launcher(app_dir: Path = APP_DIR) -> None:
     executable = app_dir / f"{APP_NAME}.exe"
     output = BUILD_DIR / "startup-probe.txt"
     output.unlink(missing_ok=True)
+    probe_appdata = BUILD_DIR / "probe-localappdata"
+    probe_appdata.mkdir(parents=True, exist_ok=True)
+    probe_env = os.environ.copy()
+    probe_env["LOCALAPPDATA"] = str(probe_appdata)
     try:
         result = subprocess.run(
             [str(executable), "--startup-probe-file", str(output)],
             cwd=str(app_dir),
+            env=probe_env,
             check=False,
             timeout=45,
         )

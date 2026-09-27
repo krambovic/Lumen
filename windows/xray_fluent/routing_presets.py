@@ -142,27 +142,23 @@ def proxy_default_services() -> dict[str, str]:
 
 
 def repair_builtin_preset_service_routes(routing: RoutingSettings) -> RoutingSettings:
-    """Fill service defaults omitted by old/default persisted blocked presets.
+    """Migrate the blocked preset's unmatched-traffic fallback only.
 
-    Explicit entries win, so a service that the user deliberately changed to
-    direct remains direct across restarts.
+    Built-in service actions are resolved from preset metadata at runtime;
+    writing them into ``service_routes`` would turn inherited actions into fake
+    per-service overrides and make the UI imply that every row was customized.
     """
     if str(routing.preset_id or "").strip().lower() not in {
         ROUTING_PRESET_BLOCKED,
         ROUTING_PRESET_BLOCKED_CN,
     }:
         return routing
-    repaired = proxy_default_services()
-    repaired.update(
-        {
-            str(service_id): str(action)
-            for service_id, action in routing.service_routes.items()
-            if str(action).strip().lower() in {"proxy", "direct"}
-        }
-    )
-    if repaired == routing.service_routes:
+    default_outbound = str(routing.tun_default_outbound or "").strip().lower()
+    if not routing.tun_default_outbound_user_selected:
+        default_outbound = "direct"
+    if default_outbound == routing.tun_default_outbound:
         return routing
-    return replace(routing, service_routes=repaired)
+    return replace(routing, tun_default_outbound=default_outbound)
 
 
 def build_routing_preset(current: RoutingSettings, preset_id: str) -> RoutingSettings:
@@ -179,6 +175,7 @@ def build_routing_preset(current: RoutingSettings, preset_id: str) -> RoutingSet
             block_domains=block_domains,
             service_routes={},
             tun_default_outbound="proxy",
+            tun_default_outbound_user_selected=False,
         )
 
     if preset_id in {ROUTING_PRESET_BLOCKED, ROUTING_PRESET_BLOCKED_CN}:
@@ -191,6 +188,7 @@ def build_routing_preset(current: RoutingSettings, preset_id: str) -> RoutingSet
             block_domains=block_domains,
             service_routes=proxy_default_services(),
             tun_default_outbound="direct",
+            tun_default_outbound_user_selected=False,
         )
 
     if preset_id in {ROUTING_PRESET_EXCEPT_RU, ROUTING_PRESET_EXCEPT_CN, ROUTING_PRESET_EXCEPT_IR}:
@@ -203,6 +201,7 @@ def build_routing_preset(current: RoutingSettings, preset_id: str) -> RoutingSet
             block_domains=block_domains,
             service_routes={},
             tun_default_outbound="proxy",
+            tun_default_outbound_user_selected=False,
         )
 
     return current
