@@ -1175,8 +1175,20 @@ class AppController(QObject):
     def reset_active_xray_config_to_template(self) -> tuple[bool, Path | None, str]:
         return reset_active_config_to_template_operation(self, "xray")
 
-    def save_singbox_config_text(self, text: str, path: str | Path | None = None) -> Path:
-        return save_config_text_operation(self, "singbox", text, path)
+    def save_singbox_config_text(
+        self,
+        text: str,
+        path: str | Path | None = None,
+        *,
+        previous_text: str | None = None,
+    ) -> Path:
+        return save_config_text_operation(
+            self,
+            "singbox",
+            text,
+            path,
+            previous_text=previous_text,
+        )
 
     def save_xray_config_text(self, text: str, path: str | Path | None = None) -> Path:
         return save_config_text_operation(self, "xray", text, path)
@@ -1203,8 +1215,12 @@ class AppController(QObject):
             )
         return True, message
 
-    def apply_singbox_config_text(self, text: str) -> tuple[bool, Path | None, str]:
-        return apply_singbox_config_text_operation(self, text)
+    def apply_singbox_config_text(
+        self,
+        text: str,
+        previous_text: str | None = None,
+    ) -> tuple[bool, Path | None, str]:
+        return apply_singbox_config_text_operation(self, text, previous_text)
 
     def apply_xray_config_text(self, text: str) -> tuple[bool, Path | None, str]:
         return apply_xray_config_text_operation(self, text)
@@ -2220,6 +2236,13 @@ class AppController(QObject):
             return None
         if routing.mode not in ROUTING_MODES:
             routing.mode = "rule"
+        # Keep the legacy default resolver secure after an in-session edit too.
+        # Users can still select UDP for a custom bootstrap address if needed.
+        if (
+            str(routing.dns_bootstrap_server or "").strip().lower() == "1.1.1.1"
+            and str(routing.dns_bootstrap_type or "").strip().lower() == "udp"
+        ):
+            routing.dns_bootstrap_type = "https"
         self.state.routing = routing
         self.routing_changed.emit(self.state.routing)
         self.schedule_save()

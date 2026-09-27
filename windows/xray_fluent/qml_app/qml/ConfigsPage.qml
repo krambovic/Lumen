@@ -177,13 +177,13 @@ Item {
         _guard(function() { _ingest(App.resetConfig(page.core)) })
     }
     function doSave() {
-        _ingest(App.saveConfig(page.core, editor.text))
+        _ingest(App.saveConfig(page.core, editor.text, page.savedText))
     }
     function doValidate() {
         _ingestStatus(App.validateConfig(page.core, editor.text))
     }
     function doApply() {
-        var st = App.applyConfig(page.core, editor.text)
+        var st = App.applyConfig(page.core, editor.text, page.savedText)
         _ingestStatus(st)
         if (st && st.statusLevel !== "error")
             page.savedText = editor.text

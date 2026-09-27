@@ -1,10 +1,19 @@
 package com.lumen.app.subscription
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SubscriptionClientTest {
+    @Test
+    fun encryptedSubscriptionSourcesArePreservedAcrossRefreshes() {
+        assertTrue(SubscriptionClient.isEncryptedSource("incy://crypt1/payload"))
+        assertTrue(SubscriptionClient.isEncryptedSource("happ://crypt5/payload"))
+        assertFalse(SubscriptionClient.isEncryptedSource("https://example.com/sub"))
+    }
+
     @Test
     fun httpsNewUrlIsAccepted() {
         assertEquals(

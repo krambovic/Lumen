@@ -1670,7 +1670,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             ?.takeIf { it.kind == ImportKind.SUBSCRIPTION }?.normalized
                             ?: error("Invalid subscription URL")
                         val sub = SubscriptionEntity(
-                            name = url.substringAfter("://").substringBefore('/').take(80),
+                            name = when {
+                                url.startsWith("incy://", ignoreCase = true) -> "Incy"
+                                url.startsWith("happ://", ignoreCase = true) -> "Happ"
+                                else -> url.substringAfter("://").substringBefore('/').take(80)
+                            },
                             url = url
                         )
                         subscriptionDao.insertSubscription(sub)
@@ -2039,12 +2043,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         return@withTransaction
                     }
                     val result = reconcileSubscriptionNodes(previous, valid.map { it.toEntity(sub.id) })
-                    val replacementUrl = (payload.effectiveUrl
-                        ?: SubscriptionClient.replaceDomain(latest.url, payload.premiumFeatures["new-domain"]))
-                        ?.takeIf { candidate ->
-                            subscriptionSettings.subscriptionAllowHttp ||
-                                !latest.url.startsWith("https://", true) || candidate.startsWith("https://", true)
-                        }
+                    val replacementUrl = if (SubscriptionClient.isEncryptedSource(latest.url)) {
+                        null
+                    } else {
+                        (payload.effectiveUrl
+                            ?: SubscriptionClient.replaceDomain(latest.url, payload.premiumFeatures["new-domain"]))
+                            ?.takeIf { candidate ->
+                                subscriptionSettings.subscriptionAllowHttp ||
+                                    !latest.url.startsWith("https://", true) || candidate.startsWith("https://", true)
+                            }
+                    }
                     nodeDao.deleteNodesBySubscription(sub.id)
                     nodeDao.insertNodes(result.nodes)
                     subscriptionDao.updateSubscription(

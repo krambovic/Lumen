@@ -8,7 +8,6 @@ import java.security.interfaces.RSAPrivateKey
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
-import java.util.regex.Pattern
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -21,7 +20,6 @@ object HappCrypt {
 
     const val HAPP_SCHEME = "happ://"
 
-    private val LEGACY_DIGIT_PATTERN = Pattern.compile("^\\d+")
     private val REGEX_TRAILING_EQUALS = Regex("=+$")
     private val REGEX_LEADING_EQUALS = Regex("^=+")
 
@@ -193,12 +191,23 @@ object HappCrypt {
         return String(out.toByteArray(), Charsets.UTF_8)
     }
 
-    private fun finishCrypt5(nonce: ByteArray, urlB64: String, encStr: String, keyB64: String): String {
+    private fun finishCrypt5(
+        nonce: ByteArray,
+        urlB64: String,
+        encStr: String,
+        keyB64: String,
+        salt: ByteArray? = null
+    ): String {
         val rsaPlainBytes = rsaDecrypt(keyB64, b64decode(encStr))
         val rsaPlain = String(rsaPlainBytes, Charsets.ISO_8859_1)
-        val chachaKey = b64decode(swapPairs(rsaPlain))
+        var chachaKey = b64decode(swapPairs(rsaPlain))
         if (chachaKey.size != 32) {
             throw HappDecryptError("crypt5: invalid ChaCha20 key length (${chachaKey.size})")
+        }
+        if (salt != null && salt.isNotEmpty()) {
+            chachaKey = chachaKey.mapIndexed { index, value ->
+                (value.toInt() xor salt[index % salt.size].toInt()).toByte()
+            }.toByteArray()
         }
         val intermediateBytes = chachaDecrypt(chachaKey, nonce, b64decode(urlB64))
         val intermediateStr = String(intermediateBytes, Charsets.UTF_8)
@@ -213,23 +222,34 @@ object HappCrypt {
         val body = shuffled.substring(4, shuffled.length - 4)
         if (body.length < 13) return null
 
-        val tail = body.substring(12)
-        val matcher = LEGACY_DIGIT_PATTERN.matcher(tail)
-        if (!matcher.find()) return null
-
-        val segmentLenStr = matcher.group()
-        val segmentLen = segmentLenStr.toIntOrNull() ?: return null
-        val packed = tail.substring(segmentLenStr.length)
-        if (packed.length < 1 + segmentLen) return null
-
-        val urlB64 = packed.substring(1, 1 + segmentLen)
-        val encStr = packed.substring(1 + segmentLen)
-        return try {
-            val nonce = body.substring(0, 12).toByteArray(Charsets.US_ASCII)
-            finishCrypt5(nonce, urlB64, encStr, keyB64)
-        } catch (e: Exception) {
-            null
+        val nonce = body.substring(0, 12).toByteArray(Charsets.US_ASCII)
+        val preferSalted = body.length > 22 && !body[12].isDigit()
+        for (salted in listOf(preferSalted, !preferSalted)) {
+            try {
+                val salt: ByteArray?
+                var position: Int
+                if (salted) {
+                    if (body.length < 22) continue
+                    salt = body.substring(14, 22).toByteArray(Charsets.US_ASCII)
+                    position = 22
+                } else {
+                    salt = null
+                    position = 12
+                }
+                val start = position
+                while (position < body.length && body[position].isDigit()) position++
+                if (position == start) continue
+                val segmentLen = body.substring(start, position).toIntOrNull() ?: continue
+                val packed = body.substring(position)
+                if (packed.length < 1 + segmentLen) continue
+                val urlB64 = packed.substring(1, 1 + segmentLen)
+                val encStr = packed.substring(1 + segmentLen)
+                return finishCrypt5(nonce, urlB64, encStr, keyB64, salt)
+            } catch (e: Exception) {
+                continue
+            }
         }
+        return null
     }
 
     private fun c51BlockPairSwap(region: String, length: Int): String {

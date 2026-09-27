@@ -10,7 +10,7 @@ MAX_DEEP_LINK_LENGTH = 32 * 1024
 _TARGET_QUERY_KEYS = ("url", "subscription", "link", "config", "data")
 _NAME_QUERY_KEYS = ("name", "title")
 _ACTIONS = {"add", "import", "subscribe", "subscription", "install-config"}
-_TARGET_SCHEMES = {"http", "https", "happ"}
+_TARGET_SCHEMES = {"http", "https", "happ", "incy"}
 
 
 class DeepLinkError(ValueError):
@@ -41,7 +41,7 @@ def _validate_subscription_url(value: str) -> str:
         raise DeepLinkError("subscription URL contains control characters")
     parsed = urlsplit(target)
     if parsed.scheme.lower() not in _TARGET_SCHEMES:
-        raise DeepLinkError("only http, https and happ subscription links are allowed")
+        raise DeepLinkError("only http, https, happ and incy subscription links are allowed")
     if not parsed.netloc:
         raise DeepLinkError("subscription URL has no host")
     return target

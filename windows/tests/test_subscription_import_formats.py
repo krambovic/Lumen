@@ -15,6 +15,64 @@ from xray_fluent.link_parser import (
 from xray_fluent.subscription_fetcher import _read_http_response
 
 
+_MAGVPN_AUTO_FIXTURE = {
+    "remarks": "AUTO VLESS",
+    "routing": {"balancers": [{"tag": "pool", "selector": ["member-"]}]},
+    "outbounds": [{
+        "tag": "member-1", "protocol": "vless",
+        "settings": {"vnext": [{"address": "node.example", "port": 443,
+                                "users": [{"id": "00000000-0000-0000-0000-000000000001"}]}]},
+    }],
+}
+
+
+def test_magvpn_variants_keep_physical_nodes_and_auto_pools(monkeypatch) -> None:
+    calls = []
+    physical = "vless://00000000-0000-0000-0000-000000000001@node.example:443?encryption=none#node"
+
+    def fake_fetch(url, profile, headers, **_kwargs):
+        calls.append((profile, dict(headers)))
+        body = physical if profile == "Lumen" else json.dumps([_MAGVPN_AUTO_FIXTURE])
+        return body, {"clientProfile": profile}
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
+    text, _, errors = node_service.fetch_subscription_payload(
+        "https://www.magvpn.ru/tsub/29332", cache_etag='"stale"',
+    )
+    nodes, parse_errors = parse_links_text(text)
+
+    assert not errors and not parse_errors
+    assert [node.scheme for node in nodes] == ["vless", "auto"]
+    assert [name for name, _ in calls] == ["Lumen", "Happ Windows"]
+    assert all("If-None-Match" not in headers for _, headers in calls)
+
+
+def test_magvpn_secondary_failure_does_not_reconcile_partial_profile(monkeypatch) -> None:
+    physical = "vless://00000000-0000-0000-0000-000000000001@node.example:443?encryption=none#node"
+
+    def fake_fetch(url, profile, headers, **_kwargs):
+        if profile == "Happ Windows":
+            raise OSError("HTTP 500")
+        return physical, {"clientProfile": profile}
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
+    text, _, errors = node_service.fetch_subscription_payload("https://www.magvpn.ru/tsub/29332")
+    assert text == ""
+    assert errors and "MagVPN AUTO" in errors[0]
+
+
+def test_other_providers_do_not_receive_a_second_request(monkeypatch) -> None:
+    calls = []
+
+    def fake_fetch(url, profile, headers, **_kwargs):
+        calls.append(profile)
+        return "vless://00000000-0000-0000-0000-000000000001@node.example:443?encryption=none#node", {}
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fake_fetch)
+    text, _, errors = node_service.fetch_subscription_payload("https://other.example/tsub/29332")
+    assert text and not errors and calls == ["Lumen"]
+
+
 def test_happ_premium_headers_and_body_directives_are_preserved() -> None:
     metadata = node_service._extract_subscription_metadata(
         {

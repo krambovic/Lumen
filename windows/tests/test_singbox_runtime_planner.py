@@ -246,7 +246,7 @@ def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults(monkeypatch: pytest.Mon
     assert inbound["stack"] == "gvisor"
     assert inbound["auto_route"] is True
     assert "route_address" not in inbound
-    assert inbound["strict_route"] is False
+    assert inbound["strict_route"] is True
     assert config["route"]["rules"][0] == _tun_sniff_rule()
     assert any(
         rule.get("inbound") == ["tun-in"]
@@ -254,6 +254,33 @@ def test_tun_runtime_uses_stable_low_mtu_v2rayn_defaults(monkeypatch: pytest.Mon
         and rule.get("action") == "reject"
         for rule in config["route"]["rules"]
     )
+
+
+def test_tun_strict_route_can_still_be_disabled_explicitly() -> None:
+    config = _plan(RoutingSettings(mode="global"), tun_strict_route=False)
+    assert _tun_inbound(config)["strict_route"] is False
+
+
+def test_full_singbox_config_repairs_null_vmess_security() -> None:
+    config = _base_config()
+    config["outbounds"] = [
+        {
+            "type": "vmess",
+            "tag": "proxy",
+            "server": "example.com",
+            "server_port": 443,
+            "uuid": "00000000-0000-0000-0000-000000000000",
+            "security": "null",
+        },
+        {"type": "direct", "tag": "direct"},
+        {"type": "block", "tag": "block"},
+    ]
+    document = parse_singbox_document(Path("template.json"), json.dumps(_base_config()))
+
+    plan = plan_singbox_runtime(document, _full_config_node(config))
+
+    proxy = next(item for item in plan.singbox_config["outbounds"] if item.get("tag") == "proxy")
+    assert proxy["security"] == "auto"
 
 
 def test_tun_runtime_uses_singbox_tun_when_interface_name_is_missing() -> None:
@@ -293,6 +320,31 @@ def test_tun_runtime_keeps_v2rayn_style_local_proxy_inbounds() -> None:
         and rule.get("outbound") == "proxy"
         and rule.get("action") == "route"
         for rule in rules
+    )
+
+
+def test_tun_direct_fallback_keeps_local_proxy_inbounds_routed_to_proxy() -> None:
+    config = _plan(
+        RoutingSettings(
+            mode="rule",
+            preset_id="custom-user-preset",
+            tun_default_outbound="direct",
+            process_rules=[{"process": "selected-app.exe", "action": "proxy"}],
+        )
+    )
+
+    assert config["route"]["final"] == "direct"
+    assert any(
+        rule.get("process_name") == ["selected-app.exe"]
+        and rule.get("outbound") == "proxy"
+        and rule.get("action") == "route"
+        for rule in config["route"]["rules"]
+    )
+    assert any(
+        rule.get("inbound") == ["socks-in", "http-in"]
+        and rule.get("outbound") == "proxy"
+        and rule.get("action") == "route"
+        for rule in config["route"]["rules"]
     )
 
 
@@ -525,9 +577,10 @@ def test_default_system_dns_keeps_proxied_domain_dns_on_proxy_resolver() -> None
     servers = _dns_servers(config)
     dns_rules = config["dns"]["rules"]
 
-    assert servers["bootstrap-dns"]["type"] == "udp"
+    assert servers["bootstrap-dns"]["type"] == "https"
     assert servers["bootstrap-dns"]["server"] == "1.1.1.1"
-    assert servers["direct-dns"]["type"] == "udp"
+    assert servers["bootstrap-dns"]["tls"]["server_name"] == "cloudflare-dns.com"
+    assert servers["direct-dns"]["type"] == "https"
     assert servers["direct-dns"]["server"] == "1.1.1.1"
     assert servers["proxy-dns"]["type"] == "https"
     assert servers["proxy-dns"]["server"] == "cloudflare-dns.com"
@@ -569,8 +622,9 @@ def test_system_dns_mode_falls_back_to_explicit_bootstrap_server() -> None:
 
     servers = _dns_servers(config)
 
-    assert servers["bootstrap-dns"]["type"] == "udp"
+    assert servers["bootstrap-dns"]["type"] == "https"
     assert servers["bootstrap-dns"]["server"] == "1.1.1.1"
+    assert servers["bootstrap-dns"]["tls"]["server_name"] == "cloudflare-dns.com"
     assert servers["bootstrap-dns"]["detour"] == "direct"
     assert servers["proxy-dns"]["type"] == "https"
     assert servers["proxy-dns"]["server"] == "cloudflare-dns.com"
@@ -598,8 +652,9 @@ def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
         for index, rule in enumerate(rules)
         if rule.get("action") == "reject" and rule.get("port") == [135, 137, 138, 139, 5353, 5355]
     )
-    assert servers["bootstrap-dns"]["type"] == "udp"
+    assert servers["bootstrap-dns"]["type"] == "https"
     assert servers["bootstrap-dns"]["server"] == "1.1.1.1"
+    assert servers["bootstrap-dns"]["tls"]["server_name"] == "cloudflare-dns.com"
     assert servers["bootstrap-dns"]["detour"] == "direct"
     assert servers["direct-dns"]["detour"] == "direct"
     assert servers["proxy-dns"]["detour"] == "proxy"
@@ -611,6 +666,39 @@ def test_builtin_dns_mode_keeps_tun_dns_hijack_contract() -> None:
         for rule in config["dns"]["rules"]
     )
     assert config["log"]["level"] == "info"
+
+
+def test_default_bootstrap_dns_is_encrypted_doh_with_ip_sni() -> None:
+    config = _plan(RoutingSettings(mode="global", tun_default_outbound="proxy"))
+    servers = _dns_servers(config)
+
+    assert servers["bootstrap-dns"]["type"] == "https"
+    assert servers["bootstrap-dns"]["server"] == "1.1.1.1"
+    assert servers["bootstrap-dns"]["tls"]["server_name"] == "cloudflare-dns.com"
+    assert servers["direct-dns"]["tls"]["server_name"] == "cloudflare-dns.com"
+    assert servers["direct-dns-2"]["server"] == "8.8.8.8"
+    assert servers["direct-dns-2"]["tls"]["server_name"] == "dns.google"
+    assert "domain_resolver" not in servers["bootstrap-dns"]
+
+
+def test_legacy_default_udp_dns_is_migrated_but_custom_udp_is_preserved() -> None:
+    legacy_default = RoutingSettings.from_dict(
+        {
+            "dns_bootstrap_server": "1.1.1.1",
+            "dns_bootstrap_servers": ["1.1.1.1", "8.8.8.8"],
+            "dns_bootstrap_type": "udp",
+        }
+    )
+    custom_udp = RoutingSettings.from_dict(
+        {
+            "dns_bootstrap_server": "9.9.9.9",
+            "dns_bootstrap_servers": ["9.9.9.9"],
+            "dns_bootstrap_type": "udp",
+        }
+    )
+
+    assert legacy_default.dns_bootstrap_type == "https"
+    assert custom_udp.dns_bootstrap_type == "udp"
 
 
 def test_fake_dns_runtime_persists_fakeip_cache() -> None:

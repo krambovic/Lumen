@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/krambovic/Lumen/releases/tag/v1.9.15"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Desktop&amp;labelColor=1C1C1C&amp;color=8A2BE2" alt="Последний релиз Desktop"></a>
-  <a href="https://github.com/krambovic/Lumen/releases/tag/android-v1.1.3"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=android-v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Android&amp;labelColor=1C1C1C&amp;color=3DDC84" alt="Последний релиз Android"></a>
+  <a href="https://github.com/krambovic/Lumen/releases/tag/v1.9.16"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Desktop&amp;labelColor=1C1C1C&amp;color=8A2BE2" alt="Последний релиз Desktop"></a>
+  <a href="https://github.com/krambovic/Lumen/releases/tag/android-v1.2.1"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=android-v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Android&amp;labelColor=1C1C1C&amp;color=3DDC84" alt="Последний релиз Android"></a>
   <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=%D0%A1%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D1%8F&labelColor=1C1C1C&color=F5A623" alt="Скачивания"></a>
   <img src="https://img.shields.io/badge/Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=1C1C1C&label=%D0%9F%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D0%B0" alt="Платформа">
 </p>
@@ -103,7 +103,7 @@ TLS, REALITY, отпечатки uTLS, Vision, поддерживаемые ре
 - Clash/Mihomo YAML и Xray/sing-box JSON.
 - Ссылки Shadowsocks SIP002/SIP003 и JSON SIP008.
 - WireGuard/AmneziaWG `.conf` и OpenVPN `.ovpn`.
-- Поддерживаемые зашифрованные ссылки Happ и метаданные провайдера.
+- Поддерживаемые зашифрованные ссылки подписок Happ и Incy, а также метаданные провайдера.
 - Буфер обмена, файлы, QR-коды и ссылки для открытия в приложении на поддерживаемых платформах.
 
 **Редактирование и экспорт**

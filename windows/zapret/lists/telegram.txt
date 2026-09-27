@@ -6,4 +6,10 @@ tdesktop.com
 telegram.tips
 telegramusercontent.com
 telesco.pe
+cdn1.telesco.pe
+cdn2.telesco.pe
+cdn3.telesco.pe
+cdn4.telesco.pe
+desktop.telegram.org
+macos.telegram.org
 telegram-cdn.org

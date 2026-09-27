@@ -1,6 +1,7 @@
 package com.lumen.app.subscription
 
 import com.lumen.core.config.crypto.HappCrypt
+import com.lumen.core.config.crypto.IncyCrypt
 import com.lumen.core.config.parser.LinkParser
 import java.net.URI
 import java.util.Locale
@@ -37,9 +38,22 @@ internal object ImportClassifier {
                 // The wrapped URL is provider supplied and carries the subscriber
                 // token, so it is only accepted over TLS.
                 return if (decrypted.startsWith("https://", ignoreCase = true)) {
-                    ImportClassification.Ready(ImportKind.SUBSCRIPTION, decrypted)
+                    // Preserve the encrypted source exactly as for INCY; the
+                    // subscription client decrypts it again on every refresh.
+                    ImportClassification.Ready(ImportKind.SUBSCRIPTION, text)
                 } else {
                     ImportClassification.Rejected("Happ subscription URL must use HTTPS")
+                }
+            }
+        }
+        if (IncyCrypt.isIncyCryptLink(text)) {
+            val decrypted = runCatching { IncyCrypt.decryptIncyLink(text).trim() }.getOrNull()
+            if (!decrypted.isNullOrBlank() && LinkParser.isSubscriptionUrl(decrypted)) {
+                return if (decrypted.startsWith("https://", ignoreCase = true)) {
+                    // Keep the encrypted source in storage and decrypt it for every refresh.
+                    ImportClassification.Ready(ImportKind.SUBSCRIPTION, text)
+                } else {
+                    ImportClassification.Rejected("Incy subscription URL must use HTTPS")
                 }
             }
         }

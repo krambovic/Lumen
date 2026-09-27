@@ -124,7 +124,7 @@ def test_dns_defaults_use_builtin_split_resolvers() -> None:
 
     assert routing.dns_mode == "builtin"
     assert routing.dns_bootstrap_servers == ["1.1.1.1", "8.8.8.8"]
-    assert routing.dns_bootstrap_type == "udp"
+    assert routing.dns_bootstrap_type == "https"
     assert routing.dns_bootstrap_strategy == "ipv4_only"
     assert routing.dns_proxy_servers == ["cloudflare-dns.com", "dns.google"]
     assert routing.dns_proxy_type == "https"
@@ -162,7 +162,7 @@ def test_dns_defaults_update_is_applied_once_without_touching_servers() -> None:
     assert state.routing.dns_mode == "builtin"
     assert state.routing.dns_bootstrap_servers == ["1.1.1.1", "8.8.8.8"]
     assert state.routing.dns_proxy_servers == ["cloudflare-dns.com", "dns.google"]
-    assert state.routing.dns_bootstrap_type == "udp"
+    assert state.routing.dns_bootstrap_type == "https"
     assert state.routing.dns_bootstrap_strategy == "ipv4_only"
     assert state.routing.dns_proxy_type == "https"
     assert state.routing.dns_proxy_strategy == "ipv4_only"
@@ -212,7 +212,7 @@ def test_dns_defaults_update_persists_across_restart(tmp_path) -> None:
     assert restarted.subscriptions == [{"id": "sub-1", "url": "https://example.test/sub"}]
     assert restarted.routing.dns_mode == "builtin"
     assert restarted.routing.dns_bootstrap_servers == ["1.1.1.1", "8.8.8.8"]
-    assert restarted.routing.dns_bootstrap_type == "udp"
+    assert restarted.routing.dns_bootstrap_type == "https"
     assert restarted.routing.dns_bootstrap_strategy == "ipv4_only"
     assert restarted.routing.dns_proxy_servers == ["cloudflare-dns.com", "dns.google"]
     assert restarted.routing.dns_proxy_type == "https"

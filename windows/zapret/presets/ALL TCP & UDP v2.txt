@@ -1,5 +1,5 @@
 # Preset: ALL TCP & UDP v2
-# BuiltinVersion: 2.20
+# BuiltinVersion: 2.40
 # Description: 
 
 --lua-init=@lua/zapret-lib.lua
@@ -26,6 +26,34 @@
 --blob=tls_max:@bin/tls_clienthello_max_ru.bin
 --blob=quic_google:@bin/quic_initial_www_google_com.bin
 --blob=tls_gosuslugi:@bin/tls_clienthello_gosuslugi_ru.bin
+
+--name=git.zapret.moe
+--filter-tcp=443
+--hostlist=lists/git-zapret-moe.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=Исключения домены (RU сайты)
+--filter-tcp=80,443-65535
+--hostlist=lists/netrogat.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
+
+--name=Исключения айпи (RU сайты)
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-ru.txt
+--ipset=lists/ipset-dns.txt
+--ipset=lists/ipset-exclude.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
 
 --name=updates.discord.com
 --filter-tcp=443
@@ -68,7 +96,7 @@
 
 --new
 
---name=Все сайты (исключение)
+--name=Все сайты (айпи)
 --filter-tcp=80,443-65535
 --ipset-exclude=lists/ipset-ru.txt
 --ipset-exclude=lists/ipset-dns.txt
@@ -80,7 +108,7 @@
 
 --new
 
---name=Все сайты UDP (исключение)
+--name=Все сайты UDP (айпи)
 --filter-udp=443-65535
 --ipset-exclude=lists/ipset-ru.txt
 --ipset-exclude=lists/ipset-dns.txt

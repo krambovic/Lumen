@@ -177,7 +177,7 @@ jobs:
           Write-Host "Building Lumen-compatible sing-box-extended..."
           $sbRelease = Invoke-RestMethod "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest" -Headers $githubHeaders
           Write-Host "Using sing-box $($sbRelease.tag_name)"
-          & ./windows/scripts/build_singbox_extended.ps1 -OutputPath windows/core/sing-box.exe -Ref $sbRelease.tag_name
+          & ./windows/scripts/build_singbox_extended.ps1 -OutputPath windows/core/sing-box-extended/sing-box.exe -Ref $sbRelease.tag_name
 
           Write-Host "Core binaries ready:"
           Get-ChildItem windows/core/

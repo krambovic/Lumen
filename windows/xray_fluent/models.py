@@ -7,7 +7,7 @@ import math
 from typing import Any
 import uuid
 
-from .constants import ROUTING_RULE, STATE_SCHEMA_VERSION
+from .constants import ROUTING_DIRECT, ROUTING_RULE, STATE_SCHEMA_VERSION
 
 
 DEFAULT_WINDOW_WIDTH = 1280
@@ -157,7 +157,7 @@ class RoutingSettings:
     dns_mode: str = "builtin"  # system | builtin
     dns_bootstrap_server: str = "1.1.1.1"  # DNS for direct traffic
     dns_bootstrap_servers: list[str] = field(default_factory=list)
-    dns_bootstrap_type: str = "udp"        # udp | tcp | tls | https
+    dns_bootstrap_type: str = "https"      # udp | tcp | tls | https
     dns_bootstrap_strategy: str = "ipv4_only"
     dns_proxy_server: str = "cloudflare-dns.com"  # DNS for proxy traffic
     dns_proxy_servers: list[str] = field(default_factory=list)
@@ -173,8 +173,8 @@ class RoutingSettings:
     process_rules: list[dict[str, str]] = field(default_factory=list)  # [{"process": "chrome.exe", "action": "direct|proxy|block"}]
     process_preset_routes: dict[str, str] = field(default_factory=dict)  # {"telegram": "proxy", "windows_system": "direct"}
     service_routes: dict[str, str] = field(default_factory=dict)  # {"youtube": "proxy", "steam": "direct", ...}
-    # Kept in persisted data for compatibility with older presets. The runtime
-    # now derives the fallback from the active preset and otherwise uses proxy.
+    # Fallback for unmatched TUN traffic.  This is user-configurable for custom
+    # routing and must be preserved when a preset is saved and restored.
     tun_default_outbound: str = "proxy"  # "proxy" | "direct"
 
     def __post_init__(self) -> None:
@@ -193,7 +193,17 @@ class RoutingSettings:
         )
         self.dns_bootstrap_server = self.dns_bootstrap_servers[0] if self.dns_bootstrap_servers else ""
         self.dns_proxy_server = self.dns_proxy_servers[0]
+        # The bundled public bootstrap resolver must not fall back to plaintext
+        # DNS. Older settings serialized this default as UDP; upgrade that
+        # legacy default while leaving explicitly configured resolver IPs alone.
+        if (
+            self.dns_bootstrap_server.strip().lower() == "1.1.1.1"
+            and str(self.dns_bootstrap_type or "").strip().lower() == "udp"
+        ):
+            self.dns_bootstrap_type = "https"
         self.dns_hosts = _normalize_dns_hosts(self.dns_hosts)
+        default_outbound = str(self.tun_default_outbound or "").strip().lower()
+        self.tun_default_outbound = default_outbound if default_outbound in {"proxy", "direct"} else "proxy"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -223,6 +233,7 @@ class RoutingSettings:
             "process_preset_routes": dict(self.process_preset_routes),
             "service_routes": dict(self.service_routes),
             "tun_default_outbound": self.tun_default_outbound,
+            "tun_default_outbound_explicit": True,
         }
 
     @staticmethod
@@ -261,6 +272,16 @@ class RoutingSettings:
                 if str(item).strip()
             ]
             bootstrap_server = bootstrap_servers[0] if bootstrap_servers else ""
+        raw_default_outbound = str(data.get("tun_default_outbound") or "").strip().lower()
+        if data.get("tun_default_outbound_explicit") is not True or raw_default_outbound not in {"proxy", "direct"}:
+            # Older builds persisted this value while ignoring it at runtime.
+            # Preserve their effective preset behavior until the user chooses a
+            # fallback in the restored UI or saves a new custom preset.
+            raw_default_outbound = (
+                "direct"
+                if mode.strip().lower() == ROUTING_DIRECT or preset_id in {"blocked", "blocked_cn"}
+                else "proxy"
+            )
         return RoutingSettings(
             mode=mode,
             preset_id=preset_id,
@@ -271,7 +292,7 @@ class RoutingSettings:
             dns_mode=str(data.get("dns_mode") or "builtin"),
             dns_bootstrap_server=bootstrap_server,
             dns_bootstrap_servers=bootstrap_servers,
-            dns_bootstrap_type=str(data.get("dns_bootstrap_type") or "udp"),
+            dns_bootstrap_type=str(data.get("dns_bootstrap_type") or "https"),
             dns_bootstrap_strategy=str(data.get("dns_bootstrap_strategy") or "ipv4_only"),
             dns_proxy_server=str(data.get("dns_proxy_server") or "cloudflare-dns.com"),
             dns_proxy_servers=list(data.get("dns_proxy_servers") or []),
@@ -291,7 +312,7 @@ class RoutingSettings:
             process_rules=list(data.get("process_rules") or []),
             process_preset_routes=dict(data.get("process_preset_routes") or {}),
             service_routes=dict(data.get("service_routes") or {}),
-            tun_default_outbound=str(data.get("tun_default_outbound") or "proxy"),
+            tun_default_outbound=raw_default_outbound,
         )
 
 
@@ -414,7 +435,7 @@ class AppSettings:
     ui_wallpaper_brightness: int = 50    # яркость обоев, 0..100 (100 = оригинал)
     diagnostics_upload_enabled: bool = True
     proxy_allow_lan: bool = False
-    tun_strict_route: bool = False
+    tun_strict_route: bool = True
     tun_stack: str = "mixed"
     tun_mtu: int = 9000
     tun_endpoint_independent_nat: bool = False
@@ -432,6 +453,7 @@ class AppSettings:
     node_filter_group: str = ""
     selected_subscription_id: str = ""
     node_table_layout: dict[str, Any] = field(default_factory=dict)
+    zapret_table_layout: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         from .routing_presets import normalize_regional_preset
@@ -455,6 +477,7 @@ class AppSettings:
         self.node_filter_group = str(self.node_filter_group or "").strip()
         self.selected_subscription_id = str(self.selected_subscription_id or "").strip()
         self.node_table_layout = _normalize_node_table_layout(self.node_table_layout)
+        self.zapret_table_layout = _normalize_zapret_table_layout(self.zapret_table_layout)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -499,6 +522,10 @@ class AppSettings:
             "tun_mode": self.tun_mode,
             "proxy_allow_lan": self.proxy_allow_lan,
             "tun_strict_route": self.tun_strict_route,
+            # Older settings stored the insecure default as false on every
+            # save, so absence of this marker is the only way to distinguish
+            # them from a deliberate opt-out after the privacy migration.
+            "tun_strict_route_default_v2": True,
             "tun_stack": self.tun_stack,
             "tun_mtu": self.tun_mtu,
             "tun_endpoint_independent_nat": self.tun_endpoint_independent_nat,
@@ -514,6 +541,7 @@ class AppSettings:
             "node_filter_group": self.node_filter_group,
             "selected_subscription_id": self.selected_subscription_id,
             "node_table_layout": dict(self.node_table_layout),
+            "zapret_table_layout": dict(self.zapret_table_layout),
             "xray_config_file": self.xray_config_file,
             "xray_template_file": self.xray_template_file,
             "singbox_path": self.singbox_path,
@@ -609,7 +637,11 @@ class AppSettings:
             discord_proxy_enabled=bool(data.get("discord_proxy_enabled", False)),
             tun_mode=bool(data.get("tun_mode", False)),
             proxy_allow_lan=bool(data.get("proxy_allow_lan", False)),
-            tun_strict_route=bool(data.get("tun_strict_route", False)),
+            tun_strict_route=(
+                bool(data.get("tun_strict_route", True))
+                if data.get("tun_strict_route_default_v2") is True
+                else True
+            ),
             tun_stack=_normalize_tun_stack(data.get("tun_stack")),
             tun_mtu=_clamp_tun_mtu(data.get("tun_mtu")),
             tun_endpoint_independent_nat=bool(data.get("tun_endpoint_independent_nat", False)),
@@ -627,6 +659,11 @@ class AppSettings:
             node_table_layout=(
                 dict(data.get("node_table_layout"))
                 if isinstance(data.get("node_table_layout"), dict)
+                else {}
+            ),
+            zapret_table_layout=(
+                dict(data.get("zapret_table_layout"))
+                if isinstance(data.get("zapret_table_layout"), dict)
                 else {}
             ),
             xray_config_file=str(data.get("xray_config_file") or ""),
@@ -760,6 +797,28 @@ def _normalize_node_table_layout(value: Any) -> dict[str, Any]:
         "manual", "name", "type", "transport", "address", "port",
         "group", "ping", "speed", "status", "last",
     }
+    normalized: dict[str, Any] = {}
+    for raw_key, raw_value in value.items():
+        key = str(raw_key)
+        if key not in allowed:
+            continue
+        if key == "manual":
+            normalized[key] = bool(raw_value)
+            continue
+        try:
+            numeric = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(numeric):
+            continue
+        normalized[key] = max(48.0, min(numeric, 2000.0))
+    return normalized
+
+
+def _normalize_zapret_table_layout(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    allowed = {"manual", "name", "description", "args", "date"}
     normalized: dict[str, Any] = {}
     for raw_key, raw_value in value.items():
         key = str(raw_key)

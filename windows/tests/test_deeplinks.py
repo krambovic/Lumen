@@ -32,13 +32,18 @@ def test_parse_canonical_subscription_deep_link() -> None:
         "lumen://subscribe/https%3A%2F%2Fexample.com%2Fsub",
         "lumen://add/https://example.com/sub",
         "lumen://subscription/add?subscription=happ%3A%2F%2Fcrypt%2Fpayload",
+        "lumen://subscription/add?subscription=incy%3A%2F%2Fcrypt1%2Fpayload",
         "lumen:install-config?link=https%3A%2F%2Fexample.com%2Fsub",
     ],
 )
 def test_parse_supported_deep_link_aliases(link: str) -> None:
     request = parse_lumen_deep_link(link)
     assert request is not None
-    assert request.url in {"https://example.com/sub", "happ://crypt/payload"}
+    assert request.url in {
+        "https://example.com/sub",
+        "happ://crypt/payload",
+        "incy://crypt1/payload",
+    }
 
 
 def test_bare_lumen_link_only_activates_application() -> None:

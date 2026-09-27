@@ -64,6 +64,7 @@
                 <data android:scheme="hy2" />
                 <data android:scheme="hysteria" />
                 <data android:scheme="happ" />
+                <data android:scheme="incy" />
                 <data android:scheme="wireguard" />
                 <data android:scheme="awg" />
             </intent-filter>

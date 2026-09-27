@@ -1,5 +1,5 @@
 # Preset: Ultimate Main Riot + Valorant (game filter)
-# BuiltinVersion: 2.20
+# BuiltinVersion: 2.40
 # Description: YouTube + Discord (as MAIN) + Valorant/Riot
 # IconColor: #60cdff
 
@@ -33,6 +33,14 @@
 # YOUTUBE (TCP)
 ################################################################################
 
+--name=git.zapret.moe
+--filter-tcp=443
+--hostlist=lists/git-zapret-moe.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
 --name=googlevideo.com (CDN сервера)
 --filter-tcp=80,443
 --hostlist=lists/googlevideo.txt
@@ -52,7 +60,6 @@
 ################################################################################
 # YOUTUBE (UDP / QUIC)
 ################################################################################
-
 --name=youtube.com (QUIC)
 --filter-udp=443
 --ipset=lists/ipset-youtube.txt
@@ -62,10 +69,29 @@
 
 --new
 
+--name=Исключения домены (RU сайты)
+--filter-tcp=80,443-65535
+--hostlist=lists/netrogat.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
+
+--name=Исключения айпи (RU сайты)
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-ru.txt
+--ipset=lists/ipset-dns.txt
+--ipset=lists/ipset-exclude.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
+
 ################################################################################
 # DISCORD
 ################################################################################
-
 --name=updates.discord.com
 --filter-tcp=443
 --hostlist=lists/discord-updates.txt
@@ -101,10 +127,9 @@
 ################################################################################
 # RIOT / VALORANT
 ################################################################################
-
 --name=Riot / Valorant TCP
 --filter-tcp=443
---hostlist-domains=riotgames.com,valorant.com,riotcdn.net
+--hostlist=lists/riot-valorant.txt
 --out-range=-d5
 --lua-desync=send
 --lua-desync=multidisorder:pos=1
@@ -113,7 +138,7 @@
 
 --name=Riot / Valorant UDP
 --filter-udp=5000-5500,7000-8000
---hostlist-domains=riotgames.com,valorant.com
+--hostlist=lists/riot-valorant.txt
 --out-range=-d5
 --payload=all
 --lua-desync=pass
@@ -132,7 +157,6 @@
 ################################################################################
 # GLOBAL TCP (SOFT FALLBACK)
 ################################################################################
-
 --name=Russia blacklist TCP 443
 --filter-tcp=443
 --hostlist=lists/russia-blacklist.txt
@@ -153,34 +177,16 @@
 
 --name=Cloudflare TCP
 --filter-tcp=80,443-65535
---ipset=lists/ipset-cloudflare.txt
+--hostlist=lists/cloudflare.txt
 --out-range=-d5
 --lua-desync=send
 --lua-desync=multidisorder:pos=1
 
 --new
 
---name=Cloudflare legacy TCP
+--name=cloudfront.net
 --filter-tcp=80,443-65535
---ipset=lists/cloudflare-ipset.txt
---out-range=-d5
---lua-desync=send
---lua-desync=multidisorder:pos=1
-
---new
-
---name=Cloudflare IPv6 legacy TCP
---filter-tcp=80,443-65535
---ipset=lists/cloudflare-ipset_v6.txt
---out-range=-d5
---lua-desync=send
---lua-desync=multidisorder:pos=1
-
---new
-
---name=Cloudflare alt TCP
---filter-tcp=80,443-65535
---ipset=lists/ipset-cloudflare1.txt
+--hostlist=lists/cloudfront.txt
 --out-range=-d5
 --lua-desync=send
 --lua-desync=multidisorder:pos=1
@@ -189,7 +195,16 @@
 
 --name=Amazon TCP
 --filter-tcp=80,443-65535
---ipset=lists/ipset-amazon.txt
+--hostlist=lists/amazon.txt
+--out-range=-d5
+--lua-desync=send
+--lua-desync=multidisorder:pos=1
+
+--new
+
+--name=EpicGames & Fortnite
+--filter-tcp=80,443-65535
+--hostlist=lists/epicgames-fortnite.txt
 --out-range=-d5
 --lua-desync=send
 --lua-desync=multidisorder:pos=1
@@ -268,7 +283,7 @@
 
 --new
 
---name=Все сайты (исключение)
+--name=Все сайты (айпи)
 --filter-tcp=80,443-65535
 --ipset-exclude=lists/ipset-ru.txt
 --ipset-exclude=lists/ipset-dns.txt
@@ -279,7 +294,7 @@
 
 --new
 
---name=Все сайты UDP (исключение)
+--name=Все сайты UDP (айпи)
 --filter-udp=443-65535
 --ipset-exclude=lists/ipset-ru.txt
 --ipset-exclude=lists/ipset-dns.txt

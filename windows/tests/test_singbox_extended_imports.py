@@ -56,6 +56,66 @@ def test_vmess_base64_with_legacy_non_utf8_remark_still_imports() -> None:
     assert nodes[0].name == "Сервер Ы"
 
 
+@pytest.mark.parametrize("missing_security", [None, "", "null", "NULL", "undefined"])
+def test_vmess_missing_security_sentinels_use_auto(missing_security) -> None:
+    payload = {
+        "v": "2",
+        "ps": "VMess",
+        "add": "example.com",
+        "port": "443",
+        "id": "00000000-0000-0000-0000-000000000000",
+        "aid": "0",
+        "net": "tcp",
+        "tls": "none",
+        "scy": missing_security,
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+
+    node = parse_single(f"vmess://{encoded}")
+
+    assert node.outbound["settings"]["vnext"][0]["users"][0]["security"] == "auto"
+    assert build_singbox_outbound(node)["security"] == "auto"
+
+
+def test_native_vmess_null_security_is_repaired_at_runtime_boundary() -> None:
+    node = Node(
+        scheme="vmess",
+        server="example.com",
+        port=443,
+        outbound={
+            "protocol": "vmess",
+            "singbox": {
+                "type": "vmess",
+                "server": "example.com",
+                "server_port": 443,
+                "uuid": "00000000-0000-0000-0000-000000000000",
+                "security": "null",
+            },
+        },
+    )
+
+    assert build_singbox_outbound(node)["security"] == "auto"
+
+
+def test_clash_vmess_null_cipher_uses_auto() -> None:
+    nodes, errors = parse_links_text(
+        """
+proxies:
+  - name: VMess
+    type: vmess
+    server: example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+    cipher: 'null'
+"""
+    )
+
+    assert errors == []
+    assert build_singbox_outbound(nodes[0])["security"] == "auto"
+
+
 def test_base64_subscription_with_legacy_non_utf8_text_is_unwrapped() -> None:
     raw = "vless://00000000-0000-0000-0000-000000000000@example.com:443#Сервер Ы".encode(
         "cp1251"
@@ -491,7 +551,9 @@ def test_awg31_wgquick_config_preserves_the_extended_transport_fields() -> None:
 
 @pytest.mark.native_helper
 def test_awg3_runtime_config_is_accepted_by_delivered_singbox_core(tmp_path) -> None:
-    core = Path(__file__).parents[1] / "core" / "sing-box.exe"
+    from xray_fluent.constants import SINGBOX_PATH_DEFAULT
+
+    core = SINGBOX_PATH_DEFAULT
     if not core.is_file():
         pytest.skip("delivered sing-box core is not present")
 

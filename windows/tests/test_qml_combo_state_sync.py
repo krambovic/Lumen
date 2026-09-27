@@ -131,12 +131,12 @@ def test_resource_update_setting_and_reset_are_in_expected_sections() -> None:
     assert version_index > reset_index
 
 
-def test_routing_page_has_no_user_control_for_tun_default_outbound() -> None:
+def test_routing_page_exposes_tun_default_outbound_control() -> None:
     routing_qml = (QML_DIR / "RoutingPage.qml").read_text(encoding="utf-8")
 
-    assert "По умолчанию (TUN)" not in routing_qml
-    assert "tunDefaultOutbound" not in routing_qml
-    assert "setTunDefaultOutbound" not in routing_qml
+    assert "По умолчанию (TUN)" in routing_qml
+    assert "App.tunDefaultOutbound" in routing_qml
+    assert "App.setTunDefaultOutbound" in routing_qml
 
 
 def test_updates_page_hides_internal_lumen_singbox_revision() -> None:
@@ -145,3 +145,30 @@ def test_updates_page_hides_internal_lumen_singbox_revision() -> None:
     assert "function publicSingboxVersion(value)" in updates_qml
     assert "-lumen(?:\\.[0-9A-Za-z.-]+)?$" in updates_qml
     assert "singboxVersion = publicSingboxVersion(s.singboxVersion)" in updates_qml
+
+
+def test_updates_page_does_not_expose_droute_updater() -> None:
+    updates_qml = (QML_DIR / "UpdatesPage.qml").read_text(encoding="utf-8")
+
+    assert 'I18n.t("Обновить droute")' not in updates_qml
+    assert 'I18n.t("Проверить droute")' not in updates_qml
+
+
+def test_zapret_table_has_persisted_resizable_columns() -> None:
+    zapret_qml = (QML_DIR / "ZapretPage.qml").read_text(encoding="utf-8")
+
+    assert "App.zapretTableLayout" in zapret_qml
+    assert "App.setZapretTableLayout" in zapret_qml
+    assert "Qt.SplitHCursor" in zapret_qml
+    assert '"description": manualColDescription' in zapret_qml
+
+
+def test_zapret_table_column_layout_round_trips() -> None:
+    from xray_fluent.models import AppSettings
+
+    settings = AppSettings(
+        zapret_table_layout={"manual": True, "name": 220, "description": 410, "args": 100, "date": 145}
+    )
+    restored = AppSettings.from_dict(settings.to_dict())
+
+    assert restored.zapret_table_layout == settings.zapret_table_layout

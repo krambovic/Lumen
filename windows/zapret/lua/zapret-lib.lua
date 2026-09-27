@@ -139,7 +139,7 @@ function cutoff_shim_check(desync)
 		local b=desync.track.lua_state.cutoff_shim and
 			desync.track.lua_state.cutoff_shim[desync.func_instance] and
 			desync.track.lua_state.cutoff_shim[desync.func_instance][desync.outgoing]
-		if b and b_debug then 
+		if b and b_debug then
 			DLOG("cutoff_shim_check: '"..desync.func_instance.."' "..(desync.outgoing and "out" or "in").." cutoff")
 		end
 		return b

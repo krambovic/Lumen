@@ -19,6 +19,7 @@ from ..constants import APP_VERSION, SUBSCRIPTION_PARSER_REVISION
 from ..country_flags import detect_country
 from ..data_paths import get_install_id
 from ..happ_crypt import HappDecryptError, decrypt_happ_link, is_happ_crypt_link, is_happ_link
+from ..incy_crypt import IncyDecryptError, decrypt_incy_link, is_incy_crypt_link, is_incy_link
 from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
 from ..models import DEFAULT_SUBSCRIPTION_HWID, Node
 from ..subscription_presentation import EXTRA_PROVIDER_PARAMETERS
@@ -36,6 +37,32 @@ HAPP_WINDOWS_USER_AGENT = "Happ/2.18.3/Windows/2606241603601"
 # Lumen's own subscription User-Agent; the Android build sends the same shape
 # with an "Android-" platform tag.
 LUMEN_SUBSCRIPTION_USER_AGENT = f"Lumen-Subscription/Windows-{APP_VERSION}"
+
+
+def _needs_magvpn_variants(url: str, user_agent: str = "") -> bool:
+    """This provider serves URI nodes and AUTO pools under different client UAs."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return (
+        not str(user_agent or "").strip()
+        and parsed.scheme == "https"
+        and host in {"magvpn.ru", "www.magvpn.ru"}
+        and parsed.path.startswith("/tsub/")
+    )
+
+
+def _merge_magvpn_variants(links_text: str, auto_text: str) -> str:
+    """Keep the original links and native AUTO graphs without flattening either."""
+    graphs = json.loads(auto_text)
+    if not isinstance(graphs, list) or not graphs:
+        raise ValueError("Happ-вариант не содержит конфигураций AUTO")
+    auto_nodes, _ = parse_links_text(auto_text)
+    if not any(node.scheme == "auto" for node in auto_nodes):
+        raise ValueError("Happ-вариант не содержит групп AUTO")
+    merged = json.dumps([links_text, *graphs], ensure_ascii=False)
+    if len(merged.encode("utf-8")) > MAX_SUBSCRIPTION_BYTES:
+        raise ValueError("Объединённая подписка превышает 8 МиБ")
+    return merged
 
 
 @dataclass(slots=True)
@@ -755,6 +782,12 @@ def _subscription_name_from_info(info: dict | None) -> str:
 
 
 def _premium_subscription_url(url: str, info: dict | None) -> str:
+    # Encrypted subscription links are stable source identifiers.  Provider
+    # metadata describes the decrypted fetch target and must not replace the
+    # stored happ:// or incy:// source, otherwise the next refresh bypasses the
+    # encrypted link and may no longer be reconcilable with the subscription.
+    if is_happ_crypt_link(url) or is_incy_crypt_link(url):
+        return url
     premium = info.get("premiumFeatures") if isinstance(info, dict) else None
     if not isinstance(premium, dict):
         return url
@@ -1294,6 +1327,8 @@ def _node_validation_errors(nodes: list) -> list[str]:
 def _derive_subscription_name(url: str) -> str:
     if is_happ_link(url):
         return "Подписка Happ"
+    if is_incy_link(url):
+        return "Подписка Incy"
     host = urlparse(url).hostname or ""
     host = host.strip()
     if host:
@@ -1484,6 +1519,14 @@ def fetch_subscription_payload(
             return "", {}, ["Happ: URL подписки внутри crypt-ссылки должен использовать HTTPS"]
         else:
             return _happ_direct_payload(decrypted)
+    if is_incy_crypt_link(url):
+        try:
+            decrypted = decrypt_incy_link(url).strip()
+        except IncyDecryptError as exc:
+            return "", {}, [f"Incy: {exc}"]
+        if not decrypted.lower().startswith("https://"):
+            return "", {}, ["Incy: URL подписки внутри crypt-ссылки должен использовать HTTPS"]
+        url = decrypted
     if converter_url:
         try:
             url = _subscription_converter_target(converter_url, url)
@@ -1510,6 +1553,7 @@ def fetch_subscription_payload(
         for profile_name, headers in _SUBSCRIPTION_CLIENT_PROFILES
     ]
     custom_user_agent = str(user_agent or "").strip()
+    magvpn_variants = _needs_magvpn_variants(url, custom_user_agent)
     if custom_user_agent:
         profiles.insert(
             0,
@@ -1527,12 +1571,16 @@ def fetch_subscription_payload(
         "If-None-Match": str(cache_etag or "").strip(),
         "If-Modified-Since": str(cache_last_modified or "").strip(),
     }
-    if any(validators.values()):
+    # A single ETag cannot validate two content-negotiated representations.
+    if any(validators.values()) and not magvpn_variants:
         for _profile_name, profile_headers in profiles:
             for key, value in validators.items():
                 if value:
                     profile_headers[key] = value
     request_meta: dict[str, object] = {}
+    if magvpn_variants:
+        # A partial profile would remove the other half on reconciliation.
+        profiles = profiles[:1]
     for profile_name, headers in profiles:
         _raise_if_subscription_cancelled(cancelled)
         try:
@@ -1558,6 +1606,22 @@ def fetch_subscription_payload(
                 return "", userinfo, []
             nodes, errors = parse_links_text(text)
             if _subscription_response_is_accepted(text, nodes):
+                if magvpn_variants:
+                    try:
+                        happ_headers = {
+                            **dict(_SUBSCRIPTION_CLIENT_PROFILES)["Happ Windows"],
+                            "X-Hwid": request_hwid,
+                        }
+                        auto_text, _ = _fetch_with_optional_meta(
+                            url, "Happ Windows", happ_headers,
+                            response_meta={}, **fetch_options,
+                        )
+                        text = _merge_magvpn_variants(text, auto_text)
+                    except SubscriptionFetchCancelled:
+                        raise
+                    except Exception as exc:
+                        from ..secret_scrubber import scrub_text
+                        return "", userinfo, [f"MagVPN AUTO: {scrub_text(str(exc))}"]
                 return text, userinfo, errors
             attempts.append(f"{profile_name}: {_subscription_reject_reason(text, nodes, errors)}")
         except SubscriptionFetchCancelled:

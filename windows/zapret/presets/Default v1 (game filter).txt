@@ -1,5 +1,5 @@
 # Preset: Default v1 (game filter)
-# BuiltinVersion: 2.19
+# BuiltinVersion: 2.40
 # IconColor: #a8c5ff
 
 --lua-init=@lua/zapret-lib.lua
@@ -12,8 +12,7 @@
 --lua-init=@lua/fakemultidisorder.lua
 
 --ctrack-disable=0
---ipcache-lifetime=8400
---ipcache-hostname=1
+--ipcache-hostname=0
 
 --wf-tcp-out=80,443,1080,2053,2083,2087,2096,5050,8443,8080,45631
 --wf-udp-out=443-65535
@@ -41,6 +40,7 @@
 --blob=tls17:@bin/tls_clienthello_17.bin
 --blob=tls18:@bin/tls_clienthello_18.bin
 --blob=tls_sber:@bin/tls_clienthello_sberbank_ru.bin
+--blob=tls_sber_v2:@bin/tls_clienthello_sberbank_ru_v2.bin
 --blob=tls_vk:@bin/tls_clienthello_vk_com.bin
 --blob=tls_vk_kyber:@bin/tls_clienthello_vk_com_kyber.bin
 --blob=tls_deepseek:@bin/tls_clienthello_chat_deepseek_com.bin
@@ -82,14 +82,35 @@
 --blob=hex_0f0f0f0f:0x0F0F0F0F
 --blob=hex_00:0x00
 
---name=Исключения (RU сайты)
---filter-tcp=80,443-65535
---ipset=lists/ipset-ru.txt
---ipset=lists/ipset-dns.txt
---ipset=lists/ipset-exclude.txt
+--name=git.zapret.moe
+--filter-tcp=443
+--hostlist=lists/git-zapret-moe.txt
 --out-range=-d8
---payload=tls_client_hello
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=chatgpt
+--filter-tcp=80-65535
+--hostlist=lists/chatgpt.txt
+--out-range=-d8
 --lua-desync=pass
+
+--new
+
+--name=AnyDesk UDP
+--filter-udp=443,6568,50000-51000
+--ipset=lists/ipset-anydesk.txt
+--out-range=-d8
+--lua-desync=fake:blob=stun_pat:repeats=6
+
+--new
+
+--name=AnyDesk TCP
+--filter-tcp=80,443,6568
+--ipset=lists/ipset-anydesk.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -98,7 +119,7 @@
 --hostlist=lists/googlevideo.txt
 --out-range=-n8
 --payload=tls_client_hello
---lua-desync=multidisorder:pos=100,midsld,sniext+1,endhost-2,-10
+--lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
 
 --new
 
@@ -107,7 +128,7 @@
 --hostlist=lists/youtube.txt
 --out-range=-d8
 --payload=tls_client_hello
---lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+--lua-desync=multisplit:pos=1,host+2,sld+2,sld+5,sniext+1,sniext+2,endhost-2:seqovl=1
 
 --new
 
@@ -120,12 +141,40 @@
 
 --new
 
+--name=Исключения домены (RU сайты)
+--filter-tcp=80,443-65535
+--hostlist=lists/netrogat.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
+
+--name=Исключения айпи (RU сайты)
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-ru.txt
+--ipset=lists/ipset-dns.txt
+--ipset=lists/ipset-exclude.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
+
+--name=Голосовые звонки/чаты
+--filter-l7=stun,discord
+--out-range=-n8
+--payload=stun,discord_ip_discovery
+--lua-desync=fake:blob=stun_pat:repeats=4
+
+--new
+
 --name=updates.discord.com
 --filter-tcp=443
 --hostlist=lists/discord-updates.txt
 --out-range=-d10
 --payload=tls_client_hello
---lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -134,7 +183,7 @@
 --hostlist=lists/discord-media.txt
 --out-range=-d10
 --payload=tls_client_hello
---lua-desync=multidisorder:pos=1,host+2,sld+2,sld+5,sniext+1,sniext+2,endhost-2:seqovl=1
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -143,7 +192,7 @@
 --hostlist=lists/discord-images.txt
 --out-range=-d10
 --payload=tls_client_hello
---lua-desync=multidisorder:pos=1,host+2,sld+2,sld+5,sniext+1,sniext+2,endhost-2:seqovl=1
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -156,20 +205,12 @@
 
 --new
 
---name=Голосовые звонки/чаты
---filter-l7=stun,discord
---out-range=-n8
---payload=stun,discord_ip_discovery
---lua-desync=fake:blob=stun_pat:repeats=6
-
---new
-
 --name=Telegram
 --filter-tcp=80,443-65535
 --ipset=lists/ipset-telegram.txt
 --out-range=-d10
 --payload=all
---lua-desync=pass
+--lua-desync=tls_aggressive:fakes=6:ttl_start=1:ttl_step=1:badseq:split_sni
 
 --new
 
@@ -182,24 +223,12 @@
 
 --new
 
---name=Tanki X
---filter-tcp=80,443,5050,8080
---hostlist=lists/tankix.txt
---out-range=-n8
---payload=http_req,tls_client_hello
---lua-desync=send:repeats=2
---lua-desync=syndata:blob=stun_pat
-
---new
-
 --name=Fandom
 --filter-tcp=443
 --hostlist=lists/fandom.txt
 --out-range=-d8
 --payload=tls_client_hello
---lua-desync=send:repeats=2
---lua-desync=syndata:blob=stun_pat
---lua-desync=tls_multisplit_sni:seqovl=652:seqovl_pattern=stun_pat
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -208,34 +237,65 @@
 --hostlist=lists/steam.txt
 --out-range=-d8
 --payload=tls_client_hello
+--lua-desync=fake:blob=fake_default_tls:tcp_flags_unset=ack:tls_mod=rnd,rndsni,padencap
+--lua-desync=fakeddisorder:pos=midsld:tcp_flags_unset=ack
+
+--new
+
+--name=obsidian.md
+--filter-tcp=80,443
+--hostlist=lists/obsidian.txt
+--out-range=-d8
+--lua-desync=send:repeats=2
+--lua-desync=syndata:blob=stun_pat
+
+--new
+
+--name=EpicGames & Fortnite
+--filter-tcp=80,443-65535
+--hostlist=lists/epicgames-fortnite.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=Speedtest
+--filter-tcp=443,8080
+--hostlist=lists/speedtest.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=Roblox TCP
+--filter-tcp=80,443-65535
+--hostlist=lists/roblox.txt
+--out-range=-d8
 --lua-desync=pass
 
 --new
 
---name=Twitter/X
---filter-tcp=80,443
---hostlist=lists/twitter.txt
+--name=Ubisoft
+--filter-tcp=80,443-65535
+--hostlist=lists/ubisoft.txt
 --out-range=-d8
---payload=tls_client_hello
---lua-desync=tls_multisplit_sni:seqovl=652:seqovl_pattern=tls_google
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
---name=Twitter Images (twimg.com)
---filter-tcp=80,443
---hostlist=lists/twimg.txt
+--name=Twitch
+--filter-tcp=443
+--hostlist=lists/twitch.txt
 --out-range=-d8
---payload=tls_client_hello
---lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
---name=Google (сервисы)
---filter-tcp=80,443
---hostlist=lists/google.txt
+--name=Google TCP
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-google.txt
 --out-range=-d8
---payload=tls_client_hello
---lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
+--lua-desync=pass
 
 --new
 
@@ -257,17 +317,6 @@
 
 --new
 
---name=rutracker.org
---filter-tcp=80,443
---hostlist=lists/rutracker.txt
---out-range=-d10
---payload=tls_client_hello
---lua-desync=send:repeats=2
---lua-desync=syndata:blob=stun_pat
---lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
-
---new
-
 --name=rutor.info (.is)
 --filter-tcp=80,443
 --hostlist=lists/rutor.txt
@@ -283,8 +332,8 @@
 --out-range=-d8
 --payload=tls_client_hello
 --lua-desync=send:repeats=2
---lua-desync=syndata:blob=stun_pat
---lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
+--lua-desync=syndata:blob=tls_google
+--lua-desync=tls_multisplit_sni:seqovl=652:seqovl_pattern=tls_google
 
 --new
 
@@ -310,46 +359,6 @@
 
 --new
 
---name=js.rbxcdn.com
---filter-tcp=80-65535
---hostlist=lists/js-rbxcdn-com.txt
---out-range=-d8
---payload=tls_client_hello
---lua-desync=multisplit:seqovl=681:seqovl_pattern=stun_pat
-
---new
-
---name=tr.rbxcdn.com
---filter-tcp=443-65535
---hostlist=lists/tr-rbxcdn-com.txt
---out-range=-n5
---payload=tls_client_hello
---lua-desync=send:repeats=2
---lua-desync=syndata:blob=stun_pat
---lua-desync=multisplit:seqovl=1000:seqovl_pattern=stun_pat
-
---new
-
---name=css.rbxcdn.com
---filter-tcp=80-65535
---hostlist=lists/css-rbxcdn-com.txt
---out-range=-d8
---payload=tls_client_hello
---lua-desync=multisplit:seqovl=681:seqovl_pattern=stun_pat
-
---new
-
---name=Roblox TCP
---filter-tcp=80,443-65535
---hostlist=lists/roblox.txt
---out-range=-d5
---payload=tls_client_hello
---lua-desync=send:repeats=2
---lua-desync=syndata:blob=stun_pat
---lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
-
---new
-
 --name=itch.io
 --filter-tcp=80,443
 --hostlist=lists/itch.txt
@@ -364,26 +373,26 @@
 --hostlist=lists/other.txt
 --out-range=-d10
 --payload=tls_client_hello
---lua-desync=send:repeats=2
---lua-desync=syndata:blob=stun_pat
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
 --name=Facebook
 --filter-tcp=80,443
---hostlist=lists/facebook.txt
+--ipset=lists/ipset-facebook.txt
 --out-range=-d10
 --payload=tls_client_hello
 --lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
 
 --new
 
---name=Instagram
---filter-tcp=80,443
---hostlist=lists/instagram.txt
---out-range=-d10
---payload=tls_client_hello
---lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
+--name=githubusercontent.com
+--filter-tcp=443
+--hostlist=lists/githubusercontent.txt
+--out-range=-d8
+--lua-desync=send:repeats=2
+--lua-desync=syndata:blob=stun_pat
+--lua-desync=tls_multisplit_sni:seqovl=652:seqovl_pattern=stun_pat
 
 --new
 
@@ -394,54 +403,34 @@
 --payload=tls_client_hello
 --lua-desync=send:repeats=2
 --lua-desync=syndata:blob=stun_pat
-
---new
-
---name=18+ сайты
---filter-tcp=80,443
---hostlist=lists/porn.txt
---out-range=-d8
---payload=http_req,tls_client_hello
---lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
-
---new
-
---name=Russia blacklist TCP 443
---filter-tcp=443
---hostlist=lists/russia-blacklist.txt
---out-range=-d10
---payload=tls_client_hello
---lua-desync=multidisorder:pos=1,host+2,sld+2,sld+5,sniext+1,sniext+2,endhost-2:seqovl=1
+--lua-desync=tls_multisplit_sni:seqovl=652:seqovl_pattern=stun_pat
 
 --new
 
 --name=Cloudflare TCP
 --filter-tcp=80,443-65535
 --ipset=lists/ipset-cloudflare.txt
---out-range=-d10
+--out-range=-d8
 --payload=all
---lua-desync=send:repeats=2
---lua-desync=syndata:blob=stun_pat
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
---name=Cloudflare legacy TCP
+--name=Hetzner TCP
 --filter-tcp=80,443-65535
---ipset=lists/cloudflare-ipset.txt
---out-range=-d10
---payload=tls_client_hello
+--ipset=lists/ipset-hetzner.txt
+--out-range=-d8
 --lua-desync=send:repeats=2
---lua-desync=syndata:blob=stun_pat
+--lua-desync=syndata:blob=tls_google
+--lua-desync=tls_multisplit_sni:seqovl=652:seqovl_pattern=tls_google
 
 --new
 
---name=Cloudflare IPv6 legacy TCP
+--name=WorldStream TCP
 --filter-tcp=80,443-65535
---ipset=lists/cloudflare-ipset_v6.txt
---out-range=-d10
---payload=tls_client_hello
---lua-desync=fake:blob=tls_google:repeats=6:tcp_ts=-600000
---lua-desync=fakedsplit:pattern=0x00:repeats=6:tcp_ts=-600000
+--ipset=lists/ipset-worldstream.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -449,19 +438,80 @@
 --filter-tcp=80,443-65535
 --ipset=lists/ipset-ovh.txt
 --out-range=-d10
---payload=tls_client_hello
---lua-desync=fake:blob=tls_google:repeats=6:tcp_ts=-600000
---lua-desync=fakedsplit:pattern=0x00:repeats=6:tcp_ts=-600000
+--payload=all
+--lua-desync=send:repeats=2
+--lua-desync=syndata:blob=stun_pat
+--lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
 
 --new
 
---name=Cloudflare alt TCP
+--name=DigitalOcean TCP
 --filter-tcp=80,443-65535
---ipset=lists/ipset-cloudflare1.txt
---out-range=-d10
+--ipset=lists/ipset-digitalocean.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=Datacamp TCP
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-datacamp.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=NovoServe TCP
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-novoserve.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=FranTech Solutions TCP
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-frantech.txt
+--out-range=-d8
+--lua-desync=send:repeats=2
+--lua-desync=syndata:blob=stun_pat
+--lua-desync=hostfakesplit_multi:hosts=google.com,vimeo.com:tcp_ts=-1000:tcp_md5:repeats=2
+
+--new
+
+--name=Fastly TCP
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-fastly.txt
+--out-range=-n10
 --payload=tls_client_hello
---lua-desync=fake:blob=tls_google:repeats=6:tcp_ts=-600000
---lua-desync=fakedsplit:pattern=0x00:repeats=6:tcp_ts=-600000
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=Akamai TCP
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-akamai.txt
+--out-range=-n10
+--payload=tls_client_hello
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=Railway TCP
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-railway.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
+
+--name=Google Cloud TCP
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-usa-google.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -470,8 +520,7 @@
 --ipset=lists/ipset-amazon.txt
 --out-range=-d10
 --payload=tls_client_hello
---lua-desync=fake:blob=tls_google:repeats=6:tcp_ts=-600000
---lua-desync=fakedsplit:pattern=0x00:repeats=6:tcp_ts=-600000
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -525,18 +574,86 @@
 
 --new
 
---name=Discord UDP
+--name=Discord UDP (обычно не нужно)
 --filter-udp=443-65535
 --ipset=lists/ipset-discord.txt
 --out-range=-n8
 --payload=all
---lua-desync=fake:blob=quic_google:repeats=12:ip_autottl=2,3-20:ip6_autottl=2,3-20:payload=all
+--lua-desync=fake:blob=stun_pat:repeats=4
 
 --new
 
---name=Tanki X UDP
+--name=DigitalOcean UDP
 --filter-udp=443-65535
---hostlist=lists/tankix.txt
+--ipset=lists/ipset-digitalocean.txt
+--out-range=-d8
+--lua-desync=fake:blob=stun_pat:repeats=6
+
+--new
+
+--name=Datacamp UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-datacamp.txt
+--out-range=-d8
+--lua-desync=fake:blob=stun_pat:repeats=6
+
+--new
+
+--name=NovoServe UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-novoserve.txt
+--out-range=-d8
+--lua-desync=fake:blob=stun_pat:repeats=6
+
+--new
+
+--name=FranTech Solutions UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-frantech.txt
+--out-range=-d8
+--lua-desync=fake:blob=stun_pat:repeats=6
+
+--new
+
+--name=Fastly UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-fastly.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:repeats=6:blob=fake_default_quic
+
+--new
+
+--name=Akamai UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-akamai.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:repeats=6:blob=fake_default_quic
+
+--new
+
+--name=Railway UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-railway.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:repeats=6:blob=fake_default_quic
+
+--new
+
+--name=Google Cloud UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-usa-google.txt
+--out-range=-n8
+--payload=all
+--lua-desync=fake:repeats=6:blob=fake_default_quic
+
+--new
+
+--name=Hetzner UDP
+--filter-udp=443-65535
+--ipset=lists/ipset-hetzner.txt
 --out-range=-d8
 --payload=all
 --lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=10:payload=all
@@ -588,7 +705,7 @@
 
 --new
 
---name=Все сайты UDP (исключение)
+--name=Все сайты UDP (айпи)
 --filter-udp=443-65535
 --ipset-exclude=lists/ipset-ru.txt
 --ipset-exclude=lists/ipset-dns.txt

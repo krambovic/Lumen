@@ -39,6 +39,7 @@ from ...wireguard_normalization import normalize_singbox_wireguard_endpoints
 from ...openvpn_normalization import normalize_openvpn_outbound
 from .config_builder import (
     _normalize_shadowsocks_methods,
+    _normalize_vmess_security,
     _normalize_vless_vision,
     _preserve_or_reject_semantic_fields,
     _strip_removed_transport_fields,
@@ -56,7 +57,7 @@ _APP_TUN_MIXED_INBOUND_TAG = "socks-in"
 _APP_TUN_HTTP_INBOUND_TAG = "http-in"
 _ENDPOINT_DNS_CACHE_TTL_SECONDS = 300.0
 _DEFAULT_DIRECT_DNS_SERVER = "1.1.1.1"
-_DEFAULT_DIRECT_DNS_TYPE = "udp"
+_DEFAULT_DIRECT_DNS_TYPE = "https"
 _DEFAULT_PROXY_DNS_SERVER = "cloudflare-dns.com"
 _DEFAULT_PROXY_DNS_TYPE = "https"
 _SINGBOX_DHCP_AUTO_DNS = "dhcp://auto"
@@ -196,7 +197,7 @@ def plan_singbox_runtime(
     multiplex_enabled: bool = False,
     multiplex_concurrency: int = 8,
     discord_proxy_enabled: bool = False,
-    tun_strict_route: bool = False,
+    tun_strict_route: bool = True,
     tun_stack: str = "mixed",
     tun_mtu: int = 9000,
     tun_endpoint_independent_nat: bool = False,
@@ -217,6 +218,7 @@ def plan_singbox_runtime(
         runtime_config = deepcopy((node.outbound or {}).get("singbox_config") or {})
         _preserve_or_reject_semantic_fields(runtime_config)
         _strip_removed_transport_fields(runtime_config)
+        _normalize_vmess_security(runtime_config)
         _normalize_vless_vision(runtime_config)
         _normalize_shadowsocks_methods(runtime_config)
         normalize_singbox_wireguard_endpoints(runtime_config)
@@ -275,6 +277,7 @@ def plan_singbox_runtime(
     runtime_config = deepcopy(document.payload)
     _preserve_or_reject_semantic_fields(runtime_config)
     _strip_removed_transport_fields(runtime_config)
+    _normalize_vmess_security(runtime_config)
     _normalize_vless_vision(runtime_config)
     _normalize_shadowsocks_methods(runtime_config)
     normalize_singbox_wireguard_endpoints(runtime_config)
@@ -1553,6 +1556,9 @@ def _build_dns_server(tag: str, server: str, server_type: str, strategy: str) ->
     if dns_type == "https":
         payload.setdefault("server_port", 443)
         payload.setdefault("path", "/dns-query")
+        known_tls_name = _KNOWN_DOH_IP_HOSTS.get(address.lower())
+        if known_tls_name:
+            payload["tls"] = {"server_name": known_tls_name}
     elif dns_type == "tls":
         payload.setdefault("server_port", 853)
     elif dns_type in {"udp", "tcp"}:
@@ -1797,7 +1803,7 @@ def _ensure_singbox_tun_runtime_contract(
     routing: RoutingSettings | None = None,
     enable_final_fragment: bool = True,
     system_dns_servers: tuple[str, ...] = (),
-    tun_strict_route: bool = False,
+    tun_strict_route: bool = True,
     tun_stack: str = "mixed",
     tun_mtu: int = 9000,
     tun_endpoint_independent_nat: bool = False,
@@ -1843,7 +1849,10 @@ def _ensure_singbox_tun_runtime_contract(
             inbound["mtu"] = mtu_value
             inbound["auto_route"] = True
             inbound.pop("route_address", None)
-            inbound["strict_route"] = bool(tun_strict_route)  # True breaks Discord voice ICE fallback and WinDivert tools
+            # On Windows, strict_route installs the WFP protection needed to
+            # stop multihomed DNS from leaving through a physical interface.
+            # The route-level DNS hijack below only sees packets already in TUN.
+            inbound["strict_route"] = bool(tun_strict_route)
             inbound["stack"] = stack_value
             if tun_endpoint_independent_nat and stack_value != "system":
                 inbound["endpoint_independent_nat"] = True  # full-cone NAT, needs gvisor/mixed UDP stack
@@ -1977,6 +1986,14 @@ def _ensure_singbox_dns_runtime_contract(
     if proxy_is_default:
         runtime_proxy_server = _DEFAULT_PROXY_DNS_SERVER
         runtime_proxy_type = _DEFAULT_PROXY_DNS_TYPE
+    # Migrate the historical default (Cloudflare over UDP) at runtime too, so
+    # already-running installs with a serialized legacy setting cannot send
+    # plaintext DNS to an Iranian ISP that transparently intercepts port 53.
+    if (
+        runtime_direct_server.lower() == _DEFAULT_DIRECT_DNS_SERVER
+        and runtime_direct_type.lower() == "udp"
+    ):
+        runtime_direct_type = "https"
 
     dns["strategy"] = direct_strategy
     dns["reverse_mapping"] = True

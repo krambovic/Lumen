@@ -35,6 +35,16 @@ def test_diagnostics_upload_defaults_to_enabled() -> None:
     assert restored.diagnostics_upload_enabled is False
 
 
+def test_tun_dns_leak_protection_migrates_old_default_and_preserves_opt_out() -> None:
+    assert AppSettings().tun_strict_route is True
+    assert AppSettings.from_dict({"tun_strict_route": False}).tun_strict_route is True
+
+    settings = AppSettings(tun_strict_route=False)
+    saved = settings.to_dict()
+    assert saved["tun_strict_route_default_v2"] is True
+    assert AppSettings.from_dict(saved).tun_strict_route is False
+
+
 def test_legacy_xray_tun_engine_is_ignored() -> None:
     settings = AppSettings.from_dict({"tun_mode": True, "tun_engine": "xray"})
 

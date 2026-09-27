@@ -1,11 +1,34 @@
 package com.lumen.app.subscription
 
+import com.lumen.core.config.parser.LinkParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.URL
 
 class SubscriptionClientProfilesTest {
+    @Test
+    fun magVpnCombinesPhysicalLinksWithOnlyExplicitAutoGroups() {
+        val link = "vless://00000000-0000-0000-0000-000000000001@node.example:443?encryption=none#node"
+        val auto = """[{"remarks":"AUTO VLESS","routing":{"balancers":[{"tag":"pool","selector":["member-"]}]},"outbounds":[{"tag":"member-1","protocol":"vless","settings":{"vnext":[{"address":"node.example","port":443,"users":[{"id":"00000000-0000-0000-0000-000000000001"}]}]}}]}]"""
+
+        val merged = SubscriptionClient.mergeMagVpnVariants(link, auto)
+        val (nodes, errors) = LinkParser.parseLinksText(merged)
+
+        assertTrue(errors.toString(), errors.isEmpty())
+        assertEquals(1, nodes.count { it.scheme == "vless" })
+        assertEquals(1, nodes.count { it.scheme == "auto" })
+    }
+
+    @Test
+    fun magVpnVariantProbeDoesNotAffectOtherProvidersOrCustomAgents() {
+        val url = URL("https://www.magvpn.ru/tsub/29332")
+        assertTrue(SubscriptionClient.needsMagVpnVariants(url, null))
+        assertFalse(SubscriptionClient.needsMagVpnVariants(url, "Custom/1"))
+        assertFalse(SubscriptionClient.needsMagVpnVariants(URL("https://other.example/tsub/29332"), null))
+    }
+
     @Test
     fun lumenProfileIsTriedFirst() {
         val profiles = SubscriptionClient.clientProfiles()

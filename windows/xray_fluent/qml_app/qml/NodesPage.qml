@@ -1603,7 +1603,7 @@ Item {
 
     // ── keyboard shortcuts ───────────────────────
     readonly property bool _kbReady: page.visible && page.enabled
-        && !subUrlMenu.opened && !groupCombo.popup.opened && !sortCombo.popup.opened && !subCombo.popup.opened
+        && !groupCombo.popup.opened && !sortCombo.popup.opened && !subCombo.popup.opened
         && !subDialog.opened && !infoDialog.opened && !deleteGroupDialog.opened && !qrDialog.opened && !importProgressDialog.opened
         && !searchInput.activeFocus
         && !editDialog.opened
@@ -1914,7 +1914,7 @@ Item {
                         FluentTextEdit {
                             visible: infoRow.isUrlRow
                             text: modelData[1]
-                            color: urlMouse.containsMouse ? Theme.accent : Theme.text
+                            color: Theme.text
                             selectedTextColor: Theme.text
                             selectionColor: Theme.accentSoft
                             font.family: Theme.fontFamily
@@ -1926,22 +1926,24 @@ Item {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             Layout.preferredWidth: 1
-
-                            MouseArea {
-                                id: urlMouse
-                                anchors.fill: parent
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                cursorShape: Qt.PointingHandCursor
-                                hoverEnabled: true
-                                onClicked: function(mouse) {
-                                    if (mouse.button === Qt.RightButton) {
-                                        subUrlMenu.url = modelData[1];
-                                        subUrlMenu.popup();
-                                    } else {
-                                        App.openUrl(modelData[1]);
-                                    }
-                                }
-                            }
+                        }
+                        AccentButton {
+                            visible: infoRow.isUrlRow
+                            kind: "ghost"
+                            iconOnly: true
+                            glyph: "\uE8C8"
+                            text: I18n.t("Копировать ссылку")
+                            Layout.alignment: Qt.AlignTop
+                            onClicked: App.copyText(modelData[1])
+                        }
+                        AccentButton {
+                            visible: infoRow.isUrlRow
+                            kind: "ghost"
+                            iconOnly: true
+                            glyph: "\uE8A7"
+                            text: I18n.t("Открыть")
+                            Layout.alignment: Qt.AlignTop
+                            onClicked: App.openUrl(modelData[1])
                         }
                     }
                 }
@@ -1966,16 +1968,6 @@ Item {
                 Item { Layout.fillWidth: true }
                 AccentButton { kind: "accent"; text: I18n.t("Закрыть"); onClicked: infoDialog.close() }
             }
-        }
-    }
-
-    FluentMenu {
-        id: subUrlMenu
-        property string url: ""
-        width: 210
-        FluentMenuItem {
-            text: I18n.t("Копировать ссылку")
-            onTriggered: App.copyText(subUrlMenu.url)
         }
     }
 

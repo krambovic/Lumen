@@ -16,6 +16,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import json
 import logging
+import math
 import re
 import sys
 from pathlib import Path
@@ -206,6 +207,7 @@ class AppBridge(QObject):
     nodeSortChanged = pyqtSignal()
     nodeFilterChanged = pyqtSignal()
     nodeTableLayoutChanged = pyqtSignal()
+    zapretTableLayoutChanged = pyqtSignal()
     selectedSubscriptionChanged = pyqtSignal()
     lockedChanged = pyqtSignal()           # app lock/unlock state changed
     trayAvailableChanged = pyqtSignal()    # system tray availability resolved
@@ -3427,12 +3429,17 @@ class AppBridge(QObject):
             level="success", message=message,
         )
 
-    @pyqtSlot(str, str, result="QVariantMap")
-    def saveConfig(self, core: str, text: str):
+    @pyqtSlot(str, str, str, result="QVariantMap")
+    def saveConfig(self, core: str, text: str, previous_text: str):
         if core not in ("singbox", "xray"):
             return self._config_state("singbox", text=text)
         try:
-            path = getattr(self.controller, f"save_{core}_config_text")(text)
+            save = getattr(self.controller, f"save_{core}_config_text")
+            path = (
+                save(text, previous_text=previous_text)
+                if core == "singbox"
+                else save(text)
+            )
         except Exception as exc:  # noqa: BLE001
             self.toast.emit("error", str(exc).splitlines()[0])
             return self._config_state(core, text=text, level="error", message=str(exc))
@@ -3454,12 +3461,17 @@ class AppBridge(QObject):
             self.toast.emit("success", "JSON корректен")
         return {"statusLevel": "success" if ok else "error", "statusMessage": message}
 
-    @pyqtSlot(str, str, result="QVariantMap")
-    def applyConfig(self, core: str, text: str):
+    @pyqtSlot(str, str, str, result="QVariantMap")
+    def applyConfig(self, core: str, text: str, previous_text: str):
         if core not in ("singbox", "xray"):
             return {"statusLevel": "error", "statusMessage": "Неизвестное ядро", "fileLabel": ""}
         try:
-            ok, path, message = getattr(self.controller, f"apply_{core}_config_text")(text)
+            apply_config = getattr(self.controller, f"apply_{core}_config_text")
+            ok, path, message = (
+                apply_config(text, previous_text)
+                if core == "singbox"
+                else apply_config(text)
+            )
         except Exception as exc:  # noqa: BLE001
             self.toast.emit("error", str(exc).splitlines()[0])
             return {"statusLevel": "error", "statusMessage": str(exc), "fileLabel": ""}
@@ -3729,6 +3741,37 @@ class AppBridge(QObject):
         settings.node_table_layout = normalized
         self.controller.schedule_save()
         self.nodeTableLayoutChanged.emit()
+
+    @pyqtProperty("QVariantMap", notify=zapretTableLayoutChanged)
+    def zapretTableLayout(self) -> dict:
+        return dict(self.controller.state.settings.zapret_table_layout)
+
+    @pyqtSlot("QVariantMap")
+    def setZapretTableLayout(self, layout: dict) -> None:
+        if not isinstance(layout, dict):
+            return
+        allowed = {"manual", "name", "description", "args", "date"}
+        normalized: dict[str, Any] = {}
+        for raw_key, value in layout.items():
+            key = str(raw_key)
+            if key not in allowed:
+                continue
+            if key == "manual":
+                normalized[key] = bool(value)
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(number):
+                continue
+            normalized[key] = max(48.0, min(number, 2000.0))
+        settings = self.controller.state.settings
+        if settings.zapret_table_layout == normalized:
+            return
+        settings.zapret_table_layout = normalized
+        self.controller.schedule_save()
+        self.zapretTableLayoutChanged.emit()
 
     @pyqtSlot(str, result=bool)
     def createManualGroup(self, name: str) -> bool:
@@ -4745,6 +4788,11 @@ class AppBridge(QObject):
         return bool(self.controller.state.routing.bypass_lan)
 
     @pyqtProperty(str, notify=routingChanged)
+    def tunDefaultOutbound(self) -> str:
+        value = str(self.controller.state.routing.tun_default_outbound or "").strip().lower()
+        return value if value in {"proxy", "direct"} else "proxy"
+
+    @pyqtProperty(str, notify=routingChanged)
     def dnsMode(self) -> str:
         return self.controller.state.routing.dns_mode
 
@@ -4912,6 +4960,20 @@ class AppBridge(QObject):
     def setBypassLan(self, enabled: bool) -> None:
         def apply(r: RoutingSettings) -> None:
             r.bypass_lan = bool(enabled)
+        self._mutate_routing(apply)
+
+    @pyqtSlot(str)
+    def setTunDefaultOutbound(self, outbound: str) -> None:
+        value = str(outbound or "").strip().lower()
+        if value not in {"proxy", "direct"}:
+            return
+
+        def apply(r: RoutingSettings) -> None:
+            r.tun_default_outbound = value
+            r.mode = "rule"
+            # Keep preset_id: regional domain/rule-set membership is derived
+            # from it, while this value only changes the unmatched fallback.
+
         self._mutate_routing(apply)
 
     @pyqtSlot(str)

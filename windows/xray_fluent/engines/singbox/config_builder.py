@@ -56,6 +56,14 @@ _SUPPORTED_SHADOWSOCKS_METHODS = {
 }
 _SUPPORTED_SHADOWSOCKS_PLUGINS = {"obfs-local", "v2ray-plugin"}
 _SHADOWSOCKS_PLUGIN_ALIASES = {"obfs": "obfs-local", "simple-obfs": "obfs-local"}
+_SUPPORTED_VMESS_SECURITY = {
+    "auto",
+    "none",
+    "zero",
+    "aes-128-gcm",
+    "chacha20-poly1305",
+}
+_MISSING_VMESS_SECURITY = {"", "null", "undefined"}
 
 
 def _ensure_hysteria_speeds(sb: dict[str, Any]) -> None:
@@ -95,6 +103,7 @@ def build_singbox_outbound(
     # Current sing-box no longer accepts Xray's grpcSettings.authority.
     # Sanitize native/imported payloads before validation as well.
     _strip_removed_transport_fields(outbound)
+    _normalize_vmess_security(outbound)
     _normalize_vless_vision(outbound)
     _normalize_shadowsocks_methods(outbound)
     unsupported_transport = str(outbound.pop("_unsupported_transport", "") or "").strip()
@@ -391,6 +400,35 @@ def _normalize_shadowsocks_methods(value: Any) -> None:
 
     for nested in value.values():
         _normalize_shadowsocks_methods(nested)
+
+
+def _normalize_vmess_security(value: Any) -> None:
+    """Normalize VMess ciphers before strict sing-box config decoding.
+
+    Some subscription generators serialize an omitted cipher as the literal
+    string ``null``. It means "use the client default", but sing-box treats it
+    as an unknown cipher and rejects the entire runtime, including otherwise
+    valid nodes in a large selector. Apply the repair recursively so native
+    full configs and dependency outbounds receive the same protection as links.
+    """
+    if isinstance(value, list):
+        for nested in value:
+            _normalize_vmess_security(nested)
+        return
+    if not isinstance(value, dict):
+        return
+
+    if str(value.get("type") or "").strip().lower() == "vmess":
+        security = str(value.get("security") or "").strip().lower()
+        if security in _MISSING_VMESS_SECURITY:
+            value["security"] = "auto"
+        elif security not in _SUPPORTED_VMESS_SECURITY:
+            raise ValueError(f"Unsupported VMess security type: {security}")
+        else:
+            value["security"] = security
+
+    for nested in value.values():
+        _normalize_vmess_security(nested)
 
 
 def _normalize_vless_vision(value: Any) -> None:

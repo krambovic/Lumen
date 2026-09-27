@@ -27,15 +27,21 @@ def test_pages_do_not_fall_back_to_native_dialog_buttons() -> None:
     assert "FluentDialog {\n        id: qrDialog" in qml_sources["NodesPage.qml"]
 
 
-def test_subscription_properties_do_not_refresh_and_use_fluent_copy_menu() -> None:
+def test_subscription_properties_are_selectable_and_offer_copy_and_open() -> None:
     source = (QML_DIR / "NodesPage.qml").read_text(encoding="utf-8")
 
     open_info = source[source.index("function openInfo()") : source.index("background: Rectangle", source.index("function openInfo()"))]
     assert "App.updateSubscription" not in open_info
 
-    menu = source[source.index("id: subUrlMenu") : source.index("// ---- QR dialog")]
-    assert "FluentMenu {\n        id: subUrlMenu" in source
-    assert "FluentMenuItem" in menu
+    info = source[source.index("id: infoProperties") : source.index("// ---- QR dialog")]
+    assert "FluentTextEdit {" in info
+    assert "selectByMouse: true" in info
+    assert "App.copyText(modelData[1])" in info
+    assert "App.openUrl(modelData[1])" in info
+    assert "id: subUrlMenu" not in source
+
+    text_edit = (QML_DIR / "FluentTextEdit.qml").read_text(encoding="utf-8")
+    assert "TextEditContextMenu { editor: control }" in text_edit
 
     shared_menu = (QML_DIR / "FluentMenu.qml").read_text(encoding="utf-8")
     shared_item = (QML_DIR / "FluentMenuItem.qml").read_text(encoding="utf-8")

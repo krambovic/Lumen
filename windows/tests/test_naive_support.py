@@ -167,7 +167,7 @@ def test_singbox_build_defaults_to_the_awg31_compatible_outbound_release() -> No
         encoding="utf-8"
     )
 
-    assert 'Ref = "v1.14.0-extended-2.7.1"' in build_script
+    assert 'Ref = "v1.14.1-extended-2.7.2"' in build_script
     assert "apply --unidiff-zero" in build_script
     assert '"tunnel_address"' in (ROOT / "xray_fluent" / "link_parser.py").read_text(
         encoding="utf-8"

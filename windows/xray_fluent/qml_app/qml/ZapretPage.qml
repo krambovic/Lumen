@@ -10,14 +10,101 @@ import "."
 Item {
     id: page
 
-    readonly property int colName: 200
-    readonly property int colArgs: 110
-    readonly property int colDate: 150
+    readonly property var savedTableLayout: App.zapretTableLayout || ({})
+    property bool manualColumnWidths: savedTableLayout.manual === true
+    property real manualColName: savedTableLayout.name !== undefined ? Number(savedTableLayout.name) : 200
+    property real manualColDescription: savedTableLayout.description !== undefined ? Number(savedTableLayout.description) : 300
+    property real manualColArgs: savedTableLayout.args !== undefined ? Number(savedTableLayout.args) : 110
+    property real manualColDate: savedTableLayout.date !== undefined ? Number(savedTableLayout.date) : 150
+    readonly property int colName: Math.round(manualColName)
+    readonly property int colArgs: Math.round(manualColArgs)
+    readonly property int colDate: Math.round(manualColDate)
+    readonly property int colDescription: Math.round(manualColumnWidths
+        ? manualColDescription
+        : Math.max(120, tableViewport.width - 64 - colName - colArgs - colDate))
+    readonly property int tableWidth: manualColumnWidths
+        ? 64 + colName + colDescription + colArgs + colDate
+        : tableViewport.width
 
     property var presets: []
     property string selected: ""
     property bool running: false
     property string activePreset: ""
+
+    function freezeColumnWidths() {
+        if (manualColumnWidths)
+            return
+        manualColName = colName
+        manualColDescription = colDescription
+        manualColArgs = colArgs
+        manualColDate = colDate
+        manualColumnWidths = true
+    }
+
+    function resizeColumn(index, width) {
+        freezeColumnWidths()
+        var minWidth = index === 0 ? 90 : (index === 1 ? 120 : 64)
+        var value = Math.max(minWidth, Math.min(2000, Math.round(width)))
+        if (index === 0) manualColName = value
+        else if (index === 1) manualColDescription = value
+        else if (index === 2) manualColArgs = value
+        else if (index === 3) manualColDate = value
+        persistTableLayout()
+    }
+
+    function persistTableLayout() {
+        App.setZapretTableLayout({
+            "manual": manualColumnWidths,
+            "name": manualColName,
+            "description": manualColDescription,
+            "args": manualColArgs,
+            "date": manualColDate
+        })
+    }
+
+    component ResizableHeader: Item {
+        id: headerCell
+        property string label: ""
+        property int columnIndex: -1
+        implicitHeight: 24
+        Text {
+            anchors.left: parent.left
+            anchors.right: resizeHandle.left
+            anchors.leftMargin: 4
+            anchors.rightMargin: 3
+            anchors.verticalCenter: parent.verticalCenter
+            text: headerCell.label
+            elide: Text.ElideRight
+            color: Theme.textMuted
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSmall
+            font.weight: Font.DemiBold
+        }
+        MouseArea {
+            id: resizeHandle
+            z: 2
+            width: 10
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+            acceptedButtons: Qt.LeftButton
+            cursorShape: Qt.SplitHCursor
+            property real pressedX: 0
+            property real pressedWidth: 0
+            onPressed: (mouse) => {
+                var point = mapToItem(page, mouse.x, mouse.y)
+                pressedX = point.x
+                pressedWidth = headerCell.width
+                mouse.accepted = true
+            }
+            onPositionChanged: (mouse) => {
+                if (!pressed)
+                    return
+                var point = mapToItem(page, mouse.x, mouse.y)
+                page.resizeColumn(headerCell.columnIndex, pressedWidth + point.x - pressedX)
+            }
+        }
+    }
 
     // editor state
     property bool editing: false
@@ -92,6 +179,13 @@ Item {
             page.activePreset = s.preset || ""
         }
         function onZapretPresetsChanged() { page.refresh() }
+        function onZapretTableLayoutChanged() {
+            page.manualColumnWidths = App.zapretTableLayout.manual === true
+            page.manualColName = Number(App.zapretTableLayout.name || 200)
+            page.manualColDescription = Number(App.zapretTableLayout.description || 300)
+            page.manualColArgs = Number(App.zapretTableLayout.args || 110)
+            page.manualColDate = Number(App.zapretTableLayout.date || 150)
+        }
     }
 
     // ════════════════ LIST VIEW ════════════════
@@ -162,32 +256,50 @@ Item {
             Layout.fillHeight: true
             padding: 0
             hoverable: false
-            ColumnLayout {
+            Flickable {
+                id: tableViewport
                 anchors.fill: parent
-                spacing: 0
-                // header
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.margins: 14
-                    Layout.bottomMargin: 8
-                    spacing: 12
-                    Text { text: I18n.t("Имя"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colName }
-                    Text { text: I18n.t("Описание"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                    Text { text: I18n.t("Аргументов"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colArgs; horizontalAlignment: Text.AlignRight }
-                    Text { text: I18n.t("Изменён"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold; Layout.preferredWidth: page.colDate; horizontalAlignment: Text.AlignRight }
-                    Item { Layout.preferredWidth: 30 }
+                contentWidth: page.tableWidth
+                contentHeight: height
+                flickableDirection: Flickable.HorizontalFlick
+                interactive: false
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.horizontal: FluentScrollBar {
+                    parent: tableViewport
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    interactive: true
+                    policy: page.tableWidth > tableViewport.width ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
                 }
-                Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
 
-                // rows
-                ListView {
-                    id: list
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    model: page.presets
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: FluentScrollBar { id: zapretListVbar }
+                ColumnLayout {
+                    width: page.tableWidth
+                    height: tableViewport.height
+                    spacing: 0
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 14
+                        Layout.rightMargin: 14
+                        Layout.topMargin: 8
+                        Layout.bottomMargin: 8
+                        spacing: 12
+                        ResizableHeader { label: I18n.t("Имя"); columnIndex: 0; Layout.preferredWidth: page.colName }
+                        ResizableHeader { label: I18n.t("Описание"); columnIndex: 1; Layout.preferredWidth: page.colDescription; Layout.fillWidth: !page.manualColumnWidths }
+                        ResizableHeader { label: I18n.t("Аргументов"); columnIndex: 2; Layout.preferredWidth: page.colArgs }
+                        ResizableHeader { label: I18n.t("Изменён"); columnIndex: 3; Layout.preferredWidth: page.colDate }
+                    }
+                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 14; Layout.rightMargin: 14; height: 1; color: Theme.divider }
+
+                    ListView {
+                        id: list
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        model: page.presets
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: FluentScrollBar { id: zapretListVbar }
 
                     NumberAnimation {
                         id: zapretListScrollAnim
@@ -248,7 +360,8 @@ Item {
                             Text {
                                 text: modelData.description; elide: Text.ElideRight
                                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
-                                Layout.fillWidth: true
+                                Layout.preferredWidth: page.colDescription
+                                Layout.fillWidth: !page.manualColumnWidths
                             }
                             Text {
                                 text: "" + modelData.argCount
@@ -279,6 +392,7 @@ Item {
                 }
             }
         }
+    }
     }
 
     // ════════════════ EDITOR VIEW ════════════════

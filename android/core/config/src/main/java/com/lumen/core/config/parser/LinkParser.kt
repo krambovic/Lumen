@@ -2,6 +2,7 @@ package com.lumen.core.config.parser
 
 import com.lumen.core.config.normalizer.OpenVpnConfigNormalizer
 import com.lumen.core.config.crypto.HappCrypt
+import com.lumen.core.config.crypto.IncyCrypt
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -32,7 +33,7 @@ object LinkParser {
     private val SCHEME_SPLIT_REGEX = Regex(
         "(?i)(vless|vmess|trojan|ss|ssr|hysteria2|hysteria|hy2|hy|tuic|wireguard|wg|awg|" +
             "amneziawg|warp|naive\\+https|naive\\+quic|naive|mierus|mieru|masque|socks5|socks|" +
-            "https|http|happ|snell|juicity|anytls)://"
+            "https|http|happ|incy|snell|juicity|anytls)://"
     )
     // The extended core types the AmneziaWG options: jc/jmin/jmax/s1..s4/itime are
     // integers, header-protection and packet definitions are strings, and the
@@ -73,6 +74,7 @@ object LinkParser {
     // A happ crypt link may hide a subscription URL instead of a node; it has to
     // go through the subscription fetch (parity with desktop node_service).
     const val HAPP_SUBSCRIPTION_ERROR = "Happ link contains a subscription URL, add it as a subscription"
+    const val INCY_SUBSCRIPTION_ERROR = "Incy link contains a subscription URL, add it as a subscription"
 
     const val MAX_IMPORT_BYTES = 8 * 1024 * 1024
     const val MAX_IMPORT_LINES = 20000
@@ -264,6 +266,16 @@ object LinkParser {
                 return Pair(emptyList(), listOf(HAPP_SUBSCRIPTION_ERROR))
             }
         }
+        if (IncyCrypt.isIncyCryptLink(stripped)) {
+            try {
+                stripped = IncyCrypt.decryptIncyLink(stripped).trim()
+            } catch (e: Exception) {
+                return Pair(emptyList(), listOf("Incy crypt decryption failed: ${e.message}"))
+            }
+            if (isSubscriptionUrl(stripped)) {
+                return Pair(emptyList(), listOf(INCY_SUBSCRIPTION_ERROR))
+            }
+        }
 
         if (stripped.startsWith("{") || stripped.startsWith("[") || stripped.startsWith(34.toChar())) {
             try {
@@ -345,6 +357,10 @@ object LinkParser {
                 if (HappCrypt.isHappCryptLink(currentLine)) {
                     currentLine = HappCrypt.decryptHappLink(currentLine).trim()
                     if (isSubscriptionUrl(currentLine)) throw LinkParseError(HAPP_SUBSCRIPTION_ERROR)
+                }
+                if (IncyCrypt.isIncyCryptLink(currentLine)) {
+                    currentLine = IncyCrypt.decryptIncyLink(currentLine).trim()
+                    if (isSubscriptionUrl(currentLine)) throw LinkParseError(INCY_SUBSCRIPTION_ERROR)
                 }
                 if (currentLine.startsWith("{") || currentLine.startsWith("[") || currentLine.startsWith(34.toChar())) {
                     val (inner, innerErrors) = parseLinksTextInternal(currentLine, depth + 1)
@@ -440,6 +456,11 @@ object LinkParser {
         if (HappCrypt.isHappCryptLink(text)) {
             val decrypted = HappCrypt.decryptHappLink(text).trim()
             if (isSubscriptionUrl(decrypted)) throw LinkParseError(HAPP_SUBSCRIPTION_ERROR)
+            return parseSingle(decrypted)
+        }
+        if (IncyCrypt.isIncyCryptLink(text)) {
+            val decrypted = IncyCrypt.decryptIncyLink(text).trim()
+            if (isSubscriptionUrl(decrypted)) throw LinkParseError(INCY_SUBSCRIPTION_ERROR)
             return parseSingle(decrypted)
         }
 

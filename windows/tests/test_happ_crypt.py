@@ -75,17 +75,9 @@ def test_decrypts_public_crypt5_vector() -> None:
     assert decrypt_happ_link(CRYPT5_LINK) == CRYPT5_EXPECTED
 
 
-@pytest.mark.native_helper
 def test_decrypts_crypt51_vector() -> None:
-    import shutil
     expected = "https://heaver.tgmru.ru/6f81573aa5ab4ce46075b7ac2d91a186de26f77b688bb9f5/json?template=default-xray-json"
-    if shutil.which("node"):
-        assert decrypt_happ_link(CRYPT51_LINK) == expected
-    else:
-        with pytest.raises(HappKeyUnavailableError) as exc:
-            decrypt_happ_link(CRYPT51_LINK)
-        assert "crypt5.1" in str(exc.value)
-        assert "vdfzfoff" in str(exc.value)
+    assert decrypt_happ_link(CRYPT51_LINK) == expected
 
 
 def test_unsupported_scheme_raises() -> None:

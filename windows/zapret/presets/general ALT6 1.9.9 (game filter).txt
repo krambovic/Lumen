@@ -1,5 +1,5 @@
 # Preset: general ALT6 1.9.9 (game filter)
-# BuiltinVersion: 2.20
+# BuiltinVersion: 2.40
 # IconColor: #67d1e4ff
 
 --lua-init=@lua/zapret-lib.lua
@@ -22,6 +22,14 @@
 
 --wf-tcp-out=80,443,2053,2083,2087,2096,8443,1024-65535
 --wf-udp-out=443,19294-19344,50000-50100,1024-65535
+
+--name=git.zapret.moe
+--filter-tcp=443
+--hostlist=lists/git-zapret-moe.txt
+--out-range=-d8
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
+
+--new
 
 --name=googlevideo.com (CDN сервера)
 --filter-tcp=80,443
@@ -47,9 +55,29 @@
 
 --new
 
+--name=Исключения домены (RU сайты)
+--filter-tcp=80,443-65535
+--hostlist=lists/netrogat.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
+
+--name=Исключения айпи (RU сайты)
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-ru.txt
+--ipset=lists/ipset-dns.txt
+--ipset=lists/ipset-exclude.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
+
 --name=discord.media (voice RTC)
 --filter-tcp=80,443,1080,2053,2083,2087,2096,8443
---hostlist-domains=discord.media
+--hostlist=lists/discord-media.txt
 --payload=all
 --lua-desync=multisplit:pos=1:seqovl=681:seqovl_pattern=tls_google
 
@@ -71,7 +99,7 @@
 
 --new
 
---name=Discord UDP
+--name=Discord UDP (обычно не нужно)
 --filter-udp=443-65535
 --ipset=lists/ipset-discord.txt
 --out-range=-n2
@@ -248,7 +276,7 @@
 
 --name=Riot / Valorant TCP
 --filter-tcp=443
---hostlist-domains=riotgames.com,valorant.com,riotcdn.net
+--hostlist=lists/riot-valorant.txt
 --out-range=-n3
 --payload=all
 --lua-desync=multisplit:payload=all:pos=1:seqovl=681:seqovl_pattern=tls_google
@@ -267,31 +295,15 @@
 
 --name=Cloudflare TCP
 --filter-tcp=80,443-65535
---ipset=lists/ipset-cloudflare.txt
+--hostlist=lists/cloudflare.txt
 --payload=all
 --lua-desync=multisplit:pos=1:seqovl=681:seqovl_pattern=tls_google
 
 --new
 
---name=Cloudflare legacy TCP
+--name=cloudfront.net
 --filter-tcp=80,443-65535
---ipset=lists/cloudflare-ipset.txt
---payload=all
---lua-desync=multisplit:pos=1:seqovl=681:seqovl_pattern=tls_google
-
---new
-
---name=Cloudflare IPv6 legacy TCP
---filter-tcp=80,443-65535
---ipset=lists/cloudflare-ipset_v6.txt
---payload=all
---lua-desync=multisplit:pos=1:seqovl=681:seqovl_pattern=tls_google
-
---new
-
---name=Cloudflare alt TCP
---filter-tcp=80,443-65535
---ipset=lists/ipset-cloudflare1.txt
+--hostlist=lists/cloudfront.txt
 --payload=all
 --lua-desync=multisplit:pos=1:seqovl=681:seqovl_pattern=tls_google
 
@@ -299,7 +311,15 @@
 
 --name=Amazon TCP
 --filter-tcp=80,443-65535
---ipset=lists/ipset-amazon.txt
+--hostlist=lists/amazon.txt
+--payload=all
+--lua-desync=multisplit:pos=1:seqovl=681:seqovl_pattern=tls_google
+
+--new
+
+--name=EpicGames & Fortnite
+--filter-tcp=80,443-65535
+--hostlist=lists/epicgames-fortnite.txt
 --payload=all
 --lua-desync=multisplit:pos=1:seqovl=681:seqovl_pattern=tls_google
 
@@ -497,6 +517,14 @@
 
 --new
 
+--name=githubusercontent.com
+--filter-tcp=443
+--hostlist=lists/githubusercontent.txt
+--payload=all
+--lua-desync=multisplit:pos=1:seqovl=681:seqovl_pattern=tls_google
+
+--new
+
 --name=AnyDesk TCP
 --filter-tcp=80,443,6568
 --ipset=lists/ipset-anydesk.txt
@@ -513,7 +541,7 @@
 
 --new
 
---name=SpeedTest
+--name=Speedtest
 --filter-tcp=443,8080
 --hostlist=lists/speedtest.txt
 --payload=all

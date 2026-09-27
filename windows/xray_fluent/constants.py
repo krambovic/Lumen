@@ -7,7 +7,7 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen"
-APP_VERSION = "1.9.15"
+APP_VERSION = "1.9.16"
 STATE_SCHEMA_VERSION = 1
 # Bump when parsing/reconciliation semantics change; cached validators remain
 # useful, while the value lets future migrations force one clean reconcile.
@@ -60,7 +60,7 @@ XRAY_PATH_DEFAULT = BASE_DIR / "core" / "xray.exe"
 
 SINGBOX_CONFIG_FILE = RUNTIME_DIR / "singbox_config.json"
 SINGBOX_DEFAULT_CONFIG_NAME = "default.json"
-SINGBOX_PATH_DEFAULT = BASE_DIR / "core" / "sing-box.exe"
+SINGBOX_PATH_DEFAULT = BASE_DIR / "core" / "sing-box-extended" / "sing-box.exe"
 SINGBOX_CLASH_API_PORT = 19090
 SINGBOX_CLASH_API_SELECTOR = "proxy"
 SINGBOX_XRAY_RELAY_PORT = 11808

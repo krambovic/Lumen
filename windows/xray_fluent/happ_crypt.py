@@ -6,7 +6,7 @@ Happ умеет делиться подписками в «зашифрован�
 
 * ``crypt``..``crypt4`` — тело в base64, расшифровывается RSA-PKCS1v15 одним из
   четырёх приватных ключей (по одному на каждый режим), блоками по размеру ключа.
-* ``crypt5`` (классический) — гибрид: несколько строковых перестановок,
+* ``crypt5`` (включая salted-вариант) — гибрид: строковые перестановки,
   RSA-PKCS1v15 (ключ выбирается по 8-символьному «маркеру») отдаёт ключ
   ChaCha20-Poly1305, которым расшифровывается тело.
 * ``crypt5.1`` — тот же гибрид с изменённой раскладкой полей и расширенным
@@ -179,18 +179,29 @@ def _decrypt_crypt1to4(ordinal: int, payload: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _finish_crypt5(nonce: bytes, url_b64: str, enc_str: str, key_b64: str) -> str:
+def _finish_crypt5(
+    nonce: bytes,
+    url_b64: str,
+    enc_str: str,
+    key_b64: str,
+    salt: bytes | None = None,
+) -> str:
     """Общий финал crypt5/crypt5.1: RSA → ключ ChaCha → расшифровка → URL."""
     rsa_plain = _rsa_decrypt(key_b64, _b64decode(enc_str)).decode("latin-1")
     chacha_key = _b64decode(_swap_pairs(rsa_plain))
     if len(chacha_key) != 32:
         raise HappDecryptError("crypt5: неверная длина ключа ChaCha20")
+    if salt:
+        chacha_key = bytes(
+            value ^ salt[index % len(salt)]
+            for index, value in enumerate(chacha_key)
+        )
     intermediate = _chacha_decrypt(chacha_key, nonce, _b64decode(url_b64)).decode("utf-8")
     return _b64decode(_swap_pairs(intermediate)).decode("utf-8")
 
 
 def _try_decrypt_crypt5_legacy(payload: str) -> str | None:
-    """Классический crypt5: маркер (первые+последние 4 символа) → RSA-ключ.
+    """Current crypt5 layout, including the salted crypt5.2 variant.
 
     Возвращает ``None``, если маркер неизвестен либо структура не подходит, —
     тогда вызывающий пробует формат crypt5.1.
@@ -205,20 +216,33 @@ def _try_decrypt_crypt5_legacy(payload: str) -> str | None:
     body = shuffled[4:-4]
     if len(body) < 13:
         return None
-    match = re.match(r"^\d+", body[12:])
-    if not match:
-        return None
-    segment_len = int(match.group(0))
-    packed = body[12 + match.end():]
-    if len(packed) < 1 + segment_len:
-        return None
-    url_b64 = packed[1:1 + segment_len]
-    enc_str = packed[1 + segment_len:]
-    try:
-        nonce = body[:12].encode("ascii")
-        return _finish_crypt5(nonce, url_b64, enc_str, key_b64)
-    except Exception:
-        return None
+    nonce = body[:12].encode("ascii")
+    prefer_salted = len(body) > 22 and not body[12].isdigit()
+    for salted in (prefer_salted, not prefer_salted):
+        try:
+            if salted:
+                if len(body) < 22:
+                    continue
+                salt = body[14:22].encode("ascii")
+                position = 22
+            else:
+                salt = None
+                position = 12
+            start = position
+            while position < len(body) and body[position].isdigit():
+                position += 1
+            if position == start:
+                continue
+            segment_len = int(body[start:position])
+            packed = body[position:]
+            if len(packed) < 1 + segment_len:
+                continue
+            url_b64 = packed[1:1 + segment_len]
+            enc_str = packed[1 + segment_len:]
+            return _finish_crypt5(nonce, url_b64, enc_str, key_b64, salt)
+        except Exception:
+            continue
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -376,30 +400,6 @@ def _decrypt_crypt51(payload: str) -> str:
     decrypted = decrypt_with_keys(preferred_keys)
     if decrypted is not None:
         return decrypted
-
-    # Fallback to Node.js emulation decryptor
-    from pathlib import Path
-    import shutil
-    
-    node_bin = shutil.which("node")
-    if node_bin:
-        emu_dir = Path(__file__).parent / "happ_emulator"
-        cli_js = emu_dir / "decrypt_cli.js"
-        if cli_js.exists():
-            from .subprocess_utils import run_text_pumped, CREATE_NO_WINDOW, decode_output
-            try:
-                link = f"happ://crypt5/{payload}"
-                result = run_text_pumped(
-                    [node_bin, str(cli_js), link],
-                    timeout=20.0,
-                    creationflags=CREATE_NO_WINDOW,
-                )
-                if result.returncode == 0:
-                    decrypted = decode_output(result.stdout).strip()
-                    if decrypted:
-                        return decrypted
-            except Exception:
-                pass
 
     decrypted = decrypt_with_keys(fallback_keys)
     if decrypted is not None:

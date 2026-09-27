@@ -52,6 +52,74 @@ def test_missing_ipset_base_is_created_from_ipset_all(tmp_path, monkeypatch) -> 
     assert (lists / "ipset-base.txt").read_text(encoding="utf-8") == "1.1.1.0/24\n"
 
 
+def test_missing_preset_lists_are_reported_without_creating_placeholders(tmp_path, monkeypatch) -> None:
+    zapret_root = tmp_path / "zapret"
+    lists = zapret_root / "lists"
+    lists.mkdir(parents=True)
+    existing = lists / "custom.txt"
+    existing.write_text("example.org\n", encoding="utf-8")
+    monkeypatch.setattr(zapret_manager, "ZAPRET_DIR", zapret_root)
+
+    args = [
+        "--hostlist=lists/cloudflare.txt",
+        "--ipset-exclude=lists/ipset-akamai.txt",
+        "--hostlist=lists/custom.txt",
+    ]
+    missing = zapret_manager.ZapretManager._missing_referenced_files(args)
+
+    assert missing == [lists / "cloudflare.txt", lists / "ipset-akamai.txt"]
+    assert not (lists / "cloudflare.txt").exists()
+    assert not (lists / "ipset-akamai.txt").exists()
+    assert existing.read_text(encoding="utf-8") == "example.org\n"
+
+
+def test_missing_preset_list_paths_outside_lists_are_not_created(tmp_path, monkeypatch) -> None:
+    zapret_root = tmp_path / "zapret"
+    (zapret_root / "lists").mkdir(parents=True)
+    monkeypatch.setattr(zapret_manager, "ZAPRET_DIR", zapret_root)
+
+    missing = zapret_manager.ZapretManager._missing_referenced_files(
+        ["--hostlist=../outside.txt", "--ipset=lists/nested/inside.txt"]
+    )
+
+    assert len(missing) == 2
+    assert not (tmp_path / "outside.txt").exists()
+    assert not (zapret_root / "lists" / "nested").exists()
+
+
+def test_missing_bundled_blob_is_detected_before_start(tmp_path, monkeypatch) -> None:
+    zapret_root = tmp_path / "zapret"
+    (zapret_root / "bin").mkdir(parents=True)
+    monkeypatch.setattr(zapret_manager, "ZAPRET_DIR", zapret_root)
+
+    missing = zapret_manager.ZapretManager._missing_referenced_files(
+        ["--blob=tls:@bin/missing.bin", "--lua-init=@lua/missing.lua"]
+    )
+
+    assert missing == [zapret_root / "bin" / "missing.bin", zapret_root / "lua" / "missing.lua"]
+
+
+def test_every_bundled_preset_has_its_referenced_resources() -> None:
+    missing = {}
+    for preset in zapret_manager.PRESETS_DIR.glob("*.txt"):
+        args = zapret_manager.ZapretManager._parse_preset_args(preset)
+        paths = zapret_manager.ZapretManager._referenced_zapret_files(args)
+        absent = [
+            str(path.relative_to(zapret_manager.ZAPRET_DIR))
+            for path in paths
+            if not path.is_file()
+            and not (
+                path.name == "ipset-base.txt"
+                and path.parent.name == "lists"
+                and (path.parent / "ipset-all.txt").is_file()
+            )
+        ]
+        if absent:
+            missing[preset.name] = sorted(set(absent))
+
+    assert not missing
+
+
 def test_ipset_registration_error_is_not_windivert_conflict() -> None:
     assert not zapret_manager.ZapretManager._looks_like_windivert_conflict(
         1,

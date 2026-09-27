@@ -9,6 +9,7 @@ import sys
 import threading
 
 from .constants import (
+    BASE_DIR,
     CONFIGS_DIR,
     DATA_DIR,
     LOG_DIR,
@@ -30,6 +31,29 @@ from .security import (
     encrypt_with_passphrase,
     is_passphrase_encrypted,
 )
+
+
+def _is_legacy_bundled_singbox_path(value: object) -> bool:
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    normalized = raw.replace("/", "\\").lstrip(".\\").casefold()
+    if normalized in {
+        "core\\sing-box.exe",
+        "core\\sing-box-extended-1.14.1-2.7.2\\sing-box.exe",
+    }:
+        return True
+    try:
+        candidate = Path(raw)
+        legacy_bundles = (
+            BASE_DIR / "core" / "sing-box.exe",
+            BASE_DIR / "core" / "sing-box-extended-1.14.1-2.7.2" / "sing-box.exe",
+        )
+        return candidate.is_absolute() and any(
+            candidate.resolve() == path.resolve() for path in legacy_bundles
+        )
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 class PassphraseRequired(Exception):
@@ -91,8 +115,11 @@ class StateStorage:
             use_default_if_empty=True,
             migrate_default_location=True,
         )
+        singbox_path = state.settings.singbox_path
+        if _is_legacy_bundled_singbox_path(singbox_path):
+            singbox_path = ""
         state.settings.singbox_path = normalize_configured_path(
-            state.settings.singbox_path,
+            singbox_path,
             default_path=SINGBOX_PATH_DEFAULT,
             use_default_if_empty=True,
             migrate_default_location=True,
@@ -177,8 +204,11 @@ class StateStorage:
             use_default_if_empty=True,
             migrate_default_location=True,
         )
+        singbox_path = settings_payload.get("singbox_path")
+        if _is_legacy_bundled_singbox_path(singbox_path):
+            singbox_path = ""
         settings_payload["singbox_path"] = normalize_configured_path(
-            settings_payload.get("singbox_path"),
+            singbox_path,
             default_path=SINGBOX_PATH_DEFAULT,
             use_default_if_empty=True,
             migrate_default_location=True,

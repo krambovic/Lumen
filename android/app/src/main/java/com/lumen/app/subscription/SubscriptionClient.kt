@@ -1,7 +1,9 @@
 package com.lumen.app.subscription
 
 import com.lumen.core.config.crypto.HappCrypt
+import com.lumen.core.config.crypto.IncyCrypt
 import com.lumen.core.config.parser.LinkParser
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URI
@@ -93,6 +95,26 @@ internal object SubscriptionClient {
         add("Generic" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36")
     }
 
+    internal fun needsMagVpnVariants(url: URL, customUserAgent: String?): Boolean {
+        val host = url.host.lowercase(Locale.US)
+        return customUserAgent.isNullOrBlank() && url.protocol == "https" &&
+            host in setOf("magvpn.ru", "www.magvpn.ru") && url.path.startsWith("/tsub/")
+    }
+
+    internal fun mergeMagVpnVariants(linksBody: String, autoBody: String): String {
+        val graphs = JSONArray(autoBody)
+        if (graphs.length() == 0 || LinkParser.parseLinksText(autoBody).first.none { it.scheme == "auto" }) {
+            throw IOException("MagVPN Happ response contains no AUTO groups")
+        }
+        val combined = JSONArray().put(linksBody)
+        for (index in 0 until graphs.length()) combined.put(graphs.get(index))
+        val result = combined.toString()
+        if (result.toByteArray(Charsets.UTF_8).size > MAX_BYTES) {
+            throw IOException("Combined subscription exceeds 8 MiB")
+        }
+        return result
+    }
+
     /**
      * Detects "stub" responses that panels return to unknown clients
      * (for example, a single fake node named "client not supported").
@@ -115,7 +137,8 @@ internal object SubscriptionClient {
         proxyPort: Int? = null,
         proxyUsername: String? = null,
         proxyPassword: String? = null,
-        cancelled: () -> Boolean = { false }
+        cancelled: () -> Boolean = { false },
+        preferredProfileOnly: Boolean = false
     ): SubscriptionPayload {
         SubscriptionHttp.checkCancelled(cancelled)
         require(hwid == null || (hwid.length <= 256 && '\r' !in hwid && '\n' !in hwid)) { "Invalid HWID" }
@@ -131,11 +154,20 @@ internal object SubscriptionClient {
             }
             target = decrypted
         }
+        if (IncyCrypt.isIncyCryptLink(target)) {
+            val decrypted = IncyCrypt.decryptIncyLink(target).trim()
+            require(decrypted.startsWith("https://", true)) { "Incy subscription URL must use HTTPS" }
+            target = decrypted
+        }
         val initialUrl = URL(target)
         require(initialUrl.protocol in setOf("http", "https")) { "Subscription URL must use HTTP(S)" }
         require(allowHttp || initialUrl.protocol == "https") { "HTTP subscriptions are disabled in settings" }
+        val magVpnVariants = needsMagVpnVariants(initialUrl, customUserAgent)
         var lastError: Exception? = null
-        for ((profile, userAgent) in clientProfiles(customUserAgent)) {
+        val profiles = clientProfiles(customUserAgent).let {
+            if (magVpnVariants || preferredProfileOnly) it.take(1) else it
+        }
+        for ((profile, userAgent) in profiles) {
             SubscriptionHttp.checkCancelled(cancelled)
             try {
                 var current = initialUrl
@@ -178,6 +210,27 @@ internal object SubscriptionClient {
                         throw IOException("Subscription returned a compatibility placeholder")
                     }
                     SubscriptionHttp.checkCancelled(cancelled)
+                    if (magVpnVariants) {
+                        // This panel serves physical URI nodes to Lumen and AUTO
+                        // Xray graphs to Happ. Never reconcile a partial response.
+                        val compatible = try {
+                            fetch(target, hwid, customUserAgent = "Happ/2.18.3/Windows/2606241603601",
+                                direct = direct, allowHttp = allowHttp, proxyPort = proxyPort,
+                                proxyUsername = proxyUsername, proxyPassword = proxyPassword,
+                                cancelled = cancelled, preferredProfileOnly = true)
+                        } catch (e: java.util.concurrent.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            val reason = e.message?.takeIf { it.startsWith("Subscription HTTP ") }
+                                ?: "compatible response unavailable"
+                            throw PermanentSubscriptionException("MagVPN AUTO: $reason")
+                        }
+                        return try {
+                            normalized.copy(body = mergeMagVpnVariants(normalized.body, compatible.body))
+                        } catch (e: Exception) {
+                            throw PermanentSubscriptionException("MagVPN AUTO: ${e.message}")
+                        }
+                    }
                     return normalized
                 }
             } catch (error: java.util.concurrent.CancellationException) {
@@ -191,6 +244,9 @@ internal object SubscriptionClient {
         }
         throw IOException(lastError?.message ?: "Subscription download failed", lastError)
     }
+
+    internal fun isEncryptedSource(value: String?): Boolean =
+        HappCrypt.isHappCryptLink(value) || IncyCrypt.isIncyCryptLink(value)
 
     internal fun sameOrigin(first: URL, second: URL): Boolean =
         first.protocol.equals(second.protocol, true) && first.host.equals(second.host, true) &&

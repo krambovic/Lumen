@@ -121,12 +121,8 @@ def _routing_final_outbound(routing: RoutingSettings, *, use_rule_default: bool 
         return "direct"
     if not use_rule_default:
         return "direct"
-    # The removed "TUN default" UI setting is no longer user-controlled.
-    # Custom/rule routing falls back to proxy. The built-in "blocked only"
-    # preset is the deliberate exception: unmatched traffic must stay direct.
-    if str(routing.preset_id).strip().lower() in {ROUTING_PRESET_BLOCKED, ROUTING_PRESET_BLOCKED_CN}:
-        return "direct"
-    return "proxy"
+    default_outbound = str(routing.tun_default_outbound or "").strip().lower()
+    return default_outbound if default_outbound in {"proxy", "direct"} else "proxy"
 
 
 def effective_service_action(routing: RoutingSettings, service_id: str) -> str:

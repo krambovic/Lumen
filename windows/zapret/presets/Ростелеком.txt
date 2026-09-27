@@ -1,5 +1,5 @@
 # Preset: Ростелеком
-# BuiltinVersion: 2.20
+# BuiltinVersion: 2.40
 # Description: 
 
 --lua-init=@lua/zapret-lib.lua
@@ -41,6 +41,7 @@
 --blob=tls17:@bin/tls_clienthello_17.bin
 --blob=tls18:@bin/tls_clienthello_18.bin
 --blob=tls_sber:@bin/tls_clienthello_sberbank_ru.bin
+--blob=tls_sber_v2:@bin/tls_clienthello_sberbank_ru_v2.bin
 --blob=tls_vk:@bin/tls_clienthello_vk_com.bin
 --blob=tls_vk_kyber:@bin/tls_clienthello_vk_com_kyber.bin
 --blob=tls_deepseek:@bin/tls_clienthello_chat_deepseek_com.bin
@@ -82,14 +83,11 @@
 --blob=hex_0f0f0f0f:0x0F0F0F0F
 --blob=hex_00:0x00
 
---name=Исключения (RU сайты)
---filter-tcp=80,443-65535
---ipset=lists/ipset-ru.txt
---ipset=lists/ipset-dns.txt
---ipset=lists/ipset-exclude.txt
+--name=git.zapret.moe
+--filter-tcp=443
+--hostlist=lists/git-zapret-moe.txt
 --out-range=-d8
---payload=tls_client_hello
---lua-desync=pass
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -115,6 +113,26 @@
 --out-range=-n8
 --payload=all
 --lua-desync=fake:blob=quic_google:repeats=2
+
+--new
+
+--name=Исключения домены (RU сайты)
+--filter-tcp=80,443-65535
+--hostlist=lists/netrogat.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
+
+--name=Исключения айпи (RU сайты)
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-ru.txt
+--ipset=lists/ipset-dns.txt
+--ipset=lists/ipset-exclude.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
 
 --new
 
@@ -152,7 +170,6 @@
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
 --filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
@@ -161,51 +178,23 @@
 --new
 
 --name=Cloudflare TCP
---ipset=lists/ipset-cloudflare.txt
+--filter-tcp=80,443-65535
+--hostlist=lists/cloudflare.txt
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
---filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
 
 --new
 
---name=Cloudflare legacy TCP
---ipset=lists/cloudflare-ipset.txt
---out-range=-d10
---lua-desync=syndata
---lua-desync=multidisorder_legacy:pos=1,midsld
-
+--name=cloudfront.net
 --filter-tcp=80,443-65535
+--hostlist=lists/cloudfront.txt
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
---new
-
---name=Cloudflare IPv6 legacy TCP
---ipset=lists/cloudflare-ipset_v6.txt
---out-range=-d10
---lua-desync=syndata
---lua-desync=multidisorder_legacy:pos=1,midsld
-
---filter-tcp=80,443-65535
---out-range=-d10
---lua-desync=syndata
---lua-desync=multidisorder_legacy:pos=1,midsld
-
---new
-
---name=Cloudflare alt TCP
---ipset=lists/ipset-cloudflare1.txt
---out-range=-d10
---lua-desync=syndata
---lua-desync=multidisorder_legacy:pos=1,midsld
-
---filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
@@ -213,12 +202,23 @@
 --new
 
 --name=Amazon TCP
---ipset=lists/ipset-amazon.txt
+--filter-tcp=80,443-65535
+--hostlist=lists/amazon.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
 
+--new
+
+--name=EpicGames & Fortnite
 --filter-tcp=80,443-65535
+--hostlist=lists/epicgames-fortnite.txt
+--out-range=-d10
+--lua-desync=syndata
+--lua-desync=multidisorder_legacy:pos=1,midsld
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
@@ -230,7 +230,6 @@
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
 --filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
@@ -243,7 +242,6 @@
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
 --filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
@@ -256,7 +254,6 @@
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
 --filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
@@ -269,7 +266,6 @@
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
 --filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
@@ -282,7 +278,6 @@
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
 --filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
@@ -295,7 +290,6 @@
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
 --filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
@@ -308,7 +302,6 @@
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
 --filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
@@ -321,7 +314,6 @@
 --out-range=-d10
 --lua-desync=syndata
 --lua-desync=multidisorder_legacy:pos=1,midsld
-
 --filter-tcp=80,443-65535
 --out-range=-d10
 --lua-desync=syndata
@@ -329,7 +321,7 @@
 
 --new
 
---name=Discord UDP
+--name=Discord UDP (обычно не нужно)
 --filter-udp=443-65535
 --ipset=lists/ipset-discord.txt
 --out-range=-n8

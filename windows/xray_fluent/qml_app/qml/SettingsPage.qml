@@ -1018,8 +1018,8 @@ Item {
                 Text { text: I18n.t("TUN"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
 
                 SettingRow {
-                    glyph: "\uE72E"; title: I18n.t("Strict Route"); subtitle: I18n.t("Жёсткая маршрутизация: блокировать любой трафик мимо TUN (рекомендуется: выключено)")
-                    InfoIcon { tip: I18n.t("Защищает от утечек, но ломает голосовые звонки Discord (ICE fallback) и инструменты на WinDivert. Применяется при следующем включении TUN.") }
+                    glyph: "\uE72E"; title: I18n.t("Strict Route"); subtitle: I18n.t("Ограничивать обход TUN для защиты от утечек (рекомендуется: включено)")
+                    InfoIcon { tip: I18n.t("Защищает от DNS-утечек Windows при нескольких сетевых адаптерах, но также может ограничить трафик в обход TUN. Может нарушить Discord Voice (ICE fallback), работу WinDivert, VirtualBox и других приложений с нестандартной маршрутизацией. Применяется при следующем включении TUN.") }
                     Switch { checked: App.tunStrictRoute; onToggled: App.setTunStrictRoute(checked) }
                 }
                 SettingRow {
@@ -1315,7 +1315,7 @@ Item {
                 }
                 SettingRow {
                     glyph: "\uE756"; title: I18n.t("Ядро sing-box-extended"); subtitle: I18n.t("Путь к исполняемому файлу sing-box-extended")
-                    StyledField { id: sbField; Layout.preferredWidth: 240; text: App.singboxPath; placeholderText: "core\\sing-box.exe"; onEditingFinished: App.setSingboxPath(text) }
+                    StyledField { id: sbField; Layout.preferredWidth: 240; text: App.singboxPath; placeholderText: "core\\sing-box-extended\\sing-box.exe"; onEditingFinished: App.setSingboxPath(text) }
                     AccentButton { kind: "ghost"; glyph: "\uE8B7"; text: I18n.t("Обзор"); onClicked: { var p = App.browseSingboxPath(); if (p) sbField.text = p } }
                 }
             }

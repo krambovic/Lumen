@@ -543,51 +543,6 @@ Item {
                 }
             }
 
-            Card {
-                Layout.fillWidth: true
-                padding: 18
-                hoverable: false
-                ColumnLayout {
-                    width: parent.width
-                    spacing: 10
-                    Text { text: I18n.t("droute для Discord Voice"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontStrong; font.weight: Font.DemiBold }
-                    RowLayout {
-                        Layout.fillWidth: true; spacing: 8
-                        Text { text: I18n.t("Версия:"); color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
-                        Text { text: page.drouteVersion !== "" ? page.drouteVersion : I18n.t("не найдена"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal; font.weight: Font.DemiBold }
-                        Item { Layout.fillWidth: true }
-                    }
-                    Text {
-                        text: page.resourceStatusText(page.droutePhase, page.drouteMessage, I18n.t("Проверяет и обновляет компонент droute для проксирования Discord Voice."), page.droutePercent)
-                        color: page.resourceStatusColor(page.droutePhase)
-                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
-                        font.weight: (page.droutePhase === "updated" || page.droutePhase === "error") ? Font.DemiBold : Font.Normal
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    }
-                    ProgressBar {
-                        Layout.fillWidth: true
-                        visible: page.drouteBusy
-                        indeterminate: page.droutePhase === "checking" || page.droutePercent <= 0
-                        from: 0; to: 100; value: page.droutePercent
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true; spacing: 8
-                        AccentButton {
-                            kind: "accent"; glyph: "\uE72C"; text: I18n.t("Проверить droute")
-                            enabled: !page.drouteBusy
-                            onClicked: App.checkDrouteUpdate()
-                        }
-                        AccentButton {
-                            kind: "ghost"; glyph: "\uE896"; text: I18n.t("Обновить droute")
-                            visible: page.droutePhase === "available" || page.droutePhase === "updating"
-                            enabled: !page.drouteBusy && page.droutePhase !== "uptodate" && page.droutePhase !== "updated"
-                            onClicked: App.updateDroute()
-                        }
-                        Item { Layout.fillWidth: true }
-                    }
-                }
-            }
-
             Item { Layout.preferredHeight: 4 }
         }
     }

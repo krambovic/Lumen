@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -185,22 +187,105 @@ def reset_active_config_to_template(controller: AppController, engine: str) -> t
     return True, active_path, f"Активная копия сброшена к шаблону: {template_path.name}"
 
 
-def save_config_text(controller: AppController, engine: str, text: str, path: str | Path | None = None) -> Path:
+def save_config_text(
+    controller: AppController,
+    engine: str,
+    text: str,
+    path: str | Path | None = None,
+    *,
+    previous_text: str | None = None,
+    force_route_final: bool = False,
+) -> Path:
     resolved = ensure_active_config(controller, engine, path, sync_template=False)
     resolved.write_text(text, encoding="utf-8")
     if engine == "singbox":
         controller._set_active_singbox_config_path(resolved)
         controller._cache_singbox_document_state(resolved, text)
+        sync_singbox_routing_from_config(
+            controller,
+            text,
+            previous_text=previous_text,
+            force=force_route_final,
+        )
     else:
         controller._set_active_xray_config_path(resolved)
     return resolved
 
 
-def apply_singbox_config_text(controller: AppController, text: str) -> tuple[bool, Path | None, str]:
+def sync_singbox_routing_from_config(
+    controller: AppController,
+    text: str,
+    *,
+    previous_text: str | None = None,
+    force: bool = False,
+) -> bool:
+    """Honor an explicit route.final saved in the GUI config editor.
+
+    The runtime config is rebuilt for every connection, so changing route.final
+    only in the source JSON used to be silently undone by GUI routing. Mirror a
+    supported explicit value into RoutingSettings, which remains the canonical
+    input for the generated runtime while preserving all other source fields.
+    """
+    try:
+        payload = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    route = payload.get("route")
+    if not isinstance(route, dict):
+        return False
+    requested = str(route.get("final") or "").strip().lower()
+    if requested not in {"proxy", "direct"}:
+        return False
+    if not force and previous_text is not None:
+        try:
+            previous_payload = json.loads(previous_text)
+        except (TypeError, json.JSONDecodeError):
+            previous_payload = None
+        previous_route = previous_payload.get("route") if isinstance(previous_payload, dict) else None
+        previous_final = (
+            str(previous_route.get("final") or "").strip().lower()
+            if isinstance(previous_route, dict)
+            else ""
+        )
+        if previous_final == requested:
+            return False
+
+    current = controller.state.routing
+    mode = str(current.mode or "").strip().lower()
+    effective = (
+        "proxy"
+        if mode == "global"
+        else "direct"
+        if mode == "direct"
+        else str(current.tun_default_outbound or "proxy").strip().lower()
+    )
+    if requested == effective:
+        return False
+
+    routing = deepcopy(current)
+    routing.mode = "rule"
+    routing.tun_default_outbound = requested
+    controller.update_routing(routing, restart_runtime=False)
+    return True
+
+
+def apply_singbox_config_text(
+    controller: AppController,
+    text: str,
+    previous_text: str | None = None,
+) -> tuple[bool, Path | None, str]:
     ok, message = controller.validate_json_text(text)
     if not ok:
         return False, None, message
-    path = save_config_text(controller, "singbox", text)
+    path = save_config_text(
+        controller,
+        "singbox",
+        text,
+        previous_text=previous_text,
+        force_route_final=True,
+    )
     if controller._active_core == "singbox" or (
         controller.is_singbox_editor_mode() and (controller.connected or controller._desired_connected)
     ):

@@ -76,7 +76,7 @@ _AWG_RANGE_RE = re.compile(r"^(\d+)-(\d+)$")
 _IMPORT_SCHEME_RE = re.compile(
     r"(?i)(?:vless|vmess|trojan|ss|ssr|hysteria2|hysteria|hy2|hy|tuic|wireguard|wg|awg|"
     r"amneziawg|warp|naive\+https|naive\+quic|naive|mierus|mieru|masque|socks5|socks|"
-    r"https|http|happ|snell|juicity|anytls)://"
+    r"https|http|happ|incy|snell|juicity|anytls)://"
 )
 
 
@@ -543,6 +543,12 @@ def _sip003_options_from_mapping(value: dict[Any, Any], *, obfs: bool) -> str:
 def _clean_name(name: str, fallback: str) -> str:
     value = unquote(name).partition("?")[0].strip()
     return value if value else fallback
+
+
+def _normalize_vmess_security_value(value: Any) -> str:
+    """Treat provider null sentinels as an omitted VMess cipher."""
+    security = str(value or "").strip().lower()
+    return "auto" if security in {"", "null", "undefined"} else security
 
 
 def _decode_happ_description(value: str) -> str:
@@ -1345,7 +1351,7 @@ def _parse_vmess(link: str) -> Node:
                         {
                             "id": user_id,
                             "alterId": int(payload.get("aid") or 0),
-                            "security": str(payload.get("scy") or "auto"),
+                            "security": _normalize_vmess_security_value(payload.get("scy")),
                         }
                     ],
                 }
@@ -2253,7 +2259,7 @@ def _clash_to_xray_outbound(payload: dict[str, Any], kind: str) -> dict[str, Any
                 user["flow"] = flow
         else:
             user["alterId"] = int(payload.get("alterId") or payload.get("alter-id") or 0)
-            user["security"] = str(payload.get("cipher") or "auto")
+            user["security"] = _normalize_vmess_security_value(payload.get("cipher"))
         settings = {"vnext": [{"address": server, "port": port, "users": [user]}]}
     elif kind == "trojan":
         settings = {"servers": [{"address": server, "port": port, "password": password}]}

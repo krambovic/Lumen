@@ -25,6 +25,8 @@ Item {
     readonly property var procActionLabels: [I18n.t("Прямой"), I18n.t("Прокси"), I18n.t("Блокировка")]
     readonly property var svcActionKeys: ["direct", "proxy"]
     readonly property var svcActionLabels: [I18n.t("Прямой"), I18n.t("Прокси")]
+    readonly property var defaultOutboundKeys: ["proxy", "direct"]
+    readonly property var defaultOutboundLabels: [I18n.t("Прокси"), I18n.t("Напрямую")]
 
     // ---- reusable styled combo (Windows 11 Fluent look) --------------
     component StyledCombo: FluentCombo {}
@@ -151,6 +153,31 @@ Item {
                             id: bypassSwitch
                             checked: App.bypassLan
                             onToggled: App.setBypassLan(checked)
+                        }
+                    }
+
+                    Rectangle { Layout.fillWidth: true; height: 1; color: Theme.divider }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+                            Text { text: I18n.t("По умолчанию (TUN)"); color: Theme.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal }
+                            Text {
+                                Layout.fillWidth: true
+                                text: I18n.t("Маршрут для трафика, который не совпал ни с одним правилом.")
+                                color: Theme.textFaint; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                        StyledCombo {
+                            id: defaultOutboundCombo
+                            Layout.preferredWidth: 160
+                            model: page.defaultOutboundLabels
+                            boundIndex: page.idxIn(page.defaultOutboundKeys, App.tunDefaultOutbound)
+                            onActivated: App.setTunDefaultOutbound(page.defaultOutboundKeys[currentIndex])
                         }
                     }
 

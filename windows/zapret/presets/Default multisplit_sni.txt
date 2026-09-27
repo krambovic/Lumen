@@ -1,5 +1,5 @@
 # Preset: Default multisplit_sni
-# BuiltinVersion: 2.20
+# BuiltinVersion: 2.40
 # IconColor: #a8c5ff
 
 --lua-init=@lua/zapret-lib.lua
@@ -41,6 +41,7 @@
 --blob=tls17:@bin/tls_clienthello_17.bin
 --blob=tls18:@bin/tls_clienthello_18.bin
 --blob=tls_sber:@bin/tls_clienthello_sberbank_ru.bin
+--blob=tls_sber_v2:@bin/tls_clienthello_sberbank_ru_v2.bin
 --blob=tls_vk:@bin/tls_clienthello_vk_com.bin
 --blob=tls_vk_kyber:@bin/tls_clienthello_vk_com_kyber.bin
 --blob=tls_deepseek:@bin/tls_clienthello_chat_deepseek_com.bin
@@ -82,14 +83,11 @@
 --blob=hex_0f0f0f0f:0x0F0F0F0F
 --blob=hex_00:0x00
 
---name=Исключения (RU сайты)
---filter-tcp=80,443-65535
---ipset=lists/ipset-ru.txt
---ipset=lists/ipset-dns.txt
---ipset=lists/ipset-exclude.txt
+--name=git.zapret.moe
+--filter-tcp=443
+--hostlist=lists/git-zapret-moe.txt
 --out-range=-d8
---payload=tls_client_hello
---lua-desync=pass
+--lua-desync=hostfakesplit:host=ozon.ru:tcp_ts=-1000:tcp_md5:repeats=4
 
 --new
 
@@ -115,6 +113,26 @@
 --hostlist=lists/googlevideo.txt
 --out-range=-d8
 --lua-desync=multidisorder:pos=1,host+2,sld+2,sld+5,sniext+1,sniext+2,endhost-2:seqovl=1
+
+--new
+
+--name=Исключения домены (RU сайты)
+--filter-tcp=80,443-65535
+--hostlist=lists/netrogat.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
+
+--new
+
+--name=Исключения айпи (RU сайты)
+--filter-tcp=80,443-65535
+--ipset=lists/ipset-ru.txt
+--ipset=lists/ipset-dns.txt
+--ipset=lists/ipset-exclude.txt
+--out-range=-d8
+--payload=tls_client_hello
+--lua-desync=pass
 
 --new
 

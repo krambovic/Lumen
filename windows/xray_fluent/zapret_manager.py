@@ -41,6 +41,7 @@ PROGRAM_DATA_DIR = Path(os.environ.get("ProgramData") or r"C:\ProgramData")
 AT_CONFIG_DIR = PROGRAM_DATA_DIR / "Lumen" / "zapret" / "winws2_at_config"
 _INLINE_ARG_SPLIT_RE = re.compile(r"(?<=\S)\s+(?=--)")
 _LIST_FILE_ARG_RE = re.compile(r"^--(?:ipset|ipset-exclude|hostlist|hostlist-exclude)=(.+)$")
+_BUNDLED_FILE_ARG_RE = re.compile(r"@((?:lua|bin|windivert\.filter)/[A-Za-z0-9_.+\-]+)")
 _ELEVATION_ERROR_MARKERS = (
     "elevation",
     "requires elevation",
@@ -420,6 +421,7 @@ class ZapretManager(QObject):
     def _referenced_zapret_files(args: list[str]) -> list[Path]:
         paths: list[Path] = []
         for arg in args:
+            paths.extend(ZAPRET_DIR / match.group(1) for match in _BUNDLED_FILE_ARG_RE.finditer(str(arg)))
             match = _LIST_FILE_ARG_RE.match(str(arg or "").strip())
             if not match:
                 continue
@@ -434,17 +436,17 @@ class ZapretManager(QObject):
 
     @staticmethod
     def _ensure_compatibility_lists() -> str:
-        """Create lists/ipset-base.txt from ipset-all.txt. Returns an error text."""
+        """Create the legacy ipset-base alias without masking missing preset data."""
         lists_dir = ZAPRET_DIR / "lists"
         ipset_base = lists_dir / "ipset-base.txt"
         ipset_all = lists_dir / "ipset-all.txt"
-        if ipset_base.exists() or not ipset_all.is_file():
-            return ""
-        try:
-            shutil.copy2(ipset_all, ipset_base)
-        except OSError as exc:
-            return f"Не удалось создать {ipset_base}: {exc}"
-        return ""
+        errors: list[str] = []
+        if not ipset_base.exists() and ipset_all.is_file():
+            try:
+                shutil.copy2(ipset_all, ipset_base)
+            except OSError as exc:
+                errors.append(f"Не удалось создать {ipset_base}: {exc}")
+        return "; ".join(errors)
 
     @staticmethod
     def _missing_referenced_files(args: list[str]) -> list[Path]:
@@ -488,7 +490,7 @@ class ZapretManager(QObject):
             preview = ", ".join(preview_items)
             if len(missing_files) > 6:
                 preview += f" ... (+{len(missing_files) - 6})"
-            message = f"Не найдены файлы списков Zapret: {preview}"
+            message = f"Не найдены файлы Zapret: {preview}. Запуск остановлен, чтобы пресет не работал частично."
             if lists_error:
                 message += f". {lists_error}"
             self.error.emit(message)

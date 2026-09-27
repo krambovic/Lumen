@@ -1,11 +1,15 @@
-Source: https://github.com/youtubediscord/zapret/tree/main
-Upstream pre-release checked: 21.1.0.3
-Release asset checked: Zapret2Setup_DEV_21_1_0_3.exe
-Bundled winws2: v1.0.1 (31904a564e3b316b6948679e00c901e6d11ebf93), lua_compat_ver 6
+Zapret2 runtime source: https://git.zapret.moe/zapretdiscordyoutube/zapret2-youtube-discord
+Runtime source mirror: https://github.com/zapret-discordyoutube/zapret2-youtube-discord
+Runtime source revision: 7d5aec1bc7a8693dd20628f36ed40fb3d6897fc5 (2026-08-07)
 
-Bundled update scope:
-- Runtime directories exe, bin, lists, lua and windivert.filter were copied from the upstream pre-release installer.
-- winws2 built-in presets were copied from the upstream pre-release installer.
-- Two upstream preset typos were normalized for bundled dry-run compatibility:
-  - Default v1 (game filter): payload http -> http_req.
-  - Preset.X1: lists/russia-youtube-rtmps.txt -> lists/ipset-russia-youtube-rtmps.txt.
+Strategy source: https://git.zapret.moe/zapretdiscordyoutube/zapretgui
+Strategy source mirror: https://github.com/zapret-discordyoutube/zapretgui
+Latest checked release: 21.1.5.78
+Strategy source revision: 4473f22acd725c8da48f95cd5e60e182cd99e2e1 (2026-09-23)
+
+Bundled resources:
+- winws2.exe, cygwin1.dll, the shared bin/lists assets, lua and windivert.filter come from the runtime source revision above.
+- Built-in winws2 presets come from the strategy source revision above (BuiltinVersion 2.40).
+- Additional preset-specific bin/list assets come from the matching Zapret Dev 21.1.5.78 installer (SHA-256: 509ec62f6fd665f1f33bc0ac59fb59e5fa1de54fdbd9c511f9f8398f54b8822a).
+- The local-only Ростелеком preset is retained.
+- WinDivert.dll and Monkey64.sys remain the Lumen-specific conflict-isolation pair; do not replace them with the upstream-named driver pair without rebuilding and validating the Lumen service-name patch.

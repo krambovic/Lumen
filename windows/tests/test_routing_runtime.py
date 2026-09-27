@@ -208,18 +208,57 @@ def test_apply_singbox_gui_routing_replaces_previous_generated_domain_rules() ->
     assert "new.example" in dns_text
 
 
-def test_custom_rule_routing_falls_back_to_proxy_without_tun_default_setting() -> None:
+def test_custom_rule_routing_honors_direct_tun_default_setting() -> None:
     payload = {"route": {"rules": [], "final": "direct"}}
     routing = RoutingSettings(
         mode="rule",
         preset_id="custom-user-preset",
-        # A legacy saved value must no longer control the hidden fallback.
         tun_default_outbound="direct",
     )
 
     apply_singbox_gui_routing(payload, routing)
 
+    assert payload["route"]["final"] == "direct"
+
+
+def test_custom_rule_routing_honors_proxy_tun_default_setting() -> None:
+    payload = {"route": {"rules": [], "final": "direct"}}
+
+    apply_singbox_gui_routing(
+        payload,
+        RoutingSettings(
+            mode="rule",
+            preset_id="custom-user-preset",
+            tun_default_outbound="proxy",
+        ),
+    )
+
     assert payload["route"]["final"] == "proxy"
+
+
+def test_routing_settings_restore_tun_default_and_migrate_legacy_blocked_state() -> None:
+    restored = RoutingSettings.from_dict(
+        {
+            "mode": "rule",
+            "preset_id": "custom-user-preset",
+            "tun_default_outbound": "direct",
+            "tun_default_outbound_explicit": True,
+        }
+    )
+    legacy_blocked = RoutingSettings.from_dict({"mode": "rule", "preset_id": "blocked"})
+    legacy_custom = RoutingSettings.from_dict(
+        {"mode": "rule", "preset_id": "custom-user-preset", "tun_default_outbound": "direct"}
+    )
+    legacy_blocked_with_stale_proxy = RoutingSettings.from_dict(
+        {"mode": "rule", "preset_id": "blocked", "tun_default_outbound": "proxy"}
+    )
+
+    assert restored.tun_default_outbound == "direct"
+    assert restored.to_dict()["tun_default_outbound"] == "direct"
+    assert restored.to_dict()["tun_default_outbound_explicit"] is True
+    assert legacy_blocked.tun_default_outbound == "direct"
+    assert legacy_custom.tun_default_outbound == "proxy"
+    assert legacy_blocked_with_stale_proxy.tun_default_outbound == "direct"
 
 
 def test_subscription_fetcher_is_always_routed_direct_before_user_process_rules() -> None:
