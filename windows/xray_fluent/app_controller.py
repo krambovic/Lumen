@@ -2236,13 +2236,6 @@ class AppController(QObject):
             return None
         if routing.mode not in ROUTING_MODES:
             routing.mode = "rule"
-        # Keep the legacy default resolver secure after an in-session edit too.
-        # Users can still select UDP for a custom bootstrap address if needed.
-        if (
-            str(routing.dns_bootstrap_server or "").strip().lower() == "1.1.1.1"
-            and str(routing.dns_bootstrap_type or "").strip().lower() == "udp"
-        ):
-            routing.dns_bootstrap_type = "https"
         self.state.routing = routing
         self.routing_changed.emit(self.state.routing)
         self.schedule_save()

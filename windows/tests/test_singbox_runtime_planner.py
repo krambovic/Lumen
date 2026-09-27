@@ -696,9 +696,19 @@ def test_legacy_default_udp_dns_is_migrated_but_custom_udp_is_preserved() -> Non
             "dns_bootstrap_type": "udp",
         }
     )
+    explicit_default_udp = RoutingSettings.from_dict(
+        {
+            "dns_bootstrap_server": "1.1.1.1",
+            "dns_bootstrap_servers": ["1.1.1.1", "8.8.8.8"],
+            "dns_bootstrap_type": "udp",
+            "dns_bootstrap_type_explicit": True,
+        }
+    )
 
     assert legacy_default.dns_bootstrap_type == "https"
     assert custom_udp.dns_bootstrap_type == "udp"
+    assert explicit_default_udp.dns_bootstrap_type == "udp"
+    assert RoutingSettings.from_dict(explicit_default_udp.to_dict()).dns_bootstrap_type == "udp"
 
 
 def test_fake_dns_runtime_persists_fakeip_cache() -> None:

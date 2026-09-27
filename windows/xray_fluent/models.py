@@ -212,6 +212,7 @@ class RoutingSettings:
             "dns_bootstrap_server": self.dns_bootstrap_server,
             "dns_bootstrap_servers": list(self.dns_bootstrap_servers),
             "dns_bootstrap_type": self.dns_bootstrap_type,
+            "dns_bootstrap_type_explicit": True,
             "dns_bootstrap_strategy": self.dns_bootstrap_strategy,
             "dns_proxy_server": self.dns_proxy_server,
             "dns_proxy_servers": list(self.dns_proxy_servers),
@@ -267,6 +268,15 @@ class RoutingSettings:
                 if str(item).strip()
             ]
             bootstrap_server = bootstrap_servers[0] if bootstrap_servers else ""
+        bootstrap_type = str(data.get("dns_bootstrap_type") or "https")
+        if (
+            data.get("dns_bootstrap_type_explicit") is not True
+            and bootstrap_server.strip().lower() == "1.1.1.1"
+            and bootstrap_type.strip().lower() == "udp"
+        ):
+            # Migrate the legacy default only on first load. to_dict() writes
+            # the marker so an intentional UDP choice survives later loads.
+            bootstrap_type = "https"
         raw_default_outbound = str(data.get("tun_default_outbound") or "").strip().lower()
         if data.get("tun_default_outbound_explicit") is not True or raw_default_outbound not in {"proxy", "direct"}:
             # Older builds persisted this value while ignoring it at runtime.
@@ -287,7 +297,7 @@ class RoutingSettings:
             dns_mode=str(data.get("dns_mode") or "builtin"),
             dns_bootstrap_server=bootstrap_server,
             dns_bootstrap_servers=bootstrap_servers,
-            dns_bootstrap_type=str(data.get("dns_bootstrap_type") or "https"),
+            dns_bootstrap_type=bootstrap_type,
             dns_bootstrap_strategy=str(data.get("dns_bootstrap_strategy") or "ipv4_only"),
             dns_proxy_server=str(data.get("dns_proxy_server") or "cloudflare-dns.com"),
             dns_proxy_servers=list(data.get("dns_proxy_servers") or []),
