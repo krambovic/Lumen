@@ -115,23 +115,25 @@ def test_xray_dns_keeps_explicit_service_and_custom_routes_when_geo_check_is_off
     )
 
     servers = build_xray_config(_node(), routing, AppSettings())["dns"]["servers"]
+    bootstrap_domains = {
+        domain
+        for server in servers
+        if isinstance(server, dict)
+        and str(server.get("address", "")).startswith(("https://1.1.1.1/", "https://8.8.8.8/"))
+        for domain in server.get("domains", [])
+    }
     proxy_domains = {
         domain
         for server in servers
-        if isinstance(server, dict) and str(server.get("address", "")).startswith("https://")
-        for domain in server.get("domains", [])
-    }
-    direct_domains = {
-        domain
-        for server in servers
-        if isinstance(server, dict) and not str(server.get("address", "")).startswith("https://")
+        if isinstance(server, dict)
+        and str(server.get("address", "")).startswith(("https://cloudflare-dns.com/", "https://dns.google/"))
         for domain in server.get("domains", [])
     }
 
     assert "domain:proxy.example" in proxy_domains
-    assert "domain:direct.example" in direct_domains
-    assert "domain:youtube.com" in direct_domains
-    assert "geosite:category-ru" not in direct_domains
+    assert "domain:direct.example" in bootstrap_domains
+    assert "domain:youtube.com" in bootstrap_domains
+    assert "geosite:category-ru" not in bootstrap_domains
 
 
 def test_xray_tls_certificate_pin_stays_a_single_hex_string() -> None:

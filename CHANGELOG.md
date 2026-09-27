@@ -7,6 +7,7 @@
 - fix: improve subscription refresh reconciliation, retain selected servers and avoid partial updates on provider errors
 - fix: restore missing Zapret strategy dependencies and validate preset assets before launch
 - fix: improve sing-box core packaging, runtime migration, routing and configuration compatibility
+- fix: preserve explicitly selected Xray DNS transports and keep direct-domain rules on bootstrap resolvers
 - fix: make subscription links easier to select and copy in the desktop UI
 - docs: refresh English and Russian project guides and release links
 - test: add regression coverage for encrypted imports, subscriptions, runtime configs and Zapret assets

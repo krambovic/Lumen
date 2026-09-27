@@ -193,14 +193,9 @@ class RoutingSettings:
         )
         self.dns_bootstrap_server = self.dns_bootstrap_servers[0] if self.dns_bootstrap_servers else ""
         self.dns_proxy_server = self.dns_proxy_servers[0]
-        # The bundled public bootstrap resolver must not fall back to plaintext
-        # DNS. Older settings serialized this default as UDP; upgrade that
-        # legacy default while leaving explicitly configured resolver IPs alone.
-        if (
-            self.dns_bootstrap_server.strip().lower() == "1.1.1.1"
-            and str(self.dns_bootstrap_type or "").strip().lower() == "udp"
-        ):
-            self.dns_bootstrap_type = "https"
+        # Respect an explicitly selected transport. New installations default
+        # to HTTPS in the field declaration and from_dict(), but mutating a
+        # persisted UDP choice here silently overrode the user's DNS setting.
         self.dns_hosts = _normalize_dns_hosts(self.dns_hosts)
         default_outbound = str(self.tun_default_outbound or "").strip().lower()
         self.tun_default_outbound = default_outbound if default_outbound in {"proxy", "direct"} else "proxy"
