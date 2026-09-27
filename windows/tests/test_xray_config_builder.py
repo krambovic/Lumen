@@ -14,6 +14,7 @@ def _node() -> Node:
 
 def test_xray_builtin_dns_uses_advanced_settings() -> None:
     routing = RoutingSettings(
+        preset_id="custom",
         dns_mode="builtin",
         dns_bootstrap_server="1.1.1.1",
         dns_bootstrap_servers=["1.1.1.1"],
