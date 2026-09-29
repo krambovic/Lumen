@@ -62,6 +62,15 @@ Item {
         })
     }
 
+    component ColumnGuide: Rectangle {
+        width: 1
+        height: 40
+        x: parent.width + 5
+        y: (parent.height - height) / 2
+        color: Theme.divider
+        opacity: 0.5
+    }
+
     component ResizableHeader: Item {
         id: headerCell
         property string label: ""
@@ -80,6 +89,7 @@ Item {
             font.pixelSize: Theme.fontSmall
             font.weight: Font.DemiBold
         }
+        ColumnGuide { visible: headerCell.columnIndex < 3 }
         MouseArea {
             id: resizeHandle
             z: 2
@@ -356,17 +366,20 @@ Item {
                                 font.family: Theme.fontFamily; font.pixelSize: Theme.fontNormal
                                 font.weight: parent.parent.isActive ? Font.DemiBold : Font.Normal
                                 Layout.preferredWidth: page.colName
+                                ColumnGuide {}
                             }
                             Text {
                                 text: modelData.description; elide: Text.ElideRight
                                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                                 Layout.preferredWidth: page.colDescription
                                 Layout.fillWidth: !page.manualColumnWidths
+                                ColumnGuide {}
                             }
                             Text {
                                 text: "" + modelData.argCount
                                 color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSmall
                                 horizontalAlignment: Text.AlignRight; Layout.preferredWidth: page.colArgs
+                                ColumnGuide {}
                             }
                             Text {
                                 text: modelData.modified

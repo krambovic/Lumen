@@ -10,6 +10,7 @@ import pytest
 
 from xray_fluent import app_updater, update_checker
 from xray_fluent.app_updater import AppUpdate
+from xray_fluent.constants import APP_VERSION
 import run_qml
 
 
@@ -100,7 +101,7 @@ def test_version_probe_accepts_nested_output(monkeypatch, tmp_path: Path) -> Non
     target.parent.mkdir(parents=True)
     monkeypatch.setattr(run_qml.sys, "argv", ["run_qml.py", "--version-file", str(target)])
     assert run_qml._run() == 0
-    assert target.read_text(encoding="utf-8") == "1.9.17"
+    assert target.read_text(encoding="utf-8") == APP_VERSION
 
 
 def test_update_feed_url_must_use_https() -> None:

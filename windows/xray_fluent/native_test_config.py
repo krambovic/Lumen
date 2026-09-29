@@ -18,6 +18,7 @@ def build_native_test_config(node, port: int) -> dict:
             if not all_items:
                 raise ValueError("No profile outbounds")
             final = str(all_items[0].get("tag") or "")
+        _exclude_direct_group_members(all_items, final)
         _validate_proxy_group(all_items, final)
     else:
         outbound = build_singbox_outbound(node, tag="speed-proxy")
@@ -67,3 +68,30 @@ def _validate_proxy_group(items: list[dict], root: str) -> None:
         visiting.remove(tag)
         visited.add(tag)
     visit(root)
+
+
+def _exclude_direct_group_members(items: list[dict], root: str) -> None:
+    """An isolated proxy probe must not succeed through an AUTO direct fallback."""
+    by_tag = {str(item.get("tag") or ""): item for item in items}
+    visiting: set[str] = set()
+
+    def visit(tag: str) -> bool:
+        item = by_tag.get(tag)
+        if item is None or tag in visiting:
+            return False
+        kind = str(item.get("type") or "").lower()
+        if kind in NON_PROXY_TYPES:
+            return False
+        if kind not in GROUP_TYPES:
+            return True
+        members = item.get("outbounds")
+        if not isinstance(members, list):
+            return False
+        visiting.add(tag)
+        retained = [str(member) for member in members if visit(str(member))]
+        visiting.remove(tag)
+        item["outbounds"] = retained
+        return bool(retained)
+
+    if not visit(root):
+        raise ValueError("AUTO test has no proxy group member")

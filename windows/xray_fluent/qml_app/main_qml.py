@@ -942,18 +942,9 @@ def _attach_qwindowkit(window) -> None:
 def main(argv: list[str] | None = None) -> int:
     _install_crash_guards()
     _set_app_user_model_id()
-    _cleanup_legacy_root_program_install()
-    _cleanup_legacy_executable_bridge()
-    try:
-        from ..startup import cleanup_legacy_system_entries
-        cleanup_legacy_system_entries()
-    except Exception:
-        pass
-    try:
-        from ..discord_proxy_manager import migrate_legacy_droute_markers
-        migrate_legacy_droute_markers()
-    except Exception:
-        pass
+    # Legacy startup-task cleanup can spawn four schtasks calls, each with a
+    # 15-second timeout. The startup-registration worker performs it after the
+    # first frame; it must not hold the GUI before the window is visible.
     _enable_gpu_friendly_defaults()
     _install_message_filter()
 
@@ -988,6 +979,11 @@ def main(argv: list[str] | None = None) -> int:
     single_server, is_primary = _create_single_instance(app, launch_arguments)
     if not is_primary:
         return 0
+
+    # A game can occupy all logical CPUs; keep the GUI and the core's log
+    # reader schedulable so the running VPN does not depend on a stalled UI.
+    from ..runtime_priority import prioritize_lumen_ui
+    prioritize_lumen_ui()
 
     if APP_ICON_PATH.is_file():
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
@@ -1108,6 +1104,14 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(0, bridge.startDeferred)
     QTimer.singleShot(750, bridge.startDeferred)
     QTimer.singleShot(1200, lambda: QMetaObject.invokeMethod(window, "beginBackgroundPageWarmup"))
+    def _cleanup_legacy_files() -> None:
+        _cleanup_legacy_root_program_install()
+        _cleanup_legacy_executable_bridge()
+
+    QTimer.singleShot(
+        800,
+        lambda: bridge.controller._start_background_task(_cleanup_legacy_files, "legacy-file-cleanup"),
+    )
     try:
         bridge.settingsChanged.connect(_refresh_backdrop)
     except Exception:

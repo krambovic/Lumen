@@ -23,8 +23,8 @@ Item {
 
     readonly property var procActionKeys: ["direct", "proxy", "block"]
     readonly property var procActionLabels: [I18n.t("Прямой"), I18n.t("Прокси"), I18n.t("Блокировка")]
-    readonly property var svcActionKeys: ["default", "direct", "proxy"]
-    readonly property var svcActionLabels: [I18n.t("По умолчанию (TUN)"), I18n.t("Прямой"), I18n.t("Прокси")]
+    readonly property var svcActionKeys: ["direct", "proxy"]
+    readonly property var svcActionLabels: [I18n.t("Прямой"), I18n.t("Прокси")]
     readonly property var defaultOutboundKeys: ["proxy", "direct"]
     readonly property var defaultOutboundLabels: [I18n.t("Прокси"), I18n.t("Напрямую")]
 

@@ -115,6 +115,68 @@ def test_expected_core_exit_with_nonzero_code_is_not_error() -> None:
     assert classify_log_level("[xray] process stopped with code -1 (expected)") == "success"
 
 
+def test_repeated_connection_timeouts_keep_first_and_periodic_summary(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from xray_fluent.app_controller import AppController
+
+    clock = [100.0]
+    monkeypatch.setattr("xray_fluent.app_controller.time.monotonic", lambda: clock[0])
+    emitted = []
+    controller = SimpleNamespace(_log=emitted.append)
+    failure = (
+        "[singbox] ERROR [42 5s] connection: open connection to 192.0.2.1:443 "
+        "using outbound/direct[direct]: dial tcp 192.0.2.1:443: i/o timeout"
+    )
+    collapse = AppController._collapse_repeated_connection_failure
+    assert collapse(controller, failure) is False
+    assert collapse(controller, failure.replace("192.0.2.1", "192.0.2.2")) is True
+    clock[0] += 31
+    assert collapse(controller, failure) is False
+    assert emitted == [
+        "[core] 1 repeated connection failures hidden in 30 s (outbound/direct[direct], i/o timeout)"
+    ]
+
+
+def test_application_info_reaches_logs_page_without_duplicating_controller_lines() -> None:
+    import logging
+    from xray_fluent.qml_app.bridge.app_bridge import _ApplicationLogEmitter, _ApplicationLogHandler
+
+    emitter = _ApplicationLogEmitter()
+    received = []
+    emitter.line.connect(received.append)
+    handler = _ApplicationLogHandler(emitter)
+    handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logger = logging.getLogger("xray_fluent.log_page_test")
+    previous_level = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        logger.info("connection is ready")
+        logger.info("controller event", extra={"from_controller": True})
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+    assert len(received) == 1
+    assert "INFO: connection is ready" in received[0]
+
+
+def test_proxy_conflict_toast_keeps_message_and_adds_reset_action() -> None:
+    from types import SimpleNamespace
+    from xray_fluent.qml_app.bridge.app_bridge import AppBridge
+
+    actions = []
+    message = "Не удалось применить системный прокси: Системный прокси изменён вне Lumen; автоматическая перезапись отменена"
+    bridge = SimpleNamespace(
+        controller=SimpleNamespace(recent_logs=[message], _log=lambda _line: None),
+        _localized_backend_message=lambda value: value,
+        _notify_action=lambda *args: actions.append(args),
+    )
+    AppBridge._on_status_message(bridge, "error", message)
+    assert len(actions) == 1
+    assert actions[0][:3] == ("error", message, "reset-system-proxy")
+    assert actions[0][3]
+
+
 def test_diagnostic_filter_ignores_connection_errors() -> None:
     import logging
     from xray_fluent.logging_setup import _DiagnosticFilter

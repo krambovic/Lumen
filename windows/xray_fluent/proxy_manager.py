@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 
 from pathlib import Path
 import sys
@@ -184,6 +185,29 @@ class ProxyManager:
         current = self._read_settings()
         return all(current.get(key) == expected.get(key) for key in _PROXY_FIELDS) and self._query_connection_flags() == expected.get("WinInetFlags")
 
+    def _matches_owned_proxy(self) -> bool:
+        """Accept WinINET losing only Lumen's bypass list or PROXY flag.
+
+        Windows can clear ProxyOverride while leaving our exact local proxy in
+        place.  The durable receipt and endpoint still prove which settings we
+        applied; a changed server, PAC URL or custom bypass must remain an
+        external change and must never be overwritten automatically.
+        """
+        applied = self._applied
+        if applied is None or not self._backup_file.exists():
+            return False
+        current = self._read_settings()
+        if (
+            current.get("ProxyEnable") != 1
+            or current.get("ProxyServer") != applied.get("ProxyServer")
+            or current.get("AutoConfigURL") != applied.get("AutoConfigURL")
+            or current.get("ProxyOverride") not in (applied.get("ProxyOverride"), "")
+            or not self._is_lumen_proxy(applied.get("ProxyServer"))
+        ):
+            return False
+        flags = self._query_connection_flags()
+        return flags is not None and flags in (PROXY_TYPE_DIRECT, PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY)
+
     def _matches_registry_settings(self, expected: dict[str, str | int] | None) -> bool:
         if expected is None:
             return False
@@ -203,6 +227,32 @@ class ProxyManager:
         if not self.is_supported or self._load_persisted_backup() is None:
             return False
         return self.disable(restore_previous=True)
+
+    def reset_conflicted_state(self) -> None:
+        """Explicitly turn off the Windows LAN proxy and PAC configuration."""
+        if not self.is_supported:
+            return
+        if self._backup_file.exists():
+            if self._load_persisted_backup() is None or self._owner_is_live_elsewhere():
+                raise RuntimeError("Сохранённые настройки прокси принадлежат другому экземпляру Lumen")
+        direct = {
+            "ProxyEnable": 0,
+            "ProxyServer": "",
+            "ProxyOverride": "",
+            "AutoConfigURL": "",
+            "WinInetFlags": PROXY_TYPE_DIRECT,
+        }
+        # This is a deliberate user action, unlike automatic stale-state
+        # recovery: it also clears a foreign proxy/PAC that replaced Lumen.
+        # Keep the old receipt for manual recovery, but only after a verified
+        # Windows reset so a failed native write remains retryable.
+        self._restore_settings(direct)
+        if self._backup_file.exists():
+            recovery = self._backup_file.with_name(
+                f"{self._backup_file.stem}.recovery-{time.time_ns()}.json"
+            )
+            self._backup_file.replace(recovery)
+        self._backup = self._applied = self._owner = None
 
     def _load_persisted_backup(self) -> dict[str, str | int] | None:
         if self._backup is None:
@@ -327,7 +377,7 @@ class ProxyManager:
         except Exception:
             error_code = 0
         self._last_wininet_error = (error_code, int(payload.dwOptionError))
-        _logger.warning(
+        _logger.debug(
             "[proxy] InternetSetOptionW failed: error=%d option_error=%d option_count=%d",
             error_code,
             int(payload.dwOptionError),
@@ -337,12 +387,16 @@ class ProxyManager:
 
     def _restore_settings(self, values: dict[str, str | int]) -> None:
         self._write_settings(values)
-        if not self._set_connection_proxy(None, str(values["ProxyServer"]), str(values["ProxyOverride"]),
-                                          bool(values["ProxyEnable"]), flags=int(values["WinInetFlags"]),
-                                          auto_config_url=str(values["AutoConfigURL"])):
-            self._refresh_system_proxy()
-            raise RuntimeError("Не удалось полностью восстановить параметры WinINET; резервная копия сохранена")
+        applied = self._set_connection_proxy(None, str(values["ProxyServer"]), str(values["ProxyOverride"]),
+                                             bool(values["ProxyEnable"]), flags=int(values["WinInetFlags"]),
+                                             auto_config_url=str(values["AutoConfigURL"]))
         self._refresh_system_proxy()
+        if not self._matches_settings(values):
+            error_code, option_error = self._last_wininet_error
+            detail = f" (Win32={error_code}, option={option_error})" if not applied and (error_code or option_error) else ""
+            raise RuntimeError(f"Не удалось полностью восстановить параметры WinINET{detail}; резервная копия сохранена")
+        if not applied:
+            _logger.info("[proxy] WinINET reported failure, but restored settings were verified")
 
     def _enumerate_ras_entries(self) -> list[str]:
         try:
@@ -395,7 +449,10 @@ class ProxyManager:
             if saved is None and self._backup_file.exists():
                 raise RuntimeError("Сохранённые настройки прокси требуют проверки: другой экземпляр или неподтверждённая резервная копия")
             self._backup = saved if saved is not None else self._snapshot_settings()
-        if self._owner_is_live_elsewhere() or (self._applied is not None and not self._matches_settings(self._applied)):
+        if self._owner_is_live_elsewhere() or (
+            self._applied is not None
+            and not (self._matches_settings(self._applied) or self._matches_owned_proxy())
+        ):
             raise RuntimeError("Системный прокси изменён вне Lumen; автоматическая перезапись отменена")
 
         # v2rayN-style system proxy: WinINET points at the local mixed inbound.
@@ -438,7 +495,7 @@ class ProxyManager:
                     raise RuntimeError(f"Не удалось применить параметры WinINET{detail}")
                 self._applied["WinInetFlags"] = int(effective_flags)
                 self._persist_backup(self._backup)
-                _logger.warning(
+                _logger.info(
                     "[proxy] WinINET returned failure, but verified registry settings and effective flags were applied"
                 )
         except Exception:
@@ -471,7 +528,7 @@ class ProxyManager:
         backup = self._backup if self._backup is not None else self._load_persisted_backup()
         if backup is None or self._owner_is_live_elsewhere():
             return False
-        if not self._matches_settings(self._applied):
+        if not (self._matches_settings(self._applied) or self._matches_owned_proxy()):
             _logger.warning("[proxy] External changes detected; proxy and recovery snapshot left untouched")
             return False
         desired = backup if restore_previous else {"ProxyEnable": 0, "ProxyServer": "", "ProxyOverride": "",

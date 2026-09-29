@@ -114,7 +114,14 @@ Item {
             AccentButton {
                 text: I18n.t("Очистить")
                 kind: "ghost"
-                onClicked: App.clearLogs()
+                onClicked: {
+                    searchDebounce.stop()
+                    searchField.text = ""
+                    page.activeLevel = "all"
+                    App.setLogSearch("")
+                    App.setLogLevelFilter("all")
+                    App.clearLogs()
+                }
             }
             AccentButton {
                 text: I18n.t("Экспорт диагностики")

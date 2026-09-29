@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from copy import deepcopy
 import logging
+import re
 import socket
 import threading
 import time
@@ -120,7 +121,7 @@ from .application.runtime import (
     tun_layer_signature as tun_layer_signature_operation,
     xray_layer_signature as xray_layer_signature_operation,
 )
-from .country_flags import CountryResolver
+from .country_flags import CountryResolver, detect_country
 from .engines.xray import (
     XrayManager,
     build_xray_config,
@@ -164,7 +165,7 @@ from .constants import (
 )
 from .path_utils import resolve_configured_path
 from .diagnostics import export_diagnostics
-from .discord_proxy_manager import DiscordProxyManager
+from .discord_proxy_manager import DiscordProxyManager, migrate_legacy_droute_markers
 from .live_metrics_worker import LiveMetricsWorker
 from .link_parser import repair_node_outbound_from_link
 from .log_utils import classify_log_level, clean_log_text
@@ -320,12 +321,6 @@ class AppController(QObject):
         self.singbox = SingBoxManager(self)
         self.zapret = ZapretManager(self)
         self.proxy = ProxyManager()
-        # An abnormal exit leaves the registry pointing at our own dead port;
-        # repair it at launch instead of waiting for the next connect/disconnect.
-        try:
-            self.proxy.reconcile_stale_state()
-        except Exception:
-            pass
         self.discord_proxy = DiscordProxyManager()
         self.network_monitor = NetworkMonitor(parent=self)
 
@@ -342,6 +337,13 @@ class AppController(QObject):
             app_version=APP_VERSION,
         )
         self._logger = get_logger("app")
+        # A previous crash can leave WinINET pointing at Lumen's dead port.
+        # Reconcile after logging is configured so recovery failures are visible.
+        try:
+            if self.proxy.reconcile_stale_state():
+                self._logger.info("[proxy] Restored system proxy after an interrupted session")
+        except Exception:
+            self._logger.exception("[proxy] Could not restore system proxy after an interrupted session")
         # Check and log previous native crash logs (faulthandler)
         prev_fh_path = LOG_DIR / "faulthandler.prev"
         if prev_fh_path.is_file():
@@ -363,6 +365,12 @@ class AppController(QObject):
         }
 
         self._country_resolver: CountryResolver | None = None
+        self._country_detect_nodes: list[Node] = []
+        self._country_detect_cursor = 0
+        self._country_detect_changed = False
+        self._country_detect_timer = QTimer(self)
+        self._country_detect_timer.setSingleShot(True)
+        self._country_detect_timer.timeout.connect(self._process_country_detection_batch)
         self._ping_worker: PingWorker | None = None
         self._speed_worker: SpeedTestWorker | None = None
         self._ping_node_map: dict[str, Node] = {}
@@ -548,12 +556,17 @@ class AppController(QObject):
         self.network_monitor.start()
         self._lock_timer.start()
 
-        if self._detect_countries_sync():
-            self.nodes_changed.emit(self.state.nodes)
-        QTimer.singleShot(500, self._start_country_ip_resolution)
+        # A large subscription can contain thousands of unnamed countries.
+        # Keep each GUI-thread pass short so the first window stays responsive
+        # even when another process has saturated the CPU during boot.
+        self._country_detect_nodes = list(self.state.nodes)
+        self._country_detect_cursor = 0
+        self._country_detect_changed = False
+        self._country_detect_timer.start(10)
 
         self._start_background_task(self._probe_core_versions, "core-version-probe")
         self._start_background_task(self._prewarm_connection_context, "connection-context-prewarm")
+        self._start_background_task(migrate_legacy_droute_markers, "droute-marker-migration")
 
         if self.state.settings.always_run_as_admin:
             self._start_background_task(self._configure_admin_startup, "admin-startup")
@@ -1810,6 +1823,29 @@ class AppController(QObject):
     def _detect_countries_sync(self) -> None:
         detect_countries_sync_operation(self)
 
+    def _process_country_detection_batch(self) -> None:
+        if self._shutting_down:
+            self._country_detect_nodes = []
+            return
+        nodes = self._country_detect_nodes
+        end = min(len(nodes), self._country_detect_cursor + 32)
+        while self._country_detect_cursor < end:
+            node = nodes[self._country_detect_cursor]
+            self._country_detect_cursor += 1
+            if not node.country_code:
+                code = detect_country(node.name, node.server)
+                if code:
+                    node.country_code = code
+                    self._country_detect_changed = True
+        if self._country_detect_cursor < len(nodes):
+            self._country_detect_timer.start(10)
+            return
+        self._country_detect_nodes = []
+        if self._country_detect_changed:
+            self.schedule_save()
+            self.nodes_changed.emit(self.state.nodes)
+        QTimer.singleShot(500, self._start_country_ip_resolution)
+
     def _start_country_ip_resolution(self) -> None:
         start_country_ip_resolution_operation(self)
 
@@ -2694,7 +2730,52 @@ class AppController(QObject):
             if self._tun_log_count % 200 == 0:
                 self._core_logger.info("[tun] %d internal/noisy logs hidden", self._tun_log_count)
             return
+        if self._collapse_repeated_connection_failure(line):
+            return
         self._log(line)
+
+    def _collapse_repeated_connection_failure(self, line: str) -> bool:
+        """Keep the first core failure and periodic counts, not every retry."""
+        low = line.lower()
+        if "connection: open connection" not in low:
+            return False
+        outbound = re.search(r"using outbound/([^\s:]+)", low)
+        reason = next(
+            (
+                item for item in (
+                    "i/o timeout",
+                    "connection refused",
+                    "network is unreachable",
+                    "requested address is not valid in its context",
+                ) if item in low
+            ),
+            "",
+        )
+        if outbound is None or not reason:
+            return False
+        key = (outbound.group(1), reason)
+        now = time.monotonic()
+        counts = getattr(self, "_repeated_connection_failures", None)
+        if counts is None:
+            counts = self._repeated_connection_failures = {}
+        # Bound state for long sessions with many changing outbound tags.
+        if len(counts) > 64:
+            counts.clear()
+        previous = counts.get(key)
+        if previous is None:
+            counts[key] = (now, 0)
+            return False
+        started, hidden = previous
+        if now - started < 30.0:
+            counts[key] = (started, hidden + 1)
+            return True
+        if hidden:
+            self._log(
+                f"[core] {hidden} repeated connection failures hidden in 30 s "
+                f"(outbound/{key[0]}, {reason})"
+            )
+        counts[key] = (now, 0)
+        return False
 
     def _queue_core_log(self, source: str, line: str) -> None:
         # Scrub complete producer lines before truncation/drop and before Qt.

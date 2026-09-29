@@ -936,6 +936,17 @@ def _ensure_proxy_server_bootstrap_contract(
     # Domain-based proxy servers must resolve through bootstrap-dns, otherwise
     # proxy-dns can recurse into the proxy outbound before the tunnel is ready.
     proxy_outbound["domain_resolver"] = "bootstrap-dns"
+    # Proxy mode has no virtual adapter to exclude endpoint IPs from.  A
+    # selector with hundreds of subscription nodes used to resolve every
+    # candidate synchronously here, delaying each proxy start by seconds.
+    # The direct domain rule and bootstrap resolver are sufficient without TUN.
+    has_tun_inbound = any(
+        isinstance(inbound, dict) and str(inbound.get("type") or "").lower() == "tun"
+        for inbound in payload.get("inbounds") or []
+    )
+    if not has_tun_inbound:
+        _ensure_direct_domain_route(payload, server)
+        return
     endpoint_addresses = _resolve_endpoint_addresses(server)
     endpoint_cidrs = [_endpoint_ip_cidr(address) for address in endpoint_addresses]
     if endpoint_cidrs:

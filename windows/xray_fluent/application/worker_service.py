@@ -66,6 +66,9 @@ def _outbound_endpoint(outbound: dict) -> tuple[str, int]:
     peers = outbound.get("peers")
     if isinstance(peers, list) and peers and isinstance(peers[0], dict):
         outbound = peers[0]
+    servers = outbound.get("servers")
+    if isinstance(servers, list) and servers and isinstance(servers[0], dict):
+        outbound = servers[0]
     server = str(outbound.get("server") or outbound.get("address") or "").strip()
     port = _port_number(outbound.get("server_port") or outbound.get("port"))
     settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
@@ -114,16 +117,32 @@ def _auto_candidate_outbounds(node: Node) -> list[dict]:
             for item in outbounds
             if str(item.get("tag") or "").strip()
         }
-        for selector in outbounds:
-            if _outbound_protocol(selector) not in {"selector", "url-test", "urltest"}:
-                continue
-            refs = selector.get("outbounds")
-            if isinstance(refs, list):
-                selectors.extend(str(value).strip() for value in refs if str(value).strip())
-        selected = [tag_map[tag] for tag in selectors if tag in tag_map]
-        if selected:
-            outbounds = selected
-            selectors = []
+        route = config.get("route") if isinstance(config.get("route"), dict) else {}
+        root = str(route.get("final") or "").strip()
+        if not root:
+            first = next((item for item in outbounds if _outbound_protocol(item) in {"selector", "url-test", "urltest"}), outbounds[0])
+            root = str(first.get("tag") or "").strip()
+        selected: list[dict] = []
+        visiting: set[str] = set()
+
+        def visit(tag: str) -> None:
+            if tag in visiting:
+                return
+            item = tag_map.get(tag)
+            if item is None:
+                return
+            kind = _outbound_protocol(item)
+            if kind in {"selector", "url-test", "urltest"}:
+                visiting.add(tag)
+                refs = item.get("outbounds")
+                for member in refs if isinstance(refs, list) else []:
+                    visit(str(member).strip())
+                visiting.remove(tag)
+            elif kind not in _IGNORED_AUTO_OUTBOUNDS and item not in selected:
+                selected.append(item)
+
+        visit(root)
+        outbounds = selected
 
     candidates = [
         item for item in outbounds
@@ -142,9 +161,10 @@ def _auto_candidate_outbounds(node: Node) -> list[dict]:
 def _auto_candidate_supports(candidate: dict, test: str, *, ping_method: str) -> bool:
     protocol = _outbound_protocol(candidate)
     server, port = _outbound_endpoint(candidate)
+    allowed = XRAY_PROTOCOLS | NATIVE_PROTOCOLS | {"openvpn-client"}
     if test == "speed" or ping_method in {"http", "real"}:
-        return protocol in XRAY_PROTOCOLS or protocol in NATIVE_PROTOCOLS
-    return bool(server and port > 0 and (protocol in XRAY_PROTOCOLS or protocol in NATIVE_PROTOCOLS))
+        return protocol in allowed
+    return bool(server and port > 0 and protocol in allowed)
 
 
 def _node_supports_test(node: Node, test: str, *, ping_method: str = "tcping") -> bool:
@@ -152,9 +172,9 @@ def _node_supports_test(node: Node, test: str, *, ping_method: str = "tcping") -
     if protocol in _AUTO_CONFIG_PROTOCOLS:
         candidates = _auto_candidate_outbounds(node)
         if test == "speed" or ping_method in {"http", "real"}:
-            allowed = XRAY_PROTOCOLS if protocol == "xray_config" else XRAY_PROTOCOLS | NATIVE_PROTOCOLS
+            allowed = XRAY_PROTOCOLS if protocol == "xray_config" else XRAY_PROTOCOLS | NATIVE_PROTOCOLS | {"openvpn-client"}
             return bool(candidates) and all(_outbound_protocol(c) in allowed for c in candidates)
-        allowed = XRAY_PROTOCOLS if protocol == "xray_config" else XRAY_PROTOCOLS | NATIVE_PROTOCOLS
+        allowed = XRAY_PROTOCOLS if protocol == "xray_config" else XRAY_PROTOCOLS | NATIVE_PROTOCOLS | {"openvpn-client"}
         return any(_outbound_protocol(c) in allowed and _auto_candidate_supports(c, test, ping_method=ping_method) for c in candidates)
     return probe_capability(node, "speed" if test == "speed" else ping_method).supported
 
@@ -173,6 +193,8 @@ def _node_for_test(node: Node, test: str, *, ping_method: str) -> Node:
         prepared.server = server
         prepared.port = port
         candidate_protocol = _outbound_protocol(candidate)
+        if candidate_protocol == "openvpn-client":
+            candidate_protocol = "openvpn"
         if candidate_protocol:
             prepared.scheme = candidate_protocol
             prepared.outbound = (deepcopy(candidate) if protocol == "xray_config" else

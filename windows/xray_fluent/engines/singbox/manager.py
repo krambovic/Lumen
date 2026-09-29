@@ -26,7 +26,9 @@ from ...constants import (
     SINGBOX_PATH_DEFAULT,
     SINGBOX_TUN_INTERFACE_NAME,
 )
+from ...core_log_limiter import CoreLogLimiter
 from ...path_utils import resolve_configured_path
+from ...runtime_priority import CORE_RUN_PRIORITY_FLAG
 from ...log_utils import is_routine_core_log
 from ...subprocess_utils import (
     decode_output,
@@ -147,6 +149,10 @@ class SingBoxManager(QObject):
         # internal retry boundary instead of making the UI wait for the core's
         # full adapter-open timeout.
         self._tun_startup_stalled_event = threading.Event()
+        self._runtime_log_window = 0.0
+        self._runtime_log_visible = 0
+        self._runtime_log_hidden = 0
+        self._other_log_limiter = CoreLogLimiter("sing-box", max_lines_per_second=20)
 
     @property
     def is_running(self) -> bool:
@@ -302,6 +308,10 @@ class SingBoxManager(QObject):
             )
             with self._lock:
                 self._last_output_lines.clear()
+                self._runtime_log_window = 0.0
+                self._runtime_log_visible = 0
+                self._runtime_log_hidden = 0
+                self._other_log_limiter.reset()
             self._core_ready_event.clear()
             self._profile_ready_event.clear()
             self._profile_error_event.clear()
@@ -317,7 +327,7 @@ class SingBoxManager(QObject):
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
                     bufsize=0,
-                    creationflags=_CREATE_NO_WINDOW,
+                    creationflags=_CREATE_NO_WINDOW | CORE_RUN_PRIORITY_FLAG,
                 )
             except Exception as exc:
                 self._starting = False
@@ -587,21 +597,24 @@ class SingBoxManager(QObject):
                     for line in text.splitlines():
                         clean = line.rstrip()
                         if clean:
+                            if "found process path" in clean.lower() or "process_path=" in clean.lower():
+                                continue
                             with self._lock:
                                 if proc is not self._proc:
                                     break
                                 self._last_output_lines.append(clean)
                             self._observe_startup_line(clean)
-                            # DNS/connection tracing and process-path lookups
-                            # are high-volume implementation chatter, not
-                            # actionable diagnostics.  Filter them for the
-                            # entire lifetime of the core (the previous
-                            # startup-only filter made the log explode as soon
-                            # as the TUN became ready).  ``_is_noisy...`` keeps
-                            # genuine ERROR/FATAL lines visible.
+                            # Keep a bounded view of real traffic and routing,
+                            # but suppress high-volume DNS and process-path
+                            # chatter. Genuine failures remain visible.
                             if self._is_noisy_runtime_line(clean):
+                                self._emit_bounded_runtime_activity(clean)
                                 continue
-                            self.log_received.emit(clean)
+                            summary, visible = self._other_log_limiter.admit(clean)
+                            if summary:
+                                self.log_received.emit(summary)
+                            if visible:
+                                self.log_received.emit(clean)
         except Exception:
             pass
         finally:
@@ -752,13 +765,22 @@ class SingBoxManager(QObject):
             "sing-box extended build ignores raw MASQUE keys and leaves the tunnel uninitialized."
         )
 
-    @staticmethod
     def _wait_until_proxy_ready(
+        self,
         proc: subprocess.Popen[bytes],
         ports: tuple[int, ...],
         max_wait: float = 10.0,
     ) -> bool:
+        # The native started marker is emitted after all inbounds are ready.
+        # Opening bare TCP probes against HTTP/SOCKS inbounds creates false
+        # "read http request: EOF" errors in the user's runtime log.
         deadline = time.monotonic() + max_wait
+        marker_deadline = min(deadline, time.monotonic() + 2.0)
+        while time.monotonic() < marker_deadline and proc.poll() is None:
+            if self._core_ready_event.wait(0.05):
+                return proc.poll() is None
+            pump_qt_events()
+        # Compatibility fallback for older extended cores without the marker.
         while time.monotonic() < deadline and proc.poll() is None:
             all_ready = True
             for port in ports:
@@ -991,6 +1013,39 @@ class SingBoxManager(QObject):
     @staticmethod
     def _is_noisy_runtime_line(line: str) -> bool:
         return is_routine_core_log(line)
+
+    def _emit_bounded_runtime_activity(self, line: str) -> None:
+        """Show connection and routing work without flooding busy TUN logs."""
+        if not re.search(r"(?:^|\s)INFO\s", line, flags=re.IGNORECASE):
+            return
+        lower = line.lower()
+        if "found process path" in lower or "process_path=" in lower:
+            return
+        if re.search(
+            r"(?:inbound/[^\s:]+: inbound (?:packet )?connection (?:from|to)\b"
+            r"|outbound/[^\s:]+: outbound (?:packet )?connection to\b"
+            r"|router: match\[)",
+            line,
+            flags=re.IGNORECASE,
+        ) is None:
+            return
+        now = time.monotonic()
+        with self._lock:
+            summary = 0
+            if now - self._runtime_log_window >= 1.0:
+                summary = self._runtime_log_hidden
+                self._runtime_log_window = now
+                self._runtime_log_visible = 0
+                self._runtime_log_hidden = 0
+            if self._runtime_log_visible >= 20:
+                self._runtime_log_hidden += 1
+                return
+            self._runtime_log_visible += 1
+        if summary:
+            self.log_received.emit(
+                f"INFO [sing-box] {summary} additional traffic events hidden in the previous second"
+            )
+        self.log_received.emit(line)
 
     @classmethod
     def _is_startup_routine_line(cls, line: str) -> bool:

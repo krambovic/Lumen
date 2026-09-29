@@ -445,6 +445,8 @@
   "Настройки приложения и маршрутизации вернутся к значениям по умолчанию. Серверы и подписки не будут удалены.": "Application and routing settings will return to their defaults. Servers and subscriptions will not be deleted.",
   "Настройки сброшены по умолчанию. Серверы и подписки сохранены.": "Settings were reset to defaults. Servers and subscriptions were preserved.",
   "Сбросить": "Reset",
+  "Состояние прокси сброшено. Повторите подключение.": "Proxy state reset. Try connecting again.",
+  "Не удалось сбросить прокси: {error}": "Could not reset the proxy: {error}",
   "Сбросить к шаблону": "Reset to template",
   "Светлая": "Light",
   "Свойства подписки": "Subscription properties",
@@ -1090,5 +1092,6 @@
   "Дополнительные заголовки (JSON)": "Extra headers (JSON)",
   "UDP поверх TCP": "UDP over TCP",
   "Использовать QUIC": "Use QUIC",
-  "Некорректная ссылка lumen": "Invalid lumen link"
+  "Некорректная ссылка lumen": "Invalid lumen link",
+  "Журнал очищен; новые логи продолжают поступать": "Logs cleared; new entries will continue to appear"
 }

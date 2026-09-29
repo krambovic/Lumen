@@ -1332,3 +1332,28 @@ def test_hot_switch_selector_contains_all_native_extended_nodes() -> None:
         extended.id: singbox_node_source_signature(extended),
     }
     assert not any(item.get("tag") == "proxy" and item.get("type") != "selector" for item in plan.singbox_config["outbounds"])
+def test_proxy_bootstrap_does_not_resolve_every_hot_switch_candidate(monkeypatch) -> None:
+    from xray_fluent.engines.singbox import runtime_planner as planner
+
+    monkeypatch.setattr(
+        planner,
+        "_resolve_endpoint_addresses",
+        lambda _host: (_ for _ in ()).throw(AssertionError("proxy mode must not pre-resolve candidates")),
+    )
+    payload = {"inbounds": [{"type": "mixed", "tag": "socks-in"}], "route": {"rules": []}}
+    outbound = {"type": "vless", "server": "example.org"}
+    planner._ensure_proxy_server_bootstrap_contract(payload, outbound, "example.org")
+    assert outbound["domain_resolver"] == "bootstrap-dns"
+    assert payload["route"]["rules"] == [
+        {"domain": ["example.org"], "action": "route", "outbound": "direct"}
+    ]
+
+
+def test_tun_bootstrap_still_excludes_resolved_endpoint(monkeypatch) -> None:
+    from xray_fluent.engines.singbox import runtime_planner as planner
+
+    monkeypatch.setattr(planner, "_resolve_endpoint_addresses", lambda _host: ["203.0.113.10"])
+    payload = {"inbounds": [{"type": "tun", "tag": "tun-in"}], "route": {"rules": []}}
+    outbound = {"type": "vless", "server": "example.org"}
+    planner._ensure_proxy_server_bootstrap_contract(payload, outbound, "example.org")
+    assert "203.0.113.10/32" in payload["inbounds"][0]["route_exclude_address"]

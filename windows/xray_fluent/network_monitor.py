@@ -13,7 +13,9 @@ class NetworkMonitor(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._check)
-        self._last_fingerprint = self._fingerprint()
+        # The monitor is constructed before the first window frame. Network
+        # probing there can stall startup on a busy or offline Windows boot.
+        self._last_fingerprint = ""
 
     def start(self) -> None:
         self._last_fingerprint = self._fingerprint()
@@ -38,9 +40,8 @@ class NetworkMonitor(QObject):
                 sock.connect(("8.8.8.8", 80))
                 local_ip = sock.getsockname()[0]
         except OSError:
-            try:
-                local_ip = socket.gethostbyname(socket.gethostname())
-            except OSError:
-                local_ip = "0.0.0.0"
+            # Hostname resolution can block for a long time while DNS services
+            # are still starting. A later timer tick detects the real address.
+            pass
 
         return local_ip

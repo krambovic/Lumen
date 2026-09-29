@@ -11,6 +11,8 @@ from xray_fluent.application.worker_service import (
 )
 from xray_fluent.models import Node
 from xray_fluent import ping_worker
+from xray_fluent.native_test_config import build_native_test_config
+from xray_fluent.probe_capabilities import endpoint_method
 
 
 class _Signal:
@@ -190,3 +192,37 @@ def test_auto_with_only_unsupported_candidates_stays_untested() -> None:
 
     assert _node_supports_test(auto, "ping", ping_method="tcping") is False
     assert _node_supports_test(auto, "speed") is False
+
+
+def test_singbox_nested_auto_supports_endpoint_and_proxy_checks_without_direct_fallback() -> None:
+    config = {
+        "outbounds": [
+            {"type": "selector", "tag": "main", "outbounds": ["fast", "direct"]},
+            {"type": "urltest", "tag": "fast", "outbounds": ["ovpn", "vless"]},
+            {"type": "direct", "tag": "direct"},
+            {"type": "vless", "tag": "vless", "server": "vless.example", "server_port": 443},
+            {"type": "selector", "tag": "unused", "outbounds": ["missing"]},
+        ],
+        "endpoints": [
+            {"type": "openvpn-client", "tag": "ovpn", "servers": [
+                {"server": "openvpn.example", "server_port": 1194}
+            ]},
+        ],
+        "route": {"final": "main"},
+    }
+    auto = Node(
+        id="native-auto", name="AUTO", scheme="auto", server="", port=0,
+        outbound={"protocol": "singbox_config", "singbox_config": config},
+    )
+
+    assert _node_supports_test(auto, "ping", ping_method="tcping")
+    assert _node_supports_test(auto, "ping", ping_method="http")
+    assert _node_supports_test(auto, "ping", ping_method="real")
+    assert _node_supports_test(auto, "speed")
+    prepared = _filter_testable_nodes(_CompatibilityController([auto]), [auto], "ping")
+    assert (prepared[0].server, prepared[0].port) == ("openvpn.example", 1194)
+    assert endpoint_method(prepared[0], "tcping") == "icmp"
+    probe = build_native_test_config(auto, 19876)
+    main = next(item for item in probe["outbounds"] if item.get("tag") == "main")
+    assert main["outbounds"] == ["fast"]
+    assert config["outbounds"][0]["outbounds"] == ["fast", "direct"]

@@ -16,7 +16,9 @@ from typing import Any
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from ...constants import RUNTIME_DIR, XRAY_CONFIG_FILE, XRAY_PATH_DEFAULT
+from ...core_log_limiter import CoreLogLimiter
 from ...path_utils import resolve_configured_path
+from ...runtime_priority import CORE_RUN_PRIORITY_FLAG
 from ...subprocess_utils import (
     decode_output,
     is_windows_shutting_down,
@@ -51,6 +53,7 @@ class XrayManager(QObject):
         self._last_exit_code: int | None = None
         self._last_exit_expected = False
         self._exe_path: Path | None = None
+        self._runtime_log_limiter = CoreLogLimiter("xray", max_lines_per_second=30)
 
     @property
     def is_running(self) -> bool:
@@ -164,6 +167,7 @@ class XrayManager(QObject):
 
         for attempt in range(2):
             self._last_output_lines.clear()
+            self._runtime_log_limiter.reset()
             self._stop_requested = False
             self._last_exit_expected = False
             self._last_exit_code = None
@@ -183,7 +187,7 @@ class XrayManager(QObject):
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
                     bufsize=0,
-                    creationflags=_CREATE_NO_WINDOW,
+                    creationflags=_CREATE_NO_WINDOW | CORE_RUN_PRIORITY_FLAG,
                 )
             except Exception as exc:
                 self._starting = False
@@ -307,7 +311,11 @@ class XrayManager(QObject):
                         clean = line.rstrip()
                         if clean:
                             self._last_output_lines.append(clean)
-                            self.log_received.emit(clean)
+                            summary, visible = self._runtime_log_limiter.admit(clean)
+                            if summary:
+                                self.log_received.emit(summary)
+                            if visible:
+                                self.log_received.emit(clean)
         except Exception:
             pass
         finally:

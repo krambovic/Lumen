@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from xray_fluent.constants import SUBSCRIPTION_FETCHER_EXE_NAME
 from xray_fluent.models import RoutingSettings
 from xray_fluent.routing_presets import repair_builtin_preset_service_routes
@@ -8,6 +10,7 @@ from xray_fluent.routing_runtime import (
     build_singbox_gui_dns_rules,
     build_singbox_gui_route_rules,
     build_xray_gui_routing_rules,
+    effective_service_action,
     routing_with_ip_preference,
     service_route_selection,
 )
@@ -316,6 +319,12 @@ def test_unmatched_tun_fallback_does_not_turn_inherited_services_into_overrides(
         ),
         "spotify",
     ) == "default"
+    assert effective_service_action(routing, "youtube") == "proxy"
+    assert effective_service_action(routing, "spotify") == "direct"
+    assert effective_service_action(
+        RoutingSettings(preset_id="custom", tun_default_outbound="proxy"),
+        "spotify",
+    ) == "proxy"
 
     direct_rules, _ = build_singbox_gui_route_rules(routing)
     proxy_fallback = RoutingSettings(
@@ -331,6 +340,20 @@ def test_unmatched_tun_fallback_does_not_turn_inherited_services_into_overrides(
     )
     assert youtube_rule(direct_rules)["outbound"] == "proxy"
     assert youtube_rule(proxy_rules)["outbound"] == "proxy"
+
+
+def test_service_list_shows_effective_routes_without_creating_overrides() -> None:
+    from xray_fluent.qml_app.bridge.app_bridge import AppBridge
+
+    routing = RoutingSettings(preset_id="custom", service_routes={"youtube": "proxy"}, tun_default_outbound="direct")
+    bridge = SimpleNamespace(controller=SimpleNamespace(state=SimpleNamespace(routing=routing)))
+    rows = AppBridge.serviceList.fget(bridge)
+    by_id = {row["id"]: row for row in rows}
+
+    assert by_id["youtube"]["action"] == "proxy"
+    assert by_id["discord"]["action"] == "direct"
+    assert all(row["action"] in {"direct", "proxy"} for row in rows)
+    assert routing.service_routes == {"youtube": "proxy"}
 
 
 def test_changing_tun_fallback_changes_only_route_final_not_matching_rules() -> None:

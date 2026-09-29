@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import time
 from typing import TYPE_CHECKING, Any
 
 from .clash_api import ClashApiError, SingboxClashApiClient
@@ -26,12 +27,16 @@ def start_runtime(
     tun_mode: bool,
 ) -> SingboxStartResult | None:
     controller._active_core = "singbox"
+    plan_started = time.monotonic()
     try:
         plan = controller._plan_runtime_singbox(node, tun_mode=tun_mode)
     except (ValueError, RuntimeError) as exc:
         controller._active_core = prev_active_core
         controller._set_connection_status("error", str(exc), level="error")
         return None
+
+    log_domain = "tun" if tun_mode else "proxy"
+    controller._log(f"[{log_domain}] runtime plan ready in {int((time.monotonic() - plan_started) * 1000)} ms")
 
     session_label = plan.source_path.name
     if plan.used_selected_node and node is not None:
@@ -42,7 +47,6 @@ def start_runtime(
         else f"Запуск {'VPN' if tun_mode else 'прокси'}: {session_label}..."
     )
     controller._set_connection_status("starting", start_message, level="info")
-    log_domain = "tun" if tun_mode else "proxy"
     controller._log(f"[{log_domain}] sing-box planner outcome: {plan.outcome} from {plan.source_path}")
     route = plan.singbox_config.get("route") if isinstance(plan.singbox_config, dict) else {}
     dns = plan.singbox_config.get("dns") if isinstance(plan.singbox_config, dict) else {}
@@ -59,10 +63,12 @@ def start_runtime(
         else:
             controller._log(f"[{log_domain}] outbound tag 'proxy' replaced from selected node: {node.name}")
 
+    validation_started = time.monotonic()
     valid, validation_output = controller.singbox.validate_config(
         controller.state.settings.singbox_path,
         plan.singbox_config,
     )
+    controller._log(f"[{log_domain}] core config check completed in {int((time.monotonic() - validation_started) * 1000)} ms")
     if not valid:
         controller._active_core = prev_active_core
         controller._set_connection_status(

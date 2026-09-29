@@ -139,6 +139,22 @@ def test_routing_page_exposes_tun_default_outbound_control() -> None:
     assert "App.setTunDefaultOutbound" in routing_qml
 
 
+def test_service_route_combo_shows_only_effective_direct_or_proxy() -> None:
+    routing_qml = (QML_DIR / "RoutingPage.qml").read_text(encoding="utf-8")
+    bridge_source = (ROOT / "xray_fluent" / "qml_app" / "bridge" / "app_bridge.py").read_text(encoding="utf-8")
+
+    assert 'svcActionKeys: ["direct", "proxy"]' in routing_qml
+    assert '"action": effective_service_action(routing, s.id)' in bridge_source
+
+
+def test_zapret_table_has_vertical_guides_for_the_first_three_boundaries() -> None:
+    zapret_qml = (QML_DIR / "ZapretPage.qml").read_text(encoding="utf-8")
+
+    assert "component ColumnGuide: Rectangle" in zapret_qml
+    assert "ColumnGuide { visible: headerCell.columnIndex < 3 }" in zapret_qml
+    assert zapret_qml.count("ColumnGuide {}") == 3
+
+
 def test_updates_page_hides_internal_lumen_singbox_revision() -> None:
     updates_qml = (QML_DIR / "UpdatesPage.qml").read_text(encoding="utf-8")
 

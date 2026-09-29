@@ -104,6 +104,73 @@ def test_routine_connection_logs_are_suppressed_when_not_normalized() -> None:
     assert all(SingBoxManager._is_noisy_runtime_line(line) for line in lines)
 
 
+def test_runtime_work_logs_are_sampled_without_emitting_process_paths(monkeypatch) -> None:
+    manager = SingBoxManager()
+    clock = [100.0]
+    monkeypatch.setattr(manager_module.time, "monotonic", lambda: clock[0])
+    emitted = []
+    manager.log_received.connect(emitted.append)
+    first = "INFO outbound/vless[proxy]: outbound connection to example.org:443"
+    second = "INFO outbound/vless[proxy]: outbound connection to example.net:443"
+    inbound = "INFO inbound/mixed[socks-in]: inbound connection from 127.0.0.1:61234"
+    route = "INFO [123 2ms] router: match[4] domain_suffix=example.org => proxy"
+    assert manager._is_noisy_runtime_line(first)
+    manager._emit_bounded_runtime_activity(first)
+    manager._emit_bounded_runtime_activity(second)
+    manager._emit_bounded_runtime_activity(inbound)
+    manager._emit_bounded_runtime_activity(route)
+    manager._emit_bounded_runtime_activity("INFO router: found process path: C:\\private\\app.exe")
+    assert emitted == [first, second, inbound, route]
+    for _ in range(17):
+        manager._emit_bounded_runtime_activity(second)
+    assert len(emitted) == 20
+    clock[0] += 1.1
+    manager._emit_bounded_runtime_activity(second)
+    assert emitted[-2:] == [
+        "INFO [sing-box] 1 additional traffic events hidden in the previous second",
+        second,
+    ]
+
+
+def test_runtime_reader_shows_proxy_and_tun_work_without_process_path() -> None:
+    manager = SingBoxManager()
+    received = []
+    manager.log_received.connect(received.append)
+    proc = SimpleNamespace(
+        stdout=io.BytesIO(
+            b"INFO inbound/mixed[socks-in]: inbound connection from 127.0.0.1:61234\n"
+            b"INFO inbound/tun[tun-in]: inbound packet connection to 1.1.1.1:53\n"
+            b"INFO [42 2ms] router: match[4] => proxy\n"
+            b"INFO outbound/direct[direct]: outbound connection to 1.1.1.1:443\n"
+            b"INFO router: found process path: C:\\private\\app.exe\n"
+            b"ERROR router: found process path: C:\\private\\missing.exe\n"
+        ),
+        returncode=0,
+        poll=lambda: 0,
+        wait=lambda: 0,
+    )
+    manager._proc = proc
+    manager._read_output(proc)
+    assert len(received) >= 4
+    assert any("inbound/mixed" in line for line in received)
+    assert any("inbound/tun" in line for line in received)
+    assert any("router: match[" in line for line in received)
+    assert any("outbound/direct" in line for line in received)
+    assert not any("found process path" in line for line in received)
+
+
+def test_proxy_ready_marker_avoids_bare_tcp_probe_errors(monkeypatch) -> None:
+    manager = SingBoxManager()
+    manager._observe_startup_line("NOTICE sing-box started (0.4s)")
+    monkeypatch.setattr(
+        manager_module.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected TCP probe")),
+    )
+    proc = SimpleNamespace(poll=lambda: None)
+    assert manager._wait_until_proxy_ready(proc, (10808, 10809, 10818)) is True
+
+
 def test_actionable_runtime_errors_are_not_suppressed() -> None:
     lines = [
         "ERROR dns: exchange failed: context deadline exceeded",

@@ -41,5 +41,6 @@ def test_pid_access_failure_cannot_return_a_previous_process_name(monkeypatch):
 def test_busy_telemetry_gets_a_real_cpu_budget(cpu, wall, expected):
     assert _metrics_idle_delay(1.0, wall, cpu) == pytest.approx(expected)
 
-def test_network_wait_is_not_mistaken_for_cpu_load():
-    assert _metrics_idle_delay(1.0, 5.0, 0.001) == pytest.approx(0.05)
+def test_slow_local_api_gets_a_bounded_cooldown_without_cpu_load():
+    assert _metrics_idle_delay(1.0, 5.0, 0.001) == pytest.approx(3.0)
+    assert _metrics_idle_delay(1.0, 0.02, 0.001) == pytest.approx(0.98)

@@ -132,6 +132,108 @@ def test_external_proxy_change_is_not_overwritten(monkeypatch, tmp_path):
     assert manager._backup_file.exists()
 
 
+def test_windows_cleared_lumen_bypass_can_be_recovered(monkeypatch, tmp_path):
+    manager, original, current, flags, native, writes = proxy_fixture(monkeypatch, tmp_path)
+    manager.enable(10809, 10808)
+    current["ProxyOverride"] = ""
+    flags[0] = 1
+    # A new manager must recover the durable receipt left by the old process.
+    recovered = ProxyManager()
+    recovered._backup_file = manager._backup_file
+    recovered._firefox_proxy = NS(disable=lambda: None)
+    monkeypatch.setattr(recovered, "_read_settings", lambda: dict(current))
+    monkeypatch.setattr(recovered, "_query_connection_flags", lambda: flags[0])
+    monkeypatch.setattr(recovered, "_write_settings", manager._write_settings)
+    monkeypatch.setattr(recovered, "_set_connection_proxy", manager._set_connection_proxy)
+    monkeypatch.setattr(recovered, "_refresh_system_proxy", lambda: None)
+    assert recovered.reconcile_stale_state() is True
+    assert current == original and flags[0] == 13
+    assert not recovered._backup_file.exists()
+
+
+def test_reenable_lumen_proxy_after_wininet_drift_preserves_original(monkeypatch, tmp_path):
+    manager, original, current, flags, _native, _writes = proxy_fixture(monkeypatch, tmp_path)
+    manager.enable(10809, 10808)
+    current["ProxyOverride"] = ""
+    flags[0] = 1
+    manager.enable(10809, 10808)
+    assert current["ProxyOverride"] == manager._applied["ProxyOverride"]
+    assert flags[0] == 3
+    assert json.loads(manager._backup_file.read_text(encoding="utf-8"))["original"] == {
+        **original,
+        "WinInetFlags": 13,
+    }
+
+
+def test_changed_bypass_is_preserved_for_external_owner(monkeypatch, tmp_path):
+    manager, _original, current, _flags, native, writes = proxy_fixture(monkeypatch, tmp_path)
+    manager.enable(10809, 10808)
+    current["ProxyOverride"] = "company.invalid"
+    native.clear()
+    writes.clear()
+    assert manager.disable() is False
+    assert not native and not writes and manager._backup_file.exists()
+
+
+def test_explicit_proxy_reset_clears_lumen_and_windows_proxy_settings(monkeypatch, tmp_path):
+    manager, _original, current, flags, _native, _writes = proxy_fixture(monkeypatch, tmp_path)
+    manager.enable(10809, 10808)
+    current["ProxyOverride"] = "new.invalid"
+    manager.reset_conflicted_state()
+    assert current == {"ProxyEnable": 0, "ProxyServer": "", "ProxyOverride": "", "AutoConfigURL": ""}
+    assert flags[0] == proxy_module.PROXY_TYPE_DIRECT
+    assert not manager._backup_file.exists()
+    assert len(list(tmp_path.glob("proxy.recovery-*.json"))) == 1
+
+
+def test_explicit_proxy_reset_clears_foreign_proxy_and_archives_receipt(monkeypatch, tmp_path):
+    manager, _original, current, flags, native, writes = proxy_fixture(monkeypatch, tmp_path)
+    manager.enable(10809, 10808)
+    current["ProxyServer"] = "foreign.invalid:3128"
+    native.clear()
+    writes.clear()
+    manager.reset_conflicted_state()
+    assert current == {"ProxyEnable": 0, "ProxyServer": "", "ProxyOverride": "", "AutoConfigURL": ""}
+    assert flags[0] == proxy_module.PROXY_TYPE_DIRECT
+    assert native and writes
+    assert not manager._backup_file.exists()
+    assert len(list(tmp_path.glob("proxy.recovery-*.json"))) == 1
+
+
+def test_explicit_proxy_reset_requires_verified_wininet_state(monkeypatch, tmp_path):
+    manager, _original, current, flags, _native, _writes = proxy_fixture(monkeypatch, tmp_path)
+    manager.enable(10809, 10808)
+    monkeypatch.setattr(manager, "_set_connection_proxy", lambda *_args, **_kwargs: False)
+    with pytest.raises(RuntimeError, match="WinINET"):
+        manager.reset_conflicted_state()
+    assert current["ProxyEnable"] == 0
+    assert flags[0] == 3
+    assert manager._backup_file.exists()
+
+
+def test_explicit_proxy_reset_accepts_false_native_result_after_verified_write(monkeypatch, tmp_path):
+    manager, _original, current, flags, _native, _writes = proxy_fixture(monkeypatch, tmp_path)
+    manager.enable(10809, 10808)
+    def native_failure_after_apply(_connection, _server, _bypass, _enabled, **_kwargs):
+        flags[0] = proxy_module.PROXY_TYPE_DIRECT
+        return False
+    monkeypatch.setattr(manager, "_set_connection_proxy", native_failure_after_apply)
+    manager.reset_conflicted_state()
+    assert current == {"ProxyEnable": 0, "ProxyServer": "", "ProxyOverride": "", "AutoConfigURL": ""}
+    assert flags[0] == proxy_module.PROXY_TYPE_DIRECT
+    assert not manager._backup_file.exists()
+
+
+def test_explicit_proxy_reset_without_receipt_still_clears_windows_settings(monkeypatch, tmp_path):
+    manager, _original, current, flags, native, _writes = proxy_fixture(monkeypatch, tmp_path)
+    current["ProxyEnable"] = 1
+    current["ProxyServer"] = "foreign.invalid:3128"
+    manager.reset_conflicted_state()
+    assert current == {"ProxyEnable": 0, "ProxyServer": "", "ProxyOverride": "", "AutoConfigURL": ""}
+    assert flags[0] == proxy_module.PROXY_TYPE_DIRECT
+    assert native
+
+
 def test_legacy_proxy_backup_does_not_grant_ownership(monkeypatch, tmp_path):
     manager, original, current, flags, native, writes = proxy_fixture(monkeypatch, tmp_path)
     manager._backup_file.write_text(json.dumps(original))
@@ -153,6 +255,9 @@ def test_live_other_instance_is_not_recovered(monkeypatch, tmp_path):
     writes.clear()
     native.clear()
     assert manager.reconcile_stale_state() is False
+    assert not native and not writes
+    with pytest.raises(RuntimeError, match="другому экземпляру"):
+        manager.reset_conflicted_state()
     assert not native and not writes
 
 

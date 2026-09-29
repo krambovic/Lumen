@@ -208,6 +208,8 @@ def on_live_metrics(controller: AppController, payload: dict[str, object]) -> No
     if getattr(controller, "_shutting_down", False):
         return
     controller.live_metrics_updated.emit(payload)
+    for event in payload.get("connection_events") or ():
+        controller._log(event)
     down_bps = float(payload.get("down_bps") or 0.0)
     latency_raw = payload.get("latency_ms")
     latency_ms = int(latency_raw) if isinstance(latency_raw, (int, float)) else None

@@ -14,6 +14,7 @@ from .process_traffic_collector import (
 )
 from .win_proc_monitor import get_proxy_connections
 from .xray_stats_client import XrayStatsClient
+from .traffic_route_classifier import RouteClassifier
 
 _MAX_REASONABLE_BYTES_PER_SEC = 256 * 1024 ** 2
 _MAX_PLAUSIBLE_CONN_BYTES = 1 * 1024 ** 5
@@ -21,8 +22,15 @@ _MAX_PLAUSIBLE_CONN_BYTES = 1 * 1024 ** 5
 
 def _metrics_idle_delay(interval: float, wall_elapsed: float, cpu_elapsed: float) -> float:
     # A slow machine must not run telemetry back-to-back forever. Native/JSON
-    # work that consumes CPU earns a rest; network wait is not counted as CPU.
-    return max(0.05, interval - wall_elapsed, min(30.0, max(0.0, cpu_elapsed) * 4.0))
+    # work that consumes CPU earns a rest. A delayed local-core API response
+    # also needs a bounded cooldown: under game load a 1-second poll used to
+    # retry every 50 ms after each timeout, adding load to the same core.
+    return max(
+        0.05,
+        interval - wall_elapsed,
+        min(30.0, max(0.0, cpu_elapsed) * 4.0),
+        min(3.0, max(0.0, wall_elapsed - interval)),
+    )
 
 
 class LiveMetricsWorker(QThread):
@@ -69,6 +77,8 @@ class LiveMetricsWorker(QThread):
         self._stats_client = XrayStatsClient(api_port)
         self._clash_client = ClashApiClient(clash_api_port, self._clash_api_secret)
         self._connections_document: Mapping[str, Any] | None = None
+        self._seen_connection_ids: set[str] = set()
+        self._connection_events: tuple[str, ...] = ()
         self._outbound_graph: Mapping[str, Any] | None = None
         self._traffic_reason = "not sampled"
 
@@ -155,6 +165,10 @@ class LiveMetricsWorker(QThread):
                             process_stats = self._collect_proxy_process_stats(proxy_prev_bytes, proxy_total_bytes)
                     except Exception:
                         process_stats = None
+                    finally:
+                        # A costly snapshot must not immediately trigger the
+                        # next process scan after the worker wakes up again.
+                        last_process_ts = time.monotonic()
                 if self._stopped:
                     break
                 with self._config_lock:
@@ -162,6 +176,7 @@ class LiveMetricsWorker(QThread):
                 self._last_ping_ms = health_payload["latency_ms"]
                 self.metrics.emit({
                     "down_bps": down_bps, "up_bps": up_bps, "process_stats": process_stats,
+                    "connection_events": self._connection_events,
                     "traffic_available": available, "traffic_reason": self._traffic_reason,
                     "traffic_checked_at": sampled_at if available else 0.0,
                     "upload_total": uplink, "download_total": downlink, **health_payload,
@@ -227,12 +242,14 @@ class LiveMetricsWorker(QThread):
 
     def _query_clash_api_totals(self) -> tuple[int | None, int | None]:
         self._connections_document = None
+        self._connection_events = ()
         try:
             data = self._clash_client.get("/connections", timeout=0.8)
         except MetricsApiError as exc:
             self._traffic_reason = str(exc)
             return None, None
         self._connections_document = data
+        self._connection_events = self._new_connection_events(data)
         upload, download = data.get("uploadTotal"), data.get("downloadTotal")
         if any(
             isinstance(value, bool) or not isinstance(value, int) or value < 0
@@ -242,6 +259,67 @@ class LiveMetricsWorker(QThread):
             return None, None
         self._traffic_reason = ""
         return upload, download
+
+    def _new_connection_events(self, data: Mapping[str, Any]) -> tuple[str, ...]:
+        """Log a bounded sample of real new connections already in /connections.
+
+        No extra API request, process path, credentials, or assumed route is
+        introduced. Unknown routes stay unknown until /proxies is available.
+        """
+        connections = data.get("connections")
+        if not isinstance(connections, (list, tuple)):
+            return ()
+        classifier: RouteClassifier | None = None
+        current: set[str] = set()
+        events: list[str] = []
+        hidden = 0
+        for conn in connections:
+            if not isinstance(conn, Mapping):
+                continue
+            connection_id = str(conn.get("id") or "")
+            if not connection_id:
+                continue
+            current.add(connection_id)
+            if connection_id in self._seen_connection_ids:
+                continue
+            meta = conn.get("metadata")
+            if not isinstance(meta, Mapping):
+                continue
+            host = str(meta.get("host") or meta.get("destinationIP") or "").strip()[:200]
+            if not host:
+                continue
+            try:
+                port = int(meta.get("destinationPort") or 0)
+            except (TypeError, ValueError, OverflowError):
+                port = 0
+            if len(events) < 6:
+                if classifier is None and self._outbound_graph:
+                    classifier = RouteClassifier(self._outbound_graph)
+                route = classifier.classify(conn.get("chains")) if classifier else "unknown"
+                target = f"[{host}]" if ":" in host and not host.startswith("[") else host
+                destination = f"{target}:{port}" if 0 < port < 65536 else target
+                network = str(meta.get("network") or "").lower()
+                if network not in {"tcp", "udp"}:
+                    network = "connection"
+                source_ip = str(meta.get("sourceIP") or "").strip()[:100]
+                try:
+                    source_port = int(meta.get("sourcePort") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    source_port = 0
+                if source_ip:
+                    source = f"[{source_ip}]" if ":" in source_ip and not source_ip.startswith("[") else source_ip
+                    if 0 < source_port < 65536:
+                        source += f":{source_port}"
+                    source = f"from {source} "
+                else:
+                    source = ""
+                events.append(f"[singbox] {source}accepted {network}:{destination} [{route}]")
+            else:
+                hidden += 1
+        self._seen_connection_ids = current
+        if hidden:
+            events.append(f"[singbox] {hidden} additional connections hidden in this sample")
+        return tuple(events)
 
     def _query_xray_stats(self) -> tuple[int | None, int | None]:
         if not self._xray_inbound_tags:

@@ -33,11 +33,19 @@ def _proxy_manager(tmp_path: Path, monkeypatch, registry: dict) -> tuple[ProxyMa
     manager._backup_file = tmp_path / "system_proxy_backup.json"
     manager._firefox_proxy = _NoopFirefoxProxy()
     written: list[dict] = []
-    monkeypatch.setattr(manager, "_read_settings", lambda: dict(registry))
-    monkeypatch.setattr(manager, "_write_settings", lambda values: written.append(dict(values)))
+    state = dict(registry)
+    flags = [3]
+    monkeypatch.setattr(manager, "_read_settings", lambda: dict(state))
+    def write(values):
+        written.append(dict(values))
+        state.update({key: values[key] for key in state if key in values})
+    def apply(_connection, _server, _bypass, _enabled, **kwargs):
+        flags[0] = kwargs.get("flags", 3)
+        return True
+    monkeypatch.setattr(manager, "_write_settings", write)
     monkeypatch.setattr(manager, "_set_wininet_connection_proxy", lambda *_args: True)
-    monkeypatch.setattr(manager, "_query_connection_flags", lambda: 3)
-    monkeypatch.setattr(manager, "_set_connection_proxy", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(manager, "_query_connection_flags", lambda: flags[0])
+    monkeypatch.setattr(manager, "_set_connection_proxy", apply)
     monkeypatch.setattr(manager, "_refresh_system_proxy", lambda: None)
     monkeypatch.setattr("xray_fluent.proxy_manager._process_creation_time", lambda _pid: 12345)
     return manager, written

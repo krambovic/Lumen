@@ -107,7 +107,9 @@ class _ApplicationLogEmitter(QObject):
 
 class _ApplicationLogHandler(logging.Handler):
     def __init__(self, emitter: _ApplicationLogEmitter) -> None:
-        super().__init__(logging.WARNING)
+        # The logs page has a separate "Work" filter.  Dropping INFO here
+        # made it show almost exclusively warnings after the core connected.
+        super().__init__(logging.INFO)
         self._emitter = emitter
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -1077,6 +1079,9 @@ class AppBridge(QObject):
             recent = self.controller.recent_logs[-3:]
             if not any(localized in item for item in recent):
                 self.controller._log(f"[app-{level}] {localized}")
+            if "Системный прокси изменён вне Lumen" in message:
+                self._notify_action(level, localized, "reset-system-proxy", tr("Сбросить"))
+                return
             entry = parse_log_line(localized)
             if entry.action_id:
                 self._notify_action(level, entry.message + "\n" + entry.details.split(". ", 1)[0] + ".", entry.action_id, tr(entry.action_label))
@@ -3901,7 +3906,13 @@ class AppBridge(QObject):
 
     @pyqtSlot()
     def clearLogs(self) -> None:
-        self._log_model.clear()
+        # Discard only the displayed/pending history, never the producer
+        # connections or flush timer. A fresh marker makes it clear that live
+        # logging is still active even when the core is currently idle.
+        self._pending_ui_logs.clear()
+        self._log_source_model.clear()
+        self.controller._log(f"[app] {tr('Журнал очищен; новые логи продолжают поступать')}")
+        self._flush_ui_logs()
 
     @pyqtSlot(str)
     def setLogLevelFilter(self, value: str) -> None:
@@ -3928,6 +3939,15 @@ class AppBridge(QObject):
     def runToastAction(self, action_id: str) -> None:
         if action_id == "restart-admin":
             self._on_admin_relaunch()
+            return
+        if action_id == "reset-system-proxy":
+            try:
+                self.controller.proxy.reset_conflicted_state()
+                self.controller._log("[proxy] User reset conflicted system proxy state")
+                self.toast.emit("success", tr("Состояние прокси сброшено. Повторите подключение."))
+            except Exception as exc:
+                self.controller._log(f"[app-error] Не удалось сбросить прокси: {exc}")
+                self.toast.emit("error", tr("Не удалось сбросить прокси: {error}", error=exc))
             return
         if not action_id.startswith("change-port:"):
             return
@@ -4886,7 +4906,7 @@ class AppBridge(QObject):
 
     @pyqtProperty('QVariantList', notify=routingChanged)
     def serviceList(self):
-        from ...routing_runtime import service_route_selection
+        from ...routing_runtime import effective_service_action
         from ...service_presets import SERVICE_PRESETS
         routing = self.controller.state.routing
         return [
@@ -4895,9 +4915,9 @@ class AppBridge(QObject):
                 "name": s.name,
                 "description": s.description,
                 "defaultAction": s.default_action,
-                # Keep inherited traffic distinct from an explicit per-service
-                # rule. The TUN fallback is not a route override for this row.
-                "action": service_route_selection(routing, s.id),
+                # Display the route currently taken by this service. An
+                # inherited route remains inherited until the user edits it.
+                "action": effective_service_action(routing, s.id),
             }
             for s in SERVICE_PRESETS
         ]

@@ -30,7 +30,7 @@ def endpoint_method(node, requested: str) -> str:
     outbound = node.outbound if isinstance(node.outbound, dict) else {}
     native = outbound.get("singbox", outbound)
     native = native if isinstance(native, dict) else {}
-    transport = str(native.get("transport") or native.get("protocol") or "").lower()
+    transport = str(native.get("transport") or native.get("network") or native.get("proto") or native.get("protocol") or "").lower()
     if protocol in UDP_PROTOCOLS or (protocol == "openvpn" and not transport.startswith("tcp")) or (protocol == "mieru" and transport == "udp"):
         # Unsolicited UDP datagrams cannot verify an authenticated handshake.
         return "icmp"
