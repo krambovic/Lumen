@@ -1,2 +1,0 @@
-chat.deepseek.com
-api.deepseek.com
