@@ -1,6 +1,8 @@
 package com.lumen.ui.screens
 
+import com.lumen.ui.components.expressiveControlLabel
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,7 +28,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -69,111 +71,82 @@ fun RoutingScreen(
     }
 
     LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 20.dp),
+        modifier = modifier.fillMaxSize().statusBarsPadding(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
         item(key = "header") {
-            LumenScreenHeader(title = strings.appRouting, onBack = onBack)
+            LumenScreenHeader(title = strings.appRouting, onBack = onBack, applyStatusBarPadding = false)
         }
         item(key = "mode_title") {
             SectionHeader(strings.splitTunneling)
         }
         item(key = "modes") {
-            SettingsCard {
-                ModeOption(
-                    title = strings.off,
-                    description = strings.offDescription,
-                    selected = mode == SplitModeUi.DISABLED
-                ) { onModeChange(SplitModeUi.DISABLED) }
-                SettingsDivider()
-                ModeOption(
-                    title = strings.vpnOnly,
-                    description = strings.vpnOnlyDescription,
-                    selected = mode == SplitModeUi.ALLOW_LIST
-                ) { onModeChange(SplitModeUi.ALLOW_LIST) }
-                SettingsDivider()
-                ModeOption(
-                    title = strings.exclude,
-                    description = strings.excludeDescription,
-                    selected = mode == SplitModeUi.DISALLOW_LIST
-                ) { onModeChange(SplitModeUi.DISALLOW_LIST) }
+            Column {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ModeOption(strings.off, strings.offDescription, mode == SplitModeUi.DISABLED,
+                        Modifier.weight(1f)) { onModeChange(SplitModeUi.DISABLED) }
+                    ModeOption(strings.vpnOnly, strings.vpnOnlyDescription, mode == SplitModeUi.ALLOW_LIST,
+                        Modifier.weight(1f)) { onModeChange(SplitModeUi.ALLOW_LIST) }
+                    ModeOption(strings.exclude, strings.excludeDescription, mode == SplitModeUi.DISALLOW_LIST,
+                        Modifier.weight(1f)) { onModeChange(SplitModeUi.DISALLOW_LIST) }
+                }
+                Text(when (mode) {
+                    SplitModeUi.DISABLED -> strings.offDescription
+                    SplitModeUi.ALLOW_LIST -> strings.vpnOnlyDescription
+                    SplitModeUi.DISALLOW_LIST -> strings.excludeDescription
+                }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, top = 10.dp))
             }
         }
 
         if (mode != SplitModeUi.DISABLED) {
             item(key = "apps_title") {
-                SectionHeader(
-                    if (mode == SplitModeUi.ALLOW_LIST) strings.appsUsingVpn
-                    else strings.appsBypassingVpn
-                )
-            }
-            item(key = "filters") {
-                SettingsCard {
-                    Column(Modifier.padding(vertical = 12.dp)) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text(strings.searchApps) },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Search,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(14.dp)
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    text = strings.hideSystem,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "${filteredApps.size} / ${apps.size}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            LumenSwitch(
-                                checked = hideSystem,
-                                onCheckedChange = { hideSystem = it }
-                            )
-                        }
-                        SettingsDivider()
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            TextButton(onClick = onAutoSelect) {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                                Spacer(Modifier.width(5.dp))
-                                Text(strings.autoSelect)
-                            }
-                            TextButton(onClick = onClearSelection) {
-                                Icon(
-                                    Icons.Filled.Delete,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                                Spacer(Modifier.width(5.dp))
-                                Text(strings.clear, color = MaterialTheme.colorScheme.error)
-                            }
-                        }
+                val selectedCount = apps.count { it.isSelected }
+                Column(Modifier.fillMaxWidth()) {
+                    SectionHeader(if (mode == SplitModeUi.ALLOW_LIST) strings.appsUsingVpn else strings.appsBypassingVpn)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(selectedCount.toString().padStart(2, '0'),
+                            style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
+                        Text(strings.selected, style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = onAutoSelect) { Text(strings.autoSelect) }
+                        TextButton(onClick = onClearSelection) { Text(strings.clear) }
                     }
+                }
+            }
+
+            item(key = "filters") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ExpressiveTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text(strings.searchApps) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("${filteredApps.size} / ${apps.size}", style = MaterialTheme.typography.labelSmall,
+                        fontFamily = com.lumen.ui.theme.LumenMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LumenFilterChip(
+                        label = strings.hideSystem,
+                        selected = hideSystem,
+                        onClick = { hideSystem = !hideSystem }
+                    )
                 }
             }
             item(key = "apps_gap") { Spacer(Modifier.height(12.dp)) }
@@ -214,34 +187,18 @@ fun RoutingScreen(
 }
 
 @Composable
-private fun ModeOption(
-    title: String,
-    description: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(selected = selected, onClick = onClick)
-        Spacer(Modifier.width(3.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+private fun ModeOption(title: String, description: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val art = com.lumen.ui.theme.expressivePalette()
+    val ink = if (selected) art.onStage else MaterialTheme.colorScheme.onSurface
+    Column(modifier.expressiveControlLabel("$title. $description").height(138.dp).clip(com.lumen.ui.components.selectionShape(selected, 14.dp, 28.dp))
+        .background(if (selected) art.stage else MaterialTheme.colorScheme.surfaceContainerLow)
+        .selectable(selected, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onClick)
+        .padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        RadioButton(selected, onClick = null, modifier = Modifier.size(24.dp),
+            colors = androidx.compose.material3.RadioButtonDefaults.colors(
+                selectedColor = art.onStage, unselectedColor = MaterialTheme.colorScheme.primary))
+        Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold,
+            color = ink, maxLines = 4)
     }
 }
 
@@ -252,18 +209,13 @@ private fun AppRoutingRow(
     isLast: Boolean,
     onToggle: () -> Unit
 ) {
-    val shape = when {
-        isFirst && isLast -> RoundedCornerShape(18.dp)
-        isFirst -> RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
-        isLast -> RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
-        else -> RoundedCornerShape(0.dp)
-    }
+    val shape = com.lumen.ui.components.selectionShape(app.isSelected, 14.dp, 24.dp)
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxWidth().padding(bottom = 6.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onToggle)
+            .background(if (app.isSelected) MaterialTheme.colorScheme.primary.copy(alpha = .11f) else MaterialTheme.colorScheme.surfaceContainerLow)
+            .then(Modifier.selectable(selected = app.isSelected, role = androidx.compose.ui.semantics.Role.Checkbox, onClick = onToggle))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -305,6 +257,6 @@ private fun AppRoutingRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Checkbox(checked = app.isSelected, onCheckedChange = { onToggle() })
+        Checkbox(checked = app.isSelected, onCheckedChange = null)
     }
 }

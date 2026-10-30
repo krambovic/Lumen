@@ -320,6 +320,8 @@ class LumenVpnService : VpnService() {
 
         val socksCredentials = socksCredentialsOf(runtimeParams.configJson)
         activeSocksCredentials = socksCredentials
+        _activeProxySession.value = ActiveProxySession(localSocksPort, socksCredentials?.first,
+            socksCredentials?.second, System.nanoTime())
         if (!params.proxyOnly) {
             val builder = Builder()
                 .setMtu(mtu)
@@ -327,7 +329,7 @@ class LumenVpnService : VpnService() {
                 .addAddress(DEFAULT_IPV6_ADDRESS, DEFAULT_IPV6_PREFIX)
                 .addRoute("0.0.0.0", 0)
                 .addRoute("::", 0)
-                .setSession("Lumen VPN")
+                .setSession(getString(R.string.lumen_service_name))
                 .setBlocking(true)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Inherit metered/unmetered state from the real network instead of
@@ -1176,6 +1178,7 @@ ${hevAuthLines}misc:
     }
 
     private suspend fun stopRuntimeLocked(closeInterface: Boolean) {
+        _activeProxySession.value = null
         stopObfsRelay()
         trafficStatsJob?.cancel()
         trafficStatsJob = null
@@ -1313,6 +1316,8 @@ ${hevAuthLines}misc:
         const val INTERNAL_DNS_ADDRESS = "172.19.0.2"
         val DEFAULT_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8")
         private val _isRunning = MutableStateFlow(false)
+        private val _activeProxySession = MutableStateFlow<ActiveProxySession?>(null)
+        val activeProxySession: StateFlow<ActiveProxySession?> = _activeProxySession.asStateFlow()
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
         private val _isStarting = MutableStateFlow(false)
         val isStarting: StateFlow<Boolean> = _isStarting.asStateFlow()

@@ -99,6 +99,7 @@ data class SingboxConfigOptions(
     val urlTestToleranceMs: Int = 50,
     val urlTestIdleTimeoutMinutes: Int = 0,
     val urlTestInterruptExistConnections: Boolean = true,
+    val routingFinalOutbound: String = "proxy",
     val bypassLan: Boolean = false,
     val cacheFileEnabled: Boolean = false,
     val cacheFilePath: String = "",
@@ -521,6 +522,10 @@ object SingboxConfigBuilder {
             ?: "automatic"
         val directServers = options.dnsDirectServers.map(String::trim).filter(String::isNotEmpty)
             .ifEmpty { listOf(options.directDnsServer.ifBlank { "1.1.1.1" }) }
+        val iranNetwork = options.geoResourceSource.contains("chocolate4u", ignoreCase = true)
+        // The saved transport is authoritative. Regional setup may suggest DoH,
+        // but choosing UDP here must actually produce UDP in the running core.
+        val directDnsType = options.dnsDirectType
         val proxyServers = options.dnsProxyServers.map(String::trim).filter(String::isNotEmpty)
             .ifEmpty { listOf(options.proxyDnsServer.ifBlank { "cloudflare-dns.com" }) }
         // "Secure" is a policy, not a label: its final resolvers must use an
@@ -660,7 +665,8 @@ object SingboxConfigBuilder {
         val dohHostsResolverTag = "dns-doh-hosts"
         // The secure bootstrap resolves itself from the same table, so the table is
         // always emitted even when no proxy resolver needs it.
-        val usedDohHosts = (proxyServers.mapNotNull(::knownDohHostOf) + SECURE_BOOTSTRAP_HOST).distinct()
+        val usedDohHosts = ((proxyServers + directServers).mapNotNull(::knownDohHostOf) +
+            SECURE_BOOTSTRAP_HOST + if (iranNetwork) listOf("dns.google") else emptyList()).distinct()
         val dohHostsTransport = mapOf<String, Any?>(
             "type" to "hosts",
             "tag" to dohHostsResolverTag,
@@ -671,24 +677,37 @@ object SingboxConfigBuilder {
         // widespread case), and that happens no matter which resolver IP the query
         // is addressed to. Outbounds resolve their server hostname through this
         // bootstrap, so a single poisoned answer points the tunnel at the sinkhole
-        // and every connection dies with an i/o timeout. DoH answers cannot be
-        // forged, so it is tried first; the previous plaintext transport stays
-        // behind it as a fallback, leaving networks that block DoH outright no
-        // worse off than before.
+        // and every connection dies with an i/o timeout. DoH is an authenticated
+        // fallback. IR also retains the physical resolver independently of the
+        // public resolver transport; endpoint pinning vets its answers first.
         val bootstrapSecureTransport =
             dnsServer("dns-bootstrap-secure", SECURE_BOOTSTRAP_HOST, "https", "direct", dohHostsResolverTag)
         val bootstrapPlainTransport =
-            dnsServer("dns-bootstrap-plain", directServers.first(), options.dnsDirectType, "direct", "dns-system")
+            dnsServer("dns-bootstrap-plain", directServers.first(), directDnsType, "direct",
+                if (knownDohHostOf(directServers.first()) != null) dohHostsResolverTag else "dns-system")
+        // Race authenticated providers, never a plaintext ISP answer against DoH.
+        // Otherwise a fast sinkhole wins while a healthy encrypted answer is in flight.
+        val regionalBootstrap = if (iranNetwork) listOf(
+            dnsServer("dns-bootstrap-alternate", "dns.google", "https", "direct", dohHostsResolverTag),
+            mapOf<String, Any?>("type" to "fallback", "tag" to "dns-bootstrap-protected",
+                "servers" to listOf("dns-bootstrap-secure", "dns-bootstrap-alternate"),
+                "strategy" to "parallel")
+        ) else emptyList()
         val bootstrapFallbackTransport = mapOf<String, Any?>(
             "type" to "fallback",
             "tag" to "dns-bootstrap",
-            "servers" to listOf("dns-bootstrap-secure", "dns-bootstrap-plain"),
+            // Like Exclave's local bootstrap, retain the physical resolver before
+            // trying public DoH. In IR the configured "plain" member can itself
+            // be HTTPS, so it is not an independent fallback when DoH is blocked.
+            "servers" to if (iranNetwork) listOf("dns-system", "dns-bootstrap-protected", "dns-bootstrap-plain")
+                else listOf("dns-bootstrap-secure", "dns-bootstrap-plain"),
             "strategy" to "sequential"
         )
         // Ordered so that every tag is defined before it is referenced.
         val bootstrapTransports = listOf(
             dohHostsTransport,
-            bootstrapSecureTransport,
+            bootstrapSecureTransport
+        ) + regionalBootstrap + listOf(
             bootstrapPlainTransport,
             bootstrapFallbackTransport
         )
@@ -713,7 +732,8 @@ object SingboxConfigBuilder {
             )
         }
         directServers.forEachIndexed { index, server ->
-            dnsServers += dnsServer("dns-direct-${index + 1}", server, options.dnsDirectType, "direct", "dns-system")
+            val resolver = if (knownDohHostOf(server) != null) dohHostsResolverTag else "dns-system"
+            dnsServers += dnsServer("dns-direct-${index + 1}", server, directDnsType, "direct", resolver)
         }
         proxyServers.forEachIndexed { index, server ->
             // Anything the table does not know keeps the old bootstrap path.
@@ -724,7 +744,10 @@ object SingboxConfigBuilder {
         dnsServers += mapOf(
             "type" to "fallback",
             "tag" to "dns-direct-final",
-            "servers" to directServers.indices.map { "dns-direct-${it + 1}" },
+            "servers" to (directServers.indices.map { "dns-direct-${it + 1}" } +
+                // Regional direct domains must remain resolvable when the ISP
+                // blocks access to the default public encrypted resolvers.
+                if (iranNetwork && directServers.all { knownDohHostOf(it) != null }) listOf("dns-system") else emptyList()),
             "strategy" to fallbackStrategy
         )
         dnsServers += mapOf(
@@ -769,6 +792,10 @@ object SingboxConfigBuilder {
         // explicit IPv6 preference wins over the IPv4-only shortcut.
         if (options.dnsProxyIpv4Only && !options.preferIpv6 && !ipv6OnlyNetwork && dnsMode != "json") {
             dnsRules += mapOf("query_type" to listOf("AAAA"), "action" to "reject")
+        }
+        if (options.localSocksPort > 0 && dnsMode in setOf("automatic", "secure")) {
+            dnsRules += mapOf("domain" to com.lumen.core.config.NetworkInfoEndpoints.hosts,
+                "server" to "dns-proxy-final")
         }
         // Direct-listed domains must resolve through direct DNS: proxy-resolved
         // IPs would otherwise be routed direct and break geo-based access.
@@ -911,6 +938,11 @@ object SingboxConfigBuilder {
                     "${options.tlsFragmentFallbackDelayMs.coerceIn(0, 10000)}ms"
             )
         }
+
+        // IP diagnostics use SOCKS and always follow the selected exit, including
+        // blocked-only presets. Apply TLS route-options before this terminal rule.
+        if (options.localSocksPort > 0) routeRules += mapOf("inbound" to listOf("socks-in"),
+            "domain" to com.lumen.core.config.NetworkInfoEndpoints.hosts, "outbound" to "proxy")
 
         // sing-box 1.12+ removed legacy geosite/geoip keys; exact extended consumes
         // binary local/remote rule sets. One tag is shared by duplicate references.
@@ -1066,7 +1098,7 @@ object SingboxConfigBuilder {
                     ?: if (options.preferIpv6) "prefer_ipv6" else options.dnsDirectStrategy)
             ),
             "rules" to routeRules,
-            "final" to "proxy"
+            "final" to if (options.routingFinalOutbound == "direct") "direct" else "proxy"
         )
         if (ruleSets.isNotEmpty()) {
             routeMap["rule_set"] = ruleSets
@@ -1915,7 +1947,8 @@ object SingboxConfigBuilder {
                     // Xray servers negotiate UDP through XUDP. The default differs
                     // between cores and forks, so it is stated rather than assumed:
                     // without it UDP dies silently while TCP keeps working.
-                    result["packet_encoding"] = "xudp"
+                    val packetEncoding = users?.get("packetEncoding")?.toString() ?: "xudp"
+                    if (packetEncoding != "none") result["packet_encoding"] = packetEncoding
                 } else {
                     val alterId = (users?.get("alterId") as? Number)?.toInt() ?: (outbound["alterId"] as? Number)?.toInt() ?: 0
                     val security = users?.get("security")?.toString() ?: outbound["security"]?.toString() ?: "auto"
@@ -2331,11 +2364,9 @@ object SingboxConfigBuilder {
         }
     }
 
-    // Static Clash/usque endpoint fields are not part of exact extended 2.5.2's
-    // MASQUE outbound at either level. That implementation obtains its endpoint
-    // and EC key through the Cloudflare profile/cache.
-    private val MASQUE_LEGACY_ENDPOINT_KEYS =
-        setOf("server", "server_port", "port", "private_key", "public_key", "address", "mtu")
+    private val MASQUE_DIRECT_KEYS =
+        setOf("server", "server_port", "private_key", "public_key", "tunnel_address", "mtu")
+    private val MASQUE_LEGACY_ENDPOINT_KEYS = setOf("port", "address")
 
     // The only fields sing-box accepts inside `masque.profile`. Everything else
     // aborts config decoding with `json: unknown field "..."`.
@@ -2351,6 +2382,7 @@ object SingboxConfigBuilder {
         "udp_fragment", "domain_resolver", "network_strategy", "network_type",
         "fallback_network_type", "fallback_delay", "domain_strategy",
         "system", "name", "allowed_ips", "use_http2", "use_ipv6", "profile",
+        "server", "server_port", "private_key", "public_key", "tunnel_address", "mtu",
         "udp_timeout", "udp_keepalive_period", "udp_initial_packet_size",
         "reconnect_delay", "congestion_controller", "cwnd", "tls"
     )
@@ -2375,6 +2407,34 @@ object SingboxConfigBuilder {
             }
         }
 
+        val privateKey = result["private_key"]?.toString()?.trim().orEmpty()
+        val publicKey = result["public_key"]?.toString()?.trim().orEmpty()
+        val hasDirectCredentials = privateKey.isNotEmpty() || publicKey.isNotEmpty()
+        if (hasDirectCredentials) {
+            val server = result["server"]?.toString()?.trim().orEmpty()
+            val port = (result["server_port"] as? Number)?.toInt()
+                ?: result["server_port"]?.toString()?.toIntOrNull() ?: 0
+            val rawAddresses = result["tunnel_address"] ?: result["address"]
+            val addresses = when (rawAddresses) {
+                is List<*> -> rawAddresses.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+                null -> emptyList()
+                else -> listOf(rawAddresses.toString().trim()).filter(String::isNotEmpty)
+            }.mapNotNull(::normalizedIpPrefixOrNull).distinct()
+            require(server.isNotEmpty() && port in 1..65535 && privateKey.isNotEmpty() &&
+                publicKey.isNotEmpty() && addresses.isNotEmpty()) {
+                "direct MASQUE requires server, server_port, private_key, public_key and tunnel_address"
+            }
+            result["server"] = server
+            result["server_port"] = port
+            result["private_key"] = privateKey
+            result["public_key"] = publicKey
+            result["tunnel_address"] = addresses
+            val mtu = (result["mtu"] as? Number)?.toInt()
+                ?: result["mtu"]?.toString()?.toIntOrNull()
+            if (mtu == null || mtu !in 576..65535) result["mtu"] = 1280 else result["mtu"] = mtu
+        } else {
+            MASQUE_DIRECT_KEYS.forEach(result::remove)
+        }
         MASQUE_LEGACY_ENDPOINT_KEYS.forEach(result::remove)
         result.keys.retainAll(MASQUE_OUTBOUND_KEYS)
         result["system"] = false
@@ -2518,13 +2578,19 @@ object SingboxConfigBuilder {
         edSetting: Any?,
         supportsEarlyData: Boolean
     ) {
-        transport["path"] = rawPath.substringBefore('?')
+        transport["path"] = if (supportsEarlyData) rawPath else rawPath.substringBefore('?')
         if (!supportsEarlyData) return
         val fromQuery = rawPath.substringAfter('?', "")
             .split('&')
             .firstOrNull { it.startsWith("ed=", true) }
             ?.substringAfter('=')
         val earlyData = intValue(edSetting) ?: intValue(fromQuery) ?: return
+        // Only ed= is transport metadata. Other query parameters are part of the
+        // provider's WebSocket URL and must survive a URI round trip.
+        val remainingQuery = rawPath.substringAfter('?', "").split('&')
+            .filter { it.isNotEmpty() && !it.startsWith("ed=", true) }
+        transport["path"] = rawPath.substringBefore('?') +
+            remainingQuery.joinToString("&", prefix = if (remainingQuery.isEmpty()) "" else "?")
         transport["max_early_data"] = earlyData
         transport["early_data_header_name"] = "Sec-WebSocket-Protocol"
     }

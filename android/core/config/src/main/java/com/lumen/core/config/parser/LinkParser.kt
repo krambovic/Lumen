@@ -608,6 +608,8 @@ object LinkParser {
 
         val user = mutableMapOf<String, Any?>("id" to userId, "encryption" to encryption)
         if (flow.isNotEmpty()) user["flow"] = flow
+        params["packetencoding"]?.takeIf { it in setOf("none", "xudp", "packet") }
+            ?.let { user["packetEncoding"] = it }
 
         val streamSettings = buildStreamSettings(params, defaultNetwork = "tcp", defaultSecurity = params["security"] ?: "none")
         val outbound = mutableMapOf<String, Any?>(
@@ -2592,16 +2594,26 @@ object LinkParser {
                         "congestion_controller" to "bbr"
                     )
                     if (privateKey.isNotEmpty() || publicKey.isNotEmpty()) {
-                        // Clash/Mihomo exports a concrete endpoint and key pair here,
-                        // but this bundled sing-box MASQUE implementation manages its
-                        // Cloudflare profile itself. Keep these fields only as WARP
-                        // classification hints; emitting them makes config decoding fail.
                         if (privateKey.isEmpty() || publicKey.isEmpty() || server.isEmpty()) {
                             throw LinkParseError("direct MASQUE proxy must contain server, private-key and public-key")
                         }
                         val address = clashStringList(map["ip"] ?: map["address"]).toMutableList()
                         for (item in clashStringList(map["ipv6"])) if (item !in address) address.add(item)
                         if (address.isEmpty()) throw LinkParseError("direct MASQUE proxy must contain ip, ipv6 or address")
+                        val tunnelAddress = address.map { item ->
+                            when {
+                                '/' in item -> item
+                                ':' in item -> "$item/128"
+                                else -> "$item/32"
+                            }
+                        }
+                        singbox["server"] = server
+                        singbox["server_port"] = port
+                        singbox["private_key"] = privateKey
+                        singbox["public_key"] = publicKey
+                        singbox["tunnel_address"] = tunnelAddress
+                        singbox["mtu"] = (map["mtu"]?.toString()?.toIntOrNull()
+                            ?.takeIf { it in 576..65535 } ?: 1280)
                         if (isCloudflareWarpProfile(address, publicKey, server)) {
                             outbound["warp"] = true
                             outbound["display_protocol"] = "MASQUE/WARP"
@@ -2850,10 +2862,8 @@ object LinkParser {
                                 nodes += when {
                                     usable.isEmpty() -> emptyList()
                                     label.isEmpty() -> usable
-                                    else -> usable.map { node ->
-                                        val suffix = node.name.takeIf { it.isNotBlank() && it != label }
-                                        node.copy(name = if (suffix == null) label else "$label · $suffix")
-                                    }
+                                    // Outbound tags belong to the engine config, not the profile's title.
+                                    else -> usable.map { node -> node.copy(name = label) }
                                 }
                                 errors += innerErrors.map { "Config ${i + 1}: $it" }
                             } else {

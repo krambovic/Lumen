@@ -1,10 +1,19 @@
 package com.lumen.ui.screens
 
+import androidx.compose.material.icons.filled.PowerSettingsNew
+
+import androidx.compose.ui.unit.sp
+
 import android.os.Build
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -38,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -48,6 +59,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
+@Composable
+private fun ThemeSettingsSwitchRow(
+    title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector,
+    checked: Boolean, enabled: Boolean, onCheckedChange: (Boolean) -> Unit
+) { PreferenceSwitchRow(title, subtitle, icon, checked, enabled, onCheckedChange) }
+
 private data class ThemeOptionUi(
     val preset: ThemePreset,
     val title: String,
@@ -57,23 +74,14 @@ private data class ThemeOptionUi(
     val dots: List<Color>
 )
 
-@Composable
-fun ThemeSettingsScreen(
-    state: SettingsUiState,
-    onUpdate: (SettingsUiState) -> Unit,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val s = LocalStrings.current
-
-    val themes = listOf(
+private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.LIGHT,
             title = s.lightTheme,
             subtitle = s.lightThemeDesc,
             iconBg = Color(0xFFE2E8F0),
             iconTint = Color(0xFF007AA3),
-            dots = listOf(Color(0xFFFFFFFF), Color(0xFFE2E8F0), Color(0xFF007AA3))
+            dots = listOf(com.lumen.ui.theme.LumenLightBg, com.lumen.ui.theme.LumenLightTonal, com.lumen.ui.theme.LumenLightAccent)
         ),
         ThemeOptionUi(
             preset = ThemePreset.DARK,
@@ -81,7 +89,7 @@ fun ThemeSettingsScreen(
             subtitle = s.darkThemeDesc,
             iconBg = Color(0xFF1E293B),
             iconTint = Color(0xFF38BDF8),
-            dots = listOf(Color(0xFF0D0F17), Color(0xFF161926), Color(0xFF007AA3))
+            dots = listOf(com.lumen.ui.theme.LumenDarkBg, com.lumen.ui.theme.LumenDarkTonal, com.lumen.ui.theme.LumenDarkAccent)
         ),
         ThemeOptionUi(
             preset = ThemePreset.DRACULA,
@@ -165,112 +173,111 @@ fun ThemeSettingsScreen(
         )
     )
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-    ) {
-        LumenScreenHeader(
-            title = s.themeSettings,
-            onBack = onBack
-        )
+internal fun themeDisplayName(preset: ThemePreset, strings: LumenStrings): String =
+    themeOptions(strings).first { it.preset == preset }.title
 
-        Spacer(Modifier.height(8.dp))
-
-        // Two-per-row grid of compact preview tiles instead of full-width list rows.
-        themes.chunked(2).forEach { pair ->
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                pair.forEach { item ->
-                    ThemePresetCard(
-                        title = item.title,
-                        subtitle = item.subtitle,
-                        iconBg = item.iconBg,
-                        iconTint = item.iconTint,
-                        dots = item.dots,
-                        isSelected = state.themePreset == item.preset,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            onUpdate(state.copy(themePreset = item.preset, themeMode = if (item.preset == ThemePreset.LIGHT) ThemeMode.LIGHT else ThemeMode.DARK))
-                        }
-                    )
+@Composable
+internal fun ThemePalettePicker(state: SettingsUiState, onUpdate: (SettingsUiState) -> Unit) {
+    val s = LocalStrings.current
+    val themes = themeOptions(s)
+    Column {
+        SectionHeader(s.theme)
+        androidx.compose.foundation.lazy.LazyRow(
+            state = androidx.compose.foundation.lazy.rememberLazyListState(
+                initialFirstVisibleItemIndex = themes.indexOfFirst { it.preset == state.themePreset }.coerceAtLeast(0)),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(themes, key = { it.preset.name }) { item ->
+                ThemePresetCard(item.title, item.subtitle, item.iconBg, item.iconTint, item.dots,
+                    state.themePreset == item.preset, Modifier.width(166.dp).heightIn(min = 184.dp)) {
+                    onUpdate(state.copy(themePreset = item.preset, accentColor = "",
+                        themeMode = if (item.preset == ThemePreset.LIGHT) ThemeMode.LIGHT else ThemeMode.DARK))
                 }
-                if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(8.dp))
-
-        // Two square toggle tiles instead of switch rows, matching the preset grid.
-        // Dynamic colour only exists on Android 12+; below that the tile says so
-        // instead of offering a switch that would silently do nothing.
-        val dynamicColorSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            ThemeToggleTile(
-                title = s.materialYou,
-                subtitle = if (dynamicColorSupported) s.materialYouDesc else s.materialYouUnavailable,
-                // Wallpaper, because that is literally where the colours come from.
-                icon = Icons.Filled.Wallpaper,
-                checked = state.useMaterialYou && dynamicColorSupported,
-                enabled = dynamicColorSupported,
-                // Live preview of the scheme currently in effect: on a Material You
-                // device these are the wallpaper-derived roles.
-                dots = listOf(
-                    MaterialTheme.colorScheme.primary,
-                    MaterialTheme.colorScheme.secondary,
-                    MaterialTheme.colorScheme.tertiary
-                ),
-                modifier = Modifier.weight(1f)
-            ) { onUpdate(state.copy(useMaterialYou = it)) }
-            ThemeToggleTile(
-                title = s.amoledBlack,
-                subtitle = s.amoledBlackDesc,
-                icon = Icons.Filled.DarkMode,
-                // Real #000000, not a dark grey: the swatch has to be the thing it promises.
-                swatch = Color(0xFF000000),
-                checked = state.useAmoledBlack,
-                dots = listOf(Color(0xFF000000), Color(0xFF000000), MaterialTheme.colorScheme.primary),
-                modifier = Modifier.weight(1f)
-            ) { onUpdate(state.copy(useAmoledBlack = it)) }
-        }
-
-        Spacer(Modifier.height(20.dp))
-
+@Composable
+internal fun DashboardLayoutPicker(state: SettingsUiState, onUpdate: (SettingsUiState) -> Unit) {
+    val s = LocalStrings.current
+    Column {
         Text(
             text = s.dashboardStyle,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
         Spacer(Modifier.height(10.dp))
+        DashboardStyle.entries.chunked(2).forEach { row ->
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Bottom
         ) {
-            DashboardStyleCard(
-                title = s.dashboardStyleDefault,
-                style = DashboardStyle.DEFAULT,
-                isSelected = state.dashboardStyle == DashboardStyle.DEFAULT,
-                modifier = Modifier.weight(1f)
-            ) { onUpdate(state.copy(dashboardStyle = DashboardStyle.DEFAULT)) }
-            DashboardStyleCard(
-                title = s.dashboardStyleSlider,
-                style = DashboardStyle.SLIDER,
-                isSelected = state.dashboardStyle == DashboardStyle.SLIDER,
-                modifier = Modifier.weight(1f)
-            ) { onUpdate(state.copy(dashboardStyle = DashboardStyle.SLIDER)) }
-            DashboardStyleCard(
-                title = s.dashboardStyleCentered,
-                style = DashboardStyle.CENTERED,
-                isSelected = state.dashboardStyle == DashboardStyle.CENTERED,
-                modifier = Modifier.weight(1f)
-            ) { onUpdate(state.copy(dashboardStyle = DashboardStyle.CENTERED)) }
+            row.forEach { style ->
+                DashboardStyleCard(title = when (style) {
+                    DashboardStyle.DEFAULT -> s.dashboardStyleDefault
+                    DashboardStyle.SLIDER -> s.dashboardStyleSlider
+                    DashboardStyle.CENTERED -> s.dashboardStyleCentered
+                    DashboardStyle.DOCK -> s.dashboardStyleDock
+                }, style = style, isSelected = state.dashboardStyle == style, modifier = Modifier.weight(1f)) {
+                    onUpdate(state.copy(dashboardStyle = style))
+                }
+            }
         }
+        Spacer(Modifier.height(8.dp))
+        }
+
+    }
+}
+
+@Composable
+fun ThemeSettingsScreen(
+    state: SettingsUiState,
+    onUpdate: (SettingsUiState) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val s = LocalStrings.current
+
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, bottom = 100.dp)
+    ) {
+        SettingsDetailHeader(
+            title = s.appearance,
+            description = s.settingsAppearanceSummary,
+            onBack = onBack
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        val dynamicColorSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        SectionHeader(s.appearance)
+        SettingsCard {
+            ThemeSettingsSwitchRow(s.materialYou,
+                if (dynamicColorSupported) s.materialYouDesc else s.materialYouUnavailable,
+                Icons.Filled.Wallpaper, state.useMaterialYou && dynamicColorSupported,
+                dynamicColorSupported) { onUpdate(state.copy(useMaterialYou = it)) }
+            SettingsDivider()
+            ThemeSettingsSwitchRow(s.amoledBlack, s.amoledBlackDesc, Icons.Filled.DarkMode,
+                state.useAmoledBlack, true) { onUpdate(state.copy(useAmoledBlack = it)) }
+        }
+        ThemePalettePicker(state, onUpdate)
+
+
+        Spacer(Modifier.height(20.dp))
+        AccentColorSetting(state.accentColor, state.language) { onUpdate(state.copy(accentColor = it)) }
+        Spacer(Modifier.height(20.dp))
+
+        DashboardLayoutPicker(state, onUpdate)
+        Spacer(Modifier.height(20.dp))
+        ServerLayoutPicker(state, onUpdate)
 
         Spacer(Modifier.height(20.dp))
 
@@ -411,6 +418,19 @@ private fun LauncherIconPreview(option: LauncherIconOption, modifier: Modifier =
 
 // Same tile shape as DashboardStyleCard, with the actual artwork as the preview.
 @Composable
+private fun selectionCardShape(selected: Boolean): RoundedCornerShape {
+    val corner = androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (selected) 26.dp else 18.dp,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+        ),
+        label = "selection_card_shape"
+    )
+    return RoundedCornerShape(corner.value)
+}
+
+@Composable
 private fun LauncherIconCard(
     title: String,
     option: LauncherIconOption,
@@ -419,7 +439,7 @@ private fun LauncherIconCard(
     defaultBadge: String? = null,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(18.dp)
+    val shape = selectionCardShape(isSelected)
     val accent = MaterialTheme.colorScheme.primary
     val border = if (isSelected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
     Column(
@@ -430,7 +450,7 @@ private fun LauncherIconCard(
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(if (isSelected) 2.dp else 1.dp, border, shape)
-            .clickable(onClick = onClick)
+            .selectable(selected = isSelected, role = Role.RadioButton, onClick = onClick)
             .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -491,107 +511,78 @@ private fun LauncherIconCard(
 // Miniature dashboard mock-up so the layout choice is understandable at a glance.
 @Composable
 private fun DashboardStyleCard(
-    title: String,
-    style: DashboardStyle,
-    isSelected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
+    title: String, style: DashboardStyle, isSelected: Boolean,
+    modifier: Modifier = Modifier, onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(18.dp)
+    val art = com.lumen.ui.theme.expressivePalette()
     val accent = MaterialTheme.colorScheme.primary
-    val border = if (isSelected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
-    Column(
-        modifier = modifier
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(if (isSelected) 2.dp else 1.dp, border, shape)
-            .clickable(onClick = onClick)
-            .padding(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(84.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(8.dp)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().fillMaxHeight(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                when (style) {
-                    DashboardStyle.DEFAULT -> {
-                        Box(
-                            Modifier.fillMaxWidth().height(10.dp)
-                                .clip(RoundedCornerShape(4.dp)).background(muted)
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Box(Modifier.size(26.dp).clip(CircleShape).background(accent))
-                        Spacer(Modifier.height(6.dp))
-                        Box(
-                            Modifier.fillMaxWidth().height(8.dp)
-                                .clip(RoundedCornerShape(4.dp)).background(muted)
-                        )
+    val shape = selectionCardShape(isSelected)
+    Column(modifier.height(if (isSelected) 178.dp else 164.dp).clip(shape)
+        .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow)
+        .border(if (isSelected) 2.dp else 1.dp,
+            if (isSelected) accent else MaterialTheme.colorScheme.outlineVariant, shape)
+        .selectable(selected = isSelected, role = Role.RadioButton, onClick = onClick).padding(10.dp)) {
+        Box(Modifier.fillMaxWidth().height(88.dp).clip(RoundedCornerShape(14.dp)).background(art.stage).padding(8.dp)) {
+            when (style) {
+                DashboardStyle.DEFAULT -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+                    Box(Modifier.width(22.dp).height(4.dp).clip(CircleShape).background(art.onStage.copy(alpha = .4f)))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Box(Modifier.width(26.dp).height(9.dp).clip(CircleShape).background(art.onStage))
+                        com.lumen.ui.components.ExpressiveMotif(com.lumen.ui.components.Motif.Clover, art.lime, Modifier.size(21.dp))
                     }
-                    DashboardStyle.SLIDER -> {
-                        Box(
-                            Modifier.fillMaxWidth().height(10.dp)
-                                .clip(RoundedCornerShape(4.dp)).background(muted)
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Box(
-                            Modifier.fillMaxWidth().height(18.dp)
-                                .clip(RoundedCornerShape(6.dp)).background(muted)
-                        )
-                        Spacer(Modifier.weight(1f))
-                        Box(
-                            Modifier.fillMaxWidth().height(16.dp)
-                                .clip(RoundedCornerShape(8.dp)).background(accent)
-                        )
+                    Box(Modifier.fillMaxWidth().height(12.dp).clip(CircleShape).background(art.lime))
+                }
+                DashboardStyle.SLIDER -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+                    Box(Modifier.width(22.dp).height(4.dp).clip(CircleShape).background(art.onStage.copy(alpha = .4f)))
+                    Box(Modifier.fillMaxWidth(.7f).height(12.dp).clip(CircleShape).background(art.onStage))
+                    Row(Modifier.fillMaxWidth().height(22.dp).clip(CircleShape).background(art.lime).padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        com.lumen.ui.components.ExpressiveMotif(com.lumen.ui.components.Motif.Clover, art.onLime, Modifier.size(16.dp))
+                        androidx.compose.foundation.Canvas(Modifier.weight(1f).height(20.dp).padding(start = 4.dp)) {
+                            val wave = androidx.compose.ui.graphics.Path()
+                            var x = 0f
+                            while (x <= size.width) {
+                                val y = size.height / 2 + kotlin.math.sin(x / 6f) * 3f
+                                if (x == 0f) wave.moveTo(x, y) else wave.lineTo(x, y)
+                                x += 1f
+                            }
+                            drawPath(wave, art.onLime, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
+                        }
                     }
-                    DashboardStyle.CENTERED -> {
-                        Box(
-                            Modifier.fillMaxWidth().height(8.dp)
-                                .clip(RoundedCornerShape(4.dp)).background(muted)
-                        )
+                }
+                DashboardStyle.CENTERED -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+                    Box(Modifier.width(22.dp).height(4.dp).clip(CircleShape).background(art.onStage.copy(alpha = .4f)))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        com.lumen.ui.components.ExpressiveMotif(com.lumen.ui.components.Motif.Flower, art.lime, Modifier.size(36.dp))
+                        Box(Modifier.weight(1f).height(9.dp).clip(CircleShape).background(art.onStage))
+                    }
+                    Box(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(4.dp)).background(art.onStage.copy(alpha = .22f)))
+                }
+                DashboardStyle.DOCK -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+                    Box(Modifier.fillMaxWidth(.45f).height(5.dp).clip(CircleShape).background(art.onStage.copy(alpha = .4f)))
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(Modifier.weight(1f).height(23.dp).clip(RoundedCornerShape(5.dp)).background(art.onStage.copy(alpha = .22f)))
+                        Box(Modifier.weight(1f).height(23.dp).clip(RoundedCornerShape(5.dp)).background(art.onStage.copy(alpha = .22f)))
+                    }
+                    Row(Modifier.fillMaxWidth().height(23.dp).clip(CircleShape).background(art.onStage.copy(alpha = .18f)).padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        repeat(4) { Box(Modifier.size(5.dp).clip(CircleShape).background(art.onStage.copy(alpha = .6f))) }
                         Spacer(Modifier.weight(1f))
-                        Box(Modifier.size(34.dp).clip(CircleShape).background(accent))
-                        Spacer(Modifier.weight(1f))
-                        Box(
-                            Modifier.fillMaxWidth().height(8.dp)
-                                .clip(RoundedCornerShape(4.dp)).background(muted)
-                        )
+                        Box(Modifier.size(16.dp).clip(com.lumen.ui.components.expressiveShape(com.lumen.ui.components.Motif.Sun))
+                            .background(art.lime), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.PowerSettingsNew, null, Modifier.size(9.dp), tint = art.onLime)
+                        }
                     }
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            if (isSelected) {
-                Spacer(Modifier.width(4.dp))
-                Box(
-                    modifier = Modifier.size(16.dp).clip(CircleShape).background(accent),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(11.dp)
-                    )
-                }
-            }
+        Spacer(Modifier.height(12.dp))
+        Text(title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+            if (isSelected) Icon(Icons.Filled.Check, null, tint = accent, modifier = Modifier.size(18.dp))
         }
     }
 }
@@ -701,87 +692,32 @@ private fun ThemeToggleTile(
 
 @Composable
 private fun ThemePresetCard(
-    title: String,
-    subtitle: String,
-    iconBg: Color,
-    iconTint: Color,
-    dots: List<Color>,
-    isSelected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
+    title: String, subtitle: String, iconBg: Color, iconTint: Color, dots: List<Color>,
+    isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(18.dp)
+    val shape = selectionCardShape(isSelected)
     val accent = MaterialTheme.colorScheme.primary
-    val cardBorder = if (isSelected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-    Column(
-        modifier = modifier
-            // Fixed height keeps every preset tile the same size regardless of text length.
-            .height(158.dp)
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(if (isSelected) 2.dp else 1.dp, cardBorder, shape)
-            .clickable(onClick = onClick)
-            .padding(12.dp)
-    ) {
-        // Palette strip doubles as the preview: dots row was too small to judge a theme.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(46.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(iconBg)
-        ) {
-            dots.forEach { color ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .background(color)
-                )
+    Column(modifier.clip(shape)
+        .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
+        .selectable(selected = isSelected, role = Role.RadioButton, onClick = onClick).padding(10.dp)) {
+        Box(Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(20.dp)).background(dots.first())) {
+            Text("Aa", fontFamily = com.lumen.ui.theme.Inter, fontSize = 42.sp, fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-2).sp, color = dots.last(), modifier = Modifier.padding(start = 12.dp, top = 8.dp))
+            com.lumen.ui.components.ExpressiveMotif(com.lumen.ui.components.Motif.Flower, dots.last(),
+                Modifier.align(Alignment.CenterEnd).offset(x = 12.dp).size(66.dp))
+            Row(Modifier.align(Alignment.BottomStart).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box(Modifier.width(35.dp).height(12.dp).clip(RoundedCornerShape(50)).background(dots.last()))
+                Box(Modifier.width(24.dp).height(12.dp).clip(RoundedCornerShape(50)).background(dots.getOrElse(1) { iconBg }))
             }
         }
-
         Spacer(Modifier.height(10.dp))
-
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(iconTint)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            if (isSelected) {
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(accent),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(13.dp)
-                    )
-                }
-            }
+            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (isSelected) Icon(Icons.Filled.Check, LocalStrings.current.selected,
+                tint = accent, modifier = Modifier.size(20.dp))
         }
-        Text(
-            text = subtitle,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
+        Text(subtitle, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }

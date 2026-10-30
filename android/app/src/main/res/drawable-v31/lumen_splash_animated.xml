@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector android:width="240dp" android:height="240dp" android:viewportWidth="108" android:viewportHeight="108">
+            <path android:name="mark" android:pathData="M35.6,76.5 L35.6,40.7 L44.8,31.5 L44.8,67.3 L72.4,67.3 L64.1,76.5 Z"
+                android:strokeColor="?attr/lumenSplashInk" android:strokeWidth="2"
+                android:strokeLineJoin="round" android:strokeLineCap="round"
+                android:trimPathEnd="0" android:fillColor="?attr/lumenSplashInk" android:fillAlpha="0" />
+        </vector>
+    </aapt:attr>
+    <target android:name="mark">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator android:propertyName="trimPathEnd" android:valueFrom="0" android:valueTo="1"
+                    android:valueType="floatType" android:duration="620" android:interpolator="@android:interpolator/fast_out_slow_in" />
+                <objectAnimator android:propertyName="fillAlpha" android:valueFrom="0" android:valueTo="1"
+                    android:valueType="floatType" android:startOffset="480" android:duration="140" />
+            </set>
+        </aapt:attr>
+    </target>
+</animated-vector>

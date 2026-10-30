@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.lumen.ui"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 26
@@ -33,6 +33,13 @@ android {
     }
 }
 
+composeCompiler {
+    if (providers.gradleProperty("lumen.composeReports").orNull == "true") {
+        reportsDestination.set(layout.buildDirectory.dir("compose_reports"))
+        metricsDestination.set(layout.buildDirectory.dir("compose_metrics"))
+    }
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.1")
@@ -43,7 +50,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material3:material3:1.5.0-alpha01")
     implementation("androidx.compose.material:material-icons-extended")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")

@@ -286,6 +286,9 @@ object CountryFlagHelper {
         return String(char1) + String(char2)
     }
 
+    /** Use the same visible placeholder wherever a server has no country flag. */
+    fun getServerFlagEmoji(code: String?): String = getFlagEmoji(code).ifEmpty { "◎" }
+
     fun detectCountry(name: String?, server: String?): String {
         // Desktop Lumen leaves an unresolved country empty and resolves public
         // IPs asynchronously. Invented US/CA locations made ordinary AWG nodes

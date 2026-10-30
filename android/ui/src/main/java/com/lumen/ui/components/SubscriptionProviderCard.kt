@@ -1,7 +1,11 @@
 package com.lumen.ui.components
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,22 +14,31 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.lumen.ui.screens.LocalStrings
 import com.lumen.ui.screens.LumenStrings
@@ -78,6 +91,7 @@ fun hasProviderBanner(sub: SubscriptionUiModel): Boolean =
  */
 fun hasProviderCard(sub: SubscriptionUiModel): Boolean =
     subscriptionAnnouncement(sub) != null ||
+        sub.announceUrl.orNullIfBlank() != null ||
         sub.description.orNullIfBlank() != null ||
         hasProviderBanner(sub) ||
         sub.telegramUrl.orNullIfBlank() != null ||
@@ -110,87 +124,50 @@ fun providerColorPrefersDarkText(argb: Int): Boolean {
  * Announcement, banner and provider buttons, drawn as a continuation of the traffic
  * bar above it. Renders nothing at all when the provider sent none of them.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SubscriptionProviderCard(
-    sub: SubscriptionUiModel,
-    onOpenUrl: (String) -> Unit,
-    modifier: Modifier = Modifier
+    sub: SubscriptionUiModel, onOpenUrl: (String) -> Unit, modifier: Modifier = Modifier,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
     val s = LocalStrings.current
     val announcement = subscriptionAnnouncement(sub)
-    val announcementUrl = sub.announceUrl.orNullIfBlank()
     val description = sub.description.orNullIfBlank()
     val links = providerLinks(sub, s)
-    val banner = hasProviderBanner(sub)
     if (!hasProviderCard(sub)) return
-
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-            .padding(start = 14.dp, end = 14.dp, bottom = 12.dp)
-    ) {
-        if (announcement != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(
-                        if (announcementUrl != null) {
-                            Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { onOpenUrl(announcementUrl) }
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Info,
-                    contentDescription = s.providerAnnouncement,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                // No maxLines: the announcement is up to 200 characters and keeps the
-                // provider's own line breaks, so it wraps instead of being cut off.
-                Text(
-                    text = announcement,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
-                )
+    val summary = announcement ?: description ?: sub.bannerText.orNullIfBlank()
+    var expanded by remember(sub.id, summary) { mutableStateOf(false) }
+    var summaryOverflows by remember(sub.id, summary) { mutableStateOf(false) }
+    val expandable = summaryOverflows || (description != null && description != summary) || hasProviderBanner(sub)
+    Column(modifier.fillMaxWidth().animateContentSize(spring(dampingRatio = .85f, stiffness = 320f))) {
+        if (summary != null && !(expanded && announcement == null && description == null && hasProviderBanner(sub))) Row(
+            Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.Top
+        ) {
+            Icon(Icons.Filled.Info, null, tint = contentColor.copy(alpha = .75f), modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(summary, style = MaterialTheme.typography.bodySmall, color = contentColor,
+                maxLines = if (expanded) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis,
+                onTextLayout = { if (!expanded) summaryOverflows = it.hasVisualOverflow },
+                modifier = Modifier.weight(1f).then(if (sub.announceUrl != null && announcement != null)
+                    Modifier.clickable { onOpenUrl(sub.announceUrl) } else Modifier))
+        }
+        if (expanded && description != null && description != summary) Text(description,
+            style = MaterialTheme.typography.bodySmall, color = contentColor.copy(alpha = .8f),
+            modifier = Modifier.padding(top = 8.dp))
+        if (expanded && hasProviderBanner(sub)) {
+            Spacer(Modifier.height(8.dp))
+            ProviderBanner(sub, onOpenUrl)
+        }
+        if (links.isNotEmpty() || sub.announceUrl != null || expandable) Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                links.forEach { link -> ProviderButton(link.label, contentColor.copy(alpha = .08f), contentColor,
+                    { onOpenUrl(link.target) }) }
+                if (announcement == null && sub.announceUrl != null) ProviderButton(s.providerAnnouncement,
+                    contentColor.copy(alpha = .08f), contentColor, { onOpenUrl(sub.announceUrl) })
             }
-        }
-        if (description != null) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (banner) {
-            Spacer(Modifier.height(8.dp))
-            ProviderBanner(sub = sub, onOpenUrl = onOpenUrl)
-        }
-        if (links.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                links.forEach { link ->
-                    ProviderButton(
-                        label = link.label,
-                        container = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                        content = MaterialTheme.colorScheme.primary,
-                        onClick = { onOpenUrl(link.target) }
-                    )
-                }
+            if (expandable) IconButton(onClick = { expanded = !expanded }) {
+                Icon(if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    if (expanded) s.providerLess else s.providerMore, tint = contentColor)
             }
         }
     }
@@ -250,14 +227,13 @@ private fun ProviderButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(24.dp)
     Row(
-        modifier = modifier
+        modifier = modifier.heightIn(min = 48.dp)
             .clip(shape)
             .background(container)
-            .border(1.dp, content.copy(alpha = 0.35f), shape)
             .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Labels wrap rather than truncate: Persian and Chinese buttons are wider
@@ -272,8 +248,8 @@ private fun ProviderButton(
 }
 
 /**
- * Subscription properties: name, URL unless the provider hid it, and the same
- * provider links the card offers.
+ * Subscription properties: technical metadata, URL unless the provider hid it,
+ * and the same provider links the card offers.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -291,13 +267,33 @@ fun SubscriptionDetailsDialog(
         confirmText = s.done,
         onConfirm = onDismiss,
         content = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)
+                .verticalScroll(rememberScrollState())) {
                 Text(
                     text = sub.name,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                if (sub.updateIntervalHours != null || sub.lastUpdated > 0L) {
+                    Spacer(Modifier.height(12.dp))
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(16.dp))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        sub.updateIntervalHours?.let { hours ->
+                            SubscriptionProperty(s.subscriptionAutoUpdateInterval, (hours * 60).toString())
+                        }
+                        if (sub.lastUpdated > 0L) {
+                            val updated = java.text.DateFormat.getDateTimeInstance(
+                                java.text.DateFormat.SHORT, java.text.DateFormat.SHORT
+                            ).format(java.util.Date(sub.lastUpdated))
+                            SubscriptionProperty(s.updated, updated)
+                        }
+                    }
+                }
                 if (subscriptionUrlVisible(sub)) {
                     Spacer(Modifier.height(12.dp))
                     Text(
@@ -350,4 +346,14 @@ fun SubscriptionDetailsDialog(
             }
         }
     )
+}
+
+@Composable
+private fun SubscriptionProperty(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+    }
 }

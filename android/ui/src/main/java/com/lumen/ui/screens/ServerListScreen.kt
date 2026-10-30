@@ -1,50 +1,45 @@
 package com.lumen.ui.screens
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Sort
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.NetworkCheck
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.DeleteSweep
-import com.lumen.ui.components.LumenDialog
-import com.lumen.ui.components.SubscriptionDetailsDialog
-import com.lumen.ui.components.SubscriptionProviderCard
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,74 +51,64 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import com.lumen.ui.components.CountryFlagHelper
-
+import androidx.compose.ui.unit.sp
+import com.lumen.ui.components.AddServerSheet
+import com.lumen.ui.components.BrandTopBar
 import com.lumen.ui.components.ConnectionState
+import com.lumen.ui.components.CountryFlagHelper
+import com.lumen.ui.components.LumenDialog
+import com.lumen.ui.components.SubscriptionDetailsDialog
+import com.lumen.ui.theme.LocalLumenColors
+import com.lumen.ui.theme.TileBlueDark
+import com.lumen.ui.theme.TileBlueDarkOn
+import com.lumen.ui.theme.TileBlueLight
+import com.lumen.ui.theme.TileBlueLightOn
 
-enum class ServerSort { DEFAULT, NAME, NAME_DESC, PING, COUNTRY, PROTOCOL }
+enum class ServerSort { PING, NAME, NAME_DESC, COUNTRY, PROTOCOL }
 
-/**
- * Sort order is a single user choice shared by the dashboard and the Servers tab:
- * both read and write this preference, so changing it in one place moves the other.
- */
 const val SERVERS_SORT_PREF = "servers_last_sort"
 
-/** Menu entries, in display order. Kept here so the two screens cannot drift apart. */
 fun serverSortOptions(s: LumenStrings): List<Pair<ServerSort, String>> = listOf(
-    ServerSort.DEFAULT to s.sortDefaultLabel,
+    ServerSort.PING to s.sortByPing,
     ServerSort.NAME to s.sortByName,
     ServerSort.NAME_DESC to s.sortByNameDesc,
-    ServerSort.PING to s.sortByPing,
     ServerSort.COUNTRY to s.sortByCountry,
     ServerSort.PROTOCOL to s.sortByProtocol
 )
 
 fun serverSortLabel(sort: ServerSort, s: LumenStrings): String =
-    serverSortOptions(s).firstOrNull { it.first == sort }?.second ?: s.sortDefaultLabel
+    serverSortOptions(s).firstOrNull { it.first == sort }?.second ?: s.sortByPing
 
 fun serverSortOf(key: String): ServerSort =
-    runCatching { ServerSort.valueOf(key) }.getOrDefault(ServerSort.DEFAULT)
+    runCatching { ServerSort.valueOf(key) }.getOrDefault(ServerSort.PING)
 
-/** The one comparator both screens sort with; the dashboard applies it per group. */
 fun serverSortComparator(sort: ServerSort): Comparator<NodeUiModel> = when (sort) {
-    ServerSort.NAME -> compareBy<NodeUiModel> { it.name.lowercase() }
-    ServerSort.NAME_DESC -> compareByDescending<NodeUiModel> { it.name.lowercase() }
+    ServerSort.NAME -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+    ServerSort.NAME_DESC -> compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.name }
     ServerSort.PING -> compareBy<NodeUiModel> { it.pingMs?.takeIf { ping -> ping > 0 } ?: Int.MAX_VALUE }
-    // Unknown countries sink to the bottom instead of leading the list.
+        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.id }
     ServerSort.COUNTRY -> compareBy<NodeUiModel> { countryCodeOf(it).ifEmpty { "zzz" } }
         .thenBy { it.name.lowercase() }
     ServerSort.PROTOCOL -> compareBy<NodeUiModel> { protocolKey(it) }
         .thenBy { it.name.lowercase() }
-    ServerSort.DEFAULT -> compareBy<NodeUiModel> { it.name.lowercase() }
 }
 
-private const val PROTOCOL_ALL = "__all__"
-
-/** Latency ceilings offered by the filter menu; 0 disables the filter. */
-private val MAX_PING_CHOICES = listOf(0, 100, 200, 500)
-
-/** AWG nodes are stored as "wireguard", so facets must use the displayed protocol. */
 internal fun protocolKey(node: NodeUiModel): String =
     node.displayProtocol.substringBefore('/').trim().lowercase()
         .ifEmpty { node.protocol.trim().lowercase() }
 
-/** Country of a node, falling back to name/host detection when the code is empty. */
 internal fun countryCodeOf(node: NodeUiModel): String =
     node.countryCode.trim().ifEmpty { CountryFlagHelper.detectCountryStrict(node.name, node.server) }
         .uppercase()
 
-/** A header of the "group by country" layout. */
-private data class CountrySection(
-    val code: String,
-    val count: Int,
-    val bestPing: Int?
-)
-
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ServerListScreen(
     nodes: List<NodeUiModel>,
@@ -132,7 +117,6 @@ fun ServerListScreen(
     refreshingIds: Set<String>,
     isPinging: Boolean,
     pingingNodeIds: Set<String> = emptySet(),
-    // Starts a check automatically the first time the list is shown.
     autoPingOnOpen: Boolean = false,
     testingNodeId: String?,
     serverTestResults: Map<String, String>,
@@ -150,7 +134,6 @@ fun ServerListScreen(
     onCopyNodeLink: (NodeUiModel) -> Unit = {},
     onExportQrCode: (NodeUiModel) -> Unit = {},
     onImportClipboard: () -> Unit,
-    onAddSubscription: (String, String) -> Unit,
     onUpdateSubscription: (SubscriptionUiModel, String, String) -> Boolean = { _, _, _ -> false },
     onRefreshSubscription: (SubscriptionUiModel) -> Unit,
     onDeleteSubscription: (SubscriptionUiModel) -> Unit,
@@ -160,1192 +143,674 @@ fun ServerListScreen(
     onCreateGroup: (String) -> Unit = {},
     onRenameGroup: (String, String) -> Unit = { _, _ -> },
     onDeleteGroup: (String) -> Unit = {},
-    // Null group id clears the assignment, sending the servers back to their default bucket.
     onAssignNodesToGroup: (List<NodeUiModel>, String?) -> Unit = { _, _ -> },
     onExportNodesText: (Set<String>) -> String = { "" },
     onExportSubscriptionText: (String?) -> String = { "" },
     onShareText: (String) -> Unit = {},
     onCopyText: (String) -> Unit = {},
-    // Provider links (support, website, banner…) leave the app through the platform browser.
     onOpenUrl: (String) -> Unit = {},
     onOpen: () -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    persistPreferences: Boolean = true,
+    compactGrid: Boolean = false,
+    selectedGroupFilter: String? = null,
+    onSelectedGroupFilter: (String) -> Unit = {}
 ) {
-    LaunchedEffect(Unit) { onOpen() }
-    val s = LocalStrings.current
-    val tick = rememberHapticTick()
-    // Ask for the camera at the point of use so the scanner never falls back to the
-    // library's own "the camera encountered a problem" dialog.
+    val lumenColors = LocalLumenColors.current
+    val art = com.lumen.ui.theme.expressivePalette()
+    val strings = LocalStrings.current
     val scanQr = rememberQrScanRequest(onImportQr)
 
-    var query by remember { mutableStateOf("") }
-    // Group / protocol / sort choices survive app restarts so the tab reopens as it was left.
-    var group by rememberUiPreference("servers_last_group", GROUP_ALL)
-    var protocol by rememberUiPreference("servers_last_protocol", PROTOCOL_ALL)
-    var sortKey by rememberUiPreference(SERVERS_SORT_PREF, ServerSort.DEFAULT.name)
-    val sort = remember(sortKey) { serverSortOf(sortKey) }
-    // Optional automatic check when the tab opens; fires once per screen entry.
+    var searchQuery by remember { mutableStateOf("") }
+    var localFilter by remember { mutableStateOf("all") }
+    val selectedFilter = resolvedServerFilter(selectedGroupFilter ?: localFilter, subscriptions, serverGroups)
+    val chooseFilter: (String) -> Unit = { localFilter = it; onSelectedGroupFilter(it) }
+    var sortKey by if (persistPreferences) rememberUiPreference(SERVERS_SORT_PREF, ServerSort.PING.name)
+        else remember { mutableStateOf(ServerSort.PING.name) }
+    val currentSort = serverSortOf(sortKey)
+    var showSortMenu by remember { mutableStateOf(false) }
+    var showAddSheet by remember { mutableStateOf(false) }
+    var editingSubscription by remember { mutableStateOf<SubscriptionUiModel?>(null) }
+    var deletingSubscription by remember { mutableStateOf<SubscriptionUiModel?>(null) }
+    var detailsSubscription by remember { mutableStateOf<SubscriptionUiModel?>(null) }
+    var deletingNode by remember { mutableStateOf<NodeUiModel?>(null) }
+    var showCreateGroup by remember { mutableStateOf(false) }
+    var showGroupMenu by remember { mutableStateOf(false) }
+    var renamingGroup by remember { mutableStateOf<ServerGroupUiModel?>(null) }
+    var deletingGroup by remember { mutableStateOf<ServerGroupUiModel?>(null) }
+    var movingNodes by remember { mutableStateOf<List<NodeUiModel>?>(null) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    var pendingSelectedId by remember { mutableStateOf<String?>(null) }
+    val selectServer: (NodeUiModel) -> Unit = { node -> pendingSelectedId = node.id; onSelectNode(node) }
+    var showDeleteAll by remember { mutableStateOf(false) }
+    var showSubscriptionMenu by remember { mutableStateOf(false) }
+    var showFilterMenu by remember { mutableStateOf(false) }
+    var protocol by remember { mutableStateOf("") }
+    var reachablePref by if (persistPreferences) rememberUiPreference("servers_filter_reachable", "0") else remember { mutableStateOf("0") }
+    val onlyReachable = reachablePref == "1"
+    var countryPref by if (persistPreferences) rememberUiPreference("servers_group_by_country", "0") else remember { mutableStateOf("0") }
+    var maxPingPref by if (persistPreferences) rememberUiPreference("servers_filter_max_ping", "0") else remember { mutableStateOf("0") }
+    val maxPing = maxPingPref.toIntOrNull()?.coerceAtLeast(0) ?: 0
+    val groupByCountry = countryPref == "1"
     var autoPingStarted by remember { mutableStateOf(false) }
-    LaunchedEffect(autoPingOnOpen, nodes.isEmpty()) {
-        if (autoPingOnOpen && !autoPingStarted && !isPinging && nodes.isNotEmpty()) {
+    LaunchedEffect(Unit) { onOpen() }
+    LaunchedEffect(autoPingOnOpen, nodes.isNotEmpty()) {
+        if (autoPingOnOpen && nodes.isNotEmpty() && !autoPingStarted) {
             autoPingStarted = true
             onPingAll()
         }
     }
-    // Country grouping and the reachability/latency filters also survive restarts.
-    var groupByCountryPref by rememberUiPreference("servers_group_by_country", "0")
-    val groupByCountry = groupByCountryPref == "1"
-    var onlyReachablePref by rememberUiPreference("servers_filter_reachable", "0")
-    val onlyReachable = onlyReachablePref == "1"
-    var maxPingPref by rememberUiPreference("servers_filter_max_ping", "0")
-    val maxPing = remember(maxPingPref) { maxPingPref.toIntOrNull()?.coerceAtLeast(0) ?: 0 }
-    var showAddSubscription by remember { mutableStateOf(false) }
-    var showSortMenu by remember { mutableStateOf(false) }
-    var showGroupMenu by remember { mutableStateOf(false) }
-    var showProtocolMenu by remember { mutableStateOf(false) }
-    var showFiltersMenu by remember { mutableStateOf(false) }
-    var showDeleteAllConfirm by remember { mutableStateOf(false) }
-    var propertiesSub by remember { mutableStateOf<SubscriptionUiModel?>(null) }
-    var editingSubscription by remember { mutableStateOf<SubscriptionUiModel?>(null) }
-    // Group management: create/rename share one name dialog, delete asks first, and the
-    // picker serves both the row menu and the multi-select bar.
-    var showCreateGroup by remember { mutableStateOf(false) }
-    var renamingGroup by remember { mutableStateOf<ServerGroupUiModel?>(null) }
-    var deletingGroup by remember { mutableStateOf<ServerGroupUiModel?>(null) }
-    var assigningNodes by remember { mutableStateOf<List<NodeUiModel>>(emptyList()) }
-    // A new group is written through the view model, so it only reaches this screen on
-    // the next state update. Remember what the creation was for and finish there.
-    var pendingGroupName by remember { mutableStateOf<String?>(null) }
-    var pendingAssignment by remember { mutableStateOf<List<NodeUiModel>>(emptyList()) }
-    var isSelectionMode by remember { mutableStateOf(false) }
-    var selectedNodeIds by remember { mutableStateOf(setOf<String>()) }
-    // Groups collapse here just like on the dashboard.
-    var groupExpanded by remember(group) { mutableStateOf(true) }
+    BackHandler(enabled = selectedIds.isNotEmpty()) { selectedIds = emptySet() }
 
-    BackHandler(enabled = isSelectionMode) {
-        isSelectionMode = false
-        selectedNodeIds = emptySet()
-    }
-    LaunchedEffect(nodes.map { it.id }) {
-        selectedNodeIds = selectedNodeIds.intersect(nodes.mapTo(mutableSetOf()) { it.id })
-        if (selectedNodeIds.isEmpty()) isSelectionMode = false
+    val query = ServerListQuery(selectedFilter, searchQuery, protocol, onlyReachable, currentSort, maxPing, groupByCountry)
+    val prepared by rememberPreparedServerList(nodes, query)
+    val preparing = prepared.source !== nodes || prepared.query != query
+    val manualNodesCount = prepared.manualCount
+    // Keep rows during a ping refresh; never display another group's rows after switching groups.
+    val filteredNodes = if (prepared.query.group == selectedFilter) prepared.visible else emptyList()
+    LaunchedEffect(prepared.source, pendingSelectedId) {
+        if (pendingSelectedId != null && (prepared.source.any { it.id == pendingSelectedId && it.isSelected } ||
+                (prepared.source === nodes && nodes.none { it.id == pendingSelectedId }))) pendingSelectedId = null
     }
 
-    val groups = remember(subscriptions, serverGroups) {
-        serverGroupIds(serverGroups, subscriptions)
-    }
-    // Only drop a remembered group once real data is loaded, otherwise the first
-    // (still empty) composition would wipe the persisted choice. "all" and "manual"
-    // are always present, so the list size says nothing about the subscriptions.
-    LaunchedEffect(groups) {
-        if ((subscriptions.isNotEmpty() || serverGroups.isNotEmpty()) && group !in groups) {
-            group = GROUP_ALL
-        }
-    }
-    val selectedSubscription = subscriptions.firstOrNull { it.id == group }
-    val selectedCustomGroup = serverGroups.firstOrNull { it.id == group }
-    // Once the group exists: move whatever the user was assigning into it and open it.
-    LaunchedEffect(serverGroups, pendingGroupName) {
-        val wanted = pendingGroupName ?: return@LaunchedEffect
-        val created = serverGroups.lastOrNull { it.name == wanted } ?: return@LaunchedEffect
-        val targets = pendingAssignment
-        if (targets.isNotEmpty()) onAssignNodesToGroup(targets, created.id)
-        group = created.id
-        protocol = PROTOCOL_ALL
-        // Cleared last: these keys restart this effect.
-        pendingAssignment = emptyList()
-        pendingGroupName = null
-    }
+    val activeSub = subscriptionForServerFilter(selectedFilter, subscriptions)
 
-    // Nodes of the active group, before protocol/search narrowing.
-    val groupNodes = remember(nodes, group) { nodesInGroup(nodes, group) }
-    val groupLabelOf: (String) -> String = { id ->
-        when (id) {
-            GROUP_ALL -> s.allGroups
-            GROUP_MANUAL -> s.groupDefault.ifBlank { s.manual }
-            else -> serverGroups.firstOrNull { it.id == id }?.name
-                ?: subscriptions.firstOrNull { it.id == id }?.name
-                ?: s.subscriptions
-        }
-    }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+    ) {
+        // Top Bar
+        BrandTopBar(onAddClick = { showAddSheet = true }, title = strings.servers)
 
-    // Protocol facets are derived from the active group so counts always match.
-    val protocolCounts = remember(groupNodes) {
-        groupNodes.groupingBy { protocolKey(it) }
-            .eachCount()
-            .toList()
-            .sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first })
-    }
-    LaunchedEffect(protocolCounts) {
-        if (protocol != PROTOCOL_ALL && groupNodes.isNotEmpty() &&
-            protocolCounts.none { it.first == protocol }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
         ) {
-            protocol = PROTOCOL_ALL
-        }
-    }
-
-    val filtered = remember(groupNodes, query, protocol, sort, onlyReachable, maxPing) {
-        val matched = groupNodes.filter { node ->
-            val protocolOk = protocol == PROTOCOL_ALL || protocolKey(node) == protocol
-            val queryOk = query.isBlank() || node.name.contains(query, true) ||
-                node.server.contains(query, true) || node.protocol.contains(query, true)
-            val ping = node.pingMs?.takeIf { value -> value > 0 }
-            val reachableOk = !onlyReachable || ping != null
-            val latencyOk = maxPing <= 0 || (ping != null && ping <= maxPing)
-            protocolOk && queryOk && reachableOk && latencyOk
-        }
-        matched.sortedWith(serverSortComparator(sort))
-    }
-
-    // With country grouping on, the list is a flat sequence of headers and rows so
-    // the existing LazyColumn keying and rail logic keep working unchanged.
-    val rowItems: List<Any> = remember(filtered, groupByCountry) {
-        if (!groupByCountry) {
-            filtered
-        } else {
-            buildList {
-                filtered.groupBy { countryCodeOf(it) }
-                    .toList()
-                    .sortedBy { it.first.ifEmpty { "zzz" } }
-                    .forEach { (code, sectionNodes) ->
-                        add(
-                            CountrySection(
-                                code = code,
-                                count = sectionNodes.size,
-                                bestPing = sectionNodes.mapNotNull { node ->
-                                    node.pingMs?.takeIf { value -> value > 0 }
-                                }.minOrNull()
-                            )
-                        )
-                        addAll(sectionNodes)
-                    }
-            }
-        }
-    }
-    val firstVisibleNodeId = remember(rowItems) {
-        rowItems.firstNotNullOfOrNull { (it as? NodeUiModel)?.id }
-    }
-    val lastVisibleNodeId = remember(rowItems) {
-        rowItems.asReversed().firstNotNullOfOrNull { (it as? NodeUiModel)?.id }
-    }
-
-    val activeFilterCount = (if (protocol != PROTOCOL_ALL) 1 else 0) +
-        (if (onlyReachable) 1 else 0) + (if (maxPing > 0) 1 else 0)
-
-    val groupCount = subscriptions.size + serverGroups.size + 1
-    val countsSubtitle = "${s.groupCountLabel(groupCount)} \u2022 ${s.serverCountLabel(nodes.size)}"
-
-    Column(modifier = modifier.fillMaxSize()) {
-        if (isSelectionMode) {
-            SelectionTopBar(
-                selectedCount = selectedNodeIds.size,
-                onCancel = {
-                    isSelectionMode = false
-                    selectedNodeIds = emptySet()
-                },
-                onExportSelected = {
-                    val text = onExportNodesText(selectedNodeIds)
-                    if (text.isNotBlank()) onShareText(text)
-                },
-                onPingSelected = {
-                    val selectedNodes = nodes.filter { it.id in selectedNodeIds }
-                    if (selectedNodes.isNotEmpty()) onPingNodes(selectedNodes)
-                },
-                onMoveSelected = {
-                    val selectedNodes = nodes.filter { it.id in selectedNodeIds }
-                    if (selectedNodes.isNotEmpty()) assigningNodes = selectedNodes
+            if (selectedIds.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${strings.selected}: ${selectedIds.size}", style = MaterialTheme.typography.labelLarge)
+                    TextButton(onClick = { onPingNodes(nodes.filter { it.id in selectedIds }) }) { Text(strings.ping) }
+                    TextButton(onClick = {
+                        onExportNodesText(selectedIds).takeIf { it.isNotBlank() }?.let(onShareText)
+                    }) { Text(strings.exportSelected) }
+                    TextButton(onClick = { movingNodes = nodes.filter { it.id in selectedIds } }) { Text(strings.moveToGroup) }
+                    TextButton(onClick = { selectedIds = emptySet() }) { Text(strings.cancel) }
                 }
-            )
-        } else {
-            LumenScreenHeader(
-                title = s.servers,
-                subtitle = countsSubtitle,
-                modifier = Modifier.padding(horizontal = 16.dp),
-                actions = {
-                Box {
-                    val shape = RoundedCornerShape(14.dp)
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(shape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
-                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f), shape)
-                            .clickable {
-                                tick(HapticFeedbackType.LongPress)
-                                showSortMenu = true
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
+            }
+            // 1. Search Bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                ExpressiveTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = {
+                        Text(
+                            text = strings.searchServers,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    leadingIcon = {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Sort,
-                            contentDescription = s.sortBy,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(21.dp)
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = strings.clear,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(28.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = lumenColors.raised,
+                        unfocusedContainerColor = lumenColors.raised,
+                        disabledContainerColor = lumenColors.raised,
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                )
+            }
+
+            val currentGroup = serverGroups.firstOrNull { selectedFilter == "group:${it.id}" }
+            ServerFilterBar(selectedFilter,
+                serverFilterChoices(nodes, serverGroups, subscriptions, strings),
+                chooseFilter, protocol, prepared.protocols, { protocol = it },
+                groupByCountry, { countryPref = if (it) "1" else "0" },
+                onlyReachable, { reachablePref = if (it) "1" else "0" }, maxPing, { maxPingPref = it.toString() },
+                onReset = { protocol = ""; reachablePref = "0"; countryPref = "0"; maxPingPref = "0" },
+                onNewGroup = { showCreateGroup = true },
+                onRenameGroup = currentGroup?.let { group -> { renamingGroup = group } },
+                onDeleteGroup = currentGroup?.let { group -> { deletingGroup = group } },
+                onDeleteManual = if (selectedFilter == "manual" && manualNodesCount > 0) ({ showDeleteAll = true }) else null)
+
+            // 5. Server List
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 100.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                item(key = "server_overview", contentType = "overview") {
+            // 3. Subscription Provider Banner (if present and filter matches)
+            if (activeSub != null && selectedFilter != "manual") {
+                val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+                val bannerBg = art.blue
+                val bannerText = art.onBlue
+                val btnBg = art.onLavender.copy(alpha = .1f)
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                        .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp, bottomEnd = 12.dp, bottomStart = 30.dp))
+                        .background(bannerBg)
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    com.lumen.ui.components.ExpressiveMotif(com.lumen.ui.components.Motif.Fan, bannerText.copy(alpha = .08f),
+                        Modifier.align(Alignment.BottomEnd).size(140.dp))
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(activeSub.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = bannerText)
+                                Text(strings.serverCountLabel(activeSub.nodeCount),
+                                    style = MaterialTheme.typography.bodySmall, color = bannerText.copy(alpha = .7f))
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(com.lumen.ui.components.expressiveShape(com.lumen.ui.components.Motif.Clover))
+                                    .background(btnBg)
+                                    .clickable { onRefreshSubscription(activeSub) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (refreshingIds.contains(activeSub.id)) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = bannerText
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = strings.refreshSubscription,
+                                        tint = bannerText,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Box {
+                                IconButton(onClick = { showSubscriptionMenu = true }) {
+                                    Icon(Icons.Default.MoreVert, contentDescription = activeSub.name, tint = bannerText)
+                                }
+                                LumenMenu(expanded = showSubscriptionMenu, onDismissRequest = { showSubscriptionMenu = false }) {
+                                    DropdownMenuItem(text = { Text(strings.subscriptionProperties) }, onClick = {
+                                        showSubscriptionMenu = false; detailsSubscription = activeSub
+                                    })
+                                    DropdownMenuItem(text = { Text(strings.edit) }, onClick = {
+                                        showSubscriptionMenu = false; editingSubscription = activeSub
+                                    })
+                                    DropdownMenuItem(text = { Text(strings.exportAll) }, onClick = {
+                                        showSubscriptionMenu = false
+                                        onExportSubscriptionText(activeSub.id).takeIf { it.isNotBlank() }?.let(onShareText)
+                                    })
+                                    DropdownMenuItem(text = { Text(strings.delete) }, onClick = {
+                                        showSubscriptionMenu = false; deletingSubscription = activeSub
+                                    })
+                                }
+                            }
+                            }
+                        }
+
+                        activeSub.trafficRatio?.let { trafficRatio ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val ratio = trafficRatio.coerceIn(0f, 1f)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.background)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(ratio)
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val trafficText = activeSub.trafficSummary ?: "—"
+                        val daysText = activeSub.expiryDaysLeft?.let { "$it ${strings.daysRemaining}" }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = trafficText,
+                                fontSize = 11.sp,
+                                color = bannerText.copy(alpha = 0.8f)
+                            )
+                            if (daysText != null) Text(
+                                text = daysText,
+                                fontSize = 11.sp,
+                                color = bannerText.copy(alpha = 0.8f)
+                            )
+                        }
+                        if (com.lumen.ui.components.hasProviderCard(activeSub)) {
+                            com.lumen.ui.components.SubscriptionProviderCard(activeSub, onOpenUrl,
+                                contentColor = bannerText)
+                        }
+                    }
+                }
+            }
+
+            // 4. List Toolbar: "Сначала быстрые" + "Проверить пинг"
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { showSortMenu = true }
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = serverSortLabel(currentSort, strings),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+
                     LumenMenu(
                         expanded = showSortMenu,
                         onDismissRequest = { showSortMenu = false }
                     ) {
-                        serverSortOptions(s).forEach { (value, label) ->
-                            val checked = sort == value
-                            DropdownMenuItem(
-                                text = { Text(label, color = MaterialTheme.colorScheme.onSurface) },
-                                trailingIcon = if (checked) {
-                                    {
-                                        Icon(
-                                            Icons.Filled.Check,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                } else null,
-                                onClick = {
-                                    sortKey = value.name
-                                    showSortMenu = false
-                                }
-                            )
+                        serverSortOptions(strings).forEach { (sort, label) ->
+                            DropdownMenuItem(text = { Text(label) }, onClick = {
+                                sortKey = sort.name
+                                showSortMenu = false
+                            })
                         }
                     }
                 }
-                Spacer(Modifier.width(6.dp))
-                AddEntryButton(
-                    onImportClipboard = onImportClipboard,
-                    onImportQr = scanQr,
-                    onImportFile = onImportFile,
-                    onAddNode = onAddNode,
-                    onAddSubscription = { showAddSubscription = true }
-                )
+
+                DashboardPingAllButton(isPinging, filteredNodes.isNotEmpty(), { onPingNodes(filteredNodes) }, onStopPing)
+            }
+
                 }
-            )
-        }
-
-        // Group / protocol chip rails were replaced by the compact control row
-        // below the search field, so the screen starts with the search box.
-        Spacer(Modifier.height(6.dp))
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            placeholder = { Text(s.searchServers, style = MaterialTheme.typography.bodySmall) },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp)
-        )
-
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Subscription/server group comes first, protocol filter second. Both
-            // controls always display their current selection, including "All".
-            Box(modifier = Modifier.weight(1.15f)) {
-                LumenFilterChip(
-                    label = groupLabelOf(group),
-                    selected = true,
-                    badge = groupNodes.size.toString(),
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { showGroupMenu = true }
-                )
-                LumenMenu(
-                    expanded = showGroupMenu,
-                    onDismissRequest = { showGroupMenu = false }
-                ) {
-                    groups.forEach { id ->
-                        val label = groupLabelOf(id)
-                        val count = nodes.count { nodeInGroup(it, id) }
-                        DropdownMenuItem(
-                            text = { Text("$label  $count", color = MaterialTheme.colorScheme.onSurface) },
-                            trailingIcon = if (group == id) {
-                                { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                            } else null,
-                            onClick = {
-                                group = id
-                                protocol = PROTOCOL_ALL
-                                showGroupMenu = false
-                            }
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(s.newGroup, color = MaterialTheme.colorScheme.primary) },
-                        trailingIcon = {
-                            Icon(
-                                Icons.Filled.CreateNewFolder,
-                                contentDescription = null,
+                if (preparing && filteredNodes.isEmpty()) item(key = "preparing_servers", contentType = "progress") {
+                    androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                if (filteredNodes.isEmpty() && !preparing) {
+                    item(key = "empty_servers", contentType = "empty") {
+                        Column(
+                            modifier = Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(24.dp))
+                                .background(MaterialTheme.colorScheme.surface)
+                                .padding(horizontal = 20.dp, vertical = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Default.Search, contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        onClick = {
-                            showGroupMenu = false
-                            showCreateGroup = true
-                        }
-                    )
-                }
-            }
-            // Protocol filter stays on the right.
-            // display their current selection, including the two "All" choices.
-            Box(modifier = Modifier.weight(0.85f)) {
-                val protocolLabel = if (protocol == PROTOCOL_ALL) {
-                    s.allProtocols
-                } else {
-                    protocol.uppercase()
-                }
-                LumenFilterChip(
-                    label = protocolLabel,
-                    selected = protocol != PROTOCOL_ALL,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { showProtocolMenu = true }
-                )
-                LumenMenu(
-                    expanded = showProtocolMenu,
-                    onDismissRequest = { showProtocolMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(s.allProtocols, color = MaterialTheme.colorScheme.onSurface) },
-                        trailingIcon = if (protocol == PROTOCOL_ALL) {
-                            {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        } else null,
-                        onClick = {
-                            protocol = PROTOCOL_ALL
-                            showProtocolMenu = false
-                        }
-                    )
-                    protocolCounts.forEach { (proto, count) ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    "${proto.uppercase()}  $count",
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            },
-                            trailingIcon = if (protocol == proto) {
-                                {
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                modifier = Modifier.size(28.dp))
+                            Spacer(Modifier.height(12.dp))
+                            Text(if (nodes.isEmpty()) strings.noServers else strings.nothingFound,
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(onClick = {
+                                if (nodes.isEmpty()) showAddSheet = true else {
+                                    searchQuery = ""
+                                    chooseFilter("all")
+                                    protocol = ""
+                                    reachablePref = "0"
+                                    countryPref = "0"
+                                    maxPingPref = "0"
                                 }
-                            } else null,
-                            onClick = {
-                                protocol = proto
-                                showProtocolMenu = false
-                            }
-                        )
-                    }
-                }
-            }
-            // Country grouping and the reachability/latency filters live behind this menu.
-            Box {
-                IconButton(
-                    onClick = {
-                        tick(HapticFeedbackType.LongPress)
-                        showFiltersMenu = true
-                    },
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.FilterList,
-                        contentDescription = s.filtersLabel,
-                        tint = if (activeFilterCount > 0) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                    )
-                }
-                LumenMenu(
-                    expanded = showFiltersMenu,
-                    onDismissRequest = { showFiltersMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(s.groupByCountry, color = MaterialTheme.colorScheme.onSurface) },
-                        trailingIcon = if (groupByCountry) {
-                            { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                        } else null,
-                        onClick = { groupByCountryPref = if (groupByCountry) "0" else "1" }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(s.onlyReachable, color = MaterialTheme.colorScheme.onSurface) },
-                        trailingIcon = if (onlyReachable) {
-                            { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                        } else null,
-                        onClick = { onlyReachablePref = if (onlyReachable) "0" else "1" }
-                    )
-                    MAX_PING_CHOICES.forEach { choice ->
-                        val label = if (choice == 0) {
-                            "${s.maxPingLabel}: ${s.offLabel}"
-                        } else {
-                            "${s.maxPingLabel}: $choice ms"
-                        }
-                        DropdownMenuItem(
-                            text = { Text(label, color = MaterialTheme.colorScheme.onSurface) },
-                            trailingIcon = if (maxPing == choice) {
-                                { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                            } else null,
-                            onClick = { maxPingPref = choice.toString() }
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(s.resetFilters, color = MaterialTheme.colorScheme.primary) },
-                        onClick = {
-                            groupByCountryPref = "0"
-                            onlyReachablePref = "0"
-                            maxPingPref = "0"
-                            protocol = PROTOCOL_ALL
-                            showFiltersMenu = false
-                        }
-                    )
-                }
-            }
-            // Wipe-all sitting left of ping button appears only for the default/manual group
-            if (group == GROUP_MANUAL) {
-                val hasManualNodes = nodes.any { it.subscriptionId == null }
-                IconButton(
-                    onClick = {
-                        tick(HapticFeedbackType.LongPress)
-                        showDeleteAllConfirm = true
-                    },
-                    enabled = hasManualNodes,
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.DeleteSweep,
-                        contentDescription = s.deleteAllServers,
-                        tint = if (!hasManualNodes) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        else MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            if (showDeleteAllConfirm) {
-                LumenDialog(
-                    title = s.deleteAllServers,
-                    message = s.deleteAllServersConfirm,
-                    onDismissRequest = { showDeleteAllConfirm = false },
-                    confirmText = s.delete,
-                    destructive = true,
-                    onConfirm = {
-                        showDeleteAllConfirm = false
-                        onDeleteAllNodes()
-                    },
-                    dismissText = s.cancel,
-                    onDismiss = { showDeleteAllConfirm = false }
-                )
-            }
-            IconButton(
-                onClick = {
-                    tick(HapticFeedbackType.LongPress)
-                    if (isPinging) onStopPing() else onPingAll()
-                },
-                modifier = Modifier.size(38.dp)
-            ) {
-                if (isPinging) {
-                    Icon(
-                        imageVector = Icons.Filled.Stop,
-                        contentDescription = s.cancel,
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Filled.NetworkCheck,
-                        contentDescription = s.pingAll,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
-            // Zero spacing: every item brings its own padding, so the subscription
-            // header, traffic bar and rows render as one uninterrupted tile.
-            verticalArrangement = Arrangement.spacedBy(0.dp)
-        ) {
-            if (selectedSubscription != null) {
-                // Exactly the dashboard group header: all buttons, counts, traffic.
-                item(key = "sub_head_" + selectedSubscription.id) {
-                    SubscriptionHeaderTile(
-                        group = HomeServerGroup(
-                            id = selectedSubscription.id,
-                            title = selectedSubscription.name,
-                            nodes = groupNodes,
-                            isSubscription = true,
-                            subscription = selectedSubscription
-                        ),
-                        isExpanded = groupExpanded,
-                        onToggleExpand = { groupExpanded = !groupExpanded },
-                        onRefreshSubscription = { onRefreshSubscription(selectedSubscription) },
-                        onDeleteSubscription = {
-                            onDeleteSubscription(selectedSubscription)
-                            group = GROUP_ALL
-                        },
-                        onPingGroup = { onPingGroup(selectedSubscription.id) },
-                        onShowProperties = { sub -> propertiesSub = sub },
-                        onEditSubscription = { sub -> editingSubscription = sub },
-                        onExportAll = { subId ->
-                            val text = onExportSubscriptionText(subId)
-                            if (text.isNotBlank()) onShareText(text)
-                        }
-                    )
-                }
-                if (groupExpanded) {
-                    item(key = "sub_info_" + selectedSubscription.id) {
-                        // No rounding and no gap: the rows below continue the same tile.
-                        // The bar itself no longer draws the announcement; the provider
-                        // card below lays it out where it can wrap over several lines.
-                        SubscriptionInfoBar(
-                            sub = selectedSubscription,
-                            pullUp = 0.dp,
-                            roundedBottom = false
-                        )
-                    }
-                    item(key = "sub_provider_" + selectedSubscription.id) {
-                        // Renders nothing when the provider sent no announcement, banner
-                        // or links, so a plain subscription keeps the card it always had.
-                        SubscriptionProviderCard(
-                            sub = selectedSubscription,
-                            onOpenUrl = onOpenUrl
-                        )
-                    }
-                }
-            } else if (selectedCustomGroup != null) {
-                // Same header as a subscription, minus the traffic block: ping, export,
-                // rename and delete for a group the user made.
-                item(key = "custom_head_" + selectedCustomGroup.id) {
-                    SubscriptionHeaderTile(
-                        group = HomeServerGroup(
-                            id = selectedCustomGroup.id,
-                            title = selectedCustomGroup.name,
-                            nodes = groupNodes,
-                            isCustom = true
-                        ),
-                        isExpanded = groupExpanded,
-                        onToggleExpand = { groupExpanded = !groupExpanded },
-                        onRefreshSubscription = {},
-                        onDeleteSubscription = {},
-                        onPingGroup = { if (groupNodes.isNotEmpty()) onPingNodes(groupNodes) },
-                        onExportAll = {
-                            val text = onExportNodesText(groupNodes.mapTo(mutableSetOf()) { it.id })
-                            if (text.isNotBlank()) onShareText(text)
-                        },
-                        onRenameGroup = { renamingGroup = selectedCustomGroup },
-                        onDeleteGroup = { deletingGroup = selectedCustomGroup }
-                    )
-                }
-            }
-            val showRows = (selectedSubscription == null && selectedCustomGroup == null) || groupExpanded
-            if (filtered.isEmpty() && showRows) {
-                item(key = "empty") {
-                    EmptyState(text = if (groupNodes.isEmpty()) s.noServers else s.nothingFound)
-                }
-            } else if (showRows) {
-                // rowItems is either the plain node list or nodes interleaved with
-                // country headers when "group by country" is enabled.
-                itemsIndexed(
-                    rowItems,
-                    key = { _, entry ->
-                        when (entry) {
-                            is NodeUiModel -> entry.id
-                            is CountrySection -> "country_" + entry.code
-                            else -> entry.hashCode()
+                            }) { Text(if (nodes.isEmpty()) strings.add else strings.resetFilters) }
                         }
                     }
-                ) { index, entry ->
-                    when (entry) {
-                        is CountrySection -> CountrySectionHeader(
-                            section = entry,
-                            unknownLabel = s.otherLabel
-                        )
-                        is NodeUiModel -> {
-                            // The same continuous rail is used for All servers,
-                            // manual servers and subscriptions, matching every
-                            // dashboard style.
-                            val isFirst = entry.id == firstVisibleNodeId
-                            val isLast = index == rowItems.lastIndex
-                            // A subscription and a custom group both put a header tile
-                            // above the rail, so the rows continue it instead of opening
-                            // their own rounded card.
-                            val hasGroupHeader =
-                                selectedSubscription != null || selectedCustomGroup != null
-                            val railShape = when {
-                                hasGroupHeader && isLast ->
-                                    RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
-                                hasGroupHeader -> RoundedCornerShape(0.dp)
-                                isFirst && entry.id == lastVisibleNodeId -> RoundedCornerShape(18.dp)
-                                isFirst -> RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
-                                entry.id == lastVisibleNodeId ->
-                                    RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
-                                else -> RoundedCornerShape(0.dp)
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(railShape)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f))
-                                    .padding(
-                                        start = 8.dp,
-                                        end = 8.dp,
-                                        top = if (isFirst && !hasGroupHeader) 10.dp else 4.dp,
-                                        bottom = if (entry.id == lastVisibleNodeId) 10.dp else 4.dp
-                                    )
-                            ) {
-                                ServerTileRow(
-                                    node = entry,
-                                    isSelectionMode = isSelectionMode,
-                                    isNodeSelected = entry.id in selectedNodeIds,
-                                    isPinging = testingNodeId == entry.id || entry.id in pingingNodeIds,
-                                    supportingText = serverTestResults[entry.id],
+                }
+                val sections = if (groupByCountry) filteredNodes.groupBy { countryCodeOf(it).ifBlank { "—" } }
+                    else mapOf("" to filteredNodes)
+                sections.forEach { (country, sectionNodes) ->
+                    if (country.isNotBlank()) item(key = "country:$country", contentType = "country") {
+                        Text("${CountryFlagHelper.getFlagEmoji(country)}  $country · ${sectionNodes.size}",
+                            Modifier.padding(horizontal = 8.dp, vertical = 10.dp), style = MaterialTheme.typography.labelLarge)
+                    }
+                if (compactGrid) {
+                    items(sectionNodes.chunked(3), key = { row -> "grid:" + row.joinToString { it.id } }, contentType = { "server_grid" }) { row ->
+                        Row(Modifier.fillMaxWidth().animateItem(fadeInSpec = null, fadeOutSpec = null),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            row.forEach { node ->
+                                CompactServerCard(if (pendingSelectedId != null) node.copy(isSelected = node.id == pendingSelectedId) else node,
+                                    node.id in selectedIds, node.id in pingingNodeIds || testingNodeId == node.id,
                                     onClick = {
-                                        tick(HapticFeedbackType.LongPress)
-                                        if (isSelectionMode) {
-                                            selectedNodeIds = if (entry.id in selectedNodeIds) {
-                                                selectedNodeIds - entry.id
-                                            } else {
-                                                selectedNodeIds + entry.id
-                                            }
-                                            if (selectedNodeIds.isEmpty()) isSelectionMode = false
-                                        } else {
-                                            onSelectNode(entry)
-                                        }
-                                    },
-                                    onLongClick = {
-                                        tick(HapticFeedbackType.LongPress)
-                                        isSelectionMode = true
-                                        selectedNodeIds = selectedNodeIds + entry.id
-                                    },
-                                    onEditNode = { onEditNode(entry) },
-                                    onDeleteNode = { onDeleteNode(entry) },
-                                    onPingNode = { onPingNode(entry) },
-                                    onCopyLink = { onCopyNodeLink(entry) },
-                                    onExportQr = { onExportQrCode(entry) },
-                                    onMoveToGroup = { assigningNodes = listOf(entry) }
-                                )
+                                        if (selectedIds.isEmpty()) selectServer(node)
+                                        else selectedIds = if (node.id in selectedIds) selectedIds - node.id else selectedIds + node.id
+                                    }, onLongClick = { selectedIds = selectedIds + node.id },
+                                    onEdit = { onEditNode(node) }, onPing = { onPingNode(node) },
+                                    onCopy = { onCopyNodeLink(node) }, onDelete = { deletingNode = node }, modifier = Modifier.weight(1f))
                             }
+                            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                         }
+                    }
+                } else items(sectionNodes, key = { it.id }, contentType = { "server" }) { node ->
+                    ServerListRow(if (pendingSelectedId != null) node.copy(isSelected = node.id == pendingSelectedId) else node, node.id in selectedIds,
+                        node.id in pingingNodeIds || testingNodeId == node.id,
+                        serverTestResults[node.id],
+                        onClick = { clicked ->
+                            if (selectedIds.isEmpty()) selectServer(clicked)
+                            else selectedIds = if (clicked.id in selectedIds) selectedIds - clicked.id else selectedIds + clicked.id
+                        },
+                        onLongClick = { selectedIds = selectedIds + it.id },
+                        onEditNode = onEditNode, onPingNode = onPingNode,
+                        onCopyNodeLink = onCopyNodeLink, onExportQrCode = onExportQrCode,
+                        onMove = { movingNodes = listOf(it) }, onDeleteNode = { deletingNode = it },
+                        modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null))
+                }
+
+                }
+                item(key = "server_footer", contentType = "spacer") {
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
+        }
+    }
+
+    if (showAddSheet) {
+        AddServerSheet(
+            onDismissRequest = { showAddSheet = false },
+            onImportClipboard = onImportClipboard,
+            onImportQr = scanQr,
+            onImportFile = onImportFile,
+            onAddManualNode = onAddNode
+        )
+    }
+    editingSubscription?.let { original ->
+        var name by remember(original.id) { mutableStateOf(original.name) }
+        var url by remember(original.id) { mutableStateOf(original.url) }
+        LumenDialog(
+            title = strings.edit,
+            onDismissRequest = { editingSubscription = null },
+            confirmText = strings.saveAction,
+            onConfirm = {
+                if (url.isNotBlank()) {
+                    val saved = onUpdateSubscription(original, name.trim(), url.trim())
+                    if (saved) { editingSubscription = null }
+                }
+            },
+            dismissText = strings.cancel,
+            onDismiss = { editingSubscription = null }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ExpressiveTextField(shape = MaterialTheme.shapes.large, value = name, onValueChange = { name = it },
+                    label = { Text(strings.nameOptional) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                ExpressiveTextField(shape = MaterialTheme.shapes.large, value = url, onValueChange = { url = it },
+                    label = { Text(strings.url) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+    detailsSubscription?.let { sub ->
+        SubscriptionDetailsDialog(sub, onDismiss = { detailsSubscription = null },
+            onCopyUrl = onCopyText, onOpenUrl = onOpenUrl)
+    }
+    deletingSubscription?.let { sub ->
+        LumenDialog(title = strings.deleteSubscription, message = sub.name,
+            onDismissRequest = { deletingSubscription = null }, confirmText = strings.delete,
+            onConfirm = { onDeleteSubscription(sub); deletingSubscription = null },
+            dismissText = strings.cancel, onDismiss = { deletingSubscription = null }, destructive = true)
+    }
+    deletingNode?.let { node ->
+        LumenDialog(title = strings.delete, message = node.name,
+            onDismissRequest = { deletingNode = null }, confirmText = strings.delete,
+            onConfirm = { onDeleteNode(node); deletingNode = null },
+            dismissText = strings.cancel, onDismiss = { deletingNode = null }, destructive = true)
+    }
+    if (showCreateGroup || renamingGroup != null) {
+        val original = renamingGroup
+        var name by remember(original?.id) { mutableStateOf(original?.name.orEmpty()) }
+        LumenDialog(title = if (original == null) strings.newGroup else strings.renameGroup,
+            onDismissRequest = { showCreateGroup = false; renamingGroup = null },
+            confirmText = if (original == null) strings.createAction else strings.saveAction,
+            onConfirm = {
+                if (name.isNotBlank()) {
+                    if (original == null) onCreateGroup(name.trim()) else onRenameGroup(original.id, name.trim())
+                    showCreateGroup = false; renamingGroup = null
+                }
+            }, dismissText = strings.cancel,
+            onDismiss = { showCreateGroup = false; renamingGroup = null }) {
+            ExpressiveTextField(shape = MaterialTheme.shapes.large, value = name, onValueChange = { name = it },
+                label = { Text(strings.nodeName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        }
+    }
+    deletingGroup?.let { group ->
+        LumenDialog(title = strings.deleteGroup, message = strings.deleteGroupConfirm,
+            onDismissRequest = { deletingGroup = null }, confirmText = strings.delete,
+            onConfirm = {
+                onDeleteGroup(group.id)
+                if (selectedFilter == "group:${group.id}") chooseFilter("all")
+                deletingGroup = null
+            }, dismissText = strings.cancel, onDismiss = { deletingGroup = null }, destructive = true)
+    }
+    if (showDeleteAll) {
+        LumenDialog(title = strings.deleteAllServers, message = strings.deleteAllServersConfirm,
+            onDismissRequest = { showDeleteAll = false }, confirmText = strings.delete,
+            onConfirm = { onDeleteAllNodes(); showDeleteAll = false },
+            dismissText = strings.cancel, onDismiss = { showDeleteAll = false }, destructive = true)
+    }
+    movingNodes?.let { nodesToMove ->
+        LumenDialog(title = strings.moveToGroup, onDismissRequest = { movingNodes = null },
+            dismissText = strings.cancel, onDismiss = { movingNodes = null }) {
+            Column {
+                TextButton(onClick = { onAssignNodesToGroup(nodesToMove, null); movingNodes = null; selectedIds = emptySet() }) {
+                    Text(strings.groupDefault)
+                }
+                serverGroups.forEach { group ->
+                    TextButton(onClick = { onAssignNodesToGroup(nodesToMove, group.id); movingNodes = null; selectedIds = emptySet() }) {
+                        Text(group.name)
                     }
                 }
             }
         }
-
-    }
-
-    if (showAddSubscription) {
-        AddSubscriptionDialog(
-            onDismiss = { showAddSubscription = false },
-            onConfirm = { name, url ->
-                onAddSubscription(name, url)
-                showAddSubscription = false
-            }
-        )
-    }
-
-    if (showCreateGroup) {
-        GroupNameDialog(
-            title = s.newGroup,
-            confirmText = s.createAction,
-            initialName = "",
-            onDismiss = {
-                showCreateGroup = false
-                pendingAssignment = emptyList()
-            },
-            onConfirm = { name ->
-                showCreateGroup = false
-                // Same normalisation the view model applies, so the new group is
-                // recognised when it comes back.
-                pendingGroupName = name.trim().take(64)
-                onCreateGroup(name)
-            }
-        )
-    }
-
-    renamingGroup?.let { target ->
-        GroupNameDialog(
-            title = s.renameGroup,
-            confirmText = s.saveAction,
-            initialName = target.name,
-            onDismiss = { renamingGroup = null },
-            onConfirm = { name ->
-                renamingGroup = null
-                onRenameGroup(target.id, name)
-            }
-        )
-    }
-
-    deletingGroup?.let { target ->
-        LumenDialog(
-            title = "${s.deleteGroup}: ${target.name}",
-            // Spelled out because the wording is the whole point: the servers stay.
-            message = s.deleteGroupConfirm,
-            onDismissRequest = { deletingGroup = null },
-            confirmText = s.delete,
-            destructive = true,
-            onConfirm = {
-                deletingGroup = null
-                if (group == target.id) group = GROUP_ALL
-                onDeleteGroup(target.id)
-            },
-            dismissText = s.cancel,
-            onDismiss = { deletingGroup = null }
-        )
-    }
-
-    if (assigningNodes.isNotEmpty()) {
-        val targets = assigningNodes
-        GroupPickerDialog(
-            groups = serverGroups,
-            // Only meaningful for a single server; a mixed selection shows no tick.
-            currentGroupId = targets.singleOrNull()?.groupId,
-            onDismiss = { assigningNodes = emptyList() },
-            onCreateGroup = {
-                assigningNodes = emptyList()
-                // Carried through the creation so the servers land in the new group.
-                pendingAssignment = targets
-                isSelectionMode = false
-                selectedNodeIds = emptySet()
-                showCreateGroup = true
-            },
-            onPick = { groupId ->
-                assigningNodes = emptyList()
-                isSelectionMode = false
-                selectedNodeIds = emptySet()
-                onAssignNodesToGroup(targets, groupId)
-            }
-        )
-    }
-
-    // "Subscription properties" from the header menu; the URL row is left out when the
-    // provider asked for it with hide-url.
-    editingSubscription?.let { sub ->
-        EditSubscriptionDialog(
-            subscription = sub,
-            onDismiss = { editingSubscription = null },
-            onConfirm = { name, url ->
-                onUpdateSubscription(sub, name, url).also { saved ->
-                    if (saved) editingSubscription = null
-                }
-            }
-        )
-    }
-
-    propertiesSub?.let { sub ->
-        SubscriptionDetailsDialog(
-            sub = sub,
-            onDismiss = { propertiesSub = null },
-            onCopyUrl = onCopyText,
-            onOpenUrl = onOpenUrl
-        )
     }
 }
 
-/** Subscription groups own both a display name and a source URL. */
 @Composable
-private fun EditSubscriptionDialog(
-    subscription: SubscriptionUiModel,
-    onDismiss: () -> Unit,
-    onConfirm: (String, String) -> Boolean
-) {
-    val s = LocalStrings.current
-    var name by remember(subscription.id) { mutableStateOf(subscription.name) }
-    var url by remember(subscription.id) { mutableStateOf(subscription.url) }
-    var invalid by remember(subscription.id) { mutableStateOf(false) }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-            ) {
-                Text(
-                    text = "${s.edit}: ${subscription.name}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(14.dp))
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = {
-                        name = it
-                        invalid = false
-                    },
-                    label = { Text(s.groupNameLabel) },
-                    singleLine = true,
-                    isError = invalid && name.isBlank(),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = {
-                        url = it
-                        invalid = false
-                    },
-                    label = { Text(s.url) },
-                    singleLine = true,
-                    isError = invalid,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onDismiss) { Text(s.cancel) }
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            invalid = !onConfirm(name.trim(), url.trim())
-                        },
-                        enabled = name.isNotBlank() && url.isNotBlank()
-                    ) { Text(s.saveAction) }
-                }
-            }
-        }
-    }
+private fun FilterPill(label: String, isSelected: Boolean, onClick: () -> Unit) {
+    LumenFilterChip(label, isSelected, onClick)
 }
 
-/** Create / rename dialog for a custom group. */
-@Composable
-private fun GroupNameDialog(
-    title: String,
-    confirmText: String,
-    initialName: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    val s = LocalStrings.current
-    var name by remember(initialName) { mutableStateOf(initialName) }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(Modifier.height(14.dp))
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(s.groupNameLabel) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onDismiss) { Text(s.cancel) }
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedButton(
-                        onClick = { onConfirm(name.trim()) },
-                        enabled = name.isNotBlank()
-                    ) { Text(confirmText) }
-                }
-            }
-        }
-    }
-}
+/** Aggregate filters deliberately have no provider owner. */
+internal fun subscriptionForServerFilter(filter: String, subscriptions: List<SubscriptionUiModel>): SubscriptionUiModel? =
+    filter.takeIf { it.startsWith("subscription:") }?.removePrefix("subscription:")
+        ?.let { id -> subscriptions.firstOrNull { it.id == id } }
 
-/**
- * Group chooser for one server or for the whole selection. "No group" clears the
- * assignment, which returns the servers to Default, or to their subscription when
- * they came from one.
- */
+
+/** Per-row inputs keep unrelated latency/selection updates skippable. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun GroupPickerDialog(
-    groups: List<ServerGroupUiModel>,
-    currentGroupId: String?,
-    onDismiss: () -> Unit,
-    onCreateGroup: () -> Unit,
-    onPick: (String?) -> Unit
+private fun ServerListRow(
+    node: NodeUiModel, selectionChecked: Boolean, pinging: Boolean, testResult: String?,
+    onClick: (NodeUiModel) -> Unit, onLongClick: (NodeUiModel) -> Unit,
+    onEditNode: (NodeUiModel) -> Unit, onPingNode: (NodeUiModel) -> Unit,
+    onCopyNodeLink: (NodeUiModel) -> Unit, onExportQrCode: (NodeUiModel) -> Unit,
+    onMove: (NodeUiModel) -> Unit, onDeleteNode: (NodeUiModel) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val s = LocalStrings.current
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 18.dp)
-            ) {
-                Text(
-                    text = s.moveToGroup,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(horizontal = 20.dp)
-                )
-                Spacer(Modifier.height(10.dp))
-                DropdownMenuItem(
-                    text = { Text(s.groupNoGroup, color = MaterialTheme.colorScheme.onSurface) },
-                    trailingIcon = if (currentGroupId == null) {
-                        { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                    } else null,
-                    onClick = { onPick(null) }
-                )
-                groups.forEach { entry ->
-                    DropdownMenuItem(
-                        text = { Text(entry.name, color = MaterialTheme.colorScheme.onSurface) },
-                        trailingIcon = if (currentGroupId == entry.id) {
-                            { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                        } else null,
-                        onClick = { onPick(entry.id) }
+    val strings = LocalStrings.current
+    val art = com.lumen.ui.theme.expressivePalette()
+
+                    var showNodeMenu by remember(node.id) { mutableStateOf(false) }
+                    val isSelected = node.isSelected
+                    val highlighted = isSelected || selectionChecked
+                    val cardBg = androidx.compose.animation.animateColorAsState(
+                        targetValue = if (selectionChecked) art.blue else if (isSelected) art.stage else MaterialTheme.colorScheme.surfaceContainerLow,
+                        animationSpec = androidx.compose.animation.core.spring(), label = "server_color"
                     )
-                }
-                DropdownMenuItem(
-                    text = { Text(s.newGroup, color = MaterialTheme.colorScheme.primary) },
-                    trailingIcon = {
-                        Icon(
-                            Icons.Filled.CreateNewFolder,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    },
-                    onClick = onCreateGroup
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) { Text(s.cancel) }
-                }
-            }
-        }
-    }
-}
+                    val rowCorner = androidx.compose.animation.core.animateDpAsState(
+                        targetValue = if (highlighted) 22.dp else 14.dp,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                        ), label = "server_shape"
+                    )
+                    val textPrimary = if (selectionChecked) art.onBlue else if (isSelected) art.onStage else MaterialTheme.colorScheme.onSurface
+                    val textMuted = textPrimary.copy(alpha = .75f)
 
-/**
- * Single entry point for everything that adds servers: clipboard, QR, file,
- * manual editor and subscription links. Replaces the old separate buttons.
- */
-@Composable
-private fun AddEntryButton(
-    onImportClipboard: () -> Unit,
-    onImportQr: () -> Unit,
-    onImportFile: () -> Unit,
-    onAddNode: () -> Unit,
-    onAddSubscription: () -> Unit
-) {
-    val s = LocalStrings.current
-    val tick = rememberHapticTick()
-    var expanded by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(14.dp)
-    Box {
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
-                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f), shape)
-                .clickable {
-                    tick(HapticFeedbackType.LongPress)
-                    expanded = true
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Add,
-                contentDescription = s.addServerOrSubscription,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-        LumenMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            // Every entry here starts adding a server, so each one confirms with a tick.
-            DropdownMenuItem(
-                text = { Text(s.subscriptionLink) },
-                leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
-                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onAddSubscription() }
-            )
-            DropdownMenuItem(
-                text = { Text(s.importFromClipboard) },
-                leadingIcon = { Icon(Icons.Filled.ContentPaste, contentDescription = null) },
-                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onImportClipboard() }
-            )
-            DropdownMenuItem(
-                text = { Text(s.importQrCode) },
-                leadingIcon = { Icon(Icons.Filled.QrCodeScanner, contentDescription = null) },
-                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onImportQr() }
-            )
-            DropdownMenuItem(
-                text = { Text(s.importFromFile) },
-                leadingIcon = { Icon(Icons.Filled.UploadFile, contentDescription = null) },
-                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onImportFile() }
-            )
-            DropdownMenuItem(
-                text = { Text(s.importManually) },
-                leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
-                onClick = { expanded = false; tick(HapticFeedbackType.LongPress); onAddNode() }
-            )
-        }
-    }
-}
+                    val flagEmoji = remember(node.countryCode) {
+                        CountryFlagHelper.getServerFlagEmoji(node.countryCode)
+                    }
 
-/** Header of a country bucket: flag, location name, server count and best ping. */
-@Composable
-private fun CountrySectionHeader(section: CountrySection, unknownLabel: String) {
-    val title = when {
-        section.code.isBlank() -> unknownLabel
-        else -> CountryFlagHelper.countryDisplayName(section.code).ifBlank { section.code }
-    }
-    val flag = if (section.code.length == 2) CountryFlagHelper.getFlagEmoji(section.code) else ""
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        if (flag.isNotBlank()) {
-            Text(text = flag, style = MaterialTheme.typography.bodyMedium)
-        }
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = section.count.toString(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.weight(1f))
-        val best = section.bestPing
-        if (best != null) {
-            Text(
-                text = "$best ms",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
+                        // Latency
+                        val pingMs = node.pingMs
+                        val unreachable = pingMs != null && pingMs <= 0 && !pinging
+                        val pingText = when {
+                            pinging -> "..."
+                            pingMs != null && pingMs > 0 -> "$pingMs ms"
+                            pingMs != null -> strings.pingUnreachable
+                            else -> "--"
+                        }
 
-@Composable
-private fun EmptyState(text: String) {
-    LumenCard {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
 
-@Composable
-private fun AddSubscriptionDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (String, String) -> Unit
-) {
-    val s = LocalStrings.current
-    var name by remember { mutableStateOf("") }
-    var url by remember { mutableStateOf("") }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-            ) {
-                Text(
-                    text = s.addSubscription,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(Modifier.height(14.dp))
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text(s.url) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(s.nameOptional) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onDismiss) { Text(s.cancel) }
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedButton(
-                        onClick = { onConfirm(name.trim(), url.trim()) },
-                        enabled = url.isNotBlank()
-                    ) { Text(s.add) }
-                }
-            }
-        }
-    }
+                    Row(
+                        modifier = modifier
+                            .fillMaxWidth()
+                            .graphicsLayer {
+                                shape = RoundedCornerShape(topStart = rowCorner.value, topEnd = 12.dp,
+                                    bottomEnd = rowCorner.value, bottomStart = 12.dp)
+                                clip = true
+                            }.drawBehind { drawRect(cardBg.value) }
+                            .combinedClickable(
+                                onClick = {
+                                    onClick(node)
+                                },
+                                onLongClick = { onLongClick(node) }
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Flag squircle badge
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 18.dp, bottomEnd = 6.dp, bottomStart = 18.dp))
+                                .background(if (highlighted) art.lime else MaterialTheme.colorScheme.background),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = flagEmoji,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        // Info
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = node.name,
+                                fontSize = 15.sp,
+                                fontWeight = if (highlighted) FontWeight.Bold else FontWeight.SemiBold,
+                                letterSpacing = if (strings.localeCode == "fa") 0.sp else (-0.5).sp,
+                                color = textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(node.displayProtocol,
+                                    style = MaterialTheme.typography.bodySmall, color = textMuted,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                                Spacer(Modifier.width(8.dp))
+                                Text(pingText, fontFamily = com.lumen.ui.theme.LumenMono,
+                                    style = MaterialTheme.typography.labelSmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr),
+                                    color = if (pinging || pingMs == null) textMuted else pingColor(pingMs, cardBg.value),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+
+                        if (isSelected || selectionChecked) {
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Icon(
+                                imageVector = if (selectionChecked) Icons.Default.CheckBox else Icons.Default.CheckCircle,
+                                contentDescription = strings.selected,
+                                tint = if (art.stage.luminance() > .5f) art.onStage else art.lime,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Box {
+                            IconButton(onClick = { showNodeMenu = true }, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Default.MoreVert, contentDescription = node.name, tint = textMuted)
+                            }
+                            if (showNodeMenu) LumenMenu(expanded = true, onDismissRequest = { showNodeMenu = false }) {
+                                DropdownMenuItem(text = { Text(strings.edit) }, onClick = {
+                                    showNodeMenu = false; onEditNode(node)
+                                })
+                                DropdownMenuItem(text = { Text(strings.ping) }, onClick = {
+                                    showNodeMenu = false; onPingNode(node)
+                                })
+                                DropdownMenuItem(text = { Text(strings.copyLink) }, onClick = {
+                                    showNodeMenu = false; onCopyNodeLink(node)
+                                })
+                                DropdownMenuItem(text = { Text(strings.exportQrCode) }, onClick = {
+                                    showNodeMenu = false; onExportQrCode(node)
+                                })
+                                DropdownMenuItem(text = { Text(strings.moveToGroup) }, onClick = {
+                                    showNodeMenu = false; onMove(node)
+                                })
+                                DropdownMenuItem(text = { Text(strings.delete) }, onClick = {
+                                    showNodeMenu = false; onDeleteNode(node)
+                                })
+                            }
+                        }
+                    }
+
 }

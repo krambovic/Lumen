@@ -12,6 +12,68 @@ import org.junit.Test
 import java.util.Base64
 
 class ConfigBuilderTest {
+    @Test fun networkInfoAlwaysUsesSelectedProxyEvenWithDirectFallbackAndUserRules() {
+        val node = ParsedNode("test", "socks", "vpn.example", 1080, "",
+            mapOf("type" to "socks", "server" to "vpn.example", "server_port" to 1080))
+        val json = JSONObject(SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions(
+            tunMode = false, routingFinalOutbound = "direct", enableFinalFragment = true,
+            directDomains = listOf("direct:domain:ipwho.is")
+        )))
+        val rules = json.getJSONObject("route").getJSONArray("rules").let { array ->
+            (0 until array.length()).map { array.getJSONObject(it) }
+        }
+        val diagnostic = rules.indexOfFirst { it.optJSONArray("inbound")?.toString()?.contains("socks-in") == true &&
+            it.optJSONArray("domain")?.toString()?.contains("ipwho.is") == true }
+        assertTrue(diagnostic >= 0)
+        assertEquals("proxy", rules[diagnostic].getString("outbound"))
+        assertTrue(rules.indexOfFirst { it.optString("action") == "route-options" } < diagnostic)
+        assertTrue(rules.indexOfLast { it.optString("outbound") == "direct" } > diagnostic)
+        val dns = json.getJSONObject("dns").getJSONArray("rules")
+        val firstMatch = (0 until dns.length()).map { dns.getJSONObject(it) }
+            .first { it.optJSONArray("domain")?.toString()?.contains("ipwho.is") == true }
+        assertEquals("dns-proxy-final", firstMatch.getString("server"))
+    }
+
+    @Test
+    fun iranBootstrapRetainsPhysicalDnsWhenPublicDohIsBlocked() {
+        val node = ParsedNode("test", "socks", "vpn.example", 1080, "",
+            mapOf("type" to "socks", "server" to "vpn.example", "server_port" to 1080))
+        val json = JSONObject(SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions(
+            tunMode = false, geoResourceSource = "https://github.com/Chocolate4U/Iran-sing-box-rules/",
+            dnsParallelQuery = true, systemDnsServers = listOf("172.19.0.2")
+        )))
+        val dns = json.getJSONObject("dns")
+        val list = dns.getJSONArray("servers")
+        val servers = (0 until list.length()).map { list.getJSONObject(it) }.associateBy { it.getString("tag") }
+        assertEquals("udp", servers.getValue("dns-direct-1").getString("type"))
+        assertEquals("172.19.0.2", servers.getValue("dns-system").getString("server"))
+        assertEquals("udp", servers.getValue("dns-system").getString("type"))
+        assertEquals("dns.google", servers.getValue("dns-bootstrap-alternate").getString("server"))
+        assertEquals("direct", servers.getValue("dns-bootstrap-alternate").getString("detour"))
+        assertEquals("parallel", servers.getValue("dns-bootstrap-protected").getString("strategy"))
+        assertEquals("dns-system", servers.getValue("dns-bootstrap").getJSONArray("servers").getString(0))
+        assertTrue(servers.getValue("dns-bootstrap").getJSONArray("servers").toString().contains("dns-bootstrap-protected"))
+        assertEquals("parallel", servers.getValue("dns-proxy-final").getString("strategy"))
+        assertEquals("proxy", servers.getValue("dns-proxy-1").getString("detour"))
+        assertEquals("dns-proxy-final", dns.getString("final"))
+    }
+
+    @Test
+    fun iranCustomDirectResolverKeepsItsTransport() {
+        val node = ParsedNode("test", "socks", "vpn.example", 1080, "",
+            mapOf("type" to "socks", "server" to "vpn.example", "server_port" to 1080))
+        val json = JSONObject(SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions(
+            tunMode = false, geoResourceSource = "https://github.com/Chocolate4U/Iran-sing-box-rules/",
+            dnsDirectServers = listOf("192.168.1.1"), dnsDirectType = "udp"
+        )))
+        val list = json.getJSONObject("dns").getJSONArray("servers")
+        val direct = (0 until list.length()).map { list.getJSONObject(it) }.first { it.getString("tag") == "dns-direct-1" }
+        assertEquals("udp", direct.getString("type"))
+        assertEquals("192.168.1.1", direct.getString("server"))
+        val proxyPool = (0 until list.length()).map { list.getJSONObject(it) }
+            .first { it.getString("tag") == "dns-proxy-final" }
+        assertEquals("sequential", proxyPool.getString("strategy"))
+    }
 
     @Test
     fun dnsBlockRespectsEarlierDomainException() {
@@ -523,7 +585,7 @@ class ConfigBuilderTest {
     }
 
     @Test
-    fun testSingboxMasqueOutboundUsesTheExtendedProfileSchema() {
+    fun testSingboxMasqueDirectFieldsReachThePatchedCore() {
         val node = ParsedNode(
             name = "WARP Masque",
             scheme = "masque",
@@ -545,19 +607,19 @@ class ConfigBuilderTest {
         val json = JSONObject(SingboxConfigBuilder.buildConfig(node, SingboxConfigOptions()))
         val proxyOb = json.getJSONArray("outbounds").getJSONObject(0)
         assertEquals("masque", proxyOb.getString("type"))
-        // sing-box-extended 2.5.2 obtains its endpoint and EC key from the
-        // Cloudflare profile/cache. Static Clash/usque fields are unknown here.
-        for (key in listOf("server", "server_port", "private_key", "public_key", "address", "mtu")) {
-            assertTrue("MASQUE outbound must not contain $key", !proxyOb.has(key))
-        }
+        assertEquals("162.159.193.1", proxyOb.getString("server"))
+        assertEquals(2408, proxyOb.getInt("server_port"))
+        assertEquals("private_key_xyz", proxyOb.getString("private_key"))
+        assertEquals("public_key_abc", proxyOb.getString("public_key"))
+        assertEquals(1280, proxyOb.getInt("mtu"))
+        assertEquals("172.16.0.2/32", proxyOb.getJSONArray("tunnel_address").getString(0))
         assertEquals(false, proxyOb.getBoolean("system"))
         assertEquals("masque0", proxyOb.getString("name"))
         assertTrue(!proxyOb.has("legacy_unknown"))
         val profile = proxyOb.getJSONObject("profile")
         assertEquals("direct", profile.getString("detour"))
-        for (key in listOf("server", "server_port", "public_key", "address", "mtu")) {
-            assertTrue("MASQUE profile must not contain $key", !profile.has(key))
-        }
+        assertTrue(!profile.has("server"))
+        assertTrue(!profile.has("public_key"))
     }
 
     @Test
@@ -1734,6 +1796,7 @@ class ConfigBuilderTest {
         val rules = root.getJSONObject("route").getJSONArray("rules")
         val userRules = (0 until rules.length())
             .map { rules.getJSONObject(it) }
+            .filterNot { it.has("inbound") }
             .filter { it.has("domain") || it.has("domain_suffix") || it.has("ip_cidr") }
             .take(3)
 

@@ -55,16 +55,6 @@ object NotificationHelper {
     @Volatile
     var smallIconRes: Int = 0
 
-    /** Flat single-colour vectors, in the order they are preferred. */
-    private val ICON_CANDIDATES = arrayOf(
-        "ic_stat_lumen",
-        "ic_qs_lumen",
-        "ic_launcher_monochrome"
-    )
-
-    @Volatile
-    private var resolvedIconRes: Int = 0
-
     enum class Stage { CONNECTING, CONNECTED, DISCONNECTED }
 
     data class NotificationSettings(
@@ -91,22 +81,8 @@ object NotificationHelper {
     @Volatile
     private var lastPostedKey: String? = null
 
-    /**
-     * :core:vpn owns no resources, so the glyph is looked up in the app package by
-     * name. A miss degrades to the framework icon instead of failing the build, and
-     * the app can still assign [smallIconRes] to skip the lookup entirely.
-     */
-    private fun smallIcon(context: Context): Int {
-        smallIconRes.takeIf { it != 0 }?.let { return it }
-        resolvedIconRes.takeIf { it != 0 }?.let { return it }
-        val resolved = ICON_CANDIDATES.firstNotNullOfOrNull { name ->
-            runCatching {
-                context.resources.getIdentifier(name, "drawable", context.packageName)
-            }.getOrNull()?.takeIf { it != 0 }
-        } ?: return android.R.drawable.ic_dialog_info
-        resolvedIconRes = resolved
-        return resolved
-    }
+    /** The same resource as the QS tile; a direct reference also survives R8. */
+    private fun smallIcon(): Int = smallIconRes.takeIf { it != 0 } ?: R.drawable.ic_qs_lumen
 
     fun settings(context: Context): NotificationSettings {
         val prefs = context.getSharedPreferences(
@@ -233,7 +209,7 @@ object NotificationHelper {
     private fun render(context: Context, stage: Stage, stats: TrafficStats): Rendered {
         createNotificationChannel(context)
         val settings = settings(context)
-        val icon = smallIcon(context)
+        val icon = smallIcon()
         val server = if (settings.showServer) serverName(context) else ""
         val sessionStartedAt = sessionStartedAt(context)
         // Everything the builder itself bakes in. A change to any of it has to

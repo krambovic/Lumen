@@ -19,8 +19,8 @@ val hasReleaseKeystore = keystoreProps.getProperty("storeFile") != null
 // src/main/jniLibs for these ABIs only. Shipping any other ABI produces an APK that installs
 // but can never start a tunnel, so the split and the packaged ABIs are pinned to this list.
 val supportedAbis = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
-val baseVersionCode = 36
-val lumenVersionName = "1.2.1"
+val baseVersionCode = 50
+val lumenVersionName = "1.5.0"
 // AGP does not derive per-output version codes; without an offset every split APK would share one.
 val abiVersionCodeOffsets = mapOf(
     "armeabi-v7a" to 1,
@@ -31,7 +31,7 @@ val abiVersionCodeOffsets = mapOf(
 
 android {
     namespace = "net.kramb.lumen"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "net.kramb.lumen"
@@ -74,8 +74,9 @@ android {
 
     buildTypes {
         release {
-            if (hasReleaseKeystore) signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
+            signingConfig = if (hasReleaseKeystore) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -120,6 +121,13 @@ androidComponents {
     }
 }
 
+composeCompiler {
+    if (providers.gradleProperty("lumen.composeReports").orNull == "true") {
+        reportsDestination.set(layout.buildDirectory.dir("compose_reports"))
+        metricsDestination.set(layout.buildDirectory.dir("compose_metrics"))
+    }
+}
+
 dependencies {
     // Project modules
     implementation(project(":ui"))
@@ -130,6 +138,7 @@ dependencies {
 
     // AndroidX Core & Lifecycle
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
@@ -140,7 +149,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material3:material3:1.5.0-alpha01")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
     // Coroutines
@@ -156,14 +166,21 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    // QR code scanning (camera)
-    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // Native camera UI with a bundled offline QR detector.
+    val cameraXVersion = "1.5.3"
+    implementation("androidx.camera:camera-camera2:$cameraXVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraXVersion")
+    implementation("androidx.camera:camera-view:$cameraXVersion")
+    implementation("androidx.camera:camera-mlkit-vision:$cameraXVersion")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("com.google.zxing:core:3.5.3")
 
     // Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.08.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")

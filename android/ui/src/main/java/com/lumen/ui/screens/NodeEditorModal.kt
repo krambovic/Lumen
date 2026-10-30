@@ -2,6 +2,7 @@ package com.lumen.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,7 +24,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -58,15 +58,16 @@ fun NodeEditorModal(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.94f)
-                .padding(horizontal = 10.dp),
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.surface
+                .padding(horizontal = 10.dp)
+                .imePadding(),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.background
         ) {
             Column(Modifier.padding(16.dp)) {
                 Row(
@@ -76,7 +77,7 @@ fun NodeEditorModal(
                 ) {
                     Text(
                         if (initial.id == null) s.addNode else s.editNode,
-                        style = MaterialTheme.typography.titleMedium
+                        style = MaterialTheme.typography.headlineMedium
                     )
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Filled.Close, contentDescription = s.close, tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -119,16 +120,16 @@ fun NodeEditorModal(
                 ) {
                     TextButton(onClick = onDismiss) { Text(s.cancel) }
                     Spacer(Modifier.width(8.dp))
-                    OutlinedButton(
+                    com.lumen.ui.components.ExpressiveAction(
+                        label = s.saveAction,
+                        modifier = Modifier.weight(1f),
                         onClick = {
                             // A saved node is the "server added" moment the user feels.
                             tick(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                             onSave(draft)
                         },
                         enabled = isDraftValid(draft)
-                    ) {
-                        Text(s.saveAction)
-                    }
+                    )
                 }
             }
         }
@@ -208,7 +209,8 @@ private fun Field(
     minLines: Int = 1,
     onChange: (String) -> Unit
 ) {
-    OutlinedTextField(
+    ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
         value = value,
         onValueChange = onChange,
         label = { Text(label) },
@@ -225,7 +227,8 @@ private fun Field(
 private fun ServerPortRow(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
     val s = LocalStrings.current
     Row(Modifier.fillMaxWidth()) {
-        OutlinedTextField(
+        ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
             value = draft.server,
             onValueChange = { onChange(draft.copy(server = it)) },
             label = { Text(s.serverLabel) },
@@ -235,7 +238,8 @@ private fun ServerPortRow(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
                 .padding(vertical = 4.dp)
         )
         Spacer(Modifier.width(8.dp))
-        OutlinedTextField(
+        ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
             value = draft.port,
             onValueChange = { onChange(draft.copy(port = it)) },
             label = { Text(s.portLabel) },
@@ -482,7 +486,8 @@ private fun WireGuardFields(
         )
         SectionHeader(s.awgJunkParamsLabel)
         Row(Modifier.fillMaxWidth()) {
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.jc,
                 onValueChange = { onChange(draft.copy(jc = it)) },
                 label = { Text("Jc") },
@@ -490,7 +495,8 @@ private fun WireGuardFields(
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp)
             )
             Spacer(Modifier.width(6.dp))
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.jmin,
                 onValueChange = { onChange(draft.copy(jmin = it)) },
                 label = { Text("Jmin") },
@@ -498,7 +504,8 @@ private fun WireGuardFields(
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp)
             )
             Spacer(Modifier.width(6.dp))
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.jmax,
                 onValueChange = { onChange(draft.copy(jmax = it)) },
                 label = { Text("Jmax") },
@@ -507,7 +514,8 @@ private fun WireGuardFields(
             )
         }
         Row(Modifier.fillMaxWidth()) {
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.s1,
                 onValueChange = { onChange(draft.copy(s1 = it)) },
                 label = { Text("S1") },
@@ -515,7 +523,8 @@ private fun WireGuardFields(
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp)
             )
             Spacer(Modifier.width(6.dp))
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.s2,
                 onValueChange = { onChange(draft.copy(s2 = it)) },
                 label = { Text("S2") },
@@ -523,7 +532,8 @@ private fun WireGuardFields(
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp)
             )
             Spacer(Modifier.width(6.dp))
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.s3,
                 onValueChange = { onChange(draft.copy(s3 = it)) },
                 label = { Text("S3") },
@@ -531,7 +541,8 @@ private fun WireGuardFields(
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp)
             )
             Spacer(Modifier.width(6.dp))
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.s4,
                 onValueChange = { onChange(draft.copy(s4 = it)) },
                 label = { Text("S4") },
@@ -541,7 +552,8 @@ private fun WireGuardFields(
         }
         SectionHeader(s.awgHeadersLabel)
         Row(Modifier.fillMaxWidth()) {
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.h1,
                 onValueChange = { onChange(draft.copy(h1 = it)) },
                 label = { Text("H1") },
@@ -549,7 +561,8 @@ private fun WireGuardFields(
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp)
             )
             Spacer(Modifier.width(6.dp))
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.h2,
                 onValueChange = { onChange(draft.copy(h2 = it)) },
                 label = { Text("H2") },
@@ -557,7 +570,8 @@ private fun WireGuardFields(
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp)
             )
             Spacer(Modifier.width(6.dp))
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.h3,
                 onValueChange = { onChange(draft.copy(h3 = it)) },
                 label = { Text("H3") },
@@ -565,7 +579,8 @@ private fun WireGuardFields(
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp)
             )
             Spacer(Modifier.width(6.dp))
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.h4,
                 onValueChange = { onChange(draft.copy(h4 = it)) },
                 label = { Text("H4") },
@@ -675,7 +690,8 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
 
     SectionHeader("Connection")
     Row(Modifier.fillMaxWidth()) {
-        OutlinedTextField(
+        ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
             value = draft.ovpnReconnectDelay,
             onValueChange = { onChange(draft.copy(ovpnReconnectDelay = it)) },
             label = { Text("Reconnect, s") },
@@ -684,7 +700,8 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
             modifier = Modifier.weight(1f).padding(vertical = 4.dp)
         )
         Spacer(Modifier.width(6.dp))
-        OutlinedTextField(
+        ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
             value = draft.ovpnPingInterval,
             onValueChange = { onChange(draft.copy(ovpnPingInterval = it)) },
             label = { Text("Ping, s") },
@@ -693,7 +710,8 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
             modifier = Modifier.weight(1f).padding(vertical = 4.dp)
         )
         Spacer(Modifier.width(6.dp))
-        OutlinedTextField(
+        ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
             value = draft.ovpnPingRestart,
             onValueChange = { onChange(draft.copy(ovpnPingRestart = it)) },
             label = { Text("Ping restart, s") },
@@ -717,7 +735,8 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
     Spacer(Modifier.height(4.dp))
     if (draft.ovpnProxyType.isNotBlank()) {
         Row(Modifier.fillMaxWidth()) {
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.ovpnProxyServer,
                 onValueChange = { onChange(draft.copy(ovpnProxyServer = it)) },
                 label = { Text(s.proxyServerLabel) },
@@ -725,7 +744,8 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
                 modifier = Modifier.weight(2f).padding(vertical = 4.dp)
             )
             Spacer(Modifier.width(6.dp))
-            OutlinedTextField(
+            ExpressiveTextField(
+            shape = MaterialTheme.shapes.large,
                 value = draft.ovpnProxyPort,
                 onValueChange = { onChange(draft.copy(ovpnProxyPort = it.filter { c -> c.isDigit() })) },
                 label = { Text(s.portLabel) },

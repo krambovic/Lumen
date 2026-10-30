@@ -55,20 +55,15 @@ fun LumenDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.88f)
-                .clip(RoundedCornerShape(26.dp))
-                .border(
-                    1.dp,
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-                    RoundedCornerShape(26.dp)
-                ),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(26.dp),
+                .clip(RoundedCornerShape(28.dp)),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(28.dp),
             tonalElevation = 0.dp
         ) {
             Column(Modifier.padding(horizontal = 22.dp, vertical = 20.dp)) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -128,32 +123,13 @@ fun LumenDialog(
 }
 
 @Composable
-private fun DialogButton(
-    label: String,
-    filled: Boolean,
-    modifier: Modifier = Modifier,
-    destructive: Boolean = false,
-    onClick: () -> Unit
-) {
-    val accent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    val shape = RoundedCornerShape(14.dp)
-    Box(
-        modifier = modifier
-            .height(46.dp)
-            .clip(shape)
-            .then(
-                if (filled) Modifier.background(accent)
-                else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), shape)
-            )
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-            color = if (filled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-        )
-    }
+private fun DialogButton(label: String, filled: Boolean, modifier: Modifier = Modifier,
+    destructive: Boolean = false, onClick: () -> Unit) {
+    ExpressiveAction(label, onClick, modifier,
+        container = if (filled) {
+            if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+        } else MaterialTheme.colorScheme.surfaceContainer,
+        content = if (filled) {
+            if (destructive) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary
+        } else MaterialTheme.colorScheme.onSurface)
 }

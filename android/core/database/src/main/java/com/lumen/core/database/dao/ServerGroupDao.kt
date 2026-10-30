@@ -11,6 +11,12 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ServerGroupDao {
+    @Query("DELETE FROM node_group_members")
+    suspend fun clearAllMembers()
+
+    @Query("DELETE FROM server_groups")
+    suspend fun clearAllGroups()
+
     @Query("SELECT * FROM server_groups ORDER BY createdAt ASC, name ASC")
     fun getGroups(): Flow<List<ServerGroupEntity>>
 

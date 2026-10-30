@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,7 +33,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -118,6 +118,7 @@ fun DomainRoutingScreen(
     modifier: Modifier = Modifier
 ) {
     val s = LocalStrings.current
+    val art = com.lumen.ui.theme.expressivePalette()
     val clipboard = LocalClipboardManager.current
     val density = LocalDensity.current
     var newAddressInput by remember { mutableStateOf("") }
@@ -227,28 +228,25 @@ fun DomainRoutingScreen(
     LazyColumn(
         state = listState,
         modifier = modifier
-            .fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 20.dp),
+            .fillMaxSize().statusBarsPadding(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
         item(key = "header") {
-            LumenScreenHeader(title = s.domainIpRouting, onBack = onBack)
+            LumenScreenHeader(title = s.domainIpRouting, onBack = onBack, applyStatusBarPadding = false)
         }
         item(key = "notice") {
-            LumenCard {
-                Text(
-                    text = s.directRulesNotice,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            SettingsPanel(s.routing, rules.size.toString().padStart(2, '0'), art.stage, art.onStage) {
+                Text(s.directRulesNotice, style = MaterialTheme.typography.bodySmall,
+                    color = art.onStage.copy(alpha = .8f))
             }
         }
         item(key = "presets_title") {
             SectionHeader(s.routingPresets)
         }
         item(key = "presets") {
-            SettingsCard {
-                Column(Modifier.padding(vertical = 12.dp)) {
+            Column {
+                Column(Modifier.padding(vertical = 4.dp)) {
                     Text(
                         text = s.routingPresetsDesc,
                         style = MaterialTheme.typography.bodySmall,
@@ -276,13 +274,11 @@ fun DomainRoutingScreen(
                 }
             }
         }
-        item(key = "custom_title") {
-            SectionHeader(s.customRules)
-        }
+        item(key = "custom_title") { Spacer(Modifier.height(14.dp)) }
         item(key = "composer") {
-            SettingsCard {
-                Column(Modifier.padding(vertical = 12.dp)) {
-                    OutlinedTextField(
+            SettingsPanel(s.customRules, "+", art.lavender, art.onLavender) {
+                Column {
+                    ExpressiveTextField(
                         value = newAddressInput,
                         onValueChange = { newAddressInput = it },
                         placeholder = { Text("example.com, geosite:ru, 192.168.1.0/24") },
@@ -423,7 +419,7 @@ fun DomainRoutingScreen(
             onDismiss = { editingRule = null }
         ) {
             Column {
-                OutlinedTextField(
+                ExpressiveTextField(
                     value = editorAddress,
                     onValueChange = { editorAddress = it },
                     modifier = Modifier.fillMaxWidth(),
@@ -459,48 +455,27 @@ fun DomainRoutingScreen(
 
 @Composable
 private fun PresetButton(
-    label: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    destructive: Boolean = false,
-    onClick: () -> Unit
+    label: String, selected: Boolean, modifier: Modifier = Modifier,
+    destructive: Boolean = false, onClick: () -> Unit
 ) {
-    val accent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    val shape = RoundedCornerShape(14.dp)
-    Row(
-        modifier = modifier
-            .clip(shape)
-            .background(
-                if (selected) accent.copy(alpha = 0.16f)
-                else MaterialTheme.colorScheme.surface
-            )
-            .border(
-                1.dp,
-                if (selected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-                shape
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 11.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (selected) {
-            Icon(
-                Icons.Filled.Check,
-                contentDescription = null,
-                tint = accent,
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(Modifier.width(5.dp))
+    val art = com.lumen.ui.theme.expressivePalette()
+    val container = if (destructive) art.coral else art.blue
+    val ink = if (destructive) art.onCoral else art.onBlue
+    Box(modifier.height(124.dp).clip(com.lumen.ui.components.selectionShape(selected, 18.dp, 30.dp))
+        .background(container).clickable(onClick = onClick)) {
+        com.lumen.ui.components.ExpressiveMotif(
+            if (destructive) com.lumen.ui.components.Motif.Sun else com.lumen.ui.components.Motif.Fan,
+            ink.copy(alpha = .08f), Modifier.align(Alignment.BottomEnd).size(94.dp))
+        Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Box(Modifier.size(26.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                .background(if (selected) ink else androidx.compose.ui.graphics.Color.Transparent)
+                .border(1.5.dp, ink.copy(alpha = .65f), androidx.compose.foundation.shape.CircleShape),
+                contentAlignment = Alignment.Center) {
+                if (selected) Icon(Icons.Filled.Check, null, Modifier.size(16.dp), tint = container)
+            }
+            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold,
+                color = ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = if (selected || destructive) accent else MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
@@ -513,28 +488,25 @@ private fun ActionChip(
     onClick: () -> Unit
 ) {
     val accent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    val shape = RoundedCornerShape(12.dp)
+    val shape = com.lumen.ui.components.selectionShape(selected, 12.dp, 24.dp)
     Box(
         modifier = modifier
             .clip(shape)
             .background(
-                if (selected) accent.copy(alpha = 0.14f)
-                else MaterialTheme.colorScheme.surface
-            )
-            .border(
-                1.dp,
-                if (selected) accent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                shape
+                if (selected) accent
+                else MaterialTheme.colorScheme.primary.copy(alpha = .08f)
             )
             .clickable(onClick = onClick)
-            .padding(vertical = 9.dp),
+            .height(48.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (selected) {
+                if (destructive) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary
+            } else MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1
         )
     }
@@ -566,12 +538,7 @@ private fun RuleRow(
         "proxy" -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.primary
     }
-    val shape = when {
-        isFirst && isLast -> RoundedCornerShape(18.dp)
-        isFirst -> RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
-        isLast -> RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
-        else -> RoundedCornerShape(0.dp)
-    }
+    val shape = RoundedCornerShape(16.dp)
     Row(
         modifier = Modifier
             .zIndex(if (isDragging) 1f else 0f)
@@ -579,9 +546,9 @@ private fun RuleRow(
                 translationY = dragOffsetY
                 shadowElevation = if (isDragging) 12.dp.toPx() else 0f
             }
-            .fillMaxWidth()
+            .fillMaxWidth().padding(bottom = 6.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(accent.copy(alpha = .08f))
             .pointerInput(rule.address) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = { currentOnDragStart(it.y) },
@@ -597,21 +564,6 @@ private fun RuleRow(
             .padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(11.dp))
-                .background(accent.copy(alpha = 0.14f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = actionLabel.take(1).uppercase(),
-                color = accent,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.ExtraBold
-            )
-        }
-        Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = rule.address,

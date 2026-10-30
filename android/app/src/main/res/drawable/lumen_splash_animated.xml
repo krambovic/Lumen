@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8–11 use the same mark without an animated-vector splash. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp" android:height="240dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M35.6,76.5 L35.6,40.7 L44.8,31.5 L44.8,67.3 L72.4,67.3 L64.1,76.5 Z"
+        android:fillColor="?attr/lumenSplashInk" />
+</vector>

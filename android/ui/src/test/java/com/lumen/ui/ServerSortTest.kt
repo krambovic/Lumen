@@ -54,8 +54,9 @@ class ServerSortTest {
     }
 
     @Test
-    fun unknownStoredValueFallsBackToDefault() {
-        assertEquals(ServerSort.DEFAULT, serverSortOf("NOT_A_SORT"))
+    fun legacyAndUnknownStoredValuesFallBackToPing() {
+        assertEquals(ServerSort.PING, serverSortOf("NOT_A_SORT"))
+        assertEquals(ServerSort.PING, serverSortOf("DEFAULT"))
         assertEquals(ServerSort.PROTOCOL, serverSortOf("PROTOCOL"))
     }
 
@@ -70,10 +71,6 @@ class ServerSortTest {
         assertEquals(
             listOf("alpha", "beta", "gamma"),
             nodes.sortedWith(serverSortComparator(ServerSort.NAME)).map { it.name }
-        )
-        assertEquals(
-            listOf("alpha", "beta", "gamma"),
-            nodes.sortedWith(serverSortComparator(ServerSort.DEFAULT)).map { it.name }
         )
         assertEquals(
             listOf("gamma", "beta", "alpha"),

@@ -13,6 +13,15 @@ import kotlinx.coroutines.runBlocking
 class VpnLogBusTest {
 
     @Test
+    fun liveHistoryKeepsMoreThanTwoHundredEventsWithoutDiskPersistence() {
+        VpnLogBus.updateSettings(VpnLogSettings(persist = false))
+        repeat(450) { VpnLogBus.warning("HISTORY", "event $it") }
+        assertEquals(450, VpnLogBus.entries.value.size)
+        assertEquals("event 0", VpnLogBus.entries.value.first().message)
+        assertEquals("event 449", VpnLogBus.entries.value.last().message)
+    }
+
+    @Test
     fun `dialog error keeps the core reason without colours or duplicate wrapper`() {
         val cause = IllegalStateException(
             "\u001B[31mConnection failed: FATAL\u001B[0m unknown cipher_suite"

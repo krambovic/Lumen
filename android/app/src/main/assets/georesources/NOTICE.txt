@@ -1,0 +1,10 @@
+Iranian regional rule sets: geosite-ir.srs and geoip-ir.srs
+Source: https://github.com/Chocolate4U/Iran-sing-box-rules
+License: GPL-3.0 (see https://github.com/Chocolate4U/Iran-sing-box-rules/blob/main/LICENSE)
+Bundled on 2026-10-30, unmodified, from the upstream rule-set branch:
+https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/rule-set/geosite-ir.srs
+https://raw.githubusercontent.com/Chocolate4U/Iran-sing-box-rules/rule-set/geoip-ir.srs
+
+SHA-256:
+geosite-ir.srs 59ad4f15d78b27017315da1de79ebb3250ad1ba7a870b2424319285f7864cbe0
+geoip-ir.srs 67525f97cab99dba83558cbaf54f3bcf1f0738d4feb2021bb358ea58c6c86c4d

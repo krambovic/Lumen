@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lumen_service_name" translatable="false">Lumen</string>
+    <string name="lumen_tile_description" translatable="false"></string>
+</resources>

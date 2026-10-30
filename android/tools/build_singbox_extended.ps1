@@ -2,16 +2,21 @@
 param(
     [string]$Ref = "v1.14.0-extended-2.7.1",
     [string]$Repository = "https://github.com/shtorm-7/sing-box-extended.git",
-    [string]$LumenRevision = "2",
+    [string]$LumenRevision = "3",
     [string]$GoExecutable = "go",
     [string]$WorkDirectory = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$patchPath = Join-Path $repoRoot "android\patches\sing-box-extended-interface-monitor.patch"
-if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
-    throw "sing-box Android compatibility patch is missing: $patchPath"
+$patchPaths = @(
+    (Join-Path $repoRoot "android\patches\sing-box-extended-direct-masque.patch"),
+    (Join-Path $repoRoot "android\patches\sing-box-extended-interface-monitor.patch")
+)
+foreach ($patchPath in $patchPaths) {
+    if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
+        throw "sing-box Android compatibility patch is missing: $patchPath"
+    }
 }
 
 $ownsWorkDirectory = [string]::IsNullOrWhiteSpace($WorkDirectory)
@@ -26,10 +31,12 @@ try {
     & git clone --filter=blob:none --depth 1 --branch $Ref $Repository $source
     if ($LASTEXITCODE -ne 0) { throw "failed to clone sing-box-extended ref $Ref" }
 
-    & git -C $source apply --check $patchPath
-    if ($LASTEXITCODE -ne 0) { throw "the Android compatibility patch is incompatible with $Ref" }
-    & git -C $source apply $patchPath
-    if ($LASTEXITCODE -ne 0) { throw "failed to apply the Android compatibility patch" }
+    foreach ($patchPath in $patchPaths) {
+        & git -C $source apply --unidiff-zero --check $patchPath
+        if ($LASTEXITCODE -ne 0) { throw "a Lumen Android patch is incompatible with ${Ref}: $patchPath" }
+        & git -C $source apply --unidiff-zero $patchPath
+        if ($LASTEXITCODE -ne 0) { throw "failed to apply Lumen Android patch: $patchPath" }
+    }
 
     # Keep the network feature set of the extended Android CLI artifacts already
     # shipped by Lumen. The embedded admin web UI is intentionally omitted: the

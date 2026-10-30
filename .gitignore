@@ -1,23 +1,14 @@
-# Python
 __pycache__/
 *.pyc
 *.pyo
 .venv/
-AGENTS.md
-CLAUDE.md
-
-# PyInstaller
 build/
 dist/
 *.spec
 !Lumen-qml.spec
 !windows/Lumen-qml.spec
-
-# Core binaries (downloaded by CI) — only the repo-root core/, not android/core
 /core/
 windows/core/
-
-# App data
 data/*
 !data/templates/
 !data/templates/**
@@ -30,19 +21,13 @@ windows/data/*
 !windows/data/templates/**
 !windows/data/external/
 !windows/data/external/**
-
-# Local backup artifacts
 *.bak
 *.bak[0-9]*
 *.bak_*
 *.broken_dns
-
-# Android signing (never commit)
 keystore.properties
 *.jks
 *.keystore
-
-# Android
 .gradle/
 android/.gradle/
 android/**/.gradle/
@@ -52,32 +37,33 @@ android/.idea/
 android/local.properties
 *.apk
 *.aar
-
-# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# OS
 Thumbs.db
 desktop.ini
 .DS_Store
-
-# Logs
 *.log
-
-# Archives
 *.zip
-/.claude
 /docs/changelog
-/.agent
-/.codex
-/.codegraph
-/graphify-out
-
-# Worktrees
-.worktrees/
+.agent/
+.agents/
+.claude/
+.codex/
+.codegraph/
+.serena/
+graphify-out/
 AGENTS.md
+CLAUDE.md
 HANDOFF.md
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.kotlin/
+node_modules/
+*.perfetto-trace
+*.hprof
+.worktrees/
 /telemetry-site
+/.env.local

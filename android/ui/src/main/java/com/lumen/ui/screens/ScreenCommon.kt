@@ -1,8 +1,12 @@
 package com.lumen.ui.screens
 
+import androidx.compose.ui.graphics.luminance
+
+import com.lumen.ui.components.expressiveButtonSemantics
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -50,7 +54,80 @@ import com.lumen.ui.theme.ConnectionWarning
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import com.lumen.ui.theme.LocalLumenColors
+
 import androidx.compose.ui.draw.shadow
+
+/** All editable fields share filled expressive surfaces, typography and focus feedback. */
+@Composable
+fun ExpressiveTextField(
+    value: String, onValueChange: (String) -> Unit, modifier: Modifier = Modifier,
+    label: (@Composable () -> Unit)? = null, placeholder: (@Composable () -> Unit)? = null,
+    leadingIcon: (@Composable () -> Unit)? = null, trailingIcon: (@Composable () -> Unit)? = null,
+    singleLine: Boolean = false, minLines: Int = 1, maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
+    enabled: Boolean = true, isError: Boolean = false, readOnly: Boolean = false,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(14.dp),
+    keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default,
+    keyboardActions: androidx.compose.foundation.text.KeyboardActions = androidx.compose.foundation.text.KeyboardActions.Default,
+    visualTransformation: androidx.compose.ui.text.input.VisualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
+    textStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyLarge,
+    colors: androidx.compose.material3.TextFieldColors = expressiveFieldColors()
+) {
+    androidx.compose.material3.TextField(value, onValueChange, modifier,
+        enabled = enabled, readOnly = readOnly, textStyle = textStyle,
+        label = label, placeholder = placeholder, leadingIcon = leadingIcon, trailingIcon = trailingIcon,
+        singleLine = singleLine, minLines = minLines, maxLines = maxLines, isError = isError,
+        keyboardOptions = keyboardOptions, keyboardActions = keyboardActions,
+        visualTransformation = visualTransformation, shape = shape, colors = colors)
+}
+
+@Composable
+fun expressiveFieldColors() = androidx.compose.material3.TextFieldDefaults.colors(
+    focusedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+    errorContainerColor = MaterialTheme.colorScheme.errorContainer,
+    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+    disabledIndicatorColor = Color.Transparent, errorIndicatorColor = Color.Transparent
+)
+
+@Composable
+internal fun PreferenceSwitchRow(
+    title: String, description: String, icon: androidx.compose.ui.graphics.vector.ImageVector,
+    checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit
+) {
+    val selectedColor by androidx.compose.animation.animateColorAsState(
+        if (checked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        animationSpec = androidx.compose.animation.core.spring(), label = "preference_color")
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(selectedColor)
+        .border(1.dp, if (checked) Color.Transparent else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(18.dp))
+        .then(Modifier.graphicsLayer { alpha = if (enabled) 1f else .45f })
+        .then(Modifier.togglePreference(checked, enabled, onChange))
+        .padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(40.dp).clip(com.lumen.ui.components.expressiveShape(
+            if (checked) com.lumen.ui.components.Motif.Clover else com.lumen.ui.components.Motif.Pebble))
+            .background(if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest),
+            contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = if (checked) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(21.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+            if (description.isNotBlank()) Text(description, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 3.dp))
+        }
+        LumenSwitch(checked, null, enabled = enabled)
+    }
+}
+
+private fun Modifier.togglePreference(checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit): Modifier =
+    this.then(Modifier.toggleable(value = checked, enabled = enabled,
+        role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChange))
 
 /** Material Design 3 Menu Selector with rounded corners & shadow elevation. */
 @Composable
@@ -63,7 +140,6 @@ fun LumenDropdown(
     optionLabel: (String) -> String = { it }
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val menuShape = RoundedCornerShape(20.dp)
 
     Column(modifier) {
         if (label.isNotEmpty()) {
@@ -74,30 +150,30 @@ fun LumenDropdown(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = .09f))
+                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .18f), RoundedCornerShape(14.dp))
                 .clickable { expanded = true }
-                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .padding(horizontal = 14.dp, vertical = 14.dp)
         ) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(optionLabel(selected), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text("\u25BE", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text(optionLabel(selected), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                val arrowRotation by animateFloatAsState(if (expanded) 180f else 0f, label = "arrow")
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp).graphicsLayer { rotationZ = arrowRotation }
+                )
             }
-            // Rounding comes from the theme shape: clipping the popup content left a
-            // second square outline around the menu.
-            MaterialTheme(shapes = MaterialTheme.shapes.copy(extraSmall = menuShape)) {
-            DropdownMenu(
+            LumenMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier
-                    .widthIn(min = 220.dp)
-                    .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), menuShape)
+                modifier = Modifier.widthIn(min = 220.dp)
             ) {
-                Column(Modifier.padding(vertical = 6.dp)) {
                     options.forEach { option ->
                         val isOptionSelected = option == selected
                         DropdownMenuItem(
@@ -118,8 +194,6 @@ fun LumenDropdown(
                             }
                         )
                     }
-                }
-            }
             }
         }
     }
@@ -137,19 +211,14 @@ fun LumenMenu(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    val shape = RoundedCornerShape(20.dp)
+    val shape = RoundedCornerShape(24.dp)
     // The popup surface draws its own container, so the rounding is set through the
     // theme shape; an extra clip/background here produced a second, square outline.
     MaterialTheme(shapes = MaterialTheme.shapes.copy(extraSmall = shape)) {
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = onDismissRequest,
-            modifier = modifier
-                .widthIn(min = 220.dp)
-                .border(
-                    BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-                    shape
-                )
+            modifier = modifier.widthIn(min = 220.dp)
         ) {
             Column(Modifier.padding(vertical = 6.dp)) { content() }
         }
@@ -169,14 +238,22 @@ fun LumenSwitch(
         onCheckedChange = onCheckedChange,
         modifier = modifier,
         enabled = enabled,
+        thumbContent = {
+            Icon(
+                imageVector = if (checked) Icons.Filled.Check else Icons.Filled.Close,
+                contentDescription = null,
+                modifier = Modifier.size(androidx.compose.material3.SwitchDefaults.IconSize)
+            )
+        },
         colors = androidx.compose.material3.SwitchDefaults.colors(
-            checkedThumbColor = Color.White,
+            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
             checkedTrackColor = MaterialTheme.colorScheme.primary,
             checkedBorderColor = Color.Transparent,
             checkedIconColor = MaterialTheme.colorScheme.primary,
-            uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-            uncheckedBorderColor = MaterialTheme.colorScheme.outline
+            uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+            uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            uncheckedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+            uncheckedIconColor = MaterialTheme.colorScheme.surfaceContainerHighest
         )
     )
 }
@@ -193,21 +270,23 @@ fun LumenCard(
             .fillMaxWidth()
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), shape)
             .padding(16.dp)
     ) {
         content()
     }
 }
 
+/** Small caps caption above a group of cards, as in the 2.x redesign. */
 @Composable
 fun SectionHeader(title: String, modifier: Modifier = Modifier) {
-    Text(
-        title,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = modifier.padding(top = 16.dp, bottom = 8.dp)
-    )
+    Row(modifier.padding(start = 2.dp, top = 24.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(5.dp).height(20.dp).clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colorScheme.primary))
+        Spacer(Modifier.width(10.dp))
+        Text(title, style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface)
+    }
 }
 
 /**
@@ -219,11 +298,31 @@ object PingThresholds {
     var fairMs by androidx.compose.runtime.mutableStateOf(300)
 }
 
+/** Latency colours; LumenTheme points them at the active palette. */
+object PingColors {
+    var good by androidx.compose.runtime.mutableStateOf(ConnectionSuccess)
+    var fair by androidx.compose.runtime.mutableStateOf(ConnectionWarning)
+    var bad by androidx.compose.runtime.mutableStateOf(ConnectionDanger)
+}
+
 fun pingColor(ping: Int): Color = when {
-    ping <= 0 -> ConnectionDanger
-    ping <= PingThresholds.goodMs -> ConnectionSuccess
-    ping <= PingThresholds.fairMs -> ConnectionWarning
-    else -> ConnectionDanger
+    ping <= 0 -> PingColors.bad
+    ping <= PingThresholds.goodMs -> PingColors.good
+    ping <= PingThresholds.fairMs -> PingColors.fair
+    else -> PingColors.bad
+}
+
+/** Keep semantic green/amber/red readable on both the active dark card and light rows. */
+fun pingColor(ping: Int, background: Color): Color {
+    val original = pingColor(ping)
+    val target = if (background.luminance() < .4f) Color.White else Color.Black
+    for (step in 0..10) {
+        val color = androidx.compose.ui.graphics.lerp(original, target, step / 10f)
+        val ratio = (maxOf(color.luminance(), background.luminance()) + .05f) /
+            (minOf(color.luminance(), background.luminance()) + .05f)
+        if (ratio >= 4.5f) return color
+    }
+    return target
 }
 
 /** Badge colour per protocol family; VLESS/VMess/Trojan intentionally share one. */
@@ -240,103 +339,67 @@ fun protocolColor(protocol: String): Color = when (protocol.trim().lowercase()) 
     else -> Color(0xFF9AA6B8)
 }
 
+/** Header for settings destinations, matching the settings hub hierarchy. */
 @Composable
-fun LumenScreenHeader(
-    title: String,
-    onBack: (() -> Unit)? = null,
-    subtitle: String? = null,
-    actions: (@Composable () -> Unit)? = null,
-    stackSubtitleOnCompact: Boolean = true,
-    applyStatusBarPadding: Boolean = true,
-    modifier: Modifier = Modifier
+fun SettingsDetailHeader(
+    title: String, description: String, onBack: (() -> Unit)?,
+    applyStatusBarPadding: Boolean = false, actions: (@Composable () -> Unit)? = null
 ) {
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxWidth()
-            .then(if (applyStatusBarPadding) Modifier.statusBarsPadding() else Modifier)
-            .padding(vertical = 6.dp),
-    ) {
-        val compactHeader = maxWidth < 520.dp &&
-            stackSubtitleOnCompact &&
-            !subtitle.isNullOrBlank()
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (onBack != null) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .offset(x = (-2).dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                Spacer(Modifier.width(6.dp))
+    val art = com.lumen.ui.theme.expressivePalette()
+    Column(Modifier.fillMaxWidth()
+        .then(if (applyStatusBarPadding) Modifier.statusBarsPadding() else Modifier)
+        .padding(top = 8.dp, bottom = 12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            if (onBack != null) Row(
+                Modifier.height(48.dp).clip(RoundedCornerShape(24.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onBack)
+                    .padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(LocalStrings.current.back, style = MaterialTheme.typography.labelLarge)
             }
-            if (compactHeader) {
-                Column(modifier = Modifier.weight(1f)) {
-                    HeaderTitle(title, Modifier.fillMaxWidth())
-                    Text(
-                        text = subtitle.orEmpty(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Clip,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            } else {
-                if (subtitle.isNullOrBlank()) {
-                    HeaderTitle(title, Modifier.weight(1f))
-                } else {
-                    HeaderTitle(title, Modifier.wrapContentWidth())
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Clip,
-                        modifier = Modifier.wrapContentWidth()
-                    )
-                    Spacer(Modifier.weight(1f))
-                }
-            }
-            if (actions != null) {
-                actions()
-            }
+            com.lumen.ui.components.ExpressiveMotif(com.lumen.ui.components.Motif.Sun, art.stage,
+                Modifier.size(28.dp))
         }
+        Text(title, style = MaterialTheme.typography.headlineLarge,
+            color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 18.dp))
+        if (description.isNotBlank()) Text(description, style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+        if (actions != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { actions() }
     }
 }
 
 @Composable
-private fun HeaderTitle(title: String, modifier: Modifier = Modifier) {
-    Text(
-        text = title,
-        style = headerTitleStyle(title),
-        fontWeight = FontWeight.ExtraBold,
-        color = MaterialTheme.colorScheme.onSurface,
-        maxLines = 2,
-        overflow = TextOverflow.Clip,
-        modifier = modifier
-    )
+fun LumenScreenHeader(
+    title: String, onBack: (() -> Unit)? = null, subtitle: String? = null,
+    subtitleColor: Color? = null, actions: (@Composable () -> Unit)? = null,
+    stackSubtitleOnCompact: Boolean = true, applyStatusBarPadding: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier.fillMaxWidth()
+        .then(if (applyStatusBarPadding) Modifier.statusBarsPadding() else Modifier)
+        .padding(vertical = 10.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (onBack != null) {
+                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)
+                    .clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceContainer)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, LocalStrings.current.back)
+                }
+                Spacer(Modifier.width(12.dp))
+            }
+            Text(title, style = if (onBack == null) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (actions != null) actions()
+        }
+        if (!subtitle.isNullOrBlank()) Text(subtitle, style = MaterialTheme.typography.bodyMedium,
+            color = subtitleColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp, start = if (onBack != null) 60.dp else 0.dp))
+    }
 }
-
-@Composable
-private fun headerTitleStyle(title: String) = MaterialTheme.typography.headlineSmall.copy(
-    fontSize = if (title.length >= 18) 24.sp else MaterialTheme.typography.headlineSmall.fontSize,
-    lineHeight = if (title.length >= 18) 30.sp else MaterialTheme.typography.headlineSmall.lineHeight
-)
 
 /**
  * True while the device itself plays touch feedback.
@@ -444,7 +507,7 @@ fun rememberHapticTick(): (androidx.compose.ui.hapticfeedback.HapticFeedbackType
  * Height of a filter chip. Fixed so a long subscription name can never turn the
  * chip into a tall rectangle next to the 38dp filter icons.
  */
-private val FilterChipHeight = 38.dp
+private val FilterChipHeight = 34.dp
 
 /** Compact selectable chip used by the server filters. */
 @Composable
@@ -456,21 +519,30 @@ fun LumenFilterChip(
     badge: String? = null,
     leading: String? = null
 ) {
-    val shape = RoundedCornerShape(12.dp)
+    // Expressive selection changes the silhouette as well as its color.
+    val corner by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (selected) FilterChipHeight / 2 else 11.dp,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        ),
+        label = "filter_chip_shape"
+    )
+    val shape = RoundedCornerShape(corner)
     val tick = rememberHapticTick()
     val bg by androidx.compose.animation.animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+        targetValue = if (selected) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.surfaceVariant,
         label = "chip_bg"
     )
     val borderColor by androidx.compose.animation.animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
-            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        targetValue = if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.outlineVariant,
         label = "chip_border"
     )
-    val fg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
     Row(
-        modifier = modifier
+        modifier = modifier.expressiveButtonSemantics(label + (badge?.let { " · $it" } ?: ""), onClick)
             .height(FilterChipHeight)
             .clip(shape)
             .background(bg)
@@ -479,7 +551,7 @@ fun LumenFilterChip(
                 tick(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                 onClick()
             }
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (!leading.isNullOrBlank()) {
@@ -491,13 +563,15 @@ fun LumenFilterChip(
         // which used to wrap the count onto three lines and blow up the chip.
         Text(
             text = label,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelLarge,
             color = fg,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false)
+            // Capped width instead of weight: chips also live in horizontally scrolling
+            // rails, where a weighted child gets no width at all.
+            modifier = Modifier.widthIn(max = 200.dp)
         )
         if (!badge.isNullOrBlank()) {
             Spacer(Modifier.width(6.dp))

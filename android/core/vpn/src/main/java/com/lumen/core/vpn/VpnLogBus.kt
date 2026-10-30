@@ -54,7 +54,7 @@ data class VpnLogSettings(
  * one, which is what makes the tail survive a crash or a kill.
  */
 object VpnLogBus {
-    private const val MAX_ENTRIES = 200
+    private const val MAX_ENTRIES = 2_000
     private const val MAX_MESSAGE_CHARS = 2_000
     private const val MAX_STACK_FRAMES = 12
     private const val MAX_PENDING_WRITES = 512
@@ -74,7 +74,7 @@ object VpnLogBus {
     const val KEY_LOG_MAX_ENTRIES = "app_log_max_entries"
 
     /** One screenful; the log screen pages further back with `skipFromEnd`. */
-    const val DEFAULT_PAGE_SIZE = 200
+    const val DEFAULT_PAGE_SIZE = 500
 
     /** An export has to fit into an Intent extra, so it is bounded too. */
     const val DEFAULT_EXPORT_ENTRIES = 2_000

@@ -2,6 +2,7 @@ package com.lumen.core.vpn
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.net.VpnService
 import android.os.Build
 import android.service.quicksettings.Tile
@@ -99,13 +100,15 @@ class LumenTileService : TileService() {
             ?: (LumenVpnService.isRunning.value || LumenVpnService.isStarting.value)
 
         tile.state = if (isRunning) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.label = "Lumen VPN"
+        tile.label = getString(R.string.lumen_service_name)
+        tile.icon = Icon.createWithResource(this, R.drawable.ic_qs_lumen)
+        tile.contentDescription = tile.label
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            tile.subtitle = when {
-                LumenVpnService.isRunning.value -> "Connected"
-                LumenVpnService.isStarting.value -> "Connecting"
-                else -> "Disconnected"
-            }
+            // Explicitly clear a subtitle cached by SystemUI or an OEM shell.
+            tile.subtitle = null
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            tile.stateDescription = null
         }
         tile.updateTile()
         // Must be explicit, otherwise Android 8+ drops it before it reaches the

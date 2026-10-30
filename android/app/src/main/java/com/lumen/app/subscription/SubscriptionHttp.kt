@@ -22,9 +22,15 @@ internal object SubscriptionHttp {
     fun get(
         url: URL, headers: Map<String, String>, proxyPort: Int?, username: String?, password: String?,
         cancelled: () -> Boolean
+    ): SubscriptionHttpResponse = get(url, headers, proxyPort, username, password, cancelled, 45_000)
+
+    fun get(
+        url: URL, headers: Map<String, String>, proxyPort: Int?, username: String?, password: String?,
+        cancelled: () -> Boolean, timeoutMs: Int
     ): SubscriptionHttpResponse {
         checkCancelled(cancelled)
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45)
+        require(timeoutMs in 1_000..45_000)
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs.toLong())
         fun check() {
             checkCancelled(cancelled)
             if (System.nanoTime() >= deadline) throw SocketTimeoutException("Subscription request deadline exceeded")
@@ -34,8 +40,8 @@ internal object SubscriptionHttp {
         require(headers.all { (k, v) -> k.none { it == '\r' || it == '\n' } && v.none { it == '\r' || it == '\n' } })
         val response = if (proxyPort == null) {
             val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 20_000
+            conn.connectTimeout = minOf(15_000, timeoutMs)
+            conn.readTimeout = minOf(20_000, timeoutMs)
             conn.instanceFollowRedirects = false
             headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
             try {
@@ -49,7 +55,7 @@ internal object SubscriptionHttp {
         } else {
             require(proxyPort in 1..65535) { "Invalid local SOCKS port" }
             require((username == null) == (password == null)) { "Incomplete SOCKS credentials" }
-            requestViaSocks(url, headers, proxyPort, username, password, ::check)
+            requestViaSocks(url, headers, proxyPort, username, password, ::check, timeoutMs)
         }
         check()
         val bytes = if (response.headers["content-encoding"]?.equals("gzip", true) == true && response.body.isNotEmpty()) {
@@ -72,11 +78,12 @@ internal object SubscriptionHttp {
     }
 
     private fun requestViaSocks(
-        url: URL, headers: Map<String, String>, port: Int, username: String?, password: String?, check: () -> Unit
+        url: URL, headers: Map<String, String>, port: Int, username: String?, password: String?, check: () -> Unit,
+        timeoutMs: Int
     ): SubscriptionHttpResponse {
         var socket: Socket = Socket(Proxy.NO_PROXY)
         try {
-            socket.connect(InetSocketAddress("127.0.0.1", port), 15_000)
+            socket.connect(InetSocketAddress("127.0.0.1", port), minOf(15_000, timeoutMs))
             socket.soTimeout = 500
             var input: InputStream = socket.getInputStream()
             var output: OutputStream = socket.getOutputStream()
@@ -127,7 +134,7 @@ internal object SubscriptionHttp {
             if (url.protocol == "https") {
                 val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(socket, host, targetPort, true) as SSLSocket
                 socket = tls
-                tls.soTimeout = 15_000
+                tls.soTimeout = minOf(15_000, timeoutMs)
                 tls.sslParameters = tls.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
                 tls.startHandshake()
                 tls.soTimeout = 500

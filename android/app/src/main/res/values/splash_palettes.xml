@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="lumenSplashInk" format="color" />
+    <style name="Theme.Lumen.Starting.LIGHT.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#FAF7F2</item>
+        <item name="lumenSplashInk">#6937D4</item>
+    </style>
+    <style name="Theme.Lumen.Starting.LIGHT.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#09080D</item>
+        <item name="lumenSplashInk">#D5B8FF</item>
+    </style>
+    <style name="Theme.Lumen.Starting.LIGHT.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#D5B8FF</item>
+    </style>
+    <style name="Theme.Lumen.Starting.DARK.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#FAF7F2</item>
+        <item name="lumenSplashInk">#6937D4</item>
+    </style>
+    <style name="Theme.Lumen.Starting.DARK.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#09080D</item>
+        <item name="lumenSplashInk">#D5B8FF</item>
+    </style>
+    <style name="Theme.Lumen.Starting.DARK.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#D5B8FF</item>
+    </style>
+    <style name="Theme.Lumen.Starting.DRACULA.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#F8F4F2</item>
+        <item name="lumenSplashInk">#886AB3</item>
+    </style>
+    <style name="Theme.Lumen.Starting.DRACULA.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#282A36</item>
+        <item name="lumenSplashInk">#BD93F9</item>
+    </style>
+    <style name="Theme.Lumen.Starting.DRACULA.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#BD93F9</item>
+    </style>
+    <style name="Theme.Lumen.Starting.CATPPUCCIN.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#F8F4F2</item>
+        <item name="lumenSplashInk">#9278B2</item>
+    </style>
+    <style name="Theme.Lumen.Starting.CATPPUCCIN.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#11111B</item>
+        <item name="lumenSplashInk">#CBA6F7</item>
+    </style>
+    <style name="Theme.Lumen.Starting.CATPPUCCIN.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#CBA6F7</item>
+    </style>
+    <style name="Theme.Lumen.Starting.NORD.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#F6F5F1</item>
+        <item name="lumenSplashInk">#628A96</item>
+    </style>
+    <style name="Theme.Lumen.Starting.NORD.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#2E3440</item>
+        <item name="lumenSplashInk">#88C0D0</item>
+    </style>
+    <style name="Theme.Lumen.Starting.NORD.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#88C0D0</item>
+    </style>
+    <style name="Theme.Lumen.Starting.GITHUB.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#F4F4F2</item>
+        <item name="lumenSplashInk">#3F78B8</item>
+    </style>
+    <style name="Theme.Lumen.Starting.GITHUB.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#0D1117</item>
+        <item name="lumenSplashInk">#58A6FF</item>
+    </style>
+    <style name="Theme.Lumen.Starting.GITHUB.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#58A6FF</item>
+    </style>
+    <style name="Theme.Lumen.Starting.GRUVBOX.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#FAF5EB</item>
+        <item name="lumenSplashInk">#B48822</item>
+    </style>
+    <style name="Theme.Lumen.Starting.GRUVBOX.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#1D2021</item>
+        <item name="lumenSplashInk">#FABD2F</item>
+    </style>
+    <style name="Theme.Lumen.Starting.GRUVBOX.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#FABD2F</item>
+    </style>
+    <style name="Theme.Lumen.Starting.TOKYO_NIGHT.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#F6F4F2</item>
+        <item name="lumenSplashInk">#5875B2</item>
+    </style>
+    <style name="Theme.Lumen.Starting.TOKYO_NIGHT.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#16161E</item>
+        <item name="lumenSplashInk">#7AA2F7</item>
+    </style>
+    <style name="Theme.Lumen.Starting.TOKYO_NIGHT.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#7AA2F7</item>
+    </style>
+    <style name="Theme.Lumen.Starting.MONOKAI.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#FAF0EE</item>
+        <item name="lumenSplashInk">#B31B52</item>
+    </style>
+    <style name="Theme.Lumen.Starting.MONOKAI.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#1E1F1C</item>
+        <item name="lumenSplashInk">#F92672</item>
+    </style>
+    <style name="Theme.Lumen.Starting.MONOKAI.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#F92672</item>
+    </style>
+    <style name="Theme.Lumen.Starting.MATERIAL.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#F6F5F0</item>
+        <item name="lumenSplashInk">#5C928D</item>
+    </style>
+    <style name="Theme.Lumen.Starting.MATERIAL.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#0F111A</item>
+        <item name="lumenSplashInk">#80CBC4</item>
+    </style>
+    <style name="Theme.Lumen.Starting.MATERIAL.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#80CBC4</item>
+    </style>
+    <style name="Theme.Lumen.Starting.SOLARIZED.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#F3F3F1</item>
+        <item name="lumenSplashInk">#1B6497</item>
+    </style>
+    <style name="Theme.Lumen.Starting.SOLARIZED.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#002B36</item>
+        <item name="lumenSplashInk">#268BD2</item>
+    </style>
+    <style name="Theme.Lumen.Starting.SOLARIZED.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#268BD2</item>
+    </style>
+    <style name="Theme.Lumen.Starting.ROSE_PINE.Light" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#F8F4F2</item>
+        <item name="lumenSplashInk">#8D78A6</item>
+    </style>
+    <style name="Theme.Lumen.Starting.ROSE_PINE.Dark" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#191724</item>
+        <item name="lumenSplashInk">#C4A7E7</item>
+    </style>
+    <style name="Theme.Lumen.Starting.ROSE_PINE.Amoled" parent="Theme.Lumen.Starting">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="lumenSplashInk">#C4A7E7</item>
+    </style>
+</resources>

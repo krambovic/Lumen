@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name="com.lumen.app.MotionTestActivity" android:exported="false" />
+        <!-- No data URI, launcher entry, live state or engine access; debug variant only. -->
+        <activity android:name="com.lumen.app.DesignReviewActivity"
+            android:exported="true" android:windowSoftInputMode="adjustResize" />
+    </application>
+</manifest>

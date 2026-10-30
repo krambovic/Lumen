@@ -65,11 +65,7 @@ class AndroidUpdateInstallReceiver : BroadcastReceiver() {
 
     private fun reportFailure(context: Context, message: String) {
         VpnLogBus.warning("UPDATE", "Android update installation failed: $message")
-        Toast.makeText(
-            context,
-            "Lumen update failed: $message",
-            Toast.LENGTH_LONG
-        ).show()
+        com.lumen.ui.screens.showLumenNotice("Lumen update failed: $message")
     }
 
     private fun launchUpdatedApp(context: Context) {

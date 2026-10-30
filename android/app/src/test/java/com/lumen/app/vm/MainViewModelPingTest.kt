@@ -6,6 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MainViewModelPingTest {
+    @Test fun iranCheckBudgetsColdDnsAndTlsAndHasIndependentDestinations() {
+        assertEquals(10_000, PingBudget.setupMs(2_000, iranNetwork = true))
+        assertTrue(PingBudget.attemptsMs(5_000, 2, 200, true, iranNetwork = true) >= 160_000L)
+        val urls = httpPingTargets("", iranNetwork = true)
+        assertEquals(3, urls.distinct().size)
+        assertEquals("https://www.google.com/generate_204", urls.first())
+        assertEquals(listOf("https://example.org/check", "https://example.org/check"),
+            httpPingTargets("https://example.org/check", iranNetwork = true))
+    }
     @Test
     fun httpGetAcceptsAnyValidHttpResponse() {
         assertTrue(isSuccessfulHttpPingStatusLine("HTTP/1.1 204 No Content"))

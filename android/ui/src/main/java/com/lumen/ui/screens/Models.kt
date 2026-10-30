@@ -226,6 +226,8 @@ direct:geosite:category-ru
 direct:geoip:ru
 """.trimIndent()
 
+enum class LumenResetTarget { SETTINGS, SERVERS }
+
 data class SettingsUiState(
     val engine: String = "SINGBOX",
     val muxEnabled: Boolean = false,
@@ -259,6 +261,7 @@ data class SettingsUiState(
     val blockQuic: Boolean = false,
     val sniffRouteOnly: Boolean = false,
     val mtu: Int = 1500,
+    val routingFinalOutbound: String = "proxy",
     val directDomains: String = DEFAULT_DIRECT_DOMAINS,
     val directIpCidrs: String = "",
     val geoResourceSource: String = "https://github.com/runetfreedom/russia-v2ray-rules-dat/",
@@ -301,8 +304,9 @@ data class SettingsUiState(
     val subscriptionConverterUrl: String = "",
     val loggingEnabled: Boolean = true,
     val language: String = "en",
-    val themeMode: ThemeMode = ThemeMode.DARK,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val themePreset: ThemePreset = ThemePreset.DARK,
+    val accentColor: String = "",
     val useMaterialYou: Boolean = false,
     val useAmoledBlack: Boolean = false,
     val hapticsEnabled: Boolean = true,
@@ -328,11 +332,17 @@ data class SettingsUiState(
     /** Check GitHub for a newer Android APK when the app is opened, at most daily. */
     val autoCheckUpdates: Boolean = true,
     val dashboardStyle: DashboardStyle = DashboardStyle.DEFAULT,
+    val compactServerGrid: Boolean = false,
+    /** Versioned tile IDs, order and size. An empty value uses the curated layout. */
+    val settingsTileLayout: String = "",
     val launcherIcon: LauncherIconOption = LauncherIconOption.SYSTEM
 )
 
 /** Dashboard layouts offered in Customization. */
-enum class DashboardStyle { DEFAULT, SLIDER, CENTERED }
+enum class DashboardStyle { DEFAULT, SLIDER, CENTERED, DOCK }
+
+@Immutable
+data class DashboardSpeeds(val download: Long = 0L, val upload: Long = 0L)
 
 /**
  * Launcher icon the user pinned in Customization.
@@ -479,7 +489,7 @@ val LOG_LEVELS: List<String> = listOf("trace", "debug", "info", "warning", "erro
  * Ping methods shared with desktop Lumen. "real" times the whole connect through a
  * temporary core, "http" times a plain GET through the same node once it is up.
  */
-val PING_TYPES: List<String> = listOf("tcping", "icmp", "real", "http")
+val PING_TYPES: List<String> = listOf("tcping", "icmp", "http")
 
 /** How several probes of one server are reduced to a single latency value. */
 val PING_AGGREGATES: List<String> = listOf("min", "avg", "median")
@@ -499,4 +509,23 @@ val LocalHapticsEnabled = androidx.compose.runtime.staticCompositionLocalOf { tr
 object LumenVersion {
     var appVersion: String = "0.7.0"
     const val ENGINE: String = "1.14.0-extended-2.7.1"
+}
+
+/** Legacy raw ids from imports and explicit UI filter ids share one selection. */
+internal fun resolvedServerFilter(value: String, subscriptions: List<SubscriptionUiModel>, groups: List<ServerGroupUiModel>): String = when {
+    value == "sub" -> "all" // Migrate the removed aggregate subscription facet.
+    value in listOf("all", "manual") -> value
+    value.startsWith("subscription:") -> if (subscriptions.any { it.id == value.removePrefix("subscription:") }) value else "all"
+    value.startsWith("group:") -> if (groups.any { it.id == value.removePrefix("group:") }) value else "all"
+    groups.any { it.id == value } -> "group:$value"
+    subscriptions.any { it.id == value } -> "subscription:$value"
+    else -> "all"
+}
+
+internal fun nodesForServerFilter(nodes: List<NodeUiModel>, filter: String): List<NodeUiModel> = when {
+    filter == "sub" -> nodes.filter { it.subscriptionId != null }
+    filter == "manual" -> nodes.filter { nodeInGroup(it, GROUP_MANUAL) }
+    filter.startsWith("subscription:") -> nodes.filter { nodeInGroup(it, filter.removePrefix("subscription:")) }
+    filter.startsWith("group:") -> nodes.filter { nodeInGroup(it, filter.removePrefix("group:")) }
+    else -> nodes
 }

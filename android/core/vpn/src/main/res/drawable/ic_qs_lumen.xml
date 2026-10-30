@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lumen's launcher mark, fitted to the monochrome system-icon safe area. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="600" android:viewportHeight="600">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M188.93,62.96 L188.93,448 L496.02,448 L424.21,537.04 L103.98,537.04 L103.98,150.25 Z" />
+</vector>

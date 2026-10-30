@@ -1,5 +1,7 @@
 package com.lumen.ui.screens
 
+import androidx.compose.foundation.layout.Box
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -51,11 +54,12 @@ fun GeoResourcesScreen(
     // mandatory files for that region have downloaded successfully.
     var selectedSource by remember(source) { mutableStateOf(source) }
     Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
+        modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 100.dp)
     ) {
         LumenScreenHeader(
             title = s.geoResourceFiles,
-            onBack = onBack
+            onBack = onBack,
+            applyStatusBarPadding = false
         )
         Spacer(Modifier.height(8.dp))
         LumenDropdown(
@@ -118,15 +122,18 @@ fun GeoResourcesScreen(
 // like a separate tool bolted onto the app.
 @Composable
 private fun GeoResourceCard(resource: GeoResourceUiModel) {
-    SettingsCard {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
-            Text(resource.name, style = MaterialTheme.typography.titleMedium)
+    val art = com.lumen.ui.theme.expressivePalette()
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(art.blue)) {
+        com.lumen.ui.components.ExpressiveMotif(com.lumen.ui.components.Motif.Fan, art.onBlue.copy(alpha = .09f),
+            Modifier.align(Alignment.BottomEnd).size(112.dp))
+        Column(Modifier.fillMaxWidth().padding(20.dp)) {
+            Text(resource.name, fontFamily = com.lumen.ui.theme.LumenMono,
+                style = MaterialTheme.typography.labelLarge, color = art.onBlue)
+            Spacer(Modifier.height(18.dp))
+            Text(formatGeoBytes(resource.sizeBytes), style = MaterialTheme.typography.headlineLarge, color = art.onBlue)
             Spacer(Modifier.height(6.dp))
-            Text(
-                "${formatGeoBytes(resource.sizeBytes)} \u2022 ${DateFormat.getDateTimeInstance().format(Date(resource.modifiedAt))}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text(DateFormat.getDateTimeInstance().format(Date(resource.modifiedAt)),
+                style = MaterialTheme.typography.bodySmall, color = art.onBlue.copy(alpha = .7f))
         }
     }
 }

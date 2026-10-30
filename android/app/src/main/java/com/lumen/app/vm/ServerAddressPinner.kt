@@ -37,18 +37,26 @@ object ServerAddressPinner {
     /**
      * @param hostnames outbound server hostnames (IP literals are ignored)
      * @param foreignResolver the plaintext resolver the core's bootstrap would use
+     * @param preferSystemDns keep vetted physical-network endpoint answers, with
+     * authenticated DoH as fallback for missing or reserved/sinkhole replies
      * @return hostname -> vetted addresses, empty when nothing needs pinning
      */
     fun pinnedAddresses(
         hostnames: Collection<String>,
-        foreignResolver: String
+        foreignResolver: String,
+        preferSystemDns: Boolean = false
     ): Map<String, List<String>> {
         val resolver = foreignResolver.trim()
-        if (resolver.isEmpty() || !isIpLiteral(resolver)) return emptyMap()
+        if (!preferSystemDns && (resolver.isEmpty() || !isIpLiteral(resolver))) return emptyMap()
         val pinned = LinkedHashMap<String, List<String>>()
         for (raw in hostnames.distinct()) {
             val host = raw.trim().trimEnd('.').lowercase()
             if (host.isEmpty() || isIpLiteral(host) || !host.any(Char::isLetter)) continue
+            if (preferSystemDns) {
+                val addresses = TrustedEndpointResolver.resolve(host, preferSystem = true).mapNotNull { it.hostAddress }
+                if (addresses.isNotEmpty()) pinned[host] = addresses
+                continue
+            }
             val hijacked = runCatching { queryA(host, resolver) }.getOrDefault(emptyList())
             // Nothing came back, or something plausible did: leave this hostname to
             // the normal bootstrap chain. Pinning here could only make it worse.
@@ -134,11 +142,9 @@ object ServerAddressPinner {
         val request = buildQuery(id, host)
         DatagramSocket().use { socket ->
             socket.soTimeout = QUERY_TIMEOUT_MS
+            socket.connect(InetSocketAddress(InetAddress.getByName(resolver), DNS_PORT))
             socket.send(
-                DatagramPacket(
-                    request, request.size,
-                    InetSocketAddress(InetAddress.getByName(resolver), DNS_PORT)
-                )
+                DatagramPacket(request, request.size)
             )
             val buffer = ByteArray(1500)
             val response = DatagramPacket(buffer, buffer.size)
@@ -147,16 +153,18 @@ object ServerAddressPinner {
         }
     }
 
-    private fun buildQuery(id: Int, host: String): ByteArray {
+    internal fun buildQuery(id: Int, host: String): ByteArray {
         val out = ByteArrayOutputStream()
         out.write(id shr 8)
         out.write(id and 0xFF)
         out.write(0x01); out.write(0x00) // standard query, recursion desired
         out.write(0x00); out.write(0x01) // one question
         repeat(6) { out.write(0x00) } // no answer/authority/additional records
-        for (label in host.split('.')) {
+        val asciiHost = java.net.IDN.toASCII(host.trimEnd('.'))
+        require(asciiHost.length in 1..253)
+        for (label in asciiHost.split('.')) {
             val bytes = label.toByteArray(Charsets.US_ASCII)
-            if (bytes.isEmpty() || bytes.size > 63) continue
+            require(bytes.size in 1..63)
             out.write(bytes.size)
             out.write(bytes)
         }
@@ -166,10 +174,16 @@ object ServerAddressPinner {
         return out.toByteArray()
     }
 
-    private fun parseAnswers(buffer: ByteArray, length: Int, expectedId: Int): List<InetAddress> {
+    internal fun parseAnswers(buffer: ByteArray, length: Int, expectedId: Int): List<InetAddress> {
         fun byteAt(index: Int): Int = buffer[index].toInt() and 0xFF
-        if (length < 12) return emptyList()
+        if (length < 12 || length > buffer.size) return emptyList()
         if ((byteAt(0) shl 8 or byteAt(1)) != expectedId) return emptyList()
+        // Do not pin partial/truncated responses or treat an authenticated NXDOMAIN
+        // as a reason to trust a carrier's forged positive answer.
+        val flags = byteAt(2) shl 8 or byteAt(3)
+        if (flags and 0x8000 == 0 || flags and 0x0200 != 0) return emptyList()
+        if (flags and 0x000F == 3) throw TrustedNameNotFound()
+        if (flags and 0x000F != 0) return emptyList()
         val questions = byteAt(4) shl 8 or byteAt(5)
         val answers = byteAt(6) shl 8 or byteAt(7)
         if (answers <= 0) return emptyList()
@@ -181,25 +195,30 @@ object ServerAddressPinner {
                 val len = byteAt(cursor)
                 when {
                     len == 0 -> return cursor + 1
-                    len and 0xC0 == 0xC0 -> return cursor + 2
+                    len and 0xC0 == 0xC0 -> return if (cursor + 1 < length) cursor + 2 else -1
+                    len > 63 || cursor + len + 1 > length -> return -1
                     else -> cursor += len + 1
                 }
             }
-            return length
+            return -1
         }
 
         var cursor = 12
-        repeat(questions) { cursor = skipName(cursor) + 4 }
+        repeat(questions) {
+            val end = skipName(cursor)
+            if (end < 0 || end + 4 > length) return emptyList()
+            cursor = end + 4
+        }
         val result = mutableListOf<InetAddress>()
         repeat(answers) {
-            if (cursor + 10 > length) return result
             cursor = skipName(cursor)
-            if (cursor + 10 > length) return result
+            if (cursor < 0 || cursor + 10 > length) return emptyList()
             val type = byteAt(cursor) shl 8 or byteAt(cursor + 1)
+            val recordClass = byteAt(cursor + 2) shl 8 or byteAt(cursor + 3)
             val dataLength = byteAt(cursor + 8) shl 8 or byteAt(cursor + 9)
             val dataStart = cursor + 10
-            if (dataStart + dataLength > length) return result
-            if (type == TYPE_A && dataLength == 4) {
+            if (dataStart + dataLength > length) return emptyList()
+            if (type == TYPE_A && recordClass == CLASS_IN && dataLength == 4) {
                 runCatching {
                     InetAddress.getByAddress(buffer.copyOfRange(dataStart, dataStart + 4))
                 }.getOrNull()?.let(result::add)

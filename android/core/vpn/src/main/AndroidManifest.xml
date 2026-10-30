@@ -23,8 +23,9 @@
         <service
             android:name=".LumenTileService"
             android:exported="true"
-            android:icon="@android:drawable/ic_dialog_info"
-            android:label="Lumen VPN"
+            android:icon="@drawable/ic_qs_lumen"
+            android:label="@string/lumen_service_name"
+            android:description="@string/lumen_tile_description"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
