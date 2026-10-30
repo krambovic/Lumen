@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/krambovic/Lumen/releases/tag/v2.0.0"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Desktop&amp;labelColor=1C1C1C&amp;color=8A2BE2" alt="Latest Desktop release"></a>
-  <a href="https://github.com/krambovic/Lumen/releases/tag/android-v1.2.1"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=android-v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Android&amp;labelColor=1C1C1C&amp;color=3DDC84" alt="Latest Android release"></a>
+  <a href="https://github.com/krambovic/Lumen/releases/tag/android-v1.5.0"><img src="https://img.shields.io/github/v/release/krambovic/Lumen?filter=android-v*&amp;sort=semver&amp;style=for-the-badge&amp;label=Android&amp;labelColor=1C1C1C&amp;color=3DDC84" alt="Latest Android release"></a>
   <a href="https://github.com/krambovic/Lumen/releases"><img src="https://img.shields.io/github/downloads/krambovic/Lumen/total?style=for-the-badge&label=Downloads&labelColor=1C1C1C&color=F5A623" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/Windows%20%7C%20Android-29B6F6?style=for-the-badge&labelColor=1C1C1C&label=Platform" alt="Platform">
 </p>
