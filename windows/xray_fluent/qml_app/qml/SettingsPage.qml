@@ -134,16 +134,21 @@ Item {
     }
 
     function saveSubscriptionSettings() {
-        App.setSubscriptionIncludeRegex(subscriptionIncludeRegex.text)
-        App.setSubscriptionExcludeRegex(subscriptionExcludeRegex.text)
-        App.setSubscriptionUserAgent(subscriptionUserAgent.text)
-        App.setSubscriptionUseRealHwid(subscriptionUseRealHwid.checked)
-        App.setSubscriptionHwid(subscriptionHwid.text)
-        App.setSubscriptionConverterEnabled(subscriptionConverterEnabled.checked)
-        App.setSubscriptionConverterUrl(subscriptionConverterUrl.text)
+        var ua = subscriptionUserAgent.text
+        var includeRe = subscriptionIncludeRegex.text
+        var excludeRe = subscriptionExcludeRegex.text
+        var useRealHwid = subscriptionUseRealHwid.checked
+        var hwid = subscriptionHwid.text
+        var converterEnabled = subscriptionConverterEnabled.checked
+        var converterUrl = subscriptionConverterUrl.text
+        App.setSubscriptionUserAgent(ua)
+        App.setSubscriptionIncludeRegex(includeRe)
+        App.setSubscriptionExcludeRegex(excludeRe)
+        App.setSubscriptionUseRealHwid(useRealHwid)
+        App.setSubscriptionHwid(hwid)
+        App.setSubscriptionConverterEnabled(converterEnabled)
+        App.setSubscriptionConverterUrl(converterUrl)
     }
-
-
 
     component StyledCombo: FluentCombo { Layout.preferredWidth: 210 }
 
