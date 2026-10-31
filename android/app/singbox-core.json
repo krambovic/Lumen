@@ -1,50 +1,51 @@
 {
   "component": "sing-box-extended",
-  "version": "1.14.0-extended-2.7.1-lumen.3",
+  "version": "1.14.3-extended-2.7.3-lumen.1",
   "source": "https://github.com/shtorm-7/sing-box-extended",
-  "tag": "v1.14.0-extended-2.7.1",
-  "upstream_commit": "217f77643f19e915ea38ba2a9ac7e28e22a0cec5",
+  "tag": "v1.14.3-extended-2.7.3",
+  "upstream_commit": "d9442d14b19ddd02605bf3ee893a171947038e19",
   "patches": [
     {
       "path": "android/patches/sing-box-extended-direct-masque.patch",
-      "upstream_commit": "217f77643f19e915ea38ba2a9ac7e28e22a0cec5",
-      "description": "Add direct MASQUE endpoint keys and tunnel addresses"
-    },
-    {
-      "path": "android/patches/sing-box-extended-interface-monitor.patch",
-      "upstream_commit": "288411b0b9044c11a00a8ab478000e3ec1133101",
-      "description": "Prevent nil interface-monitor crashes on Android"
+      "upstream_commit": "d9442d14b19ddd02605bf3ee893a171947038e19",
+      "description": "Preserve direct MASQUE keys, DER public keys and single-stack tunnel addresses"
     }
   ],
-  "published_at": "2026-09-05T09:54:48Z",
-  "updated_at": "2026-10-29",
+  "published_at": "2026-10-19T16:41:59Z",
+  "updated_at": "2026-10-31",
   "binaries": [
     {
       "abi": "arm64-v8a",
-      "version": "1.14.0-extended-2.7.1-lumen.3",
-      "binary_sha256": "9013e08696bd2d198f9247ea343d1ccdce00df8632714a493e17e6be0d0262ba",
-      "binary_size": 91884056,
+      "version": "1.14.3-extended-2.7.3-lumen.1",
+      "binary_sha256": "9cb6d218eb022cd90cc6ebaef4486a6794dbb5dbf6071d6f3bb560df1909058c",
+      "binary_size": 92523896,
       "elf_machine": 183,
       "elf_class": 2,
       "path": "android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
     },
     {
       "abi": "armeabi-v7a",
-      "version": "1.14.0-extended-2.7.1-lumen.3",
-      "binary_sha256": "c18dfd036adbc0240654486a7db95989a715ef0595ae235c563c1dd043bded9e",
-      "binary_size": 86684276,
+      "version": "1.14.3-extended-2.7.3-lumen.1",
+      "binary_sha256": "f510f4eadf961e97de6d8863a47ad07035ef3d53119276f24711baae112d3e2f",
+      "binary_size": 88409676,
       "elf_machine": 40,
       "elf_class": 1,
       "path": "android/app/src/main/jniLibs/armeabi-v7a/libsingbox.so"
     },
     {
       "abi": "x86_64",
-      "version": "1.14.0-extended-2.7.1-lumen.3",
-      "binary_sha256": "7fdb1c9abc5aaf3431dc0246e1e3e5733837213b3f469fec1e5b68b77afd4a23",
-      "binary_size": 97835096,
+      "version": "1.14.3-extended-2.7.3-lumen.1",
+      "binary_sha256": "7c03f7ad5cbbe9f4d7011b5cd4120ddaacbf7756f571f924d5ecfd4faf3f9856",
+      "binary_size": 98823864,
       "elf_machine": 62,
       "elf_class": 2,
       "path": "android/app/src/main/jniLibs/x86_64/libsingbox.so"
     }
+  ],
+  "upstream_fixes": [
+    "DHCP interface monitor guard",
+    "Direct outbound interface monitor guard",
+    "Default interface address rule guard",
+    "Network interface address rule guard"
   ]
 }

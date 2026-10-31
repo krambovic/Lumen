@@ -26,6 +26,49 @@ _MAGVPN_AUTO_FIXTURE = {
 }
 
 
+def _dummy_happ_pool(name="АВТОВЫБОР"):
+    from urllib.parse import quote
+    auth = base64.urlsafe_b64encode(b"chacha20-ietf-poly1305:test").decode().rstrip("=")
+    return f"ss://{auth}@max.ru:1234#{quote(name)}"
+
+
+def test_dummy_ss_auto_pools_are_replaced_with_full_happ_graphs(monkeypatch):
+    from copy import deepcopy
+
+    graph = deepcopy(_MAGVPN_AUTO_FIXTURE)
+    graph["remarks"] = "АВТОВЫБОР"
+    calls = []
+
+    def fetch(url, profile, headers, **kwargs):
+        calls.append((profile, headers))
+        kwargs["response_meta"]["headers"] = {"ETag": '"uri"'}
+        return (_dummy_happ_pool() if profile == "Lumen" else json.dumps([graph])), {"clientProfile": profile}
+
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", fetch)
+    metadata = {}
+    text, info, errors = node_service.fetch_subscription_payload("https://sub.example/token", response_meta=metadata)
+    nodes, parse_errors = parse_links_text(text)
+    assert not errors and not parse_errors
+    assert [(n.name, n.scheme) for n in nodes] == [("АВТОВЫБОР", "auto")]
+    assert [p for p, _ in calls] == ["Lumen", "Happ Windows"]
+    assert calls[0][1]["X-Hwid"] == calls[1][1]["X-Hwid"]
+    assert not metadata
+    assert info["clientProfile"] == "Happ Windows"
+
+
+def test_missing_happ_pool_does_not_replace_subscription_with_partial_payload(monkeypatch):
+    monkeypatch.setattr(node_service, "_fetch_subscription_with_headers", lambda url, profile, headers, **kwargs: (_dummy_happ_pool(), {}))
+    text, _, errors = node_service.fetch_subscription_payload("https://sub.example/token")
+    assert not text and errors
+
+
+def test_standalone_dummy_auto_link_is_not_a_working_shadowsocks_node():
+    node = parse_single(_dummy_happ_pool())
+    assert "заглушка Happ" in validate_node_outbound(node)
+    real = parse_single(_dummy_happ_pool().replace("max.ru:1234", "server.example:443"))
+    assert validate_node_outbound(real) is None
+
+
 def test_magvpn_variants_keep_physical_nodes_and_auto_pools(monkeypatch) -> None:
     calls = []
     physical = "vless://00000000-0000-0000-0000-000000000001@node.example:443?encryption=none#node"

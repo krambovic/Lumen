@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .http_latency import WarmHTTPProbe
+
 import threading
 import time
 from collections.abc import Mapping
@@ -63,6 +65,7 @@ class LiveMetricsWorker(QThread):
         self._stop_event = threading.Event()
         self._config_lock = threading.Lock()
         self._health_generation = 0
+        self._warm_health_probe = WarmHTTPProbe()
         self._active_profile_id = str(active_profile_id)
         self._active_outbound_tag = str(active_outbound_tag)
         self._health_proxy_url = str(health_proxy_url)
@@ -92,6 +95,7 @@ class LiveMetricsWorker(QThread):
     def set_active_profile(self, profile_id: str, *, outbound_tag: str = "proxy", health_proxy_url: str = "") -> None:
         """Invalidate old health when hot-switching without restarting this worker."""
         with self._config_lock:
+            self._warm_health_probe.close()
             self._health_generation += 1
             self._active_profile_id = str(profile_id)
             self._active_outbound_tag = str(outbound_tag)
@@ -101,6 +105,7 @@ class LiveMetricsWorker(QThread):
     def stop(self) -> None:
         self._stopped = True
         self._stop_event.set()
+        self._warm_health_probe.close()
         self.requestInterruption()
         self._stats_client.close()
         self._clash_client.close()
@@ -145,6 +150,7 @@ class LiveMetricsWorker(QThread):
                         profile_id=profile_id, outbound_tag=tag, proxy_url=proxy_url,
                         clash_client=self._clash_client if self._mode == "singbox" else None,
                         outbound_graph=self._outbound_graph,
+                        warm_probe=self._warm_health_probe,
                     )
                     with self._config_lock:
                         if generation == self._health_generation and profile_id == self._active_profile_id:
@@ -187,6 +193,7 @@ class LiveMetricsWorker(QThread):
                 )
                 self._stop_event.wait(delay)
         finally:
+            self._warm_health_probe.close()
             self._stats_client.close()
             self._clash_client.close()
 

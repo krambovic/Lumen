@@ -141,6 +141,7 @@ class SingboxRuntimePlan:
     xray_sidecar: SingboxXraySidecarPlan | None
     clash_api_selector: str = ""
     clash_api_node_signatures: tuple[tuple[str, str], ...] = ()
+    health_proxy_url: str = ""
 
     @property
     def is_hybrid(self) -> bool:

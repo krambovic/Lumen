@@ -1140,6 +1140,28 @@ def _copy_alias_value(
         target[target_key] = deepcopy(value)
 
 
+def _xhttp_padding_range(value: Any) -> str:
+    if isinstance(value, dict):
+        low, high = value.get("from"), value.get("to")
+    elif isinstance(value, bool):
+        return ""
+    elif isinstance(value, int):
+        low = high = value
+    else:
+        text = str(value or "").strip()
+        low, _, high = text.partition("-")
+        high = high or low
+    try:
+        low_number, high_number = int(str(low).strip()), int(str(high).strip())
+    except (TypeError, ValueError):
+        return ""
+    # The fork also rejects a zero lower bound ("0-100").
+    low_number = max(1, low_number)
+    if high_number < low_number:
+        return ""
+    return f"{low_number}-{high_number}"
+
+
 def _copy_xhttp_base_options(
     source: dict[str, Any],
     target: dict[str, Any],
@@ -1175,6 +1197,13 @@ def _copy_xhttp_base_options(
             }.get(normalized.replace("_", ""), normalized)
             if normalized in {"prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"}:
                 target[target_key] = normalized
+            continue
+        if target_key == "x_padding_bytes":
+            # sing-box rejects a disabled range ("x_padding_bytes cannot be
+            # disabled"); leave it unset so the regular default applies.
+            padding = _xhttp_padding_range(value)
+            if padding:
+                target[target_key] = padding
             continue
         if target_key in {"sc_max_buffered_posts", "server_max_header_bytes", "cwnd"}:
             try:

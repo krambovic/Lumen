@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from copy import deepcopy
 from dataclasses import dataclass
+from http.client import HTTPSConnection
 import json
 import socket
 import subprocess
@@ -13,6 +14,7 @@ import threading
 import time
 from pathlib import Path
 from urllib.request import Request
+from urllib.parse import urlsplit
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -31,6 +33,7 @@ from .constants import (
     SPEED_TEST_TIMEOUT,
 )
 from .models import Node, RoutingSettings
+from .http_utils import get_ssl_context
 from .ping_worker import _WindowsPingBypass
 from .probe_capabilities import probe_backend, node_protocol
 from .native_test_config import build_native_test_config
@@ -76,6 +79,7 @@ class SpeedTestWorker(QThread):
         concurrency: int = 0,
         bypass_tun: bool = False,
         singbox_path: str = "",
+        warm_ping: bool = False,
     ):
         super().__init__()
         self.setObjectName("lumen-speed-test" if mode == "speed" else "lumen-real-ping")
@@ -86,6 +90,7 @@ class SpeedTestWorker(QThread):
         self._routing = routing or RoutingSettings()
         self._timeout = timeout
         self._mode = mode if mode in ("speed", "ping") else "speed"
+        self._warm_ping = bool(warm_ping)
         self._test_url = (test_url or "").strip() or SPEED_TEST_DEFAULT_URL
         self._concurrency = int(concurrency or 0)
         self._bypass_tun = bool(bypass_tun)
@@ -467,10 +472,17 @@ class SpeedTestWorker(QThread):
             config["routing"] = routing
         balancer_tag = ""
         rules = routing.get("rules") if isinstance(routing.get("rules"), list) else []
-        for rule in rules:
-            if isinstance(rule, dict) and str(rule.get("balancerTag") or "").strip():
-                balancer_tag = str(rule["balancerTag"]).strip()
-                break
+        balanced_rules = [
+            rule for rule in rules
+            if isinstance(rule, dict) and rule.get("balancerTag") and not rule.get("inboundTag")
+        ]
+        # Internal loopback rescue rules precede the user-facing rules.
+        # Prefer the catch-all network rule, then a regular balanced rule.
+        default_rule = next((
+            rule for rule in reversed(balanced_rules)
+            if set(rule) <= {"type", "network", "balancerTag", "ruleTag"}
+        ), next(iter(balanced_rules), {}))
+        balancer_tag = str(default_rule.get("balancerTag") or "").strip()
         if not balancer_tag:
             balancers = routing.get("balancers") if isinstance(routing.get("balancers"), list) else []
             for balancer in balancers:
@@ -480,23 +492,56 @@ class SpeedTestWorker(QThread):
         outbounds = config.get("outbounds", [])
         by_tag = {str(o.get("tag") or ""): o for o in outbounds if isinstance(o, dict)}
         if balancer_tag:
-            balancer = next((b for b in routing.get("balancers", []) if isinstance(b, dict) and b.get("tag") == balancer_tag), None)
-            if not balancer:
-                raise ValueError("Missing AUTO balancer")
-            selectors = balancer.get("selector", [])
-            candidates = [o for tag, o in by_tag.items() if any(tag.startswith(str(prefix)) for prefix in selectors)]
-            fallback = str(balancer.get("fallbackTag") or "")
-            if fallback:
-                candidates.append(by_tag.get(fallback, {}))
-            if not candidates or any(str(o.get("protocol") or "") in {"", "freedom", "blackhole", "dns"} for o in candidates):
+            balancers = {b.get("tag"): b for b in routing.get("balancers", []) if isinstance(b, dict)}
+            visiting: set[str] = set()
+
+            def check_outbound(tag: str, *, fallback: bool = False) -> None:
+                outbound = by_tag.get(tag, {})
+                protocol = str(outbound.get("protocol") or "")
+                if protocol == "blackhole" and fallback:
+                    return  # A blocked fallback fails the probe, never bypasses it.
+                if protocol == "loopback":
+                    inbound = (outbound.get("settings") or {}).get("inboundTag")
+                    route = next((r for r in rules if isinstance(r, dict) and inbound in (r.get("inboundTag") or [])), {})
+                    if route.get("balancerTag"):
+                        check_balancer(route["balancerTag"])
+                        return
+                elif protocol not in {"", "freedom", "blackhole", "dns"}:
+                    return
                 raise ValueError("AUTO test cannot bypass the profile through direct/unknown members")
+
+            def check_balancer(tag: str) -> None:
+                if tag in visiting or tag not in balancers:
+                    raise ValueError("Missing or cyclic AUTO balancer")
+                visiting.add(tag)
+                balancer = balancers[tag]
+                selectors = balancer.get("selector", [])
+                candidates = [t for t in by_tag if any(t.startswith(str(prefix)) for prefix in selectors)]
+                if not candidates:
+                    raise ValueError("AUTO balancer has no proxy members")
+                for candidate in candidates:
+                    check_outbound(candidate)
+                fallback = str(balancer.get("fallbackTag") or "")
+                if fallback:
+                    check_outbound(fallback, fallback=True)
+                visiting.remove(tag)
+
+            check_balancer(balancer_tag)
             target_rule = {"balancerTag": balancer_tag}
         else:
             first = next((o for o in outbounds if isinstance(o, dict)), {})
             if str(first.get("protocol") or "") in {"", "freedom", "blackhole", "dns"} or not first.get("tag"):
                 raise ValueError("Full profile default is not a testable proxy")
             target_rule = {"outboundTag": first["tag"]}
-        routing["rules"] = [{"type": "field", "inboundTag": [inbound_tag], **target_rule}]
+        internal_tags = {
+            (o.get("settings") or {}).get("inboundTag")
+            for o in by_tag.values() if o.get("protocol") == "loopback"
+        }
+        internal_rules = [
+            rule for rule in rules if isinstance(rule, dict)
+            and internal_tags.intersection(rule.get("inboundTag") or [])
+        ]
+        routing["rules"] = [{"type": "field", "inboundTag": [inbound_tag], **target_rule}, *internal_rules]
 
         outbounds = config.get("outbounds") if isinstance(config.get("outbounds"), list) else []
         for outbound in outbounds:
@@ -516,6 +561,18 @@ class SpeedTestWorker(QThread):
         return str(settings.get("address") or settings.get("server") or outbound.get("address") or "").strip()
 
     def _real_ping(self, target: _SpeedTestTarget) -> int:
+        # AUTO observers need their first samples before leastPing/leastLoad
+        # can choose a server. Retry startup failures outside the measurement.
+        full_auto = self._node_protocol(target.node) == "xray_config"
+        deadline = time.monotonic() + (12.0 if full_auto else 0.0)
+        while not self._cancelled:
+            measured = self._warm_http_ping(target) if self._warm_ping else self._cold_http_ping(target)
+            if measured >= 0 or time.monotonic() >= deadline:
+                return measured
+            time.sleep(0.2)
+        return -1
+
+    def _cold_http_ping(self, target: _SpeedTestTarget) -> int:
         if self._cancelled:
             return -1
         opener = self._build_proxy_opener(target.http_port)
@@ -536,6 +593,55 @@ class SpeedTestWorker(QThread):
             return elapsed_ms
         except Exception:
             return -1
+
+    def _warm_http_ping(self, target: _SpeedTestTarget) -> int:
+        """Measure GET round trips on one established, verified TLS tunnel."""
+        url = urlsplit(SPEED_TEST_PING_URL)
+        if url.scheme != "https" or not url.hostname:
+            return -1
+        connection = HTTPSConnection(
+            PROXY_HOST, target.http_port,
+            timeout=min(self._timeout, SPEED_TEST_PING_TIMEOUT),
+            context=get_ssl_context(),
+        )
+        connection.set_tunnel(url.hostname, url.port or 443)
+        path = url.path or "/"
+        if url.query:
+            path += "?" + url.query
+        self._register_response(connection)
+        samples: list[float] = []
+        try:
+            self.node_progress.emit(target.node.id, 20)
+            connection.connect()  # CONNECT and TLS are outside the measurement.
+            for attempt in range(3):
+                if self._cancelled or connection.sock is None:
+                    return -1  # Never silently reconnect inside a timed sample.
+                started = time.perf_counter()
+                connection.request("GET", path, headers={
+                    "User-Agent": "Lumen/SpeedTest", "Connection": "keep-alive",
+                    "Cache-Control": "no-cache",
+                })
+                response = connection.getresponse()
+                try:
+                    response.read(64 * 1024)
+                    if not 200 <= response.status < 300 or not response.isclosed() or response.will_close:
+                        return -1
+                finally:
+                    response.close()
+                if attempt:  # First GET warms the proxy transport and target.
+                    samples.append((time.perf_counter() - started) * 1000)
+            if self._cancelled:
+                return -1
+            elapsed = min(samples)
+            if elapsed > SPEED_TEST_MAX_PING_MS:
+                return -1
+            self.node_progress.emit(target.node.id, 30)
+            return max(1, round(elapsed))
+        except Exception:
+            return -1
+        finally:
+            self._unregister_response(connection)
+            connection.close()
 
     def _measure_speed(self, target: _SpeedTestTarget) -> float | None:
         opener = self._build_proxy_opener(target.http_port)

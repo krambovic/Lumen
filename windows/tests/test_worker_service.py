@@ -226,3 +226,79 @@ def test_singbox_nested_auto_supports_endpoint_and_proxy_checks_without_direct_f
     main = next(item for item in probe["outbounds"] if item.get("tag") == "main")
     assert main["outbounds"] == ["fast"]
     assert config["outbounds"][0]["outbounds"] == ["fast", "direct"]
+
+
+def test_icmp_falls_back_to_tcp_handshake_like_android(monkeypatch) -> None:
+    tcp_calls: list[tuple[str, int]] = []
+    monkeypatch.setattr(ping_worker, "icmp_ping", lambda host, timeout_ms: None)
+    monkeypatch.setattr(ping_worker, "tcp_ping", lambda host, port, timeout: tcp_calls.append((host, port)) or 42)
+
+    tcp_node = Node(id="vless", name="vless", scheme="vless", server="tcp.example", port=443, outbound={"protocol": "vless"})
+    udp_node = _native_node("hy2", "hysteria2")
+    worker = ping_worker.PingWorker([tcp_node, udp_node], timeout=1.0, method="icmp")
+
+    assert worker._measure(tcp_node) == 42
+    assert worker._measure(udp_node) is None  # a UDP-only endpoint has no TCP listener
+    assert tcp_calls == [("tcp.example", 443)]
+
+
+def test_icmp_reply_is_parsed_without_localized_ping_output() -> None:
+    import sys
+
+    if sys.platform != "win32":
+        return
+    assert ping_worker.icmp_ping("127.0.0.1", 1000) is not None
+
+
+def test_icmpv6_reply_uses_aligned_status_and_rtt(monkeypatch):
+    import struct
+
+    class Function:
+        def __init__(self, callback):
+            self.callback = callback
+
+        def __call__(self, *args):
+            return self.callback(*args)
+
+    closed = []
+    status = [0]
+
+    def send(*args):
+        struct.pack_into("<28xII", args[9], 0, status[0], 42)
+        return 1
+
+    api = SimpleNamespace(
+        Icmp6CreateFile=Function(lambda: 123),
+        Icmp6SendEcho2=Function(send),
+        IcmpCloseHandle=Function(closed.append),
+    )
+    monkeypatch.setattr(ping_worker, "_iphlpapi", lambda: api)
+    assert ping_worker._icmp_echo_v6("::1", 1000) == 42
+    status[0] = 11003
+    assert ping_worker._icmp_echo_v6("::1", 1000) is None
+    assert closed == [123, 123]
+
+
+def test_cancel_tests_stops_ping_and_speed_workers() -> None:
+    from xray_fluent.application import worker_service
+
+    class Worker:
+        def __init__(self, running: bool) -> None:
+            self.running = running
+            self.cancelled = False
+
+        def isRunning(self) -> bool:
+            return self.running
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    statuses: list[tuple[str, str]] = []
+    ping, speed = Worker(True), Worker(True)
+    controller = SimpleNamespace(_ping_worker=ping, _speed_worker=speed, status=SimpleNamespace(emit=lambda *a: statuses.append(a)))
+
+    assert worker_service.cancel_tests(controller)
+    assert ping.cancelled and speed.cancelled
+
+    idle = SimpleNamespace(_ping_worker=None, _speed_worker=Worker(False), status=SimpleNamespace(emit=lambda *a: statuses.append(a)))
+    assert not worker_service.cancel_tests(idle)

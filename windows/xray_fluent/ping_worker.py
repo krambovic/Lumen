@@ -107,19 +107,25 @@ def endpoint_ping(host: str, port: int, protocol: str, method: str, timeout: flo
 
 
 def icmp_ping(host: str, timeout_ms: int = ICMP_PING_TIMEOUT_MS) -> int | None:
-    """Системный ICMP ping (один пакет). Возвращает задержку в мс или None."""
+    """One ICMP echo. Returns the round trip in ms or None.
+
+    Windows uses the native IcmpSendEcho API: ping.exe output is localized
+    ("время=35мс") and could not be parsed outside English Windows.
+    """
     host = str(host or "").strip()
     if not host:
         return None
     timeout_ms = max(200, int(timeout_ms or ICMP_PING_TIMEOUT_MS))
     if os.name == "nt":
-        command = ["ping", "-n", "1", "-w", str(timeout_ms), host]
-    else:
-        timeout_sec = max(1, int(round(timeout_ms / 1000.0)))
-        command = ["ping", "-c", "1", "-W", str(timeout_sec), host]
+        for family, address in _icmp_addresses(host):
+            measured = _icmp_echo_v4(address, timeout_ms) if family == socket.AF_INET else _icmp_echo_v6(address, timeout_ms)
+            if measured is not None:
+                return measured
+        return None
+    timeout_sec = max(1, int(round(timeout_ms / 1000.0)))
     try:
         result = run_text_pumped(
-            command,
+            ["ping", "-c", "1", "-W", str(timeout_sec), host],
             timeout=max(2.0, timeout_ms / 1000.0 + 1.0),
             creationflags=CREATE_NO_WINDOW,
         )
@@ -127,13 +133,110 @@ def icmp_ping(host: str, timeout_ms: int = ICMP_PING_TIMEOUT_MS) -> int | None:
         return None
     if result.returncode != 0:
         return None
-    text = result_output_text(result)
-    match = _ICMP_TIME_RE.search(text)
+    match = _ICMP_TIME_RE.search(result_output_text(result))
     if not match:
         return None
     try:
-        return int(round(float(match.group(1).replace(",", "."))))
+        return max(1, int(round(float(match.group(1).replace(",", ".")))))
     except ValueError:
+        return None
+
+
+_ICMP_PAYLOAD = b"lumen-ping-probe"
+_ICMP_REPLY_SIZE = 256 + len(_ICMP_PAYLOAD)
+
+
+def _icmp_addresses(host: str) -> list[tuple[int, str]]:
+    """IPv4 first, then IPv6 (the same preference as TCPing)."""
+    try:
+        infos = socket.getaddrinfo(host.strip("[]"), None, 0, socket.SOCK_STREAM)
+    except OSError:
+        return []
+    result: list[tuple[int, str]] = []
+    for family in (socket.AF_INET, socket.AF_INET6):
+        for info in infos:
+            if info[0] == family and info[4] and (family, str(info[4][0])) not in result:
+                result.append((family, str(info[4][0])))
+                break
+    return result
+
+
+def _iphlpapi():
+    import ctypes
+
+    return ctypes.WinDLL("iphlpapi.dll", use_last_error=True)
+
+
+def _icmp_echo_v4(address: str, timeout_ms: int) -> int | None:
+    import ctypes
+    import struct
+
+    try:
+        api = _iphlpapi()
+        api.IcmpCreateFile.restype = ctypes.c_void_p
+        api.IcmpSendEcho.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint16,
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+        ]
+        api.IcmpCloseHandle.argtypes = [ctypes.c_void_p]
+        destination = struct.unpack("<I", socket.inet_aton(address))[0]
+        handle = api.IcmpCreateFile()
+        if not handle or handle == ctypes.c_void_p(-1).value:
+            return None
+        try:
+            reply = ctypes.create_string_buffer(_ICMP_REPLY_SIZE)
+            count = api.IcmpSendEcho(
+                handle, destination, _ICMP_PAYLOAD, len(_ICMP_PAYLOAD), None, reply, len(reply), int(timeout_ms)
+            )
+            if not count:
+                return None
+            # ICMP_ECHO_REPLY: Address, Status, RoundTripTime, ...
+            _address, status, rtt = struct.unpack_from("<III", reply.raw)
+            return max(1, int(rtt)) if status == 0 else None
+        finally:
+            api.IcmpCloseHandle(handle)
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def _icmp_echo_v6(address: str, timeout_ms: int) -> int | None:
+    import ctypes
+    import struct
+
+    try:
+        api = _iphlpapi()
+        api.Icmp6CreateFile.restype = ctypes.c_void_p
+        api.Icmp6SendEcho2.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+            ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint16,
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+        ]
+        api.IcmpCloseHandle.argtypes = [ctypes.c_void_p]
+        scope = 0
+        if "%" in address:
+            address, _, scope_text = address.partition("%")
+            scope = int(scope_text) if scope_text.isdigit() else 0
+        # SOCKADDR_IN6: family, port, flowinfo, address, scope id.
+        source = struct.pack("<HHI16sI", socket.AF_INET6, 0, 0, bytes(16), 0)
+        destination = struct.pack("<HHI16sI", socket.AF_INET6, 0, 0, socket.inet_pton(socket.AF_INET6, address), scope)
+        handle = api.Icmp6CreateFile()
+        if not handle or handle == ctypes.c_void_p(-1).value:
+            return None
+        try:
+            reply = ctypes.create_string_buffer(_ICMP_REPLY_SIZE)
+            count = api.Icmp6SendEcho2(
+                handle, None, None, None, source, destination,
+                _ICMP_PAYLOAD, len(_ICMP_PAYLOAD), None, reply, len(reply), int(timeout_ms),
+            )
+            if not count:
+                return None
+            # The IPv6 address and its padding occupy 28 bytes before
+            # the aligned Status and RoundTripTime DWORDs.
+            status, rtt = struct.unpack_from("<28xII", reply.raw)
+            return max(1, int(rtt)) if status == 0 else None
+        finally:
+            api.IcmpCloseHandle(handle)
+    except (OSError, AttributeError, ValueError):
         return None
 
 
@@ -426,7 +529,12 @@ class PingWorker(QThread):
             return None
         actual = endpoint_method(node, self._method)
         if actual == "icmp":
-            return icmp_ping(target, int(self._timeout * 1000))
+            measured = icmp_ping(target, int(self._timeout * 1000))
+            if measured is None and self._method == "icmp" and endpoint_method(node, "tcping") == "tcping":
+                # Like Android's InetAddress.isReachable: a host that drops
+                # ICMP is still reachable when it completes a TCP handshake.
+                measured = tcp_ping(target, node.port, self._timeout)
+            return measured
         return tcp_ping(target, node.port, self._timeout)
 
     def cancel(self) -> None:

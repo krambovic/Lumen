@@ -228,3 +228,22 @@ def test_onboarding_motion_always_reaches_visible_state() -> None:
     assert 'NumberAnimation { target: appChrome; property: "opacity"' in main
     assert "appChrome.opacity = 1" in main
     assert "win.chromeSettle" not in main
+
+
+def test_213_upgrade_shows_curated_news_once_even_after_completed_setup():
+    from xray_fluent.release_notes import RELEASE_NOTES
+    for previous in ("0", "1.9.18", "2.0.0", "2.1.0", "2.1.1", "2.1.2", "2.1.3-pre.01"):
+        controller = _Controller(AppSettings(
+            onboarding_revision=constants.ONBOARDING_REVISION,
+            onboarding_version=previous,
+        ))
+        bridge = _bridge(controller)
+        assert AppBridge.onboardingSetupRequired.fget(bridge) is False
+        assert AppBridge.onboardingRequired.fget(bridge) is True
+        assert AppBridge.onboardingShowWhatsNew.fget(bridge) is True
+        groups = AppBridge.onboardingWhatsNew.fget(bridge)
+        assert groups[0]["version"] == "2.1.3"
+        assert groups[0]["items"] == [dict(item) for item in RELEASE_NOTES["2.1.3"]]
+        AppBridge.completeOnboarding(bridge)
+        restored = _bridge(_Controller(AppSettings.from_dict(controller.state.settings.to_dict())))
+        assert AppBridge.onboardingRequired.fget(restored) is False

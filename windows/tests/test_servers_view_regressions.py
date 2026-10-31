@@ -322,3 +322,14 @@ def test_incy_maintenance_has_priority_over_expiry_and_theme_stays_local():
     result = present_subscription({"userinfo": info}, now=1000)
     assert [b["kind"] for b in result["banners"]] == ["incy-expiry"]
     assert all("не применяется" in row["status"] for row in result["featureRows"] if row["key"].startswith("INCY.theme."))
+
+
+def test_group_delete_in_source_popup_opens_dialog_from_page_scope():
+    # Closing the popup destroys its Repeater rows; ids looked up from a
+    # destroyed row raise "deleteGroupDialog is not defined".
+    qml = (Path(__file__).resolve().parents[1] / "xray_fluent" / "qml_app" / "qml" / "NodesPage.qml").read_text(encoding="utf-8")
+    assert "onClicked: page.requestDeleteGroup(srcRow.modelData.name)" in qml
+    function = qml[qml.index("function requestDeleteGroup(name)"):]
+    function = function[:function.index("\n    }")]
+    assert function.index("sourcePopup.close()") < function.index("Qt.callLater")
+    assert "deleteGroupDialog.open()" in function

@@ -178,11 +178,11 @@ def test_updates_page_hides_internal_lumen_singbox_revision() -> None:
     assert "singboxVersion = publicSingboxVersion(s.singboxVersion)" in updates_qml
 
 
-def test_updates_page_does_not_expose_droute_updater() -> None:
+def test_updates_page_exposes_online_droute_updater() -> None:
     updates_qml = (QML_DIR / "UpdatesPage.qml").read_text(encoding="utf-8")
 
-    assert 'I18n.t("Обновить droute")' not in updates_qml
-    assert 'I18n.t("Проверить droute")' not in updates_qml
+    assert 'I18n.t("Обновить droute")' in updates_qml
+    assert 'I18n.t("Проверить droute")' in updates_qml
 
 
 def test_zapret_and_configs_pages_use_shared_code_editor() -> None:

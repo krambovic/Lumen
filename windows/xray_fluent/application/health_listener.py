@@ -27,3 +27,28 @@ def add_xray_health_listener(payload: dict[str, Any], *, port: int, outbound_tag
     })
     routing["rules"].insert(0, {"type": "field", "inboundTag": [tag], "outboundTag": outbound_tag})
     return "http" + "://" + username + ":" + password + "@127.0.0.1:" + str(port)
+
+
+def add_singbox_health_listener(payload: dict[str, Any], *, port: int, outbound_tag: str = "proxy") -> str:
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        return ""
+    from ..traffic_route_classifier import RouteClassifier
+    graph = {o.get("tag"): o for o in [*payload.get("outbounds", []), *payload.get("endpoints", [])] if isinstance(o, dict)}
+    # Selector targets can change, but this listener always follows the active
+    # selector. Unknown/full imported graphs remain on API-only health checks.
+    target = graph.get(outbound_tag, {})
+    if target.get("type") == "selector":
+        graph[outbound_tag] = {**target, "now": target.get("default"), "all": target.get("outbounds", [])}
+    if RouteClassifier(graph).classify([outbound_tag]) != "proxy":
+        return ""
+    inbounds = payload.setdefault("inbounds", [])
+    if any(i.get("listen_port") == port for i in inbounds if isinstance(i, dict)):
+        return ""
+    tag = "__app_health_" + secrets.token_hex(12)
+    username, password = "lumen-health", secrets.token_urlsafe(32)
+    inbounds.append({"type": "http", "tag": tag, "listen": "127.0.0.1", "listen_port": port,
+                     "users": [{"username": username, "password": password}]})
+    payload.setdefault("route", {}).setdefault("rules", []).insert(
+        0, {"inbound": [tag], "action": "route", "outbound": outbound_tag},
+    )
+    return f"http://{username}:{password}@127.0.0.1:{port}"

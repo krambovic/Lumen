@@ -70,3 +70,22 @@ def test_native_windows_process_snapshot_contains_current_process() -> None:
     processes = _running_processes_win32()
     assert processes is not None
     assert os.getpid() in processes
+
+
+def test_process_snapshot_ignores_unregistered_lumen_children(monkeypatch):
+    def snapshot(*, parent_ids=None):
+        if parent_ids is not None:
+            parent_ids.update({101: os.getpid(), 202: 101, 303: 999})
+        return {101: "xray.exe", 202: "sing-box.exe", 303: "sing-box.exe"}
+
+    monkeypatch.setattr(process_conflicts, "_running_processes_win32", snapshot)
+    monkeypatch.setattr(process_conflicts, "_running_processes", snapshot)
+    monkeypatch.setattr(process_conflicts, "_process_executable_path", lambda _pid: None)
+    monkeypatch.setattr(process_conflicts, "find_listening_port_conflicts", lambda *_a, **_k: [])
+    def foreign_proxy(**kwargs):
+        assert {101, 202}.issubset(kwargs["ignored_pids"])
+        return False
+
+    monkeypatch.setattr(process_conflicts, "has_foreign_system_proxy", foreign_proxy)
+    result = scan_network_conflicts({10808})
+    assert {item["pid"] for item in result["processes"]} == {303}

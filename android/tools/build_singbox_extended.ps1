@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$Ref = "v1.14.0-extended-2.7.1",
+    [string]$Ref = "v1.14.3-extended-2.7.3",
     [string]$Repository = "https://github.com/shtorm-7/sing-box-extended.git",
-    [string]$LumenRevision = "3",
+    [string]$LumenRevision = "1",
     [string]$GoExecutable = "go",
     [string]$WorkDirectory = ""
 )
@@ -10,8 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $patchPaths = @(
-    (Join-Path $repoRoot "android\patches\sing-box-extended-direct-masque.patch"),
-    (Join-Path $repoRoot "android\patches\sing-box-extended-interface-monitor.patch")
+    (Join-Path $repoRoot "android\patches\sing-box-extended-direct-masque.patch")
 )
 foreach ($patchPath in $patchPaths) {
     if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {

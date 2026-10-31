@@ -42,6 +42,7 @@ def probe_active_profile(
     *, profile_id: str, clash_client: ClashApiClient | None = None,
     outbound_tag: str = "proxy", outbound_graph: Mapping[str, Any] | None = None,
     proxy_url: str = "", health_url: str = DEFAULT_HEALTH_URL, timeout: float = 1.2,
+    warm_probe=None,
 ) -> HealthSample:
     """A proxy_url may be supplied ONLY for a guaranteed active-outbound listener.
 
@@ -64,6 +65,16 @@ def probe_active_profile(
         return sample("UNKNOWN", "invalid HTTP health target")
     if target.scheme not in {"https", "http"} or not target.hostname:
         return sample("UNKNOWN", "unsupported HTTP health URL")
+    if warm_probe is not None and proxy_url and target.scheme == "https":
+        source = "active-http-proxy-warm"
+        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "::1"}:
+            return sample("UNKNOWN", "guaranteed active local HTTP proxy unavailable")
+        try:
+            return sample("HEALTHY", latency=warm_probe.measure(proxy_url, health_url, max(timeout, 3.0)))
+        except (OSError, TimeoutError):
+            return sample("FAILED", "active profile HTTP request failed")
+        except Exception:
+            return sample("UNKNOWN", "warm HTTP probe unavailable")
     if clash_client is not None:
         if RouteClassifier(outbound_graph).classify([outbound_tag]) != "proxy":
             return sample("UNKNOWN", "active outbound type/selection unverified")
@@ -83,7 +94,7 @@ def probe_active_profile(
         delay = result.get("delay")
         if isinstance(delay, bool) or not isinstance(delay, int) or delay <= 0:
             return sample("UNKNOWN", "active outbound delay unsupported or invalid")
-        return sample("HEALTHY", latency=delay)
+        return sample("HEALTHY", latency=delay if warm_probe is None else None)
 
     if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "::1"}:
         return sample("UNKNOWN", "guaranteed active local HTTP proxy unavailable")

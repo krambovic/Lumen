@@ -4,7 +4,7 @@ param(
     [string]$OutputPath,
     # Latest extended release. 1.14 moved WireGuard outbounds to endpoints;
     # Lumen's runtime planner performs that migration before launch.
-    [string]$Ref = "v1.14.1-extended-2.7.2",
+    [string]$Ref = "v1.14.3-extended-2.7.3",
     [string]$Repository = "https://github.com/shtorm-7/sing-box-extended.git",
     [string]$LumenRevision = "1",
     [string]$WorkDirectory = ""

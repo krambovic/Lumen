@@ -111,10 +111,10 @@ def migrate_legacy_droute_markers() -> None:
 
 def _write_droute_notice() -> None:
     DROUTE_NOTICE.write_text(
-        "droute is a bundled external GPL-3.0 component originally published at:\n"
+        "droute is an external GPL-3.0 component published at:\n"
         f"{DROUTE_SOURCE_URL}\n\n"
-        "Lumen includes the frozen droute 2.0.0 binary distribution because the\n"
-        "upstream repository is no longer available. The external binary is used\n"
+        "Lumen bundles the latest verified release and supports GitHub updates.\n"
+        "The external binary is used\n"
         "to install a Discord-local version.dll loader, droute.dll payload and Squirrel\n"
         "updater hook for Discord TCP/UDP SOCKS5 proxying.\n",
         encoding="utf-8",
@@ -243,17 +243,24 @@ def get_droute_bundle_version() -> str:
 
 
 def ensure_droute_bundle() -> Path:
-    DROUTE_DIR.mkdir(parents=True, exist_ok=True)
+    """Fetch a missing/legacy package, then verify every installed payload file."""
     bundled_version = get_bundled_droute_version()
-    if not bundled_version:
-        raise RuntimeError("Встроенный droute не найден. Переустановите Lumen.")
-    current_version = _current_droute_version()
-    if not current_version or _droute_version_key(bundled_version) > _droute_version_key(current_version):
-        install_bundled_droute()
-    _write_droute_notice()
-    # DROUTE_DIR is user-writable, and the assembly is loaded by an elevated
-    # PowerShell. Run the checksum-verified copy from the install tree instead.
-    return DROUTE_BUNDLED_EXE
+    current = _current_droute_version()
+    if bundled_version and (not current or _droute_version_key(bundled_version) >= _droute_version_key(current)):
+        if not current or _droute_version_key(bundled_version) > _droute_version_key(current):
+            install_bundled_droute()
+        return DROUTE_BUNDLED_EXE
+    try:
+        _verify_bundled_droute(DROUTE_DIR)
+        if not _current_droute_version():
+            raise RuntimeError("droute is not installed")
+    except (OSError, RuntimeError):
+        from .core_resource_updater import check_or_update_droute
+        result = check_or_update_droute(True)
+        if result.status not in {"updated", "up_to_date"}:
+            raise RuntimeError(result.message)
+        _verify_bundled_droute(DROUTE_DIR)
+    return DROUTE_EXE
 
 
 def _powershell_quote(value: str | Path) -> str:
@@ -515,27 +522,18 @@ def _droute_payload_present(install: DiscordInstall) -> bool:
 def _install_droute_payload(exe: Path, install: DiscordInstall) -> None:
     app_dir = install.app_dir
     branch_root = install.root
-    proxy_path = app_dir / "version.dll"
-    payload_path = app_dir / "droute.dll"
-    updater_hook_path = branch_root / "Droute.UpdaterHook.dll"
-    updater_config_path = branch_root / "Update.exe.config"
 
     script = (
         "$ErrorActionPreference = 'Stop'; "
         f"$asm = [System.Reflection.Assembly]::LoadFile({_powershell_quote(exe)}); "
-        "$patchType = $asm.GetType('Droute.Core.PatchManager', $true); "
-        "$archType = $patchType.GetNestedType('ArchitectureBitness'); "
-        "$force64 = [Enum]::Parse($archType, 'Force64'); "
-        "$dup = $patchType.GetMethod('DuplicateProxy', [Type[]]@([string], $archType)); "
-        "$apply = $patchType.GetMethod('ApplyPEPatch', [Type[]]@([string])); "
-        f"$dup.Invoke($null, @({_powershell_quote(proxy_path)}, $force64)); "
-        f"$apply.Invoke($null, @({_powershell_quote(proxy_path)})); "
+        "$patchType = $asm.GetType('Droute.Core.PatchInstaller', $true); "
         "$stream = $asm.GetManifestResourceStream('Droute.Installer.Properties.Resources.resources'); "
         "$reader = New-Object System.Resources.ResourceReader($stream); "
         "$items = @{}; foreach ($entry in $reader) { $items[$entry.Key] = $entry.Value }; "
-        f"[IO.File]::WriteAllBytes({_powershell_quote(payload_path)}, [byte[]]$items['Droute64']); "
-        f"[IO.File]::WriteAllBytes({_powershell_quote(updater_hook_path)}, [byte[]]$items['UpdaterHook']); "
-        f"[IO.File]::WriteAllText({_powershell_quote(updater_config_path)}, [string]$items['UpdaterConfig']); "
+        "$patch = @($patchType.GetMethods() | Where-Object { $_.Name -eq 'InstallPatch' -and $_.GetParameters()[1].ParameterType -eq [byte[]] })[0]; "
+        "$hook = @($patchType.GetMethods() | Where-Object { $_.Name -eq 'InstallUpdaterHook' -and $_.GetParameters()[1].ParameterType -eq [byte[]] })[0]; "
+        f"$patch.Invoke($null, @({_powershell_quote(app_dir)}, [byte[]]$items['Droute64'], $null)); "
+        f"$hook.Invoke($null, @({_powershell_quote(branch_root)}, [byte[]]$items['UpdaterHook'], [string]$items['UpdaterConfig'], $null)); "
         "$reader.Close(); $stream.Close()"
     )
     result = _run_powershell(script, timeout=30)
@@ -586,7 +584,7 @@ class DiscordProxyManager:
         target_port = int(socks_port)
         try:
             needs_install = any(not _droute_payload_installed(install) for install in installs)
-            exe = ensure_droute_bundle() if needs_install else DROUTE_BUNDLED_EXE
+            exe = ensure_droute_bundle() if needs_install else DROUTE_EXE
             if not exe.is_file():
                 exe = ensure_droute_bundle()
             current_port = _read_droute_registry_port()

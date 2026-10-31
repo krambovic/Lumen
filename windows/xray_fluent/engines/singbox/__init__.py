@@ -2,7 +2,14 @@
 
 from .config_builder import build_singbox_outbound
 from .manager import SingBoxManager, get_singbox_version
-from .operations import restart_runtime, start_proxy, start_runtime, start_tun, try_hot_switch_selector
+from .operations import (
+    enforce_selector_default,
+    restart_runtime,
+    start_proxy,
+    start_runtime,
+    start_tun,
+    try_hot_switch_selector,
+)
 from .runtime_planner import (
     ParsedSingboxDocument,
     SingboxDocumentState,
@@ -21,6 +28,7 @@ __all__ = [
     "build_singbox_outbound",
     "SingBoxManager",
     "get_singbox_version",
+    "enforce_selector_default",
     "restart_runtime",
     "start_tun",
     "start_proxy",

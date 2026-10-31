@@ -78,3 +78,71 @@ def test_firefox_manager_skips_locked_profile_and_continues(monkeypatch) -> None
     manager.enable(http_port=10809, socks_port=10808)
 
     assert attempted == [locked, writable]
+
+
+def _firefox_profile(monkeypatch, tmp_path, *, running: bool):
+    manager = FirefoxProxyManager()
+    manager._backup_file = tmp_path / "firefox-backup.json"
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    (profile / "prefs.js").write_text('user_pref("browser.theme", "old");\n')
+    monkeypatch.setattr(manager, "_find_profiles", lambda: [profile])
+    state = {"running": running}
+    monkeypatch.setattr(manager, "_browser_running", lambda: state["running"])
+    manager.enable(http_port=10809, socks_port=10808)
+    return manager, profile, state
+
+
+def _firefox_rewrite(profile: Path) -> None:
+    # Firefox drops markers and prefs equal to their defaults on exit.
+    (profile / "prefs.js").write_text(
+        "// Mozilla User Preferences\n"
+        'user_pref("browser.theme", "old");\n'
+        'user_pref("network.proxy.http", "127.0.0.1");\n'
+        'user_pref("network.proxy.http_port", 10808);\n'
+        'user_pref("network.proxy.socks", "127.0.0.1");\n'
+        'user_pref("network.proxy.socks_port", 10808);\n'
+        'user_pref("network.proxy.type", 1);\n'
+    )
+
+
+def test_firefox_restore_handles_prefs_rewritten_by_browser(monkeypatch, tmp_path) -> None:
+    manager, profile, _state = _firefox_profile(monkeypatch, tmp_path, running=False)
+    _firefox_rewrite(profile)
+
+    manager.disable()
+
+    prefs = (profile / "prefs.js").read_text()
+    assert "network.proxy" not in prefs and '"browser.theme", "old"' in prefs
+    assert not (profile / "user.js").exists()
+    assert not manager._backup_file.exists()
+
+
+def test_firefox_restore_is_pinned_while_browser_runs(monkeypatch, tmp_path) -> None:
+    manager, profile, state = _firefox_profile(monkeypatch, tmp_path, running=True)
+
+    manager.disable()
+
+    user_js = (profile / "user.js").read_text()
+    assert 'user_pref("network.proxy.type", 5);' in user_js
+    assert "Lumen system proxy begin" not in user_js
+    assert manager._backup_file.exists()
+
+    _firefox_rewrite(profile)  # the browser exits with the old proxy in memory
+    state["running"] = False
+    manager.disable()
+
+    assert "network.proxy" not in (profile / "prefs.js").read_text()
+    assert not (profile / "user.js").exists()
+    assert not manager._backup_file.exists()
+
+
+def test_running_firefox_restore_does_not_pin_over_another_proxy(monkeypatch, tmp_path):
+    manager, profile, _state = _firefox_profile(monkeypatch, tmp_path, running=True)
+    for name in ("user.js", "prefs.js"):
+        target = profile / name
+        target.write_text(target.read_text().replace('"127.0.0.1"', '"other.proxy"'))
+    manager.disable()
+    text = (profile / "user.js").read_text()
+    assert '"other.proxy"' in text
+    assert "Lumen proxy restore begin" not in text

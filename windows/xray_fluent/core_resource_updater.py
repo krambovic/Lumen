@@ -51,6 +51,7 @@ from .path_utils import resolve_configured_path
 from .subprocess_utils import CREATE_NO_WINDOW, result_output_text
 from .zip_utils import safe_extract_zip
 
+DROUTE_LATEST_API = "https://api.github.com/repos/snowluwu/droute/releases/latest"
 SINGBOX_EXTENDED_LATEST_API = "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest"
 RUNETFREEDOM_LATEST_API = "https://api.github.com/repos/runetfreedom/russia-v2ray-rules-dat/releases/latest"
 LOYALSOLDIER_LATEST_API = "https://api.github.com/repos/Loyalsoldier/v2ray-rules-dat/releases/latest"
@@ -579,56 +580,75 @@ def _ensure_rule_set_file(path: Path, key: str) -> None:
 
 def check_or_update_droute(
     apply_update: bool,
-    *,
-    on_progress=None,
-    proxy_url: str | None = None,
-    cancelled=None,
-    response_opened=None,
-    response_closed=None,
-    bundle_dir: Path | None = None,
+    *, on_progress=None, proxy_url: str | None = None, cancelled=None,
+    response_opened=None, response_closed=None, bundle_dir: Path | None = None,
     bundled_dir: Path | None = None,
 ) -> ResourceUpdateResult:
-    del proxy_url, response_opened, response_closed
-    _raise_if_cancelled(cancelled)
-    target_dir = bundle_dir or DROUTE_DIR
-    source_dir = bundled_dir or DROUTE_BUNDLED_DIR
-    target_exe = target_dir / DROUTE_EXE.name
-    version_file = target_dir / DROUTE_VERSION_FILE.name
-    if bundle_dir is None:
-        current = get_droute_bundle_version()
-    elif target_exe.is_file():
+    del bundled_dir  # Old callers may still supply it; updates are online now.
+    target = (bundle_dir or DROUTE_DIR).resolve()
+    current = get_droute_bundle_version() if bundle_dir is None else ""
+    if bundle_dir is not None and (target / "droute.exe").is_file():
         try:
-            current = version_file.read_text(encoding="utf-8").strip().lstrip("v")
+            current = (target / "version.txt").read_text().strip().lstrip("v")
         except OSError:
             current = DROUTE_LEGACY_VERSION
-    else:
-        current = ""
-
-    latest = get_bundled_droute_version(source_dir)
-    if not latest:
-        return ResourceUpdateResult(
-            "droute",
-            "error",
-            "Не удалось проверить droute: встроенный пакет не найден. Переустановите Lumen.",
-            current,
-            "",
-        )
-
-    if current and not _is_newer(latest, current):
-        return ResourceUpdateResult("droute", "up_to_date", f"droute актуален ({current}, встроенный)", current, latest)
-    if not apply_update:
-        return ResourceUpdateResult("droute", "available", f"Доступен droute {latest} (встроенный)", current, latest)
-
+    options = dict(proxy_url=proxy_url, cancelled=cancelled,
+                   response_opened=response_opened, response_closed=response_closed)
+    latest = ""
     try:
         _raise_if_cancelled(cancelled)
-        install_bundled_droute(target_dir, bundle_dir=source_dir)
-        if on_progress:
-            on_progress(1, 1)
+        release = _request_json(DROUTE_LATEST_API, **options)
+        latest = str(release.get("tag_name") or "").lstrip("v")
+        if not re.fullmatch(r"\d+\.\d+\.\d+", latest):
+            raise RuntimeError("GitHub returned an invalid droute version")
+        asset = next((a for a in release.get("assets", []) if a.get("name") == "droute.zip"), None)
+        if not asset:
+            raise RuntimeError("droute.zip is missing from the release")
+        digest = _extract_digest(str(asset.get("digest") or ""))
+        if not digest:
+            raise RuntimeError("droute archive has no published SHA-256")
+        from .discord_proxy_manager import _verify_bundled_droute
+        try:
+            _verify_bundled_droute(target)
+            verified = True
+        except (OSError, RuntimeError):
+            verified = False
+        if current and verified and not _is_newer(latest, current):
+            return ResourceUpdateResult("droute", "up_to_date", f"droute актуален ({current})", current, latest)
+        if not apply_update:
+            return ResourceUpdateResult("droute", "available", f"Доступен droute {latest}", current, latest)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="droute-update-", dir=target.parent) as temporary:
+            work = Path(temporary)
+            archive, staged = work / "droute.zip", work / "new"
+            _download_file(str(asset["browser_download_url"]), archive, on_progress=on_progress, **options)
+            if _sha256_file(archive).lower() != digest.lower():
+                raise RuntimeError("droute archive SHA-256 mismatch")
+            with zipfile.ZipFile(archive) as package:
+                safe_extract_zip(package, staged)
+            executables = list(staged.rglob("droute.exe"))
+            if len(executables) != 1 or executables[0].stat().st_size < 1024:
+                raise RuntimeError("droute archive contains no valid executable")
+            payload = executables[0].parent
+            (payload / "version.txt").write_text(latest + "\n", encoding="utf-8")
+            sums = [f"{_sha256_file(f)}  {f.relative_to(payload).as_posix()}"
+                    for f in sorted(payload.rglob("*")) if f.is_file() and f.name != "SHA256SUMS.txt"]
+            (payload / "SHA256SUMS.txt").write_text("\n".join(sums) + "\n", encoding="utf-8")
+            _raise_if_cancelled(cancelled)
+            backup = work / "previous"
+            if target.exists():
+                target.rename(backup)
+            try:
+                payload.rename(target)
+            except Exception:
+                if backup.exists():
+                    backup.rename(target)
+                raise
+        return ResourceUpdateResult("droute", "updated", f"droute обновлен до {latest}", current, latest)
     except UpdateCancelled:
         raise
     except Exception as exc:
         return ResourceUpdateResult("droute", "error", f"Не удалось обновить droute: {exc}", current, latest)
-    return ResourceUpdateResult("droute", "updated", f"droute обновлен до {latest} (из встроенного пакета)", current, latest)
 
 
 def check_or_update_singbox(

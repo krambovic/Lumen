@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import ctypes
 import ctypes.wintypes
 import hashlib
@@ -296,22 +298,19 @@ def test_install_skips_bundle_files_missing_from_the_checksum_list(tmp_path) -> 
     assert not (target / "evil.dll").exists()
 
 
-def test_ensure_droute_bundle_executes_the_copy_in_the_install_tree(tmp_path, monkeypatch) -> None:
-    bundle = tmp_path / "bundle"
-    staged = tmp_path / "staged"
-    _write_droute_bundle(bundle)
-    staged.mkdir()
-    (staged / "droute.exe").write_bytes(b"tampered" * 512)
-    (staged / "version.txt").write_text("99.0.0\n", encoding="utf-8")
-
-    monkeypatch.setattr(discord_proxy_manager, "DROUTE_BUNDLED_DIR", bundle)
-    monkeypatch.setattr(discord_proxy_manager, "DROUTE_BUNDLED_EXE", bundle / "droute.exe")
+def test_ensure_droute_verifies_downloaded_payload_before_execution(tmp_path, monkeypatch) -> None:
+    staged = tmp_path / "downloaded"
+    monkeypatch.setattr(discord_proxy_manager, "DROUTE_BUNDLED_DIR", tmp_path / "absent-bundle")
+    _write_droute_bundle(staged, version="2.2.1")
     monkeypatch.setattr(discord_proxy_manager, "DROUTE_DIR", staged)
     monkeypatch.setattr(discord_proxy_manager, "DROUTE_EXE", staged / "droute.exe")
     monkeypatch.setattr(discord_proxy_manager, "DROUTE_VERSION_FILE", staged / "version.txt")
-    monkeypatch.setattr(discord_proxy_manager, "DROUTE_NOTICE", staged / "README.droute.txt")
-
-    assert discord_proxy_manager.ensure_droute_bundle() == bundle / "droute.exe"
+    assert discord_proxy_manager.ensure_droute_bundle() == staged / "droute.exe"
+    (staged / "droute.exe").write_bytes(b"tampered")
+    from xray_fluent import core_resource_updater
+    monkeypatch.setattr(core_resource_updater, "check_or_update_droute", lambda *_a: core_resource_updater.ResourceUpdateResult("droute", "error", "re-download failed"))
+    with pytest.raises(RuntimeError, match="re-download failed"):
+        discord_proxy_manager.ensure_droute_bundle()
 
 
 # ── zapret: processes and driver services Lumen owns ────────────

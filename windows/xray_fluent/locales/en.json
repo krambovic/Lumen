@@ -1717,5 +1717,14 @@
   "Плавный интерфейс": "Smoother interface",
   "Без подвисаний при запуске и остановке Zapret и TUN, изменении размера окна и раскрытии боковой панели.": "No freezes when Zapret and TUN start or stop, when the window is resized or the sidebar opens.",
   "Смена ядра в TUN": "Switching cores in TUN",
-  "TUN снова передаёт данные после переключения между Xray и sing-box extended.": "TUN passes traffic again after switching between Xray and sing-box extended."
+  "TUN снова передаёт данные после переключения между Xray и sing-box extended.": "TUN passes traffic again after switching between Xray and sing-box extended.",
+  "Поставляется с Lumen; обновляется с GitHub.": "Bundled with Lumen; updated from GitHub.",
+  "Подписки и автовыбор": "Subscriptions and auto selection",
+  "Импорт из буфера распознаёт подписки; исправлены группы автовыбора и переключение серверов.": "Clipboard import recognizes subscriptions; auto-selection groups and server switching are fixed.",
+  "Задержка без хэндшейков": "Latency without handshakes",
+  "HTTP GET по умолчанию; задержка на панели измеряется на прогретом соединении.": "HTTP GET is the default; dashboard latency is measured over a warmed connection.",
+  "Обновлённые компоненты": "Updated components",
+  "sing-box extended 2.7.3 с исправлениями Lumen и droute 2.2.1 в комплекте и обновлениях.": "sing-box extended 2.7.3 with Lumen fixes and droute 2.2.1, bundled and available in Updates.",
+  "Стабильность и оформление": "Stability and appearance",
+  "Исправлены ложные конфликты ядер и подсказки; новая светлая иконка и обновления только для Desktop.": "Fixed false core conflicts and tooltips; a new light icon and Desktop-only update selection."
 }

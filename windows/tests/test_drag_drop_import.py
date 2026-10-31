@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from PyQt6.QtCore import QUrl
 
 from xray_fluent.models import Node
@@ -111,3 +113,49 @@ def test_clipboard_file_urls_are_imported_as_config_files(monkeypatch, tmp_path)
     AppBridge.importClipboard(bridge)
 
     assert imported == [urls]
+
+
+@pytest.mark.parametrize("text", [
+    "https://sub.example/token",
+    "https://sub.example:8443/token",
+    "http://sub.example/?token=abc",
+    "https://sub.example",
+    "happ://crypt/example",
+    "incy://crypt1/example",
+])
+def test_clipboard_subscription_uses_background_import(monkeypatch, text):
+    import xray_fluent.qml_app.bridge.app_bridge as module
+
+    clipboard = SimpleNamespace(mimeData=lambda: None, text=lambda: text)
+    monkeypatch.setattr(module, "QGuiApplication", SimpleNamespace(clipboard=lambda: clipboard))
+    imported = []
+    bridge = SimpleNamespace(importSubscription=imported.append)
+    AppBridge.importClipboard(bridge)
+    assert imported == [text]
+
+
+def test_clipboard_subscription_batch_is_deduplicated(monkeypatch):
+    import xray_fluent.qml_app.bridge.app_bridge as module
+
+    clipboard = SimpleNamespace(mimeData=lambda: None, text=lambda: "https://sub.example/a\nhttps://sub.example/b\nhttps://sub.example/a")
+    monkeypatch.setattr(module, "QGuiApplication", SimpleNamespace(clipboard=lambda: clipboard))
+    imported = []
+    AppBridge.importClipboard(SimpleNamespace(importSubscriptions=imported.append))
+    assert imported == ["https://sub.example/a\nhttps://sub.example/b"]
+
+
+@pytest.mark.parametrize("text", ["http://user:pass@proxy.example:8080", "https://proxy.example:443", "vless://uuid@node.example:443"])
+def test_clipboard_proxy_links_remain_node_imports(monkeypatch, text):
+    import xray_fluent.qml_app.bridge.app_bridge as module
+
+    clipboard = SimpleNamespace(mimeData=lambda: None, text=lambda: text)
+    monkeypatch.setattr(module, "QGuiApplication", SimpleNamespace(clipboard=lambda: clipboard))
+    imported = []
+    bridge = SimpleNamespace(
+        _filter_group="Manual", controller=SimpleNamespace(
+            state=SimpleNamespace(nodes=[]),
+            import_nodes_from_text=lambda value, **kwargs: (imported.append(value) or 0, []),
+        ), toast=_Signal(),
+    )
+    AppBridge.importClipboard(bridge)
+    assert imported == [text]

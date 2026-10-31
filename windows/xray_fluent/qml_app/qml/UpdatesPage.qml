@@ -543,6 +543,54 @@ Item {
                 }
             }
 
+            Card {
+                Layout.fillWidth: true
+                padding: 18
+                hoverable: false
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 10
+                    Text {
+                        text: "Discord · droute" + (page.drouteVersion ? " · " + page.drouteVersion : "")
+                        color: Theme.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontStrong
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        text: page.resourceStatusText(page.droutePhase, page.drouteMessage,
+                            I18n.t("Поставляется с Lumen; обновляется с GitHub."), page.droutePercent)
+                        color: page.resourceStatusColor(page.droutePhase)
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSmall
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                    ProgressBar {
+                        Layout.fillWidth: true
+                        visible: page.drouteBusy
+                        indeterminate: page.droutePercent <= 0
+                        from: 0; to: 100; value: page.droutePercent
+                    }
+                    RowLayout {
+                        spacing: 8
+                        AccentButton {
+                            glyph: "\uE72C"
+                            text: I18n.t("Проверить droute")
+                            enabled: !page.drouteBusy
+                            onClicked: App.checkDrouteUpdate()
+                        }
+                        AccentButton {
+                            kind: "ghost"
+                            glyph: "\uE896"
+                            text: I18n.t("Обновить droute")
+                            visible: page.droutePhase === "available" || page.droutePhase === "updating"
+                            enabled: page.droutePhase === "available"
+                            onClicked: App.updateDroute()
+                        }
+                    }
+                }
+            }
             Item { Layout.preferredHeight: 4 }
         }
     }

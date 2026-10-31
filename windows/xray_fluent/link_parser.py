@@ -1223,7 +1223,18 @@ def _validate_amnezia_settings(node: Node, amnezia: dict[str, Any]) -> str | Non
     return None
 
 
+def is_happ_auto_placeholder(node: Node) -> bool:
+    """Recognize the dummy SS links used in Dobry's URI subscription."""
+    return (
+        node.scheme in {"ss", "shadowsocks"}
+        and node.server.casefold() == "max.ru" and node.port == 1234
+        and "автовыбор" in node.name.casefold()
+    )
+
+
 def validate_node_outbound(node: Node) -> str | None:
+    if is_happ_auto_placeholder(node):
+        return "Ссылка автовыбора — служебная заглушка Happ. Импортируйте или обновите подписку, чтобы загрузить полную AUTO-конфигурацию."
     name_l = str(node.name or "").strip().lower()
     if str(node.scheme or "").strip().lower() in {
         "vless",

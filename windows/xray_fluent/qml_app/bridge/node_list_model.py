@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from PyQt6.QtCore import QAbstractListModel, QModelIndex, QSortFilterProxyModel, Qt
+from PyQt6.QtCore import QAbstractListModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
 
 from ...models import Node
 from ...country_flags import detect_country, get_flag_emoji, get_flag_svg_data_uri, _STRIPES as _FLAG_STRIPES
@@ -73,6 +73,8 @@ class NodeListModel(QAbstractListModel):
         ProtocolRole: b"protocol",
     }
 
+    _FLUSH_INTERVAL_MS = 50
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._nodes: list[Node] = []
@@ -83,6 +85,13 @@ class NodeListModel(QAbstractListModel):
         self._country_cache: dict[str, tuple[tuple[str, str], str]] = {}
         self._allow_native_singbox_only = False
         self._core_preference = "auto"
+        # Bulk ping/speed runs touch thousands of rows; one dataChanged per row
+        # makes every proxy re-sort per row and freezes the UI.
+        self._pending_roles: dict[str, set[int]] = {}
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setSingleShot(True)
+        self._flush_timer.setInterval(self._FLUSH_INTERVAL_MS)
+        self._flush_timer.timeout.connect(self.flush_pending_changes)
 
     # ── Qt model API ────────────────────────────────────────────
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -248,9 +257,9 @@ class NodeListModel(QAbstractListModel):
             return
         self._nodes[row].ping_ms = ping_ms
         self._pinging_ids.discard(node_id)
-        self._emit_row_changed(
+        self._queue_row_changed(
             node_id,
-            [self.PingRole, self.AliveRole, self.TestedRole, self.PingingRole, self.PingKindRole],
+            (self.PingRole, self.AliveRole, self.TestedRole, self.PingingRole, self.PingKindRole),
         )
 
     def set_pinging_ids(self, node_ids: Iterable[str]) -> None:
@@ -258,7 +267,7 @@ class NodeListModel(QAbstractListModel):
         changed = self._pinging_ids.symmetric_difference(next_ids)
         self._pinging_ids = next_ids
         for node_id in changed:
-            self._emit_row_changed(node_id, [self.PingingRole])
+            self._queue_row_changed(node_id, (self.PingingRole,))
 
     def clear_pinging(self) -> None:
         self.set_pinging_ids(())
@@ -269,19 +278,19 @@ class NodeListModel(QAbstractListModel):
             return
         self._nodes[row].speed_mbps = speed_mbps
         self._speed_progress.pop(node_id, None)
-        self._emit_row_changed(node_id, [self.SpeedRole, self.SpeedProgressRole, self.TestedRole])
+        self._queue_row_changed(node_id, (self.SpeedRole, self.SpeedProgressRole, self.TestedRole))
 
     def update_alive(self, node_id: str, is_alive: bool) -> None:
         row = self._index_by_id.get(node_id)
         if row is None:
             return
-        self._emit_row_changed(node_id, [self.AliveRole, self.TestedRole])
+        self._queue_row_changed(node_id, (self.AliveRole, self.TestedRole))
 
     def update_speed_progress(self, node_id: str, percent: int) -> None:
         if node_id not in self._index_by_id:
             return
         self._speed_progress[node_id] = int(percent)
-        self._emit_row_changed(node_id, [self.SpeedProgressRole])
+        self._queue_row_changed(node_id, (self.SpeedProgressRole,))
 
     def node_id_at(self, row: int) -> str | None:
         if 0 <= row < len(self._nodes):
@@ -319,6 +328,34 @@ class NodeListModel(QAbstractListModel):
         return best_id
 
     # ── helpers ─────────────────────────────────────────────────
+    def _queue_row_changed(self, node_id: str, roles: Iterable[int]) -> None:
+        if node_id not in self._index_by_id:
+            return
+        self._pending_roles.setdefault(node_id, set()).update(roles)
+        if not self._flush_timer.isActive():
+            self._flush_timer.start()
+
+    def flush_pending_changes(self) -> None:
+        """Emit queued row changes as a few contiguous ranges."""
+        self._flush_timer.stop()
+        pending, self._pending_roles = self._pending_roles, {}
+        rows = sorted(
+            (row, roles)
+            for node_id, roles in pending.items()
+            if (row := self._index_by_id.get(node_id)) is not None
+        )
+        start = end = -1
+        merged: set[int] = set()
+        for row, roles in [*rows, (-2, set())]:
+            if row == end + 1 and start >= 0:
+                end = row
+                merged |= roles
+                continue
+            if start >= 0:
+                self.dataChanged.emit(self.index(start, 0), self.index(end, 0), sorted(merged))
+            start = end = row
+            merged = set(roles)
+
     def _emit_row_changed(self, node_id: str | None, roles: list[int]) -> None:
         if not node_id:
             return
@@ -376,9 +413,11 @@ class DashboardNodeProxy(QSortFilterProxyModel):
         return self._text in haystack.casefold()
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        model = self.sourceModel()
-        a = model.data(left, NodeListModel.PingRole)
-        b = model.data(right, NodeListModel.PingRole)
+        # Called O(n log n) times per re-sort: read the nodes directly instead
+        # of going through the role dispatch in data().
+        nodes = self.sourceModel()._nodes
+        a = nodes[left.row()].ping_ms
+        b = nodes[right.row()].ping_ms
         a = a if isinstance(a, int) and a > 0 else self._UNKNOWN_PING
         b = b if isinstance(b, int) and b > 0 else self._UNKNOWN_PING
         if a != b:

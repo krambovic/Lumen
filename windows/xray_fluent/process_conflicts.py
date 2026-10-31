@@ -78,7 +78,7 @@ def _running_processes() -> dict[int, str]:
     return processes
 
 
-def _running_processes_win32() -> dict[int, str] | None:
+def _running_processes_win32(*, parent_ids: dict[int, int] | None = None) -> dict[int, str] | None:
     """Enumerate process names through Toolhelp without spawning tasklist."""
     if os.name != "nt":
         return None
@@ -117,6 +117,8 @@ def _running_processes_win32() -> dict[int, str] | None:
             processes: dict[int, str] = {}
             while True:
                 processes[int(entry.th32ProcessID)] = str(entry.szExeFile)
+                if parent_ids is not None:
+                    parent_ids[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
                 if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
                     break
             return processes
@@ -124,6 +126,18 @@ def _running_processes_win32() -> dict[int, str] | None:
             kernel32.CloseHandle(snapshot)
     except Exception:
         return None
+
+
+def _own_descendant_pids() -> set[int]:
+    """Cover the gap between CreateProcess and manager/worker registration."""
+    parents: dict[int, int] = {}
+    _running_processes_win32(parent_ids=parents)
+    owned = {os.getpid()}
+    while True:
+        children = {pid for pid, parent in parents.items() if parent in owned and pid not in owned}
+        if not children:
+            return owned
+        owned.update(children)
 
 
 def _process_executable_path(pid: int) -> Path | None:
@@ -290,7 +304,7 @@ def scan_network_conflicts(
     ignored_executable_paths: set[str | Path] | None = None,
 ) -> dict:
     processes = _running_processes()
-    ignored = set(ignored_pids or ())
+    ignored = set(ignored_pids or ()) | _own_descendant_pids()
     ignored_paths = {
         Path(path) for path in (ignored_executable_paths or ()) if str(path).strip()
     }
@@ -348,7 +362,7 @@ def scan_network_conflicts(
             and (
                 port_conflicts
                 or has_foreign_system_proxy(
-                    ignored_pids=ignored_pids,
+                    ignored_pids=ignored,
                     ignored_executable_paths=ignored_paths,
                     processes=processes,
                 )
@@ -362,6 +376,7 @@ def terminate_scanned_conflicts(processes: list[dict]) -> tuple[list[str], list[
     if os.name != "nt":
         return [], []
     running = _running_processes()
+    owned = _own_descendant_pids()
     closed: list[str] = []
     failed: list[str] = []
     for item in processes:
@@ -372,7 +387,7 @@ def terminate_scanned_conflicts(processes: list[dict]) -> tuple[list[str], list[
         expected_name = str(item.get("name") or "").strip()
         label = str(item.get("label") or expected_name or pid)
         current_name = str(running.get(pid) or "").strip()
-        if pid <= 4 or pid == os.getpid() or not current_name:
+        if pid <= 4 or pid in owned or not current_name:
             continue
         if not expected_name or current_name.casefold() != expected_name.casefold():
             failed.append(label)

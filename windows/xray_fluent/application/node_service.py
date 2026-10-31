@@ -20,7 +20,7 @@ from ..country_flags import detect_country
 from ..data_paths import get_install_id
 from ..happ_crypt import HappDecryptError, decrypt_happ_link, is_happ_crypt_link, is_happ_link
 from ..incy_crypt import IncyDecryptError, decrypt_incy_link, is_incy_crypt_link, is_incy_link
-from ..link_parser import normalize_node_outbound, parse_links_text, validate_node_outbound
+from ..link_parser import is_happ_auto_placeholder, normalize_node_outbound, parse_links_text, validate_node_outbound
 from ..models import DEFAULT_SUBSCRIPTION_HWID, Node
 from ..subscription_presentation import EXTRA_PROVIDER_PARAMETERS
 from ..subscription_fetcher import (
@@ -63,6 +63,14 @@ def _merge_magvpn_variants(links_text: str, auto_text: str) -> str:
     if len(merged.encode("utf-8")) > MAX_SUBSCRIPTION_BYTES:
         raise ValueError("Объединённая подписка превышает 8 МиБ")
     return merged
+
+
+def _happ_auto_placeholder_names(nodes: list[Node]) -> set[str]:
+    """Dobry's URI representation uses dummy SS endpoints for Happ pools."""
+    return {
+        node.name for node in nodes
+        if is_happ_auto_placeholder(node)
+    }
 
 
 @dataclass(slots=True)
@@ -1573,6 +1581,37 @@ def _fetch_with_optional_meta(
         return _fetch_subscription_with_headers(url, profile_name, headers, **options)
 
 
+def _resolve_happ_auto_placeholders(
+    url: str,
+    nodes: list[Node],
+    userinfo: dict,
+    request_hwid: str,
+    fetch_options: dict,
+    response_meta: dict | None,
+) -> tuple[str, dict, list[str]] | None:
+    names = _happ_auto_placeholder_names(nodes)
+    if not names:
+        return None
+    # A dummy ss:// URI cannot reconstruct balancers, routing or probes.
+    headers = {**dict(_SUBSCRIPTION_CLIENT_PROFILES)["Happ Windows"], "X-Hwid": request_hwid}
+    text, info = _fetch_with_optional_meta(
+        url, "Happ Windows", headers, response_meta={}, **fetch_options,
+    )
+    resolved_nodes, errors = parse_links_text(text)
+    resolved_names = {node.name for node in resolved_nodes if node.scheme == "auto"}
+    if (
+        not names.issubset(resolved_names)
+        or _happ_auto_placeholder_names(resolved_nodes)
+        or not _subscription_response_is_accepted(text, resolved_nodes)
+    ):
+        return "", userinfo, ["Провайдер не вернул полные конфигурации автовыбора для профиля Happ"]
+    # The original validators belong to the URI representation, not these
+    # graphs. Force a full fetch on update instead of reusing those validators.
+    if response_meta is not None:
+        response_meta.clear()
+    return text, _merge_subscription_info(userinfo, info), errors
+
+
 def fetch_subscription_payload(
     url: str,
     *,
@@ -1699,6 +1738,9 @@ def fetch_subscription_payload(
                 userinfo["_lumen_not_modified"] = True
                 return "", userinfo, []
             nodes, errors = parse_links_text(text)
+            resolved = _resolve_happ_auto_placeholders(url, nodes, userinfo, request_hwid, fetch_options, response_meta)
+            if resolved is not None:
+                return resolved
             if _subscription_response_is_accepted(text, nodes):
                 if magvpn_variants:
                     try:
@@ -1744,6 +1786,9 @@ def fetch_subscription_payload(
                         userinfo["_lumen_not_modified"] = True
                         return "", userinfo, []
                     nodes, errors = parse_links_text(text)
+                    resolved = _resolve_happ_auto_placeholders(url, nodes, userinfo, request_hwid, fetch_options, response_meta)
+                    if resolved is not None:
+                        return resolved
                     if _subscription_response_is_accepted(text, nodes):
                         return text, {**userinfo, "networkPath": network_path}, errors
                     attempts.append(

@@ -224,7 +224,15 @@ class ProxyManager:
             return True
 
     def reconcile_stale_state(self) -> bool:
-        if not self.is_supported or self._load_persisted_backup() is None:
+        if not self.is_supported:
+            return False
+        if self._load_persisted_backup() is None:
+            # Finish a Firefox restore deferred while the browser was running
+            # (it rewrites prefs.js from memory on exit).
+            try:
+                self._firefox_proxy.disable()
+            except Exception:
+                _logger.warning("[proxy] Firefox recovery remains pending", exc_info=True)
             return False
         return self.disable(restore_previous=True)
 
@@ -563,6 +571,33 @@ class FirefoxProxyManager:
 
     _MARKER_BEGIN = "// Lumen system proxy begin"
     _MARKER_END = "// Lumen system proxy end"
+    _RESET_BEGIN = "// Lumen proxy restore begin"
+    _RESET_END = "// Lumen proxy restore end"
+    _BROWSER_EXES = frozenset({"firefox.exe", "librewolf.exe", "waterfox.exe", "floorp.exe"})
+    # Keys whose values identify Lumen's proxy lease inside a profile.
+    _LEASE_KEYS = (
+        "network.proxy.type",
+        "network.proxy.http",
+        "network.proxy.http_port",
+        "network.proxy.ssl",
+        "network.proxy.ssl_port",
+        "network.proxy.socks",
+        "network.proxy.socks_port",
+    )
+    _FIREFOX_DEFAULTS: dict[str, object] = {
+        "network.proxy.type": 5,
+        "network.proxy.http": "",
+        "network.proxy.http_port": 0,
+        "network.proxy.ssl": "",
+        "network.proxy.ssl_port": 0,
+        "network.proxy.socks": "",
+        "network.proxy.socks_port": 0,
+        "network.proxy.socks_version": 5,
+        "network.proxy.socks_remote_dns": False,
+        "network.proxy.share_proxy_settings": False,
+        "network.proxy.no_proxies_on": "",
+        "network.trr.mode": 0,
+    }
 
     def __init__(self) -> None:
         self._backup_file = RUNTIME_DIR / "firefox_proxy_backup.json"
@@ -600,28 +635,42 @@ class FirefoxProxyManager:
 
     def disable(self) -> None:
         backup = self._load_backup()
+        if not backup:
+            return
+        # A running browser keeps the proxy prefs in memory and writes them
+        # back to prefs.js on exit.  Pin the original values in user.js (read
+        # on every start) and keep the lease until a pass sees it closed.
+        browser_running = self._browser_running()
         remaining = {}
         for profile_text, original in backup.items():
             profile = Path(profile_text)
             files = {"user.js": original} if not isinstance(original, dict) else original
             failed = {}
             applied = files.get("__applied", "")
+            pending = bool(browser_running and applied)
             for file_name, content in files.items():
                 if file_name not in {"user.js", "prefs.js"}:
                     continue
                 target = profile / file_name
                 try:
+                    if pending:
+                        failed[file_name] = content
                     if not target.exists():
                         continue  # Respect an external deletion.
                     current = target.read_text(encoding="utf-8", errors="replace")
+                    base = self._strip_managed_block(current, self._RESET_BEGIN, self._RESET_END)
                     expected = applied
                     if not expected:
-                        start, end = current.find(self._MARKER_BEGIN), current.find(self._MARKER_END)
+                        start, end = base.find(self._MARKER_BEGIN), base.find(self._MARKER_END)
                         if start < 0 or end < start:
                             failed[file_name] = content
                             continue  # Legacy recovery without ownership is manual.
-                        expected = current[start:end + len(self._MARKER_END)]
-                    restored = self._restore_profile_text(current, str(content or ""), expected)
+                        expected = base[start:end + len(self._MARKER_END)]
+                    restored = self._restore_profile_text(base, str(content or ""), expected)
+                    if pending and file_name == "user.js" and self._owns_proxy_preferences(base, expected):
+                        reset = self._build_reset_block(applied, files)
+                        if reset:
+                            restored = f"{restored.rstrip()}\n\n{reset}\n" if restored.strip() else f"{reset}\n"
                     if restored != current:
                         if content is None and not restored.strip():
                             target.unlink()
@@ -634,6 +683,29 @@ class FirefoxProxyManager:
                     failed["__applied"] = applied
                 remaining[profile_text] = failed
         self._save_backup(remaining)
+
+    def _build_reset_block(self, applied: str, files: dict) -> str:
+        user_values = self._preference_lines(str(files.get("user.js") or ""))
+        prefs_values = self._preference_lines(str(files.get("prefs.js") or ""))
+        lines = []
+        for key in self._preference_lines(applied):
+            if key in user_values:
+                lines.append(user_values[key][1].strip())
+            elif key in prefs_values:
+                lines.append(prefs_values[key][1].strip())
+            elif key in self._FIREFOX_DEFAULTS:
+                lines.append(f"user_pref({json.dumps(key)}, {json.dumps(self._FIREFOX_DEFAULTS[key])});")
+        if not lines:
+            return ""
+        return "\n".join([self._RESET_BEGIN, *lines, self._RESET_END])
+
+    @classmethod
+    def _browser_running(cls) -> bool:
+        if sys.platform != "win32":
+            return False
+        from .win_process_list import list_running_executables
+
+        return any(name.lower() in cls._BROWSER_EXES for name in list_running_executables())
 
     @staticmethod
     def _preference_lines(text: str) -> dict[str, tuple[object, str]]:
@@ -650,23 +722,36 @@ class FirefoxProxyManager:
                 continue
         return result
 
+    def _owns_proxy_preferences(self, current: str, applied: str) -> bool:
+        expected = self._preference_lines(applied)
+        live = self._preference_lines(current)
+        if not expected:
+            return False
+        lease = [key for key in self._LEASE_KEYS if key in expected] or list(expected)
+        return lease[0] in live and all(
+            key not in live or live[key][0] == expected[key][0] for key in lease
+        )
+
     def _restore_profile_text(self, current: str, original: str, applied: str) -> str:
         expected = self._preference_lines(applied)
         live = self._preference_lines(current)
         # Treat the configuration as one lease. A changed proxy key can indicate
         # a different client; unrelated browser preference changes are preserved.
-        if not expected or any(key not in live or live[key][0] != value[0] for key, value in expected.items()):
+        # Firefox omits prefs equal to their default when it rewrites prefs.js
+        # (e.g. socks_version=5), so a missing key does not break ownership.
+        if not self._owns_proxy_preferences(current, applied):
             return current
+        owned = {key for key, value in expected.items() if key not in live or live[key][0] == value[0]}
         before = self._preference_lines(original)
         lines = []
         for line in current.splitlines(keepends=True):
             if line.strip() in {self._MARKER_BEGIN, self._MARKER_END}:
                 continue
-            if any(key in expected for key in self._preference_lines(line)):
+            if any(key in owned for key in self._preference_lines(line)):
                 continue
             lines.append(line)
         restored = "".join(lines).rstrip()
-        originals = [before[key][1] for key in expected if key in before]
+        originals = [before[key][1] for key in expected if key in owned and key in before]
         return "\n".join(part for part in (restored, *originals) if part) + ("\n" if restored or originals else "")
 
     def _find_profiles(self) -> list[Path]:
@@ -701,6 +786,7 @@ class FirefoxProxyManager:
         for file_name in ("user.js", "prefs.js"):
             target = profile / file_name
             existing = target.read_text(encoding="utf-8", errors="replace") if target.exists() else ""
+            existing = self._strip_managed_block(existing, self._RESET_BEGIN, self._RESET_END)
             existing = self._strip_managed_block(existing).rstrip()
             text = f"{existing}\n\n{block}\n" if existing else f"{block}\n"
             target.write_text(text, encoding="utf-8")
@@ -730,12 +816,14 @@ class FirefoxProxyManager:
             ]
         )
 
-    def _strip_managed_block(self, text: str) -> str:
-        start = text.find(self._MARKER_BEGIN)
-        end = text.find(self._MARKER_END)
+    def _strip_managed_block(self, text: str, begin: str = "", end_marker: str = "") -> str:
+        begin = begin or self._MARKER_BEGIN
+        end_marker = end_marker or self._MARKER_END
+        start = text.find(begin)
+        end = text.find(end_marker)
         if start == -1 or end == -1 or end < start:
             return text
-        end += len(self._MARKER_END)
+        end += len(end_marker)
         if end < len(text) and text[end:end + 1] == "\n":
             end += 1
         return text[:start].rstrip() + ("\n" if text[:start].strip() and text[end:].strip() else "") + text[end:].lstrip()

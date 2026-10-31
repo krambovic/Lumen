@@ -89,6 +89,7 @@ from .application.runtime import (
     can_proxy_hot_swap as can_proxy_hot_swap_rule,
     can_tun_hot_swap as can_tun_hot_swap_rule,
     cancel_speed_test as cancel_speed_test_operation,
+    cancel_tests as cancel_tests_operation,
     cleanup_connection_runtime_state as cleanup_connection_runtime_state_operation,
     compute_transition_action,
     connect_selected as connect_selected_operation,
@@ -136,6 +137,7 @@ from .network_route_context import (
 )
 from .engines.singbox import (
     SingBoxManager,
+    enforce_selector_default as enforce_singbox_selector_default_operation,
     get_singbox_version,
     ParsedSingboxDocument,
     parse_singbox_document,
@@ -1319,7 +1321,13 @@ class AppController(QObject):
     def _inspect_active_xray_config(self) -> tuple[Path, str, bool, int, int, int]:
         return inspect_active_xray_config_operation(self)
 
-    def _plan_runtime_singbox(self, node: Node | None = None, *, tun_mode: bool = True) -> SingboxRuntimePlan:
+    def _plan_runtime_singbox(
+        self,
+        node: Node | None = None,
+        *,
+        tun_mode: bool = True,
+        hot_switch: bool = True,
+    ) -> SingboxRuntimePlan:
         state = self._get_singbox_document_state()
         document = self._parsed_singbox_document
         if document is None or document.source_path != state.source_path or document.text_hash != state.text_hash:
@@ -1371,8 +1379,8 @@ class AppController(QObject):
             preferred_protect_password=preferred_protect_password,
             system_dns_servers=system_dns_servers,
             tun_mode=tun_mode,
-            enable_hot_switch=True,
-            hot_switch_nodes=tuple(self.state.nodes),
+            enable_hot_switch=hot_switch,
+            hot_switch_nodes=tuple(self.state.nodes) if hot_switch else (),
             proxy_chain=proxy_chain,
             core_preference=getattr(self.state.settings, "core_preference", "auto"),
         )
@@ -1381,6 +1389,18 @@ class AppController(QObject):
                 self._log(f"[chain] {note}")
             if proxy_chain.active:
                 self._log(f"[chain] sing-box: {proxy_chain.describe(node)}")
+        if node is not None and plan.used_selected_node:
+            from .application.health_listener import add_singbox_health_listener
+            import socket
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe_socket:
+                    probe_socket.bind((PROXY_HOST, 0))
+                    health_port = probe_socket.getsockname()[1]
+                plan.health_proxy_url = add_singbox_health_listener(
+                    plan.singbox_config, port=health_port,
+                )
+            except (OSError, RuntimeError):
+                self._log("[metrics] dedicated sing-box health listener unavailable")
         return plan
 
     def _resolve_proxy_chain(self, node: Node | None) -> ProxyChain | None:
@@ -1631,8 +1651,10 @@ class AppController(QObject):
             prevalidated=True,
         )
         self._log(f"[tun] sing-box start result: {sb_ok}")
-        if sb_ok:
+        if sb_ok and enforce_singbox_selector_default_operation(self, plan):
             return True
+        if sb_ok:
+            self.singbox.stop(expected=True)
 
         if plan.xray_sidecar is not None and self.xray.is_running:
             self.xray.stop()
@@ -2723,6 +2745,9 @@ class AppController(QObject):
 
     def cancel_speed_test(self) -> bool:
         return cancel_speed_test_operation(self)
+
+    def cancel_tests(self) -> bool:
+        return cancel_tests_operation(self)
 
     def get_fastest_alive_node(self) -> Node | None:
         return get_fastest_alive_node_operation(self)

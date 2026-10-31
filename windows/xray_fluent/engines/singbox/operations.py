@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +13,12 @@ from .runtime_planner import SingboxRuntimePlan, singbox_node_source_signature, 
 if TYPE_CHECKING:
     from ...app_controller import AppController
     from ...models import Node
+
+
+_HOT_SWITCH_PRUNE_ATTEMPTS = 5
+_CONFIG_ITEM_ERROR = re.compile(r"\b(outbounds|endpoints)\[(\d+)\]")
+_SELECTOR_ENFORCE_ATTEMPTS = 4
+_SELECTOR_ENFORCE_DELAY = 0.25
 
 
 @dataclass(slots=True)
@@ -64,10 +72,7 @@ def start_runtime(
             controller._log(f"[{log_domain}] outbound tag 'proxy' replaced from selected node: {node.name}")
 
     validation_started = time.monotonic()
-    valid, validation_output = controller.singbox.validate_config(
-        controller.state.settings.singbox_path,
-        plan.singbox_config,
-    )
+    plan, valid, validation_output = validate_runtime_plan(controller, plan, node, tun_mode=tun_mode)
     controller._log(f"[{log_domain}] core config check completed in {int((time.monotonic() - validation_started) * 1000)} ms")
     if not valid:
         controller._active_core = prev_active_core
@@ -210,6 +215,7 @@ def try_hot_switch_selector(controller: AppController, reason: str) -> bool:
         clash_api_secret=session.clash_api_secret,
         clash_api_selector=session.clash_api_selector,
         clash_api_node_signatures=session.clash_api_node_signatures,
+        health_proxy_url=getattr(session, "health_proxy_url", ""),
         hybrid=False,
         socks_port=session.socks_port,
         http_port=session.http_port,
@@ -228,6 +234,113 @@ def try_hot_switch_selector(controller: AppController, reason: str) -> bool:
     return True
 
 
+def validate_runtime_plan(
+    controller: AppController,
+    plan: SingboxRuntimePlan,
+    node: Node | None,
+    *,
+    tun_mode: bool,
+) -> tuple[SingboxRuntimePlan, bool, str]:
+    """Validate a plan; never let another stored node break the selected one.
+
+    The hot-switch selector embeds every stored node, so one malformed import
+    would make sing-box reject the whole runtime.  Drop the rejected member
+    and retry, then fall back to a plan with only the selected node.
+    """
+    settings = controller.state.settings
+    valid, output = controller.singbox.validate_config(settings.singbox_path, plan.singbox_config)
+    if valid or not plan.clash_api_selector:
+        return plan, valid, output
+    for _ in range(_HOT_SWITCH_PRUNE_ATTEMPTS):
+        pruned = _prune_rejected_selector_member(plan, output)
+        if not pruned:
+            break
+        controller._log(f"[hot-switch] sing-box rejected server {pruned}; it is excluded from fast switching")
+        valid, output = controller.singbox.validate_config(settings.singbox_path, plan.singbox_config)
+        if valid:
+            return plan, valid, output
+    controller._log("[hot-switch] falling back to a runtime with only the selected server")
+    try:
+        fallback = controller._plan_runtime_singbox(node, tun_mode=tun_mode, hot_switch=False)
+    except (ValueError, RuntimeError):
+        return plan, valid, output
+    fallback_valid, fallback_output = controller.singbox.validate_config(settings.singbox_path, fallback.singbox_config)
+    return fallback, fallback_valid, fallback_output
+
+
+def _prune_rejected_selector_member(plan: SingboxRuntimePlan, output: str) -> str:
+    match = _CONFIG_ITEM_ERROR.search(str(output or ""))
+    config = plan.singbox_config
+    if match is None or not isinstance(config, dict):
+        return ""
+    items = config.get(match.group(1))
+    index = int(match.group(2))
+    if not isinstance(items, list) or index >= len(items) or not isinstance(items[index], dict):
+        return ""
+    tag = str(items[index].get("tag") or "")
+    selector = next(
+        (
+            item
+            for item in config.get("outbounds") or ()
+            if isinstance(item, dict) and item.get("type") == "selector" and item.get("tag") == plan.clash_api_selector
+        ),
+        None,
+    )
+    if selector is None or not tag or tag == selector.get("default"):
+        return ""
+    members = [member for member in selector.get("outbounds") or () if member != tag]
+    if len(members) == len(selector.get("outbounds") or ()):
+        return ""
+    # Only the definition and the selector membership may mention the tag.
+    if json.dumps(config, ensure_ascii=False).count(json.dumps(tag, ensure_ascii=False)) > 2:
+        return ""
+    selector["outbounds"] = members
+    del items[index]
+    plan.clash_api_node_signatures = tuple(
+        (node_id, signature)
+        for node_id, signature in plan.clash_api_node_signatures
+        if singbox_node_tag(node_id) != tag
+    )
+    return tag
+
+
+def enforce_selector_default(controller: AppController, plan: SingboxRuntimePlan) -> bool:
+    """Point Lumen's hot-switch selector at the planned node after start.
+
+    sing-box restores the last selector choice from cache_file and ignores
+    `default` when that tag still exists, so a restart or a fresh connect
+    would silently keep the previous server.
+    """
+    selector = plan.clash_api_selector
+    if not selector or not plan.clash_api_secret:
+        return True
+    target = next(
+        (
+            str(item.get("default") or "")
+            for item in plan.singbox_config.get("outbounds") or ()
+            if isinstance(item, dict) and item.get("type") == "selector" and item.get("tag") == selector
+        ),
+        "",
+    )
+    if not target:
+        return True
+    client = SingboxClashApiClient(secret=plan.clash_api_secret)
+    error: ClashApiError | None = None
+    for attempt in range(_SELECTOR_ENFORCE_ATTEMPTS):
+        if attempt:
+            time.sleep(_SELECTOR_ENFORCE_DELAY)
+        try:
+            result = client.switch_selector(selector, target)
+        except ClashApiError as exc:
+            error = exc
+            continue
+        if result.changed:
+            controller._log(f"[clash-api] restored selector={selector} {result.previous} -> {result.current} (cached choice ignored)")
+        return True
+    controller._log(f"[clash-api] cannot confirm selected server in sing-box selector: {error}")
+    return False
+
+
 def restart_runtime(controller: AppController, reason: str) -> bool:
     node = controller.selected_node
     tun_mode = bool(controller.state.settings.tun_mode)
@@ -241,10 +354,7 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
             controller._set_connection_status("error", str(exc), level="error")
             return False
 
-        valid, validation_output = controller.singbox.validate_config(
-            controller.state.settings.singbox_path,
-            plan.singbox_config,
-        )
+        plan, valid, validation_output = validate_runtime_plan(controller, plan, node, tun_mode=tun_mode)
         if not valid:
             controller._set_connection_status(
                 "error",
@@ -340,6 +450,7 @@ def restart_runtime(controller: AppController, reason: str) -> bool:
             clash_api_secret=plan.clash_api_secret,
             clash_api_selector=plan.clash_api_selector,
             clash_api_node_signatures=plan.clash_api_node_signatures,
+            health_proxy_url=plan.health_proxy_url,
             hybrid=plan.is_hybrid,
             xray_inbound_tags=(),
             sidecar_relay_port=plan.xray_sidecar.relay_port if plan.xray_sidecar else 0,

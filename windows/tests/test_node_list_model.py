@@ -86,3 +86,25 @@ def test_auto_node_without_description_gets_default_description() -> None:
         assert model.data(model.index(2, 0), NodeListModel.DescriptionRole) == "Провайдер выберет сервер"
     finally:
         set_language(previous_language)
+
+
+def test_bulk_ping_updates_are_coalesced_into_ranges() -> None:
+    from PyQt6.QtCore import QCoreApplication
+
+    from xray_fluent.qml_app.bridge.node_list_model import NodeListModel
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    model = NodeListModel()
+    nodes = [Node(id=f"n{i}", name=f"N{i}", server=f"h{i}.example", port=443, ping_ms=10) for i in range(200)]
+    model.set_nodes(nodes, None)
+    ranges: list[tuple[int, int]] = []
+    model.dataChanged.connect(lambda first, last, _roles: ranges.append((first.row(), last.row())))
+
+    for node in nodes:
+        model.update_ping(node.id, None)
+    model.set_pinging_ids([node.id for node in nodes if node.id != "n100"])
+    assert ranges == []  # nothing per row while the burst is running
+
+    model.flush_pending_changes()
+    assert ranges == [(0, 199)]
+    assert app is not None

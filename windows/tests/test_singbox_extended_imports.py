@@ -1882,3 +1882,17 @@ def test_saved_legacy_xhttp_download_key_is_migrated() -> None:
     assert "download_settings" not in transport
     assert transport["download"]["server"] == "download.example.com"
     assert transport["download"]["server_port"] == 8443
+
+
+@pytest.mark.parametrize(
+    ("padding", "expected"),
+    [("0", "100-1000"), ("0-0", "100-1000"), (0, "100-1000"), ("0-100", "1-100"), ("50-100", "50-100")],
+)
+def test_xhttp_disabled_padding_is_not_passed_to_singbox(padding, expected) -> None:
+    node = parse_single(
+        "vless://00000000-0000-0000-0000-000000000000@example.com:443"
+        "?type=xhttp&security=tls&path=%2Fx&extra="
+        + quote(json.dumps({"xPaddingBytes": padding}, separators=(",", ":")), safe="")
+    )
+
+    assert build_singbox_outbound(node)["transport"]["x_padding_bytes"] == expected

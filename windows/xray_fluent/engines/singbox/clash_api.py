@@ -9,6 +9,9 @@ from urllib.request import Request, urlopen
 
 from ...constants import PROXY_HOST, SINGBOX_CLASH_API_PORT
 
+# A selector lists every stored node; thousands of tags exceed 64 KiB.
+_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
 
 class ClashApiError(RuntimeError):
     """Raised when the local sing-box Clash API cannot complete an operation."""
@@ -135,7 +138,7 @@ class SingboxClashApiClient:
         request = Request(url, data=data, headers=headers, method=method)
         try:
             with urlopen(request, timeout=self._timeout) as response:
-                raw = response.read(64 * 1024)
+                raw = response.read(_MAX_RESPONSE_BYTES)
         except HTTPError as exc:
             try:
                 detail = exc.read(4096).decode("utf-8", errors="replace").strip()

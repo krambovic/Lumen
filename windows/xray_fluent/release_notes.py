@@ -18,6 +18,28 @@ _VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+){0,3})(?:[-+].*)?$")
 
 # glyph: Segoe Fluent Icons code point rendered next to the note.
 RELEASE_NOTES: dict[str, tuple[dict[str, str], ...]] = {
+    "2.1.3": (
+        {
+            "glyph": "\uEC05",
+            "title": "Подписки и автовыбор",
+            "text": "Импорт из буфера распознаёт подписки; исправлены группы автовыбора и переключение серверов.",
+        },
+        {
+            "glyph": "\uE9D9",
+            "title": "Задержка без хэндшейков",
+            "text": "HTTP GET по умолчанию; задержка на панели измеряется на прогретом соединении.",
+        },
+        {
+            "glyph": "\uE895",
+            "title": "Обновлённые компоненты",
+            "text": "sing-box extended 2.7.3 с исправлениями Lumen и droute 2.2.1 в комплекте и обновлениях.",
+        },
+        {
+            "glyph": "\uE790",
+            "title": "Стабильность и оформление",
+            "text": "Исправлены ложные конфликты ядер и подсказки; новая светлая иконка и обновления только для Desktop.",
+        },
+    ),
     "2.1.2": (
         {
             "glyph": "",
@@ -123,7 +145,12 @@ def is_upgrade(seen_version: str, app_version: str) -> bool:
     previous = version_key(seen)
     if not current:
         return False
-    return not previous or previous < current
+    promoted_to_stable = (
+        previous == current
+        and "-" in seen.split("+", 1)[0]
+        and "-" not in str(app_version).split("+", 1)[0]
+    )
+    return not previous or previous < current or promoted_to_stable
 
 
 def notes_between(seen_version: str, app_version: str, *, limit: int = 3) -> list[dict[str, Any]]:
@@ -134,7 +161,7 @@ def notes_between(seen_version: str, app_version: str, *, limit: int = 3) -> lis
     groups: list[dict[str, Any]] = []
     for version in sorted(RELEASE_NOTES, key=version_key, reverse=True):
         key = version_key(version)
-        if key and previous < key <= current:
+        if key and key <= current and (previous < key or is_upgrade(seen_version, version)):
             groups.append({"version": version, "items": [dict(item) for item in RELEASE_NOTES[version]]})
     if current and (not groups or version_key(groups[0]["version"]) != current):
         groups.insert(0, {"version": current_text, "items": [dict(FALLBACK_NOTE)]})

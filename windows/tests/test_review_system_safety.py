@@ -306,6 +306,7 @@ def firefox_fixture(monkeypatch, tmp_path):
     for name in ("user.js", "prefs.js"):
         (profile / name).write_text('user_pref("browser.theme", "old");\nuser_pref("network.proxy.type", 5);\n')
     monkeypatch.setattr(manager, "_find_profiles", lambda: [profile])
+    monkeypatch.setattr(manager, "_browser_running", lambda: False)
     manager.enable(http_port=10809, socks_port=10808)
     return manager, profile
 

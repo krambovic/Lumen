@@ -238,39 +238,44 @@ def _write_droute_bundle(directory: Path, version: str, payload: bytes) -> None:
     (directory / "SHA256SUMS.txt").write_text("\n".join(checksums) + "\n", encoding="utf-8")
 
 
-def test_droute_check_reports_available_bundled_release(tmp_path) -> None:
-    target_dir = tmp_path / "installed"
-    bundled_dir = tmp_path / "bundled"
-    _write_droute_bundle(target_dir, "1.1.2", b"old" * 512)
-    _write_droute_bundle(bundled_dir, "2.0.0", b"new" * 1024)
+def _mock_droute_release(monkeypatch, tmp_path):
+    bundle = tmp_path / "release"
+    _write_droute_bundle(bundle, "2.2.1", b"new" * 1024)
+    archive = tmp_path / "release.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        for path in bundle.rglob("*"):
+            if path.is_file():
+                z.write(path, path.relative_to(bundle).as_posix())
+    release = {"tag_name": "2.2.1", "assets": [{"name": "droute.zip",
+        "browser_download_url": "https://example.test/droute.zip",
+        "digest": "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest()}]}
+    monkeypatch.setattr(core_resource_updater, "_request_json", lambda *_a, **_k: release)
+    monkeypatch.setattr(core_resource_updater, "_download_file", lambda _url, destination, **_kw: destination.write_bytes(archive.read_bytes()))
+    return release
 
-    result = core_resource_updater.check_or_update_droute(
-        False,
-        bundle_dir=target_dir,
-        bundled_dir=bundled_dir,
-    )
 
-    assert result.status == "available"
-    assert result.current_version == "1.1.2"
-    assert result.latest_version == "2.0.0"
+def test_droute_check_reports_upstream_release(monkeypatch, tmp_path) -> None:
+    _mock_droute_release(monkeypatch, tmp_path)
+    target = tmp_path / "installed"
+    _write_droute_bundle(target, "2.0.0", b"old" * 512)
+    result = core_resource_updater.check_or_update_droute(False, bundle_dir=target)
+    assert (result.status, result.current_version, result.latest_version) == ("available", "2.0.0", "2.2.1")
 
 
-def test_droute_update_installs_bundled_release_without_network(tmp_path) -> None:
-    target_dir = tmp_path / "installed"
-    bundled_dir = tmp_path / "bundled"
-    _write_droute_bundle(target_dir, "1.1.2", b"old" * 512)
-    _write_droute_bundle(bundled_dir, "2.0.0", b"new" * 1024)
-
-    result = core_resource_updater.check_or_update_droute(
-        True,
-        bundle_dir=target_dir,
-        bundled_dir=bundled_dir,
-    )
-
+def test_droute_online_update_verifies_and_installs_release(monkeypatch, tmp_path) -> None:
+    release = _mock_droute_release(monkeypatch, tmp_path)
+    target = tmp_path / "installed"
+    _write_droute_bundle(target, "2.0.0", b"old" * 512)
+    release["assets"][0]["digest"] = "sha256:" + "0" * 64
+    result = core_resource_updater.check_or_update_droute(True, bundle_dir=target)
+    assert result.status == "error" and "SHA-256" in result.message
+    assert (target / "droute.exe").read_bytes() == b"old" * 512
+    release["assets"][0]["digest"] = "sha256:" + hashlib.sha256((tmp_path / "release.zip").read_bytes()).hexdigest()
+    result = core_resource_updater.check_or_update_droute(True, bundle_dir=target)
     assert result.status == "updated"
-    assert (target_dir / "version.txt").read_text(encoding="utf-8").strip() == "2.0.0"
-    assert (target_dir / "droute.exe").read_bytes() == b"new" * 1024
-    assert (target_dir / "ru-RU" / "droute.resources.dll").read_bytes() == b"resource"
+    assert (target / "version.txt").read_text().strip() == "2.2.1"
+    assert (target / "droute.exe").read_bytes() == b"new" * 1024
+    assert (target / "ru-RU/droute.resources.dll").read_bytes() == b"resource"
 
 
 def test_geodata_same_verified_release_is_not_downloaded(monkeypatch, tmp_path) -> None:

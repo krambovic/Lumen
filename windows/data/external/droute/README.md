@@ -1,4 +1,4 @@
-# Discord Droute (Native Proxy for Discord)
+# Droute (Proxy Support for Discord on Windows)
 
 <p align="center">
   <img src="external/droute.svg" alt="Droute Logo" width="128">
@@ -8,13 +8,12 @@
   <a href="https://github.com/snowluwu/droute/releases"><img src="https://img.shields.io/github/v/release/snowluwu/droute?style=for-the-badge&label=Release&labelColor=3A3A3A&color=5662f6" alt="Release"></a>
 </p>
 
-**Droute** is a tool that adds SOCKS5 proxy support directly into the Discord Windows client. It fixes the lack of built-in proxy settings in Discord, so you don't have to mess with TUN interfaces or full-system VPNs.
+**Droute** adds SOCKS5 proxy support to the Discord Desktop Client on Windows for chat, media, voice calls and screen sharing.
 
-The project is inspired by the [force-proxy](https://github.com/runetfreedom/force-proxy) concept and uses the [MinHook](https://github.com/tsudakageyu/minhook) library.
+Inspired by [force-proxy](https://github.com/runetfreedom/force-proxy). Uses [MinHook](https://github.com/tsudakageyu/minhook) to intercept network calls.
 
 > [!NOTE]
-> **Droute is not a standalone tool for bypassing censorship or blocks.** 
-> It requires an existing SOCKS5 proxy to function. You must provide your own proxy server or run a local client like **FlClash, v2rayN, Nekobox, or Amnezia**. Droute only handles the routing part inside Discord.
+> Requires a running SOCKS5 proxy. Voice calls and screen sharing also need UDP support. A local proxy from v2rayN, Clash Verge or NekoBox works too.
 
 ## Screenshots
 <details>
@@ -37,52 +36,78 @@ The project is inspired by the [force-proxy](https://github.com/runetfreedom/for
 
 ## Features
 
-- **Full Proxying:** Routes all Discord traffic through your proxy, completely ignoring system proxy settings, TUN interfaces, or VPNs.
-- **Voice Chats & Streams:** Proxies both TCP (chat, media) and UDP traffic, so voice calls and screen shares work perfectly.
-- **Isolated:** Works entirely within Discord's memory. It doesn't create system services or change Windows network settings.
-- **Survives Updates:** The patch automatically reapplies itself whenever Discord updates.
-- **Multi-Client Support:** Works with Discord Stable, Canary, and PTB.
+- **TCP and UDP proxying:** Routes chat, media, voice calls and screen sharing through SOCKS5.
+- **Automatic reconnection:** Restores UDP proxy connections after the proxy disconnects or restarts.
+- **Update hook:** Installs Droute in new Discord versions before they launch.
+- **Installer and CLI:** Configure the proxy and install or remove Droute through the installer or command line.
+- **Discord builds:** Supports Stable, Canary and PTB on Windows x64.
 
 ---
 
 ## Installation
 
 ### Installer Mode
-1. Download the latest release from the [releases page](https://github.com/snowluwu/droute/releases/latest).
-2. Open `droute.exe`, enter your SOCKS5 proxy details, and choose your Discord build.
-3. Click **Apply** to save the configuration, then click **Install** to apply the patch.
+
+1. Start your SOCKS5 proxy. Check its address, port, and username/password if required.
+2. Download `droute.zip` from the [latest release](https://github.com/snowluwu/droute/releases/latest) and extract it.
+3. Open `droute.exe`.
+4. Enter your SOCKS5 proxy settings and click **Apply**.
+5. Select Stable, Canary, or PTB and click **Install**. With automatic restart enabled, the installer closes Discord first. Otherwise, close Discord yourself.
+6. Close the installation log window. If the installer closed Discord, it starts it again. Otherwise, start Discord yourself.
+
+To remove Droute, close Discord and use the installer's removal action for the selected build.
 
 ### CLI Mode
-To install via the command line, run the following command:
-```bash
-.\droute.exe -i --branch stable --host 127.0.0.1 --port 1080
+
+Close Discord before installing or removing Droute. The CLI does not close it automatically.
+
+Install for Stable and save the proxy address:
+
+```console
+.\droute.exe --install --branch stable --host 127.0.0.1 --port 1080
 ```
-If you need help or want to see all available options, run:
-```bash
+
+Replace `127.0.0.1:1080` with your proxy address. Use `--branch canary` or `--branch ptb` for other builds. Add `--user` and `--password` if your proxy requires authentication.
+
+Remove Droute from Stable:
+
+```console
+.\droute.exe --uninstall --branch stable
+```
+
+List available options:
+
+```console
 .\droute.exe --help
 ```
-> [!WARNING]
-> CLI Mode will not automatically close Discord. You must close Discord manually before running the command so the installer can apply the patch.
 
 ---
 
 ## How It Works
 
-### Clean Integration
-Droute doesn't modify Discord's actual executable files. Instead, it hooks into the process using DLL Hijacking and .NET config files.
+### Main library
 
-### Intercepting Traffic
-The tool places `version.dll` and `droute.dll` into the Discord folder.
-- When Discord starts, it loads the local `version.dll` instead of the system one.
-- This local `version.dll` forwards all standard requests to the real system library while loading `droute.dll` in the background.
-- Using **MinHook**, `droute.dll` hooks into Discord's low-level network functions and redirects traffic to your proxy.
+The installer copies `version.dll` from the Windows `System32` folder to the selected Discord `app-*` folder. It adds `droute.dll` to the import table of this copy and places `droute.dll` in the same folder.
 
-### Handling Discord Updates
-When Discord updates, it creates a folder with the new version number. Droute hooks into this update process to stay active:
-- It drops a `.config` file for the .NET application into the folder with `Update.exe` (Squirrel Updater).
-- When `Update.exe` runs, it automatically loads `Droute.UpdaterHook.dll`.
-- This library hooks the process creation function. As soon as Squirrel Updater creates the new version directory, the hook patches it before the new Discord client even launches.
+When Discord loads the local `version.dll`, Windows also loads `droute.dll`. This is the main Droute library: it uses MinHook to intercept Winsock calls and send connections through SOCKS5. The original system DLL and Discord executable are not changed.
+
+### Applying after updates
+
+The installer places `Droute.UpdaterHook.dll` and `Update.exe.config` in the same folder as Discord's `Update.exe`. The config file tells the updater to load the hook. Before Discord starts, the hook finds the latest `app-*` folder and installs `version.dll` and `droute.dll` if they are missing.
 
 ### Settings & Logs
-- **Configuration:** All settings are stored in the Windows Registry at `HKCU/Software/droute` and can be tweaked via `regedit`.
-- **Logs:** The main module writes logs to `%Temp%\droute.log`, while the updater logs are saved to `droute.log` in the Discord root folder.
+
+- **Configuration:** Proxy settings are stored for the current Windows user at `HKCU\Software\droute`. Change them through the installer or `regedit`, then restart Discord.
+- **Logs:** Located at `%LOCALAPPDATA%\droute\logs\<branch>\droute-YYYY-MM-DD.log` and `updater-YYYY-MM-DD.log` (`stable`, `canary`, or `ptb`). Each day has a separate file; Discord processes share the same daily log. Old logs are kept.
+- **Log Level:** Controlled by the `LogLevel` (DWORD) value in `HKCU\Software\droute`:
+  - `0` — TRACE (all events and detailed UDP operations)
+  - `1` — DEBUG (association attempts, SOCKS negotiation)
+  - `2` — INFO (default: lifecycle events and UDP summaries)
+  - `3` — WARN
+  - `4` — ERROR
+
+**Reporting a Problem:**
+Include your Droute version, Discord build, proxy software and what went wrong. Attach the logs for that day and say roughly when the problem happened.
+
+- Logs include session IDs (`SESSION`), process PIDs, and connection generations (`generation`) to help trace traffic flows.
+- Proxy usernames/passwords, packet contents and command-line arguments are **not logged**.

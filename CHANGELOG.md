@@ -1,3 +1,19 @@
+## Desktop v2.1.3
+
+* Fixed clipboard subscription import, Dobry VPN auto-selection groups and server switching.
+* Made HTTP GET the default latency method and excluded connection handshakes from warmed dashboard measurements.
+* Updated sing-box extended to 2.7.3 on Desktop and Android, retaining Lumen MASQUE support; bundled droute 2.2.1 and restored online updates.
+* Fixed false conflicts with Lumen-owned cores, Firefox proxy restoration, server-list updates and ping tooltips.
+* Added a light rounded desktop icon and made the Desktop updater skip Android and incompatible releases.
+
+Full Changelog: https://github.com/krambovic/Lumen/compare/v2.1.2...v2.1.3
+
+## Desktop v2.1.2
+
+* Fixed TUN traffic after switching between Xray and sing-box extended.
+
+Full Changelog: https://github.com/krambovic/Lumen/compare/v2.1.1...v2.1.2
+
 ## What's Changed
 
 * feat: implement Material 3 Expressive floating navigation dock with fluid spring-physics tab switching animations

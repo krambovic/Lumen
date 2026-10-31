@@ -110,9 +110,11 @@ def urlopen_direct(request: Request | str, *, timeout: float = 15):
 def abort_http_response(response: object) -> None:
     """Interrupt a blocking urllib read before closing its response object."""
     try:
-        fp = getattr(response, "fp", None)
-        raw = getattr(fp, "raw", None)
-        sock = getattr(raw, "_sock", None)
+        sock = getattr(response, "sock", None)
+        if sock is None:
+            fp = getattr(response, "fp", None)
+            raw = getattr(fp, "raw", None)
+            sock = getattr(raw, "_sock", None)
         if sock is not None:
             sock.shutdown(socket.SHUT_RDWR)
     except (AttributeError, OSError):

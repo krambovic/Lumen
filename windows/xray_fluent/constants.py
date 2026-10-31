@@ -7,11 +7,11 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen"
-APP_VERSION = "2.1.2"
+APP_VERSION = "2.1.3"
 STATE_SCHEMA_VERSION = 1
 # Bump when parsing/reconciliation semantics change; cached validators remain
 # useful, while the value lets future migrations force one clean reconcile.
-SUBSCRIPTION_PARSER_REVISION = 4
+SUBSCRIPTION_PARSER_REVISION = 5
 # Onboarding revision. Users whose saved revision is lower walk through the
 # setup part of the welcome flow on the next launch (fresh installs and
 # upgrades alike). Bump it when a release should run the setup again. The

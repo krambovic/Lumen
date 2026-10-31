@@ -30,7 +30,7 @@ from .constants import APP_VERSION, BASE_DIR
 GITHUB_REPO = "krambovic/Lumen"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 # Список релизов (новые → старые), включая pre-release, для выбора по каналу.
-RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
+RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=100"
 USER_AGENT = f"Lumen/{APP_VERSION}"
 APP_ID = "{9B0BE72A-7D80-4D43-9871-3A5F0DA0D9C6}_is1"
 LEGACY_APP_DIR_NAMES = {"lumen kvn", "lumenkvn", "lumen-kvn", "lumen_kvn"}
@@ -445,45 +445,77 @@ class UpdateChecker(QThread):
                 _log.warning("App update metadata download through proxy failed; retrying direct")
         raise RuntimeError("app update metadata download failed")
 
+    def _compatible_assets(self, release: dict) -> list[dict]:
+        portable = is_portable()
+        extension = ".zip" if portable else ".exe"
+        return [
+            asset for asset in release.get("assets", [])
+            if isinstance(asset, dict)
+            and "android" not in str(asset.get("name") or "").lower()
+            and str(asset.get("name") or "").lower().endswith(extension)
+            and (not portable or any(
+                marker in str(asset.get("name") or "").lower()
+                for marker in ("portable", "windows")
+            ))
+        ]
+
+    def _is_desktop_release(self, release: object) -> bool:
+        return bool(
+            isinstance(release, dict)
+            and release.get("tag_name")
+            and "android" not in str(release["tag_name"]).lower()
+            and not release.get("draft")
+            and self._compatible_assets(release)
+        )
+
+    def _listed_releases(self) -> list[dict]:
+        cached = getattr(self, "_releases_cache", None)
+        if cached is not None:
+            return cached
+        releases = []
+        page = 1
+        while True:
+            self._raise_if_cancelled()
+            url = RELEASES_API if page == 1 else f"{RELEASES_API}&page={page}"
+            data = self._fetch_json(url)
+            if not isinstance(data, list):
+                raise ValueError("Invalid GitHub releases response")
+            releases.extend(item for item in data if isinstance(item, dict))
+            if len(data) < 100:
+                break
+            page += 1
+        self._releases_cache = releases
+        return releases
+
+    def _latest_matching_release(self, *, prerelease: bool) -> dict | None:
+        best = None
+        for release in self._listed_releases():
+            if not self._is_desktop_release(release) or bool(release.get("prerelease")) != prerelease:
+                continue
+            if best is None or _is_newer_version(
+                str(release["tag_name"]), str(best["tag_name"]),
+            ):
+                best = release
+        return best
+
     def _latest_stable(self) -> dict | None:
-        # /releases/latest всегда отдаёт новейший НЕ-pre-release независимо от
-        # количества промежуточных пререлизов (404 — если стабильных нет).
         try:
             data = self._fetch_json(GITHUB_API)
         except UpdateOperationCancelled:
             raise
         except Exception:
-            return None
-        if isinstance(data, dict) and data.get("tag_name") and not data.get("draft"):
+            data = None
+        if self._is_desktop_release(data) and not data.get("prerelease"):
             return data
-        return None
+        return self._latest_matching_release(prerelease=False)
 
     def _latest_prerelease(self) -> dict | None:
-        # GitHub may order tags such as pre.10 below pre.9 in /releases.
-        # Pick the newest pre-release by semver instead of trusting API order.
-        try:
-            releases = self._fetch_json(RELEASES_API)
-        except UpdateOperationCancelled:
-            raise
-        except Exception:
-            return None
-        if not isinstance(releases, list):
-            return None
-        best: dict | None = None
-        for release in releases:
-            if not (isinstance(release, dict) and not release.get("draft") and release.get("prerelease")):
-                continue
-            if best is None or _is_newer_version(
-                str(release.get("tag_name") or ""),
-                str(best.get("tag_name") or ""),
-            ):
-                best = release
-        return best
+        return self._latest_matching_release(prerelease=True)
 
     def _pick_target(self) -> dict | None:
         """Выбрать релиз для текущего канала.
 
-        stable      — /releases/latest (новейший стабильный);
+        stable      — последний подходящий стабильный Desktop-релиз;
         pre-release — новейший из последнего pre-release и последнего stable.
         """
         if not self._is_prerelease_channel():
@@ -497,13 +529,8 @@ class UpdateChecker(QThread):
     def _build_update(self, data: dict):
         tag = data.get("tag_name", "")
         portable = is_portable()
-        target_ext = ".zip" if portable else ".exe"
         
-        filtered_assets = [
-            a for a in data.get("assets", [])
-            if str(a.get("name") or "").lower().endswith(target_ext)
-            and (not portable or "portable" in str(a.get("name") or "").lower() or "windows" in str(a.get("name") or "").lower())
-        ]
+        filtered_assets = self._compatible_assets(data)
         asset = max(
             filtered_assets,
             key=lambda a: _asset_score(a, self._prefer_qml, portable),

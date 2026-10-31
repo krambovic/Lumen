@@ -294,9 +294,9 @@ def ping_nodes(
     if not nodes:
         return
 
-    resolved_method = (method or controller.state.settings.ping_method or "tcping").strip().lower()
+    resolved_method = (method or controller.state.settings.ping_method or "http").strip().lower()
     if resolved_method not in ("tcping", "icmp", "http", "real"):
-        resolved_method = "tcping"
+        resolved_method = "http"
     nodes = _filter_testable_nodes(controller, nodes, "ping", ping_method=resolved_method)
     if not nodes:
         return
@@ -343,6 +343,7 @@ def ping_nodes(
             singbox_path=str(resolve_configured_path(getattr(controller.state.settings, "singbox_path", ""), default_path=SINGBOX_PATH_DEFAULT, use_default_if_empty=True) or ""),
             routing=controller.state.routing,
             mode="ping",
+            warm_ping=resolved_method == "http",
             concurrency=controller.state.settings.speed_test_concurrency,
             bypass_tun=real_bypass_tun,
         )
@@ -422,6 +423,17 @@ def cancel_speed_test(controller: AppController) -> bool:
     worker.cancel()
     controller.status.emit("info", "Останавливаю тест скорости...")
     return True
+
+
+def cancel_tests(controller: AppController) -> bool:
+    """Stop every running ping/real-delay/speed test."""
+    cancelled = False
+    for worker in (controller._ping_worker, controller._speed_worker):
+        if worker is not None and worker.isRunning():
+            worker.cancel()
+            cancelled = True
+    controller.status.emit("info", "Останавливаю тесты..." if cancelled else "Тесты сейчас не выполняются")
+    return cancelled
 
 
 def test_connectivity(controller: AppController, url: str | None = None) -> None:

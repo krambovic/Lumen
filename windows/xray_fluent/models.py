@@ -444,7 +444,7 @@ class AppSettings:
     # Не подключаться автоматически к только что импортированному серверу.
     auto_connect_on_import: bool = False
     # Способ измерения ping: "tcping" | "icmp" | "real" (реальная задержка HTTP).
-    ping_method: str = "tcping"  # tcping | icmp | http | real
+    ping_method: str = "http"  # tcping | icmp | http | real
     # Пользовательский URL/размер для теста скорости (пусто = значение по умолчанию).
     speed_test_url: str = ""
     # Число одновременных проверок при тесте (0 = значение по умолчанию).
@@ -737,7 +737,7 @@ class AppSettings:
             auto_switch_delay_sec=int(data.get("auto_switch_delay_sec") or 30),
             auto_switch_cooldown_sec=int(data.get("auto_switch_cooldown_sec") or 60),
             auto_connect_on_import=bool(data.get("auto_connect_on_import", False)),
-            ping_method=str(data.get("ping_method") or "tcping"),
+            ping_method=str(data.get("ping_method") or "http"),
             speed_test_url=str(data.get("speed_test_url") or ""),
             speed_test_concurrency=int(data.get("speed_test_concurrency") or 0),
             subscription_auto_update_minutes=int(data.get("subscription_auto_update_minutes") if data.get("subscription_auto_update_minutes") is not None else 240),

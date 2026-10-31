@@ -670,6 +670,15 @@ Item {
             else if (kind === "group") page.chooseGroup(name);
         });
     }
+    function requestDeleteGroup(name) {
+        // Closing the popup empties its Repeater and destroys this row, so
+        // the dialog must be opened from page scope.
+        sourcePopup.close();
+        Qt.callLater(function() {
+            deleteGroupDialog.groupName = name;
+            deleteGroupDialog.open();
+        });
+    }
     function chooseAll() {
         App.setSelectedSubscriptionId("");
         subCombo.currentIndex = 0;
@@ -1049,11 +1058,7 @@ Item {
                                                     text: I18n.t("Удалить выбранную группу")
                                                     Layout.preferredWidth: 28
                                                     Layout.preferredHeight: 28
-                                                    onClicked: {
-                                                        sourcePopup.close();
-                                                        deleteGroupDialog.groupName = srcRow.modelData.name;
-                                                        deleteGroupDialog.open();
-                                                    }
+                                                    onClicked: page.requestDeleteGroup(srcRow.modelData.name)
                                                 }
                                             }
                                             HoverHandler { id: srcHover; cursorShape: Qt.PointingHandCursor }
@@ -1574,15 +1579,25 @@ Item {
 
                             MouseArea {
                                 id: listSelectionArea
+                                objectName: "serverListSelectionArea"
                                 property var hoveredNode: page.hoverRow >= 0 ? App.nodeRowAt(page.hoverRow) : null
-                                ToolTip.visible: containsMouse
-                                    && hoveredNode
-                                    && hoveredNode.pingKind !== ""
-                                    && hoveredNode.pingKind !== "proxy"
-                                ToolTip.delay: 1000
-                                ToolTip.text: hoveredNode && hoveredNode.pingKind === "unavailable"
-                                    ? I18n.t("Проверка не выполнена: проверьте ядро и прямой маршрут")
-                                    : ((hoveredNode && hoveredNode.pingKind === "icmp_endpoint" ? "ICMP. " : "TCP. ") + I18n.t("Проверена доступность адреса, а не профиль VPN"))
+                                FluentToolTip {
+                                    objectName: "serverPingToolTip"
+                                    parent: listSelectionArea
+                                    width: Math.min(300, listSelectionArea.width - 16)
+                                    x: Math.max(8, Math.min(listSelectionArea.mouseX + 12, listSelectionArea.width - width - 8))
+                                    y: listSelectionArea.mouseY + 20
+                                    visible: listSelectionArea.containsMouse && !page.selectionDragging
+                                        && listSelectionArea.mouseX >= page.leftPad + page.colName + page.colType + page.colTransport + page.colAddr + page.colPort + page.colGroup
+                                        && listSelectionArea.mouseX < page.leftPad + page.colName + page.colType + page.colTransport + page.colAddr + page.colPort + page.colGroup + page.colPing
+                                        && listSelectionArea.hoveredNode
+                                        && listSelectionArea.hoveredNode.pingKind !== ""
+                                        && listSelectionArea.hoveredNode.pingKind !== "proxy"
+                                    delay: 650
+                                    text: listSelectionArea.hoveredNode && listSelectionArea.hoveredNode.pingKind === "unavailable"
+                                        ? I18n.t("Проверка не выполнена: проверьте ядро и прямой маршрут")
+                                        : ((listSelectionArea.hoveredNode && listSelectionArea.hoveredNode.pingKind === "icmp_endpoint" ? "ICMP. " : "TCP. ") + I18n.t("Проверена доступность адреса, а не профиль VPN"))
+                                }
                                 anchors.fill: parent
                                 z: 100
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
@@ -2194,7 +2209,7 @@ Item {
         showIcons: true
         FluentMenuItem { glyph: ""; text: I18n.t("Выбрать все"); hint: "Ctrl+A"; enabled: list.count > 0; onTriggered: page.selectAll() }
         FluentMenuItem { glyph: ""; text: I18n.t("Тест скорости всех в списке"); enabled: list.count > 0; onTriggered: App.speedTestNodes(page.visibleIds()) }
-        FluentMenuItem { glyph: ""; text: I18n.t("Остановить тест"); onTriggered: App.cancelSpeedTest() }
+        FluentMenuItem { glyph: ""; text: I18n.t("Остановить тест"); enabled: App.testsRunning; onTriggered: App.cancelTests() }
         FluentMenuItem { glyph: ""; text: I18n.t("Экспорт всех (ссылки)"); onTriggered: App.exportNodeLinks([]) }
         FluentMenuSeparator {}
         FluentMenuItem { glyph: ""; text: I18n.t("Свойства подписки"); enabled: page.selectedSub() !== null; onTriggered: infoDialog.openInfo() }
@@ -2227,7 +2242,7 @@ Item {
             FluentMenuItem { glyph: "\uE968"; text: I18n.t("Тест ICMP"); onTriggered: App.icmpNodes(ctxMenu.targets) }
         }
         FluentMenuItem { glyph: ""; text: I18n.t("Тест скорости загрузки ({count})", { count: page.selCount }); onTriggered: App.downloadSpeedNodes(ctxMenu.targets) }
-        FluentMenuItem { glyph: "\uE71A"; text: I18n.t("Остановить тест"); onTriggered: App.cancelSpeedTest() }
+        FluentMenuItem { glyph: "\uE71A"; text: I18n.t("Остановить тест"); enabled: App.testsRunning; onTriggered: App.cancelTests() }
         FluentMenuSeparator {}
         FluentMenuItem { glyph: ""; text: I18n.t("Редактировать"); enabled: ctxMenu.single; onTriggered: editDialog.openFor(page.firstSelected()) }
         FluentMenuItem { glyph: ""; text: page.selCount > 1 ? I18n.t("Переместить ({count})", { count: page.selCount }) : I18n.t("Переместить"); enabled: page.selCount > 0; onTriggered: bulkDialog.openFor(ctxMenu.targets) }

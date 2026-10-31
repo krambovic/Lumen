@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 import socket
 from typing import Any
+from urllib.parse import urlsplit
 
 from PyQt6.QtCore import QEvent, QPoint, QRect, QObject, Qt, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QGuiApplication, QWindow
@@ -258,6 +259,7 @@ class AppBridge(QObject):
     actionToast = pyqtSignal(str, str, str, str)  # level, message, action id, button label
     autoSwitch = pyqtSignal(str)              # (node name)
     bulkTaskProgress = pyqtSignal(str, int, int, bool)  # task, cur, total, done
+    testsRunningChanged = pyqtSignal()
     connectivityResult = pyqtSignal(bool, str, object)  # ok, message, elapsed_ms (None on failure)
     appUpdateState = pyqtSignal("QVariantMap")     # application updater
     xrayUpdateState = pyqtSignal("QVariantMap")    # Xray-core updater
@@ -370,6 +372,7 @@ class AppBridge(QObject):
         self._selected_flag_source = ""
         self._selected_latency = -1
         self._selected_protocol = ""
+        self._running_tests: set[str] = set()
         self._selected_source = ""
         self._manual_selection_in_progress = False
         self._routing_mode = "rule"
@@ -1385,6 +1388,14 @@ class AppBridge(QObject):
             self.selectionChanged.emit()
 
     def _on_bulk_task_progress(self, task: str, current: int, total: int, done: bool) -> None:
+        was_running = bool(self._running_tests)
+        if task in ("ping", "speed"):
+            if done:
+                self._running_tests.discard(task)
+            else:
+                self._running_tests.add(task)
+        if was_running != bool(self._running_tests):
+            self.testsRunningChanged.emit()
         if task == "ping":
             if done:
                 self._node_model.clear_pinging()
@@ -1818,7 +1829,7 @@ class AppBridge(QObject):
             changed = True
         seen = str(getattr(settings, "onboarding_version", "") or "")
         # Never move the marker backwards after a downgrade.
-        if version_key(seen) < version_key(APP_VERSION):
+        if version_key(seen) < version_key(APP_VERSION) or is_upgrade(seen, APP_VERSION):
             settings.onboarding_version = APP_VERSION
             changed = True
         if changed:
@@ -2802,6 +2813,14 @@ class AppBridge(QObject):
     @pyqtSlot()
     def cancelSpeedTest(self) -> None:
         self.controller.cancel_speed_test()
+
+    @pyqtSlot()
+    def cancelTests(self) -> None:
+        self.controller.cancel_tests()
+
+    @pyqtProperty(bool, notify=testsRunningChanged)
+    def testsRunning(self) -> bool:
+        return bool(self._running_tests)
 
     @pyqtSlot('QVariantList')
     def deleteNodes(self, ids: list) -> None:
@@ -4032,6 +4051,35 @@ class AppBridge(QObject):
         if not text:
             self.toast.emit("warning", "Буфер обмена пуст")
             return
+        if text.lower().startswith("lumen:"):
+            self.handleDeepLink(text)
+            return
+        # HTTP proxy share links contain credentials or an explicit endpoint
+        # port. Ordinary web URLs belong to the subscription fetch pipeline.
+        lines = list(dict.fromkeys(line.strip() for line in text.splitlines() if line.strip()))
+        subscription_urls: list[str] = []
+        for line in lines:
+            try:
+                parsed = urlsplit(line)
+                if parsed.scheme.lower() in {"happ", "incy"} or (
+                    parsed.scheme.lower() in {"http", "https"}
+                    and parsed.hostname
+                    and parsed.username is None
+                    and parsed.password is None
+                    and not (parsed.port is not None and parsed.path in {"", "/"} and not parsed.query)
+                    and not any(char.isspace() for char in line)
+                ):
+                    subscription_urls.append(line)
+            except ValueError:
+                continue
+        if subscription_urls:
+            if len(subscription_urls) == 1:
+                self.importSubscription(subscription_urls[0])
+            else:
+                self.importSubscriptions("\n".join(subscription_urls))
+            text = "\n".join(line for line in lines if line not in subscription_urls)
+            if not text:
+                return
         target_group = (self._filter_group or "").strip() or None
         existing_ids = {node.id for node in self.controller.state.nodes}
         added, errors = self.controller.import_nodes_from_text(text, group=target_group)
@@ -5165,7 +5213,7 @@ class AppBridge(QObject):
     @pyqtProperty(str, notify=settingsChanged)
     def pingMethod(self) -> str:
         try:
-            return self.controller.state.settings.ping_method or "tcping"
+            return self.controller.state.settings.ping_method or "http"
         except Exception:
             return "tcping"
 
