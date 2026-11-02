@@ -162,235 +162,239 @@ fun DashboardScreen(
 
     val scrollState = rememberScrollState()
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(DarkBg)
             .statusBarsPadding()
-            .navigationBarsPadding() // جلوگیری از رفتن زیر منوی پایین گوشی
+            .navigationBarsPadding()
+            .padding(bottom = 72.dp) // جلوگیری قطعی از زیر منو رفتن
     ) {
-        BrandTopBar(
-            onAddClick = { showAddSheet = true }
-        )
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            BrandTopBar(
+                onAddClick = { showAddSheet = true }
+            )
 
-        Box(modifier = Modifier.weight(1f)) {
-            if (dashboardStyle == DashboardStyle.SLIDER) {
-                androidx.compose.runtime.key(groupFilter) {
-                    DashboardServerTable(groupNodes, groupTitle, pingingNodeIds, onSelectNode, onOpenServers,
-                        speedStatsEnabled, isConnected, speedValues,
-                        onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
-                }
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scrollState)
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                        .padding(bottom = 90.dp) // ایجاد فاصله برای منوی برنامه
-                ) {
-                    when (dashboardStyle) {
-                        DashboardStyle.SLIDER -> { }
-                        DashboardStyle.DEFAULT -> {
-                            com.lumen.ui.components.ConnectionStage(connectionState, activeNode?.name, {
-                                tick(HapticFeedbackType.LongPress)
-                                onToggleConnection()
-                            })
-                        }
-                        DashboardStyle.CENTERED -> OrbitConnectionCard(connectionState, onToggleConnection)
-                        DashboardStyle.DOCK -> DockDashboardStatus(connectionState, activeNode?.displayProtocol)
+            Box(modifier = Modifier.weight(1f)) {
+                if (dashboardStyle == DashboardStyle.SLIDER) {
+                    androidx.compose.runtime.key(groupFilter) {
+                        DashboardServerTable(groupNodes, groupTitle, pingingNodeIds, onSelectNode, onOpenServers,
+                            speedStatsEnabled, isConnected, speedValues,
+                            onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
                     }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // ============================================
-                    // BALOCH PING GAMING SECTION
-                    // ============================================
-                    GameBoostSection(selectedGameId = "pubg")
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    val displayPing = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.let { "$it ms" } ?: if(isConnected) "متصل (بدون پینگ)" else null
-                    
-                    com.lumen.ui.components.LivePingCard(
-                        ping = displayPing,
-                        isConnected = isConnected,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    // ============================================
-
-                    // 3. Section Header
-                    Row(
+                } else {
+                    Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .fillMaxSize()
+                            .verticalScroll(scrollState)
+                            .padding(horizontal = 14.dp, vertical = 4.dp)
                     ) {
-                        Text(
-                            text = strings.serverLabel,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        TextButton(
-                            onClick = openServerPicker,
-                            modifier = Modifier
-                                .height(48.dp)
-                                .expressiveButtonSemantics(strings.changeServer, openServerPicker)
-                        ) {
-                            Text(
-                                text = strings.changeServer,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = GoldNeon
-                            )
+                        when (dashboardStyle) {
+                            DashboardStyle.SLIDER -> { }
+                            DashboardStyle.DEFAULT -> {
+                                com.lumen.ui.components.ConnectionStage(connectionState, activeNode?.name, {
+                                    tick(HapticFeedbackType.LongPress)
+                                    onToggleConnection()
+                                })
+                            }
+                            DashboardStyle.CENTERED -> OrbitConnectionCard(connectionState, onToggleConnection)
+                            DashboardStyle.DOCK -> DockDashboardStatus(connectionState, activeNode?.displayProtocol)
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                    // 4. Selected Server Row Card
-                    if (activeNode != null) {
-                        val flagEmoji = CountryFlagHelper.getServerFlagEmoji(activeNode.countryCode)
+                        // ============================================
+                        // BALOCH PING GAMING SECTION
+                        // ============================================
+                        GameBoostSection(selectedGameId = "pubg")
+                        Spacer(modifier = Modifier.height(10.dp))
+                        
+                        val displayPing = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.let { "$it ms" } ?: if(isConnected) "متصل (بدون پینگ)" else null
+                        
+                        com.lumen.ui.components.LivePingCard(
+                            ping = displayPing,
+                            isConnected = isConnected,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        // ============================================
 
+                        // 3. Section Header
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(24.dp))
-                                .background(CardBg)
-                                .border(1.dp, StrokeColor, RoundedCornerShape(24.dp))
-                                .expressiveButtonSemantics(activeNode.name + ". " + activeNode.displayProtocol, openServerPicker)
-                                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = openServerPicker)
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                .padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Text(
+                                text = strings.serverLabel,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            TextButton(
+                                onClick = openServerPicker,
+                                modifier = Modifier
+                                    .height(40.dp)
+                                    .expressiveButtonSemantics(strings.changeServer, openServerPicker)
+                            ) {
+                                Text(
+                                    text = strings.changeServer,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = GoldNeon
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // 4. Selected Server Row Card
+                        if (activeNode != null) {
+                            val flagEmoji = CountryFlagHelper.getServerFlagEmoji(activeNode.countryCode)
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(CardBg)
+                                    .border(1.dp, StrokeColor, RoundedCornerShape(20.dp))
+                                    .expressiveButtonSemantics(activeNode.name + ". " + activeNode.displayProtocol, openServerPicker)
+                                    .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = openServerPicker)
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 16.dp, bottomEnd = 6.dp, bottomStart = 16.dp))
+                                        .background(DarkBg),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = flagEmoji,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(10.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = activeNode.name,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = activeNode.displayProtocol,
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF757D8A),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                val pingMs = activeNode.pingMs
+                                val pingText = when {
+                                    activeNode.id in pingingNodeIds -> "..."
+                                    pingMs != null && pingMs > 0 -> "$pingMs ms"
+                                    connectedPing != null && isConnected -> connectedPing
+                                    else -> "--"
+                                }
+
+                                val pColor = pingMs?.let(::pingColor) ?: Color(0xFF757D8A)
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(pColor.copy(alpha = .16f))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = pingText,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = pColor,
+                                        style = MaterialTheme.typography.labelSmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = strings.changeServer,
+                                    tint = GoldNeon,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        } else {
                             Box(
                                 modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 18.dp, bottomEnd = 6.dp, bottomStart = 18.dp))
-                                    .background(DarkBg),
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(CardBg)
+                                    .border(1.dp, StrokeColor, RoundedCornerShape(20.dp))
+                                    .clickable(onClick = openServerPicker)
+                                    .padding(12.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = flagEmoji,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold
+                                    text = strings.noServerSelected,
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF757D8A)
                                 )
                             }
+                        }
 
-                            Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = activeNode.name,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = activeNode.displayProtocol,
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF757D8A),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                        if (speedStatsEnabled) DashboardSpeedCards(isConnected, speedValues)
 
-                            val pingMs = activeNode.pingMs
-                            val pingText = when {
-                                activeNode.id in pingingNodeIds -> "..."
-                                pingMs != null && pingMs > 0 -> "$pingMs ms"
-                                connectedPing != null && isConnected -> connectedPing
-                                else -> "--"
-                            }
-
-                            val pColor = pingMs?.let(::pingColor) ?: Color(0xFF757D8A)
-                            Box(
+                        activeSub?.let { sub ->
+                            val summary = listOfNotNull(
+                                sub.trafficSummary,
+                                sub.expiryDaysLeft?.let { "$it ${strings.daysRemaining}" }
+                            ).joinToString(" · ")
+                            Row(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(pColor.copy(alpha = .16f))
-                                    .padding(horizontal = 9.dp, vertical = 6.dp)
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(CardBg)
+                                    .border(1.dp, StrokeColor, RoundedCornerShape(20.dp))
+                                    .clickable(onClick = onOpenServers)
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = pingText,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = pColor,
-                                    style = MaterialTheme.typography.labelSmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(10.dp))
-
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = strings.changeServer,
-                                tint = GoldNeon,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(CardBg)
-                                .border(1.dp, StrokeColor, RoundedCornerShape(20.dp))
-                                .clickable(onClick = openServerPicker)
-                                .padding(16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = strings.noServerSelected,
-                                fontSize = 14.sp,
-                                color = Color(0xFF757D8A)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    if (speedStatsEnabled) DashboardSpeedCards(isConnected, speedValues)
-
-                    activeSub?.let { sub ->
-                        val summary = listOfNotNull(
-                            sub.trafficSummary,
-                            sub.expiryDaysLeft?.let { "$it ${strings.daysRemaining}" }
-                        ).joinToString(" · ")
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(CardBg)
-                                .border(1.dp, StrokeColor, RoundedCornerShape(20.dp))
-                                .clickable(onClick = onOpenServers)
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Layers, contentDescription = null,
-                                tint = GoldNeon, modifier = Modifier.size(22.dp))
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(sub.name, style = MaterialTheme.typography.labelLarge, color = Color.White,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (summary.isNotBlank()) Text(summary, style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF757D8A),
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                            sub.trafficRatio?.let { ratio ->
-                                Box(Modifier.width(50.dp).height(4.dp).clip(RoundedCornerShape(6.dp))
-                                    .background(DarkBg)) {
-                                    Box(Modifier.fillMaxWidth(ratio.coerceIn(0f, 1f)).height(4.dp)
-                                        .background(GoldNeon))
+                                Icon(Icons.Default.Layers, contentDescription = null,
+                                    tint = GoldNeon, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(sub.name, style = MaterialTheme.typography.labelLarge, color = Color.White,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (summary.isNotBlank()) Text(summary, style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF757D8A),
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                sub.trafficRatio?.let { ratio ->
+                                    Box(Modifier.width(50.dp).height(4.dp).clip(RoundedCornerShape(6.dp))
+                                        .background(DarkBg)) {
+                                        Box(Modifier.fillMaxWidth(ratio.coerceIn(0f, 1f)).height(4.dp)
+                                            .background(GoldNeon))
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
                 }
             }
         }
@@ -432,23 +436,23 @@ private fun DashboardSpeedCards(isConnected: Boolean, values: () -> DashboardSpe
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(9.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         val (downVal, downUnit) = formatDashboardSpeed(speeds.download)
         Box(
             modifier = Modifier
                 .weight(1.12f)
-                .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp, bottomEnd = 30.dp, bottomStart = 10.dp))
+                .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp, bottomEnd = 26.dp, bottomStart = 10.dp))
                 .background(CardBg)
-                .border(1.dp, StrokeColor, RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp, bottomEnd = 30.dp, bottomStart = 10.dp))
-                .padding(14.dp)
+                .border(1.dp, StrokeColor, RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp, bottomEnd = 26.dp, bottomStart = 10.dp))
+                .padding(12.dp)
         ) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(DarkBg),
                         contentAlignment = Alignment.Center
                     ) {
@@ -457,31 +461,31 @@ private fun DashboardSpeedCards(isConnected: Boolean, values: () -> DashboardSpe
                             contentDescription = null,
                             tint = GoldNeon,
                             modifier = Modifier
-                                .size(14.dp)
+                                .size(12.dp)
                                 .graphicsLayer { rotationZ = 45f }
                         )
                     }
-                    Spacer(modifier = Modifier.width(7.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "↓ ${strings.speedLabel}",
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         color = Color(0xFF757D8A)
                     )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
                         text = downVal,
-                        fontSize = 38.sp,
+                        fontSize = 32.sp,
                         fontFamily = com.lumen.ui.theme.LumenMono,
-                        letterSpacing = (-2).sp,
+                        letterSpacing = (-1).sp,
                         fontWeight = FontWeight.Bold,
                         color = GoldNeon
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = downUnit,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         color = Color(0xFF757D8A)
                     )
                 }
@@ -492,17 +496,17 @@ private fun DashboardSpeedCards(isConnected: Boolean, values: () -> DashboardSpe
         Box(
             modifier = Modifier
                 .weight(.88f)
-                .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 10.dp, bottomEnd = 30.dp, bottomStart = 30.dp))
+                .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 10.dp, bottomEnd = 26.dp, bottomStart = 26.dp))
                 .background(CardBg)
-                .border(1.dp, StrokeColor, RoundedCornerShape(topStart = 30.dp, topEnd = 10.dp, bottomEnd = 30.dp, bottomStart = 30.dp))
-                .padding(14.dp)
+                .border(1.dp, StrokeColor, RoundedCornerShape(topStart = 26.dp, topEnd = 10.dp, bottomEnd = 26.dp, bottomStart = 26.dp))
+                .padding(12.dp)
         ) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(DarkBg),
                         contentAlignment = Alignment.Center
                     ) {
@@ -511,38 +515,38 @@ private fun DashboardSpeedCards(isConnected: Boolean, values: () -> DashboardSpe
                             contentDescription = null,
                             tint = Color(0xFF00E676),
                             modifier = Modifier
-                                .size(14.dp)
+                                .size(12.dp)
                                 .graphicsLayer { rotationZ = 45f }
                         )
                     }
-                    Spacer(modifier = Modifier.width(7.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "↑ ${strings.speedLabel}",
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         color = Color(0xFF757D8A)
                     )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
                         text = upVal,
-                        fontSize = 38.sp,
+                        fontSize = 32.sp,
                         fontFamily = com.lumen.ui.theme.LumenMono,
-                        letterSpacing = (-2).sp,
+                        letterSpacing = (-1).sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF00E676)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = upUnit,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         color = Color(0xFF757D8A)
                     )
                 }
             }
         }
     }
-    Spacer(modifier = Modifier.height(18.dp))
+    Spacer(modifier = Modifier.height(16.dp))
 }
 
 @Composable
@@ -589,16 +593,16 @@ private fun OrbitConnectionCard(connectionState: ConnectionState, onToggleConnec
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 36.dp, topEnd = 12.dp, bottomEnd = 36.dp, bottomStart = 36.dp))
+            .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 12.dp, bottomEnd = 32.dp, bottomStart = 32.dp))
             .background(CardBg)
-            .border(1.dp, StrokeColor, RoundedCornerShape(topStart = 36.dp, topEnd = 12.dp, bottomEnd = 36.dp, bottomStart = 36.dp))
-            .padding(16.dp),
+            .border(1.dp, StrokeColor, RoundedCornerShape(topStart = 32.dp, topEnd = 12.dp, bottomEnd = 32.dp, bottomStart = 32.dp))
+            .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
                 .expressiveButtonSemantics(when { isConnecting -> strings.cancel; isConnected -> strings.centerDisconnect; else -> strings.centerConnect }, onOrbitClick)
-                .size(168.dp)
+                .size(130.dp) // سایز مینیمال دکمه
                 .graphicsLayer {
                     scaleX = orbScale.value
                     scaleY = orbScale.value
@@ -616,32 +620,32 @@ private fun OrbitConnectionCard(connectionState: ConnectionState, onToggleConnec
             )
             if (isConnecting) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier.size(46.dp),
                     color = orbFg,
-                    strokeWidth = 4.dp
+                    strokeWidth = 3.5.dp
                 )
             } else {
                 Icon(
                     imageVector = Icons.Default.PowerSettingsNew,
                     contentDescription = null,
                     tint = orbFg,
-                    modifier = Modifier.size(54.dp)
+                    modifier = Modifier.size(44.dp)
                 )
             }
         }
 
-        Spacer(Modifier.width(16.dp))
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(strings.connection.uppercase(), style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF757D8A))
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = when {
                     isConnecting -> strings.centerConnecting
                     isConnected -> strings.centerDisconnect
                     else -> strings.centerConnect
                 },
-                style = MaterialTheme.typography.headlineMedium.copy(fontSize = 22.sp, lineHeight = 26.sp),
+                style = MaterialTheme.typography.headlineMedium.copy(fontSize = 20.sp, lineHeight = 24.sp),
                 color = Color.White, maxLines = 2
             )
         }
@@ -678,10 +682,10 @@ fun GameBoostSection(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(CardBg)
-            .border(1.dp, StrokeColor, RoundedCornerShape(18.dp))
-            .padding(vertical = 12.dp, horizontal = 12.dp)
+            .border(1.dp, StrokeColor, RoundedCornerShape(16.dp))
+            .padding(vertical = 10.dp, horizontal = 10.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -693,17 +697,17 @@ fun GameBoostSection(
                     imageVector = Icons.Filled.PlayArrow,
                     contentDescription = null,
                     tint = GoldNeon,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(14.dp)
                 )
                 Spacer(Modifier.width(6.dp))
-                Text(text = "Game Boost", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(text = "Game Boost", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
-            Text(text = "Auto-Optimize", color = Color(0xFF6B7280), fontSize = 11.sp)
+            Text(text = "Auto-Optimize", color = Color(0xFF6B7280), fontSize = 10.sp)
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(games.size) { index ->
                 val game = games[index]
                 GamePosterCard(
@@ -750,14 +754,14 @@ private fun GamePosterCard(game: BoostGame, isSelected: Boolean, onClick: () -> 
 
     Box(
         modifier = Modifier
-            .width(104.dp)
-            .height(138.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .width(90.dp) // سایز مینیمال پوستر
+            .height(120.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(DarkBg)
             .border(
                 width = if (isSelected) 2.2.dp else 1.dp,
                 color = if (isSelected) GoldNeon else StrokeColor,
-                shape = RoundedCornerShape(14.dp)
+                shape = RoundedCornerShape(12.dp)
             )
             .clickable(onClick = onClick)
     ) {
@@ -765,31 +769,31 @@ private fun GamePosterCard(game: BoostGame, isSelected: Boolean, onClick: () -> 
             Image(bitmap = posterBitmap!!, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         } else if (isLoading) {
             Box(Modifier.fillMaxSize().background(DarkBg), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = GoldNeon.copy(alpha = 0.6f))
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = GoldNeon.copy(alpha = 0.6f))
             }
         } else {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF242A38), DarkBg))), contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = GoldNeon.copy(alpha = 0.7f), modifier = Modifier.size(28.dp))
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = GoldNeon.copy(alpha = 0.7f), modifier = Modifier.size(24.dp))
             }
         }
 
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x35000000), Color.Transparent, Color(0xCC07080B), Color(0xF507080B)))))
 
-        Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.SpaceBetween, horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.fillMaxSize().padding(6.dp), verticalArrangement = Arrangement.SpaceBetween, horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
                 if (game.isHot) {
                     Box(Modifier.clip(RoundedCornerShape(4.dp)).background(GoldNeon).padding(horizontal = 4.dp, vertical = 1.dp)) {
-                        Text("HOT", color = Color.Black, fontSize = 8.sp, fontWeight = FontWeight.Black)
+                        Text("HOT", color = Color.Black, fontSize = 7.sp, fontWeight = FontWeight.Black)
                     }
                 }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Text(game.name, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(game.name, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(3.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(5.dp).clip(CircleShape).background(Color(0xFF00E676)))
+                    Box(Modifier.size(4.dp).clip(CircleShape).background(Color(0xFF00E676)))
                     Spacer(Modifier.width(4.dp))
-                    Text("Optimized", color = Color(0xFF00E676), fontSize = 8.sp, fontWeight = FontWeight.Medium)
+                    Text("Optimized", color = Color(0xFF00E676), fontSize = 7.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }
