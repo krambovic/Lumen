@@ -167,7 +167,6 @@ fun DashboardScreen(
             .background(DarkBg)
             .statusBarsPadding()
     ) {
-        // Top Bar: Brand Pill + Add Button
         BrandTopBar(
             onAddClick = { showAddSheet = true }
         )
@@ -186,7 +185,6 @@ fun DashboardScreen(
                         .verticalScroll(scrollState)
                         .padding(horizontal = 16.dp, vertical = 6.dp)
                 ) {
-                    // Hero Connection Card based on DashboardStyle
                     when (dashboardStyle) {
                         DashboardStyle.SLIDER -> { }
                         DashboardStyle.DEFAULT -> {
@@ -206,8 +204,11 @@ fun DashboardScreen(
                     // ============================================
                     GameBoostSection(selectedGameId = "pubg")
                     Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // پینگ هوشمند: اگه وصل بود و پینگ لایو نداشت، پینگ سرور رو نشون میده
+                    val displayPing = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.let { "$it ms" }
                     com.lumen.ui.components.LivePingCard(
-                        ping = connectedPing,
+                        ping = displayPing,
                         isConnected = isConnected,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -260,7 +261,6 @@ fun DashboardScreen(
                                 .padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Flag squircle badge
                             Box(
                                 modifier = Modifier
                                     .size(38.dp)
@@ -277,7 +277,6 @@ fun DashboardScreen(
 
                             Spacer(modifier = Modifier.width(12.dp))
 
-                            // Server info
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = activeNode.name,
@@ -297,7 +296,6 @@ fun DashboardScreen(
                                 )
                             }
 
-                            // Ping Badge
                             val pingMs = activeNode.pingMs
                             val pingText = when {
                                 activeNode.id in pingingNodeIds -> "..."
@@ -389,8 +387,8 @@ fun DashboardScreen(
                         }
                     }
 
-                    // فاصله پایین صفحه افزایش یافت تا زیر منو نره
-                    Spacer(modifier = Modifier.height(if (dashboardStyle == DashboardStyle.SLIDER) 190.dp else 180.dp))
+                    // فاصله بسیار زیاد برای اطمینان صد در صد از نرفتن زیر منو
+                    Spacer(modifier = Modifier.height(200.dp))
                 }
             }
         }
@@ -402,7 +400,6 @@ fun DashboardScreen(
         pinging = pingingNodeIds, onPingAll = { onPingNodes(groupNodes) },
         onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
 
-    // Add Server Bottom Sheet
     if (showAddSheet) {
         AddServerSheet(
             onDismissRequest = { showAddSheet = false },
@@ -435,9 +432,7 @@ private fun DashboardSpeedCards(isConnected: Boolean, values: () -> DashboardSpe
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(9.dp)
     ) {
-        // Download Card (Gaming Dark)
         val (downVal, downUnit) = formatDashboardSpeed(speeds.download)
-
         Box(
             modifier = Modifier
                 .weight(1.12f)
@@ -491,9 +486,7 @@ private fun DashboardSpeedCards(isConnected: Boolean, values: () -> DashboardSpe
             }
         }
 
-        // Upload Card (Gaming Dark)
         val (upVal, upUnit) = formatDashboardSpeed(speeds.upload)
-
         Box(
             modifier = Modifier
                 .weight(.88f)
@@ -591,7 +584,6 @@ private fun OrbitConnectionCard(connectionState: ConnectionState, onToggleConnec
         onToggleConnection()
     }
 
-    // Gaming Cyber Border and Colors
     Row(
         modifier = Modifier
             .fillMaxWidth()
