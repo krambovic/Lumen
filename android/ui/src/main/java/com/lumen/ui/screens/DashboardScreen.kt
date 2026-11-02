@@ -205,8 +205,9 @@ fun DashboardScreen(
                     GameBoostSection(selectedGameId = "pubg")
                     Spacer(modifier = Modifier.height(12.dp))
                     
-                    // پینگ هوشمند: اگه وصل بود و پینگ لایو نداشت، پینگ سرور رو نشون میده
-                    val displayPing = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.let { "$it ms" }
+                    // پینگ هوشمند: اگه وایرگارد پینگ لایو نداد، پینگ تست شده سرور رو نشون میده
+                    val displayPing = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.let { "$it ms" } ?: if(isConnected) "متصل (بدون پینگ)" else null
+                    
                     com.lumen.ui.components.LivePingCard(
                         ping = displayPing,
                         isConnected = isConnected,
@@ -246,7 +247,7 @@ fun DashboardScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // 4. Selected Server Row Card (Neon Themed)
+                    // 4. Selected Server Row Card
                     if (activeNode != null) {
                         val flagEmoji = CountryFlagHelper.getServerFlagEmoji(activeNode.countryCode)
 
@@ -387,8 +388,8 @@ fun DashboardScreen(
                         }
                     }
 
-                    // فاصله بسیار زیاد برای اطمینان صد در صد از نرفتن زیر منو
-                    Spacer(modifier = Modifier.height(200.dp))
+                    // فاصله بسیار زیاد برای اطمینان صد در صد از نرفتن زیر منو (280dp)
+                    Spacer(modifier = Modifier.height(280.dp))
                 }
             }
         }
