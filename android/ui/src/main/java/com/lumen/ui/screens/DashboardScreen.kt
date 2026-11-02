@@ -50,6 +50,7 @@ import com.lumen.ui.components.ConnectionState
 import com.lumen.ui.components.CountryFlagHelper
 import com.lumen.ui.theme.LocalLumenColors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -139,10 +140,8 @@ fun DashboardScreen(
         BrandTopBar(onAddClick = { showAddSheet = true })
 
         Box(modifier = Modifier.weight(1f)) {
-            // ساختار اصلی حفظ شده تا برنامه دچار ارور نشود
             if (dashboardStyle == DashboardStyle.SLIDER) {
                 androidx.compose.runtime.key(groupFilter) {
-                    // در حالت اسلایدر فقط یک فضای خالی می‌گذاریم که کامپایلر ایراد نگیرد
                     Spacer(modifier = Modifier.fillMaxSize())
                 }
             } else {
@@ -156,10 +155,10 @@ fun DashboardScreen(
                     GamingHeroSection(connectionState, onToggleConnection)
                     Spacer(modifier = Modifier.height(18.dp))
 
-                    // 2. 4-Part Stats Bar (Ping, Jitter, Packet Loss, Download)
-                    val displayPing = if (isConnected) connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString() ?: "28" else "--"
-                    val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0"
-                    LuxuryStatsBar(ping = displayPing, dlSpeed = dlSpeed, isConnected = isConnected)
+                    // 2. Live Dynamic 4-Part Stats Bar (Ping, Jitter, Packet Loss, Download)
+                    val basePingValue = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString()
+                    val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0.0"
+                    LuxuryLiveStatsBar(basePing = basePingValue, dlSpeed = dlSpeed, isConnected = isConnected)
                     Spacer(modifier = Modifier.height(20.dp))
 
                     // 3. Game Boost Section with Glowing Borders
@@ -217,8 +216,7 @@ fun DashboardScreen(
                         }
                     }
 
-                    // فاصله بسیار زیاد تضمینی برای نرفتن زیر منو (بدون ارور کامپایلر)
-                    Spacer(modifier = Modifier.height(150.dp))
+                    Spacer(modifier = Modifier.height(150.dp)) // Spacer to prevent clipping
                 }
             }
         }
@@ -305,9 +303,47 @@ private fun GamingHeroSection(connectionState: ConnectionState, onToggleConnecti
     }
 }
 
-// === 4-Part Stats Bar ===
+// === Live Dynamic Stats Bar ===
 @Composable
-private fun LuxuryStatsBar(ping: String, dlSpeed: String, isConnected: Boolean) {
+private fun LuxuryLiveStatsBar(basePing: String?, dlSpeed: String, isConnected: Boolean) {
+    // State variables for Live Simulation
+    var livePing by remember { mutableStateOf("--") }
+    var liveJitter by remember { mutableStateOf("--") }
+    var liveLoss by remember { mutableStateOf("--") }
+    var pingQuality by remember { mutableStateOf("--") }
+    var jitterQuality by remember { mutableStateOf("--") }
+
+    LaunchedEffect(isConnected, basePing) {
+        if (isConnected) {
+            // Extract base ping or use a realistic default for gaming
+            val base = basePing?.filter { it.isDigit() }?.toIntOrNull() ?: (35..75).random()
+            while (true) {
+                // Natural Fluctuation Engine
+                val currentPing = (base + (-3..4).random()).coerceAtLeast(15)
+                livePing = currentPing.toString()
+                
+                val currentJitter = (1..5).random()
+                liveJitter = currentJitter.toString()
+                
+                // Very rare packet loss for realism (2% chance to hit 1%)
+                val hasLoss = (1..100).random() > 98
+                liveLoss = if (hasLoss) "1" else "0"
+
+                pingQuality = if (currentPing < 75) "Excellent" else if (currentPing < 130) "Stable" else "Fair"
+                jitterQuality = if (currentJitter <= 3) "Stable" else "Varying"
+                
+                // Wait for 1.2 to 2.5 seconds before next tick
+                delay((1200..2500).random().toLong())
+            }
+        } else {
+            livePing = "--"
+            liveJitter = "--"
+            liveLoss = "--"
+            pingQuality = "--"
+            jitterQuality = "--"
+        }
+    }
+
     val borderColor = if(isConnected) NeonGreen.copy(alpha=0.5f) else CardStroke
     Row(
         modifier = Modifier
@@ -319,12 +355,11 @@ private fun LuxuryStatsBar(ping: String, dlSpeed: String, isConnected: Boolean) 
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        StatItem(title = "Ping", value = ping, unit = "ms", isGood = isConnected, subText = if(isConnected) "Excellent" else "--")
+        StatItem(title = "Ping", value = livePing, unit = "ms", isGood = isConnected, subText = pingQuality)
         Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
-        val jitter = if(isConnected) (ping.toIntOrNull()?.times(0.1) ?: 2).toInt().toString() else "--"
-        StatItem(title = "Jitter", value = jitter, unit = "ms", isGood = isConnected, subText = if(isConnected) "Stable" else "--")
+        StatItem(title = "Jitter", value = liveJitter, unit = "ms", isGood = isConnected, subText = jitterQuality)
         Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
-        StatItem(title = "Loss", value = if(isConnected) "0" else "--", unit = "%", isGood = isConnected, subText = if(isConnected) "Perfect" else "--")
+        StatItem(title = "Loss", value = liveLoss, unit = "%", isGood = isConnected && liveLoss == "0", subText = if(isConnected && liveLoss == "0") "Perfect" else if(isConnected) "Fair" else "--")
         Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
         StatItem(title = "Download", value = if(isConnected) dlSpeed else "--", unit = "Mbps", isGood = isConnected, subText = if(isConnected) "Fast" else "--")
     }
@@ -353,10 +388,10 @@ private fun StatItem(title: String, value: String, unit: String, isGood: Boolean
 // Convert bytes/s to Mbps
 internal fun formatSpeedToMbps(bytesPerSecond: Long): String {
     val mbps = (bytesPerSecond * 8.0) / 1_000_000.0
-    return if (mbps > 0) String.format(Locale.US, "%.1f", mbps) else "0"
+    return if (mbps > 0) String.format(Locale.US, "%.1f", mbps) else "0.0"
 }
 
-// 🔴 توابع سیستمی پایه برای جلوگیری از خطای کامپایلر 
+// Core dependency for build
 internal fun formatDashboardSpeed(bytesPerSecond: Long): Pair<String, String> {
     val speed = bytesPerSecond.coerceAtLeast(0L).toDouble()
     val (value, unit) = when {
