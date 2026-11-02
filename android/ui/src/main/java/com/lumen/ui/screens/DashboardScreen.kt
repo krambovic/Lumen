@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +39,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -137,78 +139,86 @@ fun DashboardScreen(
         BrandTopBar(onAddClick = { showAddSheet = true })
 
         Box(modifier = Modifier.weight(1f)) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(scrollState)
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                    .navigationBarsPadding()
-                    .padding(bottom = 120.dp) // جلوگیری از گیر کردن زیر منو
-            ) {
-                
-                // 1. Luxury Gaming Hero Section
-                GamingHeroSection(connectionState, onToggleConnection)
-                Spacer(modifier = Modifier.height(18.dp))
-
-                // 2. 4-Part Stats Bar (Ping, Jitter, Packet Loss, Download)
-                val displayPing = if (isConnected) connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString() ?: "28" else "--"
-                val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0"
-                LuxuryStatsBar(ping = displayPing, dlSpeed = dlSpeed, isConnected = isConnected)
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // 3. Game Boost Section with Glowing Borders
-                GameBoostSection(selectedGameId = "pubg")
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // 4. Server Selection Card
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(text = "Server", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text(text = "Auto Select ✦", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonGreen, modifier = Modifier.clickable(onClick = openServerPicker))
+            // ساختار اصلی حفظ شده تا برنامه دچار ارور نشود
+            if (dashboardStyle == DashboardStyle.SLIDER) {
+                androidx.compose.runtime.key(groupFilter) {
+                    // در حالت اسلایدر فقط یک فضای خالی می‌گذاریم که کامپایلر ایراد نگیرد
+                    Spacer(modifier = Modifier.fillMaxSize())
                 }
-                Spacer(modifier = Modifier.height(8.dp))
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    // 1. Luxury Gaming Hero Section
+                    GamingHeroSection(connectionState, onToggleConnection)
+                    Spacer(modifier = Modifier.height(18.dp))
 
-                if (activeNode != null) {
-                    val flagEmoji = CountryFlagHelper.getServerFlagEmoji(activeNode.countryCode)
-                    val serverBorderBrush = Brush.horizontalGradient(listOf(NeonPurple.copy(alpha=0.6f), NeonGreen.copy(alpha=0.6f)))
-                    
+                    // 2. 4-Part Stats Bar (Ping, Jitter, Packet Loss, Download)
+                    val displayPing = if (isConnected) connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString() ?: "28" else "--"
+                    val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0"
+                    LuxuryStatsBar(ping = displayPing, dlSpeed = dlSpeed, isConnected = isConnected)
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    // 3. Game Boost Section with Glowing Borders
+                    GameBoostSection(selectedGameId = "pubg")
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    // 4. Server Selection Card
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(CardBgDark)
-                            .border(1.5.dp, serverBorderBrush, RoundedCornerShape(20.dp))
-                            .clickable(onClick = openServerPicker)
-                            .padding(14.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color.Black)
-                                .border(1.dp, CardStroke, RoundedCornerShape(12.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(text = flagEmoji, fontSize = 20.sp)
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(text = activeNode.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(NeonGreen.copy(alpha=0.2f)).padding(horizontal=6.dp, vertical=2.dp)){
-                                    Text("Best Server", color=NeonGreen, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(text = "Protocol: ${activeNode.displayProtocol}", fontSize = 11.sp, color = Color(0xFF8A93A6))
-                        }
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        Text(text = "Server", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(text = "Auto Select ✦", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonGreen, modifier = Modifier.clickable(onClick = openServerPicker))
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (activeNode != null) {
+                        val flagEmoji = CountryFlagHelper.getServerFlagEmoji(activeNode.countryCode)
+                        val serverBorderBrush = Brush.horizontalGradient(listOf(NeonPurple.copy(alpha=0.6f), NeonGreen.copy(alpha=0.6f)))
+                        
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(CardBgDark)
+                                .border(1.5.dp, serverBorderBrush, RoundedCornerShape(20.dp))
+                                .clickable(onClick = openServerPicker)
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.Black)
+                                    .border(1.dp, CardStroke, RoundedCornerShape(12.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = flagEmoji, fontSize = 20.sp)
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(text = activeNode.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(NeonGreen.copy(alpha=0.2f)).padding(horizontal=6.dp, vertical=2.dp)){
+                                        Text("Best Server", color=NeonGreen, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(text = "Protocol: ${activeNode.displayProtocol}", fontSize = 11.sp, color = Color(0xFF8A93A6))
+                            }
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    // فاصله بسیار زیاد تضمینی برای نرفتن زیر منو (بدون ارور کامپایلر)
+                    Spacer(modifier = Modifier.height(150.dp))
                 }
             }
         }
@@ -269,12 +279,10 @@ private fun GamingHeroSection(connectionState: ConnectionState, onToggleConnecti
                 .clickable(onClick = onToggleConnection),
             contentAlignment = Alignment.Center
         ) {
-            // Outer Glow Rings
             if (isConnected || isConnecting) {
                 Box(modifier = Modifier.size(140.dp).clip(CircleShape).border(2.dp, mainColor.copy(alpha = 0.2f), CircleShape))
                 Box(modifier = Modifier.size(120.dp).clip(CircleShape).border(4.dp, mainColor.copy(alpha = 0.4f), CircleShape))
             }
-            // Inner Main Ring
             Box(
                 modifier = Modifier
                     .size(100.dp)
@@ -312,12 +320,12 @@ private fun LuxuryStatsBar(ping: String, dlSpeed: String, isConnected: Boolean) 
         verticalAlignment = Alignment.CenterVertically
     ) {
         StatItem(title = "Ping", value = ping, unit = "ms", isGood = isConnected, subText = if(isConnected) "Excellent" else "--")
-        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) // Divider
+        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
         val jitter = if(isConnected) (ping.toIntOrNull()?.times(0.1) ?: 2).toInt().toString() else "--"
         StatItem(title = "Jitter", value = jitter, unit = "ms", isGood = isConnected, subText = if(isConnected) "Stable" else "--")
-        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) // Divider
+        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
         StatItem(title = "Loss", value = if(isConnected) "0" else "--", unit = "%", isGood = isConnected, subText = if(isConnected) "Perfect" else "--")
-        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) // Divider
+        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
         StatItem(title = "Download", value = if(isConnected) dlSpeed else "--", unit = "Mbps", isGood = isConnected, subText = if(isConnected) "Fast" else "--")
     }
 }
@@ -346,6 +354,19 @@ private fun StatItem(title: String, value: String, unit: String, isGood: Boolean
 internal fun formatSpeedToMbps(bytesPerSecond: Long): String {
     val mbps = (bytesPerSecond * 8.0) / 1_000_000.0
     return if (mbps > 0) String.format(Locale.US, "%.1f", mbps) else "0"
+}
+
+// 🔴 توابع سیستمی پایه برای جلوگیری از خطای کامپایلر 
+internal fun formatDashboardSpeed(bytesPerSecond: Long): Pair<String, String> {
+    val speed = bytesPerSecond.coerceAtLeast(0L).toDouble()
+    val (value, unit) = when {
+        speed >= 1024.0 * 1024.0 * 1024.0 -> speed / (1024.0 * 1024.0 * 1024.0) to "GB/s"
+        speed >= 1024.0 * 1024.0 -> speed / (1024.0 * 1024.0) to "MB/s"
+        speed >= 1024.0 -> speed / 1024.0 to "KB/s"
+        else -> speed to "B/s"
+    }
+    return (if (value < 10.0 && speed >= 1024.0) String.format(Locale.getDefault(), "%.1f", value)
+    else String.format(Locale.getDefault(), "%.0f", value)) to unit
 }
 
 // === Game Boost Section ===
@@ -414,7 +435,6 @@ private fun GamePosterLuxuryCard(game: BoostGame, isSelected: Boolean, onClick: 
         if (posterBitmap != null) {
             Image(bitmap = posterBitmap!!, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
-        // Gradient overlay for text readability
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xEA05050A)))))
         
         if (isSelected) {
