@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -166,6 +167,7 @@ fun DashboardScreen(
             .fillMaxSize()
             .background(DarkBg)
             .statusBarsPadding()
+            .navigationBarsPadding() // جلوگیری از رفتن زیر منوی پایین گوشی
     ) {
         BrandTopBar(
             onAddClick = { showAddSheet = true }
@@ -184,6 +186,7 @@ fun DashboardScreen(
                         .fillMaxSize()
                         .verticalScroll(scrollState)
                         .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .padding(bottom = 90.dp) // ایجاد فاصله برای منوی برنامه
                 ) {
                     when (dashboardStyle) {
                         DashboardStyle.SLIDER -> { }
@@ -205,7 +208,6 @@ fun DashboardScreen(
                     GameBoostSection(selectedGameId = "pubg")
                     Spacer(modifier = Modifier.height(12.dp))
                     
-                    // پینگ هوشمند: اگه وایرگارد پینگ لایو نداد، پینگ تست شده سرور رو نشون میده
                     val displayPing = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.let { "$it ms" } ?: if(isConnected) "متصل (بدون پینگ)" else null
                     
                     com.lumen.ui.components.LivePingCard(
@@ -388,8 +390,7 @@ fun DashboardScreen(
                         }
                     }
 
-                    // فاصله بسیار زیاد برای اطمینان صد در صد از نرفتن زیر منو (280dp)
-                    Spacer(modifier = Modifier.height(280.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                 }
             }
         }
