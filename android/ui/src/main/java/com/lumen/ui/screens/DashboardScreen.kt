@@ -206,7 +206,11 @@ fun DashboardScreen(
                     // ============================================
                     GameBoostSection(selectedGameId = "pubg")
                     Spacer(modifier = Modifier.height(12.dp))
-                    com.lumen.ui.components.LivePingCard(modifier = Modifier.fillMaxWidth())
+                    com.lumen.ui.components.LivePingCard(
+                        ping = connectedPing,
+                        isConnected = isConnected,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(modifier = Modifier.height(14.dp))
                     // ============================================
 
@@ -385,7 +389,8 @@ fun DashboardScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(if (dashboardStyle == DashboardStyle.SLIDER) 190.dp else 100.dp))
+                    // فاصله پایین صفحه افزایش یافت تا زیر منو نره
+                    Spacer(modifier = Modifier.height(if (dashboardStyle == DashboardStyle.SLIDER) 190.dp else 180.dp))
                 }
             }
         }
