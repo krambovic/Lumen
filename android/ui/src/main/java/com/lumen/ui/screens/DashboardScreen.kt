@@ -65,7 +65,6 @@ import com.lumen.ui.components.expressiveButtonSemantics
 import com.lumen.ui.components.BrandTopBar
 import com.lumen.ui.components.ConnectionState
 import com.lumen.ui.components.CountryFlagHelper
-import com.lumen.ui.theme.LocalLumenColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -126,7 +125,6 @@ fun DashboardScreen(
     selectedGroupFilter: String = "all",
     speedValues: () -> DashboardSpeeds = { DashboardSpeeds(downloadSpeed, uploadSpeed) }
 ) {
-    val lumenColors = LocalLumenColors.current
     val tick = rememberHapticTick()
     var showAddSheet by remember { mutableStateOf(false) }
     var showServerPicker by remember { mutableStateOf(false) }
@@ -137,7 +135,6 @@ fun DashboardScreen(
     val groupFilter = resolvedServerFilter(selectedGroupFilter, subscriptions, serverGroups)
     val groupNodes = remember(nodes, groupFilter) { nodesForServerFilter(nodes, groupFilter) }
     
-    // استفاده از متغیرهای اصلی برای جلوگیری از ارور بی‌استفاده بودن
     val groupTitle = when {
         groupFilter == "manual" -> strings.manual
         groupFilter == "sub" -> strings.subscriptions
@@ -150,7 +147,6 @@ fun DashboardScreen(
 
     val isConnected = connectionState == ConnectionState.Connected
     val scrollState = rememberScrollState()
-    val bgFallback = lumenColors.background // استفاده از متغیر برای رفع خطای بیلد
 
     val bgBrush = Brush.radialGradient(
         colors = listOf(Color(0xFF003344), CarbonBlack),
@@ -169,9 +165,11 @@ fun DashboardScreen(
         Box(modifier = Modifier.weight(1f)) {
             if (dashboardStyle == DashboardStyle.SLIDER) {
                 androidx.compose.runtime.key(groupFilter) {
-                    DashboardServerTable(groupNodes, groupTitle, pingingNodeIds, onSelectNode, onOpenServers,
+                    DashboardServerTable(
+                        groupNodes, groupTitle, pingingNodeIds, onSelectNode, onOpenServers,
                         speedStatsEnabled, isConnected, speedValues,
-                        onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
+                        onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing
+                    )
                 }
             } else {
                 Column(
@@ -180,11 +178,9 @@ fun DashboardScreen(
                         .verticalScroll(scrollState)
                         .padding(horizontal = 16.dp, vertical = 6.dp)
                 ) {
-                    // 1. Tactical Hero Section
                     TacticalHeroSection(connectionState, onToggleConnection, tick)
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    // 2. Global Latency Engine (Stats Bar)
                     if (speedStatsEnabled) {
                         val basePingValue = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString()
                         val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0.00"
@@ -192,11 +188,9 @@ fun DashboardScreen(
                         Spacer(modifier = Modifier.height(24.dp))
                     }
 
-                    // 3. Game Boost Profiles
                     GameBoostSection(selectedGameId = "pubg")
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // 4. Global Server Node Card
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -275,15 +269,18 @@ fun DashboardScreen(
                         }
                     }
 
-                    // Spacer حیاتی برای منوی پایین
                     Spacer(modifier = Modifier.height(160.dp))
                 }
             }
         }
     }
 
-    if (showServerPicker) DashboardServerPicker(groupNodes, groupTitle, onDismiss = { showServerPicker = false }, onSelect = { onSelectNode(it); showServerPicker = false }, pinging = pingingNodeIds, onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
-    if (showAddSheet) AddServerSheet(onDismissRequest = { showAddSheet = false }, onImportClipboard = onImportClipboard, onImportQr = scanQr, onImportFile = onImportFile, onAddManualNode = onAddManualNode)
+    if (showServerPicker) {
+        DashboardServerPicker(groupNodes, groupTitle, onDismiss = { showServerPicker = false }, onSelect = { onSelectNode(it); showServerPicker = false }, pinging = pingingNodeIds, onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
+    }
+    if (showAddSheet) {
+        AddServerSheet(onDismissRequest = { showAddSheet = false }, onImportClipboard = onImportClipboard, onImportQr = scanQr, onImportFile = onImportFile, onAddManualNode = onAddManualNode)
+    }
 }
 
 @Composable
