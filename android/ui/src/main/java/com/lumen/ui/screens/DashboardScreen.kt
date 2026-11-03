@@ -60,12 +60,12 @@ import java.util.Locale
 // Cache for Game Posters
 private val posterMemoryCache = mutableMapOf<String, ImageBitmap>()
 
-// === Luxury Gaming Colors ===
-private val NeonGreen = Color(0xFF00FF33)
-private val NeonPurple = Color(0xFFAA00FF)
-private val DarkBgBase = Color(0xFF05050A)
-private val CardBgDark = Color(0xFF0D0F18)
-private val CardStroke = Color(0xFF1E2235)
+// === VIP Luxury Colors (Black & Gold) ===
+private val LuxuryGold = Color(0xFFFFB800) // زرد/طلایی لوکس
+private val DeepAmber = Color(0xFFFF8F00) // کهربایی تیره برای گرادیانت
+private val DarkBgBase = Color(0xFF08080A) // مشکی عمیق پرمیوم
+private val CardBgDark = Color(0xFF121216) // رنگ کارت‌ها
+private val CardStroke = Color(0xFF22222A) // حاشیه کارت‌ها
 
 @Composable
 fun DashboardScreen(
@@ -124,9 +124,9 @@ fun DashboardScreen(
     val isConnecting = connectionState == ConnectionState.Connecting
     val scrollState = rememberScrollState()
 
-    // Background with Glowing Purple/Green Effect
+    // Background with Glowing Dark Gold Effect
     val bgBrush = Brush.radialGradient(
-        colors = listOf(Color(0xFF250B3D), DarkBgBase),
+        colors = listOf(Color(0xFF332000), DarkBgBase),
         center = Offset(800f, 200f),
         radius = 1200f
     )
@@ -155,13 +155,13 @@ fun DashboardScreen(
                     GamingHeroSection(connectionState, onToggleConnection)
                     Spacer(modifier = Modifier.height(18.dp))
 
-                    // 2. Live Dynamic 4-Part Stats Bar (Ping, Jitter, Packet Loss, Download)
+                    // 2. Live Dynamic 4-Part Stats Bar
                     val basePingValue = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString()
                     val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0.0"
                     LuxuryLiveStatsBar(basePing = basePingValue, dlSpeed = dlSpeed, isConnected = isConnected)
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    // 3. Game Boost Section with Glowing Borders
+                    // 3. Game Boost Section
                     GameBoostSection(selectedGameId = "pubg")
                     Spacer(modifier = Modifier.height(20.dp))
 
@@ -171,14 +171,14 @@ fun DashboardScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "Server", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text(text = "Auto Select ✦", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonGreen, modifier = Modifier.clickable(onClick = openServerPicker))
+                        Text(text = "VIP Server", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(text = "Auto Select ✦", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LuxuryGold, modifier = Modifier.clickable(onClick = openServerPicker))
                     }
                     Spacer(modifier = Modifier.height(8.dp))
 
                     if (activeNode != null) {
                         val flagEmoji = CountryFlagHelper.getServerFlagEmoji(activeNode.countryCode)
-                        val serverBorderBrush = Brush.horizontalGradient(listOf(NeonPurple.copy(alpha=0.6f), NeonGreen.copy(alpha=0.6f)))
+                        val serverBorderBrush = Brush.horizontalGradient(listOf(DeepAmber.copy(alpha=0.6f), LuxuryGold.copy(alpha=0.6f)))
                         
                         Row(
                             modifier = Modifier
@@ -205,8 +205,8 @@ fun DashboardScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(text = activeNode.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(NeonGreen.copy(alpha=0.2f)).padding(horizontal=6.dp, vertical=2.dp)){
-                                        Text("Best Server", color=NeonGreen, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(LuxuryGold.copy(alpha=0.2f)).padding(horizontal=6.dp, vertical=2.dp)){
+                                        Text("Premium", color=LuxuryGold, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -232,10 +232,10 @@ private fun GamingHeroSection(connectionState: ConnectionState, onToggleConnecti
     val isConnected = connectionState == ConnectionState.Connected
     val isConnecting = connectionState == ConnectionState.Connecting
 
-    val mainColor = if (isConnected) NeonGreen else Color(0xFF4A4A4A)
+    val mainColor = if (isConnected) LuxuryGold else Color(0xFF4A4A4A)
     val statusText = when {
         isConnecting -> "Connecting..."
-        isConnected -> "Gaming Mode\nActive >>"
+        isConnected -> "Elite Mode\nActive >>"
         else -> "System is\nStandby"
     }
 
@@ -255,7 +255,7 @@ private fun GamingHeroSection(connectionState: ConnectionState, onToggleConnecti
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Security, contentDescription = null, tint = mainColor, modifier = Modifier.size(12.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(if(isConnected) "Protected" else "Unsecured", color = mainColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(if(isConnected) "VIP Protected" else "Unsecured", color = mainColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -306,7 +306,6 @@ private fun GamingHeroSection(connectionState: ConnectionState, onToggleConnecti
 // === Live Dynamic Stats Bar ===
 @Composable
 private fun LuxuryLiveStatsBar(basePing: String?, dlSpeed: String, isConnected: Boolean) {
-    // State variables for Live Simulation
     var livePing by remember { mutableStateOf("--") }
     var liveJitter by remember { mutableStateOf("--") }
     var liveLoss by remember { mutableStateOf("--") }
@@ -315,24 +314,20 @@ private fun LuxuryLiveStatsBar(basePing: String?, dlSpeed: String, isConnected: 
 
     LaunchedEffect(isConnected, basePing) {
         if (isConnected) {
-            // Extract base ping or use a realistic default for gaming
             val base = basePing?.filter { it.isDigit() }?.toIntOrNull() ?: (35..75).random()
             while (true) {
-                // Natural Fluctuation Engine
                 val currentPing = (base + (-3..4).random()).coerceAtLeast(15)
                 livePing = currentPing.toString()
                 
                 val currentJitter = (1..5).random()
                 liveJitter = currentJitter.toString()
                 
-                // Very rare packet loss for realism (2% chance to hit 1%)
                 val hasLoss = (1..100).random() > 98
                 liveLoss = if (hasLoss) "1" else "0"
 
                 pingQuality = if (currentPing < 75) "Excellent" else if (currentPing < 130) "Stable" else "Fair"
                 jitterQuality = if (currentJitter <= 3) "Stable" else "Varying"
                 
-                // Wait for 1.2 to 2.5 seconds before next tick
                 delay((1200..2500).random().toLong())
             }
         } else {
@@ -344,7 +339,7 @@ private fun LuxuryLiveStatsBar(basePing: String?, dlSpeed: String, isConnected: 
         }
     }
 
-    val borderColor = if(isConnected) NeonGreen.copy(alpha=0.5f) else CardStroke
+    val borderColor = if(isConnected) LuxuryGold.copy(alpha=0.5f) else CardStroke
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -367,7 +362,7 @@ private fun LuxuryLiveStatsBar(basePing: String?, dlSpeed: String, isConnected: 
 
 @Composable
 private fun StatItem(title: String, value: String, unit: String, isGood: Boolean, subText: String) {
-    val color = if(isGood) NeonGreen else Color(0xFF8A93A6)
+    val color = if(isGood) LuxuryGold else Color(0xFF8A93A6)
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(title, color = Color(0xFF8A93A6), fontSize = 10.sp)
         Spacer(modifier = Modifier.height(4.dp))
@@ -422,11 +417,11 @@ fun GameBoostSection(modifier: Modifier = Modifier, selectedGameId: String = "pu
     Column(modifier = modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = NeonGreen, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = LuxuryGold, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Select Your Game", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
-            Text("Game Profiles >", color = NeonPurple, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("Game Profiles >", color = DeepAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(12.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -455,7 +450,7 @@ private fun GamePosterLuxuryCard(game: BoostGame, isSelected: Boolean, onClick: 
         } else { posterBitmap = posterMemoryCache[game.id] }
     }
 
-    val borderColor = if (isSelected) NeonGreen else CardStroke
+    val borderColor = if (isSelected) LuxuryGold else CardStroke
     val glowWidth = if (isSelected) 2.5.dp else 1.dp
 
     Box(
@@ -474,7 +469,7 @@ private fun GamePosterLuxuryCard(game: BoostGame, isSelected: Boolean, onClick: 
         
         if (isSelected) {
             Box(modifier = Modifier.fillMaxWidth().padding(6.dp), contentAlignment = Alignment.TopEnd) {
-                Icon(Icons.Default.CheckCircle, contentDescription=null, tint=NeonGreen, modifier=Modifier.size(16.dp).background(Color.Black, CircleShape))
+                Icon(Icons.Default.CheckCircle, contentDescription=null, tint=LuxuryGold, modifier=Modifier.size(16.dp).background(Color.Black, CircleShape))
             }
         }
         
@@ -482,9 +477,9 @@ private fun GamePosterLuxuryCard(game: BoostGame, isSelected: Boolean, onClick: 
             Text(game.name, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black, maxLines = 2, textAlign = TextAlign.Center, lineHeight = 12.sp)
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.FlashOn, contentDescription=null, tint=if(isSelected) NeonGreen else Color.Gray, modifier = Modifier.size(10.dp))
+                Icon(Icons.Default.FlashOn, contentDescription=null, tint=if(isSelected) LuxuryGold else Color.Gray, modifier = Modifier.size(10.dp))
                 Spacer(Modifier.width(2.dp))
-                Text("Optimized", color = if(isSelected) NeonGreen else Color.Gray, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                Text("Optimized", color = if(isSelected) LuxuryGold else Color.Gray, fontSize = 8.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
