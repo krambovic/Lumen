@@ -15,12 +15,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.WifiTethering
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -113,9 +111,10 @@ fun DashboardScreen(
     val openServerPicker: () -> Unit = { showServerPicker = true }
 
     val activeNode = nodes.firstOrNull { it.isSelected } ?: nodes.firstOrNull()
+    val strings = LocalStrings.current
     val groupFilter = resolvedServerFilter(selectedGroupFilter, subscriptions, serverGroups)
     val groupNodes = remember(nodes, groupFilter) { nodesForServerFilter(nodes, groupFilter) }
-    val groupTitle = "GLOBAL NODES"
+    val groupTitle = strings.allGroups
     val scanQr = rememberQrScanRequest(onImportQr)
 
     val isConnected = connectionState == ConnectionState.Connected
@@ -139,7 +138,11 @@ fun DashboardScreen(
 
         Box(modifier = Modifier.weight(1f)) {
             if (dashboardStyle == DashboardStyle.SLIDER) {
-                androidx.compose.runtime.key(groupFilter) { Spacer(modifier = Modifier.fillMaxSize()) }
+                androidx.compose.runtime.key(groupFilter) { 
+                    DashboardServerTable(groupNodes, groupTitle, pingingNodeIds, onSelectNode, onOpenServers,
+                        speedStatsEnabled, isConnected, speedValues,
+                        onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
+                }
             } else {
                 Column(
                     modifier = Modifier
@@ -168,7 +171,7 @@ fun DashboardScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Storage, contentDescription=null, tint=CyberCyan, modifier=Modifier.size(16.dp))
+                            Icon(Icons.Default.Layers, contentDescription=null, tint=CyberCyan, modifier=Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(text = "GLOBAL ROUTING NODE", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White, fontFamily = FontFamily.Monospace)
                         }
@@ -193,9 +196,9 @@ fun DashboardScreen(
                             Box(
                                 modifier = Modifier
                                     .size(46.dp)
-                                    .clip(CutCornerShape(30)) // هشت‌ضلعی
+                                    .clip(CutCornerShape(percent = 30))
                                     .background(CarbonBlack)
-                                    .border(1.dp, PanelStroke, CutCornerShape(30)),
+                                    .border(1.dp, PanelStroke, CutCornerShape(percent = 30)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(text = flagEmoji, fontSize = 22.sp)
@@ -254,7 +257,7 @@ private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnec
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if(isConnected) Icons.Default.Security else Icons.Default.WifiTethering, contentDescription = null, tint = mainColor, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.Shield, contentDescription = null, tint = mainColor, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(if(isConnected) "ENCRYPTED TUNNEL" else "NO CONNECTION", color = mainColor, fontSize = 10.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
                 }
@@ -273,14 +276,14 @@ private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnec
             Text("ADVANCED LATENCY OPTIMIZATION", color = ToxicGreen.copy(alpha = if(isConnected) 1f else 0.3f), fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
         }
 
-        // OCTAGON GLOWING BUTTON (هشت‌ضلعی خشن)
+        // OCTAGON GLOWING BUTTON
         Box(
             modifier = Modifier
                 .size(135.dp)
                 .clickable(onClick = onToggleConnection),
             contentAlignment = Alignment.Center
         ) {
-            val octagon = CutCornerShape(percent = 28) // می‌سازد یک هشت‌ضلعی متقارن
+            val octagon = CutCornerShape(percent = 28) 
             if (isConnected || isConnecting) {
                 Box(modifier = Modifier.size(135.dp).clip(octagon).border(2.dp, mainColor.copy(alpha = 0.3f), octagon))
                 Box(modifier = Modifier.size(115.dp).clip(octagon).border(3.dp, mainColor.copy(alpha = 0.5f), octagon))
@@ -309,27 +312,21 @@ private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnec
 
 // === TACTICAL LIVE STATS BAR ===
 @Composable
-private fun TacticalLiveStatsBar(basePing: String?, dlSpeed: String, isConnected: Boolean) {
+private fun TacticalStatsBar(basePing: String?, dlSpeed: String, isConnected: Boolean) {
     var livePing by remember { mutableStateOf("--") }
     var liveJitter by remember { mutableStateOf("--") }
     var liveLoss by remember { mutableStateOf("--") }
 
     LaunchedEffect(isConnected, basePing) {
         if (isConnected) {
-            // پینگ پیش‌فرض رقابتی (اگه سرور نداد)
             val base = basePing?.filter { it.isDigit() }?.toIntOrNull() ?: (20..42).random()
             while (true) {
-                // نوسان فوق‌العاده پایین برای رقابت جهانی
                 val currentPing = (base + (-1..2).random()).coerceAtLeast(12)
                 livePing = currentPing.toString()
-                
-                // جیتر تقریباً صفر
                 val currentJitter = (0..2).random()
                 liveJitter = currentJitter.toString()
-                
-                liveLoss = "0" // بدون پکت لاس!
-                
-                delay((800..1500).random().toLong()) // آپدیت سریع‌تر رادار
+                liveLoss = "0" 
+                delay((800..1500).random().toLong()) 
             }
         } else {
             livePing = "--"
@@ -446,7 +443,7 @@ private fun GamePosterTacticalCard(game: BoostGame, isSelected: Boolean, onClick
 
     val borderColor = if (isSelected) CyberCyan else PanelStroke
     val glowWidth = if (isSelected) 2.dp else 1.dp
-    val posterShape = CutCornerShape(topStart = 16.dp, bottomEnd = 16.dp) // لبه‌های بسیار خشن
+    val posterShape = CutCornerShape(topStart = 16.dp, bottomEnd = 16.dp)
 
     Box(
         modifier = Modifier
@@ -460,7 +457,6 @@ private fun GamePosterTacticalCard(game: BoostGame, isSelected: Boolean, onClick
         if (posterBitmap != null) {
             Image(bitmap = posterBitmap!!, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
-        // سایه تاریک روی عکس برای خوانایی متن
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFA070709)))))
         
         if (isSelected) {
