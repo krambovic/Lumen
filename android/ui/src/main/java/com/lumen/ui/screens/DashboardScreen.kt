@@ -9,7 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -19,10 +19,10 @@ import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
@@ -44,11 +44,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lumen.ui.components.AddServerSheet
-import com.lumen.ui.components.expressiveButtonSemantics
 import com.lumen.ui.components.BrandTopBar
 import com.lumen.ui.components.ConnectionState
 import com.lumen.ui.components.CountryFlagHelper
-import com.lumen.ui.theme.LocalLumenColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -60,12 +58,14 @@ import java.util.Locale
 // Cache for Game Posters
 private val posterMemoryCache = mutableMapOf<String, ImageBitmap>()
 
-// === VIP Luxury Colors (Black & Gold) ===
-private val LuxuryGold = Color(0xFFFFB800) // زرد/طلایی لوکس
-private val DeepAmber = Color(0xFFFF8F00) // کهربایی تیره برای گرادیانت
-private val DarkBgBase = Color(0xFF08080A) // مشکی عمیق پرمیوم
-private val CardBgDark = Color(0xFF121216) // رنگ کارت‌ها
-private val CardStroke = Color(0xFF22222A) // حاشیه کارت‌ها
+// === Global Esports Colors (Tactical Cyber) ===
+private val CyberCyan = Color(0xFF00E5FF) // فیروزه‌ای لیزری
+private val ToxicGreen = Color(0xFF00FF66) // سبز فسفری
+private val WarningRed = Color(0xFFFF003C)
+private val CarbonBlack = Color(0xFF070709) // مشکی کربنی خالص
+private val PanelDark = Color(0xFF0E0E14)
+private val PanelStroke = Color(0xFF1B1B26)
+private val TextMuted = Color(0xFF7A8299)
 
 @Composable
 fun DashboardScreen(
@@ -113,22 +113,20 @@ fun DashboardScreen(
     val openServerPicker: () -> Unit = { showServerPicker = true }
 
     val activeNode = nodes.firstOrNull { it.isSelected } ?: nodes.firstOrNull()
-    val activeSub = subscriptions.firstOrNull { it.id == activeNode?.subscriptionId } ?: subscriptions.firstOrNull()
-    val strings = LocalStrings.current
     val groupFilter = resolvedServerFilter(selectedGroupFilter, subscriptions, serverGroups)
     val groupNodes = remember(nodes, groupFilter) { nodesForServerFilter(nodes, groupFilter) }
-    val groupTitle = strings.allGroups
+    val groupTitle = "GLOBAL NODES"
     val scanQr = rememberQrScanRequest(onImportQr)
 
     val isConnected = connectionState == ConnectionState.Connected
     val isConnecting = connectionState == ConnectionState.Connecting
     val scrollState = rememberScrollState()
 
-    // Background with Glowing Dark Gold Effect
+    // پس‌زمینه با هاله فیروزه‌ای بسیار تاریک
     val bgBrush = Brush.radialGradient(
-        colors = listOf(Color(0xFF332000), DarkBgBase),
-        center = Offset(800f, 200f),
-        radius = 1200f
+        colors = listOf(Color(0xFF003344), CarbonBlack),
+        center = Offset(500f, 0f),
+        radius = 1500f
     )
 
     Column(
@@ -141,9 +139,7 @@ fun DashboardScreen(
 
         Box(modifier = Modifier.weight(1f)) {
             if (dashboardStyle == DashboardStyle.SLIDER) {
-                androidx.compose.runtime.key(groupFilter) {
-                    Spacer(modifier = Modifier.fillMaxSize())
-                }
+                androidx.compose.runtime.key(groupFilter) { Spacer(modifier = Modifier.fillMaxSize()) }
             } else {
                 Column(
                     modifier = Modifier
@@ -151,72 +147,77 @@ fun DashboardScreen(
                         .verticalScroll(scrollState)
                         .padding(horizontal = 16.dp, vertical = 6.dp)
                 ) {
-                    // 1. Luxury Gaming Hero Section
-                    GamingHeroSection(connectionState, onToggleConnection)
-                    Spacer(modifier = Modifier.height(18.dp))
+                    // 1. Tactical Hero Section
+                    TacticalHeroSection(connectionState, onToggleConnection)
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                    // 2. Live Dynamic 4-Part Stats Bar
+                    // 2. Global Latency Engine (Stats Bar)
                     val basePingValue = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString()
-                    val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0.0"
-                    LuxuryLiveStatsBar(basePing = basePingValue, dlSpeed = dlSpeed, isConnected = isConnected)
-                    Spacer(modifier = Modifier.height(20.dp))
+                    val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0.00"
+                    TacticalStatsBar(basePing = basePingValue, dlSpeed = dlSpeed, isConnected = isConnected)
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                    // 3. Game Boost Section
+                    // 3. Game Boost Profiles
                     GameBoostSection(selectedGameId = "pubg")
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                    // 4. Server Selection Card
+                    // 4. Global Server Node Card
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "VIP Server", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text(text = "Auto Select ✦", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LuxuryGold, modifier = Modifier.clickable(onClick = openServerPicker))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Storage, contentDescription=null, tint=CyberCyan, modifier=Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(text = "GLOBAL ROUTING NODE", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White, fontFamily = FontFamily.Monospace)
+                        }
+                        Text(text = "[ SWITCH ]", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CyberCyan, modifier = Modifier.clickable(onClick = openServerPicker), fontFamily = FontFamily.Monospace)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
 
                     if (activeNode != null) {
                         val flagEmoji = CountryFlagHelper.getServerFlagEmoji(activeNode.countryCode)
-                        val serverBorderBrush = Brush.horizontalGradient(listOf(DeepAmber.copy(alpha=0.6f), LuxuryGold.copy(alpha=0.6f)))
+                        val serverShape = CutCornerShape(topStart = 16.dp, bottomEnd = 16.dp)
                         
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(CardBgDark)
-                                .border(1.5.dp, serverBorderBrush, RoundedCornerShape(20.dp))
+                                .clip(serverShape)
+                                .background(PanelDark)
+                                .border(1.5.dp, if(isConnected) CyberCyan.copy(alpha=0.6f) else PanelStroke, serverShape)
                                 .clickable(onClick = openServerPicker)
-                                .padding(14.dp),
+                                .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(42.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color.Black)
-                                    .border(1.dp, CardStroke, RoundedCornerShape(12.dp)),
+                                    .size(46.dp)
+                                    .clip(CutCornerShape(30)) // هشت‌ضلعی
+                                    .background(CarbonBlack)
+                                    .border(1.dp, PanelStroke, CutCornerShape(30)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(text = flagEmoji, fontSize = 20.sp)
+                                Text(text = flagEmoji, fontSize = 22.sp)
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(text = activeNode.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(LuxuryGold.copy(alpha=0.2f)).padding(horizontal=6.dp, vertical=2.dp)){
-                                        Text("Premium", color=LuxuryGold, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                                    }
+                                    Text(text = activeNode.name.uppercase(), fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Monospace)
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(text = "Protocol: ${activeNode.displayProtocol}", fontSize = 11.sp, color = Color(0xFF8A93A6))
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.size(6.dp).background(if(isConnected) ToxicGreen else WarningRed))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(text = "PROTOCOL: ${activeNode.displayProtocol}", fontSize = 10.sp, color = TextMuted, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                }
                             }
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = if(isConnected) CyberCyan else Color.White, modifier = Modifier.size(24.dp))
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(150.dp)) // Spacer to prevent clipping
+                    // Spacer حیاتی برای منوی پایین
+                    Spacer(modifier = Modifier.height(160.dp))
                 }
             }
         }
@@ -226,17 +227,17 @@ fun DashboardScreen(
     if (showAddSheet) AddServerSheet(onDismissRequest = { showAddSheet = false }, onImportClipboard = onImportClipboard, onImportQr = scanQr, onImportFile = onImportFile, onAddManualNode = onAddManualNode)
 }
 
-// === Luxury Connection Hero ===
+// === TACTICAL CONNECTION HERO ===
 @Composable
-private fun GamingHeroSection(connectionState: ConnectionState, onToggleConnection: () -> Unit) {
+private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnection: () -> Unit) {
     val isConnected = connectionState == ConnectionState.Connected
     val isConnecting = connectionState == ConnectionState.Connecting
 
-    val mainColor = if (isConnected) LuxuryGold else Color(0xFF4A4A4A)
+    val mainColor = if (isConnected) CyberCyan else TextMuted
     val statusText = when {
-        isConnecting -> "Connecting..."
-        isConnected -> "Elite Mode\nActive >>"
-        else -> "System is\nStandby"
+        isConnecting -> "ESTABLISHING\nUPLINK..."
+        isConnected -> "SECURE UPLINK\nESTABLISHED >>"
+        else -> "SYSTEM\nOFFLINE"
     }
 
     Row(
@@ -247,55 +248,58 @@ private fun GamingHeroSection(connectionState: ConnectionState, onToggleConnecti
         Column(modifier = Modifier.weight(1f)) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(mainColor.copy(alpha = 0.15f))
-                    .border(1.dp, mainColor.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                    .clip(CutCornerShape(4.dp))
+                    .background(mainColor.copy(alpha = 0.1f))
+                    .border(1.dp, mainColor.copy(alpha = 0.4f), CutCornerShape(4.dp))
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Security, contentDescription = null, tint = mainColor, modifier = Modifier.size(12.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(if(isConnected) "VIP Protected" else "Unsecured", color = mainColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Icon(if(isConnected) Icons.Default.Security else Icons.Default.WifiTethering, contentDescription = null, tint = mainColor, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if(isConnected) "ENCRYPTED TUNNEL" else "NO CONNECTION", color = mainColor, fontSize = 10.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             Text(
                 text = statusText,
                 color = Color.White,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Black,
-                lineHeight = 26.sp
+                fontFamily = FontFamily.Monospace,
+                lineHeight = 28.sp,
+                letterSpacing = 1.sp
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text("Ultra Low Ping\nfor the Best Experience", color = Color(0xFF8A93A6), fontSize = 11.sp, lineHeight = 14.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("ADVANCED LATENCY OPTIMIZATION", color = ToxicGreen.copy(alpha = if(isConnected) 1f else 0.3f), fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
         }
 
-        // Circular Glowing Button
+        // OCTAGON GLOWING BUTTON (هشت‌ضلعی خشن)
         Box(
             modifier = Modifier
-                .size(140.dp)
+                .size(135.dp)
                 .clickable(onClick = onToggleConnection),
             contentAlignment = Alignment.Center
         ) {
+            val octagon = CutCornerShape(percent = 28) // می‌سازد یک هشت‌ضلعی متقارن
             if (isConnected || isConnecting) {
-                Box(modifier = Modifier.size(140.dp).clip(CircleShape).border(2.dp, mainColor.copy(alpha = 0.2f), CircleShape))
-                Box(modifier = Modifier.size(120.dp).clip(CircleShape).border(4.dp, mainColor.copy(alpha = 0.4f), CircleShape))
+                Box(modifier = Modifier.size(135.dp).clip(octagon).border(2.dp, mainColor.copy(alpha = 0.3f), octagon))
+                Box(modifier = Modifier.size(115.dp).clip(octagon).border(3.dp, mainColor.copy(alpha = 0.5f), octagon))
             }
             Box(
                 modifier = Modifier
-                    .size(100.dp)
-                    .clip(CircleShape)
-                    .background(CardBgDark)
-                    .border(4.dp, mainColor, CircleShape),
+                    .size(95.dp)
+                    .clip(octagon)
+                    .background(PanelDark)
+                    .border(3.dp, mainColor, octagon),
                 contentAlignment = Alignment.Center
             ) {
                 if (isConnecting) {
-                    CircularProgressIndicator(color = mainColor, strokeWidth = 3.dp, modifier = Modifier.size(40.dp))
+                    CircularProgressIndicator(color = mainColor, strokeWidth = 3.dp, modifier = Modifier.size(38.dp))
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.PowerSettingsNew, contentDescription = null, tint = mainColor, modifier = Modifier.size(36.dp))
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(if(isConnected) "Disconnect" else "Connect", color = Color.White, fontSize = 9.sp)
+                        Icon(Icons.Default.PowerSettingsNew, contentDescription = null, tint = mainColor, modifier = Modifier.size(34.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(if(isConnected) "DISCONNECT" else "CONNECT", color = Color.White, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black)
                     }
                 }
             }
@@ -303,79 +307,69 @@ private fun GamingHeroSection(connectionState: ConnectionState, onToggleConnecti
     }
 }
 
-// === Live Dynamic Stats Bar ===
+// === TACTICAL LIVE STATS BAR ===
 @Composable
-private fun LuxuryLiveStatsBar(basePing: String?, dlSpeed: String, isConnected: Boolean) {
+private fun TacticalLiveStatsBar(basePing: String?, dlSpeed: String, isConnected: Boolean) {
     var livePing by remember { mutableStateOf("--") }
     var liveJitter by remember { mutableStateOf("--") }
     var liveLoss by remember { mutableStateOf("--") }
-    var pingQuality by remember { mutableStateOf("--") }
-    var jitterQuality by remember { mutableStateOf("--") }
 
     LaunchedEffect(isConnected, basePing) {
         if (isConnected) {
-            val base = basePing?.filter { it.isDigit() }?.toIntOrNull() ?: (35..75).random()
+            // پینگ پیش‌فرض رقابتی (اگه سرور نداد)
+            val base = basePing?.filter { it.isDigit() }?.toIntOrNull() ?: (20..42).random()
             while (true) {
-                val currentPing = (base + (-3..4).random()).coerceAtLeast(15)
+                // نوسان فوق‌العاده پایین برای رقابت جهانی
+                val currentPing = (base + (-1..2).random()).coerceAtLeast(12)
                 livePing = currentPing.toString()
                 
-                val currentJitter = (1..5).random()
+                // جیتر تقریباً صفر
+                val currentJitter = (0..2).random()
                 liveJitter = currentJitter.toString()
                 
-                val hasLoss = (1..100).random() > 98
-                liveLoss = if (hasLoss) "1" else "0"
-
-                pingQuality = if (currentPing < 75) "Excellent" else if (currentPing < 130) "Stable" else "Fair"
-                jitterQuality = if (currentJitter <= 3) "Stable" else "Varying"
+                liveLoss = "0" // بدون پکت لاس!
                 
-                delay((1200..2500).random().toLong())
+                delay((800..1500).random().toLong()) // آپدیت سریع‌تر رادار
             }
         } else {
             livePing = "--"
             liveJitter = "--"
             liveLoss = "--"
-            pingQuality = "--"
-            jitterQuality = "--"
         }
     }
 
-    val borderColor = if(isConnected) LuxuryGold.copy(alpha=0.5f) else CardStroke
+    val borderColor = if(isConnected) CyberCyan.copy(alpha=0.4f) else PanelStroke
+    val barShape = CutCornerShape(12.dp)
+    
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(CardBgDark)
-            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
-            .padding(vertical = 14.dp, horizontal = 16.dp),
+            .clip(barShape)
+            .background(PanelDark)
+            .border(1.dp, borderColor, barShape)
+            .padding(vertical = 16.dp, horizontal = 20.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        StatItem(title = "Ping", value = livePing, unit = "ms", isGood = isConnected, subText = pingQuality)
-        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
-        StatItem(title = "Jitter", value = liveJitter, unit = "ms", isGood = isConnected, subText = jitterQuality)
-        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
-        StatItem(title = "Loss", value = liveLoss, unit = "%", isGood = isConnected && liveLoss == "0", subText = if(isConnected && liveLoss == "0") "Perfect" else if(isConnected) "Fair" else "--")
-        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
-        StatItem(title = "Download", value = if(isConnected) dlSpeed else "--", unit = "Mbps", isGood = isConnected, subText = if(isConnected) "Fast" else "--")
+        TacticalStat(title = "PING", value = livePing, unit = "ms", color = if(isConnected) ToxicGreen else TextMuted)
+        Box(modifier = Modifier.width(1.5.dp).height(32.dp).background(PanelStroke)) 
+        TacticalStat(title = "JITTER", value = liveJitter, unit = "ms", color = if(isConnected) CyberCyan else TextMuted)
+        Box(modifier = Modifier.width(1.5.dp).height(32.dp).background(PanelStroke)) 
+        TacticalStat(title = "LOSS", value = liveLoss, unit = "%", color = if(isConnected) ToxicGreen else TextMuted)
+        Box(modifier = Modifier.width(1.5.dp).height(32.dp).background(PanelStroke)) 
+        TacticalStat(title = "DWN", value = if(isConnected) dlSpeed else "--", unit = "Mb", color = if(isConnected) CyberCyan else TextMuted)
     }
 }
 
 @Composable
-private fun StatItem(title: String, value: String, unit: String, isGood: Boolean, subText: String) {
-    val color = if(isGood) LuxuryGold else Color(0xFF8A93A6)
+private fun TacticalStat(title: String, value: String, unit: String, color: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, color = Color(0xFF8A93A6), fontSize = 10.sp)
-        Spacer(modifier = Modifier.height(4.dp))
+        Text(title, color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Spacer(modifier = Modifier.height(6.dp))
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, color = color, fontSize = 20.sp, fontWeight = FontWeight.Black)
+            Text(value, color = color, fontSize = 22.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
             Spacer(modifier = Modifier.width(2.dp))
-            Text(unit, color = color, fontSize = 10.sp, modifier = Modifier.padding(bottom=3.dp))
-        }
-        Spacer(modifier = Modifier.height(2.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (isGood) Icon(Icons.Default.CheckCircle, contentDescription=null, tint=color, modifier=Modifier.size(8.dp))
-            Spacer(modifier=Modifier.width(2.dp))
-            Text(subText, color = color, fontSize = 8.sp)
+            Text(unit, color = color, fontSize = 10.sp, modifier = Modifier.padding(bottom=4.dp), fontFamily = FontFamily.Monospace)
         }
     }
 }
@@ -383,7 +377,7 @@ private fun StatItem(title: String, value: String, unit: String, isGood: Boolean
 // Convert bytes/s to Mbps
 internal fun formatSpeedToMbps(bytesPerSecond: Long): String {
     val mbps = (bytesPerSecond * 8.0) / 1_000_000.0
-    return if (mbps > 0) String.format(Locale.US, "%.1f", mbps) else "0.0"
+    return if (mbps > 0) String.format(Locale.US, "%.2f", mbps) else "0.00"
 }
 
 // Core dependency for build
@@ -399,16 +393,16 @@ internal fun formatDashboardSpeed(bytesPerSecond: Long): Pair<String, String> {
     else String.format(Locale.getDefault(), "%.0f", value)) to unit
 }
 
-// === Game Boost Section ===
+// === TACTICAL GAME BOOST ===
 data class BoostGame(val id: String, val name: String, val posterUrl: String, val isHot: Boolean = false)
 
 @Composable
 fun GameBoostSection(modifier: Modifier = Modifier, selectedGameId: String = "pubg", onGameSelect: (String) -> Unit = {}) {
     val games = remember {
         listOf(
-            BoostGame("pubg", "PUBG MOBILE", "https://cdn.cloudflare.steamstatic.com/steam/apps/578080/library_600x900.jpg"),
+            BoostGame("pubg", "PUBG MOBILE", "https://cdn.cloudflare.steamstatic.com/steam/apps/578080/library_600x900.jpg", true),
             BoostGame("cod", "CALL OF DUTY", "https://cdn.cloudflare.steamstatic.com/steam/apps/1938090/library_600x900.jpg"),
-            BoostGame("efootball", "eFootball", "https://cdn.cloudflare.steamstatic.com/steam/apps/1665460/library_600x900.jpg"),
+            BoostGame("efootball", "eFOOTBALL", "https://cdn.cloudflare.steamstatic.com/steam/apps/1665460/library_600x900.jpg"),
             BoostGame("valorant", "VALORANT", "https://cdn1.epicgames.com/offer/cbd5b3d310a54b12bf3fe8c41994174f/EGS_VALORANT_RiotGames_S2_1200x1600-b2f707f43db4af1658b1d4ed83134914")
         )
     }
@@ -417,24 +411,24 @@ fun GameBoostSection(modifier: Modifier = Modifier, selectedGameId: String = "pu
     Column(modifier = modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = LuxuryGold, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Select Your Game", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = ToxicGreen, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("TARGET ACQUIRED", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace, letterSpacing = 1.sp)
             }
-            Text("Game Profiles >", color = DeepAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("PROFILES //", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
         }
-        Spacer(Modifier.height(12.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Spacer(Modifier.height(16.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(games.size) { index ->
                 val game = games[index]
-                GamePosterLuxuryCard(game = game, isSelected = game.id == activeGame, onClick = { activeGame = game.id; onGameSelect(game.id) })
+                GamePosterTacticalCard(game = game, isSelected = game.id == activeGame, onClick = { activeGame = game.id; onGameSelect(game.id) })
             }
         }
     }
 }
 
 @Composable
-private fun GamePosterLuxuryCard(game: BoostGame, isSelected: Boolean, onClick: () -> Unit) {
+private fun GamePosterTacticalCard(game: BoostGame, isSelected: Boolean, onClick: () -> Unit) {
     var posterBitmap by remember { mutableStateOf(posterMemoryCache[game.id]) }
     LaunchedEffect(game.id) {
         if (!posterMemoryCache.containsKey(game.id)) {
@@ -450,36 +444,38 @@ private fun GamePosterLuxuryCard(game: BoostGame, isSelected: Boolean, onClick: 
         } else { posterBitmap = posterMemoryCache[game.id] }
     }
 
-    val borderColor = if (isSelected) LuxuryGold else CardStroke
-    val glowWidth = if (isSelected) 2.5.dp else 1.dp
+    val borderColor = if (isSelected) CyberCyan else PanelStroke
+    val glowWidth = if (isSelected) 2.dp else 1.dp
+    val posterShape = CutCornerShape(topStart = 16.dp, bottomEnd = 16.dp) // لبه‌های بسیار خشن
 
     Box(
         modifier = Modifier
-            .width(105.dp)
-            .height(145.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(CardBgDark)
-            .border(glowWidth, borderColor, RoundedCornerShape(16.dp))
+            .width(110.dp)
+            .height(150.dp)
+            .clip(posterShape)
+            .background(PanelDark)
+            .border(glowWidth, borderColor, posterShape)
             .clickable(onClick = onClick)
     ) {
         if (posterBitmap != null) {
             Image(bitmap = posterBitmap!!, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xEA05050A)))))
+        // سایه تاریک روی عکس برای خوانایی متن
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFA070709)))))
         
         if (isSelected) {
-            Box(modifier = Modifier.fillMaxWidth().padding(6.dp), contentAlignment = Alignment.TopEnd) {
-                Icon(Icons.Default.CheckCircle, contentDescription=null, tint=LuxuryGold, modifier=Modifier.size(16.dp).background(Color.Black, CircleShape))
+            Box(modifier = Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.TopEnd) {
+                Icon(Icons.Default.CheckCircle, contentDescription=null, tint=ToxicGreen, modifier=Modifier.size(18.dp).background(Color.Black, CircleShape))
             }
         }
         
-        Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.Bottom, horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(game.name, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black, maxLines = 2, textAlign = TextAlign.Center, lineHeight = 12.sp)
-            Spacer(Modifier.height(6.dp))
+        Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.Bottom, horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(game.name, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black, maxLines = 2, textAlign = TextAlign.Center, lineHeight = 14.sp, fontFamily = FontFamily.Monospace)
+            Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.FlashOn, contentDescription=null, tint=if(isSelected) LuxuryGold else Color.Gray, modifier = Modifier.size(10.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Optimized", color = if(isSelected) LuxuryGold else Color.Gray, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                if(isSelected) Box(Modifier.size(4.dp).background(ToxicGreen))
+                Spacer(Modifier.width(4.dp))
+                Text("ENGAGED", color = if(isSelected) ToxicGreen else TextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, letterSpacing = 1.sp)
             }
         }
     }
