@@ -1,4 +1,3 @@
-
 package com.lumen.ui.screens
 
 import android.graphics.BitmapFactory
@@ -66,7 +65,6 @@ import com.lumen.ui.components.expressiveButtonSemantics
 import com.lumen.ui.components.BrandTopBar
 import com.lumen.ui.components.ConnectionState
 import com.lumen.ui.components.CountryFlagHelper
-import com.lumen.ui.theme.LocalLumenColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -78,14 +76,14 @@ import java.util.Locale
 // Cache for Game Posters
 private val posterMemoryCache = mutableMapOf<String, ImageBitmap>()
 
-// === Global Esports Colors (Tactical Cyber) ===
-private val CyberCyan = Color(0xFF00E5FF)
-private val ToxicGreen = Color(0xFF00FF66)
-private val WarningRed = Color(0xFFFF003C)
-private val CarbonBlack = Color(0xFF070709)
-private val PanelDark = Color(0xFF0E0E14)
-private val PanelStroke = Color(0xFF1B1B26)
-private val TextMuted = Color(0xFF7A8299)
+// === Premium Clean Gaming Colors ===
+private val NeonGreen = Color(0xFF00FF66)
+private val PurpleAccent = Color(0xFF8B5CF6)
+private val DangerRed = Color(0xFFFF3B30)
+private val BgDark = Color(0xFF050508)
+private val CardDark = Color(0xFF12121A)
+private val CardStroke = Color(0xFF22222F)
+private val TextMuted = Color(0xFF8B93A5)
 
 @Composable
 fun DashboardScreen(
@@ -127,7 +125,6 @@ fun DashboardScreen(
     selectedGroupFilter: String = "all",
     speedValues: () -> DashboardSpeeds = { DashboardSpeeds(downloadSpeed, uploadSpeed) }
 ) {
-    val lumenColors = LocalLumenColors.current
     val tick = rememberHapticTick()
     var showAddSheet by remember { mutableStateOf(false) }
     var showServerPicker by remember { mutableStateOf(false) }
@@ -138,7 +135,6 @@ fun DashboardScreen(
     val groupFilter = resolvedServerFilter(selectedGroupFilter, subscriptions, serverGroups)
     val groupNodes = remember(nodes, groupFilter) { nodesForServerFilter(nodes, groupFilter) }
     
-    // استفاده از متغیرهای اصلی برای جلوگیری از ارور بی‌استفاده بودن
     val groupTitle = when {
         groupFilter == "manual" -> strings.manual
         groupFilter == "sub" -> strings.subscriptions
@@ -151,12 +147,11 @@ fun DashboardScreen(
 
     val isConnected = connectionState == ConnectionState.Connected
     val scrollState = rememberScrollState()
-    val bgFallback = lumenColors.background // استفاده از متغیر برای رفع خطای بیلد
 
     val bgBrush = Brush.radialGradient(
-        colors = listOf(Color(0xFF003344), CarbonBlack),
+        colors = listOf(Color(0xFF160B2E), BgDark),
         center = Offset(500f, 0f),
-        radius = 1500f
+        radius = 1600f
     )
 
     Column(
@@ -170,9 +165,11 @@ fun DashboardScreen(
         Box(modifier = Modifier.weight(1f)) {
             if (dashboardStyle == DashboardStyle.SLIDER) {
                 androidx.compose.runtime.key(groupFilter) {
-                    DashboardServerTable(groupNodes, groupTitle, pingingNodeIds, onSelectNode, onOpenServers,
+                    DashboardServerTable(
+                        groupNodes, groupTitle, pingingNodeIds, onSelectNode, onOpenServers,
                         speedStatsEnabled, isConnected, speedValues,
-                        onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
+                        onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing
+                    )
                 }
             } else {
                 Column(
@@ -181,32 +178,28 @@ fun DashboardScreen(
                         .verticalScroll(scrollState)
                         .padding(horizontal = 16.dp, vertical = 6.dp)
                 ) {
-                    // 1. Tactical Hero Section
-                    TacticalHeroSection(connectionState, onToggleConnection, tick)
-                    Spacer(modifier = Modifier.height(20.dp))
+                    PremiumHeroSection(connectionState, onToggleConnection, tick)
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                    // 2. Global Latency Engine (Stats Bar)
                     if (speedStatsEnabled) {
                         val basePingValue = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString()
                         val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0.00"
-                        TacticalStatsBar(basePing = basePingValue, dlSpeed = dlSpeed, isConnected = isConnected)
+                        PremiumStatsBar(basePing = basePingValue, dlSpeed = dlSpeed, isConnected = isConnected)
                         Spacer(modifier = Modifier.height(24.dp))
                     }
 
-                    // 3. Game Boost Profiles
                     GameBoostSection(selectedGameId = "pubg")
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // 4. Global Server Node Card
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Layers, contentDescription=null, tint=CyberCyan, modifier=Modifier.size(16.dp))
+                            Icon(Icons.Default.Layers, contentDescription=null, tint=PurpleAccent, modifier=Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(text = strings.serverLabel.uppercase() + " // TACTICAL", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White, fontFamily = FontFamily.Monospace)
+                            Text(text = "SELECTED SERVER", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         }
                         TextButton(
                             onClick = openServerPicker,
@@ -214,21 +207,21 @@ fun DashboardScreen(
                                 .height(36.dp)
                                 .expressiveButtonSemantics(strings.changeServer, openServerPicker)
                         ) {
-                            Text(text = "[ " + strings.changeServer.uppercase() + " ]", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CyberCyan, fontFamily = FontFamily.Monospace)
+                            Text(text = "Change", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonGreen)
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
 
                     if (activeNode != null) {
                         val flagEmoji = CountryFlagHelper.getServerFlagEmoji(activeNode.countryCode)
-                        val serverShape = CutCornerShape(topStart = 16.dp, bottomEnd = 16.dp)
+                        val serverShape = RoundedCornerShape(20.dp)
                         
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(serverShape)
-                                .background(PanelDark)
-                                .border(1.5.dp, if(isConnected) CyberCyan.copy(alpha=0.6f) else PanelStroke, serverShape)
+                                .background(CardDark)
+                                .border(1.5.dp, if(isConnected) PurpleAccent.copy(alpha=0.5f) else CardStroke, serverShape)
                                 .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = openServerPicker)
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -236,9 +229,9 @@ fun DashboardScreen(
                             Box(
                                 modifier = Modifier
                                     .size(46.dp)
-                                    .clip(CutCornerShape(percent = 30))
-                                    .background(CarbonBlack)
-                                    .border(1.dp, PanelStroke, CutCornerShape(percent = 30)),
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(BgDark)
+                                    .border(1.dp, CardStroke, RoundedCornerShape(12.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(text = flagEmoji, fontSize = 22.sp)
@@ -246,24 +239,24 @@ fun DashboardScreen(
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(text = activeNode.name.uppercase(), fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Monospace)
+                                    Text(text = activeNode.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(6.dp).background(if(isConnected) ToxicGreen else WarningRed))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(text = "PROTOCOL: ${activeNode.displayProtocol}", fontSize = 10.sp, color = TextMuted, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                    Box(Modifier.size(6.dp).clip(CircleShape).background(if(isConnected) NeonGreen else TextMuted))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(text = "Protocol: ${activeNode.displayProtocol}", fontSize = 11.sp, color = TextMuted, fontWeight = FontWeight.Medium)
                                 }
                             }
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = strings.changeServer, tint = if(isConnected) CyberCyan else Color.White, modifier = Modifier.size(24.dp))
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = strings.changeServer, tint = if(isConnected) NeonGreen else Color.White, modifier = Modifier.size(24.dp))
                         }
                     } else {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(20.dp))
-                                .background(PanelDark)
-                                .border(1.dp, PanelStroke, RoundedCornerShape(20.dp))
+                                .background(CardDark)
+                                .border(1.dp, CardStroke, RoundedCornerShape(20.dp))
                                 .clickable(onClick = openServerPicker)
                                 .padding(16.dp),
                             contentAlignment = Alignment.Center
@@ -276,29 +269,32 @@ fun DashboardScreen(
                         }
                     }
 
-                    // Spacer حیاتی برای منوی پایین
                     Spacer(modifier = Modifier.height(160.dp))
                 }
             }
         }
     }
 
-    if (showServerPicker) DashboardServerPicker(groupNodes, groupTitle, onDismiss = { showServerPicker = false }, onSelect = { onSelectNode(it); showServerPicker = false }, pinging = pingingNodeIds, onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
-    if (showAddSheet) AddServerSheet(onDismissRequest = { showAddSheet = false }, onImportClipboard = onImportClipboard, onImportQr = scanQr, onImportFile = onImportFile, onAddManualNode = onAddManualNode)
+    if (showServerPicker) {
+        DashboardServerPicker(groupNodes, groupTitle, onDismiss = { showServerPicker = false }, onSelect = { onSelectNode(it); showServerPicker = false }, pinging = pingingNodeIds, onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
+    }
+    if (showAddSheet) {
+        AddServerSheet(onDismissRequest = { showAddSheet = false }, onImportClipboard = onImportClipboard, onImportQr = scanQr, onImportFile = onImportFile, onAddManualNode = onAddManualNode)
+    }
 }
 
 @Composable
-private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnection: () -> Unit, tick: (HapticFeedbackType) -> Unit) {
+private fun PremiumHeroSection(connectionState: ConnectionState, onToggleConnection: () -> Unit, tick: (HapticFeedbackType) -> Unit) {
     val isConnected = connectionState == ConnectionState.Connected
     val isConnecting = connectionState == ConnectionState.Connecting
     val scope = rememberCoroutineScope()
     val orbScale = remember { Animatable(1f) }
 
-    val mainColor = if (isConnected) CyberCyan else TextMuted
+    val mainColor = if (isConnected) NeonGreen else TextMuted
     val statusText = when {
-        isConnecting -> "ESTABLISHING\nUPLINK..."
-        isConnected -> "SECURE UPLINK\nESTABLISHED >>"
-        else -> "SYSTEM\nOFFLINE"
+        isConnecting -> "Optimizing\nNetwork..."
+        isConnected -> "Gaming Boost\nActive >>"
+        else -> "Ready to\nBoost"
     }
 
     val onOrbitClick: () -> Unit = {
@@ -318,59 +314,52 @@ private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnec
         Column(modifier = Modifier.weight(1f)) {
             Box(
                 modifier = Modifier
-                    .clip(CutCornerShape(4.dp))
+                    .clip(RoundedCornerShape(6.dp))
                     .background(mainColor.copy(alpha = 0.1f))
-                    .border(1.dp, mainColor.copy(alpha = 0.4f), CutCornerShape(4.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Shield, contentDescription = null, tint = mainColor, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(if(isConnected) "ENCRYPTED TUNNEL" else "NO CONNECTION", color = mainColor, fontSize = 10.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+                    Text(if(isConnected) "Secured Connection" else "Not Connected", color = mainColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
             Spacer(modifier = Modifier.height(14.dp))
             Text(
                 text = statusText,
                 color = Color.White,
-                fontSize = 22.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.Black,
-                fontFamily = FontFamily.Monospace,
-                lineHeight = 28.sp,
-                letterSpacing = 1.sp
+                lineHeight = 32.sp
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Text("ADVANCED LATENCY OPTIMIZATION", color = ToxicGreen.copy(alpha = if(isConnected) 1f else 0.3f), fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+            Text("WireGuard Low-Latency Routing", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
 
         Box(
             modifier = Modifier
-                .size(135.dp)
+                .size(130.dp)
                 .graphicsLayer { scaleX = orbScale.value; scaleY = orbScale.value }
                 .clickable(onClick = onOrbitClick),
             contentAlignment = Alignment.Center
         ) {
-            val octagon = CutCornerShape(percent = 28) 
+            val shape = CircleShape 
             if (isConnected || isConnecting) {
-                Box(modifier = Modifier.size(135.dp).clip(octagon).border(2.dp, mainColor.copy(alpha = 0.3f), octagon))
-                Box(modifier = Modifier.size(115.dp).clip(octagon).border(3.dp, mainColor.copy(alpha = 0.5f), octagon))
+                Box(modifier = Modifier.size(130.dp).clip(shape).border(1.dp, mainColor.copy(alpha = 0.3f), shape))
+                Box(modifier = Modifier.size(110.dp).clip(shape).background(mainColor.copy(alpha = 0.1f)))
             }
             Box(
                 modifier = Modifier
-                    .size(95.dp)
-                    .clip(octagon)
-                    .background(PanelDark)
-                    .border(3.dp, mainColor, octagon),
+                    .size(90.dp)
+                    .clip(shape)
+                    .background(if (isConnected) NeonGreen else CardDark)
+                    .border(2.dp, if (isConnected) NeonGreen else CardStroke, shape),
                 contentAlignment = Alignment.Center
             ) {
                 if (isConnecting) {
                     CircularProgressIndicator(color = mainColor, strokeWidth = 3.dp, modifier = Modifier.size(38.dp))
                 } else {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.PowerSettingsNew, contentDescription = null, tint = mainColor, modifier = Modifier.size(34.dp))
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(if(isConnected) "DISCONNECT" else "CONNECT", color = Color.White, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black)
-                    }
+                    Icon(Icons.Default.PowerSettingsNew, contentDescription = null, tint = if (isConnected) BgDark else Color.White, modifier = Modifier.size(36.dp))
                 }
             }
         }
@@ -378,7 +367,7 @@ private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnec
 }
 
 @Composable
-private fun TacticalStatsBar(basePing: String?, dlSpeed: String, isConnected: Boolean) {
+private fun PremiumStatsBar(basePing: String?, dlSpeed: String, isConnected: Boolean) {
     var livePing by remember { mutableStateOf("--") }
     var liveJitter by remember { mutableStateOf("--") }
     var liveLoss by remember { mutableStateOf("--") }
@@ -392,7 +381,7 @@ private fun TacticalStatsBar(basePing: String?, dlSpeed: String, isConnected: Bo
                 val currentJitter = (0..2).random()
                 liveJitter = currentJitter.toString()
                 liveLoss = "0" 
-                delay((800..1500).random().toLong()) 
+                delay((1000..2000).random().toLong()) 
             }
         } else {
             livePing = "--"
@@ -401,38 +390,38 @@ private fun TacticalStatsBar(basePing: String?, dlSpeed: String, isConnected: Bo
         }
     }
 
-    val borderColor = if(isConnected) CyberCyan.copy(alpha=0.4f) else PanelStroke
-    val barShape = CutCornerShape(12.dp)
+    val borderColor = if(isConnected) PurpleAccent.copy(alpha=0.4f) else CardStroke
+    val barShape = RoundedCornerShape(16.dp)
     
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(barShape)
-            .background(PanelDark)
+            .background(CardDark)
             .border(1.dp, borderColor, barShape)
-            .padding(vertical = 16.dp, horizontal = 20.dp),
+            .padding(vertical = 18.dp, horizontal = 20.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        TacticalStat(title = "PING", value = livePing, unit = "ms", color = if(isConnected) ToxicGreen else TextMuted)
-        Box(modifier = Modifier.width(1.5.dp).height(32.dp).background(PanelStroke)) 
-        TacticalStat(title = "JITTER", value = liveJitter, unit = "ms", color = if(isConnected) CyberCyan else TextMuted)
-        Box(modifier = Modifier.width(1.5.dp).height(32.dp).background(PanelStroke)) 
-        TacticalStat(title = "LOSS", value = liveLoss, unit = "%", color = if(isConnected) ToxicGreen else TextMuted)
-        Box(modifier = Modifier.width(1.5.dp).height(32.dp).background(PanelStroke)) 
-        TacticalStat(title = "DWN", value = if(isConnected) dlSpeed else "--", unit = "Mb", color = if(isConnected) CyberCyan else TextMuted)
+        PremiumStat(title = "Ping", value = livePing, unit = "ms", color = if(isConnected) Color.White else TextMuted)
+        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
+        PremiumStat(title = "Jitter", value = liveJitter, unit = "ms", color = if(isConnected) Color.White else TextMuted)
+        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
+        PremiumStat(title = "Loss", value = liveLoss, unit = "%", color = if(isConnected) Color.White else TextMuted)
+        Box(modifier = Modifier.width(1.dp).height(30.dp).background(CardStroke)) 
+        PremiumStat(title = "Speed", value = if(isConnected) dlSpeed else "--", unit = "Mb", color = if(isConnected) Color.White else TextMuted)
     }
 }
 
 @Composable
-private fun TacticalStat(title: String, value: String, unit: String, color: Color) {
+private fun PremiumStat(title: String, value: String, unit: String, color: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, color = TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-        Spacer(modifier = Modifier.height(6.dp))
+        Text(title, color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Spacer(modifier = Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, color = color, fontSize = 22.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+            Text(value, color = color, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.width(2.dp))
-            Text(unit, color = color, fontSize = 10.sp, modifier = Modifier.padding(bottom=4.dp), fontFamily = FontFamily.Monospace)
+            Text(unit, color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom=3.dp))
         }
     }
 }
@@ -460,10 +449,10 @@ data class BoostGame(val id: String, val name: String, val posterUrl: String, va
 fun GameBoostSection(modifier: Modifier = Modifier, selectedGameId: String = "pubg", onGameSelect: (String) -> Unit = {}) {
     val games = remember {
         listOf(
-            BoostGame("pubg", "PUBG MOBILE", "https://cdn.cloudflare.steamstatic.com/steam/apps/578080/library_600x900.jpg", true),
-            BoostGame("cod", "CALL OF DUTY", "https://cdn.cloudflare.steamstatic.com/steam/apps/1938090/library_600x900.jpg"),
-            BoostGame("efootball", "eFOOTBALL", "https://cdn.cloudflare.steamstatic.com/steam/apps/1665460/library_600x900.jpg"),
-            BoostGame("valorant", "VALORANT", "https://cdn1.epicgames.com/offer/cbd5b3d310a54b12bf3fe8c41994174f/EGS_VALORANT_RiotGames_S2_1200x1600-b2f707f43db4af1658b1d4ed83134914")
+            BoostGame("pubg", "PUBG Mobile", "https://cdn.cloudflare.steamstatic.com/steam/apps/578080/library_600x900.jpg", true),
+            BoostGame("cod", "Call of Duty", "https://cdn.cloudflare.steamstatic.com/steam/apps/1938090/library_600x900.jpg"),
+            BoostGame("efootball", "eFootball", "https://cdn.cloudflare.steamstatic.com/steam/apps/1665460/library_600x900.jpg"),
+            BoostGame("valorant", "Valorant", "https://cdn1.epicgames.com/offer/cbd5b3d310a54b12bf3fe8c41994174f/EGS_VALORANT_RiotGames_S2_1200x1600-b2f707f43db4af1658b1d4ed83134914")
         )
     }
     var activeGame by remember { mutableStateOf(selectedGameId) }
@@ -471,24 +460,24 @@ fun GameBoostSection(modifier: Modifier = Modifier, selectedGameId: String = "pu
     Column(modifier = modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = ToxicGreen, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = NeonGreen, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("TARGET ACQUIRED", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace, letterSpacing = 1.sp)
+                Text("Game Profiles", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
-            Text("PROFILES //", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+            Text("Auto Detect", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
         Spacer(Modifier.height(16.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(games.size) { index ->
                 val game = games[index]
-                GamePosterTacticalCard(game = game, isSelected = game.id == activeGame, onClick = { activeGame = game.id; onGameSelect(game.id) })
+                GamePosterPremiumCard(game = game, isSelected = game.id == activeGame, onClick = { activeGame = game.id; onGameSelect(game.id) })
             }
         }
     }
 }
 
 @Composable
-private fun GamePosterTacticalCard(game: BoostGame, isSelected: Boolean, onClick: () -> Unit) {
+private fun GamePosterPremiumCard(game: BoostGame, isSelected: Boolean, onClick: () -> Unit) {
     var posterBitmap by remember { mutableStateOf(posterMemoryCache[game.id]) }
     LaunchedEffect(game.id) {
         if (!posterMemoryCache.containsKey(game.id)) {
@@ -504,37 +493,37 @@ private fun GamePosterTacticalCard(game: BoostGame, isSelected: Boolean, onClick
         } else { posterBitmap = posterMemoryCache[game.id] }
     }
 
-    val borderColor = if (isSelected) CyberCyan else PanelStroke
+    val borderColor = if (isSelected) NeonGreen else CardStroke
     val glowWidth = if (isSelected) 2.dp else 1.dp
-    val posterShape = CutCornerShape(topStart = 16.dp, bottomEnd = 16.dp)
+    val posterShape = RoundedCornerShape(16.dp)
 
     Box(
         modifier = Modifier
             .width(110.dp)
             .height(150.dp)
             .clip(posterShape)
-            .background(PanelDark)
+            .background(CardDark)
             .border(glowWidth, borderColor, posterShape)
             .clickable(onClick = onClick)
     ) {
         if (posterBitmap != null) {
             Image(bitmap = posterBitmap!!, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFA070709)))))
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFA050508)))))
         
         if (isSelected) {
             Box(modifier = Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.TopEnd) {
-                Icon(Icons.Default.CheckCircle, contentDescription=null, tint=ToxicGreen, modifier=Modifier.size(18.dp).background(Color.Black, CircleShape))
+                Icon(Icons.Default.CheckCircle, contentDescription=null, tint=NeonGreen, modifier=Modifier.size(18.dp).background(Color.Black, CircleShape))
             }
         }
         
         Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.Bottom, horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(game.name, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black, maxLines = 2, textAlign = TextAlign.Center, lineHeight = 14.sp, fontFamily = FontFamily.Monospace)
+            Text(game.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, textAlign = TextAlign.Center, lineHeight = 14.sp)
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if(isSelected) Box(Modifier.size(4.dp).background(ToxicGreen))
+                if(isSelected) Box(Modifier.size(4.dp).clip(CircleShape).background(NeonGreen))
                 Spacer(Modifier.width(4.dp))
-                Text("ENGAGED", color = if(isSelected) ToxicGreen else TextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, letterSpacing = 1.sp)
+                Text("Optimized", color = if(isSelected) NeonGreen else TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
             }
         }
     }
