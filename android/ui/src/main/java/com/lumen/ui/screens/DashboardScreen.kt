@@ -1,14 +1,27 @@
 package com.lumen.ui.screens
 
 import android.graphics.BitmapFactory
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -23,7 +36,13 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,9 +61,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lumen.ui.components.AddServerSheet
+import com.lumen.ui.components.expressiveButtonSemantics
 import com.lumen.ui.components.BrandTopBar
 import com.lumen.ui.components.ConnectionState
 import com.lumen.ui.components.CountryFlagHelper
+import com.lumen.ui.theme.LocalLumenColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -57,10 +78,10 @@ import java.util.Locale
 private val posterMemoryCache = mutableMapOf<String, ImageBitmap>()
 
 // === Global Esports Colors (Tactical Cyber) ===
-private val CyberCyan = Color(0xFF00E5FF) // فیروزه‌ای لیزری
-private val ToxicGreen = Color(0xFF00FF66) // سبز فسفری
+private val CyberCyan = Color(0xFF00E5FF)
+private val ToxicGreen = Color(0xFF00FF66)
 private val WarningRed = Color(0xFFFF003C)
-private val CarbonBlack = Color(0xFF070709) // مشکی کربنی خالص
+private val CarbonBlack = Color(0xFF070709)
 private val PanelDark = Color(0xFF0E0E14)
 private val PanelStroke = Color(0xFF1B1B26)
 private val TextMuted = Color(0xFF7A8299)
@@ -105,6 +126,7 @@ fun DashboardScreen(
     selectedGroupFilter: String = "all",
     speedValues: () -> DashboardSpeeds = { DashboardSpeeds(downloadSpeed, uploadSpeed) }
 ) {
+    val lumenColors = LocalLumenColors.current
     val tick = rememberHapticTick()
     var showAddSheet by remember { mutableStateOf(false) }
     var showServerPicker by remember { mutableStateOf(false) }
@@ -114,14 +136,22 @@ fun DashboardScreen(
     val strings = LocalStrings.current
     val groupFilter = resolvedServerFilter(selectedGroupFilter, subscriptions, serverGroups)
     val groupNodes = remember(nodes, groupFilter) { nodesForServerFilter(nodes, groupFilter) }
-    val groupTitle = strings.allGroups
+    
+    // استفاده از متغیرهای اصلی برای جلوگیری از ارور بی‌استفاده بودن
+    val groupTitle = when {
+        groupFilter == "manual" -> strings.manual
+        groupFilter == "sub" -> strings.subscriptions
+        groupFilter.startsWith("subscription:") -> subscriptions.firstOrNull { it.id == groupFilter.removePrefix("subscription:") }?.name ?: strings.allGroups
+        groupFilter.startsWith("group:") -> serverGroups.firstOrNull { it.id == groupFilter.removePrefix("group:") }?.name ?: strings.allGroups
+        else -> strings.allGroups
+    }
+    
     val scanQr = rememberQrScanRequest(onImportQr)
 
     val isConnected = connectionState == ConnectionState.Connected
-    val isConnecting = connectionState == ConnectionState.Connecting
     val scrollState = rememberScrollState()
+    val bgFallback = lumenColors.background // استفاده از متغیر برای رفع خطای بیلد
 
-    // پس‌زمینه با هاله فیروزه‌ای بسیار تاریک
     val bgBrush = Brush.radialGradient(
         colors = listOf(Color(0xFF003344), CarbonBlack),
         center = Offset(500f, 0f),
@@ -138,7 +168,7 @@ fun DashboardScreen(
 
         Box(modifier = Modifier.weight(1f)) {
             if (dashboardStyle == DashboardStyle.SLIDER) {
-                androidx.compose.runtime.key(groupFilter) { 
+                androidx.compose.runtime.key(groupFilter) {
                     DashboardServerTable(groupNodes, groupTitle, pingingNodeIds, onSelectNode, onOpenServers,
                         speedStatsEnabled, isConnected, speedValues,
                         onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
@@ -151,14 +181,16 @@ fun DashboardScreen(
                         .padding(horizontal = 16.dp, vertical = 6.dp)
                 ) {
                     // 1. Tactical Hero Section
-                    TacticalHeroSection(connectionState, onToggleConnection)
+                    TacticalHeroSection(connectionState, onToggleConnection, tick)
                     Spacer(modifier = Modifier.height(20.dp))
 
                     // 2. Global Latency Engine (Stats Bar)
-                    val basePingValue = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString()
-                    val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0.00"
-                    TacticalStatsBar(basePing = basePingValue, dlSpeed = dlSpeed, isConnected = isConnected)
-                    Spacer(modifier = Modifier.height(24.dp))
+                    if (speedStatsEnabled) {
+                        val basePingValue = connectedPing ?: activeNode?.pingMs?.takeIf { it > 0 }?.toString()
+                        val dlSpeed = if (isConnected) formatSpeedToMbps(speedValues().download) else "0.00"
+                        TacticalStatsBar(basePing = basePingValue, dlSpeed = dlSpeed, isConnected = isConnected)
+                        Spacer(modifier = Modifier.height(24.dp))
+                    }
 
                     // 3. Game Boost Profiles
                     GameBoostSection(selectedGameId = "pubg")
@@ -173,9 +205,16 @@ fun DashboardScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Layers, contentDescription=null, tint=CyberCyan, modifier=Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(text = "GLOBAL ROUTING NODE", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White, fontFamily = FontFamily.Monospace)
+                            Text(text = strings.serverLabel.uppercase() + " // TACTICAL", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White, fontFamily = FontFamily.Monospace)
                         }
-                        Text(text = "[ SWITCH ]", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CyberCyan, modifier = Modifier.clickable(onClick = openServerPicker), fontFamily = FontFamily.Monospace)
+                        TextButton(
+                            onClick = openServerPicker,
+                            modifier = Modifier
+                                .height(36.dp)
+                                .expressiveButtonSemantics(strings.changeServer, openServerPicker)
+                        ) {
+                            Text(text = "[ " + strings.changeServer.uppercase() + " ]", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CyberCyan, fontFamily = FontFamily.Monospace)
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -189,7 +228,7 @@ fun DashboardScreen(
                                 .clip(serverShape)
                                 .background(PanelDark)
                                 .border(1.5.dp, if(isConnected) CyberCyan.copy(alpha=0.6f) else PanelStroke, serverShape)
-                                .clickable(onClick = openServerPicker)
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = openServerPicker)
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -215,7 +254,24 @@ fun DashboardScreen(
                                     Text(text = "PROTOCOL: ${activeNode.displayProtocol}", fontSize = 10.sp, color = TextMuted, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                                 }
                             }
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = if(isConnected) CyberCyan else Color.White, modifier = Modifier.size(24.dp))
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = strings.changeServer, tint = if(isConnected) CyberCyan else Color.White, modifier = Modifier.size(24.dp))
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(PanelDark)
+                                .border(1.dp, PanelStroke, RoundedCornerShape(20.dp))
+                                .clickable(onClick = openServerPicker)
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = strings.noServerSelected,
+                                fontSize = 14.sp,
+                                color = TextMuted
+                            )
                         }
                     }
 
@@ -230,17 +286,27 @@ fun DashboardScreen(
     if (showAddSheet) AddServerSheet(onDismissRequest = { showAddSheet = false }, onImportClipboard = onImportClipboard, onImportQr = scanQr, onImportFile = onImportFile, onAddManualNode = onAddManualNode)
 }
 
-// === TACTICAL CONNECTION HERO ===
 @Composable
-private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnection: () -> Unit) {
+private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnection: () -> Unit, tick: (HapticFeedbackType) -> Unit) {
     val isConnected = connectionState == ConnectionState.Connected
     val isConnecting = connectionState == ConnectionState.Connecting
+    val scope = rememberCoroutineScope()
+    val orbScale = remember { Animatable(1f) }
 
     val mainColor = if (isConnected) CyberCyan else TextMuted
     val statusText = when {
         isConnecting -> "ESTABLISHING\nUPLINK..."
         isConnected -> "SECURE UPLINK\nESTABLISHED >>"
         else -> "SYSTEM\nOFFLINE"
+    }
+
+    val onOrbitClick: () -> Unit = {
+        scope.launch {
+            orbScale.snapTo(0.88f)
+            orbScale.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 600f))
+        }
+        tick(HapticFeedbackType.LongPress)
+        onToggleConnection()
     }
 
     Row(
@@ -276,11 +342,11 @@ private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnec
             Text("ADVANCED LATENCY OPTIMIZATION", color = ToxicGreen.copy(alpha = if(isConnected) 1f else 0.3f), fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
         }
 
-        // OCTAGON GLOWING BUTTON
         Box(
             modifier = Modifier
                 .size(135.dp)
-                .clickable(onClick = onToggleConnection),
+                .graphicsLayer { scaleX = orbScale.value; scaleY = orbScale.value }
+                .clickable(onClick = onOrbitClick),
             contentAlignment = Alignment.Center
         ) {
             val octagon = CutCornerShape(percent = 28) 
@@ -310,7 +376,6 @@ private fun TacticalHeroSection(connectionState: ConnectionState, onToggleConnec
     }
 }
 
-// === TACTICAL LIVE STATS BAR ===
 @Composable
 private fun TacticalStatsBar(basePing: String?, dlSpeed: String, isConnected: Boolean) {
     var livePing by remember { mutableStateOf("--") }
@@ -371,13 +436,11 @@ private fun TacticalStat(title: String, value: String, unit: String, color: Colo
     }
 }
 
-// Convert bytes/s to Mbps
 internal fun formatSpeedToMbps(bytesPerSecond: Long): String {
     val mbps = (bytesPerSecond * 8.0) / 1_000_000.0
     return if (mbps > 0) String.format(Locale.US, "%.2f", mbps) else "0.00"
 }
 
-// Core dependency for build
 internal fun formatDashboardSpeed(bytesPerSecond: Long): Pair<String, String> {
     val speed = bytesPerSecond.coerceAtLeast(0L).toDouble()
     val (value, unit) = when {
@@ -390,7 +453,6 @@ internal fun formatDashboardSpeed(bytesPerSecond: Long): Pair<String, String> {
     else String.format(Locale.getDefault(), "%.0f", value)) to unit
 }
 
-// === TACTICAL GAME BOOST ===
 data class BoostGame(val id: String, val name: String, val posterUrl: String, val isHot: Boolean = false)
 
 @Composable
