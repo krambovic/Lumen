@@ -128,8 +128,12 @@ fun OnboardingScreen(
                             if (current == WelcomeStep.NEWS) Text(t(
                                 if (LumenVersion.appVersion == "1.5.0") WelcomeText.NEWS_COPY else WelcomeText.UPDATED_COPY),
                                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            LumenDropdown(s.language, listOf("ru", "en", "zh", "fa"), settings.language, onLanguage,
-                                Modifier.fillMaxWidth(), optionLabel = { when (it) { "ru" -> "Русский"; "zh" -> "简体中文"; "fa" -> "فارسی"; else -> "English" } })
+                            
+                            // === تغییر لیست زبان‌ها به فقط فارسی و انگلیسی + تنظیم فارسی به عنوان پیش‌فرض ===
+                            LumenDropdown(s.language, listOf("fa", "en"), settings.language.ifBlank { "fa" }, onLanguage,
+                                Modifier.fillMaxWidth(), optionLabel = { when (it) { "fa" -> "فارسی"; else -> "English" } })
+                            // ==============================================================================
+                                
                             if (current == WelcomeStep.NEWS) {
                                 Text("${onboarding.previousVersion} → ${LumenVersion.appVersion}", style = MaterialTheme.typography.titleLarge)
                                 WelcomeSupport(settings.language, onOpenLink)
