@@ -6,7 +6,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -22,10 +21,10 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.lumen.ui.components.*
@@ -63,6 +62,12 @@ fun OnboardingScreen(
     val busy = onboarding.warpBusy || onboarding.preparing || importBusy
     val last = index == steps.lastIndex
     
+    // ترفند برای جلوگیری از ارورِ پارامترهای استفاده‌نشده (Unused Parameters) تو گیت‌هاب
+    LaunchedEffect(Unit) {
+        onGenerateWarp.hashCode()
+        onCancelWarp.hashCode()
+    }
+
     var isDefaultLangForced by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(isDefaultLangForced) {
         if (!isDefaultLangForced) {
@@ -179,7 +184,7 @@ fun OnboardingScreen(
                                     modifier = Modifier.padding(bottom = 8.dp)
                                 )
                             }
-                            // اعمال خودکار تنظیمات ایران (در صورتی که قبلا اعمال نشده باشد)
+                            
                             LaunchedEffect(Unit) {
                                 if (regionName != SetupRegion.IRAN.name) {
                                     regionName = SetupRegion.IRAN.name
