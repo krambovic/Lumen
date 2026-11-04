@@ -1,5 +1,8 @@
+
 package com.lumen.ui.screens
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +26,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -31,6 +37,14 @@ import androidx.compose.ui.unit.sp
 
 import com.lumen.ui.components.*
 import com.lumen.ui.theme.*
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
+
+// Cache for High Quality Rectangular Flags
+private val flagMemoryCache = mutableMapOf<String, ImageBitmap>()
 
 // === Premium Yellow Gaming Colors ===
 private val CyberYellow = Color(0xFFFFD600)
@@ -618,6 +632,38 @@ private fun ServerListRow(
         CountryFlagHelper.getServerFlagEmoji(node.countryCode)
     }
     
+    // === سیستم جدید برای لود پرچم‌های مستطیلی تمیز از اینترنت ===
+    val countryCodeStr = node.countryCode.trim().lowercase().take(2)
+    var flagBitmap by remember(countryCodeStr) { mutableStateOf(flagMemoryCache[countryCodeStr]) }
+    var loadFailed by remember(countryCodeStr) { mutableStateOf(false) }
+
+    LaunchedEffect(countryCodeStr) {
+        if (countryCodeStr.length == 2 && !flagMemoryCache.containsKey(countryCodeStr) && !loadFailed) {
+            withContext(Dispatchers.IO) {
+                try {
+                    val url = URL("https://flagcdn.com/h40/$countryCodeStr.png")
+                    val conn = (url.openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 3000
+                        readTimeout = 3000
+                    }
+                    if (conn.responseCode in 200..299) {
+                        val bytes = conn.inputStream.readBytes()
+                        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        decoded?.asImageBitmap()?.let { img ->
+                            flagMemoryCache[countryCodeStr] = img
+                            flagBitmap = img
+                        }
+                    } else {
+                        loadFailed = true
+                    }
+                } catch (e: Exception) {
+                    loadFailed = true
+                }
+            }
+        }
+    }
+    // =======================================================
+
     val pingMs = node.pingMs
     val pingText = when {
         pinging -> "..."
@@ -642,18 +688,26 @@ private fun ServerListRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Box کاملاً ساده و مستطیلی برای پرچم، دقیقاً مثل عکس
+            
+            // نمایش پرچم مستطیلی تصویر (یا در صورت قطعی اینترنت، ایموجی پیش‌فرض)
             Box(
                 modifier = Modifier
-                    .width(38.dp)
-                    .height(26.dp)
-                    .clip(RoundedCornerShape(3.dp)), // فقط یک انحنای خیلی ریز مثل خود پرچم واقعی
+                    .width(36.dp)
+                    .height(24.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color(0xFF1E1E29)),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = flagEmoji, 
-                    fontSize = 34.sp // سایز بزرگ که کادر رو کامل پر کنه
-                )
+                if (flagBitmap != null) {
+                    Image(
+                        bitmap = flagBitmap!!,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(text = flagEmoji, fontSize = 20.sp)
+                }
             }
 
             Spacer(modifier = Modifier.width(14.dp))
