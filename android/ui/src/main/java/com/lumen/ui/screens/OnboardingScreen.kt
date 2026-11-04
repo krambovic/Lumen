@@ -1,3 +1,4 @@
+
 package com.lumen.ui.screens
 
 import androidx.activity.compose.BackHandler
@@ -194,48 +195,35 @@ fun OnboardingScreen(
                             }
                         }
                         WelcomeStep.CONFIGS -> {
-                            WelcomeHeader(t(WelcomeText.CONFIGS), t(WelcomeText.CONFIGS_COPY))
-                            WelcomeChoice(t(WelcomeText.HAVE), t(WelcomeText.HAVE_COPY), Icons.Default.FolderOpen, configChoice == "import") { configChoice = "import" }
-                            WelcomeChoice(t(WelcomeText.NEED), t(WelcomeText.NEED_COPY), Icons.Default.Shield, configChoice == "warp") { configChoice = "warp" }
+                            // === بازنویسی بخش پیکربندی (CONFIGS) بر اساس درخواست کاربر ===
+                            WelcomeHeader("پیکربندی دارید؟", "سرورهای خود را اضافه کنید یا اشتراک بخرید.")
+                            
+                            WelcomeChoice("بله، دارم", "پیوند، اشتراک یا فایل", Icons.Default.FolderOpen, configChoice == "import") { configChoice = "import" }
+                            WelcomeChoice("هنوز نه", "خرید اشتراک", Icons.Default.Shield, configChoice == "warp") { configChoice = "warp" }
+                            
                             if (configChoice == "import") {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilledTonalButton(onImportClipboard, enabled = !busy, modifier = Modifier.weight(1f)) {
-                                        Icon(Icons.Default.ContentPaste, null, Modifier.size(18.dp))
-                                        Text(t(WelcomeText.CLIPBOARD), Modifier.padding(start = 8.dp))
-                                    }
-                                    FilledTonalButton(onImportFile, enabled = !busy, modifier = Modifier.weight(1f)) {
-                                        Icon(Icons.Default.FileOpen, null, Modifier.size(18.dp))
-                                        Text(t(WelcomeText.FILE), Modifier.padding(start = 8.dp))
-                                    }
-                                }
-                                OutlinedButton(scanQr, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                                    Icon(Icons.Default.QrCodeScanner, null, Modifier.size(18.dp))
-                                    Text(t(WelcomeText.QR), Modifier.padding(start = 8.dp))
-                                }
+                                // دکمه‌های کلیپ‌بورد، فایل و QR کد حذف شدند. فقط فیلد لینک باقی مانده.
                                 ExpressiveTextField(link, { link = it }, Modifier.fillMaxWidth(), enabled = !busy,
-                                    label = { Text(t(WelcomeText.SUBSCRIPTION)) }, singleLine = true)
+                                    label = { Text("لینک اشتراک خود را وارد کنید") }, singleLine = true)
                                 ExpressiveAction(s.add, { onImportText(link.trim()) }, Modifier.fillMaxWidth(),
                                     icon = Icons.Default.Add, enabled = link.isNotBlank() && !busy)
                             }
                             if (configChoice == "warp") {
-                                SettingsPanel(t(WelcomeText.WARP), "WARP", art.blue, art.onBlue) {
-                                    Text(t(WelcomeText.WARP_COPY), style = MaterialTheme.typography.bodyMedium, color = art.onBlue)
-                                    if (onboarding.warpBusy) {
-                                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                                        TextButton(onCancelWarp) { Text(s.cancel) }
-                                    } else ExpressiveAction(t(when {
-                                        onboarding.warpIncomplete || onboarding.warpError -> WelcomeText.RETRY_WARP
-                                        onboarding.warpCount > 0 -> WelcomeText.WARP_READY
-                                        else -> WelcomeText.GET_WARP
-                                    }),
-                                        onGenerateWarp, Modifier.fillMaxWidth(), Icons.Default.CloudDownload,
-                                        enabled = onboarding.warpCount == 0 || onboarding.warpIncomplete || onboarding.warpError)
-                                    if (onboarding.warpError) Text(t(WelcomeText.WARP_ERROR), color = MaterialTheme.colorScheme.error)
-                                    if (onboarding.warpIncomplete) Text(t(WelcomeText.WARP_PARTIAL), color = art.onBlue)
+                                SettingsPanel("خرید اشتراک", "VIP", art.blue, art.onBlue) {
+                                    Text("برای دریافت بهترین کیفیت و پینگ پایین در بازی‌ها، می‌توانید از ما اشتراک ویژه تهیه کنید.", style = MaterialTheme.typography.bodyMedium, color = art.onBlue)
+                                    // دکمه خرید اشتراک که به تلگرام هدایت می‌شود (با آیدی اختصاصی)
+                                    ExpressiveAction(
+                                        "خرید اشتراک (پشتیبانی)",
+                                        { onOpenLink("https://t.me/BalochpingSuport") },
+                                        Modifier.fillMaxWidth(), 
+                                        Icons.Default.SupportAgent, 
+                                        enabled = true
+                                    )
                                 }
                             }
                             if (importBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
                             Text("${t(WelcomeText.SERVERS)}: $serverCount", style = MaterialTheme.typography.labelLarge)
+                            // ==============================================================
                         }
                         WelcomeStep.SYSTEM -> {
                             WelcomeHeader(t(WelcomeText.SYSTEM), t(WelcomeText.SYSTEM_COPY))
