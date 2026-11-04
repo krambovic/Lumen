@@ -1,6 +1,5 @@
 package com.lumen.ui.screens
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,47 +7,16 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CheckBox
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,23 +24,14 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.lumen.ui.components.AddServerSheet
-import com.lumen.ui.components.BrandTopBar
-import com.lumen.ui.components.ConnectionState
-import com.lumen.ui.components.CountryFlagHelper
-import com.lumen.ui.components.LumenDialog
-import com.lumen.ui.components.SubscriptionDetailsDialog
-import com.lumen.ui.theme.LocalLumenColors
-import com.lumen.ui.theme.TileBlueDark
-import com.lumen.ui.theme.TileBlueDarkOn
-import com.lumen.ui.theme.TileBlueLight
-import com.lumen.ui.theme.TileBlueLightOn
+
+import com.lumen.ui.components.*
+import com.lumen.ui.theme.*
 
 // === Premium Yellow Gaming Colors ===
 private val CyberYellow = Color(0xFFFFD600)
@@ -167,7 +126,6 @@ fun ServerListScreen(
     selectedGroupFilter: String? = null,
     onSelectedGroupFilter: (String) -> Unit = {}
 ) {
-    val lumenColors = LocalLumenColors.current
     val strings = LocalStrings.current
     val scanQr = rememberQrScanRequest(onImportQr)
 
@@ -201,6 +159,7 @@ fun ServerListScreen(
     val maxPing = maxPingPref.toIntOrNull()?.coerceAtLeast(0) ?: 0
     val groupByCountry = countryPref == "1"
     var autoPingStarted by remember { mutableStateOf(false) }
+    
     LaunchedEffect(Unit) { onOpen() }
     LaunchedEffect(autoPingOnOpen, nodes.isNotEmpty()) {
         if (autoPingOnOpen && nodes.isNotEmpty() && !autoPingStarted) {
@@ -215,6 +174,7 @@ fun ServerListScreen(
     val preparing = prepared.source !== nodes || prepared.query != query
     val manualNodesCount = prepared.manualCount
     val filteredNodes = if (prepared.query.group == selectedFilter) prepared.visible else emptyList()
+    
     LaunchedEffect(prepared.source, pendingSelectedId) {
         if (pendingSelectedId != null && (prepared.source.any { it.id == pendingSelectedId && it.isSelected } ||
                 (prepared.source === nodes && nodes.none { it.id == pendingSelectedId }))) pendingSelectedId = null
@@ -222,7 +182,7 @@ fun ServerListScreen(
 
     val activeSub = subscriptionForServerFilter(selectedFilter, subscriptions)
 
-    // پس‌زمینه با هاله تاریک زرد/قهوه‌ای هماهنگ با داشبورد جدید
+    // پس‌زمینه با هاله تاریک زرد/قهوه‌ای هماهنگ با داشبورد اصلی
     val bgBrush = Brush.radialGradient(
         colors = listOf(Color(0xFF2A1C00), BgDark),
         center = Offset(500f, 0f),
@@ -235,7 +195,6 @@ fun ServerListScreen(
             .background(bgBrush)
             .statusBarsPadding()
     ) {
-        // Top Bar
         BrandTopBar(onAddClick = { showAddSheet = true }, title = strings.servers)
 
         Column(
@@ -246,17 +205,17 @@ fun ServerListScreen(
             if (selectedIds.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("${strings.selected}:${selectedIds.size}", style = MaterialTheme.typography.labelLarge, color = CyberYellow)
+                    Text("${strings.selected}: ${selectedIds.size}", style = MaterialTheme.typography.labelLarge, color = CyberYellow)
                     TextButton(onClick = { onPingNodes(nodes.filter { it.id in selectedIds }) }) { Text(strings.ping, color = Color.White) }
                     TextButton(onClick = {
                         onExportNodesText(selectedIds).takeIf { it.isNotBlank() }?.let(onShareText)
                     }) { Text(strings.exportSelected, color = Color.White) }
                     TextButton(onClick = { movingNodes = nodes.filter { it.id in selectedIds } }) { Text(strings.moveToGroup, color = Color.White) }
-                    TextButton(onClick = { selectedIds = emptySet() }) { Text(strings.cancel, color = WarningRed) }
+                    TextButton(onClick = { selectedIds = emptySet() }) { Text(strings.cancel, color = Color.Red) }
                 }
             }
             
-            // 1. Search Bar - با رنگ بندی کارت های تاریک
+            // Search Bar
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -326,9 +285,7 @@ fun ServerListScreen(
             ) {
                 item(key = "server_overview", contentType = "overview") {
                     
-                    // ==========================================
-                    // 2. Subscription Banner (کادر حجم مصرفی سایبرپانکی)
-                    // ==========================================
+                    // Subscription Banner
                     if (activeSub != null && selectedFilter != "manual") {
                         Box(
                             modifier = Modifier
@@ -395,7 +352,7 @@ fun ServerListScreen(
                                 activeSub.trafficRatio?.let { trafficRatio ->
                                     Spacer(modifier = Modifier.height(16.dp))
                                     val trafficText = activeSub.trafficSummary ?: "—"
-                                    val daysText = activeSub.expiryDaysLeft?.let { "$it${strings.daysRemaining}" }
+                                    val daysText = activeSub.expiryDaysLeft?.let { "$it ${strings.daysRemaining}" }
 
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -407,7 +364,6 @@ fun ServerListScreen(
                                     Spacer(modifier = Modifier.height(8.dp))
 
                                     val ratio = trafficRatio.coerceIn(0f, 1f)
-                                    // Tactical Progress Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -436,7 +392,7 @@ fun ServerListScreen(
                         }
                     }
 
-                    // 4. List Toolbar: "Sort By" + "Ping All"
+                    // Toolbar Sort/Ping
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -594,4 +550,230 @@ fun ServerListScreen(
                 ExpressiveTextField(shape = MaterialTheme.shapes.large, value = name, onValueChange = { name = it },
                     label = { Text(strings.nameOptional) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 ExpressiveTextField(shape = MaterialTheme.shapes.large, value = url, onValueChange = { url = it },
-                    label = { Text(
+                    label = { Text(strings.url) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+    detailsSubscription?.let { sub ->
+        SubscriptionDetailsDialog(sub, onDismiss = { detailsSubscription = null },
+            onCopyUrl = onCopyText, onOpenUrl = onOpenUrl)
+    }
+    deletingSubscription?.let { sub ->
+        LumenDialog(title = strings.deleteSubscription, message = sub.name,
+            onDismissRequest = { deletingSubscription = null }, confirmText = strings.delete,
+            onConfirm = { onDeleteSubscription(sub); deletingSubscription = null },
+            dismissText = strings.cancel, onDismiss = { deletingSubscription = null }, destructive = true)
+    }
+    deletingNode?.let { node ->
+        LumenDialog(title = strings.delete, message = node.name,
+            onDismissRequest = { deletingNode = null }, confirmText = strings.delete,
+            onConfirm = { onDeleteNode(node); deletingNode = null },
+            dismissText = strings.cancel, onDismiss = { deletingNode = null }, destructive = true)
+    }
+    if (showCreateGroup || renamingGroup != null) {
+        val original = renamingGroup
+        var name by remember(original?.id) { mutableStateOf(original?.name.orEmpty()) }
+        LumenDialog(title = if (original == null) strings.newGroup else strings.renameGroup,
+            onDismissRequest = { showCreateGroup = false; renamingGroup = null },
+            confirmText = if (original == null) strings.createAction else strings.saveAction,
+            onConfirm = {
+                if (name.isNotBlank()) {
+                    if (original == null) onCreateGroup(name.trim()) else onRenameGroup(original.id, name.trim())
+                    showCreateGroup = false; renamingGroup = null
+                }
+            }, dismissText = strings.cancel,
+            onDismiss = { showCreateGroup = false; renamingGroup = null }) {
+            ExpressiveTextField(shape = MaterialTheme.shapes.large, value = name, onValueChange = { name = it },
+                label = { Text(strings.nodeName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        }
+    }
+    deletingGroup?.let { group ->
+        LumenDialog(title = strings.deleteGroup, message = strings.deleteGroupConfirm,
+            onDismissRequest = { deletingGroup = null }, confirmText = strings.delete,
+            onConfirm = {
+                onDeleteGroup(group.id)
+                if (selectedFilter == "group:${group.id}") chooseFilter("all")
+                deletingGroup = null
+            }, dismissText = strings.cancel, onDismiss = { deletingGroup = null }, destructive = true)
+    }
+    if (showDeleteAll) {
+        LumenDialog(title = strings.deleteAllServers, message = strings.deleteAllServersConfirm,
+            onDismissRequest = { showDeleteAll = false }, confirmText = strings.delete,
+            onConfirm = { onDeleteAllNodes(); showDeleteAll = false },
+            dismissText = strings.cancel, onDismiss = { showDeleteAll = false }, destructive = true)
+    }
+    movingNodes?.let { nodesToMove ->
+        LumenDialog(title = strings.moveToGroup, onDismissRequest = { movingNodes = null },
+            dismissText = strings.cancel, onDismiss = { movingNodes = null }) {
+            Column {
+                TextButton(onClick = { onAssignNodesToGroup(nodesToMove, null); movingNodes = null; selectedIds = emptySet() }) {
+                    Text(strings.groupDefault)
+                }
+                serverGroups.forEach { group ->
+                    TextButton(onClick = { onAssignNodesToGroup(nodesToMove, group.id); movingNodes = null; selectedIds = emptySet() }) {
+                        Text(group.name)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterPill(label: String, isSelected: Boolean, onClick: () -> Unit) {
+    LumenFilterChip(label, isSelected, onClick)
+}
+
+internal fun subscriptionForServerFilter(filter: String, subscriptions: List<SubscriptionUiModel>): SubscriptionUiModel? =
+    filter.takeIf { it.startsWith("subscription:") }?.removePrefix("subscription:")
+        ?.let { id -> subscriptions.firstOrNull { it.id == id } }
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun ServerListRow(
+    node: NodeUiModel, selectionChecked: Boolean, pinging: Boolean, testResult: String?,
+    onClick: (NodeUiModel) -> Unit, onLongClick: (NodeUiModel) -> Unit,
+    onEditNode: (NodeUiModel) -> Unit, onPingNode: (NodeUiModel) -> Unit,
+    onCopyNodeLink: (NodeUiModel) -> Unit, onExportQrCode: (NodeUiModel) -> Unit,
+    onMove: (NodeUiModel) -> Unit, onDeleteNode: (NodeUiModel) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = LocalStrings.current
+    var showNodeMenu by remember(node.id) { mutableStateOf(false) }
+    
+    val isSelected = node.isSelected || selectionChecked
+    val borderColor = if (isSelected) CyberYellow else CardStroke
+    val borderWidth = if (isSelected) 2.dp else 1.dp
+    val cardShape = RoundedCornerShape(16.dp)
+    
+    val flagEmoji = remember(node.countryCode) {
+        CountryFlagHelper.getServerFlagEmoji(node.countryCode)
+    }
+    
+    val pingMs = node.pingMs
+    val pingText = when {
+        pinging -> "..."
+        pingMs != null && pingMs > 0 -> "${pingMs}ms"
+        pingMs != null -> "FAIL"
+        else -> "--"
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(cardShape)
+            .background(CardDark)
+            .border(borderWidth, borderColor, cardShape)
+            .combinedClickable(
+                onClick = { onClick(node) },
+                onLongClick = { onLongClick(node) }
+            )
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Flag Box
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(BgDark)
+                    .border(1.dp, CardStroke, RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = flagEmoji, fontSize = 22.sp)
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            // Server Info
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = node.name,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (isSelected) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = CyberYellow,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (isSelected) CyberYellow else TextMuted)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "PROTOCOL: ${node.displayProtocol.uppercase()}",
+                        color = TextMuted,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Ping Badge & Menu
+            Column(horizontalAlignment = Alignment.End) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (pingMs != null && pingMs > 0 && !pinging) NeonGreen.copy(alpha = 0.15f) else CardStroke)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = pingText,
+                            color = if (pingMs != null && pingMs > 0 && !pinging) NeonGreen else TextMuted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+                Box {
+                    IconButton(onClick = { showNodeMenu = true }, modifier = Modifier.size(32.dp).padding(top = 4.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = null, tint = TextMuted)
+                    }
+                    if (showNodeMenu) LumenMenu(expanded = true, onDismissRequest = { showNodeMenu = false }) {
+                        DropdownMenuItem(text = { Text(strings.edit) }, onClick = {
+                            showNodeMenu = false; onEditNode(node)
+                        })
+                        DropdownMenuItem(text = { Text(strings.ping) }, onClick = {
+                            showNodeMenu = false; onPingNode(node)
+                        })
+                        DropdownMenuItem(text = { Text(strings.copyLink) }, onClick = {
+                            showNodeMenu = false; onCopyNodeLink(node)
+                        })
+                        DropdownMenuItem(text = { Text(strings.exportQrCode) }, onClick = {
+                            showNodeMenu = false; onExportQrCode(node)
+                        })
+                        DropdownMenuItem(text = { Text(strings.moveToGroup) }, onClick = {
+                            showNodeMenu = false; onMove(node)
+                        })
+                        DropdownMenuItem(text = { Text(strings.delete) }, onClick = {
+                            showNodeMenu = false; onDeleteNode(node)
+                        })
+                    }
+                }
+            }
+        }
+    }
+}
