@@ -1,11 +1,17 @@
 package com.lumen.ui.screens
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,6 +30,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -182,7 +189,6 @@ fun ServerListScreen(
 
     val activeSub = subscriptionForServerFilter(selectedFilter, subscriptions)
 
-    // پس‌زمینه با هاله تاریک زرد/قهوه‌ای هماهنگ با داشبورد اصلی
     val bgBrush = Brush.radialGradient(
         colors = listOf(Color(0xFF2A1C00), BgDark),
         center = Offset(500f, 0f),
@@ -215,7 +221,6 @@ fun ServerListScreen(
                 }
             }
             
-            // Search Bar
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -285,7 +290,6 @@ fun ServerListScreen(
             ) {
                 item(key = "server_overview", contentType = "overview") {
                     
-                    // Subscription Banner
                     if (activeSub != null && selectedFilter != "manual") {
                         Box(
                             modifier = Modifier
@@ -330,7 +334,7 @@ fun ServerListScreen(
                                             IconButton(onClick = { showSubscriptionMenu = true }, modifier = Modifier.size(40.dp)) {
                                                 Icon(Icons.Default.MoreVert, contentDescription = activeSub.name, tint = TextMuted)
                                             }
-                                            LumenMenu(expanded = showSubscriptionMenu, onDismissRequest = { showSubscriptionMenu = false }) {
+                                            if (showSubscriptionMenu) LumenMenu(expanded = true, onDismissRequest = { showSubscriptionMenu = false }) {
                                                 DropdownMenuItem(text = { Text(strings.subscriptionProperties) }, onClick = {
                                                     showSubscriptionMenu = false; detailsSubscription = activeSub
                                                 })
@@ -384,15 +388,10 @@ fun ServerListScreen(
                                         Text(text = daysText, fontSize = 11.sp, color = CyberYellow)
                                     }
                                 }
-                                if (com.lumen.ui.components.hasProviderCard(activeSub)) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    com.lumen.ui.components.SubscriptionProviderCard(activeSub, onOpenUrl, contentColor = Color.White)
-                                }
                             }
                         }
                     }
 
-                    // Toolbar Sort/Ping
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -423,8 +422,8 @@ fun ServerListScreen(
                                 )
                             }
 
-                            LumenMenu(
-                                expanded = showSortMenu,
+                            if (showSortMenu) LumenMenu(
+                                expanded = true,
                                 onDismissRequest = { showSortMenu = false }
                             ) {
                                 serverSortOptions(strings).forEach { (sort, label) ->
@@ -482,24 +481,7 @@ fun ServerListScreen(
                         Text("${CountryFlagHelper.getFlagEmoji(country)}  $country · ${sectionNodes.size}",
                             Modifier.padding(horizontal = 8.dp, vertical = 10.dp), style = MaterialTheme.typography.labelLarge, color = Color.White)
                     }
-                    if (compactGrid) {
-                        items(sectionNodes.chunked(3), key = { row -> "grid:" + row.joinToString { it.id } }, contentType = { "server_grid" }) { row ->
-                            Row(Modifier.fillMaxWidth().animateItem(fadeInSpec = null, fadeOutSpec = null),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                row.forEach { node ->
-                                    CompactServerCard(if (pendingSelectedId != null) node.copy(isSelected = node.id == pendingSelectedId) else node,
-                                        node.id in selectedIds, node.id in pingingNodeIds || testingNodeId == node.id,
-                                        onClick = {
-                                            if (selectedIds.isEmpty()) selectServer(node)
-                                            else selectedIds = if (node.id in selectedIds) selectedIds - node.id else selectedIds + node.id
-                                        }, onLongClick = { selectedIds = selectedIds + node.id },
-                                        onEdit = { onEditNode(node) }, onPing = { onPingNode(node) },
-                                        onCopy = { onCopyNodeLink(node) }, onDelete = { deletingNode = node }, modifier = Modifier.weight(1f))
-                                }
-                                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                            }
-                        }
-                    } else items(sectionNodes, key = { it.id }, contentType = { "server" }) { node ->
+                    items(sectionNodes, key = { it.id }, contentType = { "server" }) { node ->
                         ServerListRow(if (pendingSelectedId != null) node.copy(isSelected = node.id == pendingSelectedId) else node, node.id in selectedIds,
                             node.id in pingingNodeIds || testingNodeId == node.id,
                             serverTestResults[node.id],
@@ -510,8 +492,7 @@ fun ServerListScreen(
                             onLongClick = { selectedIds = selectedIds + it.id },
                             onEditNode = onEditNode, onPingNode = onPingNode,
                             onCopyNodeLink = onCopyNodeLink, onExportQrCode = onExportQrCode,
-                            onMove = { movingNodes = listOf(it) }, onDeleteNode = { deletingNode = it },
-                            modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null))
+                            onMove = { movingNodes = listOf(it) }, onDeleteNode = { deletingNode = it })
                     }
                 }
                 item(key = "server_footer", contentType = "spacer") {
@@ -619,11 +600,6 @@ fun ServerListScreen(
     }
 }
 
-@Composable
-private fun FilterPill(label: String, isSelected: Boolean, onClick: () -> Unit) {
-    LumenFilterChip(label, isSelected, onClick)
-}
-
 internal fun subscriptionForServerFilter(filter: String, subscriptions: List<SubscriptionUiModel>): SubscriptionUiModel? =
     filter.takeIf { it.startsWith("subscription:") }?.removePrefix("subscription:")
         ?.let { id -> subscriptions.firstOrNull { it.id == id } }
@@ -642,7 +618,21 @@ private fun ServerListRow(
     var showNodeMenu by remember(node.id) { mutableStateOf(false) }
     
     val isSelected = node.isSelected || selectionChecked
-    val borderColor = if (isSelected) CyberYellow else CardStroke
+    
+    // انیمیشن تپش نئونی (Pulse Glow Effect)
+    val infiniteTransition = rememberInfiniteTransition()
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = if (isSelected) 0.3f else 1.0f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_glow"
+    )
+
+    // استفاده از آلفا متحرک برای ایجاد حس تپش وقتی سرور انتخاب شده
+    val borderColor = if (isSelected) CyberYellow.copy(alpha = glowAlpha) else CardStroke
     val borderWidth = if (isSelected) 2.dp else 1.dp
     val cardShape = RoundedCornerShape(16.dp)
     
@@ -674,16 +664,26 @@ private fun ServerListRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Flag Box
+            // Circle Flag Box - انیمیشن تپش روی کادر پرچم
             Box(
                 modifier = Modifier
-                    .size(46.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(48.dp)
+                    .clip(CircleShape)
                     .background(BgDark)
-                    .border(1.dp, CardStroke, RoundedCornerShape(12.dp)),
+                    .border(
+                        width = if (isSelected) 1.5.dp else 1.dp,
+                        color = if (isSelected) CyberYellow.copy(alpha = glowAlpha) else CardStroke,
+                        shape = CircleShape
+                    )
+                    .graphicsLayer {
+                        // یک بزرگ‌نمایی (Scale) خیلی ریز و جذاب وقتی می‌تپه
+                        val scale = if (isSelected) 0.97f + (0.03f * glowAlpha) else 1f
+                        scaleX = scale
+                        scaleY = scale
+                    },
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = flagEmoji, fontSize = 22.sp)
+                Text(text = flagEmoji, fontSize = 28.sp)
             }
 
             Spacer(modifier = Modifier.width(14.dp))
@@ -704,7 +704,7 @@ private fun ServerListRow(
                         Icon(
                             Icons.Default.CheckCircle,
                             contentDescription = null,
-                            tint = CyberYellow,
+                            tint = CyberYellow.copy(alpha = glowAlpha),
                             modifier = Modifier.size(16.dp)
                         )
                     }
