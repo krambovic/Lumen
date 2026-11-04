@@ -65,6 +65,18 @@ fun OnboardingScreen(
     val pageStates = rememberSaveableStateHolder()
     val busy = onboarding.warpBusy || onboarding.preparing || importBusy
     val last = index == steps.lastIndex
+    
+    // === اعمال خودکار زبان فارسی در اولین ورود ===
+    var isDefaultLangForced by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(isDefaultLangForced) {
+        if (!isDefaultLangForced) {
+            onLanguage("fa")
+            onUpdate(settings.copy(language = "fa"))
+            isDefaultLangForced = true
+        }
+    }
+    // ===========================================
+
     fun back() {
         if (onboarding.preparing) onCancelPreparation()
         else if (index > 0) stepIndex = index - 1 else onMinimize()
@@ -129,10 +141,19 @@ fun OnboardingScreen(
                                 if (LumenVersion.appVersion == "1.5.0") WelcomeText.NEWS_COPY else WelcomeText.UPDATED_COPY),
                                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             
-                            // === تغییر لیست زبان‌ها به فقط فارسی و انگلیسی + تنظیم فارسی به عنوان پیش‌فرض ===
-                            LumenDropdown(s.language, listOf("fa", "en"), settings.language.ifBlank { "fa" }, onLanguage,
-                                Modifier.fillMaxWidth(), optionLabel = { when (it) { "fa" -> "فارسی"; else -> "English" } })
-                            // ==============================================================================
+                            // === منوی کشویی فقط با انگلیسی و فارسی ===
+                            LumenDropdown(
+                                label = s.language,
+                                options = listOf("fa", "en"),
+                                selected = if (settings.language == "en") "en" else "fa",
+                                onSelected = { 
+                                    onLanguage(it)
+                                    onUpdate(settings.copy(language = it))
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                optionLabel = { when (it) { "fa" -> "فارسی"; else -> "English" } }
+                            )
+                            // ==========================================
                                 
                             if (current == WelcomeStep.NEWS) {
                                 Text("${onboarding.previousVersion} → ${LumenVersion.appVersion}", style = MaterialTheme.typography.titleLarge)
@@ -271,7 +292,6 @@ private fun WelcomeFeature(title: String, body: String, icon: ImageVector) {
         }
     }
 }
-
 
 @Composable
 private fun WelcomeChoice(title: String, body: String, icon: ImageVector, chosen: Boolean, onClick: () -> Unit) {
