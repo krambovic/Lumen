@@ -64,7 +64,8 @@ object VpnConfigStore {
         runCatching { configFile(context).length() >= MIN_CONFIG_BYTES }.getOrDefault(false)
 
     /** Replaces the stored config atomically and returns its path. */
-    fun write(context: Context, configJson: String): String {
+    @Synchronized fun write(context: Context, configJson: String): String {
+        val stored = if (isProtectedConfig(configJson)) ProtectedRuntimeConfig.seal(configJson) else configJson
         val target = configFile(context)
         val dir = target.parentFile
         if (dir != null && !dir.isDirectory) dir.mkdirs()
@@ -72,7 +73,7 @@ object VpnConfigStore {
         // Write beside the target and rename: a start that races this must never
         // read half a config, and a crash must leave the previous one intact.
         val tmp = File(dir, TMP_NAME)
-        tmp.writeText(configJson)
+        tmp.writeText(stored)
         restrictToOwner(tmp)
         if (!tmp.renameTo(target)) {
             target.delete()
@@ -83,14 +84,25 @@ object VpnConfigStore {
     }
 
     /** Returns an empty string when nothing was stored; never throws. */
-    fun read(context: Context, path: String = ""): String {
+    @Synchronized fun read(context: Context, path: String = ""): String {
         val file = resolve(context, path)
-        val stored = runCatching { if (file.isFile) file.readText() else "" }.getOrDefault("")
+        val stored = runCatching { if (file.isFile && file.length() <= 32L * 1024 * 1024) file.readText() else "" }.getOrDefault("")
+        if (ProtectedRuntimeConfig.isEncrypted(stored)) {
+            // Do not fall back to a stale config if authentication/key access fails.
+            return runCatching { ProtectedRuntimeConfig.open(stored) }.getOrDefault("")
+        }
+        if (isProtectedConfig(stored)) {
+            return runCatching { write(context, stored); stored }.getOrDefault("")
+        }
         return stored.ifBlank { migrateFromPrefs(context) }
     }
 
-    fun clear(context: Context) {
+    private fun isProtectedConfig(config: String): Boolean = config.contains("\"_lumen_protected\"") &&
+        runCatching { org.json.JSONObject(config).optBoolean("_lumen_protected") }.getOrDefault(false)
+
+    @Synchronized fun clear(context: Context) {
         runCatching { configFile(context).delete() }
+        runCatching { File(configFile(context).parentFile, TMP_NAME).delete() }
         context.getSharedPreferences(VpnStartIntentFactory.PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .remove(VpnStartIntentFactory.KEY_CONFIG_JSON)
@@ -125,7 +137,8 @@ object VpnConfigStore {
         val legacy = prefs.getString(VpnStartIntentFactory.KEY_CONFIG_JSON, null)
             ?: prefs.getString(VpnStartIntentFactory.KEY_LEGACY_CONFIG_JSON, null)
         if (legacy.isNullOrBlank()) return ""
-        runCatching { write(context, legacy) }
+        val migrated = runCatching { write(context, legacy) }.isSuccess
+        if (!migrated && isProtectedConfig(legacy)) return ""
         prefs.edit()
             .remove(VpnStartIntentFactory.KEY_CONFIG_JSON)
             .remove(VpnStartIntentFactory.KEY_LEGACY_CONFIG_JSON)

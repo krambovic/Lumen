@@ -1,5 +1,7 @@
 package com.lumen.ui.screens
 
+import androidx.compose.material3.FilterChip
+
 
 
 
@@ -495,6 +497,7 @@ fun SettingsScreen(
     onReset: (LumenResetTarget) -> Unit = {},
     onOpenWelcome: (() -> Unit)? = null,
     onPageOpened: () -> Unit = {},
+    onProtectedProfiles: () -> Unit = {},
 
 
 
@@ -757,7 +760,7 @@ fun SettingsScreen(
 
 
 
-                    AppSettings(state, onUpdate, onLanguageChange, onReset, onOpenWelcome)
+                    AppSettings(state, onUpdate, onLanguageChange, onReset, onOpenWelcome, onProtectedProfiles)
 
 
 
@@ -2998,7 +3001,8 @@ private fun AppSettings(
 
     onLanguageChange: (String) -> Unit,
     onReset: (LumenResetTarget) -> Unit,
-    onOpenWelcome: (() -> Unit)?
+    onOpenWelcome: (() -> Unit)?,
+    onRecipientKey: () -> Unit
 ) {
 
 
@@ -3007,13 +3011,7 @@ private fun AppSettings(
 
 
 
-    if (onOpenWelcome != null) {
-        TextButton(onClick = onOpenWelcome, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Settings, null, Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(WelcomeText.REOPEN.inLanguage(state.language))
-        }
-    }
+    SettingsSetupAction(onOpenWelcome)
     SectionHeader(s.behavior)
 
 
@@ -3454,6 +3452,8 @@ private fun AppSettings(
 
 
     )
+    CoreEngineSelector(state.engine) { onUpdate(state.copy(engine = it)) }
+    RecipientKeySetting(onRecipientKey)
     ResetLumenControl(onReset)
 }
 
@@ -3667,16 +3667,15 @@ private fun NumberField(label: String, value: Int, onChange: (Int) -> Unit) {
     var text by remember { mutableStateOf(value.toString()) }
     var focused by remember { mutableStateOf(false) }
     LaunchedEffect(value, focused) { if (!focused) text = value.toString() }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
         Text(label, style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f).padding(end = 12.dp))
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp))
         ExpressiveTextField(value = text, onValueChange = { text = it }, singleLine = true,
             textStyle = MaterialTheme.typography.titleLarge.copy(fontFamily = com.lumen.ui.theme.LumenMono,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { text.toIntOrNull()?.let(onChange) }),
-            modifier = Modifier.width(104.dp).onFocusChanged { focusState ->
+            modifier = Modifier.fillMaxWidth().onFocusChanged { focusState ->
                 if (focused && !focusState.isFocused) text.toIntOrNull()?.let(onChange)
                 focused = focusState.isFocused
             })

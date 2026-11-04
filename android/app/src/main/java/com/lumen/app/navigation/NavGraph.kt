@@ -676,6 +676,34 @@ fun LumenApp(
 
 
 
+    var protectedProfilesDialog by remember { mutableStateOf(false) }
+    val openVpnCredentialRequest by viewModel.openVpnCredentialRequest.collectAsStateWithLifecycle()
+    var lumenExportNode by remember { mutableStateOf<com.lumen.ui.screens.NodeUiModel?>(null) }
+    val profilePasswordRequest by viewModel.profilePasswordRequest.collectAsStateWithLifecycle()
+    val profilePasswordBusy by viewModel.profilePasswordBusy.collectAsStateWithLifecycle()
+    val profilePasswordError by viewModel.profilePasswordError.collectAsStateWithLifecycle()
+    // These dialogs live above the screen provider below; inherit the selected
+    // language here as well instead of silently using the English default.
+    CompositionLocalProvider(LocalStrings provides strings) {
+        openVpnCredentialRequest?.let { request ->
+            com.lumen.app.profiles.OpenVpnCredentialsDialog(request, onConfirm = { username, password, keyPassword ->
+                viewModel.supplyOpenVpnCredentials(username, password, keyPassword, onReady = onToggleConnection)
+            }, onDismiss = viewModel::dismissOpenVpnCredentials)
+        }
+        if (protectedProfilesDialog) com.lumen.app.profiles.ProtectedProfilesDialog { protectedProfilesDialog = false }
+        lumenExportNode?.let { node ->
+            com.lumen.app.profiles.LumenProfileExportDialog(node.id, node.name,
+                loadSource = { viewModel.exportLumenConfig(node.id) },
+                onDismiss = { lumenExportNode = null })
+        }
+        profilePasswordRequest?.let { envelope ->
+            androidx.compose.runtime.key(envelope) {
+                com.lumen.app.profiles.ProfilePasswordDialog(profilePasswordBusy, profilePasswordError,
+                    viewModel::unlockProfile, viewModel::dismissProfilePassword)
+            }
+        }
+    }
+
     var qrExportLink by remember { mutableStateOf<String?>(null) }
 
 
@@ -1284,6 +1312,7 @@ fun LumenApp(
         val sliderShowing = overlayEntry?.destination?.route == "dashboard" && settings.dashboardStyle == DashboardStyle.SLIDER
         val dockConnection = settings.dashboardStyle == DashboardStyle.DOCK
         var dockVisible by remember { mutableStateOf(true) }
+        var dockHeight by remember { mutableStateOf(com.lumen.ui.components.DockSize.fromPercent(settings.dockScalePercent).height.dp) }
         val dockThresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 32.dp.toPx() }
         val dockVisibility = remember(dockThresholdPx, sliderShowing) { com.lumen.ui.components.DockScrollVisibility(dockThresholdPx, keepHiddenAtBottom = sliderShowing) }
         val dockScrollConnection = remember(dockVisibility) {
@@ -1356,7 +1385,7 @@ fun LumenApp(
 
 
                         .navigationBarsPadding().padding(horizontal = 16.dp)
-                        .padding(bottom = if (sliderShowing) 12.dp else if (dockVisible) 78.dp else 16.dp)
+                        .padding(bottom = if (sliderShowing) 12.dp else if (dockVisible) dockHeight + 32.dp else 16.dp)
 
 
 
@@ -1384,18 +1413,21 @@ fun LumenApp(
                 val activeIndex = if (selectedIndex >= 0) selectedIndex else lastTabIndex.intValue
                 val navHaptics = androidx.compose.ui.platform.LocalHapticFeedback.current
                 val lumenColors = LocalLumenColors.current
+                val dockPingProgress by viewModel.bulkPingProgress.collectAsStateWithLifecycle()
                 val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
 
                 com.lumen.ui.components.BottomConnectionControls(
                         showSlider = effectiveRoute == "dashboard" && settings.dashboardStyle == DashboardStyle.SLIDER,
                         dockVisible = sliderShowing || dockConnection || dockVisible, connectionState = connectionState,
                         dockConnection = dockConnection,
+                        dockScalePercent = settings.dockScalePercent,
+                        onDockHeightChanged = { dockHeight = it },
                         onToggleConnection = onToggleConnection,
-                        items = remember(strings) {
+                        items = remember(strings, dockPingProgress) {
                             DESTINATIONS.map { dest ->
                                 com.lumen.ui.components.DockItem(dest.route, when (dest.route) {
                                     "dashboard" -> strings.home
-                                    "servers" -> strings.servers
+                                    "servers" -> dockPingProgress?.let { "${it.first}/${it.second}" } ?: strings.servers
                                     "network" -> com.lumen.ui.screens.NetworkInfoText.TITLE.inLanguage(strings.localeCode)
                                     else -> strings.settings
                                 }, dest.icon)
@@ -1679,7 +1711,7 @@ fun LumenApp(
                         onPingGroup = viewModel::pingGroup,
                         onStopPing = viewModel::stopPing,
 
-                        onEditNode = { node -> editorDraft = viewModel.draftForNode(node) },
+                        onEditNode = { node -> if (!node.isProtected) editorDraft = viewModel.draftForNode(node) },
 
 
 
@@ -1864,6 +1896,7 @@ fun LumenApp(
 
 
                     ServerListScreen(
+                        onExportLumen = { node -> if (!node.isProtected) lumenExportNode = node },
                         compactGrid = settings.compactServerGrid,
                         selectedGroupFilter = selectedServerFilter,
                         onSelectedGroupFilter = viewModel::selectServerFilter,
@@ -1934,7 +1967,7 @@ fun LumenApp(
 
 
 
-                        onEditNode = { node -> editorDraft = viewModel.draftForNode(node) },
+                        onEditNode = { node -> if (!node.isProtected) editorDraft = viewModel.draftForNode(node) },
 
 
 
@@ -2335,6 +2368,7 @@ fun LumenApp(
 
                         onUpdate = viewModel::updateSettings,
                         onReset = viewModel::resetLumen,
+                        onProtectedProfiles = { protectedProfilesDialog = true },
                         onOpenWelcome = viewModel::reopenOnboarding,
                         onPageOpened = { dockVisibility.reset(); dockVisible = true },
 
@@ -2539,11 +2573,11 @@ fun LumenApp(
 
 
 
-                title = importState.title,
+                title = com.lumen.ui.screens.translatedImportText(importState.title, strings),
 
 
 
-                message = importState.message,
+                message = com.lumen.ui.screens.translatedImportText(importState.message, strings),
 
 
 

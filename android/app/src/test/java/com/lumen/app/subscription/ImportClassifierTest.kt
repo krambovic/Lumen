@@ -5,6 +5,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImportClassifierTest {
+    @Test fun profileFilesUseTheFileLimitInsteadOfTheClipboardLimit() {
+        val text = org.json.JSONObject().put("format", "lumen-locked").put("version", 2)
+            .put("delivery", "RECIPIENTS").put("payload", "x".repeat(1_100_000)).toString()
+        val result = ImportClassifier.classify(text)
+        assertTrue(result is ImportClassification.Ready)
+        assertEquals(ImportKind.CONFIG, (result as ImportClassification.Ready).kind)
+        assertTrue(ImportClassifier.classify("x".repeat(1_100_000)) is ImportClassification.Rejected)
+    }
     @Test
     fun happCryptSubscriptionKeepsEncryptedSource() {
         val encrypted = "happ://crypt/MYuWn7D9+SuUMnwuAO4aDNJtyglzW+mcEwGG19GeoxdaQijb+/U1JnlLMT0mRoKVWQB/ZtzfANf8koLv7Iq62LuhsGRASD4Gf+6JDAx/Ubk8LYBZifSulN7JHV5HXsqW1HeBRT/DLQ997XTfiDXxYTU+Ed0shUcucvOdXq4Vx1I="

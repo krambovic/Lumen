@@ -1,3 +1,20 @@
+## Android v1.5.1
+
+* feat: add Xray as an optional companion core, following Lumen Desktop's hybrid approach — Hybrid automatically uses it for settings sing-box cannot handle, with Singbox and Xray modes available in Settings
+* fix: preserve advanced VLESS encryption, REALITY verification, XHTTP and fragmentation settings when importing subscriptions and passing configurations to Xray
+* feat: show group ping progress in the Servers dock label, such as `2/46`, and restore the tab name shortly after completion
+* feat: add a compact current-connection ping control to every dashboard layout
+* fix: honor the configured ping concurrency instead of limiting HTTP checks to two workers — the default is 16
+* fix: prevent group ping checks from getting stuck, improve cancellation and restart, and stop outstanding checks when connecting to a server
+* perf: reduce battery use by removing continuous decorative animations and slowing traffic polling while the app is in the background or the screen is off
+* fix: improve OpenVPN configuration compatibility, encrypted private-key handling, credential saving and startup error reporting
+* fix: repair WireGuard link parsing and improve QR scanning, including private keys containing `/` or `+`
+* fix: improve text and button contrast across themes and keep settings readable with large fonts and unusual display scaling
+* feat: add adjustable navigation dock sizes with layouts bounded by the available screen width
+* feat: add `.lumen` profile export with encryption for specific recipients or password-based delivery, optional editing and export restrictions, expiration and network access conditions
+
+Full Changelog: https://github.com/krambovic/Lumen/compare/android-v1.5.0...android-v1.5.1
+
 ## Desktop v2.1.3
 
 * Fixed clipboard subscription import, Dobry VPN auto-selection groups and server switching.

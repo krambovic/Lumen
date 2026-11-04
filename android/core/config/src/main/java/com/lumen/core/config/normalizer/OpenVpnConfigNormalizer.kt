@@ -2,14 +2,15 @@ package com.lumen.core.config.normalizer
 
 /**
  * Compatibility boundary for the OpenVPN implementation shipped in
- * sing-box-extended 1.13.14-extended-2.5.2.
+ * sing-box-extended 1.14.3-extended-2.7.3.
  *
- * The core exposes one data-channel cipher instead of OpenVPN's negotiated list,
- * and its TLS wrapper accepts Go crypto/tls names rather than OpenSSL names.
+ * Keep the negotiated cipher list separate from the legacy fallback, and map
+ * TLS suite aliases at the boundary of the imported profile.
  * Keeping the conversion here prevents imported .ovpn and native JSON profiles
  * from reaching the core with fields that make the whole configuration abort.
  */
 object OpenVpnConfigNormalizer {
+    val defaultNegotiatedCiphers = listOf("AES-256-GCM", "AES-128-GCM", "CHACHA20-POLY1305")
     val dataCiphers: Set<String> = linkedSetOf(
         "AES-128-GCM", "AES-192-GCM", "AES-256-GCM",
         "AES-128-CBC", "AES-192-CBC", "AES-256-CBC",

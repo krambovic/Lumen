@@ -170,7 +170,8 @@ private fun SettingsTileGrid(
         val columns = if (maxWidth >= 600.dp) 4 else 2
         val gap = 8.dp
         val cellWidth = (maxWidth - gap * (columns - 1)) / columns
-        val cellHeight = (cellWidth * .9f).coerceIn(140.dp, 168.dp)
+        // A fixed cell height clips scaled text and makes resizing appear ineffective.
+        val cellHeight = (cellWidth * .9f).coerceIn(140.dp, 168.dp) * density.fontScale.coerceAtLeast(1f)
         val stepX = with(density) { (cellWidth + gap).toPx() }
         val stepY = with(density) { (cellHeight + gap).toPx() }
         val placements = remember(tiles, columns) { placeSettingsTiles(tiles, columns) }

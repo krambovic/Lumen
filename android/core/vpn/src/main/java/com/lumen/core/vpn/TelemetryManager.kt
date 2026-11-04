@@ -5,6 +5,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -30,7 +34,6 @@ object TelemetryManager {
     private const val RETRY_INTERVAL_MS = 60 * 1000L
     private const val ERROR_BATCH_MAX = 50
     private const val ERROR_FLUSH_INTERVAL_MS = 30 * 1000L
-    private const val ERROR_DISABLED_POLL_INTERVAL_MS = 1_000L
     private const val PREF_LAST_HEARTBEAT = "telemetry_last_heartbeat"
     /** User preference owned by App settings. Absent means enabled. */
     const val PREF_TELEMETRY_ENABLED = "telemetry_enabled"
@@ -108,15 +111,21 @@ object TelemetryManager {
      * telemetry is enabled. Failed requests are retried after one minute; accepted requests
      * are throttled to the desktop-compatible 15-minute cadence.
      */
+    private fun enabledChanges(context: Context) = callbackFlow<Boolean> {
+        val prefs = context.getSharedPreferences(VpnStartIntentFactory.PREFS_NAME, Context.MODE_PRIVATE)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key == PREF_TELEMETRY_ENABLED) trySend(isEnabled(context))
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        trySend(isEnabled(context))
+        awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }.distinctUntilChanged()
+
     fun startHeartbeatLoop(context: Context, scope: CoroutineScope) {
         val appContext = context.applicationContext
         scope.launch(Dispatchers.IO) {
-            while (isActive) {
-                if (!isEnabled(appContext)) {
-                    delay(RETRY_INTERVAL_MS)
-                    continue
-                }
-                delay(sendHeartbeatIfDue(appContext))
+            enabledChanges(appContext).collectLatest { enabled ->
+                if (enabled) while (isActive) delay(sendHeartbeatIfDue(appContext))
             }
         }
     }
@@ -125,52 +134,49 @@ object TelemetryManager {
     fun startErrorUploadLoop(context: Context, scope: CoroutineScope) {
         val appContext = context.applicationContext
         scope.launch(Dispatchers.IO) {
-            val pending = ArrayList<VpnLogEntry>(ERROR_BATCH_MAX)
-            var nextFlushAt = System.currentTimeMillis() + ERROR_FLUSH_INTERVAL_MS
-            var retryNotBefore = 0L
-            var observedGeneration = errorUploadGeneration
-
-            while (isActive) {
-                if (observedGeneration != errorUploadGeneration) {
-                    pending.clear()
+            enabledChanges(appContext).collectLatest { enabled ->
+                if (!enabled) {
                     VpnLogBus.discardDiagnosticEntries()
-                    observedGeneration = errorUploadGeneration
+                    return@collectLatest
                 }
-                if (!isEnabled(appContext)) {
-                    pending.clear()
-                    VpnLogBus.discardDiagnosticEntries()
-                    nextFlushAt = System.currentTimeMillis() + ERROR_FLUSH_INTERVAL_MS
-                    retryNotBefore = 0L
-                    delay(ERROR_DISABLED_POLL_INTERVAL_MS)
-                    continue
-                }
+                val pending = ArrayList<VpnLogEntry>(ERROR_BATCH_MAX)
+                var nextFlushAt = System.currentTimeMillis() + ERROR_FLUSH_INTERVAL_MS
+                var retryNotBefore = 0L
+                var observedGeneration = errorUploadGeneration
 
-                val waitMs = (nextFlushAt - System.currentTimeMillis()).coerceAtLeast(1L)
-                val entry = withTimeoutOrNull(waitMs) {
-                    VpnLogBus.diagnosticEntriesFlow.first()
-                }
-                if (entry != null) {
-                    if (shouldUploadError(entry)) {
-                        pending += entry
+                while (isActive) {
+                    if (observedGeneration != errorUploadGeneration) {
+                        pending.clear()
+                        VpnLogBus.discardDiagnosticEntries()
+                        observedGeneration = errorUploadGeneration
                     }
-                    val now = System.currentTimeMillis()
-                    if (pending.size >= ERROR_BATCH_MAX && now >= retryNotBefore) {
-                        val sent = sendErrorBatch(appContext, pending)
-                        if (sent) pending.clear()
-                        val sentAt = System.currentTimeMillis()
-                        nextFlushAt = sentAt + if (sent) ERROR_FLUSH_INTERVAL_MS else RETRY_INTERVAL_MS
-                        retryNotBefore = if (sent) 0L else sentAt + RETRY_INTERVAL_MS
+                    val waitMs = (nextFlushAt - System.currentTimeMillis()).coerceAtLeast(1L)
+                    val entry = if (pending.isEmpty()) VpnLogBus.diagnosticEntriesFlow.first() else withTimeoutOrNull(waitMs) {
+                        VpnLogBus.diagnosticEntriesFlow.first()
                     }
-                } else {
-                    if (pending.isNotEmpty()) {
-                        val sent = sendErrorBatch(appContext, pending)
-                        if (sent) pending.clear()
-                        val sentAt = System.currentTimeMillis()
-                        nextFlushAt = sentAt + if (sent) ERROR_FLUSH_INTERVAL_MS else RETRY_INTERVAL_MS
-                        retryNotBefore = if (sent) 0L else sentAt + RETRY_INTERVAL_MS
+                    if (entry != null) {
+                        if (shouldUploadError(entry)) {
+                            pending += entry
+                        }
+                        val now = System.currentTimeMillis()
+                        if (pending.size >= ERROR_BATCH_MAX && now >= retryNotBefore) {
+                            val sent = sendErrorBatch(appContext, pending)
+                            if (sent) pending.clear()
+                            val sentAt = System.currentTimeMillis()
+                            nextFlushAt = sentAt + if (sent) ERROR_FLUSH_INTERVAL_MS else RETRY_INTERVAL_MS
+                            retryNotBefore = if (sent) 0L else sentAt + RETRY_INTERVAL_MS
+                        }
                     } else {
-                        nextFlushAt = System.currentTimeMillis() + ERROR_FLUSH_INTERVAL_MS
-                        retryNotBefore = 0L
+                        if (pending.isNotEmpty()) {
+                            val sent = sendErrorBatch(appContext, pending)
+                            if (sent) pending.clear()
+                            val sentAt = System.currentTimeMillis()
+                            nextFlushAt = sentAt + if (sent) ERROR_FLUSH_INTERVAL_MS else RETRY_INTERVAL_MS
+                            retryNotBefore = if (sent) 0L else sentAt + RETRY_INTERVAL_MS
+                        } else {
+                            nextFlushAt = System.currentTimeMillis() + ERROR_FLUSH_INTERVAL_MS
+                            retryNotBefore = 0L
+                        }
                     }
                 }
             }

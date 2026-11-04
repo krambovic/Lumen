@@ -19,8 +19,8 @@ val hasReleaseKeystore = keystoreProps.getProperty("storeFile") != null
 // src/main/jniLibs for these ABIs only. Shipping any other ABI produces an APK that installs
 // but can never start a tunnel, so the split and the packaged ABIs are pinned to this list.
 val supportedAbis = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
-val baseVersionCode = 50
-val lumenVersionName = "1.5.0"
+val baseVersionCode = 51
+val lumenVersionName = "1.5.1"
 // AGP does not derive per-output version codes; without an offset every split APK would share one.
 val abiVersionCodeOffsets = mapOf(
     "armeabi-v7a" to 1,
@@ -73,6 +73,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            resValue("string", "app_name", "Lumen Debug")
+        }
         release {
             signingConfig = if (hasReleaseKeystore) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
             isMinifyEnabled = true
@@ -97,6 +102,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/versions/**/OSGI-INF/MANIFEST.MF"
+            pickFirsts += "/META-INF/LICENSE.md"
         }
         jniLibs {
             useLegacyPackaging = true

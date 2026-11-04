@@ -23,6 +23,7 @@ data class NodeUiModel(
     // Custom group the user put this server in, null when it is in none. Independent
     // of [subscriptionId]: a subscription server can also sit in a custom group.
     val groupId: String? = null,
+    val isProtected: Boolean = false,
     val displayProtocol: String = protocol.uppercase()
 )
 
@@ -229,7 +230,8 @@ direct:geoip:ru
 enum class LumenResetTarget { SETTINGS, SERVERS }
 
 data class SettingsUiState(
-    val engine: String = "SINGBOX",
+    val dockScalePercent: Int = 100,
+    val engine: String = "HYBRID",
     val muxEnabled: Boolean = false,
     val muxConcurrency: Int = 8,
     val multiplexProtocol: String = "smux",
@@ -507,7 +509,7 @@ val LocalHapticsEnabled = androidx.compose.runtime.staticCompositionLocalOf { tr
 
 /** Single source of version strings; the app layer fills [appVersion] from BuildConfig. */
 object LumenVersion {
-    var appVersion: String = "0.7.0"
+    var appVersion: String = "1.5.1"
     const val ENGINE: String = "1.14.3-extended-2.7.3"
 }
 

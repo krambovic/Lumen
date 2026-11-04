@@ -31,19 +31,12 @@ internal class HighRefreshRateController(private val activity: Activity) : Displ
     }
 
     fun request() {
-        val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) activity.display else {
-            @Suppress("DEPRECATION")
-            activity.windowManager.defaultDisplay
-        } ?: return
-        val current = display.mode
-        val best = highestRefreshMode(current.physicalWidth, current.physicalHeight,
-            display.supportedModes.map { DisplayModeOption(it.modeId, it.physicalWidth, it.physicalHeight, it.refreshRate) }) ?: return
+        // Let Android select the rate from touch activity, animations and battery saver.
+        // Pinning the fastest mode prevents the display from idling on a static screen.
         val attributes = activity.window.attributes
-        // On Android 14+ a rate preference is seamless and leaves resolution selection to the OS.
-        val modeId = if (Build.VERSION.SDK_INT >= 34) 0 else best.id
-        if (attributes.preferredDisplayModeId != modeId || attributes.preferredRefreshRate != best.refreshRate) {
-            attributes.preferredDisplayModeId = modeId
-            attributes.preferredRefreshRate = best.refreshRate
+        if (attributes.preferredDisplayModeId != 0 || attributes.preferredRefreshRate != 0f) {
+            attributes.preferredDisplayModeId = 0
+            attributes.preferredRefreshRate = 0f
             activity.window.attributes = attributes
         }
     }

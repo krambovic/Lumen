@@ -23,7 +23,9 @@ data class ParsedNode(
     var port: Int,
     var link: String,
     var outbound: Map<String, Any?> = emptyMap(),
-    var description: String = ""
+    var description: String = "",
+    val isProtected: Boolean = false,
+    val profilePolicy: com.lumen.core.config.crypto.LumenProfilePolicy? = null
 )
 
 object LinkParser {
@@ -256,6 +258,7 @@ object LinkParser {
         }
 
         var stripped = text.trim().removePrefix("\uFEFF").trim()
+        if (stripped.startsWith("[Interface]", true)) stripped = stripped.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r", "\n")
         if (HappCrypt.isHappCryptLink(stripped)) {
             try {
                 stripped = HappCrypt.decryptHappLink(stripped).trim()
@@ -413,7 +416,7 @@ object LinkParser {
      */
     private fun splitImportTokens(text: String): List<String> {
         val result = mutableListOf<String>()
-        for (rawLine in text.lines()) {
+        for (rawLine in text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r", "\n").lines()) {
             var line = rawLine.trim().trim('\uFEFF').removeSurrounding("\"").trim()
             if (line.startsWith("- ")) line = line.removePrefix("- ").trim()
             if (line.isEmpty() || line.startsWith("//") || line.startsWith("#") || line.startsWith(";")) continue
@@ -635,9 +638,20 @@ object LinkParser {
     }
 
     private fun parseVmess(link: String): ParsedNode {
-        val body = link.substringAfter("vmess://").trim()
+        val body = link.substringAfter("vmess://").substringBefore('#').trim()
         if (body.isEmpty()) throw LinkParseError("Empty VMess payload")
 
+        if (body.contains("@")) return parseVless("vless://$body").let { node ->
+            val outbound = node.outbound.toMutableMap()
+            outbound["protocol"] = "vmess"
+            val settings = outbound["settings"] as Map<*, *>
+            val next = (settings["vnext"] as List<*>).first() as Map<*, *>
+            val user = ((next["users"] as List<*>).first() as Map<*, *>).toMutableMap()
+            user.remove("encryption")
+            user["security"] = parseQueryParams(safeCreateUri("vless://$body").rawQuery)["scy"] ?: "auto"
+            outbound["settings"] = mapOf("vnext" to listOf(next + ("users" to listOf(user))))
+            node.copy(scheme = "vmess", link = link, outbound = outbound)
+        }
         val payloadJson = try {
             decodeB64(body)
         } catch (e: Exception) {
@@ -689,7 +703,7 @@ object LinkParser {
             "streamSettings" to streamSettings
         )
 
-        val name = json.optString("ps").ifEmpty { "vmess-$server:$port" }
+        val name = json.optString("ps").ifEmpty { extractFragment(link).orEmpty().ifBlank { "vmess-$server:$port" } }
         return ParsedNode(name = name, scheme = "vmess", server = server, port = port, link = link, outbound = outbound)
     }
 
@@ -1505,7 +1519,10 @@ object LinkParser {
         val withoutFragment = if (fragmentIdx != -1) trimmed.substring(0, fragmentIdx) else trimmed
         val afterScheme = withoutFragment.substring(schemeSep + 3)
         val queryIdx = afterScheme.indexOf('?')
-        val authority = (if (queryIdx != -1) afterScheme.substring(0, queryIdx) else afterScheme).substringBefore('/')
+        val rawAuthority = if (queryIdx != -1) afterScheme.substring(0, queryIdx) else afterScheme
+        val userEnd = rawAuthority.lastIndexOf('@')
+        val authority = if (userEnd >= 0) rawAuthority.substring(0, userEnd + 1) +
+            rawAuthority.substring(userEnd + 1).substringBefore('/') else rawAuthority.substringBefore('/')
         val rawQuery = if (queryIdx != -1) afterScheme.substring(queryIdx + 1) else null
 
         val params = mutableMapOf<String, String>()
@@ -1644,7 +1661,7 @@ object LinkParser {
                     "endpoint" -> {
                         val hostPort = value.split(":")
                         if (hostPort.size >= 2) {
-                            endpointHost = hostPort.dropLast(1).joinToString(":")
+                            endpointHost = hostPort.dropLast(1).joinToString(":").removeSurrounding("[", "]")
                             endpointPort = hostPort.last().toIntOrNull() ?: 51820
                         } else {
                             endpointHost = value
@@ -1853,17 +1870,6 @@ object LinkParser {
         }
         val dev = openVpnLastArg(byKey, "dev").lowercase()
         if (dev.startsWith("tap")) throw LinkParseError("OpenVPN TAP profiles are not supported; a TUN profile is required")
-        // Same rule as the desktop client, which imports these profiles fine: a bare
-        // `comp-lzo` / `compress` only asks for the compression framing byte, which the
-        // core negotiates away, so it is accepted. Only an explicit algorithm the core
-        // cannot decompress (lzo, lz4, ...) is rejected.
-        for (key in listOf("compress", "comp-lzo")) {
-            val value = openVpnLastArg(byKey, key).lowercase()
-            if (value.isNotEmpty() && value !in setOf("no", "disable", "stub", "stub-v2")) {
-                throw LinkParseError("OpenVPN compression `$value` is not supported")
-            }
-        }
-
         val globalProto = normalizeOpenVpnProto(openVpnLastArg(byKey, "proto").ifEmpty { "udp" })
         val remotes = mutableListOf<Pair<String, Map<String, Any?>>>()
         fun appendRemotes(source: Map<String, MutableList<List<String>>>, defaultProto: String) {
@@ -1898,6 +1904,23 @@ object LinkParser {
             "proto" to proto
         )
         if ("remote-random" in byKey) native["remote_random"] = true
+        for ((directive, nativeKey, allowed) in listOf(
+            Triple("compress", "compression", setOf("none", "no", "lz4", "lz4-v2", "stub", "stub-v2", "disabled", "off")),
+            Triple("comp-lzo", "compression_lzo", setOf("none", "no", "yes", "adaptive", "asym", "disabled", "off")),
+            Triple("allow-compression", "allow_compression", setOf("no", "asym", "yes")),
+            Triple("auth-retry", "auth_retry", setOf("none", "nointeract"))
+        )) {
+            if (directive !in byKey) continue
+            val raw = openVpnLastArg(byKey, directive).lowercase()
+            val value = when {
+                raw == "disable" -> "disabled"
+                raw.isEmpty() && directive == "compress" -> "stub"
+                raw.isEmpty() && directive == "comp-lzo" -> "adaptive"
+                else -> raw
+            }
+            if (value !in allowed) throw LinkParseError("Unsupported OpenVPN `$directive` value `$value`")
+            native[nativeKey] = value
+        }
 
         // "Use proxy": http-proxy/socks-proxy are standard directives, obfs2/obfs3
         // travel in a Lumen comment. The builder turns this into a detour outbound
@@ -1906,6 +1929,19 @@ object LinkParser {
 
         val cipher = selectOpenVpnCipher(byKey)
         if (cipher.isNotEmpty()) native["cipher"] = cipher
+        val negotiated = openVpnLastArg(byKey, "data-ciphers").ifEmpty { openVpnLastArg(byKey, "ncp-ciphers") }
+        if (negotiated.isNotEmpty()) {
+            val ciphers = negotiated.split(':').mapNotNull {
+                OpenVpnConfigNormalizer.normalizeDataCipher(it.removePrefix("?"))
+            }.distinct()
+            if (ciphers.isEmpty()) throw LinkParseError("OpenVPN profile has no supported data-ciphers")
+            native["data_ciphers"] = ciphers
+        }
+        val fallback = openVpnLastArg(byKey, "data-ciphers-fallback").ifEmpty { openVpnLastArg(byKey, "cipher") }
+        if (fallback.isNotEmpty()) {
+            native["data_ciphers_fallback"] = OpenVpnConfigNormalizer.normalizeDataCipher(fallback)
+                ?: throw LinkParseError("Unsupported OpenVPN fallback cipher `$fallback`")
+        }
         val auth = openVpnLastArg(byKey, "auth")
         if (auth.isNotEmpty() && auth.lowercase() != "none") {
             OpenVpnConfigNormalizer.normalizeAuthDigest(auth)?.let { native["auth"] = it }
@@ -1927,9 +1963,8 @@ object LinkParser {
         }
 
         val credentials = inline["auth-user-pass"] ?: ""
-        if (credentials.isEmpty() && openVpnLastValues(byKey, "auth-user-pass").isNotEmpty()) {
-            throw LinkParseError("OpenVPN `auth-user-pass` file references are not supported on Android; embed the credentials inline")
-        }
+        // External credential files cannot be read on Android. Keep the requirement
+        // so the app can request credentials before connecting instead of rejecting import.
         if (credentials.isNotEmpty()) {
             val credLines = credentials.lines().map { it.trim() }.filter { it.isNotEmpty() }
             if (credLines.isNotEmpty()) native["username"] = credLines[0]
@@ -1939,12 +1974,6 @@ object LinkParser {
         // An encrypted <key> is unusable without its passphrase. `askpass <file>`
         // cannot be read on Android, so the value has to travel inside the profile.
         val keyPassword = openVpnKeyPassword(text, inline)
-        if (keyPassword.isEmpty() && openVpnLastValues(byKey, "askpass").isNotEmpty()) {
-            throw LinkParseError(
-                "OpenVPN `askpass` file references are not supported on Android; " +
-                    "enter the private key password in the node editor"
-            )
-        }
         if (keyPassword.isNotEmpty()) native["key_password"] = keyPassword
 
         for ((directive, nativeKey) in listOf("tls-auth" to "tls_auth", "tls-crypt" to "tls_crypt", "tls-crypt-v2" to "tls_crypt")) {
@@ -1970,6 +1999,14 @@ object LinkParser {
             val value = openVpnLastArg(byKey, directive)
             if (value.isNotEmpty()) native[nativeKey] = openVpnDurationSeconds(value, directive)
         }
+        for ((directive, nativeKey) in listOf("reneg-sec" to "renegotiate_interval",
+            "tls-timeout" to "tls_timeout", "hand-window" to "handshake_window")) {
+            val value = openVpnLastArg(byKey, directive)
+            if (value.isNotEmpty()) {
+                if (directive == "reneg-sec" && value == "0") native["renegotiate_disabled"] = true
+                else native[nativeKey] = openVpnDurationSeconds(value, directive)
+            }
+        }
         // `keepalive N M` is the shorthand most providers ship instead of the pair above.
         openVpnLastValues(byKey, "keepalive").let { values ->
             values.getOrNull(0)?.takeIf { it.isNotBlank() }?.let {
@@ -1984,6 +2021,14 @@ object LinkParser {
         // `ping_restart` tears down a healthy tunnel whenever the peer stays quiet.
 
         val tls = mutableMapOf<String, Any?>()
+        for ((directive, nativeKey) in listOf("tls-version-min" to "version_min", "tls-version-max" to "version_max")) {
+            val value = openVpnLastArg(byKey, directive)
+            if (value.isNotEmpty()) {
+                if (value !in setOf("1.0", "1.1", "1.2", "1.3")) throw LinkParseError("Invalid OpenVPN `$directive` value")
+                tls[nativeKey] = value
+            }
+        }
+        openVpnLastArg(byKey, "tls-groups").takeIf(String::isNotEmpty)?.let { tls["groups"] = it }
         for ((directive, nativeKey) in listOf("ca" to "ca", "cert" to "certificate", "key" to "key")) {
             val content = inline[directive] ?: ""
             val values = openVpnLastValues(byKey, directive)
@@ -2024,6 +2069,7 @@ object LinkParser {
             "protocol" to "openvpn",
             "singbox" to native
         )
+        if ("auth-user-pass" in byKey || inline.containsKey("auth-user-pass")) outbound["openvpn_requires_auth"] = true
         if (dnsServers.isNotEmpty()) outbound["_dns"] = dnsServers
 
         val firstServer = servers[0]["server"].toString()
@@ -2086,8 +2132,8 @@ object LinkParser {
 
     private fun normalizeOpenVpnProto(value: String): String {
         val proto = value.trim().lowercase().ifEmpty { "udp" }
-        if (proto in setOf("udp", "udp4", "udp6")) return "udp"
-        if (proto in setOf("tcp", "tcp-client", "tcp4", "tcp4-client", "tcp6", "tcp6-client")) return "tcp"
+        if (proto in setOf("udp", "udp4", "udp6")) return proto
+        if (proto in setOf("tcp", "tcp-client", "tcp4", "tcp4-client", "tcp6", "tcp6-client")) return proto.removeSuffix("-client")
         throw LinkParseError("unsupported OpenVPN transport `$value`")
     }
 
@@ -2124,10 +2170,7 @@ object LinkParser {
     private fun openVpnVerifyNameMode(value: String): String {
         val normalized = value.trim().lowercase()
         return when (normalized) {
-            "name", "name-prefix", "name-suffix" -> normalized
-            "subject" -> throw LinkParseError(
-                "OpenVPN verify-x509-name mode `subject` is not supported by the bundled core"
-            )
+            "name", "name-prefix", "subject" -> normalized
             else -> throw LinkParseError("invalid OpenVPN verify-x509-name mode `$value`")
         }
     }
@@ -3455,6 +3498,7 @@ object LinkParser {
                 if (path.isNotEmpty()) xhttp["path"] = path
                 if (host.isNotEmpty()) xhttp["host"] = host
                 params["mode"]?.let { if (it.isNotEmpty()) xhttp["mode"] = it }
+                params["extra"]?.takeIf { it.isNotBlank() }?.let { xhttp["extra"] = jsonToMap(JSONObject(it)) }
                 stream["xhttpSettings"] = xhttp
             }
             "http", "h2" -> {
@@ -3496,7 +3540,11 @@ object LinkParser {
                 }
                 stream["quicSettings"] = emptyMap<String, Any?>()
             }
-            "tcp" -> Unit
+            "tcp" -> {
+                if (params["headertype"] == "http") stream["tcpSettings"] = mapOf("header" to mapOf(
+                    "type" to "http", "request" to mapOf("path" to listOf(path.ifBlank { "/" }),
+                        "headers" to mapOf("Host" to host.split(',').filter { it.isNotBlank() }))))
+            }
             else -> throw LinkParseError("unsupported transport `$rawNetwork`")
         }
 
@@ -3505,12 +3553,17 @@ object LinkParser {
             params["sni"]?.let { if (it.isNotEmpty()) tls["serverName"] = it }
             params["alpn"]?.let { if (it.isNotEmpty()) tls["alpn"] = it.split(",").map { s -> s.trim() } }
             params["fp"]?.let { if (it.isNotEmpty()) tls["fingerprint"] = it }
-            certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
+            val peerCertificate = params["pcs"] ?: params["pinnedpeercertsha256"]
+            if (!peerCertificate.isNullOrBlank()) tls["pinnedPeerCertSha256"] = peerCertificate
+            else certificatePublicKeyPins(params).takeIf { it.isNotEmpty() }?.let {
                 tls["certificatePublicKeySha256"] = it
             }
+            params["vcn"]?.takeIf { it.isNotBlank() }?.let { tls["verifyPeerCertByName"] = it }
             if (tlsInsecure(params)) {
                 tls["allowInsecure"] = true
             }
+            params["ech"]?.takeIf { it.isNotBlank() }?.let { tls["echConfigList"] = it }
+            params["echforcequery"]?.takeIf { it.isNotBlank() }?.let { tls["echForceQuery"] = it }
             stream["tlsSettings"] = tls
         } else if (security == "reality") {
             val reality = mutableMapOf<String, Any?>()
@@ -3518,11 +3571,14 @@ object LinkParser {
             params["fp"]?.let { if (it.isNotEmpty()) reality["fingerprint"] = it }
             params["pbk"]?.let { if (it.isNotEmpty()) reality["publicKey"] = it }
             params["sid"]?.let { if (it.isNotEmpty()) reality["shortId"] = it }
+            params["pqv"]?.takeIf { it.isNotBlank() }?.let { reality["mldsa65Verify"] = it }
+            params["alpn"]?.takeIf { it.isNotBlank() }?.let { reality["alpn"] = it.split(",") }
             params["spx"]?.let { if (it.isNotEmpty()) reality["spiderX"] = it }
             reality["show"] = false
             stream["realitySettings"] = reality
         }
 
+        (params["fm"] ?: params["finalmask"])?.takeIf { it.isNotBlank() }?.let { stream["finalMask"] = jsonToMap(JSONObject(it)) }
         return stream
     }
 

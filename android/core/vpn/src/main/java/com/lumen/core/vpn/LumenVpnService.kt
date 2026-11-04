@@ -27,6 +27,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -74,6 +75,12 @@ class LumenVpnService : VpnService() {
         val obfsHost: String = "",
         val obfsPort: Int = 0
     )
+
+    private var xraySidecar: ProcessEngine? = null
+    private var protectedSession = false
+    private var profilePolicyJob: kotlinx.coroutines.Job? = null
+    private val profileSession = java.util.concurrent.atomic.AtomicLong(0)
+    @Volatile private var runningProfilePolicy: org.json.JSONObject? = null
 
     @Volatile private var activeParams: StartParams? = null
     @Volatile private var obfsRelay: ObfsRelay? = null
@@ -181,6 +188,7 @@ class LumenVpnService : VpnService() {
             return
         }
         VpnLogBus.clearLastError()
+        val requestedProfileSession = profileSession.incrementAndGet()
         restartJob?.cancel()
         restartJob = null
         _isStarting.value = true
@@ -209,10 +217,16 @@ class LumenVpnService : VpnService() {
                     "VPN",
                     "Start requested; MTU=${resolved.mtu}, split mode=${resolved.splitConfig.mode}"
                 )
+                protectedSession = org.json.JSONObject(resolved.configJson).optBoolean("_lumen_protected")
+                profilePolicyJob?.cancel()
+                profilePolicyJob = null
+                val policy = org.json.JSONObject(resolved.configJson).optJSONObject(ProfilePolicyEnforcer.CONFIG_KEY)
+                if (policy != null) ProfilePolicyEnforcer.check(this@LumenVpnService, policy)
+                if (profileSession.get() != requestedProfileSession) return@launch
                 activeParams = resolved
                 bringUpRuntime(resolved)
                 // Watch the default network only once the tunnel is actually up.
-                if (resolved.reconnectOnNetworkChange) {
+                if (resolved.reconnectOnNetworkChange || policy?.optBoolean("wifiOnly") == true || policy?.optBoolean("unmeteredOnly") == true) {
                     registerNetworkMonitor()
                 } else {
                     VpnLogBus.info("VPN", "Reconnect on network change is disabled in settings")
@@ -221,8 +235,8 @@ class LumenVpnService : VpnService() {
                 VpnLogBus.info("VPN", "Connection attempt cancelled")
                 throw cancelled
             } catch (t: Throwable) {
-                Log.e(TAG, "Error starting VPN", t)
-                VpnLogBus.error("VPN", "Connection failed", t)
+                if (protectedSession) VpnLogBus.error("VPN", "Protected profile connection failed")
+                else { Log.e(TAG, "Error starting VPN", t); VpnLogBus.error("VPN", "Connection failed", t) }
                 clearSessionState()
                 stopRuntime(closeInterface = true)
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -279,7 +293,10 @@ class LumenVpnService : VpnService() {
      * network.
      */
     private suspend fun bringUpRuntime(params: StartParams) = runtimeMutex.withLock {
+        val policy = org.json.JSONObject(params.configJson).optJSONObject(ProfilePolicyEnforcer.CONFIG_KEY)
+        if (policy != null) ProfilePolicyEnforcer.check(this@LumenVpnService, policy)
         bringUpRuntimeLocked(params)
+        watchProfilePolicy(policy)
     }
 
     private suspend fun bringUpRuntimeLocked(params: StartParams) {
@@ -315,13 +332,6 @@ class LumenVpnService : VpnService() {
             enforcePrivateDnsPolicy(dnsMode)
         }
 
-        VpnLogBus.info("CORE", "Starting proxy core")
-        val localSocksPort = startCoreOnFreeLocalPort(runtimeParams)
-
-        val socksCredentials = socksCredentialsOf(runtimeParams.configJson)
-        activeSocksCredentials = socksCredentials
-        _activeProxySession.value = ActiveProxySession(localSocksPort, socksCredentials?.first,
-            socksCredentials?.second, System.nanoTime())
         if (!params.proxyOnly) {
             val builder = Builder()
                 .setMtu(mtu)
@@ -363,7 +373,24 @@ class LumenVpnService : VpnService() {
             if (blockingInterface != null && blockingInterface !== pfd) {
                 runCatching { blockingInterface.close() }
             }
-            VpnLogBus.info("VPN", "TUN interface established; starting tun2socks")
+            VpnLogBus.info("VPN", "TUN interface established")
+        }
+
+        // Establish our blocking TUN, including the own-package exclusion, before
+        // any core opens upstream sockets. Otherwise an existing VPN can carry
+        // the first OpenVPN handshake and then disappear when we replace it.
+        VpnLogBus.info("CORE", "Starting proxy core")
+        val localSocksPort = startCoreOnFreeLocalPort(runtimeParams)
+        val socksCredentials = socksCredentialsOf(runtimeParams.configJson)
+        activeSocksCredentials = socksCredentials
+        val openVpnTag = openVpnStartupTag(runtimeParams.configJson)
+        if (openVpnTag != null) awaitOpenVpnReady(openVpnTag)
+
+        if (!params.proxyOnly) {
+            val pfd = checkNotNull(vpnInterface) { "VPN interface was closed during core startup" }
+            // Keep the TUN blocking while OpenVPN negotiates. Starting HEV first
+            // sends every app's retries into an endpoint that cannot accept traffic
+            // yet, obscuring the original handshake failure with readiness errors.
 
             // The shipped libhev-socks5-tunnel only knows misc.log-level / misc.log-file:
             // a top-level `log:` section parses but is dropped, so the level never applied.
@@ -415,7 +442,10 @@ ${hevAuthLines}misc:
         check(engineManager.singboxEngine.isRunning) {
             "Proxy core stopped before the connection became ready"
         }
-        val validateDataPath = getSharedPreferences(VpnStartIntentFactory.PREFS_NAME, MODE_PRIVATE)
+        // OpenVPN readiness above comes from the authenticated native data channel.
+        // External HTTP checks remain an optional diagnostic: a blocked website
+        // must not prevent a healthy OpenVPN tunnel from becoming connected.
+        val validateDataPath = xraySidecar != null || getSharedPreferences(VpnStartIntentFactory.PREFS_NAME, MODE_PRIVATE)
             .getBoolean(PREF_VALIDATE_PROXY_DATA_PATH, false)
         if (validateDataPath) {
             verifyProxyDataPathWithRetries(localSocksPort)
@@ -427,6 +457,8 @@ ${hevAuthLines}misc:
         // Recording it before startup made a failed attempt look complete, so later
         // callbacks for the same Wi-Fi/mobile network were ignored.
         if (underlay != null) lastUnderlyingNetwork = underlay
+        _activeProxySession.value = ActiveProxySession(localSocksPort, socksCredentials?.first,
+            socksCredentials?.second, System.nanoTime())
         _isRunning.value = true
         ensureSessionStarted()
         startTrafficStats()
@@ -489,6 +521,38 @@ ${hevAuthLines}misc:
      * which is the slow, generic failure seen on reconnects and server switches.
      */
     private suspend fun startCoreOnFreeLocalPort(params: StartParams): Int {
+        val runtime = org.json.JSONObject(params.configJson)
+        protectedSession = runtime.optBoolean("_lumen_protected")
+        runtime.remove("_lumen_protected")
+        runtime.remove(ProfilePolicyEnforcer.CONFIG_KEY)
+        runtime.optJSONObject("_lumen_xray")?.let { sidecar ->
+            // A persisted tile/widget config may hold ports used by another app now.
+            val inbounds = sidecar.getJSONArray("inbounds")
+            val replacements = mutableMapOf<Int, Int>()
+            for (i in 0 until inbounds.length()) {
+                val inbound = inbounds.getJSONObject(i)
+                val original = inbound.getInt("port")
+                val resolved = LocalSocksPort.resolve(original)
+                replacements[original] = resolved
+                inbound.put("port", resolved)
+            }
+            val outbounds = runtime.optJSONArray("outbounds")
+            if (outbounds != null) for (i in 0 until outbounds.length()) {
+                val outbound = outbounds.getJSONObject(i)
+                if (outbound.optString("type") == "socks" && outbound.optString("server") == "127.0.0.1") {
+                    replacements[outbound.optInt("server_port")]?.let { outbound.put("server_port", it) }
+                }
+            }
+            xraySidecar?.stop()
+            xraySidecar = ProcessEngine(EngineType.XRAY,
+                File(applicationInfo.nativeLibraryDir, "libxray.so"), File(cacheDir, "xray-sidecar"),
+                ::logEngine, { code -> onCoreExit("Xray", code) })
+            xraySidecar!!.start(sidecar.toString())
+            VpnLogBus.info("CORE", "Xray sidecar started")
+        }
+        runtime.remove("_lumen_xray")
+        val mainConfig = runtime.toString()
+
         var lastError: Throwable? = null
         repeat(CORE_START_ATTEMPTS) { attempt ->
             val port = LocalSocksPort.resolve(params.localSocksPort)
@@ -503,7 +567,7 @@ ${hevAuthLines}misc:
             // `start inbound/http[http-in]: listen tcp 127.0.0.1:10809: bind:
             // address already in use`. Its port never reaches us as a parameter,
             // so take it from the config we are about to start.
-            var configJson = LocalSocksPort.applyToConfig(params.configJson, port)
+            var configJson = LocalSocksPort.applyToConfig(mainConfig, port)
             LocalSocksPort.portOf(configJson, LocalSocksPort.HTTP_INBOUND_TAG)?.let { wanted ->
                 val httpPort = LocalSocksPort.resolve(wanted)
                 if (httpPort != wanted) {
@@ -720,31 +784,40 @@ ${hevAuthLines}misc:
         return bytes
     }
 
-    /**
-     * AWG/WireGuard has to complete a handshake before a single packet gets through, and a
-     * freshly started core may still be resolving its endpoint. A single probe therefore
-     * fails the whole connection "the first time" even though the tunnel is up a moment
-     * later, which is exactly the flakiness seen on AWG servers.
-     */
-    private suspend fun verifyProxyDataPathWithRetries(localSocksPort: Int) {
+    /** Wait for native authentication and data-channel readiness, independent of probe sites. */
+    private suspend fun awaitOpenVpnReady(tag: String) {
+        awaitOpenVpnDataChannel(engineManager.singboxEngine, tag)
+        VpnLogBus.info("VPN", "OpenVPN authenticated data channel is ready")
+    }
+
+    private suspend fun verifyProxyDataPathWithRetries(localSocksPort: Int, attempts: Int = PROXY_PROBE_ATTEMPTS) {
         var lastError: Throwable? = null
         val targets = proxyProbeTargets()
         check(targets.isNotEmpty()) { "No valid HTTP proxy probe URL is configured" }
-        repeat(PROXY_PROBE_ATTEMPTS) { attempt ->
+        repeat(attempts) { attempt ->
             for (target in targets) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                check(engineManager.singboxEngine.isRunning) { "Proxy core stopped during the connectivity check" }
                 val result = runCatching { verifyProxyDataPath(localSocksPort, target) }
                 if (result.isSuccess) return
                 lastError = result.exceptionOrNull()
+                // The selected standalone endpoint is terminal: no amount of
+                // HTTP retries can repair rejected credentials/certificates.
+                // Do not apply this to an unused member of an AUTO pool.
+                val endpointFailure = engineManager.singboxEngine.endpointFailure
+                if (endpointFailure.contains("endpoint/openvpn-client[proxy]:")) {
+                    throw IllegalStateException(endpointFailure, lastError)
+                }
                 VpnLogBus.warning(
                     "VPN",
-                    "Proxy probe via ${target.authority} failed: ${lastError?.message}"
+                    "Proxy probe via ${target.authority} failed: ${if (protectedSession) "Protected profile unavailable" else lastError?.message}"
                 )
             }
             VpnLogBus.warning(
                 "VPN",
-                "Proxy data-path attempt ${attempt + 1}/$PROXY_PROBE_ATTEMPTS failed"
+                "Proxy data-path attempt ${attempt + 1}/$attempts failed"
             )
-            if (attempt + 1 < PROXY_PROBE_ATTEMPTS) delay(PROXY_PROBE_RETRY_DELAY_MS)
+            if (attempt + 1 < attempts) delay(PROXY_PROBE_RETRY_DELAY_MS)
         }
         throw lastError ?: IllegalStateException("Proxy data path could not be verified")
     }
@@ -763,10 +836,12 @@ ${hevAuthLines}misc:
         }
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                checkProfileAfterNetworkChange()
                 onDefaultNetworkMayHaveChanged(network)
             }
 
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                checkProfileAfterNetworkChange()
                 if (UnderlyingNetworkPolicy.isReady(
                         hasInternet = capabilities.hasCapability(
                             NetworkCapabilities.NET_CAPABILITY_INTERNET
@@ -784,6 +859,7 @@ ${hevAuthLines}misc:
             }
 
             override fun onLost(network: Network) {
+                checkProfileAfterNetworkChange()
                 if (network == pendingUnderlyingNetwork) pendingUnderlyingNetwork = null
                 if (network == lastUnderlyingNetwork) {
                     lastUnderlyingNetwork = null
@@ -843,7 +919,7 @@ ${hevAuthLines}misc:
     }
 
     private fun onDefaultNetworkMayHaveChanged(candidate: Network? = null) {
-        if (activeParams == null) return
+        if (activeParams?.reconnectOnNetworkChange != true) return
         if (candidate != null) {
             if (!restartingForNetwork && candidate == lastUnderlyingNetwork) {
                 pendingUnderlyingNetwork = null
@@ -904,13 +980,13 @@ ${hevAuthLines}misc:
                     lastError = result.exceptionOrNull()
                     VpnLogBus.warning(
                         "VPN",
-                        "Reconnect ${attempt + 1}/$NETWORK_RESTART_ATTEMPTS failed: ${lastError?.message}"
+                        "Reconnect ${attempt + 1}/$NETWORK_RESTART_ATTEMPTS failed: ${if (protectedSession) "Protected profile unavailable" else lastError?.message}"
                     )
                     delay(NETWORK_RESTART_RETRY_DELAY_MS * (attempt + 1))
                 }
                 VpnLogBus.error(
                     "VPN",
-                    "Could not restore the tunnel after the network changed: ${lastError?.message}"
+                    "Could not restore the tunnel after the network changed: ${if (protectedSession) "Protected profile unavailable" else lastError?.message}"
                 )
                 activeParams = null
                 unregisterNetworkMonitor()
@@ -986,8 +1062,8 @@ ${hevAuthLines}misc:
                     // "show notification = off" just froze it instead.
                     is EngineState.Running -> Unit
                     is EngineState.Error -> {
-                        Log.e(TAG, "Engine error: ${state.message}")
-                        VpnLogBus.error("CORE", state.message)
+                        if (protectedSession) VpnLogBus.error("CORE", "Protected profile core error")
+                        else { Log.e(TAG, "Engine error: ${state.message}"); VpnLogBus.error("CORE", state.message) }
                     }
                     else -> Unit
                 }
@@ -1040,6 +1116,8 @@ ${hevAuthLines}misc:
     private fun startTrafficStats() {
         trafficStatsJob?.cancel()
         trafficStatsJob = serviceScope.launch {
+            val power = getSystemService(android.os.PowerManager::class.java)
+            val statsPreferences = getSharedPreferences(VpnStartIntentFactory.PREFS_NAME, MODE_PRIVATE)
             val uid = Process.myUid()
             val proxyOnly = activeParams?.proxyOnly == true
             var previous = if (proxyOnly) {
@@ -1050,7 +1128,13 @@ ${hevAuthLines}misc:
             var previousTime = SystemClock.elapsedRealtimeNanos()
             var nativeReadFailures = 0
             while (true) {
-                delay(1_000)
+                delay(trafficPollingIntervalMs(
+                    uiVisible = uiVisible,
+                    interactive = power?.isInteractive != false,
+                    showNotificationSpeed = statsPreferences.getBoolean(NotificationHelper.PREF_SPEED_STATS, true) &&
+                        statsPreferences.getBoolean(NotificationHelper.PREF_SHOW_NOTIFICATION, true) &&
+                        statsPreferences.getBoolean(NotificationHelper.PREF_SHOW_SPEED, true)
+                ))
                 val nativeRunning = if (proxyOnly) {
                     true
                 } else {
@@ -1116,6 +1200,7 @@ ${hevAuthLines}misc:
     }
 
     private fun stopVpn() {
+        profileSession.incrementAndGet()
         // stopSelf() only stops when the id is the most recent one, so the teardown
         // must name the start it is ending. Reading lastStartId once the coroutine
         // runs would name the reconnect that arrived in the meantime and kill it.
@@ -1178,6 +1263,9 @@ ${hevAuthLines}misc:
     }
 
     private suspend fun stopRuntimeLocked(closeInterface: Boolean) {
+        profilePolicyJob?.cancel()
+        profilePolicyJob = null
+        runningProfilePolicy = null
         _activeProxySession.value = null
         stopObfsRelay()
         trafficStatsJob?.cancel()
@@ -1195,6 +1283,8 @@ ${hevAuthLines}misc:
         }
         runCatching { engineManager.stopEngine() }
             .onFailure { Log.w(TAG, "Failed to stop engine", it) }
+        runCatching { xraySidecar?.stop() }
+        xraySidecar = null
         if (closeInterface) {
             runCatching { vpnInterface?.close() }
             vpnInterface = null
@@ -1251,6 +1341,7 @@ ${hevAuthLines}misc:
     }
 
     private fun logEngine(line: String) {
+        if (protectedSession) return
         Log.i(TAG, line)
         when {
             line.contains("fatal", ignoreCase = true) || line.contains("panic", ignoreCase = true) ->
@@ -1261,7 +1352,68 @@ ${hevAuthLines}misc:
         }
     }
 
+    private fun watchProfilePolicy(metadata: org.json.JSONObject?) {
+        profilePolicyJob?.cancel()
+        runningProfilePolicy = metadata
+        if (metadata == null) return
+        val policy = com.lumen.core.config.crypto.LumenProfilePolicy.fromJson(metadata)
+        // Network restrictions already have callbacks; they do not need a polling timer.
+        if (policy.expiresAtMs <= 0) return
+        val sessionId = profileSession.get()
+        profilePolicyJob = serviceScope.launch {
+            while (activeParams != null && profileSession.get() == sessionId) {
+                val remaining = policy.expiresAtMs - ProfilePolicyEnforcer.effectiveNow(this@LumenVpnService)
+                delay(remaining.coerceIn(1L, 60_000L))
+                if (activeParams == null) return@launch
+                if (!enforceRunningProfile(metadata, sessionId)) return@launch
+            }
+        }
+    }
+
+    private fun checkProfileAfterNetworkChange() {
+        val params = activeParams ?: return
+        val sessionId = profileSession.get()
+        val metadata = runningProfilePolicy ?: return
+        serviceScope.launch {
+            if (activeParams === params) enforceRunningProfile(metadata, sessionId)
+        }
+    }
+
+    private suspend fun enforceRunningProfile(metadata: org.json.JSONObject, sessionId: Long): Boolean = runtimeMutex.withLock {
+        if (activeParams == null || profileSession.get() != sessionId) return@withLock false
+        try { ProfilePolicyEnforcer.check(this@LumenVpnService, metadata); return@withLock true }
+        catch (_: IllegalArgumentException) {
+            val policy = com.lumen.core.config.crypto.LumenProfilePolicy.fromJson(metadata)
+            if (policy.expiresAtMs > 0 && ProfilePolicyEnforcer.effectiveNow(this@LumenVpnService) >= policy.expiresAtMs) {
+                ProfilePolicyEnforcer.noteExpired(this@LumenVpnService, metadata)
+                VpnConfigStore.clear(this@LumenVpnService)
+            }
+            VpnLogBus.warning("VPN", "Lumen profile restrictions no longer allow this connection")
+            activeParams = null
+            val watcher = profilePolicyJob
+            if (watcher !== kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]) watcher?.cancel()
+            profilePolicyJob = null
+            restartJob?.cancel()
+            unregisterNetworkMonitor()
+            clearSessionState()
+            stopRuntimeLocked(closeInterface = true)
+            kotlinx.coroutines.withContext(Dispatchers.Main.immediate) {
+                if (profileSession.get() == sessionId) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf(lastStartId)
+                }
+            }
+            false
+        }
+    }
+
     companion object {
+        @Volatile
+        var uiVisible: Boolean = false
+            private set
+
+        fun setUiVisible(visible: Boolean) { uiVisible = visible }
+
         private const val TAG = "LumenVpnService"
         private const val LOCAL_SOCKS_PORT = 10808
         private const val PREF_VALIDATE_PROXY_DATA_PATH = "validate_proxy_data_path"

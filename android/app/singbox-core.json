@@ -1,6 +1,6 @@
 {
   "component": "sing-box-extended",
-  "version": "1.14.3-extended-2.7.3-lumen.1",
+  "version": "1.14.3-extended-2.7.3-lumen.2",
   "source": "https://github.com/shtorm-7/sing-box-extended",
   "tag": "v1.14.3-extended-2.7.3",
   "upstream_commit": "d9442d14b19ddd02605bf3ee893a171947038e19",
@@ -9,34 +9,39 @@
       "path": "android/patches/sing-box-extended-direct-masque.patch",
       "upstream_commit": "d9442d14b19ddd02605bf3ee893a171947038e19",
       "description": "Preserve direct MASQUE keys, DER public keys and single-stack tunnel addresses"
+    },
+    {
+      "path": "android/patches/sing-box-extended-openvpn-readiness.patch",
+      "upstream_commit": "d9442d14b19ddd02605bf3ee893a171947038e19",
+      "description": "Report authenticated OpenVPN readiness to the Android host without relying on external HTTP probe sites"
     }
   ],
   "published_at": "2026-10-19T16:41:59Z",
-  "updated_at": "2026-10-31",
+  "updated_at": "2026-11-04",
   "binaries": [
     {
       "abi": "arm64-v8a",
-      "version": "1.14.3-extended-2.7.3-lumen.1",
-      "binary_sha256": "9cb6d218eb022cd90cc6ebaef4486a6794dbb5dbf6071d6f3bb560df1909058c",
-      "binary_size": 92523896,
+      "version": "1.14.3-extended-2.7.3-lumen.2",
+      "binary_sha256": "000ff3c67df15b7650cbe76e02c33b59c399fa2cedc2d1382ef7a6ff71da2f66",
+      "binary_size": 92525272,
       "elf_machine": 183,
       "elf_class": 2,
       "path": "android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
     },
     {
       "abi": "armeabi-v7a",
-      "version": "1.14.3-extended-2.7.3-lumen.1",
-      "binary_sha256": "f510f4eadf961e97de6d8863a47ad07035ef3d53119276f24711baae112d3e2f",
-      "binary_size": 88409676,
+      "version": "1.14.3-extended-2.7.3-lumen.2",
+      "binary_sha256": "c8f643b71c27570f56db89f28a839754708137993a827a1b887a230fb9cabb7d",
+      "binary_size": 88411308,
       "elf_machine": 40,
       "elf_class": 1,
       "path": "android/app/src/main/jniLibs/armeabi-v7a/libsingbox.so"
     },
     {
       "abi": "x86_64",
-      "version": "1.14.3-extended-2.7.3-lumen.1",
-      "binary_sha256": "7c03f7ad5cbbe9f4d7011b5cd4120ddaacbf7756f571f924d5ecfd4faf3f9856",
-      "binary_size": 98823864,
+      "version": "1.14.3-extended-2.7.3-lumen.2",
+      "binary_sha256": "14dfdec29318c30db4bb080adaf2aaecb36195edaf5fec3905460d7f27a13bee",
+      "binary_size": 98825432,
       "elf_machine": 62,
       "elf_class": 2,
       "path": "android/app/src/main/jniLibs/x86_64/libsingbox.so"

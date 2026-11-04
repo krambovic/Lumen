@@ -94,7 +94,7 @@ private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.DRACULA,
             title = "Dracula",
-            subtitle = "Dracula Dark Purple Palette",
+            subtitle = InterfaceText.DRACULA.inLanguage(s.localeCode),
             iconBg = Color(0xFF343746),
             iconTint = Color(0xFFBD93F9),
             dots = listOf(Color(0xFF282A36), Color(0xFF343746), Color(0xFFBD93F9))
@@ -102,7 +102,7 @@ private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.CATPPUCCIN,
             title = "Catppuccin",
-            subtitle = "Catppuccin Mocha Pastel Accent",
+            subtitle = InterfaceText.CATPPUCCIN.inLanguage(s.localeCode),
             iconBg = Color(0xFF1E1E2E),
             iconTint = Color(0xFFCBA6F7),
             dots = listOf(Color(0xFF11111B), Color(0xFF1E1E2E), Color(0xFFCBA6F7))
@@ -110,7 +110,7 @@ private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.NORD,
             title = "Nord",
-            subtitle = "Arctic Blue Nord Palette",
+            subtitle = InterfaceText.NORD.inLanguage(s.localeCode),
             iconBg = Color(0xFF3B4252),
             iconTint = Color(0xFF88C0D0),
             dots = listOf(Color(0xFF2E3440), Color(0xFF3B4252), Color(0xFF88C0D0))
@@ -118,7 +118,7 @@ private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.GITHUB,
             title = "GitHub Dark",
-            subtitle = "GitHub Official Dark Theme",
+            subtitle = InterfaceText.GITHUB.inLanguage(s.localeCode),
             iconBg = Color(0xFF161B22),
             iconTint = Color(0xFF58A6FF),
             dots = listOf(Color(0xFF0D1117), Color(0xFF161B22), Color(0xFF58A6FF))
@@ -126,7 +126,7 @@ private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.GRUVBOX,
             title = "Gruvbox",
-            subtitle = "Retro Warm Dark Gruvbox",
+            subtitle = InterfaceText.GRUVBOX.inLanguage(s.localeCode),
             iconBg = Color(0xFF32302F),
             iconTint = Color(0xFFFABD2F),
             dots = listOf(Color(0xFF1D2021), Color(0xFF32302F), Color(0xFFFABD2F))
@@ -134,7 +134,7 @@ private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.TOKYO_NIGHT,
             title = "Tokyo Night",
-            subtitle = "Tokyo Neon Night Theme",
+            subtitle = InterfaceText.TOKYO.inLanguage(s.localeCode),
             iconBg = Color(0xFF24283B),
             iconTint = Color(0xFF7AA2F7),
             dots = listOf(Color(0xFF16161E), Color(0xFF24283B), Color(0xFF7AA2F7))
@@ -142,7 +142,7 @@ private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.MONOKAI,
             title = "Monokai",
-            subtitle = "Classic Monokai Dark",
+            subtitle = InterfaceText.MONOKAI.inLanguage(s.localeCode),
             iconBg = Color(0xFF272822),
             iconTint = Color(0xFFF92672),
             dots = listOf(Color(0xFF1E1F1C), Color(0xFF272822), Color(0xFFF92672))
@@ -150,7 +150,7 @@ private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.MATERIAL,
             title = "Material Dark",
-            subtitle = "Sleek Material Palette",
+            subtitle = InterfaceText.MATERIAL.inLanguage(s.localeCode),
             iconBg = Color(0xFF202331),
             iconTint = Color(0xFF80CBC4),
             dots = listOf(Color(0xFF0F111A), Color(0xFF202331), Color(0xFF80CBC4))
@@ -158,7 +158,7 @@ private fun themeOptions(s: LumenStrings): List<ThemeOptionUi> = listOf(
         ThemeOptionUi(
             preset = ThemePreset.SOLARIZED,
             title = "Solarized",
-            subtitle = "Solarized Dark Cyan",
+            subtitle = InterfaceText.SOLARIZED.inLanguage(s.localeCode),
             iconBg = Color(0xFF0A3A46),
             iconTint = Color(0xFF268BD2),
             dots = listOf(Color(0xFF002B36), Color(0xFF0A3A46), Color(0xFF268BD2))
@@ -276,6 +276,8 @@ fun ThemeSettingsScreen(
         Spacer(Modifier.height(20.dp))
 
         DashboardLayoutPicker(state, onUpdate)
+        Spacer(Modifier.height(20.dp))
+        DockSizeSetting(state, onUpdate)
         Spacer(Modifier.height(20.dp))
         ServerLayoutPicker(state, onUpdate)
 

@@ -26,8 +26,20 @@ internal object ImportClassifier {
     fun classify(raw: String?): ImportClassification {
         val text = raw?.trim().orEmpty()
         if (text.isEmpty()) return ImportClassification.Rejected("Clipboard is empty")
+        // An encrypted file includes Base64 overhead and can legitimately exceed
+        // the clipboard limit. Keep it within the same bound as file import.
+        if (text.length <= LinkParser.MAX_IMPORT_BYTES &&
+            com.lumen.core.config.crypto.ProtectedProfileCodec.isEnvelope(text)) {
+            return if (text.toByteArray(Charsets.UTF_8).size <= LinkParser.MAX_IMPORT_BYTES)
+                ImportClassification.Ready(ImportKind.CONFIG, text)
+            else ImportClassification.Rejected("Profile exceeds the 8 MiB import limit")
+        }
         if (text.length > MAX_CLIPBOARD_CHARS) {
             return ImportClassification.Rejected("Import data is larger than 1 MiB")
+        }
+
+        com.lumen.core.config.parser.SubscriptionLink.unwrap(text)?.let {
+            return ImportClassification.Ready(ImportKind.SUBSCRIPTION, it)
         }
 
         // A happ crypt link usually wraps a subscription URL; the parser rejects those,

@@ -5,6 +5,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Collections
+import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -36,13 +38,23 @@ class ProcessEngine(
 
     @Volatile
     private var fatalLine: String = ""
+    @Volatile
+    private var endpointFailureLine: String = ""
+    @Volatile
+    private var openVpnReadyTags: Set<String> = emptySet()
+    private val readinessLock = Any()
     private val recentLines = ArrayDeque<String>()
 
     override val isRunning: Boolean
         get() = process?.isAlive == true
 
     override val lastFatalLine: String
-        get() = fatalLine.ifEmpty { synchronized(recentLines) { recentLines.lastOrNull().orEmpty() } }
+        get() = fatalLine.ifEmpty { endpointFailureLine }.ifEmpty {
+            synchronized(recentLines) { recentLines.lastOrNull().orEmpty() }
+        }
+
+    override val endpointFailure: String get() = endpointFailureLine
+    override val readyOpenVpnTags: Set<String> get() = openVpnReadyTags
 
     override suspend fun start(configJson: String, tunFd: Int?) = withContext(Dispatchers.IO) {
         require(configJson.isNotBlank()) { "Engine configuration cannot be empty" }
@@ -67,8 +79,11 @@ class ProcessEngine(
         onLog("${type.name}: configuration is valid; starting core")
 
         fatalLine = ""
+        endpointFailureLine = ""
+        synchronized(readinessLock) { process = null; openVpnReadyTags = emptySet() }
         synchronized(recentLines) { recentLines.clear() }
 
+        val readinessToken = UUID.randomUUID().toString()
         val started = ProcessBuilder(
             binary.absolutePath,
             "run",
@@ -77,10 +92,12 @@ class ProcessEngine(
         )
             .directory(workDir)
             .redirectErrorStream(true)
+            .apply { if (type == EngineType.SINGBOX) environment()["LUMEN_OPENVPN_READY_TOKEN"] = readinessToken }
             .start()
 
-        process = started
+        synchronized(readinessLock) { process = started }
         liveProcesses.add(started)
+        processTypes[started] = type
         Thread({
             val readerFailure = runCatching {
                 started.inputStream.bufferedReader().useLines { lines ->
@@ -88,6 +105,14 @@ class ProcessEngine(
                         // The core colours its own output even through a pipe; the
                         // escapes only make the log and the reported reason unreadable.
                         val trimmed = stripAnsi(line).trim()
+                        if (trimmed.startsWith(OPENVPN_READY_PREFIX)) {
+                            synchronized(readinessLock) {
+                                if (process === started) parseOpenVpnReadyTag(trimmed, readinessToken)?.let {
+                                    openVpnReadyTags = openVpnReadyTags + it
+                                }
+                            }
+                            return@forEach // Private IPC, never a user-facing log entry.
+                        }
                         // Keep all operational core output. Outbound VLESS/Reality
                         // lines contain the handshake and dial errors needed to diagnose
                         // real connection failures; only verbose DEBUG is omitted.
@@ -111,8 +136,15 @@ class ProcessEngine(
                 return@Thread
             }
             liveProcesses.remove(started)
-            if (process === started) {
-                process = null
+            processTypes.remove(started)
+            val unexpectedExit = synchronized(readinessLock) {
+                if (process === started) {
+                    process = null
+                    openVpnReadyTags = emptySet()
+                    true
+                } else false
+            }
+            if (unexpectedExit) {
                 onLog("${type.name}: core exited unexpectedly with code $exitCode")
                 onUnexpectedExit(exitCode)
             }
@@ -129,6 +161,7 @@ class ProcessEngine(
             val code = runCatching { started.exitValue() }.getOrDefault(-1)
             process = null
             liveProcesses.remove(started)
+            processTypes.remove(started)
             // Let the reader thread drain the now closed pipe, otherwise the reason
             // is lost and the caller can only report a bare exit code.
             delay(STARTUP_DRAIN_MS)
@@ -146,6 +179,7 @@ class ProcessEngine(
     }
 
     private fun record(line: String) {
+        if (isTerminalOpenVpnFailure(line)) endpointFailureLine = line
         if (fatalLine.isEmpty() &&
             (line.contains("FATAL", ignoreCase = true) || line.contains("panic", ignoreCase = true))
         ) {
@@ -159,7 +193,8 @@ class ProcessEngine(
 
     private fun validateConfig(configFile: File) {
         val validationOutput = File(workDir, "${type.name.lowercase()}-validation.log")
-        val command = listOf(binary.absolutePath, "check", "-c", configFile.absolutePath)
+        val command = if (type == EngineType.XRAY) listOf(binary.absolutePath, "run", "-test", "-c", configFile.absolutePath)
+        else listOf(binary.absolutePath, "check", "-c", configFile.absolutePath)
         val validator = ProcessBuilder(command)
             .directory(workDir)
             .redirectErrorStream(true)
@@ -183,8 +218,9 @@ class ProcessEngine(
     }
 
     override suspend fun stop(): Unit = withContext(Dispatchers.IO) {
-        val runningProcess = process
-        process = null
+        val runningProcess = synchronized(readinessLock) {
+            process.also { process = null; openVpnReadyTags = emptySet() }
+        }
         if (runningProcess != null && !terminate(runningProcess)) {
             onLog("${type.name}: core did not exit within $STOP_TIMEOUT_MS ms")
         }
@@ -199,9 +235,10 @@ class ProcessEngine(
      */
     private fun reapLeftoverCores() {
         liveProcesses.toList().forEach { leftover ->
-            if (leftover === process) return@forEach
+            if (leftover === process || processTypes[leftover] != type) return@forEach
             if (!leftover.isAlive) {
                 liveProcesses.remove(leftover)
+                processTypes.remove(leftover)
                 return@forEach
             }
             onLog("${type.name}: a previous core is still running; stopping it first")
@@ -219,13 +256,25 @@ class ProcessEngine(
             }
         }
         val gone = !target.isAlive
-        if (gone) liveProcesses.remove(target)
+        if (gone) { liveProcesses.remove(target); processTypes.remove(target) }
         return gone
     }
 
     override fun getTrafficStats(): TrafficStats = TrafficStats()
 
     companion object {
+        private const val OPENVPN_READY_PREFIX = "LUMEN_OPENVPN_READY "
+
+        internal fun parseOpenVpnReadyTag(line: String, token: String): String? {
+            if (!line.startsWith(OPENVPN_READY_PREFIX) || token.isEmpty()) return null
+            val fields = line.removePrefix(OPENVPN_READY_PREFIX).split(' ')
+            if (fields.size != 2 || fields[0] != token || fields[1].length !in 1..4096) return null
+            return runCatching {
+                val tag = String(Base64.getUrlDecoder().decode(fields[1]), Charsets.UTF_8)
+                tag.takeIf { it.isNotBlank() && it.none(Char::isISOControl) &&
+                    Base64.getUrlEncoder().withoutPadding().encodeToString(it.toByteArray(Charsets.UTF_8)) == fields[1] }
+            }.getOrNull()
+        }
         private const val MAX_RECENT_LINES = 40
         private const val STARTUP_GRACE_MS = 300L
         private const val STARTUP_DRAIN_MS = 150L
@@ -239,10 +288,15 @@ class ProcessEngine(
 
         // Every core this app process spawned and has not reaped yet. The VPN service
         // is destroyed and recreated on a reconnect, so this cannot live on an instance.
+        private val processTypes = ConcurrentHashMap<Process, EngineType>()
         private val liveProcesses: MutableSet<Process> =
             Collections.newSetFromMap(ConcurrentHashMap<Process, Boolean>())
 
         fun stripAnsi(line: String): String = ANSI_ESCAPE.replace(line, "")
+
+        internal fun isTerminalOpenVpnFailure(line: String): Boolean =
+            line.contains("openvpn-client[", ignoreCase = true) &&
+                line.contains("client terminated:", ignoreCase = true)
 
         /**
          * True when the core refused to bind its local inbound. Both wordings mean

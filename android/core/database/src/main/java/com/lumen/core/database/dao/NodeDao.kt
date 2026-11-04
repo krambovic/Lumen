@@ -35,6 +35,9 @@ interface NodeDao {
     @Update
     suspend fun updateNode(node: NodeEntity)
 
+    @Query("UPDATE nodes SET link = :link, outboundJson = :outboundJson WHERE id = :id")
+    suspend fun updateConfiguration(id: String, link: String, outboundJson: String): Int
+
     @Query("UPDATE nodes SET pingMs = :pingMs WHERE id = :id")
     suspend fun updatePing(id: String, pingMs: Int?)
 

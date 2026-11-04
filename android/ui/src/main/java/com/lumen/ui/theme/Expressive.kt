@@ -39,16 +39,24 @@ fun expressivePalette(): ExpressivePalette {
     val scheme = MaterialTheme.colorScheme
     val brand = if (scheme.background.luminance() > .5f) LightExpressive else DarkExpressive
     if (LocalExpressivePreset.current in setOf(ThemePreset.LIGHT, ThemePreset.DARK)) {
-        return if (scheme.primary == LumenLightAccent || scheme.primary == LumenDarkAccent) brand
+        return (if (scheme.primary == LumenLightAccent || scheme.primary == LumenDarkAccent) brand
         else brand.copy(stage = scheme.primary, onStage = scheme.onPrimary,
             lavender = scheme.primaryContainer, onLavender = scheme.onPrimaryContainer,
             blue = scheme.secondaryContainer, onBlue = scheme.onSecondaryContainer,
-            coral = scheme.tertiaryContainer, onCoral = scheme.onTertiaryContainer)
+            coral = scheme.tertiaryContainer, onCoral = scheme.onTertiaryContainer)).readable()
     }
-    return if (scheme.primary == LumenLightAccent || scheme.primary == LumenDarkAccent) brand
+    return (if (scheme.primary == LumenLightAccent || scheme.primary == LumenDarkAccent) brand
     else brand.copy(stage = scheme.primary.copy(alpha = .28f).compositeOver(scheme.background), onStage = scheme.onSurface,
         lime = scheme.secondary, onLime = scheme.onSecondary,
         lavender = scheme.primaryContainer, onLavender = scheme.onPrimaryContainer,
         blue = scheme.secondaryContainer, onBlue = scheme.onSecondaryContainer,
-        coral = scheme.tertiaryContainer, onCoral = scheme.onTertiaryContainer)
+        coral = scheme.tertiaryContainer, onCoral = scheme.onTertiaryContainer)).readable()
 }
+
+private fun ExpressivePalette.readable() = copy(
+    onStage = readableForeground(stage, onStage),
+    onLime = readableForeground(lime, onLime),
+    onCoral = readableForeground(coral, onCoral),
+    onLavender = readableForeground(lavender, onLavender),
+    onBlue = readableForeground(blue, onBlue)
+)

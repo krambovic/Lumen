@@ -44,11 +44,13 @@ internal fun ServerFilterBar(
         Box {
             OutlinedButton({ protocolMenu = true }, contentPadding = PaddingValues(horizontal = 10.dp),
                 shape = com.lumen.ui.components.selectionShape(protocolMenu || protocol.isNotBlank())) {
-                Text(protocol.ifBlank { s.protocolField }, maxLines = 1)
+                Text(if (protocol.equals("locked", true)) InterfaceText.PROTECTED.inLanguage(s.localeCode)
+                    else protocol.ifBlank { s.protocolField }, maxLines = 1)
                 Icon(Icons.Default.KeyboardArrowDown, null, Modifier.size(18.dp))
             }
             LumenMenu(protocolMenu, { protocolMenu = false }) {
-                (listOf("" to s.allProtocols) + protocols.map { it to it.uppercase() }).forEach { (id, label) ->
+                (listOf("" to s.allProtocols) + protocols.map { it to if (it.equals("locked", true))
+                    InterfaceText.PROTECTED.inLanguage(s.localeCode) else it.uppercase() }).forEach { (id, label) ->
                     DropdownMenuItem(text = { Text(label) }, trailingIcon = { if (protocol == id) Icon(Icons.Default.Check, null) },
                         onClick = { onProtocol(id); protocolMenu = false })
                 }

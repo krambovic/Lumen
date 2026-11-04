@@ -33,7 +33,8 @@ import com.lumen.ui.theme.LumenMono
 internal fun DashboardServerTable(
     nodes: List<NodeUiModel>, groupTitle: String, pinging: Set<String>, onSelect: (NodeUiModel) -> Unit,
     onOpenServers: () -> Unit, showSpeed: Boolean, connected: Boolean, speedValues: () -> DashboardSpeeds,
-    onPingAll: () -> Unit, onPingNode: (NodeUiModel) -> Unit, onStopPing: () -> Unit
+    onPingAll: () -> Unit, onPingNode: (NodeUiModel) -> Unit, onStopPing: () -> Unit,
+    connectionLatency: @Composable () -> Unit = {}
 ) {
     val s = LocalStrings.current
     var query by remember { mutableStateOf("") }
@@ -57,6 +58,7 @@ internal fun DashboardServerTable(
                 Icon(Icons.Default.Layers, null, Modifier.size(30.dp), tint = art.onStage)
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = art.onStage)
             }
+            connectionLatency()
             if (showSpeed) DashboardTableSpeedCards(connected, speedValues)
             ExpressiveTextField(query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
                 placeholder = { Text(s.searchServers) }, leadingIcon = { Icon(Icons.Default.Search, null) })
@@ -72,7 +74,7 @@ internal fun DashboardServerTable(
         }
         items(visible, key = { it.id }, contentType = { "server" }) { node ->
             Row(Modifier.fillMaxWidth().animateItem(fadeInSpec = null, fadeOutSpec = null).padding(bottom = 3.dp)
-                .semantics { contentDescription = node.name + ". " + node.displayProtocol }
+                .semantics { contentDescription = node.name + ". " + node.localizedProtocol(s) }
                 .clip(com.lumen.ui.components.selectionShape(node.isSelected, 8.dp, 18.dp))
                 .background(if (node.isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow)
                 .clickable { onSelect(node) }.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -81,7 +83,7 @@ internal fun DashboardServerTable(
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(node.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(node.displayProtocol, style = MaterialTheme.typography.labelSmall,
+                    Text(node.localizedProtocol(s), style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 DashboardNodePing(node, node.id in pinging) { onPingNode(node) }

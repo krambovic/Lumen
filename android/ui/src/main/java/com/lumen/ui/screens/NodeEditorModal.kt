@@ -207,6 +207,7 @@ private fun Field(
     keyboardType: KeyboardType = KeyboardType.Text,
     singleLine: Boolean = true,
     minLines: Int = 1,
+    secret: Boolean = false,
     onChange: (String) -> Unit
 ) {
     ExpressiveTextField(
@@ -216,7 +217,9 @@ private fun Field(
         label = { Text(label) },
         singleLine = singleLine,
         minLines = minLines,
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        keyboardOptions = KeyboardOptions(keyboardType = if (secret) KeyboardType.Password else keyboardType),
+        visualTransformation = if (secret) androidx.compose.ui.text.input.PasswordVisualTransformation()
+            else androidx.compose.ui.text.input.VisualTransformation.None,
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
@@ -589,17 +592,17 @@ private fun WireGuardFields(
             )
         }
         SectionHeader("AWG 3.x")
-        Field("HeaderProtectionKey", draft.headerProtectionKey) {
+        Field(InterfaceText.HEADER_KEY.inLanguage(s.localeCode), draft.headerProtectionKey) {
             onChange(draft.copy(headerProtectionKey = it))
         }
-        Field("ContentPaddingAddition", draft.contentPaddingAddition) {
+        Field(InterfaceText.PADDING.inLanguage(s.localeCode), draft.contentPaddingAddition) {
             onChange(draft.copy(contentPaddingAddition = it))
         }
-        Field("RekeyAfterTime", draft.rekeyAfterTime) { onChange(draft.copy(rekeyAfterTime = it)) }
-        Field("RekeyTimeout", draft.rekeyTimeout) { onChange(draft.copy(rekeyTimeout = it)) }
-        Field("RejectAfterTime", draft.rejectAfterTime) { onChange(draft.copy(rejectAfterTime = it)) }
-        Field("KeepaliveTimeout", draft.keepaliveTimeout) { onChange(draft.copy(keepaliveTimeout = it)) }
-        Field("MaxHandshakeAttempts", draft.maxHandshakeAttempts) {
+        Field(InterfaceText.REKEY_AFTER.inLanguage(s.localeCode), draft.rekeyAfterTime) { onChange(draft.copy(rekeyAfterTime = it)) }
+        Field(InterfaceText.REKEY_TIMEOUT.inLanguage(s.localeCode), draft.rekeyTimeout) { onChange(draft.copy(rekeyTimeout = it)) }
+        Field(InterfaceText.REJECT_AFTER.inLanguage(s.localeCode), draft.rejectAfterTime) { onChange(draft.copy(rejectAfterTime = it)) }
+        Field(InterfaceText.KEEPALIVE_TIMEOUT.inLanguage(s.localeCode), draft.keepaliveTimeout) { onChange(draft.copy(keepaliveTimeout = it)) }
+        Field(InterfaceText.HANDSHAKE_ATTEMPTS.inLanguage(s.localeCode), draft.maxHandshakeAttempts) {
             onChange(draft.copy(maxHandshakeAttempts = it))
         }
     }
@@ -614,19 +617,19 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
 
     ServerPortRow(draft, onChange)
     LumenDropdown(
-        label = "Protocol",
+        label = s.protocolField,
         options = OPENVPN_PROTOCOLS,
         selected = draft.ovpnProto.ifBlank { "udp" },
         onSelected = { onChange(draft.copy(ovpnProto = it)) }
     )
     Spacer(Modifier.height(4.dp))
-    Field("Additional remotes (host port per line)", draft.ovpnExtraRemotes, singleLine = false, minLines = 2) {
+    Field(InterfaceText.REMOTES.inLanguage(s.localeCode), draft.ovpnExtraRemotes, singleLine = false, minLines = 2) {
         onChange(draft.copy(ovpnExtraRemotes = it))
     }
 
-    SectionHeader("Encryption")
+    SectionHeader(InterfaceText.ENCRYPTION.inLanguage(s.localeCode))
     LumenDropdown(
-        label = "Cipher",
+        label = InterfaceText.CIPHER.inLanguage(s.localeCode),
         options = OPENVPN_CIPHERS,
         selected = draft.ovpnCipher,
         onSelected = { onChange(draft.copy(ovpnCipher = it)) },
@@ -634,7 +637,7 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
     )
     Spacer(Modifier.height(4.dp))
     LumenDropdown(
-        label = "Auth digest",
+        label = InterfaceText.DIGEST.inLanguage(s.localeCode),
         options = OPENVPN_AUTH_DIGESTS,
         selected = draft.ovpnAuth,
         onSelected = { onChange(draft.copy(ovpnAuth = it)) },
@@ -642,10 +645,10 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
     )
     Spacer(Modifier.height(4.dp))
 
-    SectionHeader("Credentials")
+    SectionHeader(InterfaceText.CREDENTIALS.inLanguage(s.localeCode))
     val credentialsRequired = openVpnRequiresCredentials(draft)
-    Field("Username", draft.ovpnUsername) { onChange(draft.copy(ovpnUsername = it)) }
-    Field("Password", draft.ovpnPassword) { onChange(draft.copy(ovpnPassword = it)) }
+    Field(s.socks5Login, draft.ovpnUsername) { onChange(draft.copy(ovpnUsername = it)) }
+    Field(s.socks5PasswordLabel, draft.ovpnPassword, secret = true) { onChange(draft.copy(ovpnPassword = it)) }
     if (credentialsRequired && openVpnCredentialsMissing(draft)) {
         EditorWarning(s.ovpnCredentialsRequired)
     } else if (!credentialsRequired) {
@@ -656,45 +659,50 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
         )
     }
 
-    SectionHeader("Certificates")
-    Field("CA certificate", draft.ovpnCa, singleLine = false, minLines = 4) { onChange(draft.copy(ovpnCa = it)) }
-    Field("Client certificate", draft.ovpnCert, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnCert = it)) }
-    Field("Private key", draft.ovpnKey, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnKey = it)) }
+    SectionHeader(InterfaceText.CERTIFICATES.inLanguage(s.localeCode))
+    Field(InterfaceText.CA.inLanguage(s.localeCode), draft.ovpnCa, singleLine = false, minLines = 4) { onChange(draft.copy(ovpnCa = it)) }
+    Field(InterfaceText.CLIENT_CERT.inLanguage(s.localeCode), draft.ovpnCert, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnCert = it)) }
+    Field(s.privateKeyLabel, draft.ovpnKey, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnKey = it)) }
     // Encrypted private keys ("Proc-Type: 4,ENCRYPTED" / PKCS#8 ENCRYPTED) cannot be
     // used without their passphrase; OpenVPN would prompt for it interactively.
-    Field(s.ovpnKeyPasswordLabel, draft.ovpnKeyPassword) { onChange(draft.copy(ovpnKeyPassword = it)) }
+    Field(s.ovpnKeyPasswordLabel, draft.ovpnKeyPassword, secret = true) { onChange(draft.copy(ovpnKeyPassword = it)) }
     if (openVpnKeyPasswordMissing(draft)) {
         EditorWarning(s.ovpnKeyPasswordRequired)
     }
-    Field("tls-crypt key", draft.ovpnTlsCrypt, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnTlsCrypt = it)) }
+    Field(InterfaceText.TLS_CRYPT.inLanguage(s.localeCode), draft.ovpnTlsCrypt, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnTlsCrypt = it)) }
     ToggleField("tls-crypt-v2", draft.ovpnTlsCryptV2) { onChange(draft.copy(ovpnTlsCryptV2 = it)) }
-    Field("tls-auth key", draft.ovpnTlsAuth, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnTlsAuth = it)) }
+    Field(InterfaceText.TLS_AUTH.inLanguage(s.localeCode), draft.ovpnTlsAuth, singleLine = false, minLines = 3) { onChange(draft.copy(ovpnTlsAuth = it)) }
     LumenDropdown(
-        label = "Key direction",
+        label = InterfaceText.KEY_DIRECTION.inLanguage(s.localeCode),
         options = OPENVPN_KEY_DIRECTIONS,
         selected = draft.ovpnKeyDirection,
         onSelected = { onChange(draft.copy(ovpnKeyDirection = it)) },
         optionLabel = { it.ifEmpty { s.noneOption } }
     )
     Spacer(Modifier.height(4.dp))
-    Field("TLS cipher suites", draft.ovpnTlsCipherSuites) { onChange(draft.copy(ovpnTlsCipherSuites = it)) }
-    Field("verify-x509-name", draft.ovpnVerifyX509Name) { onChange(draft.copy(ovpnVerifyX509Name = it)) }
+    Field(InterfaceText.TLS_SUITES.inLanguage(s.localeCode), draft.ovpnTlsCipherSuites) { onChange(draft.copy(ovpnTlsCipherSuites = it)) }
+    Field(InterfaceText.X509_NAME.inLanguage(s.localeCode), draft.ovpnVerifyX509Name) { onChange(draft.copy(ovpnVerifyX509Name = it)) }
     LumenDropdown(
-        label = "verify-x509-name mode",
+        label = InterfaceText.X509_MODE.inLanguage(s.localeCode),
         options = OPENVPN_X509_MODES,
         selected = draft.ovpnVerifyX509Mode,
         onSelected = { onChange(draft.copy(ovpnVerifyX509Mode = it)) },
-        optionLabel = { it.ifEmpty { s.noneOption } }
+        optionLabel = { when (it) {
+            "name" -> InterfaceText.X509_EXACT.inLanguage(s.localeCode)
+            "name-prefix" -> InterfaceText.X509_PREFIX.inLanguage(s.localeCode)
+            "name-suffix" -> InterfaceText.X509_SUFFIX.inLanguage(s.localeCode)
+            else -> s.noneOption
+        } }
     )
     Spacer(Modifier.height(4.dp))
 
-    SectionHeader("Connection")
+    SectionHeader(s.connection)
     Row(Modifier.fillMaxWidth()) {
         ExpressiveTextField(
             shape = MaterialTheme.shapes.large,
             value = draft.ovpnReconnectDelay,
             onValueChange = { onChange(draft.copy(ovpnReconnectDelay = it)) },
-            label = { Text("Reconnect, s") },
+            label = { Text(InterfaceText.RECONNECT.inLanguage(s.localeCode)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.weight(1f).padding(vertical = 4.dp)
@@ -704,7 +712,7 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
             shape = MaterialTheme.shapes.large,
             value = draft.ovpnPingInterval,
             onValueChange = { onChange(draft.copy(ovpnPingInterval = it)) },
-            label = { Text("Ping, s") },
+            label = { Text(InterfaceText.PING_INTERVAL.inLanguage(s.localeCode)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.weight(1f).padding(vertical = 4.dp)
@@ -714,13 +722,13 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
             shape = MaterialTheme.shapes.large,
             value = draft.ovpnPingRestart,
             onValueChange = { onChange(draft.copy(ovpnPingRestart = it)) },
-            label = { Text("Ping restart, s") },
+            label = { Text(InterfaceText.PING_RESTART.inLanguage(s.localeCode)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.weight(1f).padding(vertical = 4.dp)
         )
     }
-    Field("DNS servers (one per line)", draft.ovpnDns, singleLine = false, minLines = 2) {
+    Field(InterfaceText.DNS_SERVERS.inLanguage(s.localeCode), draft.ovpnDns, singleLine = false, minLines = 2) {
         onChange(draft.copy(ovpnDns = it))
     }
 
@@ -730,7 +738,7 @@ private fun OpenVpnFields(draft: NodeDraft, onChange: (NodeDraft) -> Unit) {
         options = OPENVPN_PROXY_TYPES,
         selected = draft.ovpnProxyType,
         onSelected = { onChange(draft.copy(ovpnProxyType = it)) },
-        optionLabel = { openVpnProxyLabel(it) }
+        optionLabel = { if (it.isEmpty()) s.noneOption else openVpnProxyLabel(it) }
     )
     Spacer(Modifier.height(4.dp))
     if (draft.ovpnProxyType.isNotBlank()) {

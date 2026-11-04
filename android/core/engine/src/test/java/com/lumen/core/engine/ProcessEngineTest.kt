@@ -7,6 +7,23 @@ import org.junit.Test
 
 class ProcessEngineTest {
 
+    @Test fun `native readiness only accepts the current process token and exact tag framing`() {
+        assertEquals("proxy", ProcessEngine.parseOpenVpnReadyTag("LUMEN_OPENVPN_READY session cHJveHk", "session"))
+        assertEquals(null, ProcessEngine.parseOpenVpnReadyTag("LUMEN_OPENVPN_READY old cHJveHk", "session"))
+        assertEquals(null, ProcessEngine.parseOpenVpnReadyTag("ERROR LUMEN_OPENVPN_READY session cHJveHk", "session"))
+        assertEquals(null, ProcessEngine.parseOpenVpnReadyTag("LUMEN_OPENVPN_READY session !!!", "session"))
+        assertEquals(null, ProcessEngine.parseOpenVpnReadyTag("LUMEN_OPENVPN_READY session cHJveHk extra", "session"))
+        assertEquals(null, ProcessEngine.parseOpenVpnReadyTag("LUMEN_OPENVPN_READY session Cg", "session"))
+    }
+
+    @Test fun `endpoint readiness noise does not replace a terminal OpenVPN error`() {
+        assertTrue(ProcessEngine.isTerminalOpenVpnFailure(
+            "ERROR endpoint/openvpn-client[proxy]: client terminated: authentication failed"))
+        assertFalse(ProcessEngine.isTerminalOpenVpnFailure(
+            "ERROR connection: outbound/openvpn-client[proxy]: endpoint is not ready yet"))
+        assertFalse(ProcessEngine.isTerminalOpenVpnFailure("ERROR connection: dial timeout"))
+    }
+
     /** Verbatim from the core, minus the colour escapes it wraps FATAL in. */
     private val bindConflictWindows =
         "FATAL[0000] start service: start inbound/socks[socks-in]: " +

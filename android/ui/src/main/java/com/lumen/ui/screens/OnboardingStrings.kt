@@ -66,5 +66,5 @@ internal enum class WelcomeText(private val ru: String, private val en: String, 
     SKIP("Пропустить", "Skip", "跳过", "رد کردن"),
     OPEN("Открыть Lumen", "Open Lumen", "打开 Lumen", "باز کردن Lumen");
 
-    fun inLanguage(language: String): String = when (language) { "ru" -> ru; "zh" -> zh; "fa" -> fa; else -> en }
+    fun inLanguage(language: String): String = when (normalizedLanguageCode(language)) { "ru" -> ru; "zh" -> zh; "fa" -> fa; else -> en }
 }

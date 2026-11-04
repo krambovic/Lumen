@@ -1,0 +1,55 @@
+diff --git a/protocol/openvpn/client.go b/protocol/openvpn/client.go
+index a0e585e..b29e611 100644
+--- a/protocol/openvpn/client.go
++++ b/protocol/openvpn/client.go
+@@ -636,6 +636,9 @@ func (c *ClientEndpoint) Start(stage adapter.StartStage, scope *adapter.Scope) e
+ 		loopGroup.Go(func() {
+ 			c.watchChallenges(scope.Context())
+ 		})
++		loopGroup.Go(func() {
++			c.reportLumenReady(scope.Context())
++		})
+ 	}
+ 	return nil
+ }
+diff --git a/protocol/openvpn/lumen_ready.go b/protocol/openvpn/lumen_ready.go
+new file mode 100644
+--- /dev/null
++++ b/protocol/openvpn/lumen_ready.go
+@@ -0,0 +1,36 @@
++package openvpn
++
++import (
++	"context"
++	"encoding/base64"
++	"fmt"
++	"os"
++
++	"github.com/sagernet/sing-box/adapter"
++)
++
++// A private, per-process signal lets the Android host distinguish an authenticated
++// data channel from a bound SOCKS listener without contacting a third-party site.
++// WaitReady and StatusUpdated are event driven; no background polling is added.
++func (c *ClientEndpoint) reportLumenReady(ctx context.Context) {
++	token := os.Getenv("LUMEN_OPENVPN_READY_TOKEN")
++	if token == "" || c.client.WaitReady(ctx) != nil {
++		return
++	}
++	for {
++		updated := c.StatusUpdated()
++		status := c.OpenVPNStatus()
++		if status.State == adapter.OpenVPNStateConnected {
++			fmt.Fprintf(os.Stderr, "LUMEN_OPENVPN_READY %s %s\n", token, base64.RawURLEncoding.EncodeToString([]byte(c.Tag())))
++			return
++		}
++		if status.State == adapter.OpenVPNStateError {
++			return
++		}
++		select {
++		case <-ctx.Done():
++			return
++		case <-updated:
++		}
++	}
++}

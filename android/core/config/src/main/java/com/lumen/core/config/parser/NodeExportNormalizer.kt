@@ -13,6 +13,15 @@ object NodeExportNormalizer {
 
     fun export(node: ParsedNode): String {
         val raw = node.link.trim()
+        require(!node.isProtected && !raw.startsWith(com.lumen.core.config.crypto.ProtectedProfileCodec.PREFIX)) {
+            "Protected profiles cannot be exported"
+        }
+        if (com.lumen.core.config.builder.HybridConfigBuilder.needsXray(node)) {
+            // Comparing only sing-box's projection would silently discard Xray extensions.
+            val restored = runCatching { LinkParser.parseSingle(raw) }.getOrNull()
+            if (restored != null && canonical(restored.outbound) == canonical(node.outbound)) return raw
+            return JSONObject(node.outbound).put("tag", node.name).toString()
+        }
         if (node.scheme.lowercase() in setOf("auto", "singbox_config", "xray_config", "openvpn") ||
             node.outbound.containsKey("_singbox_dependencies")) return compact(raw)
         return runCatching {

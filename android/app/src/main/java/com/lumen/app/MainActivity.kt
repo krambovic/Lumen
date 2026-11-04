@@ -96,10 +96,12 @@ class MainActivity : ComponentActivity() {
             // both times, or the icons flash white over the light theme.
             systemBarsDark?.let(::applySystemBarStyle)
             if (launchBackground != 0) provider.view.setBackgroundColor(launchBackground)
-            (provider.iconView as? android.widget.ImageView)?.drawable?.setTint(launchInk)
-            val elapsed = android.os.SystemClock.uptimeMillis() - provider.iconAnimationStartMillis
+            // Android can hand over a splash without an icon (notably on warm API 37
+            // launches). The compat accessor asserts non-null before our safe cast.
+            (runCatching { provider.iconView }.getOrNull() as? android.widget.ImageView)?.drawable?.setTint(launchInk)
+            val elapsed = android.os.SystemClock.uptimeMillis() - runCatching { provider.iconAnimationStartMillis }.getOrDefault(0L)
             val remaining = if (android.animation.ValueAnimator.areAnimatorsEnabled())
-                (provider.iconAnimationDurationMillis - elapsed).coerceIn(0L, 620L) else 0L
+                (runCatching { provider.iconAnimationDurationMillis }.getOrDefault(0L) - elapsed).coerceIn(0L, 620L) else 0L
             provider.view.animate().alpha(0f).setStartDelay(remaining).setDuration(180L)
                 .withEndAction {
                     provider.remove()
@@ -174,7 +176,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        LumenVpnService.setUiVisible(true)
         viewModel.checkForAndroidUpdateIfDue()
+    }
+
+    override fun onStop() {
+        LumenVpnService.setUiVisible(false)
+        super.onStop()
     }
 
     override fun onResume() {
@@ -282,7 +290,8 @@ class MainActivity : ComponentActivity() {
         }
         lifecycleScope.launch {
             val intent = viewModel.buildStartIntent(this@MainActivity) ?: run {
-                com.lumen.ui.screens.showLumenNotice("No valid server configuration found.")
+                if (viewModel.openVpnCredentialRequest.value == null && viewModel.connectError.value == null)
+                    com.lumen.ui.screens.showLumenNotice("No valid server configuration found.")
                 return@launch
             }
             // A very large AUTO pool can parcel past the Binder limit; the config is

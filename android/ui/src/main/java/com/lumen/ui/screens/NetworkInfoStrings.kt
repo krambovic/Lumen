@@ -33,7 +33,7 @@ enum class NetworkInfoText(private val en: String, private val ru: String, priva
     SOURCE("Data source", "Источник данных", "منبع داده", "数据来源"),
     DETAILS("Network details", "Данные сети", "جزئیات شبکه", "网络详情");
 
-    fun inLanguage(language: String): String = when (language.lowercase().substringBefore('-')) {
+    fun inLanguage(language: String): String = when (normalizedLanguageCode(language)) {
         "ru" -> ru; "fa" -> fa; "zh" -> zh; else -> en
     }
 }

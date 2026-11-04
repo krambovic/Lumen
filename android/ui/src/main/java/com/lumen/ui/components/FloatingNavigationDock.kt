@@ -20,7 +20,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import com.lumen.ui.theme.LocalLumenColors
 
 data class DockItem(val id: String, val label: String, val icon: ImageVector)
@@ -30,12 +32,20 @@ data class DockItem(val id: String, val label: String, val icon: ImageVector)
 fun FloatingNavigationDock(
     items: List<DockItem>, activeId: String, visible: Boolean, onSelect: (String) -> Unit,
     modifier: Modifier = Modifier, visibilityProgress: (() -> Float)? = null,
-    trailingAction: (@Composable () -> Unit)? = null
+    trailingAction: (@Composable () -> Unit)? = null, scalePercent: Int = 100
 ) {
     val progress = if (visibilityProgress == null) animateFloatAsState(if (visible) 1f else 0f,
         spring(dampingRatio = 1f, stiffness = 550f), label = "dock_visibility") else null
+    val dockSize = DockSize.fromPercent(scalePercent)
+    val tabHeight = (dockSize.height - 8).dp
+    BoxWithConstraints(modifier) {
+    val compact = trailingAction != null
+    val padding = if (compact) 10.dp else 14.dp
+    val baseWidth = maxOf(48.dp, dockSize.iconSize.dp + padding * 2)
+    val actionWidth = if (compact) 61.dp else 0.dp
+    val labelWidth = (maxWidth - 8.dp - baseWidth * items.size - actionWidth).coerceAtLeast(0.dp)
     Surface(
-        modifier.graphicsLayer {
+        Modifier.graphicsLayer {
             val fraction = (visibilityProgress?.invoke() ?: progress!!.value).coerceIn(0f, 1f)
             alpha = fraction
             translationY = (1f - fraction) * (size.height + 16.dp.toPx())
@@ -48,7 +58,7 @@ fun FloatingNavigationDock(
         // animation here would remeasure the same content twice with different springs.
         Row(Modifier.selectableGroup().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
             items.forEach { item -> key(item.id) {
-                DockTab(item, item.id == activeId, visible, compact = trailingAction != null) { onSelect(item.id) }
+                DockTab(item, item.id == activeId, visible, tabHeight, dockSize.iconSize, labelWidth, compact) { onSelect(item.id) }
             } }
             if (trailingAction != null) {
                 Box(Modifier.padding(horizontal = 6.dp).width(1.dp).height(26.dp)
@@ -57,40 +67,41 @@ fun FloatingNavigationDock(
             }
         }
     }
+    }
 }
 
 @Composable
-private fun DockTab(item: DockItem, active: Boolean, enabled: Boolean, compact: Boolean = false, onClick: () -> Unit) {
+private fun DockTab(item: DockItem, active: Boolean, enabled: Boolean, tabHeight: Dp, iconSize: Int, labelWidth: Dp, compact: Boolean = false, onClick: () -> Unit) {
     val background = animateColorAsState(if (active) MaterialTheme.colorScheme.primary else Color.Transparent,
         tween(180), label = "dock_tab_background")
     val foreground = animateColorAsState(if (active) MaterialTheme.colorScheme.onPrimary else LocalLumenColors.current.muted,
         tween(180), label = "dock_tab_foreground")
     val scale = animateFloatAsState(if (active) 1.12f else 1f,
         spring(dampingRatio = .85f, stiffness = 600f), label = "dock_tab_icon")
-    Row(Modifier.height(46.dp).widthIn(min = 48.dp).clip(RoundedCornerShape(26.dp))
+    Row(Modifier.height(tabHeight).widthIn(min = 48.dp).clip(RoundedCornerShape(26.dp))
         .drawBehind { drawRect(background.value) }
         .expressiveControlLabel(item.label)
         .selectable(active, enabled = enabled, role = Role.Tab, onClick = onClick)
         .padding(horizontal = if (compact) 10.dp else 14.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center) {
-        DockIcon(item.icon, item.label, foreground) { scale.value }
+        DockIcon(item.icon, item.label, foreground, iconSize) { scale.value }
         AnimatedVisibility(active,
             enter = expandHorizontally(spring(dampingRatio = 1f, stiffness = 550f)) + fadeIn(tween(140)),
             exit = shrinkHorizontally(spring(dampingRatio = 1f, stiffness = 550f)) + fadeOut(tween(100))) {
-            DockLabel(item.label, foreground)
+            DockLabel(item.label, foreground, labelWidth)
         }
     }
 }
 
 @Composable
-private fun DockIcon(icon: ImageVector, label: String, color: State<Color>, scale: () -> Float) {
-    Icon(icon, label, Modifier.size(20.dp).graphicsLayer { scaleX = scale(); scaleY = scale() }, tint = color.value)
+private fun DockIcon(icon: ImageVector, label: String, color: State<Color>, iconSize: Int, scale: () -> Float) {
+    Icon(icon, label, Modifier.size(iconSize.dp).graphicsLayer { scaleX = scale(); scaleY = scale() }, tint = color.value)
 }
 
 @Composable
-private fun DockLabel(label: String, color: State<Color>) {
-    Text(label, Modifier.padding(start = 7.dp), color = color.value,
-        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+private fun DockLabel(label: String, color: State<Color>, maxWidth: Dp) {
+    Text(label, Modifier.widthIn(max = maxWidth).padding(start = 7.dp), color = color.value,
+        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 /** Hysteresis prevents tiny reversals and end-of-fling noise from restarting the dock animation. */

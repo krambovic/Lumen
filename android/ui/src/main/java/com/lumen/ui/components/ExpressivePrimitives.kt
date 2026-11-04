@@ -109,6 +109,7 @@ fun ExpressiveAction(
     content: Color = MaterialTheme.colorScheme.onPrimary,
     enabled: Boolean = true
 ) {
+    val ink = com.lumen.ui.theme.readableForeground(container, content)
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val round = animateFloatAsState(if (pressed) 18f else 32f,
@@ -121,10 +122,10 @@ fun ExpressiveAction(
         .padding(horizontal = 20.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         if (icon != null) {
-            Icon(icon, null, tint = content, modifier = Modifier.size(22.dp))
+            Icon(icon, null, tint = ink, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(10.dp))
         }
         Text(label, style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold, color = content)
+            fontWeight = FontWeight.Bold, color = ink, modifier = Modifier.weight(1f, fill = false))
     }
 }

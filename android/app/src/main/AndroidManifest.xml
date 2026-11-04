@@ -57,6 +57,11 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="lumen" />
                 <data android:scheme="vless" />
+                <data android:scheme="v2rayng" />
+                <data android:scheme="v2rayn" />
+                <data android:scheme="v2ray" />
+                <data android:scheme="sing-box" />
+                <data android:scheme="singbox" />
                 <data android:scheme="vmess" />
                 <data android:scheme="ss" />
                 <data android:scheme="trojan" />
@@ -85,6 +90,7 @@
                 <data android:pathPattern=".*\\.json" />
                 <data android:pathPattern=".*\\.txt" />
                 <data android:pathPattern=".*\\.wg" />
+                <data android:pathPattern=".*\\.lumen" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -98,6 +104,7 @@
                 <data android:mimeType="application/yaml" />
                 <data android:mimeType="application/json" />
                 <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/vnd.lumen.profile" />
             </intent-filter>
 
             <!-- Shared text / file config import -->
@@ -110,6 +117,7 @@
                 <data android:mimeType="application/yaml" />
                 <data android:mimeType="application/json" />
                 <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/vnd.lumen.profile" />
             </intent-filter>
         </activity>
 

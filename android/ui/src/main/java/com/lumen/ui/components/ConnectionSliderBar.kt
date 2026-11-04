@@ -1,14 +1,8 @@
 package com.lumen.ui.components
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -202,19 +196,17 @@ fun ConnectionSliderBar(
                     dragPx = (dragPx + delta).coerceIn(0f, maxOffsetPx)
                 }
 
-                // Indeterminate wave animation for Connecting
-                val travelingPhase = if (isConnecting) {
-                    val transition = rememberInfiniteTransition(label = "m3_wavy_anim")
-                    transition.animateFloat(
-                        initialValue = 0f,
-                        targetValue = (2 * PI).toFloat(),
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1100, easing = LinearEasing),
-                            repeatMode = RepeatMode.Restart
-                        ),
-                        label = "traveling_phase"
-                    )
-                } else null
+                // One continuous phase: connecting settles into a calmer connected wave
+                // without replacing the transition or snapping its phase back to zero.
+                val waveSpeed = animateFloatAsState(
+                    if (isConnecting) 327f else if (isConnected) 105f else 0f,
+                    spring(dampingRatio = 1f, stiffness = 90f), label = "wave_speed"
+                )
+                val waveAmplitude = animateFloatAsState(
+                    if (isConnected) .55f else 1f,
+                    spring(dampingRatio = .9f, stiffness = 120f), label = "wave_amplitude"
+                )
+                val travelingAngle = rememberForegroundAngle(enabled = atRight || isDragging) { waveSpeed.value }
 
                 val wavePath = remember { Path() }
                 val idlePath = remember { Path() }
@@ -239,71 +231,35 @@ fun ConnectionSliderBar(
 
                     val trackRightLimit = stopX - dotRadiusPx - gapPx
 
-                    if (isConnecting) {
-                        // Traveling wave packet
+                    val phase = travelingAngle.value * (PI / 180f).toFloat()
+                    val waveStartX = thumbSizePx / 2f
+                    val waveEndX = (offset - gapPx).coerceAtLeast(waveStartX)
+                    if (progress > .02f && waveEndX > waveStartX) {
                         wavePath.rewind()
-                        val startX = (thumbSizePx / 2f)
-                        val endX = (offset - gapPx).coerceIn(startX, trackRightLimit)
-                        val phase = travelingPhase?.value ?: 0f
-                        var x = startX
+                        var x = waveStartX
                         var first = true
-
-                        while (x <= endX) {
-                            val y = centerY + amplitudePx * sin((2 * PI * (x - startX) / wavelengthPx - phase).toFloat())
-                            if (first) {
-                                wavePath.moveTo(x, y)
-                                first = false
-                            } else {
-                                wavePath.lineTo(x, y)
-                            }
-                            x += 3f
+                        while (x <= waveEndX) {
+                            val y = centerY + amplitudePx * waveAmplitude.value *
+                                sin((2 * PI * (x - waveStartX) / wavelengthPx).toFloat() - phase)
+                            if (first) { wavePath.moveTo(x, y); first = false }
+                            else wavePath.lineTo(x, y)
+                            x += 2f
                         }
+                        drawPath(wavePath, activeColor, style = waveStroke)
+                    }
 
-                        drawPath(
-                            path = wavePath,
-                            color = activeColor,
-                            style = waveStroke
-                        )
-                    } else {
-                        // Determinate / Interactive state:
-                        // Left side (up to thumb): Active sinusoidal wave
-                        val waveStartX = thumbSizePx / 2f
-                        val waveEndX = (offset - gapPx).coerceAtLeast(waveStartX)
-
-                        if (progress > 0.02f && waveEndX > waveStartX) {
-                            wavePath.rewind()
-                            var x = waveStartX
-                            var first = true
-                            while (x <= waveEndX) {
-                                val y = centerY + amplitudePx * sin((2 * PI * (x - waveStartX) / wavelengthPx).toFloat())
-                                if (first) {
-                                    wavePath.moveTo(x, y)
-                                    first = false
-                                } else {
-                                    wavePath.lineTo(x, y)
-                                }
-                                x += 2f
-                            }
-                            drawPath(
-                                path = wavePath,
-                                color = activeColor,
-                                style = waveStroke
-                            )
+                    // The unused track remains a wave, with no straight rail underneath.
+                    val inactiveStartX = (offset + thumbSizePx + gapPx).coerceAtMost(trackRightLimit)
+                    if (inactiveStartX < trackRightLimit) {
+                        idlePath.rewind()
+                        var x = inactiveStartX
+                        while (x <= trackRightLimit) {
+                            val y = centerY + amplitudePx * .7f *
+                                sin((2 * PI * (x - inactiveStartX) / wavelengthPx).toFloat())
+                            if (x == inactiveStartX) idlePath.moveTo(x, y) else idlePath.lineTo(x, y)
+                            x += 2f
                         }
-
-                        // An idle wave keeps the slider's identity visible before the first drag.
-                        val inactiveStartX = (offset + thumbSizePx + gapPx).coerceAtMost(trackRightLimit)
-                        if (inactiveStartX < trackRightLimit) {
-                            idlePath.rewind()
-                            var x = inactiveStartX
-                            while (x <= trackRightLimit) {
-                                val y = centerY + amplitudePx * .7f * sin((2 * PI * (x - inactiveStartX) / wavelengthPx).toFloat())
-                                if (x == inactiveStartX) idlePath.moveTo(x, y) else idlePath.lineTo(x, y)
-                                x += 2f
-                            }
-                            drawPath(idlePath, trackInactiveColor,
-                                style = waveStroke)
-                        }
+                        drawPath(idlePath, trackInactiveColor, style = waveStroke)
                     }
                 }
 

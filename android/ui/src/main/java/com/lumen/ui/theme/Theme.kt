@@ -656,7 +656,7 @@ fun LumenTheme(
 
     // AMOLED keeps the same structure and only drops every surface to (near) black.
 
-    val finalScheme = if (useAmoledBlack && !light) {
+    val rawScheme = if (useAmoledBlack && !light) {
 
         tuned.copy(
 
@@ -698,6 +698,7 @@ fun LumenTheme(
 
 
 
+    val finalScheme = rawScheme.withReadableContent()
     val presetColors = if (light) LightLumenColors else DarkLumenColors
     val lumenColors = presetColors.copy(
         accent = finalScheme.primary,
@@ -722,7 +723,8 @@ fun LumenTheme(
 
     }
 
-    CompositionLocalProvider(LocalLumenColors provides lumenColors, LocalExpressivePreset provides themePreset) {
+    CompositionLocalProvider(LocalLumenColors provides lumenColors, LocalExpressivePreset provides themePreset,
+        androidx.compose.material3.LocalContentColor provides finalScheme.onSurface) {
 
         MaterialExpressiveTheme(
 

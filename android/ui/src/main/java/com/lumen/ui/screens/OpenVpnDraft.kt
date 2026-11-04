@@ -10,7 +10,7 @@ private val OVPN_INLINE_BLOCK = Regex(
     "(?ims)^[ \\t]*<(ca|cert|key|tls-auth|tls-crypt|tls-crypt-v2|auth-user-pass|askpass)>[ \\t]*\\r?\\n(.*?)^[ \\t]*</\\1>[ \\t]*$"
 )
 
-val OPENVPN_PROTOCOLS: List<String> = listOf("udp", "tcp")
+val OPENVPN_PROTOCOLS: List<String> = listOf("udp", "udp4", "udp6", "tcp", "tcp4", "tcp6")
 
 /** Only ciphers implemented by sing-box extended, same list as desktop. */
 val OPENVPN_CIPHERS: List<String> = listOf(
@@ -64,8 +64,8 @@ fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
     fun last(key: String): List<String> = byKey[key]?.lastOrNull() ?: emptyList()
     fun arg(key: String): String = last(key).firstOrNull()?.trim().orEmpty()
     fun proto(value: String): String = when (value.trim().lowercase()) {
-        "tcp", "tcp-client", "tcp4", "tcp4-client", "tcp6", "tcp6-client" -> "tcp"
-        "udp", "udp4", "udp6" -> "udp"
+        "tcp", "tcp-client", "tcp4", "tcp4-client", "tcp6", "tcp6-client" -> value.trim().lowercase().removeSuffix("-client")
+        "udp", "udp4", "udp6" -> value.trim().lowercase()
         else -> ""
     }
 
@@ -102,7 +102,7 @@ fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
     val globalProto = proto(arg("proto").lowercase())
     val remoteProto = first?.getOrNull(2)?.lowercase()?.let { proto(it) }.orEmpty()
     val credentials = (inline["auth-user-pass"] ?: "").lines().map { it.trim() }.filter { it.isNotEmpty() }
-    val cipher = listOf("data-ciphers", "ncp-ciphers", "cipher", "data-ciphers-fallback")
+    val cipher = listOf("cipher", "data-ciphers-fallback", "data-ciphers", "ncp-ciphers")
         .asSequence()
         .flatMap { arg(it).split(":").asSequence() }
         .map { it.trim().uppercase() }
@@ -120,7 +120,7 @@ fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
         server = first?.getOrNull(0)?.trim() ?: base.server,
         port = first?.getOrNull(1)?.trim() ?: base.port.ifBlank { "1194" },
         ovpnProto = remoteProto.ifEmpty { globalProto }.ifEmpty { "udp" },
-        ovpnExtraRemotes = remotes.drop(1).joinToString("\n") { it.take(2).joinToString(" ") },
+        ovpnExtraRemotes = remotes.drop(1).joinToString("\n") { it.take(3).joinToString(" ") },
         ovpnCipher = cipher,
         ovpnAuth = arg("auth").uppercase(),
         ovpnUsername = credentials.getOrNull(0).orEmpty(),
@@ -140,8 +140,8 @@ fun openVpnDraftFromProfile(base: NodeDraft, text: String): NodeDraft {
         ovpnVerifyX509Name = verify.getOrNull(0).orEmpty(),
         ovpnVerifyX509Mode = verify.getOrNull(1).orEmpty(),
         ovpnReconnectDelay = digitsOf(arg("connect-retry")),
-        ovpnPingInterval = digitsOf(arg("ping")),
-        ovpnPingRestart = digitsOf(arg("ping-restart")),
+        ovpnPingInterval = digitsOf(arg("ping").ifBlank { last("keepalive").getOrNull(0).orEmpty() }),
+        ovpnPingRestart = digitsOf(arg("ping-restart").ifBlank { last("keepalive").getOrNull(1).orEmpty() }),
         ovpnDns = dns.joinToString("\n"),
         ovpnProxyType = proxyType,
         ovpnProxyServer = proxyEndpoint.getOrNull(0).orEmpty(),
@@ -170,7 +170,21 @@ fun openVpnProfileFromDraft(d: NodeDraft): String {
     sb.appendLine("remote-cert-tls server")
     if (d.ovpnCipher.isNotBlank()) {
         sb.appendLine("cipher ${d.ovpnCipher.trim()}")
-        sb.appendLine("data-ciphers ${d.ovpnCipher.trim()}")
+    }
+    // Preserve the provider's negotiation policy. The Cipher control edits the
+    // legacy fallback; copying it into data-ciphers breaks modern CBC profiles.
+    // Whitespace here must stay on this line: bare `comp-lzo`/`compress`
+    // are valid and must not consume the next directive as their argument.
+    fun sourceDirective(key: String): String? = Regex("(?im)^[ \\t]*${Regex.escape(key)}(?:[ \\t]+([^\\r\\n]*))?[ \\t]*$")
+        .findAll(d.rawConfig).lastOrNull()?.groupValues?.get(1)?.trim()
+    (sourceDirective("data-ciphers") ?: sourceDirective("ncp-ciphers"))?.let {
+        sb.appendLine("data-ciphers $it")
+    }
+    sourceDirective("data-ciphers-fallback")?.let { sb.appendLine("data-ciphers-fallback $it") }
+    // Options without dedicated controls must survive editing the password/name.
+    for (key in listOf("tls-version-min", "tls-version-max", "tls-groups", "tls-timeout", "hand-window",
+        "reneg-sec", "reneg-bytes", "reneg-pkts", "compress", "comp-lzo", "allow-compression", "auth-retry")) {
+        sourceDirective(key)?.let { sb.appendLine("$key $it") }
     }
     if (d.ovpnAuth.isNotBlank()) sb.appendLine("auth ${d.ovpnAuth.trim()}")
     if (d.ovpnTlsCipherSuites.isNotBlank()) sb.appendLine("tls-cipher ${d.ovpnTlsCipherSuites.trim()}")

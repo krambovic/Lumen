@@ -11,7 +11,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 enum class EngineType {
-    SINGBOX
+    SINGBOX, XRAY
 }
 
 data class TrafficStats(
@@ -40,6 +40,10 @@ interface IEngineDriver {
      * that captures nothing reports an empty string.
      */
     val lastFatalLine: String get() = ""
+    /** An asynchronous endpoint can terminate while its containing core stays alive. */
+    val endpointFailure: String get() = ""
+    /** Endpoints whose authenticated OpenVPN data channel is ready in this process. */
+    val readyOpenVpnTags: Set<String> get() = emptySet()
     suspend fun start(configJson: String, tunFd: Int? = null)
     suspend fun stop()
     fun getTrafficStats(): TrafficStats
@@ -138,6 +142,7 @@ class EngineManager(
     private fun getDriverForType(engineType: EngineType): IEngineDriver {
         return when (engineType) {
             EngineType.SINGBOX -> singboxEngine
+            EngineType.XRAY -> error("Xray must be started by the hybrid runtime")
         }
     }
 }

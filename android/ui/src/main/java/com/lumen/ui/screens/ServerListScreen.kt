@@ -133,6 +133,7 @@ fun ServerListScreen(
     onPingNode: (NodeUiModel) -> Unit,
     onCopyNodeLink: (NodeUiModel) -> Unit = {},
     onExportQrCode: (NodeUiModel) -> Unit = {},
+    onExportLumen: (NodeUiModel) -> Unit = {},
     onImportClipboard: () -> Unit,
     onUpdateSubscription: (SubscriptionUiModel, String, String) -> Boolean = { _, _, _ -> false },
     onRefreshSubscription: (SubscriptionUiModel) -> Unit,
@@ -536,7 +537,8 @@ fun ServerListScreen(
                                         else selectedIds = if (node.id in selectedIds) selectedIds - node.id else selectedIds + node.id
                                     }, onLongClick = { selectedIds = selectedIds + node.id },
                                     onEdit = { onEditNode(node) }, onPing = { onPingNode(node) },
-                                    onCopy = { onCopyNodeLink(node) }, onDelete = { deletingNode = node }, modifier = Modifier.weight(1f))
+                                    onCopy = { onCopyNodeLink(node) }, onExportLumen = { onExportLumen(node) },
+                                    onDelete = { deletingNode = node }, modifier = Modifier.weight(1f))
                             }
                             repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                         }
@@ -551,7 +553,7 @@ fun ServerListScreen(
                         },
                         onLongClick = { selectedIds = selectedIds + it.id },
                         onEditNode = onEditNode, onPingNode = onPingNode,
-                        onCopyNodeLink = onCopyNodeLink, onExportQrCode = onExportQrCode,
+                        onCopyNodeLink = onCopyNodeLink, onExportQrCode = onExportQrCode, onExportLumen = onExportLumen,
                         onMove = { movingNodes = listOf(it) }, onDeleteNode = { deletingNode = it },
                         modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null))
                 }
@@ -681,6 +683,7 @@ private fun ServerListRow(
     onClick: (NodeUiModel) -> Unit, onLongClick: (NodeUiModel) -> Unit,
     onEditNode: (NodeUiModel) -> Unit, onPingNode: (NodeUiModel) -> Unit,
     onCopyNodeLink: (NodeUiModel) -> Unit, onExportQrCode: (NodeUiModel) -> Unit,
+    onExportLumen: (NodeUiModel) -> Unit,
     onMove: (NodeUiModel) -> Unit, onDeleteNode: (NodeUiModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -766,7 +769,7 @@ private fun ServerListRow(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(node.displayProtocol,
+                                Text(node.localizedProtocol(strings),
                                     style = MaterialTheme.typography.bodySmall, color = textMuted,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                                 Spacer(Modifier.width(8.dp))
@@ -791,16 +794,19 @@ private fun ServerListRow(
                                 Icon(Icons.Default.MoreVert, contentDescription = node.name, tint = textMuted)
                             }
                             if (showNodeMenu) LumenMenu(expanded = true, onDismissRequest = { showNodeMenu = false }) {
-                                DropdownMenuItem(text = { Text(strings.edit) }, onClick = {
+                                if (!node.isProtected) DropdownMenuItem(text = { Text(strings.edit) }, onClick = {
                                     showNodeMenu = false; onEditNode(node)
                                 })
                                 DropdownMenuItem(text = { Text(strings.ping) }, onClick = {
                                     showNodeMenu = false; onPingNode(node)
                                 })
-                                DropdownMenuItem(text = { Text(strings.copyLink) }, onClick = {
+                                if (!node.isProtected) DropdownMenuItem(text = { Text(strings.copyLink) }, onClick = {
                                     showNodeMenu = false; onCopyNodeLink(node)
                                 })
-                                DropdownMenuItem(text = { Text(strings.exportQrCode) }, onClick = {
+                                if (!node.isProtected) DropdownMenuItem(
+                                    text = { Text(LumenProfileText.EXPORT.inLanguage(strings.localeCode)) },
+                                    onClick = { showNodeMenu = false; onExportLumen(node) })
+                                if (!node.isProtected) DropdownMenuItem(text = { Text(strings.exportQrCode) }, onClick = {
                                     showNodeMenu = false; onExportQrCode(node)
                                 })
                                 DropdownMenuItem(text = { Text(strings.moveToGroup) }, onClick = {

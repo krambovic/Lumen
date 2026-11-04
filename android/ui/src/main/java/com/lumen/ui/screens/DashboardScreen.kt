@@ -156,7 +156,10 @@ fun DashboardScreen(
             androidx.compose.runtime.key(groupFilter) {
             DashboardServerTable(groupNodes, groupTitle, pingingNodeIds, onSelectNode, onOpenServers,
                 speedStatsEnabled, isConnected, speedValues,
-                onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing)
+                onPingAll = { onPingNodes(groupNodes) }, onPingNode = { onPingNodes(listOf(it)) }, onStopPing = onStopPing,
+                connectionLatency = {
+                    DashboardConnectionLatencyTile(activeNode, isCheckingPing, connectedPing, onCheckPing, visible = isConnected)
+                })
             }
         } else {
         Column(
@@ -177,7 +180,7 @@ fun DashboardScreen(
                     })
                 }
                 DashboardStyle.CENTERED -> OrbitConnectionCard(connectionState, onToggleConnection)
-                DashboardStyle.DOCK -> DockDashboardStatus(connectionState, activeNode?.displayProtocol)
+                DashboardStyle.DOCK -> DockDashboardStatus(connectionState, activeNode?.localizedProtocol(strings))
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -220,7 +223,7 @@ fun DashboardScreen(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(24.dp))
                         .background(MaterialTheme.colorScheme.primaryContainer)
-                        .expressiveButtonSemantics(activeNode.name + ". " + activeNode.displayProtocol, openServerPicker)
+                        .expressiveButtonSemantics(activeNode.name + ". " + activeNode.localizedProtocol(strings), openServerPicker)
                         .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = openServerPicker)
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -254,7 +257,7 @@ fun DashboardScreen(
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = activeNode.displayProtocol,
+                            text = activeNode.localizedProtocol(strings),
                             fontSize = 12.sp,
                             color = lumenColors.onTonal.copy(alpha = 0.8f),
                             maxLines = 1,
@@ -316,6 +319,7 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            DashboardConnectionLatencyTile(activeNode, isCheckingPing, connectedPing, onCheckPing, visible = isConnected)
             if (speedStatsEnabled) DashboardSpeedCards(isConnected, speedValues)
 
             activeSub?.let { sub ->
@@ -530,13 +534,13 @@ private fun OrbitConnectionCard(connectionState: ConnectionState, onToggleConnec
                     val orbScale = remember { Animatable(1f) }
                     val scope = rememberCoroutineScope()
                     val rotationSpeed = animateFloatAsState(
-                        targetValue = when { isConnecting -> 200f; isConnected -> 24f; else -> 0f },
+                        targetValue = if (isConnecting) 200f else 0f,
                         animationSpec = tween(900, easing = FastOutSlowInEasing),
                         label = "orbit_speed"
                     )
                     var orbRotation by remember { mutableFloatStateOf(-6f) }
                     val spinActive by remember(isConnecting, isConnected) {
-                        androidx.compose.runtime.derivedStateOf { isConnecting || isConnected || rotationSpeed.value > 0.1f }
+                        androidx.compose.runtime.derivedStateOf { isConnecting || rotationSpeed.value > 0.1f }
                     }
                     LaunchedEffect(spinActive) {
                         if (spinActive) {

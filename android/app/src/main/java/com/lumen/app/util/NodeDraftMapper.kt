@@ -45,7 +45,7 @@ object NodeDraftMapper {
         if (raw.isBlank() || raw == "auto") return base
         return when (base.protocol) {
             "wireguard", "awg" -> fillWireGuard(base, raw)
-            "openvpn" -> openVpnDraftFromProfile(base, raw)
+            "openvpn" -> if (raw.startsWith("{")) nativeOpenVpnDraft(base, raw) else openVpnDraftFromProfile(base, raw)
             "vmess" -> fillVmess(base, raw)
             "ss" -> fillShadowsocks(base, raw)
             else -> fillUri(base, raw)
@@ -195,12 +195,16 @@ object NodeDraftMapper {
             )
         }
         val link = buildLink(draft)
-        val parsed = LinkParser.parseLinksText(link).first.firstOrNull()
+        val parsed = (if (draft.protocol == "openvpn" && !link.trimStart().startsWith("{"))
+            LinkParser.parseOpenVpnConfig(link) else LinkParser.parseLinksText(link).first.firstOrNull())
             ?: throw IllegalArgumentException("Could not parse node configuration")
         val preservedOutbound = parseStoredOutbound(draft.rawConfig)?.takeIf {
             normalizeProtocol(it["protocol"]?.toString().orEmpty()) == normalizeProtocol(parsed.scheme)
         }
-        val outbound = if (preservedOutbound == null) {
+        val outbound = if (preservedOutbound == null || normalizeProtocol(parsed.scheme) == "openvpn") {
+            // The OpenVPN JSON editor already copies the complete source before
+            // applying changes. Merging the old map back resurrects removed proto,
+            // certificate aliases and credentials, overriding the edited values.
             parsed.outbound
         } else if (
             normalizeProtocol(parsed.scheme) == "ss" &&
@@ -351,11 +355,76 @@ object NodeDraftMapper {
             }
             "wireguard", "awg" -> buildWireGuardConf(d)
             // Structured fields win; the pasted profile is the fallback.
-            "openvpn" -> if (d.ovpnCa.isNotBlank()) openVpnProfileFromDraft(d) else d.rawConfig.ifBlank {
+            "openvpn" -> if (d.rawConfig.trimStart().startsWith("{")) updateNativeOpenVpn(d)
+                else if (d.ovpnCa.isNotBlank()) openVpnProfileFromDraft(d) else d.rawConfig.ifBlank {
                 throw IllegalArgumentException("OpenVPN profile is empty; paste the .ovpn config")
             }
             else -> throw IllegalArgumentException("Unsupported protocol: ${d.protocol}")
         }
+    }
+
+    private fun nativeOpenVpnDraft(base: NodeDraft, raw: String): NodeDraft {
+        val root = JSONObject(raw)
+        val native = root.optJSONObject("singbox") ?: root
+        val legacy = !native.optString("type").equals("openvpn-client", true)
+        val tls = native.optJSONObject("tls") ?: JSONObject()
+        val first = native.optJSONArray("servers")?.optJSONObject(0)
+        fun material(key: String): String = when (val value = tls.opt(key)) {
+            is org.json.JSONArray -> (0 until value.length()).joinToString("\n") { value.getString(it) }
+            null, JSONObject.NULL -> ""
+            else -> value.toString()
+        }
+        // Native remotes use network, and the legacy parser also writes network
+        // inside servers. An absent proto must never silently turn TCP into UDP.
+        val transport = first?.optString("proto").orEmpty().ifBlank { first?.optString("network").orEmpty() }
+            .ifBlank { native.optString("proto") }.ifBlank { native.optString("network") }.ifBlank { "udp" }
+            .lowercase().removeSuffix("-client")
+        return base.copy(
+            server = first?.optString("server").orEmpty().ifBlank { native.optString("server") }.ifBlank { base.server },
+            port = (first?.optInt("server_port")?.takeIf { it > 0 }
+                ?: native.optInt("server_port").takeIf { it > 0 })?.toString() ?: base.port,
+            ovpnProto = transport,
+            ovpnUsername = native.optString("username"), ovpnPassword = native.optString("password"),
+            ovpnKeyPassword = native.optString("key_password"),
+            ovpnCa = material(if (legacy) "ca" else "certificate"),
+            ovpnCert = material(if (legacy) "certificate" else "client_certificate")
+                .ifBlank { if (legacy) material("cert") else "" },
+            ovpnKey = material(if (legacy) "key" else "client_key"),
+            ovpnCipher = native.optString(if (legacy || native.optString("mode") == "static_key") "cipher" else "data_ciphers_fallback"),
+            ovpnAuth = native.optString("auth"),
+            rawConfig = raw
+        )
+    }
+
+    private fun updateNativeOpenVpn(d: NodeDraft): String {
+        val root = JSONObject(d.rawConfig)
+        val native = root.optJSONObject("singbox") ?: root
+        val legacy = !native.optString("type").equals("openvpn-client", true)
+        fun field(key: String, value: String) { if (value.isBlank()) native.remove(key) else native.put(key, value) }
+        field("username", d.ovpnUsername); field("password", d.ovpnPassword); field("key_password", d.ovpnKeyPassword)
+        field(if (legacy || native.optString("mode") == "static_key") "cipher" else "data_ciphers_fallback", d.ovpnCipher)
+        field("auth", d.ovpnAuth)
+        val tls = native.optJSONObject("tls") ?: JSONObject()
+        for ((key, value) in listOf(
+            (if (legacy) "ca" else "certificate") to d.ovpnCa,
+            (if (legacy) "key" else "client_key") to d.ovpnKey,
+            (if (legacy) "certificate" else "client_certificate") to d.ovpnCert
+        )) {
+            if (value.isNotBlank()) tls.put(key, value) else tls.remove(key)
+        }
+        if (legacy) tls.remove("cert")
+        if (native.has("tls") || listOf(d.ovpnCa, d.ovpnKey, d.ovpnCert).any { it.isNotBlank() }) {
+            native.put("tls", tls)
+        }
+        field(if (legacy) "proto" else "network", d.ovpnProto)
+        if (!legacy) native.remove("proto")
+        native.optJSONArray("servers")?.optJSONObject(0)?.let {
+            it.put("server", d.server.trim()).put("server_port", d.port.toInt()).put("network", d.ovpnProto)
+            it.remove("proto")
+        } ?: run {
+            native.put("server", d.server.trim()).put("server_port", d.port.toInt())
+        }
+        return root.put("tag", d.name).toString()
     }
 
     private fun parseStoredOutbound(rawConfig: String): Map<String, Any?>? {

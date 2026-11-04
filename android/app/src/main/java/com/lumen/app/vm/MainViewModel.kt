@@ -23,6 +23,10 @@ import com.lumen.app.update.AndroidUpdateInstaller
 import com.lumen.app.update.AndroidRelease
 import com.lumen.app.update.AndroidUpdateState
 import com.lumen.app.util.NodeDraftMapper
+import com.lumen.app.profiles.ProtectedProfiles
+import com.lumen.core.config.crypto.ProtectedProfileCodec
+import com.lumen.core.config.builder.HybridConfigBuilder
+import com.lumen.core.config.builder.CoreMode
 import com.lumen.core.config.builder.SingboxConfigBuilder
 import com.lumen.core.config.builder.SingboxConfigOptions
 import com.lumen.core.config.parser.LinkParser
@@ -64,10 +68,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -242,6 +248,7 @@ internal fun selectedAppsFirst(
     )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
+    private val sessionOpenVpnSecrets = java.util.concurrent.ConcurrentHashMap<String, com.lumen.core.config.parser.OpenVpnSecrets>()
 
     private val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -724,7 +731,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun loadSettings() = SettingsUiState(
-        engine = "SINGBOX",
+        engine = prefs.getString("core_mode", "HYBRID") ?: "HYBRID",
         muxEnabled = prefs.getBoolean("mux_enabled", false),
         muxConcurrency = prefs.getInt("mux_concurrency", 8),
         multiplexProtocol = prefs.getString("mux_protocol", "smux") ?: "smux",
@@ -849,6 +856,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .coerceIn(0, 100),
         autoCheckUpdates = prefs.getBoolean("auto_check_updates", true),
         settingsTileLayout = prefs.getString("settings_tile_layout", "") ?: "",
+        dockScalePercent = com.lumen.ui.components.DockSize.fromPercent(prefs.getInt("dock_scale_percent", 100)).percent,
         dashboardStyle = runCatching {
             DashboardStyle.valueOf(prefs.getString("dashboard_style", DashboardStyle.DEFAULT.name) ?: DashboardStyle.DEFAULT.name)
         }.getOrDefault(DashboardStyle.DEFAULT),
@@ -924,7 +932,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // made afterwards on the next application launch.
             .putBoolean("iran_network_defaults_v2", prefs.getBoolean("iran_network_defaults_v2", false) ||
                 geoRegionCode(s.geoResourceSource) == "ir")
-            .putString("engine_type", s.engine)
+            .putString("core_mode", s.engine)
             .putBoolean("mux_enabled", s.muxEnabled)
             .putInt("mux_concurrency", s.muxConcurrency.coerceIn(1, 1024))
             .putString("mux_protocol", s.multiplexProtocol)
@@ -1028,6 +1036,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("ping_auto_delete_threshold_ms", s.pingAutoDeleteThresholdMs.coerceIn(0, 100))
             .putBoolean("auto_check_updates", s.autoCheckUpdates)
             .putString("dashboard_style", s.dashboardStyle.name)
+            .putInt("dock_scale_percent", com.lumen.ui.components.DockSize.fromPercent(s.dockScalePercent).percent)
             .putString("settings_tile_layout", s.settingsTileLayout)
             .putString(PREF_LAUNCHER_ICON, s.launcherIcon.name)
             .apply()
@@ -1541,6 +1550,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             isAutoNode = autoFlag,
                             isSelected = false,
                             subscriptionId = e.subscriptionId,
+                            isProtected = e.link.startsWith(ProtectedProfileCodec.PREFIX),
                             displayProtocol = displayProto
                         ).also { nodeUiCache[e.id] = NodeUiCacheEntry(fingerprint, it) }
                     }
@@ -1617,7 +1627,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (resetJob?.isActive == true) return
         val strings = com.lumen.ui.screens.stringsForLanguage(_settings.value.language)
         if (_importState.value.phase == ImportPhaseUi.IMPORTING) {
-            emitToast(if (_settings.value.language == "ru") "Дождитесь завершения импорта" else "Wait for the import to finish")
+            emitToast(com.lumen.ui.screens.InterfaceText.WAIT_IMPORT.inLanguage(_settings.value.language))
             return
         }
         resetJob = viewModelScope.launch {
@@ -1655,6 +1665,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         _importState.value = ImportUiState()
                         storedVpnConfigRefreshJob?.cancel()
                         storedVpnConfigWriteMutex.withLock { com.lumen.core.vpn.VpnConfigStore.clear(app) }
+                        ProtectedProfiles.clearStoredProfiles(app)
                     }
                     com.lumen.app.widget.LumenWidgetProvider.sendUpdateBroadcast(app)
                 }
@@ -1663,7 +1674,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 throw cancelled
             } catch (error: Exception) {
                 log("Reset failed: ${error.javaClass.simpleName}")
-                emitToast(if (_settings.value.language == "ru") "Не удалось завершить сброс" else "Reset failed")
+                emitToast(com.lumen.ui.screens.InterfaceText.RESET_FAILED.inLanguage(_settings.value.language))
             }
         }
     }
@@ -1734,9 +1745,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun draftForNode(node: NodeUiModel): NodeDraft =
-        NodeDraftMapper.draftFromEntity(nodeEntities.value.firstOrNull { it.id == node.id })
-            ?: NodeDraft()
+    fun draftForNode(node: NodeUiModel): NodeDraft {
+        if (node.isProtected) return NodeDraft()
+        val draft = NodeDraftMapper.draftFromEntity(nodeEntities.value.firstOrNull { it.id == node.id }) ?: return NodeDraft()
+        val secret = sessionOpenVpnSecrets[node.id]?.takeIf { draft.protocol == "openvpn" } ?: return draft
+        return draft.copy(ovpnUsername = secret.username.ifEmpty { draft.ovpnUsername },
+            ovpnPassword = secret.password.ifEmpty { draft.ovpnPassword },
+            ovpnKeyPassword = secret.keyPassword.ifEmpty { draft.ovpnKeyPassword })
+    }
 
     /**
      * [onResult] receives null on success and the reason on failure, so the editor
@@ -1746,6 +1762,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val existing = draft.id?.let { id -> nodeEntities.value.firstOrNull { it.id == id } }
+                require(existing?.link?.startsWith(ProtectedProfileCodec.PREFIX) != true) { "Protected profiles cannot be edited" }
                 // The mapper leaves subscriptionId null, which is what a hand-made
                 // node needs: it belongs to the default (manual) group. An edited
                 // node must keep the group it came from instead, otherwise saving a
@@ -1753,6 +1770,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val entity = NodeDraftMapper.entityFromDraft(draft)
                     .copy(subscriptionId = existing?.subscriptionId)
                 if (draft.id != null) nodeDao.updateNode(entity) else nodeDao.insertNode(entity)
+                sessionOpenVpnSecrets.remove(entity.id)
                 log("Saved node ${entity.name}")
                 // A new node is only visible in the default group, so open it there.
                 if (draft.id == null) {
@@ -1820,6 +1838,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // a shared file or a pasted blob can be megabytes of links.
     fun prepareImportText(text: String?) {
         viewModelScope.launch(Dispatchers.Default) {
+            if (requestProfilePassword(text)) return@launch
             val state = classifiedImportState(text)
             withContext(Dispatchers.Main) { _importState.value = state }
         }
@@ -1856,6 +1875,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val resolver = context.contentResolver
         viewModelScope.launch(Dispatchers.IO) {
             val content = readBoundedStream(resolver, uri)
+            if (requestProfilePassword(content)) return@launch
             val state = when {
                 content == null -> ImportUiState(
                     phase = ImportPhaseUi.ERROR,
@@ -1937,12 +1957,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
                     ImportKindUi.CONFIG -> {
-                        val (parsed, errors) = LinkParser.parseLinksText(pending.raw)
+                        val (parsed, errors) = parseImportedProfiles(pending.raw)
                         errors.take(3).forEach { log("Import warning: $it") }
                         val valid = parsed.filter {
-                            it.name.length <= 512 && it.server.length <= 512 &&
-                                (it.scheme == "auto" || it.server.isNotBlank()) &&
-                                (it.scheme == "auto" || it.port in 1..65535) && it.link.length <= 65_536
+                            it.link.startsWith(ProtectedProfileCodec.PREFIX) ||
+                                com.lumen.core.config.crypto.LumenProfilePayload.isValidForImport(it)
                         }.take(LinkParser.MAX_IMPORT_NODES)
                         if (valid.isEmpty()) error("No supported server configs found")
                         val entities = valid.map { it.toEntity(null) }
@@ -1956,7 +1975,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         focusServerGroup(target?.id ?: SERVER_GROUP_MANUAL)
                         emitEvent(LumenEvent.ServerAdded)
-                        val destinationName = target?.name ?: "Default"
+                        val destinationName = target?.name ?: com.lumen.ui.screens.stringsForLanguage(_settings.value.language).manual
                         _importState.value = ImportUiState(
                             phase = ImportPhaseUi.SUCCESS,
                             title = "Import complete",
@@ -1989,6 +2008,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun prepareImportFileContent(content: String?) {
         viewModelScope.launch(Dispatchers.Default) {
+            if (requestProfilePassword(content)) return@launch
             val state = fileImportState(content)
             withContext(Dispatchers.Main) { _importState.value = state }
         }
@@ -2010,6 +2030,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 message = "File exceeds the ${LinkParser.MAX_IMPORT_BYTES / 1024 / 1024} MiB import limit"
             )
         }
+        // Decrypt only on confirmation, so previewing a closed profile does not
+        // create an orphaned encrypted store entry or require its password twice.
+        if (ProtectedProfileCodec.isEnvelope(content)) return classifiedImportState(content)
         // Quick-check: if it's a bare http/https URL treat it as a subscription URL.
         val trimmed = content.trim()
         if (!trimmed.contains('\n') && (trimmed.startsWith("http://") || trimmed.startsWith("https://"))) {
@@ -2017,7 +2040,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Pre-parse so we can show a meaningful summary before the user confirms.
         val (parsed, parseErrors) = try {
-            LinkParser.parseLinksText(content)
+            parseImportedProfiles(content)
         } catch (e: Exception) {
             return ImportUiState(
                 phase = ImportPhaseUi.ERROR,
@@ -2026,9 +2049,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         val valid = parsed.filter {
-            it.name.length <= 512 && it.server.length <= 512 &&
-                (it.scheme == "auto" || it.server.isNotBlank()) &&
-                (it.scheme == "auto" || it.port in 1..65535) && it.link.length <= 65_536
+            com.lumen.core.config.crypto.LumenProfilePayload.isValidForImport(it)
         }.take(LinkParser.MAX_IMPORT_NODES)
         if (valid.isEmpty()) {
             return ImportUiState(
@@ -2046,7 +2067,95 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    private fun ParsedNode.toEntity(subscriptionId: String?) = NodeEntity(
+    private val _profilePasswordRequest = MutableStateFlow<String?>(null)
+    val profilePasswordRequest: StateFlow<String?> = _profilePasswordRequest
+    private val _profilePasswordBusy = MutableStateFlow(false)
+    val profilePasswordBusy: StateFlow<Boolean> = _profilePasswordBusy
+    private val _profilePasswordError = MutableStateFlow(false)
+    val profilePasswordError: StateFlow<Boolean> = _profilePasswordError
+    private var profilePasswordGeneration = 0L
+
+    private suspend fun requestProfilePassword(content: String?): Boolean {
+        if (content == null || !com.lumen.core.config.crypto.LumenProfileEnvelope.requiresPassword(content)) return false
+        withContext(Dispatchers.Main) {
+            profilePasswordGeneration++
+            _profilePasswordRequest.value = content
+            _profilePasswordError.value = false
+            _profilePasswordBusy.value = false
+            _importState.value = ImportUiState()
+        }
+        return true
+    }
+
+    fun dismissProfilePassword() {
+        profilePasswordGeneration++
+        _profilePasswordRequest.value = null
+        _profilePasswordBusy.value = false
+        _profilePasswordError.value = false
+    }
+
+    fun unlockProfile(password: String) {
+        val envelope = _profilePasswordRequest.value ?: return
+        if (_profilePasswordBusy.value) return
+        val generation = profilePasswordGeneration
+        _profilePasswordBusy.value = true
+        _profilePasswordError.value = false
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                val secret = password.toCharArray()
+                try { runCatching { ProtectedProfiles.unlockForImport(envelope, secret) } }
+                finally { secret.fill('\u0000') }
+            }
+            if (generation != profilePasswordGeneration) return@launch
+            _profilePasswordBusy.value = false
+            result.onSuccess { unlocked ->
+                _profilePasswordRequest.value = null
+                prepareImportText(unlocked)
+            }.onFailure { _profilePasswordError.value = true }
+        }
+    }
+
+    private fun parseImportedProfiles(text: String): Pair<List<ParsedNode>, List<String>> =
+        if (ProtectedProfileCodec.isEnvelope(text)) ProtectedProfiles.parse(text, getApplication()) else LinkParser.parseLinksText(text)
+
+    data class OpenVpnCredentialRequest(val nodeId: String, val name: String,
+        val missing: com.lumen.core.config.parser.OpenVpnMissingCredentials)
+    private val _openVpnCredentialRequest = MutableStateFlow<OpenVpnCredentialRequest?>(null)
+    val openVpnCredentialRequest: StateFlow<OpenVpnCredentialRequest?> = _openVpnCredentialRequest
+    fun dismissOpenVpnCredentials() { _openVpnCredentialRequest.value = null }
+    fun supplyOpenVpnCredentials(username: String, password: String, keyPassword: String, onReady: () -> Unit) {
+        val request = _openVpnCredentialRequest.value ?: return
+        if ((request.missing.username && username.isBlank()) || (request.missing.password && password.isBlank()) ||
+            (request.missing.keyPassword && keyPassword.isBlank())) return
+        val previous = sessionOpenVpnSecrets[request.nodeId] ?: com.lumen.core.config.parser.OpenVpnSecrets()
+        val secret = com.lumen.core.config.parser.OpenVpnSecrets(
+            username.ifEmpty { previous.username }, password.ifEmpty { previous.password }, keyPassword.ifEmpty { previous.keyPassword })
+        sessionOpenVpnSecrets[request.nodeId] = secret
+        _openVpnCredentialRequest.value = null
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    db.withTransaction {
+                        val entity = checkNotNull(nodeDao.getNodesByIds(listOf(request.nodeId)).singleOrNull())
+                        // A closed .lumen envelope must never be replaced with plaintext.
+                        if (!entity.link.startsWith(ProtectedProfileCodec.PREFIX)) {
+                            val stored = com.lumen.core.config.parser.OpenVpnCredentials.persist(parseStoredEntity(entity), secret)
+                            check(nodeDao.updateConfiguration(entity.id, stored.link, LinkParser.toJsonString(stored.outbound)) == 1)
+                        }
+                    }
+                }
+                if (_selectedNodeId.value == request.nodeId) onReady()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _connectError.value = com.lumen.ui.screens.LumenProfileText.CREDENTIALS_SAVE_FAILED.inLanguage(_settings.value.language)
+            }
+        }
+    }
+
+    private fun ParsedNode.toEntity(subscriptionId: String?): NodeEntity {
+        if (link.startsWith(ProtectedProfileCodec.PREFIX)) return NodeEntity(name = name,
+            protocol = "locked", server = "", port = 0, link = link, subscriptionId = subscriptionId)
+        return NodeEntity(
         name = name.ifBlank { server },
         protocol = scheme,
         server = server,
@@ -2056,6 +2165,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         subscriptionId = subscriptionId,
         isAutoNode = scheme == "auto"
     )
+    }
 
     // ---------- Subscriptions ----------
     private val subEntities: StateFlow<List<SubscriptionEntity>> = subscriptionDao.getSubscriptions()
@@ -2496,19 +2606,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _pingingNodeIds = MutableStateFlow<Set<String>>(emptySet())
     val pingingNodeIds: StateFlow<Set<String>> = _pingingNodeIds.coalesceUiUpdates()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+    private val _bulkPingProgress = MutableStateFlow<Pair<Int, Int>?>(null)
+    val bulkPingProgress: StateFlow<Pair<Int, Int>?> = _bulkPingProgress
+    private var bulkPingProgressReset: Job? = null
+
     private var bulkPingJob: kotlinx.coroutines.Job? = null
     private var bulkPingGeneration = 0L
+    private val singlePingJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
-    // ICMP fallback wakes the radio; keep it far below the ping concurrency.
-    private val icmpSemaphore = kotlinx.coroutines.sync.Semaphore(4)
+    // The outer scheduler honours the configured count for ICMP too.
+    private val icmpSemaphore = kotlinx.coroutines.sync.Semaphore(32)
     // AUTO pools can contain hundreds of endpoints. Probe them concurrently, but keep one
     // shared ceiling across all AUTO nodes so large subscriptions cannot exhaust sockets.
     private val autoMemberPingSemaphore =
         kotlinx.coroutines.sync.Semaphore(PingBudget.AUTO_MEMBER_CONCURRENCY)
     // A real HTTP test starts an isolated sing-box proxy for the target node.
-    // Two cores are already enough to keep a phone busy; starting four at once caused
-    // CPU/memory pressure and sporadic startup failures on slower devices.
-    private val realPingSemaphore = kotlinx.coroutines.sync.Semaphore(2)
+    // Honour the configured worker count, including 16. Each temporary Go core uses
+    // one scheduler thread; the user's concurrency setting remains the CPU budget.
+    private val realPingSemaphore = kotlinx.coroutines.sync.Semaphore(PingBudget.CORE_PING_CONCURRENCY)
     // Port discovery releases its temporary socket before sing-box binds it. Serialize
     // only that short startup phase so two probes cannot race for the same local port.
     private val realPingStartupMutex = Mutex()
@@ -2532,8 +2647,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun stopPing() {
         val wasRunning = bulkPingJob?.isActive == true || _isPinging.value
         bulkPingGeneration += 1
+        bulkPingProgressReset?.cancel()
+        _bulkPingProgress.value = null
         bulkPingJob?.cancel()
         bulkPingJob = null
+        singlePingJobs.values.forEach { it.cancel() }
+        singlePingJobs.clear()
+        resetConnectedPing()
         _pingingNodeIds.value = emptySet()
         _testingNodeId.value = null
         _isPinging.value = false
@@ -2558,19 +2678,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         // A new request always supersedes the old one. This makes every run start from a
         // clean slate even if the user changes a group or starts another check mid-flight.
+        val predecessor = bulkPingJob
+        stopPing()
         val generation = ++bulkPingGeneration
-        bulkPingJob?.cancel()
+        _bulkPingProgress.value = 0 to targets.size
+        _isPinging.value = true
         val job = viewModelScope.launch(
             Dispatchers.IO,
             start = kotlinx.coroutines.CoroutineStart.LAZY
         ) {
+            predecessor?.cancelAndJoin()
             _isPinging.value = true
             log("Pinging ${targets.size} node(s), $limit at a time ($mode)…")
             try {
                 // Drop stale values first: the row must show "measuring", not the previous ping.
                 val targetIds = targets.map { it.id }
-                _serverTestResults.value = _serverTestResults.value - targetIds.toSet()
-                _pingingNodeIds.value = targetIds.toSet()
+                _serverTestResults.update { it - targetIds.toSet() }
+                _pingingNodeIds.update { it + targetIds }
                 nodeDao.updatePingsBatch(targetIds.map { Pair(it, null as Int?) })
                 val pending = java.util.Collections.synchronizedSet(targetIds.toMutableSet())
                 val completedPings = java.util.Collections.synchronizedMap(mutableMapOf<String, Int>())
@@ -2582,6 +2706,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 // Repeats the probe and aggregates it per the ping settings.
                                 val ping = measureNodePing(node)
                                 val persistedPing = ping.coerceAtLeast(0)
+                                currentCoroutineContext().ensureActive()
                                 nodeDao.updatePing(node.id, persistedPing)
                                 completedPings[node.id] = persistedPing
                             }
@@ -2599,7 +2724,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             synchronized(pending) {
                                 pending.remove(node.id)
                                 if (bulkPingGeneration == generation) {
-                                    _pingingNodeIds.value = pending.toSet()
+                                    _pingingNodeIds.update { it - node.id }
+                                    _bulkPingProgress.value = (targets.size - pending.size) to targets.size
                                 }
                             }
                         }
@@ -2628,8 +2754,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // A canceled predecessor must not reset state owned by its replacement.
                 if (bulkPingGeneration == generation) {
                     bulkPingJob = null
-                    _pingingNodeIds.value = emptySet()
+                    _pingingNodeIds.update { it - targets.map { node -> node.id }.toSet() }
                     _isPinging.value = false
+                    bulkPingProgressReset = viewModelScope.launch {
+                        delay(500)
+                        if (bulkPingGeneration == generation) _bulkPingProgress.value = null
+                    }
                 }
             }
         }
@@ -2639,7 +2769,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pingNode(node: NodeUiModel) {
         if (node.id in _pingingNodeIds.value) return
-        viewModelScope.launch(Dispatchers.IO) {
+        val generation = bulkPingGeneration
+        _pingingNodeIds.update { it + node.id }
+        val job = viewModelScope.launch(Dispatchers.IO, start = kotlinx.coroutines.CoroutineStart.LAZY) {
             _testingNodeId.value = node.id
             // update{} instead of read-modify-write: parallel pings share these sets.
             _pingingNodeIds.update { it + node.id }
@@ -2649,6 +2781,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Same repeat/aggregate rules as the bulk check.
                 val entity = nodeEntities.value.firstOrNull { it.id == node.id }
                 val ping = entity?.let { measureNodePing(it) } ?: -1
+                currentCoroutineContext().ensureActive()
                 val persistedPing = ping.coerceAtLeast(0)
                 nodeDao.updatePing(node.id, persistedPing)
                 val result = if (ping > 0) "$ping ms" else "0"
@@ -2666,10 +2799,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } finally {
                 // A thrown or cancelled measurement must not leave the row spinning.
-                _pingingNodeIds.update { it - node.id }
-                if (_testingNodeId.value == node.id) _testingNodeId.value = null
+                if (generation == bulkPingGeneration) {
+                    singlePingJobs.remove(node.id)
+                    _pingingNodeIds.update { it - node.id }
+                    if (_testingNodeId.value == node.id) _testingNodeId.value = null
+                }
             }
         }
+        singlePingJobs[node.id] = job
+        job.start()
     }
 
     /**
@@ -2683,17 +2821,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             emitToast(noServerLabel)
             return
         }
-        if (_checkingConnectedPing.value) return
+        if (_checkingConnectedPing.value) {
+            resetConnectedPing()
+            return
+        }
         val generation = ++connectedPingGeneration
+        _checkingConnectedPing.value = true
         connectedPingJob = viewModelScope.launch(Dispatchers.IO) {
             _checkingConnectedPing.value = true
             _connectedPing.value = null
             try {
                 val entity = nodeEntities.value.firstOrNull { it.id == node.id }
                 val ping = entity?.let { measureNodePing(it) } ?: -1
+                currentCoroutineContext().ensureActive()
                 if (entity != null) nodeDao.updatePing(entity.id, ping.coerceAtLeast(0))
                 val label = if (ping > 0) "$ping ms" else unreachableLabel
-                if (generation != connectedPingGeneration || _selectedNodeId.value != node.id) {
+                if (generation != connectedPingGeneration || activeNode.value?.id != node.id) {
                     return@launch
                 }
                 _connectedPing.value = label
@@ -2728,12 +2871,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun exportNodesText(nodeIds: Set<String>): String {
         val allEntities = nodeEntities.value.associateBy { it.id }
         return com.lumen.core.config.parser.NodeExportNormalizer.exportAll(
-            nodeIds.mapNotNull { id -> allEntities[id]?.let(::parseEntity) }
+            nodeIds.mapNotNull { id -> allEntities[id]?.takeUnless { it.link.startsWith(ProtectedProfileCodec.PREFIX) }?.let(::parseEntity) }
         )
     }
 
+    fun exportLumenConfig(nodeId: String): String {
+        val entity = requireNotNull(nodeEntities.value.firstOrNull { it.id == nodeId })
+        require(!entity.link.startsWith(ProtectedProfileCodec.PREFIX)) { "Protected profiles cannot be exported" }
+        return com.lumen.core.config.crypto.LumenProfilePayload.encode(listOf(parseEntity(entity)))
+    }
+
     fun exportSubscriptionText(subscriptionId: String?): String {
-        val targets = nodeEntities.value.filter { it.subscriptionId == subscriptionId }
+        val targets = nodeEntities.value.filter { it.subscriptionId == subscriptionId && !it.link.startsWith(ProtectedProfileCodec.PREFIX) }
         return com.lumen.core.config.parser.NodeExportNormalizer.exportAll(targets.map(::parseEntity))
     }
 
@@ -2774,6 +2923,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val retryDelay = cfg.pingRetryDelayMs.coerceIn(0, 5_000).toLong()
         val samples = ArrayList<Int>(attempts)
         repeat(attempts) { index ->
+            currentCoroutineContext().ensureActive()
             if (index > 0 && retryDelay > 0) kotlinx.coroutines.delay(retryDelay)
             val value = probe()
             // Zero is the UI's unreachable sentinel. A successful local round trip can
@@ -2827,6 +2977,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * best reachable member as the AUTO latency.
      */
     private suspend fun measureNodePing(entity: NodeEntity): Int {
+        if (entity.link.startsWith(ProtectedProfileCodec.PREFIX)) {
+            val resolved = parseEntity(entity)
+            return proxyPingAttempts(resolved)
+        }
+        val liveSession = LumenVpnService.activeProxySession.value
+        if (LumenVpnService.isRunning.value && entity.id == activeNode.value?.id &&
+            effectivePingType(entity.protocol) in CORE_PING_TYPES && liveSession != null) {
+            return pingWithin(entity, memberCount = 1, realCheck = true) {
+                measureAttempts {
+                    var result = -1
+                    for (url in httpPingTargets(_settings.value.pingUrl,
+                        iranNetwork = geoRegionCode(_settings.value.geoResourceSource) == "ir")) {
+                        currentCoroutineContext().ensureActive()
+                        result = try {
+                            httpDelayThroughSocks(liveSession.port, url, pingTimeout(), liveSession.username, liveSession.password)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            log("Connected ping: ${e.message?.takeIf { it.startsWith("Probe stage:") } ?: e.javaClass.simpleName}")
+                            -1
+                        }
+                        if (result > 0) break
+                    }
+                    result
+                }
+            }
+        }
         val isAuto = entity.isAutoNode || entity.protocol.equals("auto", true)
         if (!isAuto) {
             val realCheck = effectivePingType(entity.protocol) in CORE_PING_TYPES
@@ -2940,7 +3117,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * answer is discarded before anything is timed. An empty list means every
      * address the resolver returned was a sinkhole: unreachable, not fast.
      */
-    private fun resolveProbeAddresses(host: String): List<java.net.InetAddress> =
+    private suspend fun resolveProbeAddresses(host: String): List<java.net.InetAddress> =
+        ProbeIo.run { resolveProbeAddressesBlocking(host) }
+
+    private fun resolveProbeAddressesBlocking(host: String): List<java.net.InetAddress> =
         runCatching {
             if (geoRegionCode(_settings.value.geoResourceSource) == "ir") TrustedEndpointResolver.resolve(host)
             else java.net.InetAddress.getAllByName(host).toList()
@@ -2948,18 +3128,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .getOrDefault(emptyList())
             .filterNot(::isSinkholeAddress)
 
-    private fun tcpPing(host: String, port: Int, timeoutMs: Int = pingTimeout()): Int {
+    private suspend fun tcpPing(host: String, port: Int, timeoutMs: Int = pingTimeout()): Int {
         val addresses = resolveProbeAddresses(host)
         if (addresses.isEmpty()) return -1
         // A dual-stack endpoint can advertise an unusable AAAA on an IPv4-only
         // carrier, so a failing address falls through to the next one instead of
         // condemning the whole node.
         for (address in addresses) {
-            val measured = runCatching {
+            currentCoroutineContext().ensureActive()
+            val measured = try {
                 val start = System.nanoTime()
-                Socket().use { it.connect(InetSocketAddress(address, port), timeoutMs) }
+                ProbeIo.socket { it.connect(InetSocketAddress(address, port), timeoutMs) }
                 ((System.nanoTime() - start) / 1_000_000).toInt()
-            }.getOrNull()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) { null }
             if (measured != null) return measured
         }
         return -1
@@ -2972,13 +3155,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 -1
             } else {
                 val start = System.nanoTime()
-                if (address.isReachable(timeoutMs)) {
+                if (ProbeIo.run { address.isReachable(timeoutMs) }) {
                     ((System.nanoTime() - start) / 1_000_000).toInt()
                 } else {
                     -1
                 }
             }
         }
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         -1
     }
@@ -3015,19 +3200,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Use the same anti-hijacking address pinning as a normal connection. Without
         // this the tunnel may work while its ping-only core resolves the endpoint to an
         // Iranian carrier's block-page address and reports 0.
-        val pinnedServers = runCatching {
+        val pinnedServers = ProbeIo.run { runCatching {
             ServerAddressPinner.pinnedAddresses(
                 hostnames = listOf(node.server),
                 foreignResolver = _settings.value.dnsDirectServers.lineSequence()
                     .firstOrNull()?.trim().orEmpty().ifBlank { "1.1.1.1" },
                 preferSystemDns = geoRegionCode(_settings.value.geoResourceSource) == "ir"
             )
-        }.getOrDefault(emptyMap())
+        }.getOrDefault(emptyMap()) }
         val workDir = File(app.cacheDir, "ping-tests/${UUID.randomUUID()}").apply { mkdirs() }
         val configFile = File(workDir, "config.json")
         var socksPort = 0
         var obfsPort = SingboxConfigBuilder.OBFS_LOCAL_PORT
         var process: Process? = null
+        var xrayProcess: Process? = null
+        val coreDiagnostics = ArrayDeque<String>()
+        fun drainCore(child: Process, engine: String) {
+            Thread({
+                runCatching { child.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        if (!node.isProtected) synchronized(coreDiagnostics) {
+                            coreDiagnostics.addLast("$engine: ${com.lumen.core.engine.ProcessEngine.stripAnsi(line).take(700)}")
+                            while (coreDiagnostics.size > 8) coreDiagnostics.removeFirst()
+                        }
+                    }
+                } }
+            }, "lumen-ping-$engine-log").apply { isDaemon = true; start() }
+        }
+        var succeeded = false
         var relay: ObfsRelay? = null
         return try {
             val ready = realPingStartupMutex.withLock {
@@ -3050,23 +3250,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     ).also { it.start() }
                 }
                 configFile.writeText(
-                    SingboxConfigBuilder.buildConfig(
-                        node,
-                        pingSingboxOptions(socksPort, obfsPort, workDir, pinnedServers)
+                    HybridConfigBuilder.buildConfig(
+                        node, pingSingboxOptions(socksPort, obfsPort, workDir, pinnedServers),
+                        CoreMode.of(_settings.value.engine), { availableTcpPort(setOf(socksPort, obfsPort)) }
                     ),
                     Charsets.UTF_8
                 )
+                val runtimeJson = JSONObject(configFile.readText())
+                runtimeJson.optJSONObject(HybridConfigBuilder.SIDECAR_KEY)?.let { sidecar ->
+                    val xrayConfig = File(workDir, "xray.json").apply { writeText(sidecar.toString()) }
+                    xrayProcess = ProcessBuilder(File(app.applicationInfo.nativeLibraryDir, "libxray.so").absolutePath,
+                        "run", "-c", xrayConfig.absolutePath).apply {
+                        environment()["GOMAXPROCS"] = "1"
+                        redirectErrorStream(true)
+                    }.start()
+                    xrayProcess?.let { drainCore(it, "Xray") }
+                    runtimeJson.remove(HybridConfigBuilder.SIDECAR_KEY)
+                    configFile.writeText(runtimeJson.toString())
+                }
                 process = ProcessBuilder(binary.absolutePath, "run", "-c", configFile.absolutePath)
+                    .apply { environment()["GOMAXPROCS"] = "1" }
                     .directory(workDir)
                     .redirectErrorStream(true)
                     .start()
                 val startedProcess = process ?: return@withLock null
-                Thread({
-                    runCatching { startedProcess.inputStream.bufferedReader().use { it.readText() } }
-                }, "lumen-real-ping-log").apply {
-                    isDaemon = true
-                    start()
-                }
+                drainCore(startedProcess, "Singbox")
 
                 startedProcess
             }
@@ -3096,31 +3304,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     var result = -1
                     val urls = httpPingTargets(_settings.value.pingUrl,
                         iranNetwork = geoRegionCode(_settings.value.geoResourceSource) == "ir")
-                    for (url in urls) {
-                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                        try {
-                            result = httpDelayThroughSocks(socksPort, url, pingTimeout())
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            log("Ping probe ${node.name}: ${e.message?.takeIf { it.startsWith("Probe stage:") } ?: e.javaClass.simpleName}")
+                    val warmupDeadline = System.nanoTime() + PingBudget.setupMs(pingTimeout()).toLong() * 1_000_000L
+                    do {
+                        for (url in urls) {
+                            currentCoroutineContext().ensureActive()
+                            try {
+                                result = httpDelayThroughSocks(socksPort, url, pingTimeout())
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                log("Ping probe ${node.name}: ${e.message?.takeIf { it.startsWith("Probe stage:") } ?: e.javaClass.simpleName}")
+                            }
+                            if (result > 0) break
                         }
-                        if (result > 0) break
-                    }
+                        if (result > 0 || !node.scheme.equals("openvpn", true) || System.nanoTime() >= warmupDeadline) break
+                        // OpenVPN's SOCKS listener can precede the remote TLS handshake.
+                        // Retry quick "endpoint not ready" failures within the startup budget.
+                        delay(250)
+                    } while (true)
                     result
                 }
-            }
+            }.also { succeeded = it > 0 }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             log("Ping setup ${node.name}: ${e.javaClass.simpleName}")
             -1
         } finally {
+            xrayProcess?.let { child ->
+                child.destroy()
+                if (!child.waitFor(300, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    child.destroyForcibly(); child.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)
+                }
+            }
             process?.let {
                 runCatching { it.destroy() }
                 if (it.isAlive) runCatching { it.waitFor(1_000, TimeUnit.MILLISECONDS) }
                 if (it.isAlive) runCatching { it.destroyForcibly() }
                 if (it.isAlive) runCatching { it.waitFor(1_000, TimeUnit.MILLISECONDS) }
+            }
+            if (!succeeded && currentCoroutineContext()[Job]?.isActive != false && !node.isProtected) {
+                val diagnostic = synchronized(coreDiagnostics) { coreDiagnostics.joinToString(" | ") }
+                if (diagnostic.isNotBlank()) log("Core ping failed ${node.name}: $diagnostic")
             }
             runCatching { relay?.stop() }
             runCatching { workDir.deleteRecursively() }
@@ -3211,7 +3436,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // A reachability check must never inherit user bypass rules. Otherwise the
             // target URL can go out through DIRECT and make a dead node look healthy.
             bypassLan = false,
-            cacheFileEnabled = true,
+            cacheFileEnabled = false,
             cacheFilePath = File(workDir, "cache.db").absolutePath,
             geoResourceSource = s.geoResourceSource,
             directDomains = emptyList(),
@@ -3233,10 +3458,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    private fun httpDelayThroughSocks(
+    private suspend fun httpDelayThroughSocks(
         socksPort: Int,
         rawUrl: String,
-        timeoutMs: Int
+        timeoutMs: Int,
+        username: String? = null,
+        password: String? = null
     ): Int {
         val url = URL(rawUrl.trim().ifBlank { "https://www.gstatic.com/generate_204" })
         val protocol = url.protocol.lowercase(Locale.US)
@@ -3249,7 +3476,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Failures are the expected case here, so the socket must close on every
         // exit path — a handshake exception used to leak one fd per probe.
         var stage = "local SOCKS connection"
-        return try { Socket().use { socket ->
+        return try { ProbeIo.socket { socket ->
             // A fresh core has no established outbound or DNS/TLS session. This
             // setup budget is separate from the configured HTTP response timeout.
             socket.soTimeout = setupTimeout
@@ -3257,10 +3484,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             stage = "SOCKS greeting"
             val input = socket.getInputStream()
             val output = socket.getOutputStream()
-            output.write(byteArrayOf(0x05, 0x01, 0x00))
+            val authenticated = username != null
+            output.write(byteArrayOf(0x05, 0x01, if (authenticated) 0x02 else 0x00))
             output.flush()
             val greeting = readExactly(input, 2)
-            if (greeting[0].toInt() != 0x05 || greeting[1].toInt() != 0x00) throw java.io.IOException("Invalid greeting")
+            if (greeting[0].toInt() != 0x05 || greeting[1].toInt() != if (authenticated) 0x02 else 0x00) {
+                throw java.io.IOException("Invalid greeting")
+            }
+            if (authenticated) {
+                val user = username.orEmpty().toByteArray(Charsets.UTF_8)
+                val pass = password.orEmpty().toByteArray(Charsets.UTF_8)
+                require(user.size in 1..255 && pass.size <= 255)
+                output.write(byteArrayOf(1, user.size.toByte()) + user + byteArrayOf(pass.size.toByte()) + pass)
+                output.flush()
+                val auth = readExactly(input, 2)
+                if (auth[0].toInt() != 1 || auth[1].toInt() != 0) throw java.io.IOException("SOCKS authentication failed")
+            }
             stage = "outbound connect/DNS"
             output.write(
                 byteArrayOf(0x05, 0x01, 0x00, 0x03, hostBytes.size.toByte()) +
@@ -3274,7 +3513,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 0x01 -> readExactly(input, 4)
                 0x03 -> readExactly(input, readExactly(input, 1)[0].toInt() and 0xFF)
                 0x04 -> readExactly(input, 16)
-                else -> return -1
+                else -> return@socket -1
             }
             readExactly(input, 2)
 
@@ -3315,7 +3554,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 ((responseReceivedAt - requestStartedAt) / 1_000_000L).toInt().coerceAtLeast(1)
             }
             responseDelay
-        } } catch (e: Exception) {
+        } } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             throw java.io.IOException("Probe stage: $stage (${e.javaClass.simpleName})", e)
         }
     }
@@ -3421,6 +3662,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }.collect { state ->
                 val previous = _connectionState.value
                 _connectionState.value = state
+                if (state != previous) stopPing()
                 // A start that failed has a specific reason - the core's own FATAL
                 // line - and it is the only thing worth showing the user. Only a
                 // failed connection attempt raises it; a tunnel that drops later
@@ -3457,6 +3699,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun markConnecting() {
+        stopPing()
         VpnLogBus.clearLastError()
         _connectionState.value = ConnectionState.Connecting
         // Repeated taps must not stack watchdogs racing to flip the state to Error.
@@ -3522,7 +3765,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // at a server different from the config they are about to start.
             persistSelectedNodeIdentity(selected.id, selected.name)
         }
-        val parsedSelected = parseEntity(selected)
+        val parsedSelected = try { parseEntity(selected) } catch (error: Exception) {
+            if (error is com.lumen.core.config.crypto.ProfilePolicyException) {
+                if (reportErrors) reportConnectError(profilePolicyMessage(error))
+                return@withContext null
+            }
+            if (reportErrors) reportConnectError("Protected profile is unavailable in this Lumen installation")
+            return@withContext null
+        }
+        val missingCredentials = com.lumen.core.config.parser.OpenVpnCredentials.missing(parsedSelected)
+        if (missingCredentials.any) {
+            if (reportErrors) _openVpnCredentialRequest.value = OpenVpnCredentialRequest(selected.id, selected.name, missingCredentials)
+            return@withContext null
+        }
+        parsedSelected.profilePolicy?.takeIf { it.restricted }?.let { policy ->
+            try {
+                policy.requireUsable(com.lumen.core.vpn.ProfilePolicyEnforcer.effectiveNow(context))
+                if (reportErrors) com.lumen.core.vpn.ProfilePolicyEnforcer.check(context, policy.toJson())
+            }
+            catch (error: IllegalArgumentException) {
+                if (reportErrors) reportConnectError(if (error is com.lumen.core.config.crypto.ProfilePolicyException)
+                    profilePolicyMessage(error) else "Lumen profile restrictions prevent connecting")
+                return@withContext null
+            }
+        }
         val obfsBridges = obfsBridgesOf(parsedSelected)
         if (obfsBridges.size > 1) {
             if (reportErrors) {
@@ -3533,12 +3799,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             return@withContext null
         }
-        val s = _settings.value.copy(engine = "SINGBOX")
+        val s = _settings.value
         val configJson = try {
             // Also repair an existing IR installation whose first download failed.
             installBundledGeoResources(s.geoResourceSource)
             run {
-                val pool = entities.map { parseEntity(it) }
+                val pool = listOf(parsedSelected)
                 // Preserve the physical network's vetted endpoint answer in IR;
                 // global DoH may select a different, inaccessible CDN endpoint.
                 val pinnedServers = runCatching {
@@ -3554,8 +3820,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         foreignResolver = resolver
                     )
                 }.getOrDefault(emptyMap())
-                SingboxConfigBuilder.buildConfig(
-                    pool,
+                HybridConfigBuilder.buildConfig(
                     parsedSelected,
                     SingboxConfigOptions(
                         tunMode = false,
@@ -3663,13 +3928,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         urlTestIdleTimeoutMinutes = prefs.getInt("url_test_idle_timeout_minutes", 0),
                         urlTestInterruptExistConnections =
                             prefs.getBoolean("url_test_interrupt_exist", true)
-                    )
+                    ), CoreMode.of(s.engine), { availableTcpPort(setOf(s.localSocksPort, s.localHttpPort)) }
                 )
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
-            if (reportErrors) reportConnectError("Config build failed: ${e.message}")
+            if (parsedSelected.scheme == "openvpn" && e.message?.startsWith("Could not decrypt OpenVPN private key") == true) {
+                sessionOpenVpnSecrets.computeIfPresent(selected.id) { _, secret -> secret.copy(keyPassword = "") }
+                if (reportErrors) _openVpnCredentialRequest.value = OpenVpnCredentialRequest(selected.id, selected.name,
+                    com.lumen.core.config.parser.OpenVpnMissingCredentials(false, false, true))
+                return@withContext null
+            }
+            if (reportErrors) reportConnectError(if (selected.link.startsWith(ProtectedProfileCodec.PREFIX))
+                "Protected profile configuration is unsupported" else "Config build failed: ${e.message}")
             return@withContext null
         }
         // OpenVPN "Use proxy" with obfs2/obfs3 needs the in-app transport relay;
@@ -3678,8 +3950,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // One shared builder for the app, the widget and the tile: the two latter
         // read these prefs back, so every start parameter must be mirrored here.
         val params = VpnStartParams(
-            configJson = configJson,
-            engineType = s.engine,
+            configJson = if (selected.link.startsWith(ProtectedProfileCodec.PREFIX)) JSONObject(configJson)
+                .put("_lumen_protected", true).apply {
+                    parsedSelected.profilePolicy?.takeIf { it.restricted }?.let { policy ->
+                        put(com.lumen.core.vpn.ProfilePolicyEnforcer.CONFIG_KEY, policy.toJson()
+                            .put("storeHash", selected.link.removePrefix(ProtectedProfileCodec.PREFIX + "store/").substringBefore('/')))
+                    }
+                }.toString() else configJson,
+            engineType = "SINGBOX",
             splitMode = _splitMode.value.name,
             splitPackages = _splitPackages.value,
             // The tun device itself must respect the same OpenVPN ceiling as the config.
@@ -3776,7 +4054,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun buildStopIntent(context: Context): Intent =
         VpnStartIntentFactory.buildStopIntent(context)
 
+    private fun profilePolicyMessage(error: com.lumen.core.config.crypto.ProfilePolicyException): String =
+        when (error.reason) {
+            com.lumen.core.config.crypto.ProfilePolicyDenial.EXPIRED -> com.lumen.ui.screens.LumenProfileText.EXPIRED
+            com.lumen.core.config.crypto.ProfilePolicyDenial.CLOCK -> com.lumen.ui.screens.LumenProfileText.CLOCK
+            com.lumen.core.config.crypto.ProfilePolicyDenial.WIFI -> com.lumen.ui.screens.LumenProfileText.WIFI_REQUIRED
+            com.lumen.core.config.crypto.ProfilePolicyDenial.UNMETERED -> com.lumen.ui.screens.LumenProfileText.UNMETERED_REQUIRED
+        }.inLanguage(_settings.value.language)
+
     private fun parseEntity(entity: NodeEntity): ParsedNode {
+        val parsed = parseStoredEntity(entity)
+        return sessionOpenVpnSecrets[entity.id]?.takeIf { parsed.scheme == "openvpn" }
+            ?.let { com.lumen.core.config.parser.OpenVpnCredentials.apply(parsed, it) } ?: parsed
+    }
+
+    private fun parseStoredEntity(entity: NodeEntity): ParsedNode {
+        if (entity.link.startsWith(ProtectedProfileCodec.PREFIX)) return ProtectedProfiles.resolve(entity.link, getApplication())
         try {
             if (entity.isAutoNode || entity.protocol.equals("auto", true) || entity.link.trim().equals("auto", true)) {
                 // An imported AUTO group stores its server pool in outboundJson.
@@ -3868,7 +4161,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (parsed.server.isBlank()) parsed.server = entity.server
             if (parsed.port <= 0) parsed.port = entity.port
 
-            return parsed
+            return com.lumen.core.config.parser.ShareLinkExtensions.restore(parsed)
         } catch (e: Exception) {
             log("Parse error for ${entity.name}: ${e.message}")
             return ParsedNode(
@@ -4062,6 +4355,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .trim()
     }
 
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val changes = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+            val policyPrefs = context.getSharedPreferences(
+                com.lumen.core.vpn.ProfilePolicyEnforcer.PREFS_NAME, Context.MODE_PRIVATE)
+            val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key == null || key.startsWith("expiry_")) changes.trySend(Unit)
+            }
+            policyPrefs.registerOnSharedPreferenceChangeListener(listener)
+            try {
+                while (isActive) {
+                    var failed = false
+                    try {
+                        val expired = ProtectedProfiles.expiredHashes(context)
+                        if (expired.isNotEmpty()) {
+                            val prefix = ProtectedProfileCodec.PREFIX + "store/"
+                            val removed = nodeDao.getNodes().first().filter { entity ->
+                                entity.link.startsWith(prefix) && entity.link.removePrefix(prefix).substringBefore('/') in expired
+                            }
+                            db.withTransaction { removed.forEach { nodeDao.deleteNodeById(it.id) } }
+                            removed.forEach { sessionOpenVpnSecrets.remove(it.id) }
+                            if (removed.any { it.id == _selectedNodeId.value }) {
+                                storedVpnConfigWriteMutex.withLock { com.lumen.core.vpn.VpnConfigStore.clear(context) }
+                            }
+                            ProtectedProfiles.deleteExpiredFiles(context, expired)
+                        }
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { failed = true }
+                    // Imports/removals wake this immediately. With no expiry indexed,
+                    // suspend indefinitely instead of waking the app every five seconds.
+                    val nextCheck = if (failed) 30_000L else ProtectedProfiles.nextExpiryDelayMs(context)
+                    if (nextCheck == null) changes.receive()
+                    else withTimeoutOrNull(nextCheck) { changes.receive() }
+                }
+            } finally {
+                policyPrefs.unregisterOnSharedPreferenceChangeListener(listener)
+                changes.close()
+            }
+        }
+    }
+
     companion object {
         const val PREFS_NAME = "lumen_prefs"
 
@@ -4212,7 +4547,7 @@ internal object PingBudget {
     const val AUTO_MEMBER_CONCURRENCY = 32
 
     /** Mirrors realPingSemaphore; used by bulk scheduling to avoid timeout in its queue. */
-    const val CORE_PING_CONCURRENCY = 2
+    const val CORE_PING_CONCURRENCY = 16
 
     /** Nothing may hold a single row in "measuring" longer than this. */
     const val MAX_NODE_MS = 180_000L

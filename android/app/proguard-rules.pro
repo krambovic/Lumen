@@ -20,3 +20,9 @@
 -dontwarn java.beans.IntrospectionException
 -dontwarn java.beans.Introspector
 -dontwarn java.beans.PropertyDescriptor
+
+# The OpenVPN PEM/PKCS#8 decryptors use an explicit Bouncy Castle provider.
+# Provider registrations load these algorithm classes by constructed names;
+# reachability from the decryptor alone cannot preserve them or their names.
+-keep class org.bouncycastle.jcajce.provider.symmetric.** { *; }
+-keep class org.bouncycastle.jcajce.provider.digest.** { *; }

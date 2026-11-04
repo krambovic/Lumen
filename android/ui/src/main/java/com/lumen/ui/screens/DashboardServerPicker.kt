@@ -69,7 +69,7 @@ internal fun DashboardServerPicker(
                 items(visible, key = { it.id }, contentType = { "server" }) { node ->
                     val selected = node.isSelected
                     Row(Modifier.fillMaxWidth().animateItem(fadeInSpec = null, fadeOutSpec = null)
-                        .semantics { contentDescription = node.name + ". " + node.displayProtocol }
+                        .semantics { contentDescription = node.name + ". " + node.localizedProtocol(s) }
                         .clip(com.lumen.ui.components.selectionShape(selected, 14.dp, 26.dp))
                         .background(if (selected) art.lavender else MaterialTheme.colorScheme.surfaceContainerLow)
                         .clickable { onSelect(node) }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -79,7 +79,7 @@ internal fun DashboardServerPicker(
                         }
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                             Text(node.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(node.displayProtocol, style = MaterialTheme.typography.bodySmall,
+                            Text(node.localizedProtocol(s), style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         DashboardNodePing(node, node.id in pinging) { onPingNode(node) }

@@ -17,11 +17,18 @@ class QrDecoderTest {
         val scanner = BarcodeScanning.getClient(BarcodeScannerOptions.Builder()
             .setBarcodeFormats(Barcode.FORMAT_QR_CODE).build())
         try {
-            listOf("https://example.invalid/sub/test", "socks://user:secret@example.invalid:1080#Test").forEach { expected ->
+            listOf("https://example.invalid/sub/test", "socks://user:secret@example.invalid:1080#Test",
+                "wg:///+8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=@[2001:db8::1]:51820?publickey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=&address=10.0.0.2/32",
+                "[Interface]\nPrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nEndpoint = [2001:db8::1]:51820\nAllowedIPs = 0.0.0.0/0").forEach { expected ->
                 val bitmap = encodeQrBitmap(expected)
                 try {
                     val decoded = Tasks.await(scanner.process(InputImage.fromBitmap(bitmap, 0)), 20, TimeUnit.SECONDS)
                     assertEquals(expected, decoded.single().rawValue)
+                    if (expected.startsWith("wg:") || expected.startsWith("[Interface]")) {
+                        val (nodes, errors) = com.lumen.core.config.parser.LinkParser.parseLinksText(decoded.single().rawValue!!)
+                        assertEquals(errors.toString(), 1, nodes.size)
+                        assertEquals("2001:db8::1", nodes.single().server)
+                    }
                 } finally { bitmap.recycle() }
             }
         } finally { scanner.close() }

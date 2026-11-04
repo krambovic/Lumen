@@ -15,12 +15,16 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.State
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.isActive
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -41,11 +45,36 @@ fun expressivePageExit(forward: Boolean = true): ExitTransition =
     } + scaleOut(spring(dampingRatio = 1f, stiffness = 650f), targetScale = .985f,
         transformOrigin = TransformOrigin(.5f, .42f)) + fadeOut(spring(stiffness = 1500f))
 
-/** Read the phase inside a graphics layer, never in the parent screen's composition. */
+/** Read in a graphics layer/draw block so rotation does not recompose the tile. */
 @Composable
 fun rememberDecorativeRotation(durationMillis: Int = 32000): State<Float> =
-    rememberInfiniteTransition(label = "decorative_rotation").animateFloat(0f, 360f,
-        infiniteRepeatable(tween(durationMillis, easing = LinearEasing)), label = "decorative_phase")
+    rememberForegroundAngle { 360_000f / durationMillis.coerceAtLeast(1) }
+
+/** Continuous phase survives speed changes and pauses completely while the UI is not resumed. */
+@Composable
+internal fun rememberForegroundAngle(
+    enabled: Boolean = true,
+    degreesPerSecond: () -> Float
+): State<Float> {
+    val angle = remember { mutableFloatStateOf(0f) }
+    val speed = rememberUpdatedState(degreesPerSecond)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle, enabled) {
+        if (!enabled) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            var previous = withFrameNanos { it }
+            while (isActive) {
+                withFrameNanos { now ->
+                    // Discard a suspended/stalled frame's long gap instead of jumping on resume.
+                    val seconds = ((now - previous) / 1_000_000_000f).coerceIn(0f, .05f)
+                    previous = now
+                    angle.floatValue = (angle.floatValue + seconds * speed.value()).mod(360f)
+                }
+            }
+        }
+    }
+    return angle
+}
 
 /** Selection geometry uses the same interruptible spring throughout the app. */
 @Composable

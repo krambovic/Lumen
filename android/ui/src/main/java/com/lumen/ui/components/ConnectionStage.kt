@@ -47,9 +47,9 @@ fun ConnectionStage(state: ConnectionState, serverName: String?, onToggle: () ->
                     .background(if (connected) art.lime else if (failed) art.coral else art.onStage.copy(alpha = .4f)))
             }
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.height(72.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.heightIn(min = 72.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Box(Modifier.fillMaxWidth().height(64.dp), contentAlignment = Alignment.CenterStart) {
+                    Box(Modifier.fillMaxWidth().heightIn(min = 64.dp), contentAlignment = Alignment.CenterStart) {
                         AnimatedContent(state, transitionSpec = {
                             expressivePageEnter().togetherWith(expressivePageExit()).using(null)
                         }, label = "connection_status") { status ->
@@ -87,7 +87,7 @@ fun ConnectionStage(state: ConnectionState, serverName: String?, onToggle: () ->
             if (!compact) {
                 Spacer(Modifier.height(16.dp))
                 ExpressiveAction(if (connected) s.centerDisconnect else if (connecting) s.centerConnecting else s.centerConnect,
-                    onToggle, Modifier.fillMaxWidth().height(56.dp), icon = Icons.Default.PowerSettingsNew,
+                    onToggle, Modifier.fillMaxWidth().heightIn(min = 56.dp), icon = Icons.Default.PowerSettingsNew,
                     container = art.lime, content = art.onLime)
             }
         }

@@ -21,7 +21,8 @@ import com.lumen.ui.theme.expressivePalette
 @Composable
 internal fun CompactServerCard(node: NodeUiModel, checked: Boolean, pinging: Boolean,
     onClick: () -> Unit, onLongClick: () -> Unit, onEdit: () -> Unit, onPing: () -> Unit,
-    onCopy: () -> Unit, onDelete: () -> Unit, modifier: Modifier = Modifier) {
+    onCopy: () -> Unit, onDelete: () -> Unit, modifier: Modifier = Modifier,
+    onExportLumen: () -> Unit = {}) {
     val s = LocalStrings.current
     val art = expressivePalette()
     var menu by remember { mutableStateOf(false) }
@@ -37,7 +38,8 @@ internal fun CompactServerCard(node: NodeUiModel, checked: Boolean, pinging: Boo
             Box {
                 IconButton({ menu = true }, Modifier.size(28.dp)) { Icon(Icons.Default.MoreVert, node.name, Modifier.size(18.dp), tint = ink) }
                 LumenMenu(menu, { menu = false }) {
-                    listOf(s.edit to onEdit, s.ping to onPing, s.copyLink to onCopy, s.delete to onDelete).forEach { (label, action) ->
+                    (if (node.isProtected) listOf(s.ping to onPing, s.delete to onDelete) else listOf(s.edit to onEdit, s.ping to onPing,
+                        LumenProfileText.EXPORT.inLanguage(s.localeCode) to onExportLumen, s.copyLink to onCopy, s.delete to onDelete)).forEach { (label, action) ->
                         DropdownMenuItem(text = { Text(label) }, onClick = { menu = false; action() })
                     }
                 }

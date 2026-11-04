@@ -2,6 +2,7 @@ package com.lumen.core.config.builder
 
 import com.lumen.core.config.normalizer.AmneziaWGNormalizer
 import com.lumen.core.config.normalizer.OpenVpnConfigNormalizer
+import com.lumen.core.config.crypto.OpenVpnPrivateKey
 import com.lumen.core.config.parser.LinkParser
 import com.lumen.core.config.parser.ParsedNode
 import org.json.JSONArray
@@ -1678,7 +1679,9 @@ object SingboxConfigBuilder {
             !result["flow"]?.toString()?.trim().isNullOrEmpty()
         val tlsRequired = type in requiredTlsTypes || flowRequiresTls
         val rawTls = mapValue(result["tls"])
-        if (rawTls != null || tlsRequired) {
+        // OpenVPN server_name is verify-x509-name (a certificate identity), not
+        // an HTTPS SNI default. Never invent it from the remote address.
+        if (type !in setOf("openvpn", "openvpn-client") && (rawTls != null || tlsRequired)) {
             val tls = (rawTls ?: emptyMap()).toMutableMap()
             if (tlsRequired) tls["enabled"] = true
             if (tls["server_name"]?.toString().isNullOrBlank()) {
@@ -2185,7 +2188,7 @@ object SingboxConfigBuilder {
      * AUTO pool then drops just this server rather than losing the whole config.
      * Certificate-only profiles ask for no credentials and are left alone.
      */
-    private fun requireOpenVpnCredentials(outbound: Map<String, Any?>, node: ParsedNode) {
+    private fun requireOpenVpnCredentials(outbound: MutableMap<String, Any?>, node: ParsedNode) {
         if (outbound["type"]?.toString()?.lowercase() !in setOf("openvpn", "openvpn-client")) return
         // An encrypted private key is just as fatal as a missing login: without the
         // passphrase the core cannot even parse the key, so reject the member here.
@@ -2197,9 +2200,15 @@ object SingboxConfigBuilder {
             if (outbound["key_password"]?.toString()?.trim().isNullOrEmpty()) {
                 throw IllegalArgumentException("OpenVPN private key is encrypted and requires a private key password")
             }
-            throw IllegalArgumentException("Encrypted OpenVPN private keys are not supported by the current core")
+            val keyField = if (tls?.containsKey("key") == true) "key" else "client_key"
+            val decrypted = OpenVpnPrivateKey.decryptIfNeeded(
+                tls?.get(keyField).toString(), outbound["key_password"].toString()
+            )
+            outbound["tls"] = tls!!.entries.associate { it.key.toString() to it.value }
+                .toMutableMap().apply { put(keyField, decrypted) }
         }
-        if (!LinkParser.openVpnRequiresUserAuth(node.link)) return
+        if (!LinkParser.openVpnRequiresUserAuth(node.link) && node.outbound["openvpn_requires_auth"] != true &&
+            outbound["username"]?.toString().isNullOrEmpty() && outbound["password"]?.toString().isNullOrEmpty()) return
         val username = outbound["username"]?.toString()?.trim().orEmpty()
         val password = outbound["password"]?.toString()?.trim().orEmpty()
         if (username.isEmpty() || password.isEmpty()) {
@@ -2247,10 +2256,13 @@ object SingboxConfigBuilder {
             if (rawCipher.isNotEmpty()) {
                 val cipher = OpenVpnConfigNormalizer.normalizeDataCipher(rawCipher)
                     ?: throw IllegalArgumentException("Unsupported OpenVPN data cipher `$rawCipher`")
-                outbound["data_ciphers"] = listOf(cipher)
-                outbound["data_ciphers_fallback"] = cipher
+                // `cipher` is a legacy fallback, not a restriction on negotiated
+                // ciphers. Offering only CBC makes modern servers return AUTH_FAILED.
+                outbound.putIfAbsent("data_ciphers", (OpenVpnConfigNormalizer.defaultNegotiatedCiphers + cipher).distinct())
+                outbound.putIfAbsent("data_ciphers_fallback", cipher)
             }
-        } else if (outbound.containsKey("data_ciphers")) {
+        }
+        if (outbound.containsKey("data_ciphers")) {
             val rawCiphers = when (val value = outbound["data_ciphers"]) {
                 is List<*> -> value.map { it.toString() }
                 else -> value?.toString()?.split(":").orEmpty()
@@ -2272,7 +2284,8 @@ object SingboxConfigBuilder {
             if (legacy) {
                 val ca = tls.remove("ca")
                 val caPath = tls.remove("ca_path")
-                val clientCertificate = tls.remove("certificate")
+                val clientCertificate = tls.remove("certificate") ?: tls["cert"]
+                tls.remove("cert")
                 val clientCertificatePath = tls.remove("certificate_path")
                 val clientKey = tls.remove("key")
                 val clientKeyPath = tls.remove("key_path")
@@ -2326,6 +2339,9 @@ object SingboxConfigBuilder {
             }
             tls.remove("kernel_tx")
             tls.remove("kernel_rx")
+            // Legacy wrappers used generic TLS.enabled; OpenVPN TLS has no such
+            // switch and the native endpoint rejects the unknown field.
+            tls.remove("enabled")
             outbound["tls"] = tls
         }
         for (key in listOf(

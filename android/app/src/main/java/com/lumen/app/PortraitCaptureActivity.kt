@@ -54,6 +54,9 @@ class PortraitCaptureActivity : ComponentActivity() {
         val allowed = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         val controller = remember { LifecycleCameraController(this).apply {
             setEnabledUseCases(CameraController.IMAGE_ANALYSIS)
+            imageAnalysisTargetSize = CameraController.OutputSize(android.util.Size(1920, 1080))
+            isTapToFocusEnabled = true
+            isPinchToZoomEnabled = true
             imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
         } }
         val detector = remember { BarcodeScanning.getClient(BarcodeScannerOptions.Builder()
@@ -65,7 +68,7 @@ class PortraitCaptureActivity : ComponentActivity() {
                 val executor = ContextCompat.getMainExecutor(this@PortraitCaptureActivity)
                 controller.setImageAnalysisAnalyzer(executor, MlKitAnalyzer(listOf(detector),
                     ImageAnalysis.COORDINATE_SYSTEM_VIEW_REFERENCED, executor) { result ->
-                    val value = result.getValue(detector)?.firstNotNullOfOrNull { it.rawValue?.takeIf(String::isNotBlank) }
+                    val value = result.getValue(detector)?.firstNotNullOfOrNull { (it.rawValue ?: it.rawBytes?.toString(Charsets.UTF_8))?.takeIf(String::isNotBlank) }
                     if (value != null && value.length <= 64 * 1024 && delivered.compareAndSet(false, true)) {
                         setResult(RESULT_OK, Intent().putExtra(RESULT_TEXT, value))
                         finish()
