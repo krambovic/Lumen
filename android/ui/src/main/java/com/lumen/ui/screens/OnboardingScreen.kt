@@ -22,11 +22,16 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.lumen.ui.components.*
 import com.lumen.ui.theme.expressivePalette
 
@@ -62,7 +67,7 @@ fun OnboardingScreen(
     val last = index == steps.lastIndex
     
     var isDefaultLangForced by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(isDefaultLangForced) {
+    LaunchedEffect(Unit) {
         if (!isDefaultLangForced) {
             onLanguage("fa")
             onUpdate(settings.copy(language = "fa"))
@@ -134,17 +139,10 @@ fun OnboardingScreen(
                                 if (LumenVersion.appVersion == "1.5.0") WelcomeText.NEWS_COPY else WelcomeText.UPDATED_COPY),
                                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             
-                            LumenDropdown(
-                                label = s.language,
-                                options = listOf("fa", "en"),
-                                selected = if (settings.language == "en") "en" else "fa",
-                                onSelected = { 
-                                    onLanguage(it)
-                                    onUpdate(settings.copy(language = it))
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                optionLabel = { when (it) { "fa" -> "فارسی"; else -> "English" } }
-                            )
+                            LumenDropdown(s.language, listOf("fa", "en"), if (settings.language == "en") "en" else "fa", {
+                                onLanguage(it)
+                                onUpdate(settings.copy(language = it))
+                            }, Modifier.fillMaxWidth(), optionLabel = { when (it) { "fa" -> "فارسی"; else -> "English" } })
                                 
                             if (current == WelcomeStep.NEWS) {
                                 Text("${onboarding.previousVersion} → ${LumenVersion.appVersion}", style = MaterialTheme.typography.titleLarge)
@@ -199,15 +197,9 @@ fun OnboardingScreen(
                             if (configChoice == "warp") {
                                 SettingsPanel("خرید اشتراک", "VIP", art.blue, art.onBlue) {
                                     Text("برای دریافت بهترین کیفیت و پینگ پایین در بازی‌ها، می‌توانید از ما اشتراک ویژه تهیه کنید.", style = MaterialTheme.typography.bodyMedium, color = art.onBlue)
-                                    ExpressiveAction(
-                                        "خرید اشتراک (پشتیبانی)",
-                                        { onOpenLink("https://t.me/BalochpingSuport") },
-                                        Modifier.fillMaxWidth(), 
-                                        Icons.Default.ShoppingCart, 
-                                        enabled = true,
-                                        container = art.lime, 
-                                        content = art.onLime
-                                    )
+                                    ExpressiveAction("خرید اشتراک (پشتیبانی)",
+                                        { onOpenLink("https://t.me/BalochpingSuport") }, Modifier.fillMaxWidth(), Icons.Default.ShoppingCart,
+                                        enabled = true, container = art.lime, content = art.onLime)
                                 }
                             }
                             if (importBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
