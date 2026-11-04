@@ -1,17 +1,11 @@
 package com.lumen.ui.screens
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,11 +20,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -618,21 +610,7 @@ private fun ServerListRow(
     var showNodeMenu by remember(node.id) { mutableStateOf(false) }
     
     val isSelected = node.isSelected || selectionChecked
-    
-    // انیمیشن تپش نئونی (Pulse Glow Effect)
-    val infiniteTransition = rememberInfiniteTransition()
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = if (isSelected) 0.3f else 1.0f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse_glow"
-    )
-
-    // استفاده از آلفا متحرک برای ایجاد حس تپش وقتی سرور انتخاب شده
-    val borderColor = if (isSelected) CyberYellow.copy(alpha = glowAlpha) else CardStroke
+    val borderColor = if (isSelected) CyberYellow else CardStroke
     val borderWidth = if (isSelected) 2.dp else 1.dp
     val cardShape = RoundedCornerShape(16.dp)
     
@@ -664,26 +642,18 @@ private fun ServerListRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Circle Flag Box - انیمیشن تپش روی کادر پرچم
+            // Box کاملاً ساده و مستطیلی برای پرچم، دقیقاً مثل عکس
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(BgDark)
-                    .border(
-                        width = if (isSelected) 1.5.dp else 1.dp,
-                        color = if (isSelected) CyberYellow.copy(alpha = glowAlpha) else CardStroke,
-                        shape = CircleShape
-                    )
-                    .graphicsLayer {
-                        // یک بزرگ‌نمایی (Scale) خیلی ریز و جذاب وقتی می‌تپه
-                        val scale = if (isSelected) 0.97f + (0.03f * glowAlpha) else 1f
-                        scaleX = scale
-                        scaleY = scale
-                    },
+                    .width(38.dp)
+                    .height(26.dp)
+                    .clip(RoundedCornerShape(3.dp)), // فقط یک انحنای خیلی ریز مثل خود پرچم واقعی
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = flagEmoji, fontSize = 28.sp)
+                Text(
+                    text = flagEmoji, 
+                    fontSize = 34.sp // سایز بزرگ که کادر رو کامل پر کنه
+                )
             }
 
             Spacer(modifier = Modifier.width(14.dp))
@@ -704,7 +674,7 @@ private fun ServerListRow(
                         Icon(
                             Icons.Default.CheckCircle,
                             contentDescription = null,
-                            tint = CyberYellow.copy(alpha = glowAlpha),
+                            tint = CyberYellow,
                             modifier = Modifier.size(16.dp)
                         )
                     }
