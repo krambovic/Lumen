@@ -240,7 +240,6 @@ fun OnboardingScreen(
                             WelcomeHero(t(WelcomeText.DONE), "Lumen")
                             Text(t(WelcomeText.DONE_COPY), style = MaterialTheme.typography.bodyLarge)
                             WelcomeSummaryGrid(settings, region, routing, serverCount)
-                            // کادر پشتیبانی و گیت‌هاب از اینجا حذف شد
                         }
                     }
                     Spacer(Modifier.height(12.dp))
