@@ -36,6 +36,12 @@ import androidx.compose.ui.unit.sp
 import com.lumen.ui.components.*
 import com.lumen.ui.theme.expressivePalette
 
+private val CyberYellow = Color(0xFFFFD600)
+private val BgDark = Color(0xFF09090E)
+private val CardDark = Color(0xFF15151E)
+private val CardStroke = Color(0xFF252536)
+private val TextMuted = Color(0xFF8B93A5)
+
 /** Full-screen, resumable setup. Every setting and action uses the real application callbacks. */
 @Composable
 fun OnboardingScreen(
@@ -67,7 +73,6 @@ fun OnboardingScreen(
     val busy = onboarding.warpBusy || onboarding.preparing || importBusy
     val last = index == steps.lastIndex
     
-    // === اعمال خودکار زبان فارسی در اولین ورود ===
     var isDefaultLangForced by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(isDefaultLangForced) {
         if (!isDefaultLangForced) {
@@ -76,7 +81,6 @@ fun OnboardingScreen(
             isDefaultLangForced = true
         }
     }
-    // ===========================================
 
     fun back() {
         if (onboarding.preparing) onCancelPreparation()
@@ -100,7 +104,7 @@ fun OnboardingScreen(
                         val width by animateDpAsState(if (position == index) 32.dp else 10.dp,
                             spring(dampingRatio = .8f, stiffness = 500f), label = "welcome_step")
                         Box(Modifier.size(width, 6.dp).clip(RoundedCornerShape(10.dp))
-                            .background(if (position <= index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest))
+                            .background(if (position <= index) CyberYellow else MaterialTheme.colorScheme.surfaceContainerHighest))
                     }
                 }
             }
@@ -108,10 +112,10 @@ fun OnboardingScreen(
         bottomBar = {
             Column {
             if (onboarding.preparing) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
+                LinearProgressIndicator(Modifier.fillMaxWidth(), color = CyberYellow)
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(t(WelcomeText.PREPARING), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onCancelPreparation) { Text(s.cancel) }
+                    TextButton(onCancelPreparation) { Text(s.cancel, color = CyberYellow) }
                 }
             }
             if (onboarding.preparationError) Text(t(WelcomeText.PREPARATION_ERROR),
@@ -122,7 +126,7 @@ fun OnboardingScreen(
                 Spacer(Modifier.weight(1f))
                 ExpressiveAction(t(if (last) WelcomeText.OPEN else if (index == 0) WelcomeText.START else WelcomeText.NEXT),
                     onClick = { if (last) onFinish() else stepIndex = index + 1 },
-                    enabled = !busy, container = art.lime, content = art.onLime)
+                    enabled = !busy, container = CyberYellow, content = BgDark)
             }
             }
         }
@@ -142,7 +146,6 @@ fun OnboardingScreen(
                                 if (LumenVersion.appVersion == "1.5.0") WelcomeText.NEWS_COPY else WelcomeText.UPDATED_COPY),
                                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             
-                            // === منوی کشویی فقط با انگلیسی و فارسی ===
                             LumenDropdown(
                                 label = s.language,
                                 options = listOf("fa", "en"),
@@ -154,7 +157,6 @@ fun OnboardingScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 optionLabel = { when (it) { "fa" -> "فارسی"; else -> "English" } }
                             )
-                            // ==========================================
                                 
                             if (current == WelcomeStep.NEWS) {
                                 Text("${onboarding.previousVersion} → ${LumenVersion.appVersion}", style = MaterialTheme.typography.titleLarge)
@@ -195,35 +197,41 @@ fun OnboardingScreen(
                             }
                         }
                         WelcomeStep.CONFIGS -> {
-                            // === بازنویسی بخش پیکربندی (CONFIGS) بر اساس درخواست کاربر ===
-                            WelcomeHeader("پیکربندی دارید؟", "سرورهای خود را اضافه کنید یا اشتراک بخرید.")
+                            // === تغییر تیتر به «اشتراک دارید؟» ===
+                            WelcomeHeader("اشتراک دارید؟", "لینک اشتراک خود را وارد کنید یا اشتراک جدید بخرید.")
                             
                             WelcomeChoice("بله، دارم", "پیوند، اشتراک یا فایل", Icons.Default.FolderOpen, configChoice == "import") { configChoice = "import" }
                             WelcomeChoice("هنوز نه", "خرید اشتراک", Icons.Default.Shield, configChoice == "warp") { configChoice = "warp" }
                             
                             if (configChoice == "import") {
-                                // دکمه‌های کلیپ‌بورد، فایل و QR کد حذف شدند. فقط فیلد لینک باقی مانده.
                                 ExpressiveTextField(link, { link = it }, Modifier.fillMaxWidth(), enabled = !busy,
-                                    label = { Text("لینک اشتراک خود را وارد کنید") }, singleLine = true)
+                                    label = { Text("لینک اشتراک خود را وارد کنید") }, singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = CyberYellow,
+                                        focusedLabelColor = CyberYellow,
+                                        cursorColor = CyberYellow
+                                    )
+                                )
                                 ExpressiveAction(s.add, { onImportText(link.trim()) }, Modifier.fillMaxWidth(),
-                                    icon = Icons.Default.Add, enabled = link.isNotBlank() && !busy)
+                                    icon = Icons.Default.Add, enabled = link.isNotBlank() && !busy,
+                                    container = CyberYellow, content = BgDark)
                             }
                             if (configChoice == "warp") {
-                                SettingsPanel("خرید اشتراک", "VIP", art.blue, art.onBlue) {
-                                    Text("برای دریافت بهترین کیفیت و پینگ پایین در بازی‌ها، می‌توانید از ما اشتراک ویژه تهیه کنید.", style = MaterialTheme.typography.bodyMedium, color = art.onBlue)
-                                    // دکمه خرید اشتراک که به تلگرام هدایت می‌شود (با آیدی اختصاصی)
+                                SettingsPanel("خرید اشتراک", "VIP", CardDark, Color.White) {
+                                    Text("برای دریافت بهترین کیفیت و پینگ پایین در بازی‌ها، می‌توانید از ما اشتراک ویژه تهیه کنید.", style = MaterialTheme.typography.bodyMedium, color = Color.White)
                                     ExpressiveAction(
                                         "خرید اشتراک (پشتیبانی)",
                                         { onOpenLink("https://t.me/BalochpingSuport") },
                                         Modifier.fillMaxWidth(), 
-                                        Icons.Default.SupportAgent, 
-                                        enabled = true
+                                        Icons.Default.ShoppingCart, 
+                                        enabled = true,
+                                        container = CyberYellow, 
+                                        content = BgDark
                                     )
                                 }
                             }
-                            if (importBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                            if (importBusy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = CyberYellow)
                             Text("${t(WelcomeText.SERVERS)}: $serverCount", style = MaterialTheme.typography.labelLarge)
-                            // ==============================================================
                         }
                         WelcomeStep.SYSTEM -> {
                             WelcomeHeader(t(WelcomeText.SYSTEM), t(WelcomeText.SYSTEM_COPY))
@@ -256,14 +264,13 @@ private fun WelcomeHeader(title: String, description: String) {
 
 @Composable
 private fun WelcomeHero(title: String, eyebrow: String) {
-    val art = expressivePalette()
     Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Box(Modifier.size(64.dp).clip(expressiveShape(Motif.Clover)).background(art.lime), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Check, null, tint = art.onLime, modifier = Modifier.size(32.dp))
+        Box(Modifier.size(64.dp).clip(expressiveShape(Motif.Clover)).background(CyberYellow), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Check, null, tint = BgDark, modifier = Modifier.size(32.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(eyebrow, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text(eyebrow, style = MaterialTheme.typography.labelMedium, color = CyberYellow)
             Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         }
     }
@@ -271,12 +278,12 @@ private fun WelcomeHero(title: String, eyebrow: String) {
 
 @Composable
 private fun WelcomeFeature(title: String, body: String, icon: ImageVector) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp),
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(CardDark).padding(16.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+        Icon(icon, null, tint = CyberYellow)
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, style = MaterialTheme.typography.titleMedium, color = Color.White)
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = TextMuted)
         }
     }
 }
@@ -285,29 +292,35 @@ private fun WelcomeFeature(title: String, body: String, icon: ImageVector) {
 private fun WelcomeChoice(title: String, body: String, icon: ImageVector, chosen: Boolean, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().semantics { selected = chosen }
         .clip(selectionShape(chosen, 14.dp, 28.dp))
-        .background(if (chosen) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow)
+        .background(if (chosen) CyberYellow.copy(alpha = 0.15f) else CardDark)
         .clickable(role = Role.RadioButton, onClick = onClick).padding(16.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+        Icon(icon, null, tint = if (chosen) CyberYellow else TextMuted)
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            if (body.isNotBlank()) Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, style = MaterialTheme.typography.titleMedium, color = if (chosen) CyberYellow else Color.White)
+            if (body.isNotBlank()) Text(body, style = MaterialTheme.typography.bodySmall, color = TextMuted)
         }
-        RadioButton(chosen, onClick = null)
+        RadioButton(
+            selected = chosen, 
+            onClick = null,
+            colors = RadioButtonDefaults.colors(
+                selectedColor = CyberYellow,
+                unselectedColor = TextMuted
+            )
+        )
     }
 }
 
 @Composable
 private fun WelcomeSupport(language: String, onOpenLink: (String) -> Unit) {
     val s = LocalStrings.current
-    val art = expressivePalette()
-    SettingsPanel(WelcomeText.SUPPORT.inLanguage(language), "♡", art.lavender, art.onLavender) {
-        Text(WelcomeText.SUPPORT_COPY.inLanguage(language), color = art.onLavender)
+    SettingsPanel(WelcomeText.SUPPORT.inLanguage(language), "♡", CardDark, Color.White) {
+        Text(WelcomeText.SUPPORT_COPY.inLanguage(language), color = Color.White)
         ExpressiveAction(WelcomeText.STAR.inLanguage(language), { onOpenLink("https://github.com/krambovic/Lumen") },
-            Modifier.fillMaxWidth(), Icons.Default.Star)
+            Modifier.fillMaxWidth(), Icons.Default.Star, container = CyberYellow, content = BgDark)
         TextButton({ onOpenLink("https://www.donationalerts.com/r/studiobebraedition") }) {
-            Icon(Icons.Default.Favorite, null, Modifier.size(18.dp))
-            Text(s.supportProject, Modifier.padding(start = 8.dp))
+            Icon(Icons.Default.Favorite, null, Modifier.size(18.dp), tint = CyberYellow)
+            Text(s.supportProject, Modifier.padding(start = 8.dp), color = CyberYellow)
         }
     }
 }
