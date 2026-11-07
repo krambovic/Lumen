@@ -1728,5 +1728,11 @@
   "Стабильность и оформление": "Stability and appearance",
   "Исправлены ложные конфликты ядер и подсказки; новая светлая иконка и обновления только для Desktop.": "Fixed false core conflicts and tooltips; a new light icon and Desktop-only update selection.",
   "Проверка сети": "Network check",
-  "Доступность IPv4/IPv6, состояние прокси и TUN": "IPv4/IPv6 reachability, proxy and TUN status"
+  "Доступность IPv4/IPv6, состояние прокси и TUN": "IPv4/IPv6 reachability, proxy and TUN status",
+  "Кодировка подписок": "Subscription text encoding",
+  "Исправлена кириллица в заголовках и баннерах подписок.": "Fixed Cyrillic text in subscription titles and banners.",
+  "Полезная диагностика": "Useful diagnostics",
+  "В архив возвращены настройки; добавлены версии системы и ядер, проверка сети по выбору.": "Restored settings in archives; added system and core versions and optional network checks.",
+  "Отправка отчётов": "Report uploads",
+  "Восстановлен ID установки и добавлена отправка через прокси при недоступности сервера напрямую.": "Restored the installation ID and added proxy uploads when direct connections fail."
 }

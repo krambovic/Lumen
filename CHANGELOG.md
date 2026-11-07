@@ -1,3 +1,11 @@
+## Desktop v2.1.4
+
+* Fixed garbled Cyrillic text in subscription titles and information banners caused by UTF-8 HTTP headers being read as Latin-1 ([#19](https://github.com/krambovic/Lumen/issues/19)). Previously saved banner text is repaired when displayed.
+* Restored useful redacted settings and routing details in diagnostic archives; added system and engine versions and optional network checks.
+* Restored installation IDs in heartbeats, error reports and diagnostic archives, and added a configured proxy fallback for connection failures.
+
+Full Changelog: https://github.com/krambovic/Lumen/compare/v2.1.3...v2.1.4
+
 ## Android v1.5.1
 
 * feat: add Xray as an optional companion core, following Lumen Desktop's hybrid approach — Hybrid automatically uses it for settings sing-box cannot handle, with Singbox and Xray modes available in Settings
