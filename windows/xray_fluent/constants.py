@@ -7,7 +7,7 @@ from .data_paths import resolve_data_dir, seed_user_data
 
 
 APP_NAME = "Lumen"
-APP_VERSION = "2.1.3"
+APP_VERSION = "2.1.4"
 STATE_SCHEMA_VERSION = 1
 # Bump when parsing/reconciliation semantics change; cached validators remain
 # useful, while the value lets future migrations force one clean reconcile.
