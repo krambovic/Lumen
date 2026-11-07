@@ -6,14 +6,17 @@ client authentication: a secret distributed in every binary proves no identity.
 """
 from __future__ import annotations
 from collections import OrderedDict
+import errno
 import hashlib
 import hmac as _hmac
 import json
 import logging
 import os
 import queue
+import socket
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import weakref
@@ -209,6 +212,28 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
+
+def _proxy_fallback_allowed(error: urllib.error.URLError) -> bool:
+    # Retry connection establishment failures only. A read failure or HTTP
+    # response may follow an accepted POST and must not duplicate the upload.
+    reason = error.reason
+    return isinstance(reason, (ConnectionRefusedError, TimeoutError, socket.gaierror)) or (
+        isinstance(reason, OSError) and reason.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH)
+    )
+
+
+def _fallback_proxies() -> dict[str, str]:
+    configured = urllib.request.getproxies()
+    proxy = configured.get("https") or configured.get("all")
+    if not isinstance(proxy, str):
+        return {}
+    # urllib also accepts a bare host:port in system proxy settings.
+    proxy = proxy if "://" in proxy else "http://" + proxy
+    parsed = urllib.parse.urlsplit(proxy)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.fragment:
+        return {}
+    return {"https": proxy}
+
 def _send(url: str, body: bytes, content_type: str, timeout: int, headers: dict | None = None, *,
           epoch: int | None = None, cancel_event: threading.Event | None = None) -> bool:
     epoch = get_upload_epoch() if epoch is None else epoch
@@ -236,13 +261,28 @@ def _send(url: str, body: bytes, content_type: str, timeout: int, headers: dict 
             all_headers["X-Filename"] = "diagnostics.zip"
         all_headers.update(_sign_headers(body))
         request = urllib.request.Request(url, data=body, method="POST", headers=all_headers)
-        # Explicit proxy policy: no implicit registry discovery or redirects.
+        # Prefer direct transport; consult system settings only after a
+        # connection failure. Redirects remain disabled on both routes.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
         if cancelled():
             return False
         # Dispatch boundary. Never hold the consent lock across network I/O.
-        with opener.open(request, timeout=timeout):
-            pass
+        try:
+            with opener.open(request, timeout=timeout):
+                pass
+        except urllib.error.HTTPError:
+            return False
+        except urllib.error.URLError as error:
+            if loopback or cancelled() or not _proxy_fallback_allowed(error):
+                return False
+            proxies = _fallback_proxies()
+            if not proxies or cancelled():
+                return False
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), _NoRedirect())
+            if cancelled():
+                return False
+            with opener.open(request, timeout=timeout):
+                pass
         return True
     except Exception:
         return False
