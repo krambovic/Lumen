@@ -2,6 +2,7 @@
 from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Iterable
+from dataclasses import fields
 from datetime import datetime, timezone
 import io
 import json
@@ -15,7 +16,7 @@ import tempfile
 import zipfile
 from .constants import APP_VERSION, LOG_DIR
 from .data_paths import get_install_id
-from .models import AppState
+from .models import AppSettings, AppState, RoutingSettings
 from .secret_scrubber import is_sensitive_key, safe_text, scrub_text, scrub_value
 
 _DOMAIN_LOG_FILES = {"errors": "errors.log", "core": "core.log", "app": "app.log", "traffic": "traffic.log"}
@@ -28,14 +29,27 @@ _MAX_BUNDLE_BYTES = 48 * 1024 * 1024
 _MAX_MEMBERS = 32
 _VERSION = re.compile(r"\d+\.\d+(?:\.\d+)?(?:[-+._](?:alpha|beta|rc|dev)\d*)?\Z")
 _ENGINE_VERSION = re.compile(r"\d{1,4}(?:\.\d{1,5}){1,3}(?:[-+][0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?")
-_SETTING_ENUMS = {
-    "language": {"ru", "en", "de", "fr", "es", "zh", "pt", "ja", "ko", "tr", "uk"},
-    "theme": {"dark", "light", "system"}, "theme_mode": {"dark", "light", "system"},
-    "engine": {"xray", "sing-box", "singbox"}, "core_type": {"xray", "sing-box", "singbox"},
-    "proxy_mode": {"proxy", "system", "tun", "hybrid"},
+_SETTING_FIELDS = frozenset(field.name for field in fields(AppSettings)) | {"tun_strict_route_default_v2"}
+_PRIVATE_SETTING_FIELDS = {
+    "ui_wallpaper", "subscription_include_regex", "subscription_exclude_regex",
+    "subscription_user_agent", "node_filter_group", "selected_subscription_id",
+    "proxy_chain_front_node_id", "proxy_chain_exit_node_id", "zapret_preset", "zapret_server_presets",
+    "proxy_auth_username",
 }
-_SETTING_BOOLS = {"auto_connect", "tun_enabled", "diagnostics_upload_enabled", "minimize_to_tray",
-                  "auto_start", "start_minimized", "use_system_proxy"}
+_ROUTING_FIELDS = frozenset(field.name for field in fields(RoutingSettings)) | {
+    "dns_bootstrap_type_explicit", "tun_default_outbound_user_selected_v2", "tun_default_outbound_explicit",
+}
+_ROUTING_COLLECTION_COUNTS = {
+    "direct_domains": "direct_domain_count", "proxy_domains": "proxy_domain_count",
+    "block_domains": "block_domain_count", "process_rules": "process_rule_count",
+    "service_routes": "service_route_count", "process_preset_routes": "process_preset_route_count",
+    "dns_hosts": "dns_host_count", "tun_route_exclude_address": "route_exclusion_count",
+}
+_PRIVATE_ROUTING_FIELDS = {
+    "direct_domains", "proxy_domains", "block_domains", "process_rules", "dns_hosts",
+    "tun_route_exclude_address", "dns_bootstrap_server", "dns_bootstrap_servers",
+    "dns_proxy_server", "dns_proxy_servers",
+}
 
 class DiagnosticsCancelled(RuntimeError):
     """Generation was cancelled or its consent generation was invalidated."""
@@ -103,26 +117,62 @@ def collect_runtime_context(state: AppState) -> dict:
             context["engines"][name] = "unknown"
     return _sanitize_runtime(context)
 
-def _sanitize_state(state_dict: dict) -> dict:
-    """Counts and typed settings only: never names, links or unknown fields."""
-    if not isinstance(state_dict, dict):
+def _sanitize_model_section(value: object, allowed: frozenset, private: set) -> dict:
+    """Keep model fields and redact their values without reconstructing defaults."""
+    if not isinstance(value, dict):
         return {}
     safe = {}
-    for key in ("nodes", "subscriptions", "routing_rules", "groups"):
-        count_key = key.removesuffix("s") + "_count"
-        value, previous = state_dict.get(key), state_dict.get(count_key)
-        safe[count_key] = len(value) if isinstance(value, list) else (
-            previous if type(previous) is int and 0 <= previous <= 10_000_000 else 0)
-    settings, safe_settings = state_dict.get("settings"), {}
-    if isinstance(settings, dict):
-        for key, choices in _SETTING_ENUMS.items():
-            value = settings.get(key)
-            if isinstance(value, str) and value in choices:
-                safe_settings[key] = value
-        for key in _SETTING_BOOLS:
-            if type(settings.get(key)) is bool:
-                safe_settings[key] = settings[key]
-    safe["settings"] = safe_settings
+    for key, item in value.items():
+        if key not in allowed:
+            continue
+        if key in private or key.endswith("_file") or (is_sensitive_key(key) and type(item) is not bool):
+            safe[key] = "***"
+        else:
+            # Flags such as subscription_use_real_hwid describe behaviour,
+            # whereas the string subscription_hwid is identifying data.
+            safe[key] = _redact(item)
+    return safe
+
+
+def _collection_count(source: dict, key: str, count_key: str) -> int:
+    # Sanitized collections may be masked or bounded by the scrubber. Their
+    # saved count describes the original collection, including omitted items.
+    previous = source.get(count_key)
+    if type(previous) is int and 0 <= previous <= 10_000_000:
+        return previous
+    value = source.get(key)
+    if isinstance(value, (list, dict)):
+        return len(value)
+    return 0
+
+
+def _sanitize_state(state_dict: dict) -> dict:
+    """Useful app settings and routing, with credentials and personal data redacted.
+
+    Accept both raw state and already-redacted state: upload sanitizes the ZIP
+    again, so counts and settings must survive repeated passes unchanged.
+    """
+    if not isinstance(state_dict, dict):
+        return {}
+    safe = {
+        "node_count": _collection_count(state_dict, "nodes", "node_count"),
+        "subscription_count": _collection_count(state_dict, "subscriptions", "subscription_count"),
+        "group_count": _collection_count(state_dict, "manual_groups", "group_count"),
+        "routing_preset_count": _collection_count(state_dict, "routing_presets", "routing_preset_count"),
+        "settings": _sanitize_model_section(state_dict.get("settings"), _SETTING_FIELDS, _PRIVATE_SETTING_FIELDS),
+    }
+    if type(state_dict.get("schema_version")) is int:
+        safe["schema_version"] = state_dict["schema_version"]
+    source = state_dict.get("routing")
+    if isinstance(source, dict):
+        routing = _sanitize_model_section(source, _ROUTING_FIELDS, _PRIVATE_ROUTING_FIELDS)
+        for key, count_key in _ROUTING_COLLECTION_COUNTS.items():
+            routing[count_key] = _collection_count(source, key, count_key)
+        safe["routing"] = routing
+        safe["routing_rule_count"] = sum(routing[count_key] for key, count_key in _ROUTING_COLLECTION_COUNTS.items()
+                                         if key not in ("dns_hosts", "tun_route_exclude_address"))
+    else:
+        safe["routing_rule_count"] = _collection_count(state_dict, "routing_rules", "routing_rule_count")
     return safe
 
 def _collect_log_files(log_dir: Path, domains) -> list[Path]:

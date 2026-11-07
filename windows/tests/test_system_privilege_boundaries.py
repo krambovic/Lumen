@@ -158,9 +158,9 @@ def test_sanitize_state_drops_the_security_block_and_hashed_secrets() -> None:
     )
 
     assert "security" not in safe
-    # Unknown settings and node labels are omitted, not merely masked.
+    # Unknown settings and node labels are omitted; real diagnostic flags remain.
     assert "subscription_token" not in safe["settings"]
-    assert "proxy_allow_lan" not in safe["settings"]
+    assert safe["settings"]["proxy_allow_lan"] is False
     assert "nodes" not in safe
     assert safe["node_count"] == 1
     assert "aGFzaA==" not in json.dumps(safe)
