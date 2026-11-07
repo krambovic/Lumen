@@ -84,7 +84,9 @@ def test_zapret_log_levels() -> None:
     assert classify_log_level("[zapret] Перезапуск текущего пресета") == "info"
 
 
-def test_collect_network_context() -> None:
+def test_collect_network_context(monkeypatch) -> None:
+    from xray_fluent import diagnostics
+    monkeypatch.setattr(diagnostics, "_probe_tcp", lambda *args: False)
     from xray_fluent.diagnostics import collect_network_context
     net = collect_network_context()
     assert isinstance(net, dict)

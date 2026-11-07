@@ -9,6 +9,7 @@ import os
 import platform
 from pathlib import Path
 import re
+import socket
 import sys
 import tempfile
 import zipfile
@@ -136,16 +137,49 @@ def _collect_log_files(log_dir: Path, domains) -> list[Path]:
                 found.append(path)
     return found
 
-def collect_network_context() -> dict:
-    """Passive capabilities only: no netsh, registry access or network probes.
+def _probe_tcp(family: int, address: str) -> bool:
+    """Reachability of a fixed TCP endpoint, not a guarantee of general Internet access."""
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as connection:
+            connection.settimeout(1.0)
+            connection.connect((address, 443))
+        return True
+    except OSError:
+        return False
 
-    None means NOT MEASURED, not an assertion of unavailable connectivity.
-    The legacy result shape remains, without adapter, DNS or proxy values.
-    """
-    import socket
+
+def _system_proxy_status() -> tuple[bool | None, bool | None]:
+    if sys.platform != "win32":
+        return None, None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Internet Settings") as key:
+            try:
+                enabled = bool(winreg.QueryValueEx(key, "ProxyEnable")[0])
+            except OSError:
+                enabled = False
+            try:
+                pac_present = bool(winreg.QueryValueEx(key, "AutoConfigURL")[0])
+            except OSError:
+                pac_present = False
+        return enabled, pac_present
+    except OSError:
+        return None, None
+
+
+def collect_network_context() -> dict:
+    """Explicitly selected probes; retain only booleans, never network addresses."""
+    from .windows_network import query_windows_route_context
+    route = query_windows_route_context() if sys.platform == "win32" else None
+    proxy_enabled, pac_present = _system_proxy_status()
     return {
-        "probe_performed": False, "ipv4_internet": None, "ipv6_internet": None,
+        "probe_performed": True,
+        "probe_target": "cloudflare_tcp_443",
+        "ipv4_internet": _probe_tcp(socket.AF_INET, "1.1.1.1"),
+        "ipv6_internet": _probe_tcp(socket.AF_INET6, "2606:4700:4700::1111") if socket.has_ipv6 else False,
         "ipv6_supported": bool(socket.has_ipv6), "system_dns": [],
+        "tun_active": route.tun_active if route is not None else None,
+        "system_proxy_enabled": proxy_enabled, "system_pac_present": pac_present,
         "proxy_info": {
             "env_proxies": {scheme: any(name in os.environ for name in (scheme + "_proxy", scheme.upper() + "_PROXY"))
                             for scheme in ("http", "https", "all")},
@@ -157,7 +191,10 @@ def collect_network_context() -> dict:
 def _sanitize_network(value: object) -> dict:
     source = value if isinstance(value, dict) else {}
     safe = {key: source.get(key) if type(source.get(key)) is bool else None
-            for key in ("probe_performed", "ipv4_internet", "ipv6_internet", "ipv6_supported")}
+            for key in ("probe_performed", "ipv4_internet", "ipv6_internet", "ipv6_supported",
+                        "tun_active", "system_proxy_enabled", "system_pac_present")}
+    if source.get("probe_target") == "cloudflare_tcp_443":
+        safe["probe_target"] = "cloudflare_tcp_443"
     proxy_info = source.get("proxy_info")
     proxies = proxy_info.get("env_proxies", {}) if isinstance(proxy_info, dict) else source.get("proxy_env_present", {})
     safe["proxy_env_present"] = {key: type(proxies.get(key)) is bool and proxies[key]

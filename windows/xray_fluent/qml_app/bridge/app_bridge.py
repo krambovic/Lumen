@@ -4403,6 +4403,9 @@ class AppBridge(QObject):
 
     @pyqtSlot()
     def exportDiagnostics(self) -> None:
+        self._start_diagnostics_export(include=None, upload=False)
+
+    def _start_diagnostics_export(self, *, include: dict | None, upload: bool) -> None:
         if self._diagnostics_exporting or self._quitting:
             return
         from ...diagnostics_uploader import get_upload_epoch
@@ -4412,7 +4415,7 @@ class AppBridge(QObject):
 
         def work():
             try:
-                path = self.controller.build_diagnostics(upload=False, epoch=epoch, state=state, logs=logs)
+                path = self.controller.build_diagnostics(include=include, upload=upload, epoch=epoch, state=state, logs=logs)
                 self._diagnostics_finished.emit(str(path), "")
             except Exception as exc:
                 self._diagnostics_finished.emit("", scrub_text(str(exc)))
@@ -4441,21 +4444,13 @@ class AppBridge(QObject):
             "traffic": bool(opts.get("traffic", True)),
             "state": bool(opts.get("state", True)),
             "recent": bool(opts.get("recent", True)),
+            "network": opts.get("network") is True,
         }
         upload = bool(opts.get("upload", False))
         if not any(include.values()):
             self.toast.emit("error", tr("Выберите хотя бы один раздел для экспорта"))
             return
-        try:
-            path = self.controller.build_diagnostics(include=include, upload=upload)
-        except Exception as exc:  # noqa: BLE001
-            self.toast.emit("error", tr("Не удалось собрать диагностику: {error}", error=exc))
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
-        if upload:
-            self.toast.emit("success", tr("Диагностика собрана и отправлена: {name}", name=path.name))
-        else:
-            self.toast.emit("success", tr("Диагностика сохранена: {name}", name=path.name))
+        self._start_diagnostics_export(include=include, upload=upload)
 
     @pyqtSlot(int, result=str)
     def nodeIdAt(self, row: int) -> str:

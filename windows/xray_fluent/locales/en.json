@@ -1726,5 +1726,7 @@
   "Обновлённые компоненты": "Updated components",
   "sing-box extended 2.7.3 с исправлениями Lumen и droute 2.2.1 в комплекте и обновлениях.": "sing-box extended 2.7.3 with Lumen fixes and droute 2.2.1, bundled and available in Updates.",
   "Стабильность и оформление": "Stability and appearance",
-  "Исправлены ложные конфликты ядер и подсказки; новая светлая иконка и обновления только для Desktop.": "Fixed false core conflicts and tooltips; a new light icon and Desktop-only update selection."
+  "Исправлены ложные конфликты ядер и подсказки; новая светлая иконка и обновления только для Desktop.": "Fixed false core conflicts and tooltips; a new light icon and Desktop-only update selection.",
+  "Проверка сети": "Network check",
+  "Доступность IPv4/IPv6, состояние прокси и TUN": "IPv4/IPv6 reachability, proxy and TUN status"
 }

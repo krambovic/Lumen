@@ -212,7 +212,8 @@ def test_updating_startup_preferences_invalidates_reconciliation(monkeypatch):
     assert c._startup_settings_generation == 4
 
 
-def test_diagnostic_export_is_queued_and_uses_owned_snapshot(monkeypatch, tmp_path):
+@pytest.mark.parametrize("selected_sections", [False, True])
+def test_diagnostic_export_is_queued_and_uses_owned_snapshot(monkeypatch, tmp_path, selected_sections):
     import xray_fluent.diagnostics_uploader as uploader
     monkeypatch.setattr(uploader, "get_upload_epoch", lambda: 7)
     jobs, built, signals = [], [], []
@@ -221,7 +222,11 @@ def test_diagnostic_export_is_queued_and_uses_owned_snapshot(monkeypatch, tmp_pa
                     build_diagnostics=lambda **kwargs: built.append(kwargs) or tmp_path / "diagnostics.zip")
     bridge = NS(_diagnostics_exporting=False, _quitting=False, controller=controller,
                 _diagnostics_finished=NS(emit=lambda *args: signals.append(args)))
-    AppBridge.exportDiagnostics(bridge)
+    bridge._start_diagnostics_export = lambda **kwargs: AppBridge._start_diagnostics_export(bridge, **kwargs)
+    if selected_sections:
+        AppBridge.runDiagnosticsExport(bridge, {"network": True, "upload": False})
+    else:
+        AppBridge.exportDiagnostics(bridge)
     assert not built and len(jobs) == 1
     controller.state.nodes[0].name = "after"
     controller.recent_logs.append("after-log")
@@ -229,4 +234,6 @@ def test_diagnostic_export_is_queued_and_uses_owned_snapshot(monkeypatch, tmp_pa
     assert built[0]["state"].nodes[0].name == "before"
     assert built[0]["logs"] == ("before-log",)
     assert built[0]["epoch"] == 7 and built[0]["upload"] is False
+    if selected_sections:
+        assert built[0]["include"]["network"] is True
     assert signals[0][1] == ""
