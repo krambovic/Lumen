@@ -21,8 +21,16 @@ _MAX_DEPTH = 8
 # colon/slashes (``vless\://``).  Treat that spelling exactly like a URI;
 # otherwise the userinfo credential before ``@`` would remain visible.
 _URI = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*\\?:(?:\\?/){2}[^\s<>\"']+")
-_UUID = re.compile(r"\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b")
-_LONG_ID = re.compile(r"\b[0-9a-fA-F]{32,128}\b")
+_UUID_PATTERN = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+_IDENTIFIER = re.compile(r"\b(?:" + _UUID_PATTERN + r"|[0-9a-fA-F]{32,128})\b")
+# Only explicitly labelled request correlation IDs are diagnostic data.
+# Unlabelled UUIDs, node credentials and installation IDs in log text stay hidden.
+_TECHNICAL_ID_KEYS = frozenset({"request_id", "trace_id", "correlation_id"})
+_TECHNICAL_ID_VALUE = re.compile(r"(?:" + _UUID_PATTERN + r"|[0-9a-fA-F]{32})\Z")
+_TECHNICAL_ID_ASSIGNMENT = re.compile(
+    r"(?<![\w.-])(?:request_id|trace_id|correlation_id)\s*[=:]\s*[\"']?"
+    r"(?P<value>" + _UUID_PATTERN + r"|[0-9a-fA-F]{32})(?![\w-])"
+)
 _KEY_PARTS = (
     "password", "passphrase", "secret", "token", "credential", "authorization",
     "cookie", "apikey", "privatekey", "publickey", "presharedkey", "hwid",
@@ -179,8 +187,8 @@ def scrub_text(value: object, *, _depth: int = 0) -> str:
     text = _HOME_PATH.sub("[REDACTED HOME]", text)
     text = _scrub_assignments(text)
     text = _scrub_auth_schemes(text)
-    text = _UUID.sub("[REDACTED ID]", text)
-    return _LONG_ID.sub("[REDACTED ID]", text)
+    technical_spans = {match.span("value") for match in _TECHNICAL_ID_ASSIGNMENT.finditer(text)}
+    return _IDENTIFIER.sub(lambda match: match.group(0) if match.span() in technical_spans else "[REDACTED ID]", text)
 
 
 def scrub_value(value: object, *, _depth: int = 0):
@@ -194,7 +202,10 @@ def scrub_value(value: object, *, _depth: int = 0):
                 result["[TRUNCATED]"] = True
                 break
             safe_key = scrub_text(key, _depth=_depth + 1) if isinstance(key, str) else "[REDACTED KEY]"
-            result[safe_key] = _REDACTED if is_sensitive_key(key) else scrub_value(item, _depth=_depth + 1)
+            if isinstance(key, str) and key in _TECHNICAL_ID_KEYS and isinstance(item, str) and _TECHNICAL_ID_VALUE.fullmatch(item):
+                result[safe_key] = item
+            else:
+                result[safe_key] = _REDACTED if is_sensitive_key(key) else scrub_value(item, _depth=_depth + 1)
         return result
     if isinstance(value, (list, tuple)):
         return [scrub_value(item, _depth=_depth + 1) for item in value[:_MAX_ITEMS]]
