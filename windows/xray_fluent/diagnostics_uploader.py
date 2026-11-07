@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 import urllib.parse
@@ -19,6 +20,7 @@ import urllib.request
 import weakref
 from pathlib import Path
 from .constants import APP_VERSION as _APP_VERSION, DIAGNOSTICS_SECRET as _SECRET
+from .data_paths import get_install_id
 from .secret_scrubber import prepare_record, scrub_text
 
 _USER_AGENT = f"Lumen-Diagnostics/{_APP_VERSION}"
@@ -90,6 +92,14 @@ def _safe_payload(payload: object) -> dict:
         raise ValueError("Unknown diagnostics payload")
     safe = {"kind": payload["kind"], "app_version": _safe_version(payload.get("app_version"))}
     if safe["kind"] == "heartbeat":
+        install_id = payload.get("install_id")
+        if not isinstance(install_id, str) or not re.fullmatch(
+            r"(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+            install_id, re.IGNORECASE,
+        ):
+            raise ValueError("Invalid heartbeat install_id")
+        safe["install_id"] = install_id
+        safe["platform"] = "windows"
         ts = payload.get("ts")
         safe["ts"] = ts if type(ts) is int and ts >= 0 else 0
     else:
@@ -296,7 +306,7 @@ def wait_for_bundle_uploads(timeout: float = _BUNDLE_TIMEOUT + 1) -> None:
             thread.join(remaining)
 
 class HeartbeatSender:
-    """Coarse consent-scoped activity ping, without install ID or fingerprint."""
+    """Consent-scoped activity ping with a persistent random installation ID."""
     def __init__(self, url: str, *, app_version: str = "", interval: float = _HEARTBEAT_INTERVAL) -> None:
         self._url, self._app_version = url, app_version
         self._epoch = get_upload_epoch()
@@ -314,7 +324,7 @@ class HeartbeatSender:
             return
         try:
             body = json.dumps(_safe_payload({"kind": "heartbeat", "app_version": self._app_version,
-                                            "ts": int(time.time())}), ensure_ascii=False).encode("utf-8")
+                                            "install_id": get_install_id(), "ts": int(time.time())}), ensure_ascii=False).encode("utf-8")
             _send(self._url, body, "application/json", _EVENT_TIMEOUT,
                   epoch=self._epoch, cancel_event=self._stop)
         except Exception:
