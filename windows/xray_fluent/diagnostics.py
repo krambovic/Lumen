@@ -12,6 +12,7 @@ import sys
 import tempfile
 import zipfile
 from .constants import APP_VERSION, LOG_DIR
+from .data_paths import get_install_id
 from .models import AppState
 from .secret_scrubber import is_sensitive_key, safe_text, scrub_text, scrub_value
 
@@ -50,6 +51,15 @@ def _redact(value):
 
 def _safe_version(value: object) -> str:
     return value if isinstance(value, str) and _VERSION.fullmatch(value) else "unknown"
+
+
+def _safe_install_id(value: object) -> str | None:
+    if isinstance(value, str) and re.fullmatch(
+        r"(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+        value, re.IGNORECASE,
+    ):
+        return value
+    return None
 
 def _sanitize_state(state_dict: dict) -> dict:
     """Counts and typed settings only: never names, links or unknown fields."""
@@ -127,6 +137,9 @@ def _sanitize_meta(value: object, *, log_files: list[str]) -> dict:
     safe = {"app_version": _safe_version(source.get("app_version")), "timestamp": timestamp,
             "platform": platform_name if platform_name in ("win32", "linux", "darwin", "Windows", "Linux", "Darwin") else "unknown",
             "python": _safe_version(source.get("python")), "sections": sections, "log_files": log_files}
+    install_id = _safe_install_id(source.get("install_id"))
+    if install_id is not None:
+        safe["install_id"] = install_id
     if "network" in sections:
         safe["network"] = _sanitize_network(source.get("network"))
     return safe
@@ -212,7 +225,7 @@ def export_diagnostics(zip_path: Path, state: AppState, logs: Iterable[str],
     crash = Path(LOG_DIR) / "faulthandler.log"
     if flags["crash"] and crash.is_file() and not crash.is_symlink():
         files.append(crash)
-    metadata = {"app_version": APP_VERSION, "timestamp": datetime.now(timezone.utc).isoformat(),
+    metadata = {"app_version": APP_VERSION, "install_id": get_install_id(), "timestamp": datetime.now(timezone.utc).isoformat(),
                 "platform": sys.platform, "python": ".".join(str(part) for part in sys.version_info[:3]),
                 "sections": [key for key, selected in flags.items() if selected]}
     if flags["network"]:

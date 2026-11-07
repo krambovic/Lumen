@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import queue
-import re
 import threading
 import time
 import urllib.parse
@@ -87,19 +86,17 @@ def _sanitize_event(value: object) -> dict:
     return event or {"msg": "[UNFORMATTABLE LOG EVENT]"}
 
 def _safe_payload(payload: object) -> dict:
-    from .diagnostics import _safe_version
+    from .diagnostics import _safe_install_id, _safe_version
     if not isinstance(payload, dict) or payload.get("kind") not in ("error-batch", "heartbeat"):
         raise ValueError("Unknown diagnostics payload")
     safe = {"kind": payload["kind"], "app_version": _safe_version(payload.get("app_version"))}
-    if safe["kind"] == "heartbeat":
-        install_id = payload.get("install_id")
-        if not isinstance(install_id, str) or not re.fullmatch(
-            r"(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
-            install_id, re.IGNORECASE,
-        ):
-            raise ValueError("Invalid heartbeat install_id")
+    install_id = _safe_install_id(payload.get("install_id"))
+    if install_id is not None:
         safe["install_id"] = install_id
         safe["platform"] = "windows"
+    if safe["kind"] == "heartbeat":
+        if install_id is None:
+            raise ValueError("Invalid heartbeat install_id")
         ts = payload.get("ts")
         safe["ts"] = ts if type(ts) is int and ts >= 0 else 0
     else:
@@ -176,7 +173,7 @@ class HttpDiagnosticsHandler(logging.Handler):
         if not self._active():
             return False
         body = json.dumps(_safe_payload({"kind": "error-batch", "app_version": self._app_version,
-                                        "events": batch}), ensure_ascii=False).encode("utf-8")
+                                        "install_id": get_install_id(), "events": batch}), ensure_ascii=False).encode("utf-8")
         return _send(self._url, body, "application/json", _EVENT_TIMEOUT,
                      epoch=self._epoch, cancel_event=self._stop)
     def _discard_pending(self) -> None:
