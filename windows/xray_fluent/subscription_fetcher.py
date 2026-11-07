@@ -78,7 +78,9 @@ def _read_http_response(response: object, max_bytes: int) -> tuple[bytes, dict[s
         for key, value in response.headers.items():
             normalized = str(key or "").strip().lower()
             if normalized:
-                raw_headers[normalized] = str(value or "").strip()
+                # Preserve non-ASCII bytes mapped to Unicode by http.client;
+                # e.g. UTF-8 for Cyrillic characters can end in U+0085/U+00A0.
+                raw_headers[normalized] = str(value or "").strip(" \t\r\n")
     except (AttributeError, TypeError):
         pass
     try:
@@ -109,7 +111,7 @@ def _not_modified_http_error(exc: urllib.error.HTTPError, transport: str) -> Sub
         for key, value in exc.headers.items():
             normalized = str(key or "").strip().lower()
             if normalized:
-                headers[normalized] = str(value or "").strip()
+                headers[normalized] = str(value or "").strip(" \t\r\n")
     except (AttributeError, TypeError):
         pass
     try:

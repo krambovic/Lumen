@@ -7,6 +7,7 @@ import math
 import re
 import time
 from urllib.parse import urlsplit
+from .subscription_text import repair_utf8_header
 
 EXTRA_PROVIDER_PARAMETERS = (
     "fallback-url", "routing-enable", "custom-tunnel-config", "routing", "autorouting",
@@ -31,7 +32,7 @@ EXTRA_PROVIDER_PARAMETERS = (
 def text(value, limit=512):
     if value is None:
         return ""
-    value = str(value).strip()
+    value = repair_utf8_header(str(value)).strip()
     if value.lower().startswith("base64:") and len(value) <= 4096:
         try:
             raw = value.split(":", 1)[1].strip()

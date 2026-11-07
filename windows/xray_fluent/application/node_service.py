@@ -23,6 +23,7 @@ from ..incy_crypt import IncyDecryptError, decrypt_incy_link, is_incy_crypt_link
 from ..link_parser import is_happ_auto_placeholder, normalize_node_outbound, parse_links_text, validate_node_outbound
 from ..models import DEFAULT_SUBSCRIPTION_HWID, Node
 from ..subscription_presentation import EXTRA_PROVIDER_PARAMETERS
+from ..subscription_text import repair_utf8_header
 from ..subscription_fetcher import (
     SubscriptionFetcherCancelled,
     fetch_subscription_http,
@@ -938,7 +939,7 @@ _SUBSCRIPTION_CLIENT_PROFILES: tuple[tuple[str, dict[str, str]], ...] = (
 
 
 def _decode_profile_header(value: str) -> str:
-    text = str(value or "").strip()
+    text = repair_utf8_header(str(value or "")).strip()
     if text.lower().startswith("base64:"):
         raw = text.split(":", 1)[1].strip()
         for decoder in (base64.urlsafe_b64decode, base64.b64decode):
@@ -1066,14 +1067,14 @@ def _extract_subscription_metadata(headers: object, profile_name: str) -> dict:
 
 def _first_header(headers: object, *names: str) -> str:
     try:
-        lowered = {str(k).lower(): str(v if v is not None else "").strip() for k, v in headers.items()}
+        lowered = {str(k).lower(): repair_utf8_header(str(v if v is not None else "")).strip() for k, v in headers.items()}
     except (AttributeError, TypeError, ValueError):
         lowered = {}
     for name in names:
         value = lowered.get(name.lower(), "")
         if not value:
             try:
-                value = str(headers.get(name, "") or "").strip()
+                value = repair_utf8_header(str(headers.get(name, "") or "")).strip()
             except (AttributeError, TypeError, ValueError):
                 value = ""
         if value:
