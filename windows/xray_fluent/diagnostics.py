@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import io
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import sys
@@ -25,6 +26,7 @@ _MAX_ENTRY_BYTES = 3 * 1024 * 1024
 _MAX_BUNDLE_BYTES = 48 * 1024 * 1024
 _MAX_MEMBERS = 32
 _VERSION = re.compile(r"\d+\.\d+(?:\.\d+)?(?:[-+._](?:alpha|beta|rc|dev)\d*)?\Z")
+_ENGINE_VERSION = re.compile(r"\d{1,4}(?:\.\d{1,5}){1,3}(?:[-+][0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?")
 _SETTING_ENUMS = {
     "language": {"ru", "en", "de", "fr", "es", "zh", "pt", "ja", "ko", "tr", "uk"},
     "theme": {"dark", "light", "system"}, "theme_mode": {"dark", "light", "system"},
@@ -60,6 +62,45 @@ def _safe_install_id(value: object) -> str | None:
     ):
         return value
     return None
+
+
+def _sanitize_runtime(value: object) -> dict:
+    source = value if isinstance(value, dict) else {}
+    safe = {}
+    architecture = source.get("architecture")
+    if architecture in ("AMD64", "ARM64", "x86_64", "aarch64", "x86", "i386", "i686"):
+        safe["architecture"] = architecture
+    version = source.get("windows_version")
+    if isinstance(version, str) and re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,8}", version):
+        safe["windows_version"] = version
+    engines = source.get("engines")
+    if isinstance(engines, dict):
+        safe["engines"] = {
+            name: version if isinstance(version, str) and len(version) <= 80 and _ENGINE_VERSION.fullmatch(version) else "unknown"
+            for name in ("xray", "sing-box") for version in (engines.get(name),)
+        }
+    return safe
+
+
+def collect_runtime_context(state: AppState) -> dict:
+    """Technical versions only; never include executable paths or host names."""
+    from .engines.xray import get_xray_version
+    from .engines.singbox import get_singbox_version
+
+    context = {"architecture": platform.machine(), "engines": {}}
+    if sys.platform == "win32":
+        version = sys.getwindowsversion()
+        context["windows_version"] = f"{version.major}.{version.minor}.{version.build}"
+    settings = getattr(state, "settings", None)
+    for name, probe, key in (("xray", get_xray_version, "xray_path"),
+                             ("sing-box", get_singbox_version, "singbox_path")):
+        try:
+            output = probe(getattr(settings, key, "") or "")
+            match = _ENGINE_VERSION.search(output or "")
+            context["engines"][name] = match.group(0) if match else "unknown"
+        except Exception:
+            context["engines"][name] = "unknown"
+    return _sanitize_runtime(context)
 
 def _sanitize_state(state_dict: dict) -> dict:
     """Counts and typed settings only: never names, links or unknown fields."""
@@ -140,6 +181,8 @@ def _sanitize_meta(value: object, *, log_files: list[str]) -> dict:
     install_id = _safe_install_id(source.get("install_id"))
     if install_id is not None:
         safe["install_id"] = install_id
+    if "runtime" in source:
+        safe["runtime"] = _sanitize_runtime(source["runtime"])
     if "network" in sections:
         safe["network"] = _sanitize_network(source.get("network"))
     return safe
@@ -228,6 +271,7 @@ def export_diagnostics(zip_path: Path, state: AppState, logs: Iterable[str],
     metadata = {"app_version": APP_VERSION, "install_id": get_install_id(), "timestamp": datetime.now(timezone.utc).isoformat(),
                 "platform": sys.platform, "python": ".".join(str(part) for part in sys.version_info[:3]),
                 "sections": [key for key, selected in flags.items() if selected]}
+    metadata["runtime"] = collect_runtime_context(state)
     if flags["network"]:
         metadata["network"] = collect_network_context()
     zip_path.parent.mkdir(parents=True, exist_ok=True)
