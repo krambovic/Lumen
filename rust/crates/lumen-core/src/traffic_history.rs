@@ -1,0 +1,706 @@
+//! Traffic history with asynchronous atomic persistence (`traffic_history.py`).
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
+
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+const MAX_REASONABLE_BYTES_PER_SECOND: u64 = 2 * 1024 * 1024 * 1024;
+const MIN_REASONABLE_SESSION_BYTES: u64 = 2 * 1024u64.pow(4);
+const HARD_REASONABLE_SESSION_BYTES: u64 = 1024u64.pow(5);
+const ROUTES: [&str; 4] = ["proxy", "direct", "mixed", "unknown"];
+
+fn counter(value: &Value) -> u64 {
+    match value {
+        Value::Number(n) => n.as_f64().unwrap_or(0.0).max(0.0) as u64,
+        Value::String(s) => s.trim().parse().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProcessTrafficEntry {
+    pub upload: u64,
+    pub download: u64,
+    pub route: String,
+    pub proxy_bytes: u64,
+    pub direct_bytes: u64,
+    pub unknown_bytes: u64,
+}
+
+impl ProcessTrafficEntry {
+    pub fn to_dict(&self) -> Value {
+        json!({
+            "upload": self.upload,
+            "download": self.download,
+            "route": self.route,
+            "proxy_bytes": self.proxy_bytes,
+            "direct_bytes": self.direct_bytes,
+            "unknown_bytes": self.unknown_bytes,
+        })
+    }
+
+    pub fn from_dict(data: &Value) -> Self {
+        let mut entry = Self {
+            upload: counter(data.get("upload").unwrap_or(&json!(0))),
+            download: counter(data.get("download").unwrap_or(&json!(0))),
+            route: data
+                .get("route")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            proxy_bytes: counter(data.get("proxy_bytes").unwrap_or(&json!(0))),
+            direct_bytes: counter(data.get("direct_bytes").unwrap_or(&json!(0))),
+            unknown_bytes: counter(data.get("unknown_bytes").unwrap_or(&json!(0))),
+        };
+        if !["proxy_bytes", "direct_bytes", "unknown_bytes"]
+            .iter()
+            .any(|k| data.get(*k).is_some())
+        {
+            // Legacy mixed totals cannot be split honestly; retain as unknown.
+            let kind = if entry.route == "proxy" || entry.route == "direct" {
+                entry.route.clone()
+            } else {
+                "unknown".to_string()
+            };
+            let total = entry.upload + entry.download;
+            match kind.as_str() {
+                "proxy" => entry.proxy_bytes = total,
+                "direct" => entry.direct_bytes = total,
+                _ => entry.unknown_bytes = total,
+            }
+        }
+        entry
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TrafficSession {
+    pub id: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub node_name: String,
+    pub mode: String,
+    pub total_upload: u64,
+    pub total_download: u64,
+    pub processes: BTreeMap<String, ProcessTrafficEntry>,
+}
+
+impl TrafficSession {
+    pub fn new() -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub fn to_dict(&self) -> Value {
+        json!({
+            "id": self.id,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at.clone().map(Value::String).unwrap_or(Value::Null),
+            "node_name": self.node_name,
+            "mode": self.mode,
+            "total_upload": self.total_upload,
+            "total_download": self.total_download,
+            "processes": self
+                .processes
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_dict()))
+                .collect::<BTreeMap<_, _>>(),
+        })
+    }
+
+    pub fn from_dict(data: &Value) -> anyhow::Result<Self> {
+        let processes_raw = data
+            .get("processes")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| anyhow::anyhow!("invalid process history"))?;
+        Ok(Self {
+            id: data
+                .get("id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            started_at: data
+                .get("started_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            ended_at: data
+                .get("ended_at")
+                .filter(|v| v.is_string())
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            node_name: data
+                .get("node_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            mode: data
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            total_upload: counter(data.get("total_upload").unwrap_or(&json!(0))),
+            total_download: counter(data.get("total_download").unwrap_or(&json!(0))),
+            processes: processes_raw
+                .iter()
+                .filter(|(_, v)| v.is_object())
+                .map(|(k, v)| (k.clone(), ProcessTrafficEntry::from_dict(v)))
+                .collect(),
+        })
+    }
+}
+
+/// Per-process update payload: (upload, download, route) or with routed bytes.
+#[derive(Debug, Clone)]
+pub struct ProcessStatsUpdate {
+    pub upload: u64,
+    pub download: u64,
+    pub route: String,
+    pub proxy_bytes: u64,
+    pub direct_bytes: u64,
+    pub unknown_bytes: u64,
+}
+
+enum WriterCommand {
+    Submit { generation: u64, payload: String },
+    Close,
+}
+
+struct WriterState {
+    latest: u64,
+    durable: u64,
+    failed: u64,
+    last_error: String,
+    closed: bool,
+}
+
+/// One lazy writer thread per storage; only the newest pending payload is kept.
+struct HistoryWriter {
+    tx: Option<Sender<WriterCommand>>,
+    handle: Option<JoinHandle<()>>,
+    state: Arc<Mutex<WriterState>>,
+}
+
+impl HistoryWriter {
+    fn new(path: PathBuf) -> Self {
+        let (tx, rx) = mpsc::channel::<WriterCommand>();
+        let state = Arc::new(Mutex::new(WriterState {
+            latest: 0,
+            durable: 0,
+            failed: 0,
+            last_error: String::new(),
+            closed: false,
+        }));
+        let thread_state = Arc::clone(&state);
+        let handle = std::thread::Builder::new()
+            .name("lumen-history-writer".into())
+            .spawn(move || {
+                let mut pending: Option<(u64, String)> = None;
+                loop {
+                    match rx.recv() {
+                        Ok(WriterCommand::Submit { generation, payload }) => {
+                            {
+                                let mut s = thread_state.lock().unwrap();
+                                if generation > s.latest {
+                                    s.latest = generation;
+                                }
+                            }
+                            let superseded = {
+                                let s = thread_state.lock().unwrap();
+                                generation < s.latest
+                            };
+                            if !superseded {
+                                if write_snapshot(&path, &payload) {
+                                    let mut s = thread_state.lock().unwrap();
+                                    s.durable = s.durable.max(generation);
+                                    s.last_error.clear();
+                                } else {
+                                    let mut s = thread_state.lock().unwrap();
+                                    s.failed = s.failed.max(generation);
+                                    s.last_error = "traffic history write failed".to_string();
+                                }
+                            }
+                        }
+                        Ok(WriterCommand::Close) | Err(_) => {
+                            // Drain any final pending payload already received.
+                            let _ = thread_state.lock().unwrap();
+                            return;
+                        }
+                    }
+                }
+            })
+            .ok();
+        Self {
+            tx: Some(tx),
+            handle,
+            state,
+        }
+    }
+
+    fn submit(&self, generation: u64, payload: String) {
+        let mut state = self.state.lock().unwrap();
+        if state.closed || generation <= state.latest {
+            return;
+        }
+        state.latest = generation;
+        drop(state);
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(WriterCommand::Submit { generation, payload });
+        }
+    }
+
+    fn flush(&self, timeout: Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let (latest, durable, failed) = {
+                let s = self.state.lock().unwrap();
+                (s.latest, s.durable, s.failed)
+            };
+            if durable >= latest {
+                return true;
+            }
+            if failed >= latest {
+                return false;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn close(&mut self, timeout: Duration) -> bool {
+        {
+            let mut s = self.state.lock().unwrap();
+            s.closed = true;
+        }
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(WriterCommand::Close);
+        }
+        if let Some(handle) = self.handle.take() {
+            let deadline = std::time::Instant::now() + timeout;
+            while !handle.is_finished() {
+                if std::time::Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let _ = handle.join();
+        }
+        true
+    }
+}
+
+fn write_snapshot(path: &Path, payload: &str) -> bool {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let staged = path.with_file_name(format!(
+        ".{}.{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        Uuid::new_v4().simple()
+    ));
+    let result = (|| -> std::io::Result<()> {
+        fs::write(&staged, payload)?;
+        fs::rename(&staged, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+    result.is_ok()
+}
+
+fn parse_iso_datetime(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if value.is_empty() {
+        return None;
+    }
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+fn session_day_key(started_at: &str) -> String {
+    match parse_iso_datetime(started_at) {
+        Some(dt) => dt.format("%Y-%m-%d").to_string(),
+        None => {
+            if started_at.len() >= 10
+                && started_at.as_bytes().get(4) == Some(&b'-')
+                && started_at.as_bytes().get(7) == Some(&b'-')
+            {
+                started_at[..10].to_string()
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
+/// Thread-safe history with asynchronous atomic persistence.
+pub struct TrafficHistoryStorage {
+    inner: Mutex<HistoryInner>,
+    writer: Mutex<HistoryWriter>,
+    path: PathBuf,
+    generation: AtomicU64,
+}
+
+struct HistoryInner {
+    sessions: Vec<TrafficSession>,
+    daily_totals: BTreeMap<String, (u64, u64)>,
+    current_session: Option<usize>,
+    closed: bool,
+}
+
+impl TrafficHistoryStorage {
+    pub fn new() -> Self {
+        let path = crate::constants::data_dir().join("traffic_history.json");
+        let mut sessions: Vec<TrafficSession> = Vec::new();
+        if let Ok(data) = fs::read_to_string(&path) {
+            if let Ok(parsed) = serde_json::from_str::<Value>(&data) {
+                if let Some(list) = parsed.get("sessions").and_then(|v| v.as_array()) {
+                    for item in list {
+                        if let Ok(session) = TrafficSession::from_dict(item) {
+                            sessions.push(session);
+                        }
+                    }
+                }
+            }
+        }
+        let mut storage = Self {
+            inner: Mutex::new(HistoryInner {
+                sessions,
+                daily_totals: BTreeMap::new(),
+                current_session: None,
+                closed: false,
+            }),
+            writer: Mutex::new(HistoryWriter::new(path.clone())),
+            path,
+            generation: AtomicU64::new(0),
+        };
+        // Sanitize loaded sessions and refresh daily totals.
+        let mut inner = storage.inner.lock().unwrap();
+        for session in &mut inner.sessions {
+            Self::sanitize_session(session);
+        }
+        inner.daily_totals = Self::build_daily_totals(&inner.sessions);
+        drop(inner);
+        storage.save_locked();
+        storage
+    }
+
+    fn build_daily_totals(
+        sessions: &[TrafficSession],
+    ) -> BTreeMap<String, (u64, u64)> {
+        let mut totals = BTreeMap::new();
+        for session in sessions {
+            let key = session_day_key(&session.started_at);
+            if key.is_empty() {
+                continue;
+            }
+            let entry = totals.entry(key).or_insert((0u64, 0u64));
+            entry.0 += session.total_upload;
+            entry.1 += session.total_download;
+        }
+        totals
+    }
+
+    fn snapshot(&self, inner: &HistoryInner) -> String {
+        let payload = json!({
+            "sessions": inner.sessions.iter().map(|s| s.to_dict()).collect::<Vec<_>>(),
+            "daily_totals": inner
+                .daily_totals
+                .iter()
+                .map(|(k, (up, down))| (k.clone(), json!({"upload": up, "download": down})))
+                .collect::<BTreeMap<_, _>>(),
+        });
+        serde_json::to_string(&payload).unwrap_or_default()
+    }
+
+    fn save_locked(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.daily_totals = Self::build_daily_totals(&inner.sessions);
+        let snapshot = self.snapshot(&inner);
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        drop(inner);
+        self.writer.lock().unwrap().submit(generation, snapshot);
+    }
+
+    pub fn start_session(&self, node_name: &str, mode: &str) -> String {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return String::new();
+        }
+        Self::end_session_locked(&mut inner);
+        let session = TrafficSession {
+            started_at: chrono::Utc::now().to_rfc3339(),
+            node_name: node_name.to_string(),
+            mode: mode.to_string(),
+            ..TrafficSession::new()
+        };
+        let id = session.id.clone();
+        inner.current_session = Some(inner.sessions.len());
+        inner.sessions.push(session);
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(365)).to_rfc3339();
+        inner.sessions.retain(|s| s.started_at >= cutoff);
+        // Re-anchor the current session after retention pruning.
+        inner.current_session = Some(inner.sessions.len() - 1);
+        drop(inner);
+        self.save_locked();
+        id
+    }
+
+    /// Accept per-process stats: cumulative bytes, not rates.
+    pub fn update_session(&self, process_stats: &BTreeMap<String, ProcessStatsUpdate>) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        let Some(index) = inner.current_session else {
+            return;
+        };
+        let session = &mut inner.sessions[index];
+        for (exe, stats) in process_stats {
+            let route = if ROUTES.contains(&stats.route.as_str()) {
+                stats.route.clone()
+            } else {
+                "unknown".to_string()
+            };
+            let entry = session
+                .processes
+                .entry(exe.clone())
+                .or_insert_with(|| ProcessTrafficEntry {
+                    route: route.clone(),
+                    ..Default::default()
+                });
+            entry.upload = stats.upload;
+            entry.download = stats.download;
+            if entry.route != route {
+                entry.route = if entry.route == "unknown" || route == "unknown" {
+                    "unknown".to_string()
+                } else {
+                    "mixed".to_string()
+                };
+            }
+            entry.proxy_bytes = stats.proxy_bytes;
+            entry.direct_bytes = stats.direct_bytes;
+            entry.unknown_bytes = stats.unknown_bytes;
+        }
+        let session = &mut inner.sessions[index];
+        Self::sanitize_session(session);
+    }
+
+    fn session_duration_seconds(started_at: &str, ended_at: Option<&String>) -> u64 {
+        let started = parse_iso_datetime(started_at);
+        let ended = ended_at
+            .and_then(|v| parse_iso_datetime(v))
+            .unwrap_or_else(chrono::Utc::now);
+        match started {
+            Some(s) => (ended - s).num_seconds().max(0) as u64,
+            None => 0,
+        }
+    }
+
+    fn session_limit_bytes(started_at: &str, ended_at: Option<&String>) -> u64 {
+        let seconds = Self::session_duration_seconds(started_at, ended_at);
+        (MIN_REASONABLE_SESSION_BYTES)
+            .min(HARD_REASONABLE_SESSION_BYTES)
+            .max(seconds.saturating_mul(MAX_REASONABLE_BYTES_PER_SECOND))
+    }
+
+    fn sanitize_session(session: &mut TrafficSession) {
+        let limit = Self::session_limit_bytes(&session.started_at, session.ended_at.as_ref());
+        for entry in session.processes.values_mut() {
+            entry.upload = if entry.upload <= limit { entry.upload } else { 0 };
+            entry.download = if entry.download <= limit { entry.download } else { 0 };
+            if !ROUTES.contains(&entry.route.as_str()) {
+                entry.route = "unknown".to_string();
+            }
+            let total = entry.upload + entry.download;
+            let routed = entry.proxy_bytes + entry.direct_bytes + entry.unknown_bytes;
+            if routed > total {
+                entry.proxy_bytes = 0;
+                entry.direct_bytes = 0;
+                entry.unknown_bytes = total;
+                entry.route = "unknown".to_string();
+            } else if routed < total {
+                entry.unknown_bytes += total - routed;
+            }
+            if entry.unknown_bytes > 0 {
+                entry.route = "unknown".to_string();
+            }
+        }
+        if session.processes.is_empty() {
+            session.total_upload = if session.total_upload <= limit {
+                session.total_upload
+            } else {
+                0
+            };
+            session.total_download = if session.total_download <= limit {
+                session.total_download
+            } else {
+                0
+            };
+        } else {
+            let up: u64 = session.processes.values().map(|e| e.upload).sum();
+            let down: u64 = session.processes.values().map(|e| e.download).sum();
+            session.total_upload = if up <= limit { up } else { 0 };
+            session.total_download = if down <= limit { down } else { 0 };
+        }
+    }
+
+    fn end_session_locked(inner: &mut HistoryInner) {
+        if let Some(index) = inner.current_session.take() {
+            if let Some(session) = inner.sessions.get_mut(index) {
+                session.ended_at = Some(chrono::Utc::now().to_rfc3339());
+            }
+        }
+    }
+
+    pub fn end_session(&self) {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if !inner.closed {
+                Self::end_session_locked(&mut inner);
+            } else {
+                return;
+            }
+        }
+        self.save_locked();
+    }
+
+    pub fn save_periodic(&self) {
+        let inner = self.inner.lock().unwrap();
+        if inner.current_session.is_some() && !inner.closed {
+            drop(inner);
+            self.save_locked();
+        }
+    }
+
+    pub fn clear(&self) {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.sessions.clear();
+            inner.daily_totals.clear();
+            inner.current_session = None;
+        }
+        self.save_locked();
+    }
+
+    pub fn flush(&self, timeout: Duration) -> bool {
+        self.save_locked();
+        self.writer.lock().unwrap().flush(timeout)
+    }
+
+    pub fn close(&self, timeout: Duration) -> bool {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if !inner.closed {
+                Self::end_session_locked(&mut inner);
+                inner.closed = true;
+                inner.daily_totals = Self::build_daily_totals(&inner.sessions);
+                let snapshot = self.snapshot(&inner);
+                let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+                drop(inner);
+                let mut writer = self.writer.lock().unwrap();
+                writer.submit(generation, snapshot);
+                return writer.close(timeout);
+            }
+        }
+        self.writer.lock().unwrap().close(timeout)
+    }
+
+    pub fn last_save_error(&self) -> String {
+        self.writer.lock().unwrap().state.lock().unwrap().last_error.clone()
+    }
+
+    pub fn get_sessions(&self, days: i64) -> Vec<TrafficSession> {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        let inner = self.inner.lock().unwrap();
+        inner
+            .sessions
+            .iter()
+            .filter(|s| s.started_at >= cutoff)
+            .cloned()
+            .collect()
+    }
+
+    pub fn get_daily_totals(&self, days: i64) -> BTreeMap<String, (u64, u64)> {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(days))
+            .format("%Y-%m-%d")
+            .to_string();
+        let inner = self.inner.lock().unwrap();
+        let totals = Self::build_daily_totals(&inner.sessions);
+        totals
+            .into_iter()
+            .filter(|(key, _)| *key >= cutoff)
+            .collect()
+    }
+
+    pub fn get_process_totals(
+        &self,
+        days: i64,
+    ) -> BTreeMap<String, BTreeMap<String, Value>> {
+        let mut totals: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
+        for session in self.get_sessions(days) {
+            for (exe, entry) in session.processes {
+                let result = totals.entry(exe).or_insert_with(|| {
+                    BTreeMap::from([
+                        ("upload".into(), json!(0)),
+                        ("download".into(), json!(0)),
+                        ("route".into(), json!(entry.route.clone())),
+                        ("proxy_bytes".into(), json!(0)),
+                        ("direct_bytes".into(), json!(0)),
+                        ("unknown_bytes".into(), json!(0)),
+                    ])
+                });
+                for key in ["upload", "download", "proxy_bytes", "direct_bytes", "unknown_bytes"] {
+                    let current = result.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+                    let add = match key {
+                        "upload" => entry.upload,
+                        "download" => entry.download,
+                        "proxy_bytes" => entry.proxy_bytes,
+                        "direct_bytes" => entry.direct_bytes,
+                        _ => entry.unknown_bytes,
+                    };
+                    result.insert(key.into(), json!(current + add));
+                }
+                let current_route = result
+                    .get("route")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                if entry.route != current_route {
+                    let route = if entry.route == "unknown" || current_route == "unknown" {
+                        "unknown".to_string()
+                    } else {
+                        "mixed".to_string()
+                    };
+                    result.insert("route".into(), json!(route));
+                }
+            }
+        }
+        totals
+    }
+
+    pub fn current_session(&self) -> Option<TrafficSession> {
+        let inner = self.inner.lock().unwrap();
+        inner.current_session.and_then(|i| inner.sessions.get(i).cloned())
+    }
+}
+
+impl Default for TrafficHistoryStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
