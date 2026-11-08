@@ -32,6 +32,8 @@ aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 rsa = { version = "0.9", features = ["sha2"] }
 pbkdf2 = "0.12"
+aes = "0.8"
+cbc = { version = "0.1", features = ["std"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",

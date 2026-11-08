@@ -21,6 +21,8 @@ aes-gcm = { workspace = true }
 chacha20poly1305 = { workspace = true }
 rsa = { workspace = true }
 pbkdf2 = { workspace = true }
+aes = { workspace = true }
+cbc = { workspace = true }
 zip = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
