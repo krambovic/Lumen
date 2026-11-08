@@ -1,0 +1,29 @@
+[package]
+name = "lumen-engines"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lumen-core = { workspace = true }
+lumen-platform = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }
+regex = { workspace = true }
+rand = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+zip = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+windows = { workspace = true }
+percent-encoding = { workspace = true }

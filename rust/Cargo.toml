@@ -1,0 +1,89 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lumen-core",
+    "crates/lumen-platform",
+    "crates/lumen-engines",
+    "crates/lumen-app",
+    "crates/lumen-ui",
+]
+
+[workspace.package]
+version = "2.1.4"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "process", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "socks", "gzip", "stream", "blocking", "json"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+url = "2"
+regex = "1"
+rand = "0.8"
+sha1 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+rsa = { version = "0.9", features = ["sha2"] }
+pbkdf2 = "0.12"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Registry",
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_Networking_WinInet",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_Networking_HttpServer",
+    "Win32_Security_Cryptography",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Dwm",
+    "Win32_System_Power",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Com",
+    "Win32_System_Rpc",
+    "Win32_System_SystemServices",
+    "Win32_System_WindowsProgramming",
+    "Win32_Devices_Communication",
+    "Win32_Globalization",
+] }
+winreg = "0.55"
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+egui = "0.37"
+egui_extras = "0.37"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "webp"] }
+qrcode = "0.14"
+thiserror = "2"
+anyhow = "1"
+parking_lot = "0.12"
+percent-encoding = "2"
+idna = "1"
+tonic = { version = "0.14", default-features = false, features = ["transport", "codegen"] }
+prost = "0.14"
+tray-icon = "0.26"
+muda = "0.17"
+
+lumen-core = { path = "crates/lumen-core" }
+lumen-platform = { path = "crates/lumen-platform" }
+lumen-engines = { path = "crates/lumen-engines" }
+lumen-app = { path = "crates/lumen-app" }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 4
