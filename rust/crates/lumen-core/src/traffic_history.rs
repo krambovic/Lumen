@@ -233,8 +233,6 @@ impl HistoryWriter {
                             }
                         }
                         Ok(WriterCommand::Close) | Err(_) => {
-                            // Drain any final pending payload already received.
-                            let _ = thread_state.lock().unwrap();
                             return;
                         }
                     }
