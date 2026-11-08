@@ -1,15 +1,34 @@
 //! Lumen core domain logic (link parsing, config building, storage, i18n).
 #![recursion_limit = "1024"]
 
+pub mod bootstrap_dns;
+pub mod config;
 pub mod constants;
 pub mod country_flags;
+pub mod crypt;
+pub mod diagnostics;
+pub mod http_utils;
 pub mod i18n;
+pub mod link_parser;
+pub mod logging;
 pub mod models;
+pub mod node_transport;
+pub mod openvpn_import;
+pub mod openvpn_normalization;
 pub mod path_utils;
 pub mod paths;
+pub mod ping;
 pub mod presets;
+pub mod probe_capabilities;
 pub mod release_notes;
 pub mod routing_presets;
+pub mod routing_rule_import;
+pub mod routing_runtime;
+pub mod secret_scrubber;
 pub mod security;
+pub mod speed_test;
 pub mod storage;
+pub mod subscription;
 pub mod traffic_history;
+pub mod wireguard_normalization;
+pub mod warp_generator;
