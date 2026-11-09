@@ -2,6 +2,7 @@
 #![recursion_limit = "1024"]
 
 pub mod bootstrap_dns;
+pub mod bounded_logs;
 pub mod config;
 pub mod constants;
 pub mod country_flags;
@@ -10,6 +11,7 @@ pub mod diagnostics;
 pub mod http_utils;
 pub mod i18n;
 pub mod link_parser;
+pub mod log_utils;
 pub mod logging;
 pub mod models;
 pub mod node_transport;
