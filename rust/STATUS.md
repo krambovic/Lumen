@@ -3,9 +3,16 @@
 Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
-Verification: `cd rust; cargo test -p lumen-core; cargo test -p lumen-platform`.
-Last verified: lumen-core 178 tests, lumen-platform 7 tests, all green
+Verification: `cd rust; cargo test -p lumen-core -p lumen-platform --lib`.
+Last verified: lumen-core 197 tests, lumen-platform 10 tests, all green
 (cargo 1.99.1, edition 2024).
+
+## Scope rule: engines stay in Go
+xray-core and sing-box are NOT ported. They remain the original upstream Go
+binaries (`xray.exe`, `sing-box.exe`) shipped next to Lumen. `lumen-engines`
+only contains the Rust code that *manages* them: config builders, process
+managers, operations, runtime planner, Clash API client, xray gRPC stats
+client, core/resource updaters, zapret and discord proxy managers.
 
 ## Done
 
@@ -24,42 +31,62 @@ Last verified: lumen-core 178 tests, lumen-platform 7 tests, all green
   reqwest custom resolver), proxy client, proxy-first, safe redirects,
   connectivity_test, WarmHttpProbe (ports http_utils, direct_http,
   http_redirect_policy, connectivity_test, http_latency)
+- log_utils, bounded_logs, logging (logging_setup)
+- diagnostics (bundle export + zip sanitizer), diagnostics_uploader
+  (consent epochs, URL safety), pyjson (Python-compatible json.dumps)
+- ping (ping_worker.py): tcp/udp/hysteria/http/icmp pings,
+  `WindowsPingBypass` (= `_WindowsPingBypass`, also used by speed test),
+  `PingWorker` with `run(&mut emit)` and `start()` -> `PingWorkerHandle`
+  (events: `PingEvent::{Result, Progress, Completed}`)
 
 ### lumen-platform
-- dpapi, idle, system_language
+- dpapi, idle, system_language, inet_settings, os_info
 - subprocess (CREATE_NO_WINDOW, cp866/ANSI decoding, timeouts)
 - windows_network (GetAdaptersAddresses), network_route_context (TTL cache,
   single flight), route_leases
+- icmp: native IcmpSendEcho / Icmp6SendEcho2 via raw iphlpapi FFI
 
-## Stubs still in lumen-core (replace, do not keep)
-- `diagnostics.rs`, `logging.rs`, `ping.rs`, `speed_test.rs` (1-line files).
+## Stubs still present (replace, do not keep)
+- `lumen-core/src/speed_test.rs` (1 line). Decision: speed_test_worker.py
+  depends on `native_test_config.py`, which needs the sing-box
+  `build_singbox_outbound` and `_normalize_openvpn_outbounds` from
+  `engines/singbox`. Port it into **lumen-engines** (`speed_test.rs` +
+  `native_test_config.rs`) right after the sing-box config_builder and
+  runtime_planner, then delete the lumen-core stub and its `pub mod`.
+  `strict_proxy.py` maps to a reqwest client with `Proxy::all(url)` and no
+  NO_PROXY bypass plus the safe redirect policy from http_utils.
 - TODO in fetcher: "direct" transport should use `http_utils::direct_client`
   so subscription downloads bypass TUN like Python `DirectUrlOpener`.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-core
-log_utils, logging_setup, bounded_logs, diagnostics, deeplinks,
-service_presets, process_presets, zapret_strategies, zapret_server_scope,
-traffic_route_classifier, component_compatibility, geodata_resources,
-ping_worker (logic), speed_test_worker (logic).
+deeplinks, service_presets, process_presets, zapret_strategies,
+zapret_server_scope, traffic_route_classifier, component_compatibility,
+geodata_resources, active_profile_health, core_log_limiter, metrics_api,
+state_snapshot, zip_utils, update_checker.
 
 ### lumen-platform
-proxy_manager (WinINet system proxy + registry), startup (schtasks/registry),
-single instance, power_reconnect, win_proc_monitor, process_conflicts,
-process_traffic_collector, ICMP ping.
+proxy_manager (WinINet system proxy, reuse inet_settings), startup
+(schtasks/registry), single instance, power_reconnect, network_monitor,
+win_proc_monitor, win_process_list, process_conflicts,
+process_traffic_collector, runtime_priority.
 
-### lumen-engines
-xray: config_builder glue, manager, operations, tun, core_updater;
-sing-box: config_builder, manager, operations, runtime_planner, clash_api;
-xray_stats_client (tonic gRPC), core_resource_updater, zapret_manager,
-discord_proxy_manager.
+### lumen-engines (management of the Go binaries only)
+xray: config_builder (363), manager (660), operations (221), tun (173),
+core_updater (719); sing-box: config_builder (1372), manager (1250),
+operations (563), runtime_planner (2717), clash_api (159);
+xray_stats_client (tonic gRPC, 183), core_resource_updater (1309),
+zapret_manager (932), discord_proxy_manager (652), speed_test (796) +
+native_test_config (97). Also provide the engine version probe used by
+`diagnostics::collect_runtime_context`.
 
 ### lumen-app
-app_controller, application/* (node_service, connection_service,
+app_controller (3285), application/* (node_service, connection_service,
 worker_service, xray_runtime_service, profile_service, signature_service,
 auto_switch_service, runtime_services, server_preflight), live_metrics_worker,
-app_updater, diagnostics_uploader.
+subscription_worker, app_updater (1173), qthread_utils equivalents.
+`export_diagnostics` + upload: see app_controller.py:2970.
 
 ### lumen-ui (egui)
 Pages from `qml_app/qml`: Dashboard, Nodes, Configs, Routing, Zapret,
@@ -67,6 +94,19 @@ Settings, Updates, History, Logs, About, Onboarding, dialogs; tray
 (tray-icon/muda); theme; toasts. The view-model layer is
 `qml_app/bridge/app_bridge.py` + `node_list_model.py` + `node_edit_helpers.py`.
 `lumen-ui/src/main.rs` currently calls an empty `run()`.
+
+## Known warnings to clean
+happ.rs unused `cipher`; models.rs:624; paths.rs:459; traffic_history.rs
+(`pending`, field `path`); storage.rs:33; i18n.rs `Value` naming;
+diagnostics_uploader.rs SlotGuard.
+
+## Tooling notes for agents
+- Never put double curly braces in tool arguments (they get mangled);
+  build strings with concatenation instead of `format!` escapes.
+- Capture full cargo output with
+  `cmd /c "cargo test -p lumen-core --lib > target\x.txt 2>&1"`.
+- Tests that mutate the diagnostics upload epoch must hold
+  `diagnostics_uploader::TEST_EPOCH_LOCK`.
 
 ## Release checklist (when everything above is done)
 `cargo build --release -p lumen-ui`, run against a real xray/sing-box
