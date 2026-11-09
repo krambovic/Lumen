@@ -2,7 +2,9 @@
 
 pub mod dpapi;
 pub mod idle;
+pub mod inet_settings;
 pub mod network_route_context;
+pub mod os_info;
 pub mod route_leases;
 pub mod subprocess;
 pub mod system_language;
