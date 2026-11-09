@@ -46,6 +46,11 @@ client, core/resource updaters, zapret and discord proxy managers.
   single flight), route_leases
 - icmp: native IcmpSendEcho / Icmp6SendEcho2 via raw iphlpapi FFI
 
+### lumen-engines
+- singbox/clash_api: `SingboxClashApiClient` (Bearer auth, selector switch
+  with confirm + rollback, 8 MiB cap, quote(leaf, safe='')); 2 tests
+  against an in-process fake API.
+
 ## Stubs still present (replace, do not keep)
 - `lumen-core/src/speed_test.rs` (1 line). Decision: speed_test_worker.py
   depends on `native_test_config.py`, which needs the sing-box
