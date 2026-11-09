@@ -14,7 +14,7 @@ Python sources live in `windows/xray_fluent/`. Port modules 1:1 by file: `link_p
 
 ## Code style
 
-- Rust 2021, edition from workspace. `snake_case` functions, `PascalCase` types.
+- Rust 2024 edition (workspace-wide). Note: `gen` is a reserved keyword — use `r#gen` for the rand-0.8 method. `snake_case` functions, `PascalCase` types.
 - JSON data is dynamic: use `serde_json::Value` (objects, arrays) exactly like Python dicts. Do NOT invent typed structs for xray/sing-box payloads unless stated.
 - Reuse helpers from `crate::models`: `str_field`, `str_or`, `opt_str`, `int_field`, `opt_int`, `opt_f64`, `bool_field`, `str_list`, `obj_list`, `str_map`, `utc_now_iso`. Import `use crate::models::str_field;` etc. For nested JSON in engines use `serde_json::Value` directly with `.get()/as_str()/as_object_mut()`.
 - Constants from `crate::constants` (e.g. `PROXY_HOST`, `DEFAULT_SOCKS_PORT`). Ports are `u16` in platform, `i64` in models (JSON).
