@@ -1,6 +1,7 @@
 //! Windows platform integration primitives shared by all Lumen crates.
 
 pub mod dpapi;
+pub mod icmp;
 pub mod idle;
 pub mod inet_settings;
 pub mod network_route_context;
