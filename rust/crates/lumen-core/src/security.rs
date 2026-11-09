@@ -28,7 +28,7 @@ pub fn create_password_hash(password: &str, salt: Option<&[u8]>) -> anyhow::Resu
     let salt: &[u8] = match salt {
         Some(s) => s,
         None => {
-            owned_salt = rand::Rng::gen::<[u8; 16]>(&mut rand::thread_rng());
+            owned_salt = rand::Rng::r#gen::<[u8; 16]>(&mut rand::thread_rng());
             &owned_salt
         }
     };
@@ -129,7 +129,7 @@ fn fernet_decrypt(key: &[u8; 32], token: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 pub fn encrypt_with_passphrase(data: &[u8], passphrase: &str) -> anyhow::Result<String> {
-    let salt: [u8; 16] = rand::Rng::gen(&mut rand::thread_rng());
+    let salt: [u8; 16] = rand::Rng::r#gen(&mut rand::thread_rng());
     let key = derive_fernet_key(passphrase, &salt);
     let token = fernet_encrypt(&key, data)?;
     Ok(format!(

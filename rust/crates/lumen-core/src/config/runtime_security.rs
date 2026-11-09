@@ -19,7 +19,7 @@ pub fn generate_local_proxy_credentials(prefix: &str, password_length: usize) ->
     use rand::Rng;
     let mut rng = rand::thread_rng();
     let suffix: String = (0..3)
-        .map(|_| format!("{:02x}", rng.gen::<u8>()))
+        .map(|_| format!("{:02x}", rng.r#gen::<u8>()))
         .collect();
     let username = format!("{prefix}-{suffix}");
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
