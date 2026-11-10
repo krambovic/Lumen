@@ -923,7 +923,6 @@ mod tests {
 
         let mut chacha_key = [0u8; 32];
         OsRng.fill_bytes(&mut chacha_key);
-        let cipher = ChaCha20Poly1305::new_from_slice(&chacha_key).unwrap();
 
         let build_payload = |rsa_key: &[u8], chacha_effective: &[u8]| -> (String, String) {
             // intermediate = swap_pairs(base64(url)); шифруется ЭФФЕКТИВНЫМ ключом.

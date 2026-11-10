@@ -29,16 +29,6 @@ pub enum StateEncoding {
     Passphrase,
 }
 
-impl StateEncoding {
-    fn as_str(self) -> &'static str {
-        match self {
-            StateEncoding::Plain => "plain",
-            StateEncoding::Dpapi => "dpapi",
-            StateEncoding::Passphrase => "passphrase",
-        }
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum StateLoadError {
     #[error("passphrase required")]

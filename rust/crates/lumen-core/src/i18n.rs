@@ -21,8 +21,8 @@ pub struct Catalogs {
 
 fn parse_catalog(raw: &'static str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
-    if let Ok(Value) = serde_json::from_str::<serde_json::Value>(raw) {
-        if let Some(map) = Value.as_object() {
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw) {
+        if let Some(map) = parsed.as_object() {
             for (key, value) in map {
                 if key.starts_with("__") {
                     continue;

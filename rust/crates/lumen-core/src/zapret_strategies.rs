@@ -31,10 +31,6 @@ fn bin_dir() -> PathBuf {
     zapret_dir().join("bin")
 }
 
-fn lua_dir() -> PathBuf {
-    zapret_dir().join("lua")
-}
-
 pub const SERVER_KINDS: [&str; 3] = ["tcp", "quic", "wireguard"];
 
 pub fn kind_transport(kind: &str) -> &'static str {

@@ -192,9 +192,9 @@ Settings, Updates, History, Logs, About, Onboarding, dialogs; tray
 `lumen-ui/src/main.rs` currently calls an empty `run()`.
 
 ## Known warnings to clean
-happ.rs unused `cipher`; models.rs:624; paths.rs:459; traffic_history.rs
-(`pending`, field `path`); storage.rs:33; i18n.rs `Value` naming;
-diagnostics_uploader.rs SlotGuard.
+None — the lumen-core list was cleaned in the same pass as the direct-route
+fetcher fix (2026-11-10). lumen-platform/lumen-engines/lumen-app warnings
+are handled inside their porting commits.
 
 ## Tooling notes for agents
 - Never put double curly braces in tool arguments (they get mangled);
@@ -203,6 +203,8 @@ diagnostics_uploader.rs SlotGuard.
   `cmd /c "cargo test -p lumen-core --lib > target\x.txt 2>&1"`.
 - Tests that mutate the diagnostics upload epoch must hold
   `diagnostics_uploader::TEST_EPOCH_LOCK`.
+- Subagents run at most 2 concurrently (account limit); resume failed
+  agents with SendMessage after a slot frees.
 
 ## Release checklist (when everything above is done)
 `cargo build --release -p lumen-ui`, run against a real xray/sing-box

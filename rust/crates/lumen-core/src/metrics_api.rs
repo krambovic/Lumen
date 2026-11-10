@@ -93,7 +93,7 @@ impl ClashApiClient {
                 Err(_) => return Err(MetricsApiError::new("Clash API unavailable (OSError)")),
             }
         }
-        let result = self.read_document(&mut stream, path, deadline, timeout);
+        let result = self.read_document(&mut stream, path, deadline);
         let _ = stream.shutdown(Shutdown::Both);
         {
             let mut slot = self.active.lock();
@@ -107,7 +107,6 @@ impl ClashApiClient {
         stream: &mut TcpStream,
         path: &str,
         deadline: Instant,
-        timeout: f64,
     ) -> Result<Value, MetricsApiError> {
         let request = format!(
             "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept-Encoding: identity\r\nAuthorization: Bearer {secret}\r\nConnection: close\r\n\r\n",
@@ -280,7 +279,6 @@ fn body_complete(body: &[u8], content_length: Option<u64>, chunked: bool) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
     use std::net::TcpListener;
 
     fn serve_once(response: &'static str) -> u16 {

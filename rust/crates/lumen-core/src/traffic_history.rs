@@ -206,7 +206,6 @@ impl HistoryWriter {
         let handle = std::thread::Builder::new()
             .name("lumen-history-writer".into())
             .spawn(move || {
-                let mut pending: Option<(u64, String)> = None;
                 loop {
                     match rx.recv() {
                         Ok(WriterCommand::Submit { generation, payload }) => {
@@ -349,7 +348,6 @@ fn session_day_key(started_at: &str) -> String {
 pub struct TrafficHistoryStorage {
     inner: Mutex<HistoryInner>,
     writer: Mutex<HistoryWriter>,
-    path: PathBuf,
     generation: AtomicU64,
 }
 
@@ -375,7 +373,7 @@ impl TrafficHistoryStorage {
                 }
             }
         }
-        let mut storage = Self {
+        let storage = Self {
             inner: Mutex::new(HistoryInner {
                 sessions,
                 daily_totals: BTreeMap::new(),
@@ -383,7 +381,6 @@ impl TrafficHistoryStorage {
                 closed: false,
             }),
             writer: Mutex::new(HistoryWriter::new(path.clone())),
-            path,
             generation: AtomicU64::new(0),
         };
         // Sanitize loaded sessions and refresh daily totals.

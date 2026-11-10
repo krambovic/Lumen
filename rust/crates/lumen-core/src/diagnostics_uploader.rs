@@ -214,7 +214,7 @@ struct SlotGuard;
 impl SlotGuard {
     fn acquire() -> Option<Self> {
         SEND_SLOTS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < SEND_SLOTS_MAX).then_some(n + 1))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < SEND_SLOTS_MAX).then_some(n + 1))
             .ok()
             .map(|_| SlotGuard)
     }

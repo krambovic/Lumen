@@ -230,8 +230,8 @@ async fn download_with_client(
     headers: &BTreeMap<String, String>,
     max_bytes: usize,
     transport: &str,
-    // Keeps the TUN-bypass routes alive for the whole download.
-    direct_route: Option<Arc<crate::http_utils::WindowsDirectRoute>>,
+    // Keeps the TUN-bypass routes alive for the whole download (released on drop).
+    _direct_route: Option<Arc<crate::http_utils::WindowsDirectRoute>>,
 ) -> Result<SubscriptionHttpPayload, SubscriptionFetcherError> {
     let mut current = Url::parse(url.trim()).map_err(|_| {
         SubscriptionFetcherError::Unavailable(format!("unknown url type: {url}"))

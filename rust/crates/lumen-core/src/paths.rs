@@ -456,7 +456,7 @@ fn refresh_pristine_singbox_default(src: &Path, dst: &Path) {
     ) else {
         return;
     };
-    let (Ok(mut source_json), Ok(target_json)) = (
+    let (Ok(source_json), Ok(target_json)) = (
         serde_json::from_str::<serde_json::Value>(&source_payload),
         serde_json::from_str::<serde_json::Value>(&target_payload),
     ) else {

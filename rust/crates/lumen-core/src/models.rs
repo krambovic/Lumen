@@ -621,7 +621,7 @@ impl RoutingSettings {
             mode = ROUTING_RULE.into();
         }
 
-        let mut bootstrap_servers: Vec<String> = Vec::new();
+        let bootstrap_servers: Vec<String>;
         let mut bootstrap_server: String;
         if data.get("dns_bootstrap_servers").and_then(|v| v.as_array()).is_none() {
             bootstrap_server = str_or(data, "dns_bootstrap_server", "1.1.1.1");
