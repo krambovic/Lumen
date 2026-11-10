@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 204 tests, lumen-platform 11, lumen-engines 23, lumen-app 15
+Last verified: lumen-core 204 tests, lumen-platform 20, lumen-engines 23, lumen-app 15
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -55,6 +55,15 @@ client, core/resource updaters, zapret and discord proxy managers.
 - icmp: native IcmpSendEcho / Icmp6SendEcho2 via raw iphlpapi FFI
 - runtime_priority: above-normal priority for owned cores and an opt-in
   UI priority raise that preserves any existing non-normal priority class.
+- win_process_list: native Toolhelp snapshot of running executable names.
+- proxy_manager: WinINet LAN proxy on the mixed port, version-2 recovery
+  receipts compatible with Python, and PID/creation-time ownership checks.
+  Automatic restoration verifies matching settings and preserves static
+  proxy, PAC and auto-detect flags. Rust serializes mutations with a
+  runtime-directory lock and archives the receipt after a verified explicit
+  reset. Optional Firefox-family integration preserves unrelated preferences
+  and keeps restoration pinned in `user.js` until the browser exits.
+  Tests simulate registry mutations and use isolated browser profiles.
 
 ### lumen-engines
 - singbox/clash_api: `SingboxClashApiClient` (Bearer auth, selector switch
@@ -127,9 +136,9 @@ geodata_resources, active_profile_health, metrics_api,
 state_snapshot.
 
 ### lumen-platform
-proxy_manager (WinINet system proxy, reuse inet_settings), startup
+startup
 (schtasks/registry), single instance, power_reconnect, network_monitor,
-win_proc_monitor, win_process_list, process_conflicts,
+win_proc_monitor, process_conflicts,
 process_traffic_collector.
 
 ### lumen-engines (management of the Go binaries only)

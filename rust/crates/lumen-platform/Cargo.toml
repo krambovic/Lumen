@@ -18,3 +18,4 @@ anyhow = { workspace = true }
 parking_lot = { workspace = true }
 windows = { workspace = true }
 winreg = { workspace = true }
+tempfile = "3"

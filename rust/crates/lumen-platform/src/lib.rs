@@ -6,10 +6,13 @@ pub mod idle;
 pub mod inet_settings;
 pub mod network_route_context;
 pub mod os_info;
+#[cfg(windows)]
+pub mod proxy_manager;
 pub mod route_leases;
 pub mod runtime_priority;
 pub mod subprocess;
 pub mod system_language;
+pub mod win_process_list;
 pub mod windows_network;
 
 /// Lowercased primary user locale ("ru", "fa", "zh", ...).

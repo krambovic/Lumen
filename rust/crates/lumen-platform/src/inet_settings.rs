@@ -16,15 +16,19 @@ pub struct InternetSettings {
 /// `None` when the key itself cannot be opened.
 #[cfg(windows)]
 pub fn read_internet_settings() -> Option<InternetSettings> {
-    use winreg::RegKey;
-    use winreg::enums::HKEY_CURRENT_USER;
-    let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey(INTERNET_SETTINGS_KEY).ok()?;
+    let key = open_internet_settings(winreg::enums::KEY_READ).ok()?;
     Some(InternetSettings {
         proxy_enable: key.get_value::<u32, _>("ProxyEnable").ok(),
         proxy_server: key.get_value::<String, _>("ProxyServer").ok(),
         proxy_override: key.get_value::<String, _>("ProxyOverride").ok(),
         auto_config_url: key.get_value::<String, _>("AutoConfigURL").ok(),
     })
+}
+
+#[cfg(windows)]
+pub(crate) fn open_internet_settings(access: u32) -> std::io::Result<winreg::RegKey> {
+    winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey_with_flags(INTERNET_SETTINGS_KEY, access)
 }
 
 #[cfg(not(windows))]
