@@ -4,5 +4,8 @@
 //! binaries. This crate builds their configs, runs and supervises them and
 //! talks to their local APIs.
 
+pub mod core_resource_updater;
+pub mod discord_proxy_manager;
 pub mod singbox;
 pub mod xray;
+pub mod zapret_manager;

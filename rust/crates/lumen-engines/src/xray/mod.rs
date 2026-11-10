@@ -2,5 +2,6 @@
 
 pub mod core_updater;
 pub mod manager;
+pub mod operations;
 pub mod stats_client;
 pub mod tun;

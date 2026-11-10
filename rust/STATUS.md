@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 23, lumen-app 16
+Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 100, lumen-app 16
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -123,6 +123,21 @@ client, core/resource updaters, zapret and discord proxy managers.
   Tests simulate registry mutations and use isolated browser profiles.
 
 ### lumen-engines
+- singbox/config_builder: full outbound conversion for every scheme —
+  TLS/uTLS/certificate pins, ws/grpc/httpupgrade/xhttp transports with
+  their alias tables and `extra` merging, Shadowsocks-2022 key sizes,
+  vmess security, vless vision, SIP003/v2ray plugins, multiplex.
+  `build_singbox_outbound(&Node, tag, multiplex_enabled, concurrency)` is
+  the speed-test entry point. 24 tests.
+- singbox/runtime_planner (module folder): `plan_singbox_runtime` with
+  `PlanRuntimeOptions`, hybrid planning, xray sidecar plans, proxy chains
+  and hot-switch selectors, endpoint DNS bootstrap caches, DNS/TUN runtime
+  contracts (legacy UDP->DoH migration, fakeip/hosts, reject rules),
+  metrics contract, `node_runtime.rs` matrix (`is_xray_exclusive_node`).
+  `normalize_openvpn_outbounds` lives in `runtime_planner/sidecar.rs` (the
+  speed-test worker imports it there). Python object-identity dials are
+  expressed via `DialPath`. 53 tests; the one Python test that needs
+  `operations.start_runtime` moves to operations once that module lands.
 - singbox/clash_api: `SingboxClashApiClient` (Bearer auth, selector switch
   with confirm + rollback, 8 MiB cap, quote(leaf, safe='')); 2 tests
   against an in-process fake API.
@@ -196,8 +211,7 @@ win_proc_monitor, process_conflicts,
 process_traffic_collector.
 
 ### lumen-engines (management of the Go binaries only)
-xray: operations (221); sing-box: config_builder (1372), manager (1250),
-operations (563), runtime_planner (2717);
+xray: operations (221); sing-box: manager (1250), operations (563);
 core_resource_updater (1309),
 zapret_manager (932), discord_proxy_manager (652), speed_test (796) +
 native_test_config (97). Also provide the engine version probe used by
