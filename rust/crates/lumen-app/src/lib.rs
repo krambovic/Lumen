@@ -10,4 +10,5 @@ pub mod runtime_introspection;
 pub mod session_state;
 pub mod signature_service;
 pub mod transition_engine;
+pub mod update_service;
 pub mod xray_runtime_service;

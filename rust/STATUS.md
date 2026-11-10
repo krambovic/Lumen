@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 255 tests, lumen-platform 62, lumen-engines 194, lumen-app 36
+Last verified: lumen-core 255 tests, lumen-platform 62, lumen-engines 194, lumen-app 41
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -240,6 +240,12 @@ client, core/resource updaters, zapret and discord proxy managers.
   across automatic reconnects, and emits selection, save and transition
   events in Python order. Cooldown starts at the first actual switch because
   Rust uses a process-relative monotonic clock.
+- update_service: owns the Xray update worker and forwards progress, results
+  and status events. An apply request on an active connection checks first
+  and reuses the live proxy for installation. The worker replaces files only
+  after a disconnect acknowledgement. The service requests reconnect after
+  completion when it stopped a connection. Shutdown can cancel and join the
+  active worker.
 
 ## Left to port (Python source -> target crate)
 
