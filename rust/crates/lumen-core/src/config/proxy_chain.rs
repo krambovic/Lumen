@@ -216,7 +216,7 @@ pub fn proxy_chain_signature(settings: &Value, nodes: &[Node]) -> Vec<(String, S
     if front_id.is_empty() && exit_id.is_empty() {
         return Vec::new();
     }
-    let by_id: HashMap<&str, &Node> = nodes.iter().map(|node| (node.id.trim(), node)).collect();
+    let by_id: HashMap<&str, &Node> = nodes.iter().map(|node| (node.id.as_str(), node)).collect();
 
     let hop = |node_id: &str| -> (String, String) {
         if node_id.is_empty() {
@@ -225,10 +225,8 @@ pub fn proxy_chain_signature(settings: &Value, nodes: &[Node]) -> Vec<(String, S
         let Some(node) = by_id.get(node_id) else {
             return (node_id.to_string(), String::new());
         };
-        // Python falls back to repr(outbound); a stable JSON serialization
-        // plays the same role here.
-        let marker = if node.link.trim().is_empty() {
-            serde_json::to_string(&node.outbound).unwrap_or_default()
+        let marker = if node.link.is_empty() {
+            crate::pyjson::repr(&node.outbound)
         } else {
             node.link.clone()
         };
@@ -391,6 +389,16 @@ mod tests {
         assert_eq!(sig.len(), 2);
         assert_eq!(sig[0], ("front".to_string(), "link://front".to_string()));
         assert_eq!(sig[1], (String::new(), String::new()));
+    }
+
+    #[test]
+    fn signature_uses_python_repr_for_hops_without_a_link() {
+        let settings = json!({"proxy_chain_enabled": true, "proxy_chain_front_node_id": "front"});
+        let mut front = node("front", "vless");
+        front.link.clear();
+        front.outbound = json!({"extra": [true, null, "l'été", "a\u{a0}b", 1e-7]});
+        let signature = proxy_chain_signature(&settings, &[front]);
+        assert_eq!(signature[0].1, r#"{'extra': [True, None, "l'été", 'a\xa0b', 1e-07]}"#);
     }
 
     #[test]

@@ -7,5 +7,6 @@ pub mod node_runtime_service;
 pub mod profile_service;
 pub mod runtime_introspection;
 pub mod session_state;
+pub mod signature_service;
 pub mod transition_engine;
 pub mod xray_runtime_service;

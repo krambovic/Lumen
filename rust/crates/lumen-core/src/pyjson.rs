@@ -2,11 +2,20 @@
 //! `indent`, float repr). Key order follows the `serde_json::Map` order.
 
 use serde_json::Value;
+use unicode_general_category::{GeneralCategory, get_general_category};
 
 /// `json.dumps(value, ensure_ascii=..., indent=...)`.
 pub fn dumps(value: &Value, ensure_ascii: bool, indent: Option<usize>) -> String {
     let mut out = String::new();
-    write_value(&mut out, value, ensure_ascii, indent, 0);
+    write_value(&mut out, value, ensure_ascii, indent, false, 0);
+    out
+}
+
+/// `json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))`.
+pub fn dumps_compact_sorted_ascii(mut value: Value) -> String {
+    value.sort_all_objects();
+    let mut out = String::new();
+    write_value(&mut out, &value, true, None, true, 0);
     out
 }
 
@@ -44,17 +53,29 @@ pub fn float_repr(value: f64) -> String {
         return "NaN".into();
     }
     if value.is_infinite() {
-        return if value > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+        return if value > 0.0 {
+            "Infinity".into()
+        } else {
+            "-Infinity".into()
+        };
     }
     if value == 0.0 {
-        return if value.is_sign_negative() { "-0.0".into() } else { "0.0".into() };
+        return if value.is_sign_negative() {
+            "-0.0".into()
+        } else {
+            "0.0".into()
+        };
     }
     let sci = format!("{:e}", value);
     let (mantissa, exponent) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
     let exponent: i32 = exponent.parse().unwrap_or(0);
     if (-4..16).contains(&exponent) {
         let plain = format!("{}", value);
-        if plain.contains('.') { plain } else { plain + ".0" }
+        if plain.contains('.') {
+            plain
+        } else {
+            plain + ".0"
+        }
     } else {
         let sign = if exponent < 0 { '-' } else { '+' };
         format!("{}e{}{:02}", mantissa, sign, exponent.abs())
@@ -66,18 +87,27 @@ fn newline(out: &mut String, indent: usize, level: usize) {
     out.push_str(&" ".repeat(indent * level));
 }
 
-fn write_value(out: &mut String, value: &Value, ensure_ascii: bool, indent: Option<usize>, level: usize) {
+fn write_number(out: &mut String, number: &serde_json::Number) {
+    if number.is_i64() || number.is_u64() {
+        out.push_str(&number.to_string());
+    } else {
+        out.push_str(&float_repr(number.as_f64().unwrap_or(0.0)));
+    }
+}
+
+fn write_value(
+    out: &mut String,
+    value: &Value,
+    ensure_ascii: bool,
+    indent: Option<usize>,
+    compact: bool,
+    level: usize,
+) {
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(true) => out.push_str("true"),
         Value::Bool(false) => out.push_str("false"),
-        Value::Number(number) => {
-            if number.is_i64() || number.is_u64() {
-                out.push_str(&number.to_string());
-            } else {
-                out.push_str(&float_repr(number.as_f64().unwrap_or(0.0)));
-            }
-        }
+        Value::Number(number) => write_number(out, number),
         Value::String(text) => write_string(out, text, ensure_ascii),
         Value::Array(items) => {
             if items.is_empty() {
@@ -87,12 +117,16 @@ fn write_value(out: &mut String, value: &Value, ensure_ascii: bool, indent: Opti
             out.push('[');
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(if indent.is_some() { "," } else { ", " });
+                    out.push_str(if compact || indent.is_some() {
+                        ","
+                    } else {
+                        ", "
+                    });
                 }
                 if let Some(width) = indent {
                     newline(out, width, level + 1);
                 }
-                write_value(out, item, ensure_ascii, indent, level + 1);
+                write_value(out, item, ensure_ascii, indent, compact, level + 1);
             }
             if let Some(width) = indent {
                 newline(out, width, level);
@@ -107,14 +141,18 @@ fn write_value(out: &mut String, value: &Value, ensure_ascii: bool, indent: Opti
             out.push('{');
             for (index, (key, item)) in map.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(if indent.is_some() { "," } else { ", " });
+                    out.push_str(if compact || indent.is_some() {
+                        ","
+                    } else {
+                        ", "
+                    });
                 }
                 if let Some(width) = indent {
                     newline(out, width, level + 1);
                 }
                 write_string(out, key, ensure_ascii);
-                out.push_str(": ");
-                write_value(out, item, ensure_ascii, indent, level + 1);
+                out.push_str(if compact { ":" } else { ": " });
+                write_value(out, item, ensure_ascii, indent, compact, level + 1);
             }
             if let Some(width) = indent {
                 newline(out, width, level);
@@ -122,6 +160,90 @@ fn write_value(out: &mut String, value: &Value, ensure_ascii: bool, indent: Opti
             out.push('}');
         }
     }
+}
+
+/// Python `repr` for a JSON value in the map order available in Rust.
+pub(crate) fn repr(value: &Value) -> String {
+    let mut out = String::new();
+    write_repr(&mut out, value);
+    out
+}
+
+fn write_repr(out: &mut String, value: &Value) {
+    match value {
+        Value::Null => out.push_str("None"),
+        Value::Bool(true) => out.push_str("True"),
+        Value::Bool(false) => out.push_str("False"),
+        Value::Number(number) => write_number(out, number),
+        Value::String(text) => write_repr_string(out, text),
+        Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                write_repr(out, item);
+            }
+            out.push(']');
+        }
+        Value::Object(map) => {
+            out.push('{');
+            for (index, (key, item)) in map.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                write_repr_string(out, key);
+                out.push_str(": ");
+                write_repr(out, item);
+            }
+            out.push('}');
+        }
+    }
+}
+
+fn write_repr_string(out: &mut String, text: &str) {
+    use GeneralCategory::*;
+    use std::fmt::Write;
+
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    out.push(quote);
+    for ch in text.chars() {
+        match ch {
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if c == quote || c == '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if c != ' '
+                && matches!(
+                    get_general_category(c),
+                    Control
+                        | Format
+                        | Unassigned
+                        | PrivateUse
+                        | Surrogate
+                        | LineSeparator
+                        | ParagraphSeparator
+                        | SpaceSeparator
+                ) =>
+            {
+                match c as u32 {
+                    unit @ 0..=0xff => write!(out, "\\x{unit:02x}"),
+                    unit @ 0x100..=0xffff => write!(out, "\\u{unit:04x}"),
+                    unit => write!(out, "\\U{unit:08x}"),
+                }
+                .expect("writing to String cannot fail");
+            }
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
 }
 
 #[cfg(test)]
@@ -132,8 +254,14 @@ mod tests {
     #[test]
     fn compact_and_indented() {
         let value = json!({"a": [1, 2.5, "п"], "b": {}});
-        assert_eq!(dumps(&value, true, None), "{\"a\": [1, 2.5, \"\\u043f\"], \"b\": {}}");
-        assert_eq!(dumps(&value, false, None), "{\"a\": [1, 2.5, \"п\"], \"b\": {}}");
+        assert_eq!(
+            dumps(&value, true, None),
+            "{\"a\": [1, 2.5, \"\\u043f\"], \"b\": {}}"
+        );
+        assert_eq!(
+            dumps(&value, false, None),
+            "{\"a\": [1, 2.5, \"п\"], \"b\": {}}"
+        );
         assert_eq!(dumps(&json!([1]), true, Some(2)), "[\n  1\n]");
         assert_eq!(dumps(&json!("😀"), true, None), "\"\\ud83d\\ude00\"");
     }

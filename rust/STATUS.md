@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 194, lumen-app 24
+Last verified: lumen-core 255 tests, lumen-platform 62, lumen-engines 194, lumen-app 30
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -228,6 +228,12 @@ client, core/resource updaters, zapret and discord proxy managers.
   validates stored outbounds, and resolves country codes. Xray runtime setup
   uses the shared validation and reports repairs for persistence. The country
   resolver groups duplicate hosts and runs one cancellable task per controller.
+- signature_service: routing, transition, Xray and TUN signatures from the
+  selected node, settings and existing profile inspections. Keeps Xray-layer
+  signatures independent of system-proxy toggles and sing-box editor TUN
+  signatures independent of the selected node. Signatures use sorted compact
+  ASCII JSON. Proxy-chain hops without a link use Python-style `repr` in the
+  Rust JSON model's map order.
 
 ## Left to port (Python source -> target crate)
 
@@ -236,8 +242,7 @@ Single-instance enforcement and message delivery.
 
 ### lumen-app
 app_controller (3285), application/* (node_service, connection_service,
-worker_service, signature_service,
-auto_switch_service, runtime_services, server_preflight), live_metrics_worker,
+worker_service, auto_switch_service, runtime_services, server_preflight), live_metrics_worker,
 subscription_worker, app_updater (1173), qthread_utils equivalents.
 `export_diagnostics` + upload: see app_controller.py:2970.
 
