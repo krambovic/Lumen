@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 254 tests, lumen-platform 20, lumen-engines 23, lumen-app 16
+Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 23, lumen-app 16
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -87,6 +87,32 @@ client, core/resource updaters, zapret and discord proxy managers.
 - runtime_priority: above-normal priority for owned cores and an opt-in
   UI priority raise that preserves any existing non-normal priority class.
 - win_process_list: native Toolhelp snapshot of running executable names.
+- startup (startup.py incl. single-instance rebrand cleanup): legacy tree
+  removal, Run + StartupApproved entries, elevated schtasks with UTF-16-BOM
+  XML and the ONLOGON fallback, `list2cmdline` (exact CPython algorithm),
+  `relaunch_as_admin` and the always-run-as-admin AppCompatLayers toggles.
+  Note: the Python test expecting `WorkingDirectory == C:\Program Files`
+  is stale; the module (and the port) emit `C:\Program Files\Lumen`.
+- power_reconnect: `WindowsPowerEventFilter` state machine (suspend/resume
+  arming, duplicate-resume guard, busy retries, shutdown marking) and
+  `power_broadcast_event`; Qt timer modeled as `schedule`/`fire_timer_if_due`.
+- network_monitor: `NetworkMonitor` with the UDP-to-8.8.8.8 fingerprint
+  (fallback "0.0.0.0") on a worker thread.
+- win_proc_monitor: GetExtendedTcpTable + Get/SetPerTcpConnectionEStats
+  with the 96-byte ROD struct, creation-time PID cache, estats retry
+  backoff, core exclusions.
+- process_conflicts: Toolhelp snapshot with tasklist fallback, descendant
+  PID walk, netstat LISTENING parsing, conflict tables, foreign system
+  proxy scan, `scan_network_conflicts` -> JSON, terminate helper.
+- process_traffic_collector: full aggregation engine (baseline deltas with
+  `max_delta` clamp, route totals, closed-connection carryover, hidden
+  cores, top-host, speeds, epoch invalidation). Cross-crate glue is trait
+  injected: lumen-app supplies `CoreServices` forwarding to
+  `lumen_core::metrics_api::ClashApiClient`, `RouteClassifier::new` and
+  `i18n::tr`. `by_proc`, closed-only processes and top-host ties keep the
+  Python dict insertion order; collector tests share `TEST_STATE_LOCK`
+  (pytest runs sequentially, Rust tests do not).
+- New dependency: `url` added to lumen-platform (system-proxy URL parsing).
 - proxy_manager: WinINet LAN proxy on the mixed port, version-2 recovery
   receipts compatible with Python, and PID/creation-time ownership checks.
   Automatic restoration verifies matching settings and preserves static
