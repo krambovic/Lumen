@@ -6,6 +6,7 @@
 //! ("lumen-proxy") and (2) the direct in-process connection ("direct").
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use url::{Position, Url};
@@ -136,9 +137,13 @@ fn collect_headers(headers: &reqwest::header::HeaderMap) -> BTreeMap<String, Str
 ///   streamed chunks abort as soon as the total crosses the limit.
 /// * `use_proxy_tun` selects the Lumen proxy/TUN path: with `proxy_url` the
 ///   request goes through that proxy ("lumen-proxy"), without one it stays
-///   direct on the system route ("system-proxy-tun"). Otherwise the fetch is
-///   in-process direct ("direct").
+///   direct on the system route ("system-proxy-tun"). Otherwise the fetch
+///   bypasses TUN on physical /32 routes ("direct-route", Python's
+///   `DirectUrlOpener`) and, when `allow_process_direct_fallback` is set,
+///   falls back to a plain in-process connection ("process-direct") while
+///   the TUN-bypass route cannot be prepared.
 /// * `cancelled` is polled before the download starts.
+#[allow(clippy::too_many_arguments)]
 pub async fn fetch_subscription_http(
     url: &str,
     headers: &BTreeMap<String, String>,
@@ -146,6 +151,7 @@ pub async fn fetch_subscription_http(
     max_bytes: usize,
     use_proxy_tun: bool,
     proxy_url: &str,
+    allow_process_direct_fallback: bool,
     cancelled: Option<&(dyn Fn() -> bool + Send + Sync)>,
 ) -> Result<SubscriptionHttpPayload, SubscriptionFetcherError> {
     if let Some(check) = cancelled {
@@ -156,14 +162,47 @@ pub async fn fetch_subscription_http(
 
     let trimmed_proxy = proxy_url.trim();
     let proxy_requested = use_proxy_tun && !trimmed_proxy.is_empty();
-    let transport = if proxy_requested {
+    let mut transport = if proxy_requested {
         "lumen-proxy"
     } else if use_proxy_tun {
         // Python's ProxyHandler({}) path: direct connection on the TUN route.
         "system-proxy-tun"
     } else {
-        "direct"
+        "direct-route"
     };
+
+    // The bypass route must outlive the download: routes are released on drop.
+    let direct_route: Option<Arc<crate::http_utils::WindowsDirectRoute>> =
+        if proxy_requested || use_proxy_tun {
+            None
+        } else {
+            // DirectUrlOpener: GET outside an active TUN via physical /32 routes.
+            match crate::http_utils::direct_client(timeout_secs) {
+                Ok((client, route)) => {
+                    let client_ref = client;
+                    return download_with_client(
+                        &client_ref,
+                        url,
+                        headers,
+                        max_bytes,
+                        transport,
+                        Some(route),
+                    )
+                    .await;
+                }
+                Err(exc) => {
+                    if !allow_process_direct_fallback {
+                        return Err(SubscriptionFetcherError::Unavailable(exc.to_string()));
+                    }
+                    // In the packaged helper, sing-box permanently routes this
+                    // process to the direct outbound. This fallback also remains
+                    // direct when TUN is disabled and avoids failing just because
+                    // a host route could not be prepared at that exact moment.
+                    transport = "process-direct";
+                    None
+                }
+            }
+        };
 
     // reqwest::redirect::Policy cannot inspect headers, so redirects are
     // followed manually below.
@@ -182,7 +221,7 @@ pub async fn fetch_subscription_http(
         .build()
         .map_err(|exc| SubscriptionFetcherError::Unavailable(exc.to_string()))?;
 
-    download_with_client(&client, url, headers, max_bytes, transport).await
+    download_with_client(&client, url, headers, max_bytes, transport, direct_route).await
 }
 
 async fn download_with_client(
@@ -191,6 +230,8 @@ async fn download_with_client(
     headers: &BTreeMap<String, String>,
     max_bytes: usize,
     transport: &str,
+    // Keeps the TUN-bypass routes alive for the whole download.
+    direct_route: Option<Arc<crate::http_utils::WindowsDirectRoute>>,
 ) -> Result<SubscriptionHttpPayload, SubscriptionFetcherError> {
     let mut current = Url::parse(url.trim()).map_err(|_| {
         SubscriptionFetcherError::Unavailable(format!("unknown url type: {url}"))
