@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
 url = { workspace = true }
+tokio = { workspace = true }
 windows = { workspace = true }
 winreg = { workspace = true }
 tempfile = "3"

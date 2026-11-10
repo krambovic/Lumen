@@ -14,6 +14,8 @@ pub mod process_traffic_collector;
 pub mod proxy_manager;
 pub mod route_leases;
 pub mod runtime_priority;
+#[cfg(windows)]
+pub mod single_instance;
 pub mod startup;
 pub mod subprocess;
 pub mod system_language;

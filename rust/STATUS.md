@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 255 tests, lumen-platform 62, lumen-engines 194, lumen-app 55
+Last verified: lumen-core 255 tests, lumen-platform 67, lumen-engines 194, lumen-app 56
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -87,6 +87,11 @@ client, core/resource updaters, zapret and discord proxy managers.
 - runtime_priority: above-normal priority for owned cores and an opt-in
   UI priority raise that preserves any existing non-normal priority class.
 - win_process_list: native Toolhelp snapshot of running executable names.
+- single_instance: keeps the `Local\Lumen.SingleInstance` mutex for the
+  lifetime of the primary. A user-only Windows pipe accepts bounded messages
+  and recovers from abandoned clients. Secondary launches verify the pipe
+  owner's user before forwarding and can notify the legacy LumenKVN pipe.
+  Retry deadlines preserve the ordinary and elevated relaunch behavior.
 - startup (startup.py incl. single-instance rebrand cleanup): legacy tree
   removal, Run + StartupApproved entries, elevated schtasks with UTF-16-BOM
   XML and the ONLOGON fallback, `list2cmdline` (exact CPython algorithm),
@@ -257,11 +262,12 @@ client, core/resource updaters, zapret and discord proxy managers.
   process counters. Health polling stays active when process details are
   hidden and resets on profile changes. The poll delay includes the Windows
   thread CPU budget and a cooldown for slow local API responses.
+- single_instance: launcher API wraps the Windows transport and existing
+  deep-link codec. The primary receives typed activation, tray and deep-link
+  requests. A true autostart stays in the tray, while a relaunch or incoming
+  deep link requests foreground activation.
 
 ## Left to port (Python source -> target crate)
-
-### lumen-platform
-Single-instance enforcement and message delivery.
 
 ### lumen-app
 app_controller (3285), application/* (node_service, connection_service,

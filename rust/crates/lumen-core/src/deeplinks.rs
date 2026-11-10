@@ -131,15 +131,19 @@ pub fn encode_instance_message(arguments: &[String]) -> Vec<u8> {
     let payload = if !link.is_empty() {
         json!({"command": "deeplink", "url": link})
     } else {
-        let args: &[String] = if arguments.len() > 1 { &arguments[1..] } else { arguments };
-        let flags: HashSet<&str> = args.iter().map(|a| a.trim()).collect();
-        let is_tray = flags.contains("--tray")
-            && !(flags.contains("--relaunched") || flags.contains("--relaunch-as-admin"));
-        json!({"command": if is_tray { "tray" } else { "activate" }})
+        json!({"command": if should_start_in_tray(arguments, &link) { "tray" } else { "activate" }})
     };
     let mut bytes = serde_json::to_vec(&payload).unwrap_or_default();
     bytes.push(b'\n');
     bytes
+}
+
+/// Only an OS autostart without a deep link should remain in the tray.
+pub fn should_start_in_tray(arguments: &[String], initial_deep_link: &str) -> bool {
+    let args = if arguments.len() > 1 { &arguments[1..] } else { arguments };
+    let flags: HashSet<&str> = args.iter().map(|arg| arg.trim()).collect();
+    initial_deep_link.is_empty() && flags.contains("--tray")
+        && !(flags.contains("--relaunched") || flags.contains("--relaunch-as-admin"))
 }
 
 /// Parse local IPC payload into `(command, url)`.
