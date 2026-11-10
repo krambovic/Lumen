@@ -8,17 +8,13 @@ use lumen_core::constants::DEFAULT_XRAY_STATS_API_PORT;
 use lumen_core::models::{Node, int_field, str_field};
 use serde_json::{Map, Value, json};
 
+pub use lumen_core::config::json_document::config_has_proxy_outbound;
+
 fn items<'a>(payload: &'a Value, key: &str) -> &'a [Value] {
     payload
         .get(key)
         .and_then(Value::as_array)
         .map_or(&[], Vec::as_slice)
-}
-
-pub fn config_has_proxy_outbound(payload: &Value) -> bool {
-    items(payload, "outbounds")
-        .iter()
-        .any(|outbound| outbound["tag"] == "proxy")
 }
 
 pub fn is_local_runtime_host(host: &str) -> bool {

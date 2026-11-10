@@ -23,6 +23,7 @@ use crate::runtime_introspection::{
     collect_xray_inbound_ports, config_has_proxy_outbound, extract_xray_runtime_ports,
     find_free_api_port, infer_xray_ping_target,
 };
+use lumen_core::config::json_document::format_json_error_message;
 
 pub use health_listener::add_xray_health_listener;
 pub use metrics::{
@@ -121,7 +122,7 @@ pub fn build_runtime_xray_config(
                     .file_name()
                     .unwrap_or(source_path.as_os_str())
                     .to_string_lossy(),
-                format_json_error(text, &error)
+                format_json_error_message(text, &error)
             )
         })?,
     };
@@ -331,30 +332,6 @@ fn is_native_singbox_only(node: &Node) -> bool {
             | "singbox_config"
     ) || (node.outbound["singbox"].is_object()
         && !health_listener::PROXY_PROTOCOLS.contains(&protocol.as_str()))
-}
-
-fn format_json_error(text: &str, error: &serde_json::Error) -> String {
-    let line_number = error.line();
-    let line = text
-        .lines()
-        .nth(line_number.saturating_sub(1))
-        .unwrap_or_default();
-    let indent = line
-        .bytes()
-        .take(error.column().saturating_sub(1))
-        .filter(|byte| byte & 0xc0 != 0x80)
-        .count();
-    let column = indent + 1;
-    let message = error.to_string();
-    let detail = message
-        .rsplit_once(" at line ")
-        .map_or(message.as_str(), |(detail, _)| detail);
-    let mut output =
-        format!("Ошибка синтаксиса JSON: {detail} (строка {line_number}, столбец {column})");
-    if !line.is_empty() {
-        output.push_str(&format!("\n{line}\n{}^", " ".repeat(indent)));
-    }
-    output
 }
 
 #[cfg(test)]

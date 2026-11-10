@@ -3,6 +3,7 @@
 //! `proxy_chain.py`, `bootstrap_dns.py`, `application/runtime_security.py`).
 
 pub mod bootstrap_dns;
+pub mod json_document;
 pub mod multiplex;
 pub mod proxy_chain;
 pub mod runtime_security;

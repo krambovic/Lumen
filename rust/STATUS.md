@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 204 tests, lumen-platform 11, lumen-engines 23, lumen-app 7
+Last verified: lumen-core 204 tests, lumen-platform 11, lumen-engines 23, lumen-app 15
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -85,6 +85,8 @@ client, core/resource updaters, zapret and discord proxy managers.
   acknowledgement, and supports cancelling HTTP reads and the acknowledgement
   wait. Installation stages Xray and optional Wintun, preserves Lumen's
   geodata, saves `.exe.bak`, and rolls back on replacement failure.
+- singbox/document: inspect editor text and parse a runtime document with
+  its source path, SHA-256 text hash and proxy-outbound flag.
 
 ### lumen-app
 - runtime_introspection: profile proxy detection, Xray inbound ports and
@@ -96,6 +98,13 @@ client, core/resource updaters, zapret and discord proxy managers.
   services with a loopback StatsService and adds authenticated, outbound-pinned
   health probes for supported selected proxies. The full AUTO test compares
   the resulting JSON with the Python service output.
+- config_profiles, config_documents, profile_service: resolve profile paths
+  under each engine's directory, select, import and reset templates, and
+  sync a newer template with a `.bak` copy. Writes replace files atomically
+  and preserve Windows text line endings. The sing-box document cache tracks
+  path, modification time and size. Editor apply mirrors an explicit
+  `route.final` to routing settings and emits state-save and transition
+  events when required by the connection context.
 
 ## Stubs still present (replace, do not keep)
 - `lumen-core/src/speed_test.rs` (1 line). Decision: speed_test_worker.py
@@ -133,7 +142,7 @@ native_test_config (97). Also provide the engine version probe used by
 
 ### lumen-app
 app_controller (3285), application/* (node_service, connection_service,
-worker_service, profile_service, signature_service,
+worker_service, signature_service,
 auto_switch_service, runtime_services, server_preflight), live_metrics_worker,
 subscription_worker, app_updater (1173), qthread_utils equivalents.
 `export_diagnostics` + upload: see app_controller.py:2970.
