@@ -217,6 +217,12 @@ pub fn get_fastest_alive_node<'a>(
             node.ping_ms.is_some()
         }
     });
+    fastest_node(candidates).or(selected)
+}
+
+pub(crate) fn fastest_node<'a>(
+    candidates: impl Iterator<Item = &'a Node> + Clone,
+) -> Option<&'a Node> {
     let with_speed = candidates.clone().filter_map(|node| {
         node.speed_mbps
             .filter(|speed| *speed > 0.0)
@@ -227,9 +233,7 @@ pub fn get_fastest_alive_node<'a>(
     {
         return Some(node);
     }
-    candidates
-        .min_by_key(|node| (node.ping_ms.is_none(), node.ping_ms))
-        .or(selected)
+    candidates.min_by_key(|node| (node.ping_ms.is_none(), node.ping_ms))
 }
 
 #[cfg(test)]

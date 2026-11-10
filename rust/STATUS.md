@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 255 tests, lumen-platform 62, lumen-engines 194, lumen-app 30
+Last verified: lumen-core 255 tests, lumen-platform 62, lumen-engines 194, lumen-app 36
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -234,6 +234,12 @@ client, core/resource updaters, zapret and discord proxy managers.
   signatures independent of the selected node. Signatures use sorted compact
   ASCII JSON. Proxy-chain hops without a link use Python-style `repr` in the
   Rust JSON model's map order.
+- auto_switch_service: counts distinct fresh HTTP failures for the active
+  profile and separately tracks sustained download speed drops. Keeps the
+  replacement in the current group, preserves cooldown and attempt limits
+  across automatic reconnects, and emits selection, save and transition
+  events in Python order. Cooldown starts at the first actual switch because
+  Rust uses a process-relative monotonic clock.
 
 ## Left to port (Python source -> target crate)
 
@@ -242,7 +248,7 @@ Single-instance enforcement and message delivery.
 
 ### lumen-app
 app_controller (3285), application/* (node_service, connection_service,
-worker_service, auto_switch_service, runtime_services, server_preflight), live_metrics_worker,
+worker_service, runtime_services, server_preflight), live_metrics_worker,
 subscription_worker, app_updater (1173), qthread_utils equivalents.
 `export_diagnostics` + upload: see app_controller.py:2970.
 
