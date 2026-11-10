@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines --lib`.
-Last verified: lumen-core 197 tests, lumen-platform 10, lumen-engines 11
+Last verified: lumen-core 198 tests, lumen-platform 11, lumen-engines 17
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -65,6 +65,13 @@ client, core/resource updaters, zapret and discord proxy managers.
   retains deadlines, retry backoff, cancellation on `close`, the 4 MiB limit,
   and strict counter validation. Diagnostic reasons use gRPC status codes.
   Tests cover the protobuf wire format and an in-process HTTP/2 service.
+- xray/manager: `XrayManager` validates and writes runtime config, waits for
+  local inbounds, retries once on readiness timeout, and stops the retained
+  child. Lifecycle and rate-limited logs are available through `subscribe`.
+  On Windows, stale-listener cleanup checks the executable path and keeps
+  the process handle open while confirming the port owner. Runtime config
+  replacement is atomic. `get_xray_version` queries the executable directly.
+  Tests use a fixture executable and real Windows processes and sockets.
 
 ## Stubs still present (replace, do not keep)
 - `lumen-core/src/speed_test.rs` (1 line). Decision: speed_test_worker.py
@@ -93,7 +100,7 @@ win_proc_monitor, win_process_list, process_conflicts,
 process_traffic_collector.
 
 ### lumen-engines (management of the Go binaries only)
-xray: manager (660), operations (221),
+xray: operations (221),
 core_updater (719); sing-box: config_builder (1372), manager (1250),
 operations (563), runtime_planner (2717);
 core_resource_updater (1309),

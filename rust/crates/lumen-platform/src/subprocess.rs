@@ -5,9 +5,9 @@
 //! [`run_text`]: the Rust UI never blocks its render thread on a child
 //! process, every caller runs on a worker thread or a tokio blocking task.
 
-use std::io::Read;
+use std::io::{PipeReader, Read, pipe};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
@@ -120,6 +120,39 @@ pub fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     command
 }
 
+/// Start a child with a single output stream, as with Python's stderr=STDOUT.
+pub fn spawn_merged(mut command: Command) -> std::io::Result<(Child, PipeReader)> {
+    let (reader, writer) = pipe()?;
+    let child = command
+        .stdin(Stdio::null())
+        .stderr(writer.try_clone()?)
+        .stdout(writer)
+        .spawn()?;
+    Ok((child, reader))
+}
+
+/// Run a configured command and capture stdout and stderr in arrival order.
+pub fn run_merged(command: Command, timeout: f64) -> Result<CompletedProcess, RunError> {
+    let display = format!("{command:?}");
+    let (mut child, mut output) = spawn_merged(command)?;
+    let deadline = Instant::now() + Duration::from_secs_f64(timeout.max(0.0));
+    let (finished, reader) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = output.read_to_end(&mut bytes);
+        let _ = finished.send(bytes);
+    });
+    let status = wait_bounded(&mut child, deadline, timeout, &display)?;
+    let stdout = reader
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| RunError::Timeout { command: display, timeout })?;
+    Ok(CompletedProcess {
+        returncode: status.code().unwrap_or(-1),
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
 /// `run_text`: run `command`, capture raw stdout/stderr, enforce `timeout`.
 /// The child is always started without a console window.
 pub fn run_text(command: &[&str], timeout: f64, check: bool) -> Result<CompletedProcess, RunError> {
@@ -141,17 +174,7 @@ pub fn run_text_owned(command: &[String], timeout: f64, check: bool) -> Result<C
     let stdout = child.stdout.take().map(spawn_reader);
     let stderr = child.stderr.take().map(spawn_reader);
     let deadline = Instant::now() + Duration::from_secs_f64(timeout.max(0.0));
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(RunError::Timeout { command: display, timeout });
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
+    let status = wait_bounded(&mut child, deadline, timeout, &display)?;
     let result = CompletedProcess {
         returncode: status.code().unwrap_or(-1),
         stdout: stdout.map(|h| h.join().unwrap_or_default()).unwrap_or_default(),
@@ -161,6 +184,28 @@ pub fn run_text_owned(command: &[String], timeout: f64, check: bool) -> Result<C
         return Err(RunError::NonZero { command: display, code: result.returncode, result });
     }
     Ok(result)
+}
+
+fn wait_bounded(
+    child: &mut Child,
+    deadline: Instant,
+    timeout: f64,
+    command: &str,
+) -> Result<ExitStatus, RunError> {
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(RunError::Timeout {
+                command: command.into(),
+                timeout,
+            });
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// `is_same_path`: both paths resolve to the same canonical location.
