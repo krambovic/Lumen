@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 100, lumen-app 16
+Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 147, lumen-app 16
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -123,6 +123,23 @@ client, core/resource updaters, zapret and discord proxy managers.
   Tests simulate registry mutations and use isolated browser profiles.
 
 ### lumen-engines
+- singbox/manager: `SingBoxManager` (tokio broadcast `SingboxEvent`
+  replaces Qt signals) with config validation, retry loop classified by
+  Wintun race (2 attempts for WARP/MASQUE, 3 for plain TUN, 1 for
+  proxy-only), pre-launch PowerShell hook, TUN rotation/ready waits,
+  bounded runtime logs via `CoreLogLimiter("sing-box", 20, 10)`,
+  `get_singbox_version` for diagnostics, orphaned TUN adapter cleanup,
+  hot TUN-name rotation `singbox_tun-{pid:x}-{hex6}`. Fixture exe tests:
+  38. Unconditional Python errors at start() surface as `Error` events
+  instead of uncaught OSError.
+- xray/operations + singbox/operations: start_proxy/start_tun/start_
+  runtime/restart/hot-switch flows behind the `OperationsController`
+  trait (lumen-app implements it; lumen-engines cannot depend on lumen-app).
+  `try_hot_switch_selector` keeps every Python guard with the
+  rollback-to-restart fallback; `validate_runtime_plan` keeps the 5-iteration
+  prune loop; Russian user-facing strings are byte-identical. The deferred
+  planner test (`test_planner_runtime_error_is_reported_as_a_connection_error`)
+  landed here, plus the hot-switch validation trio and xray flow tests: 9.
 - singbox/config_builder: full outbound conversion for every scheme —
   TLS/uTLS/certificate pins, ws/grpc/httpupgrade/xhttp transports with
   their alias tables and `extra` merging, Shadowsocks-2022 key sizes,
@@ -211,11 +228,9 @@ win_proc_monitor, process_conflicts,
 process_traffic_collector.
 
 ### lumen-engines (management of the Go binaries only)
-xray: operations (221); sing-box: manager (1250), operations (563);
 core_resource_updater (1309),
 zapret_manager (932), discord_proxy_manager (652), speed_test (796) +
-native_test_config (97). Also provide the engine version probe used by
-`diagnostics::collect_runtime_context`.
+native_test_config (97).
 
 ### lumen-app
 app_controller (3285), application/* (node_service, connection_service,
