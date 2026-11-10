@@ -33,3 +33,6 @@ reqwest = { workspace = true }
 tokio = { workspace = true }
 image = { workspace = true }
 qrcode = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

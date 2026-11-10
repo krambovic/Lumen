@@ -3,6 +3,7 @@
 
 pub mod bootstrap_dns;
 pub mod bounded_logs;
+pub mod component_compatibility;
 pub mod config;
 pub mod constants;
 pub mod core_log_limiter;
@@ -35,5 +36,7 @@ pub mod speed_test;
 pub mod storage;
 pub mod subscription;
 pub mod traffic_history;
+pub mod update_checker;
 pub mod wireguard_normalization;
+pub mod zip_utils;
 pub mod warp_generator;

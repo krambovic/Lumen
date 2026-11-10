@@ -34,6 +34,12 @@ client, core/resource updaters, zapret and discord proxy managers.
 - log_utils, bounded_logs, logging (logging_setup)
 - core_log_limiter: per-second quotas for normal and critical core logs,
   with summaries for lines withheld from the UI.
+- component_compatibility: pinned policy digest, minimum engine versions
+  and required geodata codes.
+- update_checker: HTTPS release feeds, channel selection and SHA-256 metadata;
+  update downloads use idle read timeouts and proxy-to-physical-route fallback.
+- zip_utils: checks all member paths before extraction, including Windows
+  drive, device and reparse-point paths.
 - diagnostics (bundle export + zip sanitizer), diagnostics_uploader
   (consent epochs, URL safety), pyjson (Python-compatible json.dumps)
 - ping (ping_worker.py): tcp/udp/hysteria/http/icmp pings,
@@ -89,9 +95,9 @@ client, core/resource updaters, zapret and discord proxy managers.
 
 ### lumen-core
 deeplinks, service_presets, process_presets, zapret_strategies,
-zapret_server_scope, traffic_route_classifier, component_compatibility,
+zapret_server_scope, traffic_route_classifier,
 geodata_resources, active_profile_health, metrics_api,
-state_snapshot, zip_utils, update_checker.
+state_snapshot.
 
 ### lumen-platform
 proxy_manager (WinINet system proxy, reuse inet_settings), startup

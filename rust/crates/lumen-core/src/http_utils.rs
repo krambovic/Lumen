@@ -352,13 +352,14 @@ pub fn user_agent() -> String {
 /// automatically; use [`get_with_safe_redirects`]. Keep the returned route
 /// alive for the lifetime of the client (it owns the temporary routes).
 pub fn direct_client(timeout: f64) -> Result<(reqwest::Client, Arc<WindowsDirectRoute>), DirectNetworkUnavailable> {
+    build_direct_client(timeout, false)
+}
+
+fn build_direct_client(timeout: f64, idle_timeout: bool) -> Result<(reqwest::Client, Arc<WindowsDirectRoute>), DirectNetworkUnavailable> {
     let route = Arc::new(WindowsDirectRoute::open()?);
-    let client = reqwest::Client::builder()
+    let client = http_builder(timeout, idle_timeout)
         .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs_f64(timeout.max(0.001)))
         .dns_resolver(Arc::new(DirectResolver(route.clone())))
-        .user_agent(user_agent())
         .build()
         .map_err(|e| DirectNetworkUnavailable(e.to_string()))?;
     Ok((client, route))
@@ -367,15 +368,28 @@ pub fn direct_client(timeout: f64) -> Result<(reqwest::Client, Arc<WindowsDirect
 /// Client through `proxy_url` (`build_proxy_opener`); without a proxy the
 /// client still disables environment proxy detection.
 pub fn proxy_client(proxy_url: Option<&str>, timeout: f64) -> anyhow::Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs_f64(timeout.max(0.001)))
-        .user_agent(user_agent());
+    build_proxy_client(proxy_url, timeout, false)
+}
+
+fn build_proxy_client(proxy_url: Option<&str>, timeout: f64, idle_timeout: bool) -> anyhow::Result<reqwest::Client> {
+    let mut builder = http_builder(timeout, idle_timeout);
     match proxy_url.map(str::trim).filter(|p| !p.is_empty()) {
         Some(proxy) => builder = builder.proxy(reqwest::Proxy::all(proxy)?),
         None => builder = builder.no_proxy(),
     }
     Ok(builder.build()?)
+}
+
+fn http_builder(timeout: f64, idle_timeout: bool) -> reqwest::ClientBuilder {
+    let timeout = Duration::from_secs_f64(timeout.max(0.001));
+    let builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent(user_agent());
+    if idle_timeout {
+        builder.connect_timeout(timeout).read_timeout(timeout)
+    } else {
+        builder.timeout(timeout)
+    }
 }
 
 /// `SafeRedirectHandler` decision: true when the redirect must be blocked.
@@ -468,6 +482,26 @@ pub async fn get_proxy_first(
         }
     }
     let (response, route) = get_direct(url, headers, timeout).await?;
+    Ok((response, Some(route)))
+}
+
+/// GET for an update feed or archive. Like urllib, use a per-read timeout and
+/// fall back to the physical route if opening the response through the proxy fails.
+pub async fn get_update_response(
+    url: &str,
+    timeout: f64,
+    proxy_url: Option<&str>,
+) -> anyhow::Result<(reqwest::Response, Option<Arc<WindowsDirectRoute>>)> {
+    let headers = BTreeMap::new();
+    if let Some(proxy) = proxy_url.filter(|proxy| !proxy.trim().is_empty())
+        && let Ok(client) = build_proxy_client(Some(proxy), timeout, true)
+        && let Ok(response) = get_with_safe_redirects(&client, url, &headers).await
+        && let Ok(response) = response.error_for_status()
+    {
+        return Ok((response, None));
+    }
+    let (client, route) = tokio::task::spawn_blocking(move || build_direct_client(timeout, true)).await??;
+    let response = get_with_safe_redirects(&client, url, &headers).await?.error_for_status()?;
     Ok((response, Some(route)))
 }
 
