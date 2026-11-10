@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 194, lumen-app 16
+Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 194, lumen-app 20
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -219,6 +219,11 @@ client, core/resource updaters, zapret and discord proxy managers.
   path, modification time and size. Editor apply mirrors an explicit
   `route.final` to routing settings and emits state-save and transition
   events when required by the connection context.
+- session_state, transition_engine: active-session snapshot and the rules for
+  connect, disconnect, system-proxy updates, Xray and sing-box hot swaps, and
+  reconnect. Tests cover blocked transition signatures, action priority, and
+  the sing-box selector in both TUN and system-proxy mode. `XrayRuntimeConfig`
+  is already defined in `xray_runtime_service`.
 
 ## Left to port (Python source -> target crate)
 

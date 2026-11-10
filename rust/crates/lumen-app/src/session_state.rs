@@ -1,0 +1,31 @@
+//! Settings and runtime identity captured when a connection becomes active.
+
+#[derive(Clone, Default)]
+pub struct ActiveSessionSnapshot {
+    pub node_id: Option<String>,
+    pub node_server: String,
+    pub active_core: String,
+    pub tun_mode: bool,
+    pub proxy_enabled: bool,
+    pub proxy_bypass_lan: bool,
+    pub xray_path: String,
+    pub singbox_path: String,
+    pub socks_port: i64,
+    pub http_port: i64,
+    pub routing_signature: String,
+    pub transition_signature: String,
+    pub xray_layer_signature: String,
+    pub tun_layer_signature: String,
+    pub hybrid: bool,
+    pub api_port: i64,
+    pub clash_api_secret: String,
+    pub xray_inbound_tags: Vec<String>,
+    pub sidecar_relay_port: i64,
+    pub protect_ss_port: i64,
+    pub protect_ss_password: String,
+    pub ping_host: String,
+    pub ping_port: i64,
+    pub clash_api_selector: String,
+    pub clash_api_node_signatures: Vec<(String, String)>,
+    pub health_proxy_url: String,
+}
