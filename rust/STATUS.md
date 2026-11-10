@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 206 tests, lumen-platform 20, lumen-engines 23, lumen-app 16
+Last verified: lumen-core 254 tests, lumen-platform 20, lumen-engines 23, lumen-app 16
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -49,6 +49,34 @@ client, core/resource updaters, zapret and discord proxy managers.
   `WindowsPingBypass` (= `_WindowsPingBypass`, also used by speed test),
   `PingWorker` with `run(&mut emit)` and `start()` -> `PingWorkerHandle`
   (events: `PingEvent::{Result, Progress, Completed}`)
+- geodata_resources: RuNetFreedom archive entries and the China/Iran raw
+  GitHub rule-set feeds; `singbox_rule_set_path` lands inside
+  `singbox_rule_set_dir()`.
+- state_snapshot: `snapshot_state(&AppState)` payload + cloned settings;
+  payload keeps raw UTF-8 (Python used `ensure_ascii=True`, content equal).
+- deeplinks (deeplinks.py): `lumen://` parsing with Python-compatible
+  `urlsplit`/`parse_qs`/`unquote` helpers, instance-message encode/decode;
+  the Python tests were ported 1:1.
+- metrics_api: `ClashApiClient` over a raw loopback HTTP/1.1 socket —
+  bounded reads, deadline per chunk, `close()` cancels the active read,
+  non-200 bodies scanned for unsupported-transport markers. Reasons carry
+  Python exception names (TimeoutError/OSError/BadStatusLine/...).
+- active_profile_health: `probe_active_profile` (async: the warm probe is
+  reqwest-based) with strict no-NO_PROXY proxy GET, safe redirect policy
+  and the UNKNOWN/FAILED semantics of the Python module.
+- process_presets, service_presets: preset tables 1:1 (`icon` is the FIF
+  name as a string).
+- zapret_strategies: blob registry (74 entries incl. zero64), lua extension
+  map, catalog parsing with mtime/size cache and local overrides, strategy
+  binding helpers, `node_server_kind`. Shipped-catalog tests resolve the
+  repo checkout via `CARGO_MANIFEST_DIR` (runtime path stays `base_dir()`,
+  the exe directory).
+- zapret_server_scope: preset->server profiles (`--ipset-ip`, handshake-only
+  payloads, `--new` merging of WinDivert port filters), strategy scopes,
+  node transports and the 24h resolve cache. `make_server_scope_in` adds a
+  catalog_dir override for tests; `make_server_scope` matches Python.
+- New dependency: `unicode-general-category` (workspace + lumen-core) for
+  `clean_strategy_name` (So/Sk/Cs/Co/Cf filtering).
 
 ### lumen-platform
 - dpapi, idle, system_language, inet_settings, os_info
@@ -134,12 +162,6 @@ client, core/resource updaters, zapret and discord proxy managers.
   so subscription downloads bypass TUN like Python `DirectUrlOpener`.
 
 ## Left to port (Python source -> target crate)
-
-### lumen-core
-deeplinks, service_presets, process_presets, zapret_strategies,
-zapret_server_scope,
-geodata_resources, active_profile_health, metrics_api,
-state_snapshot.
 
 ### lumen-platform
 startup

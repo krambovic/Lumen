@@ -1,6 +1,7 @@
 //! Lumen core domain logic (link parsing, config building, storage, i18n).
 #![recursion_limit = "1024"]
 
+pub mod active_profile_health;
 pub mod bootstrap_dns;
 pub mod bounded_logs;
 pub mod component_compatibility;
@@ -9,13 +10,16 @@ pub mod constants;
 pub mod core_log_limiter;
 pub mod country_flags;
 pub mod crypt;
+pub mod deeplinks;
 pub mod diagnostics;
 pub mod diagnostics_uploader;
+pub mod geodata_resources;
 pub mod http_utils;
 pub mod i18n;
 pub mod link_parser;
 pub mod log_utils;
 pub mod logging;
+pub mod metrics_api;
 pub mod models;
 pub mod node_transport;
 pub mod openvpn_import;
@@ -24,6 +28,7 @@ pub mod path_utils;
 pub mod paths;
 pub mod ping;
 pub mod presets;
+pub mod process_presets;
 pub mod pyjson;
 pub mod probe_capabilities;
 pub mod release_notes;
@@ -32,7 +37,9 @@ pub mod routing_rule_import;
 pub mod routing_runtime;
 pub mod secret_scrubber;
 pub mod security;
+pub mod service_presets;
 pub mod speed_test;
+pub mod state_snapshot;
 pub mod storage;
 pub mod subscription;
 pub mod traffic_history;
@@ -41,3 +48,5 @@ pub mod update_checker;
 pub mod wireguard_normalization;
 pub mod zip_utils;
 pub mod warp_generator;
+pub mod zapret_server_scope;
+pub mod zapret_strategies;

@@ -75,6 +75,7 @@ anyhow = "1"
 parking_lot = "0.12"
 percent-encoding = "2"
 idna = "1"
+unicode-general-category = "1"
 tonic = { version = "0.14", default-features = false, features = ["transport", "codegen"] }
 prost = "0.14"
 tray-icon = "0.26"
