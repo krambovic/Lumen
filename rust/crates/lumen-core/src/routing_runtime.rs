@@ -263,32 +263,64 @@ fn ensure_object<'a>(value: &'a mut Value) -> &'a mut Map<String, Value> {
 
 // ── IP/network parsing (Python `ipaddress` equivalent, strict=False) ────
 
-/// `str(ipaddress.ip_network(value, strict=False))` for bare IPs and CIDR
-/// strings; host bits are masked and the result is canonical. IPv4 dotted
-/// netmasks/hostmasks are accepted like Python's `ipaddress`.
 pub(crate) fn ip_network_strict_false(value: &str) -> Option<String> {
     let value = value.trim();
-    if value.is_empty() {
+    if !value.contains('/') {
+        return value.parse::<std::net::IpAddr>().ok().map(|ip| ip.to_string());
+    }
+    let (address, prefix) = value.split_once('/')?;
+    let ip = address.trim().parse().ok()?;
+    let prefix = parse_ip_prefix(prefix, ip)?;
+    let network = mask_ip(ip, prefix);
+    Some(format!("{network}/{prefix}"))
+}
+
+/// Canonical network with an explicit prefix, matching Python's
+/// `ip_network(value, strict=False)` for TUN route exclusions.
+pub fn canonical_ip_network(value: &str) -> Option<String> {
+    let (address, prefix) = match value.trim().split_once('/') {
+        Some((address, prefix)) => (address, Some(prefix)),
+        None => (value.trim(), None),
+    };
+    let (address, scope) = match address.split_once('%') {
+        Some((address, scope)) if !scope.is_empty() && !scope.contains('%') => (address, scope),
+        Some(_) => return None,
+        None => (address, ""),
+    };
+    let ip: std::net::IpAddr = address.parse().ok()?;
+    if !scope.is_empty() && ip.is_ipv4() {
         return None;
     }
-    if let Some((addr_part, prefix_part)) = value.split_once('/') {
-        let ip: std::net::IpAddr = addr_part.trim().parse().ok()?;
-        let prefix = parse_ip_prefix(prefix_part, ip)?;
-        match ip {
-            std::net::IpAddr::V4(v4) => {
-                let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
-                let network = u32::from(v4) & mask;
-                Some(format!("{}/{}", std::net::Ipv4Addr::from(network), prefix))
-            }
-            std::net::IpAddr::V6(v6) => {
-                let mask = if prefix == 0 { 0 } else { u128::MAX << (128 - prefix) };
-                let network = u128::from(v6) & mask;
-                Some(format!("{}/{}", std::net::Ipv6Addr::from(network), prefix))
-            }
+    let prefix = match prefix {
+        Some(prefix) => parse_ip_prefix(prefix, ip)?,
+        None if ip.is_ipv4() => 32,
+        None => 128,
+    };
+    let network = mask_ip(ip, prefix);
+    let mut address = match network {
+        std::net::IpAddr::V6(v6) if v6.to_ipv4_mapped().is_some() => {
+            let segments = v6.segments();
+            format!("::ffff:{:x}:{:x}", segments[6], segments[7])
         }
-    } else {
-        let ip: std::net::IpAddr = value.parse().ok()?;
-        Some(ip.to_string())
+        _ => network.to_string(),
+    };
+    if network == ip && !scope.is_empty() {
+        address.push('%');
+        address.push_str(scope);
+    }
+    Some(format!("{address}/{prefix}"))
+}
+
+fn mask_ip(ip: std::net::IpAddr, prefix: u32) -> std::net::IpAddr {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+            std::net::Ipv4Addr::from(u32::from(v4) & mask).into()
+        }
+        std::net::IpAddr::V6(v6) => {
+            let mask = if prefix == 0 { 0 } else { u128::MAX << (128 - prefix) };
+            std::net::Ipv6Addr::from(u128::from(v6) & mask).into()
+        }
     }
 }
 

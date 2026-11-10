@@ -27,3 +27,6 @@ anyhow = { workspace = true }
 parking_lot = { workspace = true }
 windows = { workspace = true }
 percent-encoding = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

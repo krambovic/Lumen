@@ -5,3 +5,4 @@
 //! talks to their local APIs.
 
 pub mod singbox;
+pub mod xray;

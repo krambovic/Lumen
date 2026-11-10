@@ -3,9 +3,7 @@
 Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
-Verification: `cd rust; cargo test -p lumen-core -p lumen-platform --lib`.
-Last verified: lumen-core 197 tests, lumen-platform 10 tests, all green
-(cargo 1.99.1, edition 2024).
+Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines --lib`.
 
 ## Scope rule: engines stay in Go
 xray-core and sing-box are NOT ported. They remain the original upstream Go
@@ -50,6 +48,12 @@ client, core/resource updaters, zapret and discord proxy managers.
 - singbox/clash_api: `SingboxClashApiClient` (Bearer auth, selector switch
   with confirm + rollback, 8 MiB cap, quote(leaf, safe='')); 2 tests
   against an in-process fake API.
+- xray/tun: `xray_wintun_dll` resolves the configured/default core location;
+  `apply_xray_tun` adds the Wintun inbound to the existing Xray config and
+  preserves explicit outbound bindings. It uses a pre-start physical route
+  snapshot for interface binding and DNS, prepends the DNS/CIDR/QUIC rules,
+  and validates imported config sections before mutation. The base Xray
+  config builder is already in `lumen-core::config::xray_builder`.
 
 ## Stubs still present (replace, do not keep)
 - `lumen-core/src/speed_test.rs` (1 line). Decision: speed_test_worker.py
@@ -78,9 +82,9 @@ win_proc_monitor, win_process_list, process_conflicts,
 process_traffic_collector, runtime_priority.
 
 ### lumen-engines (management of the Go binaries only)
-xray: config_builder (363), manager (660), operations (221), tun (173),
+xray: manager (660), operations (221),
 core_updater (719); sing-box: config_builder (1372), manager (1250),
-operations (563), runtime_planner (2717), clash_api (159);
+operations (563), runtime_planner (2717);
 xray_stats_client (tonic gRPC, 183), core_resource_updater (1309),
 zapret_manager (932), discord_proxy_manager (652), speed_test (796) +
 native_test_config (97). Also provide the engine version probe used by
