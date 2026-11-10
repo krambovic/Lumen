@@ -481,15 +481,15 @@ pub fn cache_country(host: &str, country: &str) {
         .insert(host.to_string(), country.to_string());
 }
 
-/// Resolve countries for hosts in batches of 100 via ip-api.com/batch.
-pub async fn resolve_countries(hosts: &[String]) -> BTreeMap<String, String> {
+/// Resolve hosts in batches of 100. A non-list reply invalidates the lookup.
+pub async fn resolve_countries(hosts: &[String]) -> Option<BTreeMap<String, String>> {
     let mut results = BTreeMap::new();
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
     {
         Ok(c) => c,
-        Err(_) => return results,
+        Err(_) => return Some(results),
     };
     for batch in hosts.chunks(100) {
         if batch.is_empty() {
@@ -499,23 +499,21 @@ pub async fn resolve_countries(hosts: &[String]) -> BTreeMap<String, String> {
             .iter()
             .map(|host| json!({"query": host, "fields": "status,countryCode,query"}))
             .collect();
-        let response = match client
+        let Ok(response) = client
             .post("http://ip-api.com/batch")
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
             .await
-        {
-            Ok(r) => r,
-            Err(_) => return results,
+            .and_then(reqwest::Response::error_for_status)
+        else {
+            continue;
         };
         let data: Value = match response.json().await {
             Ok(v) => v,
-            Err(_) => return results,
+            Err(_) => continue,
         };
-        let Some(items) = data.as_array() else {
-            return results;
-        };
+        let items = data.as_array()?;
         for (host, item) in batch.iter().zip(items) {
             if item.get("status").and_then(|s| s.as_str()) == Some("fail") {
                 continue;
@@ -528,7 +526,7 @@ pub async fn resolve_countries(hosts: &[String]) -> BTreeMap<String, String> {
             }
         }
     }
-    results
+    Some(results)
 }
 
 #[cfg(test)]

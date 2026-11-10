@@ -10,10 +10,7 @@ use lumen_core::config::proxy_chain::{apply_xray_proxy_chain, resolve_proxy_chai
 use lumen_core::config::xray_fragments::{apply_xray_final_fragment, apply_xray_outbound_fragment};
 use lumen_core::config::xray_inbounds::ensure_xray_mixed_proxy_inbound;
 use lumen_core::constants::{DEFAULT_HTTP_PORT, DEFAULT_SOCKS_PORT};
-use lumen_core::link_parser::{
-    normalize_node_outbound, repair_node_outbound_from_link, validate_node_outbound,
-};
-use lumen_core::models::{AppSettings, AppState, Node, str_or};
+use lumen_core::models::{AppSettings, AppState};
 use lumen_core::routing_runtime::{apply_xray_gui_routing, routing_with_ip_preference};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -24,8 +21,10 @@ use crate::runtime_introspection::{
 };
 use lumen_core::config::json_document::format_json_error_message;
 
-use crate::health_listener::PROXY_PROTOCOLS;
 pub use crate::health_listener::add_xray_health_listener;
+use crate::node_runtime_service::{
+    is_native_singbox_only_node, native_singbox_only_message, prepare_node_for_runtime,
+};
 pub use metrics::{
     APP_DISCORD_PROXY_INBOUND_TAG, APP_METRICS_API_INBOUND_TAG, APP_METRICS_API_TAG,
     ensure_xray_metrics_contract,
@@ -168,23 +167,12 @@ pub fn build_runtime_xray_config(
                 "В конфиге есть outbound tag `proxy`. Выберите сервер для запуска xray.",
             )?;
             let node = &mut state.nodes[index];
-            if is_native_singbox_only(node) {
-                let name = if node.name.is_empty() {
-                    &node.server
-                } else {
-                    &node.name
-                };
-                bail!(
-                    "{name} не поддерживается ядром Xray. \
-                     Выберите Auto или sing-box extended в «Настройки → Сеть → Основное ядро»: \
-                     Lumen запустит этот сервер через sing-box extended как в системном прокси, так и в TUN."
-                );
+            if is_native_singbox_only_node(Some(node)) {
+                bail!(native_singbox_only_message(Some(node)));
             }
-            let repaired = repair_node_outbound_from_link(node);
-            if normalize_node_outbound(node) || repaired {
+            if let Some(problem) = prepare_node_for_runtime(Some(node), |node| {
                 emit(XrayRuntimeEvent::NodeChanged(node.id.clone()));
-            }
-            if let Some(problem) = validate_node_outbound(node) {
+            }) {
                 bail!(problem);
             }
             *outbound = node.outbound.clone();
@@ -308,29 +296,6 @@ fn apply_gui_overrides(
             }
         }
     }
-}
-
-fn is_native_singbox_only(node: &Node) -> bool {
-    if !node.outbound.is_object() {
-        return false;
-    }
-    let protocol = str_or(&node.outbound, "protocol", &node.scheme)
-        .trim()
-        .to_ascii_lowercase();
-    matches!(
-        protocol.as_str(),
-        "warp"
-            | "wireguard"
-            | "awg"
-            | "hysteria"
-            | "hysteria2"
-            | "tuic"
-            | "mieru"
-            | "masque"
-            | "openvpn"
-            | "naive"
-            | "singbox_config"
-    ) || (node.outbound["singbox"].is_object() && !PROXY_PROTOCOLS.contains(&protocol.as_str()))
 }
 
 #[cfg(test)]

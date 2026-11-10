@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 194, lumen-app 20
+Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 194, lumen-app 24
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -224,6 +224,10 @@ client, core/resource updaters, zapret and discord proxy managers.
   reconnect. Tests cover blocked transition signatures, action priority, and
   the sing-box selector in both TUN and system-proxy mode. `XrayRuntimeConfig`
   is already defined in `xray_runtime_service`.
+- node_runtime_service: selects the core and fastest eligible node, repairs and
+  validates stored outbounds, and resolves country codes. Xray runtime setup
+  uses the shared validation and reports repairs for persistence. The country
+  resolver groups duplicate hosts and runs one cancellable task per controller.
 
 ## Left to port (Python source -> target crate)
 
