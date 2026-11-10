@@ -2,6 +2,7 @@
 
 pub mod config_documents;
 pub mod config_profiles;
+pub mod health_listener;
 pub mod profile_service;
 pub mod runtime_introspection;
 pub mod xray_runtime_service;

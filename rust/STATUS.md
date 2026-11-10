@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 204 tests, lumen-platform 20, lumen-engines 23, lumen-app 15
+Last verified: lumen-core 206 tests, lumen-platform 20, lumen-engines 23, lumen-app 16
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -32,6 +32,9 @@ client, core/resource updaters, zapret and discord proxy managers.
   connectivity_test, WarmHttpProbe (ports http_utils, direct_http,
   http_redirect_policy, connectivity_test, http_latency)
 - log_utils, bounded_logs, logging (logging_setup)
+- traffic_route_classifier: classifies Clash and runtime chains by outbound
+  type, selector choices and detours. Recorded members take precedence over
+  later selector switches. Mixed, cyclic and unrecognized routes are unknown.
 - core_log_limiter: per-second quotas for normal and critical core logs,
   with summaries for lines withheld from the UI.
 - component_compatibility: pinned policy digest, minimum engine versions
@@ -100,6 +103,9 @@ client, core/resource updaters, zapret and discord proxy managers.
 ### lumen-app
 - runtime_introspection: profile proxy detection, Xray inbound ports and
   Xray/sing-box ping targets.
+- health_listener: authenticated loopback probes for both cores. A new
+  sing-box probe uses its target selector's configured default and adds a
+  pinned route only when the classifier confirms a proxy path.
 - xray_runtime_service: inspects loaded profile text and builds runtime JSON
   from it and the selected node in `AppState`. Reports repairs to stored
   nodes for persistence, applies proxy chains and GUI routing, and preserves
@@ -131,7 +137,7 @@ client, core/resource updaters, zapret and discord proxy managers.
 
 ### lumen-core
 deeplinks, service_presets, process_presets, zapret_strategies,
-zapret_server_scope, traffic_route_classifier,
+zapret_server_scope,
 geodata_resources, active_profile_health, metrics_api,
 state_snapshot.
 

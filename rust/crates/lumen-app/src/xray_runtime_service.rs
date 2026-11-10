@@ -1,6 +1,5 @@
 //! Prepare a loaded Xray profile and selected node for the process manager.
 
-mod health_listener;
 mod metrics;
 
 use std::path::{Path, PathBuf};
@@ -25,7 +24,8 @@ use crate::runtime_introspection::{
 };
 use lumen_core::config::json_document::format_json_error_message;
 
-pub use health_listener::add_xray_health_listener;
+use crate::health_listener::PROXY_PROTOCOLS;
+pub use crate::health_listener::add_xray_health_listener;
 pub use metrics::{
     APP_DISCORD_PROXY_INBOUND_TAG, APP_METRICS_API_INBOUND_TAG, APP_METRICS_API_TAG,
     ensure_xray_metrics_contract,
@@ -330,8 +330,7 @@ fn is_native_singbox_only(node: &Node) -> bool {
             | "openvpn"
             | "naive"
             | "singbox_config"
-    ) || (node.outbound["singbox"].is_object()
-        && !health_listener::PROXY_PROTOCOLS.contains(&protocol.as_str()))
+    ) || (node.outbound["singbox"].is_object() && !PROXY_PROTOCOLS.contains(&protocol.as_str()))
 }
 
 #[cfg(test)]

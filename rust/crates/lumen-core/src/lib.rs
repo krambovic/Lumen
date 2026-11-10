@@ -36,6 +36,7 @@ pub mod speed_test;
 pub mod storage;
 pub mod subscription;
 pub mod traffic_history;
+pub mod traffic_route_classifier;
 pub mod update_checker;
 pub mod wireguard_normalization;
 pub mod zip_utils;
