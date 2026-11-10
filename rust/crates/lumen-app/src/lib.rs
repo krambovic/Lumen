@@ -7,6 +7,7 @@ pub mod health_listener;
 pub mod node_runtime_service;
 pub mod profile_service;
 pub mod runtime_introspection;
+pub mod server_preflight;
 pub mod session_state;
 pub mod signature_service;
 pub mod transition_engine;

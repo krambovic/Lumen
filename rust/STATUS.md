@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 255 tests, lumen-platform 62, lumen-engines 194, lumen-app 41
+Last verified: lumen-core 255 tests, lumen-platform 62, lumen-engines 194, lumen-app 48
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -246,6 +246,11 @@ client, core/resource updaters, zapret and discord proxy managers.
   after a disconnect acknowledgement. The service requests reconnect after
   completion when it stopped a connection. Shutdown can cancel and join the
   active worker.
+- server_preflight: validates XHTTP and Reality settings, native endpoint
+  fields, and full sing-box and Xray AUTO profiles. `leastPing` and
+  `leastLoad` require an observatory. Classic proxy protocols retain the
+  Xray fallback after a native conversion error. `prepare_connection_node`
+  repairs and validates the node before checking the configured core.
 
 ## Left to port (Python source -> target crate)
 
@@ -254,7 +259,7 @@ Single-instance enforcement and message delivery.
 
 ### lumen-app
 app_controller (3285), application/* (node_service, connection_service,
-worker_service, runtime_services, server_preflight), live_metrics_worker,
+worker_service, runtime_services), live_metrics_worker,
 subscription_worker, app_updater (1173), qthread_utils equivalents.
 `export_diagnostics` + upload: see app_controller.py:2970.
 

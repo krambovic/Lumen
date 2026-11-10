@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 
 pub use crate::models::Node;
-pub use helpers::py_str_or;
+pub use helpers::{py_int_or, py_str_or, py_truthy};
 pub use validate::{
     is_happ_auto_placeholder, normalize_node_outbound, normalize_outbound_for_runtime,
     repair_node_outbound_from_link, validate_node_outbound,
