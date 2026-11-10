@@ -4,6 +4,8 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines --lib`.
+Last verified: lumen-core 197 tests, lumen-platform 10, lumen-engines 11
+(cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
 xray-core and sing-box are NOT ported. They remain the original upstream Go
@@ -54,6 +56,11 @@ client, core/resource updaters, zapret and discord proxy managers.
   snapshot for interface binding and DNS, prepends the DNS/CIDR/QUIC rules,
   and validates imported config sections before mutation. The base Xray
   config builder is already in `lumen-core::config::xray_builder`.
+- xray/stats_client: `XrayStatsClient::query` reuses a lazy loopback-only
+  gRPC channel and reads inbound counters without resetting them. The port
+  retains deadlines, retry backoff, cancellation on `close`, the 4 MiB limit,
+  and strict counter validation. Diagnostic reasons use gRPC status codes.
+  Tests cover the protobuf wire format and an in-process HTTP/2 service.
 
 ## Stubs still present (replace, do not keep)
 - `lumen-core/src/speed_test.rs` (1 line). Decision: speed_test_worker.py
@@ -85,7 +92,7 @@ process_traffic_collector, runtime_priority.
 xray: manager (660), operations (221),
 core_updater (719); sing-box: config_builder (1372), manager (1250),
 operations (563), runtime_planner (2717);
-xray_stats_client (tonic gRPC, 183), core_resource_updater (1309),
+core_resource_updater (1309),
 zapret_manager (932), discord_proxy_manager (652), speed_test (796) +
 native_test_config (97). Also provide the engine version probe used by
 `diagnostics::collect_runtime_context`.
