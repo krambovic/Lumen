@@ -7,6 +7,7 @@ pub mod inet_settings;
 pub mod network_route_context;
 pub mod os_info;
 pub mod route_leases;
+pub mod runtime_priority;
 pub mod subprocess;
 pub mod system_language;
 pub mod windows_network;

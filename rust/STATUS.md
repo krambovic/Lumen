@@ -32,6 +32,8 @@ client, core/resource updaters, zapret and discord proxy managers.
   connectivity_test, WarmHttpProbe (ports http_utils, direct_http,
   http_redirect_policy, connectivity_test, http_latency)
 - log_utils, bounded_logs, logging (logging_setup)
+- core_log_limiter: per-second quotas for normal and critical core logs,
+  with summaries for lines withheld from the UI.
 - diagnostics (bundle export + zip sanitizer), diagnostics_uploader
   (consent epochs, URL safety), pyjson (Python-compatible json.dumps)
 - ping (ping_worker.py): tcp/udp/hysteria/http/icmp pings,
@@ -45,6 +47,8 @@ client, core/resource updaters, zapret and discord proxy managers.
 - windows_network (GetAdaptersAddresses), network_route_context (TTL cache,
   single flight), route_leases
 - icmp: native IcmpSendEcho / Icmp6SendEcho2 via raw iphlpapi FFI
+- runtime_priority: above-normal priority for owned cores and an opt-in
+  UI priority raise that preserves any existing non-normal priority class.
 
 ### lumen-engines
 - singbox/clash_api: `SingboxClashApiClient` (Bearer auth, selector switch
@@ -79,14 +83,14 @@ client, core/resource updaters, zapret and discord proxy managers.
 ### lumen-core
 deeplinks, service_presets, process_presets, zapret_strategies,
 zapret_server_scope, traffic_route_classifier, component_compatibility,
-geodata_resources, active_profile_health, core_log_limiter, metrics_api,
+geodata_resources, active_profile_health, metrics_api,
 state_snapshot, zip_utils, update_checker.
 
 ### lumen-platform
 proxy_manager (WinINet system proxy, reuse inet_settings), startup
 (schtasks/registry), single instance, power_reconnect, network_monitor,
 win_proc_monitor, win_process_list, process_conflicts,
-process_traffic_collector, runtime_priority.
+process_traffic_collector.
 
 ### lumen-engines (management of the Go binaries only)
 xray: manager (660), operations (221),

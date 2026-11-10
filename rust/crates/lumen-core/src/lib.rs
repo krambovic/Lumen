@@ -5,6 +5,7 @@ pub mod bootstrap_dns;
 pub mod bounded_logs;
 pub mod config;
 pub mod constants;
+pub mod core_log_limiter;
 pub mod country_flags;
 pub mod crypt;
 pub mod diagnostics;
