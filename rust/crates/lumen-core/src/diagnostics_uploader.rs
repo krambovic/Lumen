@@ -754,6 +754,7 @@ mod tests {
 
     #[test]
     fn send_rejects_unsafe_urls_and_revoked_epochs() {
+        let _epoch_guard = TEST_EPOCH_LOCK.lock();
         let epoch = set_uploads_enabled(true);
         assert!(!send("http://example.com/x", b"{}", "application/json", EVENT_TIMEOUT, None, Some(epoch), None));
         assert!(!send("https://u:p@example.com/x", b"{}", "application/json", EVENT_TIMEOUT, None, Some(epoch), None));
