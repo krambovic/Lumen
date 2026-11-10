@@ -8,6 +8,9 @@ lumen-core = { workspace = true }
 lumen-platform = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+url = { workspace = true }
+rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
@@ -27,4 +30,5 @@ anyhow = { workspace = true }
 parking_lot = { workspace = true }
 windows = { workspace = true }
 percent-encoding = { workspace = true }
+winreg = { workspace = true }
 tempfile = "3"

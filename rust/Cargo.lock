@@ -2376,6 +2376,8 @@ dependencies = [
  "rand 0.8.8",
  "regex",
  "reqwest",
+ "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2385,8 +2387,10 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tonic",
+ "url",
  "uuid",
  "windows",
+ "winreg",
  "zip",
 ]
 
@@ -2406,6 +2410,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.21",
+ "url",
  "uuid",
  "windows",
  "winreg",

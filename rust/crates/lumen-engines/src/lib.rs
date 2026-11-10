@@ -6,6 +6,8 @@
 
 pub mod core_resource_updater;
 pub mod discord_proxy_manager;
+pub mod native_test_config;
 pub mod singbox;
+pub mod speed_test;
 pub mod xray;
 pub mod zapret_manager;

@@ -91,7 +91,7 @@ impl UpdateCancellation {
         }
     }
 
-    async fn run<F: Future>(&self, future: F) -> Result<F::Output, UpdateCancelled> {
+    pub(crate) async fn run<F: Future>(&self, future: F) -> Result<F::Output, UpdateCancelled> {
         let mut cancelled = self.0.subscribe();
         tokio::select! {
             biased;

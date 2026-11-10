@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 147, lumen-app 16
+Last verified: lumen-core 254 tests, lumen-platform 62, lumen-engines 194, lumen-app 16
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -185,6 +185,19 @@ client, core/resource updaters, zapret and discord proxy managers.
   geodata, saves `.exe.bak`, and rolls back on replacement failure.
 - singbox/document: inspect editor text and parse a runtime document with
   its source path, SHA-256 text hash and proxy-outbound flag.
+- core_resource_updater: startup checks and update worker for regional Xray
+  geodata, sing-box rule sets, sing-box extended/Cronet and Droute. Checks
+  archive hashes and rule-set files, coordinates disconnect before installing
+  sing-box, and cancels stalled HTTP reads.
+- zapret_manager: winws2 lifecycle and events, preset parsing and editing,
+  referenced resource checks, server-scoped rules and WinDivert cleanup.
+- discord_proxy_manager: Droute bundle discovery and installation, Discord
+  variant detection, legacy marker migration, and enabling/disabling the
+  local SOCKS proxy through Discord's Droute payload.
+- speed_test: `SpeedTestWorker` runs speed and cold/warm HTTP latency tests
+  through temporary Xray and sing-box processes. It uses strict proxy HTTP,
+  supports AUTO profiles and reuses the native sing-box builder through
+  `native_test_config`. The former `lumen-core` stub is removed.
 
 ### lumen-app
 - runtime_introspection: profile proxy detection, Xray inbound ports and
@@ -207,30 +220,10 @@ client, core/resource updaters, zapret and discord proxy managers.
   `route.final` to routing settings and emits state-save and transition
   events when required by the connection context.
 
-## Stubs still present (replace, do not keep)
-- `lumen-core/src/speed_test.rs` (1 line). Decision: speed_test_worker.py
-  depends on `native_test_config.py`, which needs the sing-box
-  `build_singbox_outbound` and `_normalize_openvpn_outbounds` from
-  `engines/singbox`. Port it into **lumen-engines** (`speed_test.rs` +
-  `native_test_config.rs`) right after the sing-box config_builder and
-  runtime_planner, then delete the lumen-core stub and its `pub mod`.
-  `strict_proxy.py` maps to a reqwest client with `Proxy::all(url)` and no
-  NO_PROXY bypass plus the safe redirect policy from http_utils.
-- TODO in fetcher: "direct" transport should use `http_utils::direct_client`
-  so subscription downloads bypass TUN like Python `DirectUrlOpener`.
-
 ## Left to port (Python source -> target crate)
 
 ### lumen-platform
-startup
-(schtasks/registry), single instance, power_reconnect, network_monitor,
-win_proc_monitor, process_conflicts,
-process_traffic_collector.
-
-### lumen-engines (management of the Go binaries only)
-core_resource_updater (1309),
-zapret_manager (932), discord_proxy_manager (652), speed_test (796) +
-native_test_config (97).
+Single-instance enforcement and message delivery.
 
 ### lumen-app
 app_controller (3285), application/* (node_service, connection_service,

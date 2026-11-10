@@ -38,7 +38,6 @@ pub mod routing_runtime;
 pub mod secret_scrubber;
 pub mod security;
 pub mod service_presets;
-pub mod speed_test;
 pub mod state_snapshot;
 pub mod storage;
 pub mod subscription;
