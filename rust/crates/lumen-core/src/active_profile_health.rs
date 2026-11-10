@@ -36,16 +36,28 @@ impl Default for HealthSample {
 }
 
 impl HealthSample {
+    pub fn at_time(&self, now: f64) -> Self {
+        let mut sample = self.clone();
+        let fresh = self.checked_at > 0.0 && (0.0..=HEALTH_MAX_AGE_SEC).contains(&(now - self.checked_at));
+        if !fresh {
+            sample.status = "UNKNOWN".into();
+            sample.reason = "health sample stale or unavailable".into();
+        }
+        if sample.status != "HEALTHY" {
+            sample.latency_ms = None;
+        }
+        sample
+    }
+
     pub fn payload(&self, now: Option<f64>) -> Value {
-        let now = now.unwrap_or_else(monotonic_seconds);
-        let fresh = self.checked_at > 0.0 && (now - self.checked_at) >= 0.0 && now - self.checked_at <= HEALTH_MAX_AGE_SEC;
+        let sample = self.at_time(now.unwrap_or_else(monotonic_seconds));
         json!({
-            "health_status": if fresh { self.status.clone() } else { "UNKNOWN".to_string() },
-            "health_checked_at": self.checked_at,
-            "health_profile_id": self.profile_id,
-            "health_source": self.source,
-            "health_reason": if fresh { self.reason.clone() } else { "health sample stale or unavailable".to_string() },
-            "latency_ms": if fresh && self.status == "HEALTHY" { self.latency_ms } else { None },
+            "health_status": sample.status,
+            "health_checked_at": sample.checked_at,
+            "health_profile_id": sample.profile_id,
+            "health_source": sample.source,
+            "health_reason": sample.reason,
+            "latency_ms": sample.latency_ms,
         })
     }
 }
