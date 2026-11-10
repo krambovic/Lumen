@@ -17,7 +17,15 @@ pub struct UpdateInfo {
 }
 
 pub fn is_https_url(url: &str) -> bool {
-    Url::parse(url.trim()).is_ok_and(|url| url.scheme() == "https" && url.has_host())
+    let url = url.trim();
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    scheme.eq_ignore_ascii_case("https")
+        && !authority.is_empty()
+        && !authority.contains('\\')
+        && Url::parse(url).is_ok_and(|url| url.scheme() == "https" && url.has_host())
 }
 
 pub async fn check_update(
@@ -78,6 +86,8 @@ mod tests {
     async fn refuses_non_https_feeds_before_opening_a_connection() {
         for url in [
             "http://example.test/xray.json",
+            "https:example.test/xray.json",
+            "https:///example.test/xray.json",
             "file:///C:/temp/xray.json",
             "ftp://example.test/xray.json",
         ] {
