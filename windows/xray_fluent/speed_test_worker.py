@@ -34,6 +34,7 @@ from .constants import (
 )
 from .models import Node, RoutingSettings
 from .http_utils import get_ssl_context
+from .http_latency import WarmHTTPProbe
 from .ping_worker import _WindowsPingBypass
 from .probe_capabilities import probe_backend, node_protocol
 from .native_test_config import build_native_test_config
@@ -80,6 +81,8 @@ class SpeedTestWorker(QThread):
         bypass_tun: bool = False,
         singbox_path: str = "",
         warm_ping: bool = False,
+        active_node_id: str = "",
+        active_proxy_url: str = "",
     ):
         super().__init__()
         self.setObjectName("lumen-speed-test" if mode == "speed" else "lumen-real-ping")
@@ -91,6 +94,8 @@ class SpeedTestWorker(QThread):
         self._timeout = timeout
         self._mode = mode if mode in ("speed", "ping") else "speed"
         self._warm_ping = bool(warm_ping)
+        self._active_node_id = str(active_node_id or "")
+        self._active_proxy_url = str(active_proxy_url or "")
         self._test_url = (test_url or "").strip() or SPEED_TEST_DEFAULT_URL
         self._concurrency = int(concurrency or 0)
         self._bypass_tun = bool(bypass_tun)
@@ -276,6 +281,27 @@ class SpeedTestWorker(QThread):
     def _test_node(self, node: Node) -> tuple[Node, float | None, bool]:
         if self._cancelled:
             return node, None, False
+        if (self._mode == "ping" and self._active_proxy_url and node.id == self._active_node_id
+                and node_protocol(node) in {"awg", "wireguard", "warp"}):
+            # A second WireGuard client with the same key makes the peer roam
+            # away from the live connection. Its pinned health listener already
+            # verifies this exact active profile without a duplicate handshake.
+            probe = WarmHTTPProbe()
+            self._register_response(probe)
+            try:
+                for url in (SPEED_TEST_PING_URL, "https://cp.cloudflare.com/generate_204"):
+                    if self._cancelled:
+                        break
+                    try:
+                        delay = probe.measure(self._active_proxy_url, url, min(self._timeout, SPEED_TEST_PING_TIMEOUT))
+                        if not self._cancelled:
+                            return node, float(delay), True
+                    except Exception:
+                        continue
+                return node, None, False
+            finally:
+                self._unregister_response(probe)
+                probe.close()
         backend = probe_backend(node)
         executable = self._singbox_path if backend == "singbox" else self._xray_path
         if not backend or not Path(executable).is_file():
@@ -561,10 +587,12 @@ class SpeedTestWorker(QThread):
         return str(settings.get("address") or settings.get("server") or outbound.get("address") or "").strip()
 
     def _real_ping(self, target: _SpeedTestTarget) -> int:
-        # AUTO observers need their first samples before leastPing/leastLoad
-        # can choose a server. Retry startup failures outside the measurement.
-        full_auto = self._node_protocol(target.node) == "xray_config"
-        deadline = time.monotonic() + (12.0 if full_auto else 0.0)
+        # Listening locally does not mean the remote tunnel is ready. AWG can
+        # need its first handshake retransmission; AUTO needs observer samples.
+        # Keep this setup budget separate from the measured HTTP round trip.
+        needs_setup = (self._node_protocol(target.node) == "xray_config"
+                       or probe_backend(target.node) == "singbox")
+        deadline = time.monotonic() + (12.0 if needs_setup else 0.0)
         while not self._cancelled:
             measured = self._warm_http_ping(target) if self._warm_ping else self._cold_http_ping(target)
             if measured >= 0 or time.monotonic() >= deadline:
@@ -586,7 +614,7 @@ class SpeedTestWorker(QThread):
                     resp.read(16)
                 finally:
                     self._unregister_response(resp)
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            elapsed_ms = max(1, round((time.perf_counter() - started) * 1000))
             if elapsed_ms > SPEED_TEST_MAX_PING_MS:
                 return -1
             self.node_progress.emit(target.node.id, 30)
@@ -595,8 +623,18 @@ class SpeedTestWorker(QThread):
             return -1
 
     def _warm_http_ping(self, target: _SpeedTestTarget) -> int:
-        """Measure GET round trips on one established, verified TLS tunnel."""
-        url = urlsplit(SPEED_TEST_PING_URL)
+        # An unavailable connectivity site does not mean the proxy is down.
+        for url in (SPEED_TEST_PING_URL, "https://cp.cloudflare.com/generate_204"):
+            if self._cancelled:
+                break
+            measured = self._http_get_ping(target, url)
+            if measured > 0:
+                return measured
+        return -1
+
+    def _http_get_ping(self, target: _SpeedTestTarget, target_url: str) -> int:
+        """Time GET responses; establish any new TLS tunnel before timing."""
+        url = urlsplit(target_url)
         if url.scheme != "https" or not url.hostname:
             return -1
         connection = HTTPSConnection(
@@ -614,8 +652,12 @@ class SpeedTestWorker(QThread):
             self.node_progress.emit(target.node.id, 20)
             connection.connect()  # CONNECT and TLS are outside the measurement.
             for attempt in range(3):
-                if self._cancelled or connection.sock is None:
-                    return -1  # Never silently reconnect inside a timed sample.
+                if self._cancelled:
+                    return -1
+                if connection.sock is None:
+                    # Connection: close is a valid HTTP response. Reconnect
+                    # outside the timer instead of reporting the node dead.
+                    connection.connect()
                 started = time.perf_counter()
                 connection.request("GET", path, headers={
                     "User-Agent": "Lumen/SpeedTest", "Connection": "keep-alive",
@@ -624,7 +666,7 @@ class SpeedTestWorker(QThread):
                 response = connection.getresponse()
                 try:
                     response.read(64 * 1024)
-                    if not 200 <= response.status < 300 or not response.isclosed() or response.will_close:
+                    if not 200 <= response.status < 300 or not response.isclosed():
                         return -1
                 finally:
                     response.close()

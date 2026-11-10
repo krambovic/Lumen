@@ -1,7 +1,10 @@
 # Isolated sing-box test listener; never creates TUN or a system proxy.
 from copy import deepcopy
 from .engines.singbox.config_builder import build_singbox_outbound
-from .engines.singbox.runtime_planner import _normalize_openvpn_outbounds
+from .engines.singbox.runtime_planner import (
+    _normalize_openvpn_outbounds,
+    ensure_awg3_windows_bind_workaround,
+)
 from .probe_capabilities import GROUP_TYPES, NON_PROXY_TYPES, node_protocol
 
 
@@ -40,6 +43,9 @@ def build_native_test_config(node, port: int) -> dict:
     for item in config.get("endpoints", []):
         if isinstance(item, dict):
             item["system"] = False
+            # Header-protected AWG must use ClientBind for probes too;
+            # the default Windows bind corrupts the protected handshake.
+            ensure_awg3_windows_bind_workaround(config, item)
     route = config.setdefault("route", {})
     route["rules"] = [{"inbound": ["speed-http"], "action": "route", "outbound": final}]
     route["final"] = final

@@ -529,12 +529,7 @@ class PingWorker(QThread):
             return None
         actual = endpoint_method(node, self._method)
         if actual == "icmp":
-            measured = icmp_ping(target, int(self._timeout * 1000))
-            if measured is None and self._method == "icmp" and endpoint_method(node, "tcping") == "tcping":
-                # Like Android's InetAddress.isReachable: a host that drops
-                # ICMP is still reachable when it completes a TCP handshake.
-                measured = tcp_ping(target, node.port, self._timeout)
-            return measured
+            return icmp_ping(target, int(self._timeout * 1000))
         return tcp_ping(target, node.port, self._timeout)
 
     def cancel(self) -> None:
