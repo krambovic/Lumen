@@ -19,8 +19,8 @@ val hasReleaseKeystore = keystoreProps.getProperty("storeFile") != null
 // src/main/jniLibs for these ABIs only. Shipping any other ABI produces an APK that installs
 // but can never start a tunnel, so the split and the packaged ABIs are pinned to this list.
 val supportedAbis = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
-val baseVersionCode = 51
-val lumenVersionName = "1.5.1"
+val baseVersionCode = 52
+val lumenVersionName = "1.5.2"
 // AGP does not derive per-output version codes; without an offset every split APK would share one.
 val abiVersionCodeOffsets = mapOf(
     "armeabi-v7a" to 1,

@@ -1734,5 +1734,7 @@
   "Полезная диагностика": "Useful diagnostics",
   "В архив возвращены настройки; добавлены версии системы и ядер, проверка сети по выбору.": "Restored settings in archives; added system and core versions and optional network checks.",
   "Отправка отчётов": "Report uploads",
-  "Восстановлен ID установки и добавлена отправка через прокси при недоступности сервера напрямую.": "Restored the installation ID and added proxy uploads when direct connections fail."
+  "Восстановлен ID установки и добавлена отправка через прокси при недоступности сервера напрямую.": "Restored the installation ID and added proxy uploads when direct connections fail.",
+  "Пинг и AWG": "Ping and AWG",
+  "Исправлены HTTP GET, ICMP и подключения AWG 3.0/3.1.": "Fixed HTTP GET, ICMP and AWG 3.0/3.1 connections."
 }
