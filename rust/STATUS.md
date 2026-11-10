@@ -3,8 +3,8 @@
 Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
-Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines --lib`.
-Last verified: lumen-core 204 tests, lumen-platform 11, lumen-engines 23
+Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
+Last verified: lumen-core 204 tests, lumen-platform 11, lumen-engines 23, lumen-app 7
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -86,6 +86,17 @@ client, core/resource updaters, zapret and discord proxy managers.
   wait. Installation stages Xray and optional Wintun, preserves Lumen's
   geodata, saves `.exe.bak`, and rolls back on replacement failure.
 
+### lumen-app
+- runtime_introspection: profile proxy detection, Xray inbound ports and
+  Xray/sing-box ping targets.
+- xray_runtime_service: inspects loaded profile text and builds runtime JSON
+  from it and the selected node in `AppState`. Reports repairs to stored
+  nodes for persistence, applies proxy chains and GUI routing, and preserves
+  the observatory and balancer of full AUTO profiles. Replaces imported API
+  services with a loopback StatsService and adds authenticated, outbound-pinned
+  health probes for supported selected proxies. The full AUTO test compares
+  the resulting JSON with the Python service output.
+
 ## Stubs still present (replace, do not keep)
 - `lumen-core/src/speed_test.rs` (1 line). Decision: speed_test_worker.py
   depends on `native_test_config.py`, which needs the sing-box
@@ -122,7 +133,7 @@ native_test_config (97). Also provide the engine version probe used by
 
 ### lumen-app
 app_controller (3285), application/* (node_service, connection_service,
-worker_service, xray_runtime_service, profile_service, signature_service,
+worker_service, profile_service, signature_service,
 auto_switch_service, runtime_services, server_preflight), live_metrics_worker,
 subscription_worker, app_updater (1173), qthread_utils equivalents.
 `export_diagnostics` + upload: see app_controller.py:2970.
