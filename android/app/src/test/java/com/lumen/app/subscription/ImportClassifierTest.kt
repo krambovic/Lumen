@@ -68,6 +68,13 @@ class ImportClassifierTest {
     }
 
     @Test
+    fun unicodeClipboardMarkerDoesNotHideEncryptedSource() {
+        val result = ImportClassifier.classify("\uFEFF$incyLink\n")
+        assertTrue(result is ImportClassification.Ready)
+        assertEquals(incyLink, (result as ImportClassification.Ready).normalized)
+    }
+
+    @Test
     fun undecryptableIncyCryptLinkIsRejected() {
         assertTrue(ImportClassifier.classify("incy://crypt1/not-valid") is ImportClassification.Rejected)
     }

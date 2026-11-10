@@ -25,6 +25,10 @@ object HybridConfigBuilder {
         val user = (next?.get("users") as? List<*>)?.firstOrNull() as? Map<*, *>
         val encryption = user?.get("encryption")?.toString().orEmpty()
         return stream.keys.any { it?.toString().equals("finalmask", true) } || reality?.containsKey("mldsa65Verify") == true ||
+            // The native REALITY/Firefox path can fail authentication against
+            // Xray servers. Preserve their handshake and XHTTP semantics in Xray.
+            (stream["security"] == "reality" &&
+                (network in setOf("xhttp", "splithttp") || reality?.get("fingerprint") == "firefox")) ||
             tls?.keys?.any { it in setOf("echConfigList", "pinnedPeerCertSha256", "verifyPeerCertByName") } == true ||
             stream.containsKey("tcpSettings") || network in setOf("kcp", "http", "h2") ||
             (encryption.isNotBlank() && encryption != "none")

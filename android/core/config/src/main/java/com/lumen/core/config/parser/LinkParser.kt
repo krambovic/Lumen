@@ -2932,6 +2932,17 @@ object LinkParser {
             }
         } else if (text.startsWith("{")) {
             val json = root as JSONObject
+            if (json.optString("protocol").equals("xray_config", ignoreCase = true)) {
+                val profile = json.optJSONObject("xray_config")
+                    ?: throw LinkParseError("Desktop Xray profile has no xray_config object")
+                val (inner, innerErrors) = parseJsonNodesText(profile.toString(), depth + 1)
+                val label = json.optString("tag").ifBlank { json.optString("name") }
+                val description = json.optString("serverDescription")
+                return Pair(inner.map { node ->
+                    node.copy(name = label.ifBlank { node.name }, link = json.toString(),
+                        description = description.ifBlank { node.description })
+                }, innerErrors)
+            }
             val containerKeys = listOf("outbounds", "endpoints", "proxies", "nodes", "configs", "links", "subs", "items")
             if ((json.has("type") || json.has("protocol")) && containerKeys.none { json.has(it) }) {
                 return Pair(listOf(parseJsonItem(json)), emptyList())
@@ -3228,6 +3239,11 @@ object LinkParser {
     }
 
     fun parseJsonObjectOutbound(json: JSONObject): ParsedNode {
+        if (json.optString("protocol").equals("xray_config", ignoreCase = true)) {
+            val (nodes, errors) = parseJsonNodesText(json.toString())
+            return nodes.singleOrNull()?.takeIf { errors.isEmpty() }
+                ?: throw LinkParseError("Desktop Xray profile must contain one valid server")
+        }
         if (isClashProxyJson(json)) return parseClashProxyMap(jsonToMap(json))
 
         val typeValue = json.optString("type")

@@ -44,7 +44,8 @@ object IncyCrypt {
         }
         val wire = try {
             val padded = payload + "=".repeat((4 - payload.length % 4) % 4)
-            Base64.getUrlDecoder().decode(padded)
+            // Match the desktop decoder: providers use both Base64 alphabets.
+            Base64.getDecoder().decode(padded.replace('-', '+').replace('_', '/'))
         } catch (e: IllegalArgumentException) {
             throw IncyDecryptError("Invalid incy://crypt1 base64 payload", e)
         }

@@ -55,7 +55,7 @@ internal object SubscriptionClient {
         "notification-subs-expire", "subscription-autoconnect",
         "subscription-auto-update-enable", "fragmentation-enable",
         "fragmentation-packets", "fragmentation-length", "fragmentation-interval",
-        "ping-type", "change-user-agent", "per-app-proxy-mode",
+        "change-user-agent", "per-app-proxy-mode",
         "per-app-proxy-list", "sniffing-enable", "subscriptions-collapse",
         "ping-result", "mux-enable", "mux-tcp-connections",
         "mux-xudp-connections", "mux-quic", "exclude-routes", "announce"
