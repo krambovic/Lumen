@@ -87,6 +87,7 @@ pub struct SubscriptionTarget<'a> {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct SubscriptionApplyResult {
     pub applied: bool,
+    pub subscription_id: Option<String>,
     pub node_count: usize,
     pub errors: Vec<String>,
     pub retained_selected_node: bool,

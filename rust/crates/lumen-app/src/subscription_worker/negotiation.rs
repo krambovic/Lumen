@@ -446,9 +446,27 @@ fn collapse_attempts(attempts: Vec<String>, profiles: &[ClientProfile]) -> Vec<S
             .unwrap_or(attempt);
         push_unique(&mut reasons, reason.to_owned());
     }
+    let merged = merge_subscription_reasons(&reasons);
+    if merged.len() < reasons.len() {
+        return merged;
+    }
+    if reasons.is_empty() {
+        vec![FETCH_FAILED.into()]
+    } else if reasons.len() < attempts.len() || reasons.len() == 1 {
+        reasons
+    } else {
+        attempts
+    }
+}
+
+pub(crate) fn merge_subscription_reasons(reasons: &[String]) -> Vec<String> {
     let mut notices = Vec::new();
     let mut others = Vec::new();
-    for reason in &reasons {
+    for reason in reasons {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            continue;
+        }
         if let Some(notice) = reason.strip_prefix(PROVIDER_SAYS) {
             for captures in NOTICE.captures_iter(notice) {
                 let item = captures[1].trim();
@@ -457,7 +475,7 @@ fn collapse_attempts(attempts: Vec<String>, profiles: &[ClientProfile]) -> Vec<S
                 }
             }
         } else {
-            others.push(reason.clone());
+            push_unique(&mut others, reason.to_owned());
         }
     }
     if !notices.is_empty() {
@@ -467,17 +485,8 @@ fn collapse_attempts(attempts: Vec<String>, profiles: &[ClientProfile]) -> Vec<S
                 && !reason.contains("заглушк")
         });
         others.insert(0, format_notices(&notices, 4));
-        if others.len() < reasons.len() {
-            return others;
-        }
     }
-    if reasons.is_empty() {
-        vec![FETCH_FAILED.into()]
-    } else if reasons.len() < attempts.len() || reasons.len() == 1 {
-        reasons
-    } else {
-        attempts
-    }
+    others
 }
 
 fn push_unique(values: &mut Vec<String>, value: String) {

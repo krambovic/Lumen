@@ -1,6 +1,7 @@
 //! Background fetch and preparation for an ordered batch of subscriptions.
 
 mod negotiation;
+pub(crate) use negotiation::merge_subscription_reasons;
 
 use std::collections::BTreeMap;
 

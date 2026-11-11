@@ -159,6 +159,7 @@ impl NodeService<'_> {
                 merge_subscription_info(&mut info, std::mem::take(&mut response.userinfo));
                 record["userinfo"] = Value::Object(info);
                 mark_fetch(record, response, FetchOutcome::Applied, now);
+                result.subscription_id = Some(id);
                 record_changed = true;
             } else if let Some(index) = existing {
                 let message = result.errors.first().map_or(APPLY_FAILED, String::as_str);

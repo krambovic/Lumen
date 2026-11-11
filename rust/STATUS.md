@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 78
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 83
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -295,6 +295,12 @@ client, core/resource updaters, zapret and discord proxy managers.
   force a full fetch after a parser revision change or local node removal, and
   honor Retry-After when scheduling automatic refreshes. Successful refreshes
   merge provider metadata, preserve node identities, and handle URL migration.
+- subscription_dispatcher and subscription_refresh_timer: queue manual imports,
+  deep links and refreshes on one worker, apply results on the state owner, and
+  emit import status, node deltas and localized notices. The recurring timer
+  skips locked profiles and subscriptions in backoff. Cancellation and shutdown
+  drop queued batches and active network work. The dispatcher exposes a deadline
+  and a cancellation-safe receive for the application event loop.
 
 ## Left to port (Python source -> target crate)
 
