@@ -2332,6 +2332,7 @@ dependencies = [
  "url",
  "uuid",
  "windows",
+ "winreg",
  "zip",
 ]
 
@@ -2447,10 +2448,12 @@ dependencies = [
  "muda 0.17.2",
  "parking_lot",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "tray-icon",
+ "url",
  "uuid",
  "windows",
 ]

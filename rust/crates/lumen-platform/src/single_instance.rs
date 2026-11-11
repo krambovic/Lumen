@@ -69,6 +69,10 @@ pub struct PrimaryInstance {
 }
 
 impl PrimaryInstance {
+    pub fn try_recv(&mut self) -> Option<Vec<u8>> {
+        self.messages.try_recv().ok()
+    }
+
     pub async fn recv(&mut self) -> Option<Vec<u8>> {
         self.messages.recv().await
     }

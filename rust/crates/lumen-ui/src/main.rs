@@ -1,1 +1,3 @@
-fn main() { lumen_ui::run(); }
+fn main() {
+    std::process::exit(lumen_ui::run());
+}

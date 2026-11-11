@@ -3,8 +3,8 @@
 Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
-Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 261 tests, lumen-platform 101, lumen-engines 194, lumen-app 137
+Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 138, lumen-ui 92
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -341,14 +341,23 @@ client, core/resource updaters, zapret and discord proxy managers.
   InstallLocation), ShellExecuteW "runas" launch, and a worker whose channel
   events replace the PyQt6 signals.
 
+### lumen-ui
+- view_models: the bridge and node editor, node/process/log models, history,
+  configs and Zapret helpers. The bridge consumes the existing AppEvent
+  stream, including subscription imports, diagnostics, WARP and update checks.
+  The controller pump keeps manager subscriptions alive between iterations.
+- shell: eframe entry point, themed window chrome and navigation, tray and
+  toasts, saved window geometry, Windows power handling, single-instance
+  activation and deep links. PageContext carries the bridge, theme, and
+  page events. Country flags and the window/tray icon are available in the
+  standalone binary.
+
 ## Left to port (Python source -> target crate)
 
 ### lumen-ui (egui)
 Pages from `qml_app/qml`: Dashboard, Nodes, Configs, Routing, Zapret,
-Settings, Updates, History, Logs, About, Onboarding, dialogs; tray
-(tray-icon/muda); theme; toasts. The view-model layer is
-`qml_app/bridge/app_bridge.py` + `node_list_model.py` + `node_edit_helpers.py`.
-`lumen-ui/src/main.rs` currently calls an empty `run()`.
+Settings, Updates, History, Logs, About, Onboarding and page-specific dialogs.
+The shell currently renders the themed page titles through its page dispatcher.
 
 ## Known warnings to clean
 None — the lumen-core list was cleaned in the same pass as the direct-route

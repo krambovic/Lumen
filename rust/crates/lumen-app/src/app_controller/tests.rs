@@ -10,6 +10,21 @@ use super::*;
 use crate::profile_service::ProfileService;
 use crate::runtime_services::handle_unexpected_disconnect;
 
+#[tokio::test]
+async fn shell_driver_preserves_controller_events_across_iterations() {
+    let (mut controller, _root) = test_controller();
+    let mut managers = controller.manager_events();
+    let mut ui = controller.subscribe();
+    let sender = controller.task_sender();
+    for name in ["first", "second"] {
+        sender.send(Box::new(move |controller| controller.report_diagnostics(Ok(PathBuf::from(name))))).unwrap();
+        assert!(controller.drive_event_loop_once(&mut managers).await);
+        assert!(matches!(ui.try_recv(), Ok(AppEvent::DiagnosticsFinished(Ok(path))) if path == PathBuf::from(name)));
+    }
+    controller.request_event_loop_stop();
+    assert!(!controller.drive_event_loop_once(&mut managers).await);
+}
+
 /// A controller isolated from the real user profile: temp state file and
 /// temp profile roots, system proxy disabled so no registry writes happen.
 pub(crate) fn test_controller() -> (AppController, tempfile::TempDir) {

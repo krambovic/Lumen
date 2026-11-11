@@ -42,6 +42,10 @@ impl InstanceActivation {
 }
 
 impl ActivationReceiver {
+    pub fn try_recv(&mut self) -> Option<InstanceActivation> {
+        self.0.try_recv().map(|message| InstanceActivation::from_payload(&message))
+    }
+
     pub async fn recv(&mut self) -> Option<InstanceActivation> {
         self.0
             .recv()

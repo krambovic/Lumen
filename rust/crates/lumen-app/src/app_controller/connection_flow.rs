@@ -624,7 +624,7 @@ impl AppController {
 
     /// Python `sync_zapret_server_binding`: apply the bound preset to the
     /// connected server's traffic only.
-    pub(crate) fn sync_zapret_server_binding(&mut self) {
+    pub fn sync_zapret_server_binding(&mut self) {
         if self.shutting_down() {
             return;
         }

@@ -122,6 +122,11 @@ pub enum AppEvent {
     AdminSettingApplied { enabled: bool, elevated: bool, error: String },
     AutoSwitchTriggered(String),
     TransitionStateChanged { active: bool, text: String },
+    WarpGenerated(Result<lumen_core::warp_generator::WarpResult, lumen_core::warp_generator::WarpGenerationError>),
+    AppUpdateChecked(Result<Option<crate::app_update_check::AppUpdate>, String>),
+    DiagnosticsFinished(Result<PathBuf, String>),
+    SubscriptionImportStatus(Option<String>),
+    SubscriptionImported(String),
 }
 
 /// Python `live_metrics_updated` payload (dict sample or an empty reset).
@@ -131,8 +136,15 @@ pub enum LiveMetricsEvent {
     Reset,
 }
 
+pub struct ManagerEvents {
+    xray: tokio::sync::broadcast::Receiver<XrayEvent>,
+    singbox: tokio::sync::broadcast::Receiver<SingboxEvent>,
+    zapret: tokio::sync::broadcast::Receiver<ZapretEvent>,
+}
+
 /// Completions posted back to the owner task from background threads.
 pub(crate) enum InternalEvent {
+    SetDiscordProxy(bool),
     /// `request_transition` from a worker context (queued signal).
     Transition(String),
     /// Country IP resolution finished (NodeService flow).
@@ -523,6 +535,26 @@ impl AppController {
         let _ = self.tasks.0.send(task);
     }
 
+    pub fn task_sender(&self) -> UnboundedSender<ControllerTask> {
+        self.tasks.0.clone()
+    }
+
+    pub fn request_discord_proxy_enabled(&self, enabled: bool) {
+        self.queue_internal(InternalEvent::SetDiscordProxy(enabled));
+    }
+
+    pub fn report_warp_generation(&self, result: Result<lumen_core::warp_generator::WarpResult, lumen_core::warp_generator::WarpGenerationError>) {
+        self.emit(AppEvent::WarpGenerated(result));
+    }
+
+    pub fn report_app_update_check(&self, result: Result<Option<crate::app_update_check::AppUpdate>, String>) {
+        self.emit(AppEvent::AppUpdateChecked(result));
+    }
+
+    pub fn report_diagnostics(&self, result: Result<PathBuf, String>) {
+        self.emit(AppEvent::DiagnosticsFinished(result));
+    }
+
     pub(crate) fn emit(&self, event: AppEvent) {
         let _ = self.events.send(event);
     }
@@ -560,31 +592,9 @@ impl AppController {
     /// timers and transitions. Mirrors the Qt event loop that owned the
     /// Python controller.
     pub async fn run_event_loop(&mut self) {
-        let mut xray_events = self.xray.subscribe();
-        let mut singbox_events = self.singbox.subscribe();
-        let mut zapret_events = self.zapret.subscribe();
+        let mut managers = self.manager_events();
         loop {
-            if self.stop_requested {
-                return;
-            }
-            // 1. queued calls from other threads (Qt queued connections).
-            while let Ok(task) = self.tasks.1.try_recv() {
-                task(self);
-            }
-            // 2. background completions.
-            while let Some(event) = self.internal.1.try_recv().ok() {
-                self.handle_internal(event).await;
-            }
-            // 3. pollable worker completions.
-            self.poll_workers();
-            self.poll_updates();
-            self.poll_subscriptions();
-            self.poll_resource_updates();
-            self.poll_metrics();
-            self.poll_manager_events(&mut xray_events, &mut singbox_events, &mut zapret_events);
-            // 4. timers (save flush, transitions, lock, logs, refresh).
-            self.process_timers().await;
-            if self.stop_requested {
+            if !self.drive_event_loop_once(&mut managers).await {
                 return;
             }
             // 5. park until the next deadline or completion.
@@ -609,8 +619,34 @@ impl AppController {
         }
     }
 
+    pub fn manager_events(&self) -> ManagerEvents {
+        ManagerEvents { xray: self.xray.subscribe(), singbox: self.singbox.subscribe(), zapret: self.zapret.subscribe() }
+    }
+
+    /// Drain a complete iteration while retaining the engine subscriptions between calls.
+    pub async fn drive_event_loop_once(&mut self, managers: &mut ManagerEvents) -> bool {
+        if self.stop_requested {
+            return false;
+        }
+        while let Ok(task) = self.tasks.1.try_recv() {
+            task(self);
+        }
+        while let Ok(event) = self.internal.1.try_recv() {
+            self.handle_internal(event).await;
+        }
+        self.poll_workers();
+        self.poll_updates();
+        self.poll_subscriptions();
+        self.poll_resource_updates();
+        self.poll_metrics();
+        self.poll_manager_events(&mut managers.xray, &mut managers.singbox, &mut managers.zapret);
+        self.process_timers().await;
+        !self.stop_requested
+    }
+
     async fn handle_internal(&mut self, event: InternalEvent) {
         match event {
+            InternalEvent::SetDiscordProxy(enabled) => self.set_discord_proxy_enabled(enabled).await,
             InternalEvent::Transition(reason) => self.request_transition(&reason),
             InternalEvent::CountriesResolved(results) => {
                 self.on_countries_resolved(&results);

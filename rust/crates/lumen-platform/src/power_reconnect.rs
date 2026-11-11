@@ -121,8 +121,8 @@ pub fn should_arm_resume_reconnect<C: PowerReconnectController + ?Sized>(
 }
 
 /// Queue a bounded reconnect after a Windows suspend/resume cycle.
-pub struct WindowsPowerEventFilter<'a, C: PowerReconnectController + ?Sized> {
-    controller: &'a mut C,
+#[derive(Default)]
+pub struct PowerReconnectState {
     armed: bool,
     attempts: usize,
     busy_retries: usize,
@@ -130,23 +130,35 @@ pub struct WindowsPowerEventFilter<'a, C: PowerReconnectController + ?Sized> {
     deadline: Option<Instant>,
 }
 
+impl PowerReconnectState {
+    pub fn timer_is_active(&self) -> bool {
+        self.timer_active
+    }
+}
+
+pub struct WindowsPowerEventFilter<'a, C: PowerReconnectController + ?Sized> {
+    controller: &'a mut C,
+    state: PowerReconnectState,
+}
+
 impl<'a, C: PowerReconnectController + ?Sized> WindowsPowerEventFilter<'a, C> {
     pub fn new(controller: &'a mut C) -> Self {
-        Self {
-            controller,
-            armed: false,
-            attempts: 0,
-            busy_retries: 0,
-            timer_active: false,
-            deadline: None,
-        }
+        Self::with_state(controller, PowerReconnectState::default())
+    }
+
+    pub fn with_state(controller: &'a mut C, state: PowerReconnectState) -> Self {
+        Self { controller, state }
+    }
+
+    pub fn into_state(self) -> PowerReconnectState {
+        self.state
     }
 
     pub fn close(&mut self) {
         self.stop_timer();
-        self.armed = false;
-        self.attempts = 0;
-        self.busy_retries = 0;
+        self.state.armed = false;
+        self.state.attempts = 0;
+        self.state.busy_retries = 0;
     }
 
     /// Qt `nativeEventFilter`; always reports the message as unhandled, like
@@ -159,6 +171,10 @@ impl<'a, C: PowerReconnectController + ?Sized> WindowsPowerEventFilter<'a, C> {
         let Some((message_id, wparam)) = native_message(message) else {
             return false;
         };
+        self.handle_message(message_id, wparam)
+    }
+
+    pub fn handle_message(&mut self, message_id: u32, wparam: usize) -> bool {
         if message_id == WM_QUERYENDSESSION {
             self.mark_system_shutdown(false);
             return false;
@@ -179,25 +195,25 @@ impl<'a, C: PowerReconnectController + ?Sized> WindowsPowerEventFilter<'a, C> {
         match power_broadcast_event(wparam as u32) {
             Some("suspend") => {
                 self.stop_timer();
-                self.attempts = 0;
-                self.armed = should_arm_resume_reconnect(self.controller);
-                if self.armed {
+                self.state.attempts = 0;
+                self.state.armed = should_arm_resume_reconnect(self.controller);
+                if self.state.armed {
                     self.log("[power] suspend detected; resume reconnect armed");
                 }
             }
             Some("resume") => {
-                if !self.armed {
+                if !self.state.armed {
                     // A resume without a suspend observed by this process is not
                     // enough evidence that the active session needs reconnecting.
                     // Windows can emit resume notifications for unrelated power
                     // or device changes.
                     return false;
                 }
-                if self.timer_active || self.attempts > 0 {
+                if self.state.timer_active || self.state.attempts > 0 {
                     self.log("[power] duplicate resume ignored; recovery already pending");
                     return false;
                 }
-                self.busy_retries = 0;
+                self.state.busy_retries = 0;
                 self.log("[power] resume detected; waiting for network");
                 self.schedule(RESUME_INITIAL_DELAY_MS);
             }
@@ -208,51 +224,51 @@ impl<'a, C: PowerReconnectController + ?Sized> WindowsPowerEventFilter<'a, C> {
 
     /// Single-shot timer arming (`QTimer.start`).
     pub fn schedule(&mut self, delay_ms: u64) {
-        if self.armed {
-            self.timer_active = true;
-            self.deadline = Some(Instant::now() + Duration::from_millis(delay_ms.max(0)));
+        if self.state.armed {
+            self.state.timer_active = true;
+            self.state.deadline = Some(Instant::now() + Duration::from_millis(delay_ms.max(0)));
         }
     }
 
     pub fn stop_timer(&mut self) {
-        self.timer_active = false;
-        self.deadline = None;
+        self.state.timer_active = false;
+        self.state.deadline = None;
     }
 
     pub fn timer_is_active(&self) -> bool {
-        self.timer_active
+        self.state.timer_active
     }
 
     /// Drive the timer from an external loop: fires `_on_timer` once the
     /// scheduled delay elapsed and reports whether it fired.
     pub fn fire_timer_if_due(&mut self) -> bool {
-        if !self.timer_active {
+        if !self.state.timer_active {
             return false;
         }
-        let Some(deadline) = self.deadline else {
-            self.timer_active = false;
+        let Some(deadline) = self.state.deadline else {
+            self.state.timer_active = false;
             return false;
         };
         if Instant::now() < deadline {
             return false;
         }
         // Single-shot: the timer deactivates itself when it fires.
-        self.timer_active = false;
-        self.deadline = None;
+        self.state.timer_active = false;
+        self.state.deadline = None;
         self.on_timer();
         true
     }
 
     /// `_on_timer`, callable directly (the tests do exactly that).
     pub fn on_timer(&mut self) {
-        if !self.armed || !should_arm_resume_reconnect(self.controller) {
+        if !self.state.armed || !should_arm_resume_reconnect(self.controller) {
             self.close();
             return;
         }
 
         if self.transition_busy() {
-            self.busy_retries += 1;
-            if self.busy_retries >= MAX_RESUME_ATTEMPTS {
+            self.state.busy_retries += 1;
+            if self.state.busy_retries >= MAX_RESUME_ATTEMPTS {
                 self.log("[power] resume reconnect skipped; transition stayed busy");
                 self.close();
                 return;
@@ -261,7 +277,7 @@ impl<'a, C: PowerReconnectController + ?Sized> WindowsPowerEventFilter<'a, C> {
             return;
         }
 
-        if self.attempts > 0 && self.controller.connected() {
+        if self.state.attempts > 0 && self.controller.connected() {
             self.log("[power] resume reconnect already restored the session");
             self.close();
             return;
@@ -274,18 +290,18 @@ impl<'a, C: PowerReconnectController + ?Sized> WindowsPowerEventFilter<'a, C> {
             return;
         }
 
-        self.attempts += 1;
-        self.busy_retries = 0;
+        self.state.attempts += 1;
+        self.state.busy_retries = 0;
         self.log(&format!(
             "[power] resume reconnect attempt {}/{}",
-            self.attempts, MAX_RESUME_ATTEMPTS
+            self.state.attempts, MAX_RESUME_ATTEMPTS
         ));
-        if self.attempts >= MAX_RESUME_ATTEMPTS {
+        if self.state.attempts >= MAX_RESUME_ATTEMPTS {
             self.log("[power] resume reconnect attempts exhausted");
             self.close();
             return;
         }
-        let delay = RESUME_RETRY_DELAYS_MS[self.attempts - 1];
+        let delay = RESUME_RETRY_DELAYS_MS[self.state.attempts - 1];
         self.schedule(delay);
     }
 
@@ -295,9 +311,9 @@ impl<'a, C: PowerReconnectController + ?Sized> WindowsPowerEventFilter<'a, C> {
 
     fn mark_system_shutdown(&mut self, stop_cores: bool) {
         self.stop_timer();
-        self.armed = false;
-        self.attempts = 0;
-        self.busy_retries = 0;
+        self.state.armed = false;
+        self.state.attempts = 0;
+        self.state.busy_retries = 0;
         self.controller.set_system_shutdown(true);
         self.log("[power] Windows shutdown detected; reconnect disabled");
         if stop_cores {
@@ -441,15 +457,15 @@ mod tests {
     fn filter_uses_one_request_and_stops_after_restore() {
         let mut controller = TestController::new(true);
         let mut filter = WindowsPowerEventFilter::new(&mut controller);
-        filter.armed = true;
+        filter.state.armed = true;
         filter.on_timer();
         assert_eq!(filter.controller.requests, vec!["system resume"]);
-        assert_eq!(filter.attempts, 1);
+        assert_eq!(filter.state.attempts, 1);
 
         filter.stop_timer();
         filter.on_timer();
         assert_eq!(filter.controller.requests, vec!["system resume"]);
-        assert!(!filter.armed);
+        assert!(!filter.state.armed);
         filter.close();
     }
 
@@ -462,7 +478,7 @@ mod tests {
         raw.wParam = windows::Win32::Foundation::WPARAM(PBT_APMRESUMESUSPEND as usize);
         let handled = filter.native_event_filter(b"windows_generic_MSG", &raw);
         assert!(!handled);
-        assert!(!filter.armed);
+        assert!(!filter.state.armed);
         assert!(!filter.timer_is_active());
         assert!(filter.controller.requests.is_empty());
         filter.close();
@@ -477,7 +493,7 @@ mod tests {
         raw.wParam = windows::Win32::Foundation::WPARAM(PBT_APMRESUMEAUTOMATIC as usize);
         let handled = filter.native_event_filter(b"windows_generic_MSG", &raw);
         assert!(!handled);
-        assert!(!filter.armed);
+        assert!(!filter.state.armed);
         assert!(!filter.timer_is_active());
         filter.close();
     }
@@ -486,14 +502,14 @@ mod tests {
     fn filter_does_not_reset_an_inflight_recovery() {
         let mut controller = TestController::new(true);
         let mut filter = WindowsPowerEventFilter::new(&mut controller);
-        filter.armed = true;
-        filter.attempts = 1;
+        filter.state.armed = true;
+        filter.state.attempts = 1;
         filter.schedule(30_000);
         let mut raw = MSG::default();
         raw.message = WM_POWERBROADCAST;
         raw.wParam = windows::Win32::Foundation::WPARAM(PBT_APMRESUMEAUTOMATIC as usize);
         filter.native_event_filter(b"windows_generic_MSG", &raw);
-        assert_eq!(filter.attempts, 1);
+        assert_eq!(filter.state.attempts, 1);
         assert!(filter.timer_is_active());
         filter.close();
     }
@@ -503,10 +519,10 @@ mod tests {
         let mut controller = TestController::new(true);
         controller.transition_active = true;
         let mut filter = WindowsPowerEventFilter::new(&mut controller);
-        filter.armed = true;
+        filter.state.armed = true;
         filter.on_timer();
         assert!(filter.controller.requests.is_empty());
-        assert_eq!(filter.attempts, 0);
+        assert_eq!(filter.state.attempts, 0);
         assert!(filter.timer_is_active());
         filter.close();
     }
@@ -520,7 +536,7 @@ mod tests {
         filter.native_event_filter(b"windows_generic_MSG", &raw);
         assert!(filter.controller.system_shutdown);
         assert!(filter.controller.stopped.is_empty());
-        assert!(!filter.armed);
+        assert!(!filter.state.armed);
         assert!(!filter.timer_is_active());
 
         filter.controller.system_shutdown = false;
@@ -558,7 +574,7 @@ mod tests {
         raw.wParam = windows::Win32::Foundation::WPARAM(PBT_APMSUSPEND as usize);
         let handled = filter.native_event_filter(b"windows_generic_MSG", &raw);
         assert!(!handled);
-        assert!(filter.armed);
+        assert!(filter.state.armed);
 
         raw.wParam = windows::Win32::Foundation::WPARAM(PBT_APMRESUMESUSPEND as usize);
         filter.native_event_filter(b"windows_generic_MSG", &raw);
@@ -572,12 +588,12 @@ mod tests {
         controller.simulate_restore = true;
         controller.has_active_session = true;
         let mut filter = WindowsPowerEventFilter::new(&mut controller);
-        filter.armed = true;
+        filter.state.armed = true;
         for _ in 0..MAX_RESUME_ATTEMPTS {
             filter.on_timer();
         }
         assert_eq!(filter.controller.requests.len(), MAX_RESUME_ATTEMPTS);
-        assert!(!filter.armed);
+        assert!(!filter.state.armed);
         filter.close();
     }
 }

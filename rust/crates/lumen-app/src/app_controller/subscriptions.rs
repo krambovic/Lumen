@@ -74,17 +74,10 @@ impl AppController {
     fn dispatch_subscription_event(&mut self, event: SubscriptionEvent) {
         match event {
             SubscriptionEvent::ImportStatus(current) => {
-                if current.is_none() {
-                    self.emit(AppEvent::BulkTaskProgress {
-                        task: "subscription-import".into(),
-                        current: 0,
-                        total: 0,
-                        completed: true,
-                    });
-                }
+                self.emit(AppEvent::SubscriptionImportStatus(current));
             }
-            SubscriptionEvent::Imported(url) => {
-                self.log(&format!("[subscription] imported: {url}"));
+            SubscriptionEvent::Imported(group) => {
+                self.emit(AppEvent::SubscriptionImported(group));
             }
             SubscriptionEvent::Status { level, message } => self.emit_status(level, &message),
         }
@@ -247,6 +240,17 @@ impl AppController {
     /// Python `import_subscription`: the download runs through the
     /// subscription worker; import status and node deltas arrive as events.
     pub fn import_subscription(&mut self, url: &str, name: Option<&str>) -> (usize, Vec<String>) {
+        self.dispatch_subscription_request(SubscriptionRequest::Import {
+            url: url.to_owned(),
+            name: name.unwrap_or_default().to_owned(),
+        })
+    }
+
+    pub fn import_subscriptions(&mut self, text: &str) {
+        self.dispatch_subscription_request(SubscriptionRequest::ImportLines(text.to_owned()));
+    }
+
+    fn dispatch_subscription_request(&mut self, request: SubscriptionRequest) -> (usize, Vec<String>) {
         if !self.profile_loaded() {
             self.emit_status("warning", "Сначала откройте зашифрованный профиль");
             return (0, vec!["Сначала откройте зашифрованный профиль".into()]);
@@ -261,10 +265,7 @@ impl AppController {
         self.subscriptions.dispatch(
             &self.state,
             context,
-            SubscriptionRequest::Import {
-                url: url.to_owned(),
-                name: name.unwrap_or("").to_owned(),
-            },
+            request,
             |event| events.push(event),
         );
         for event in events {

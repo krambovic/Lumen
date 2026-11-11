@@ -23,6 +23,8 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 base64 = { workspace = true }
 regex = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
 windows = { workspace = true }
