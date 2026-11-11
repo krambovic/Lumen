@@ -236,6 +236,10 @@ impl SpeedTestWorker {
         self.state.lock().expect("worker state").unavailable.clone()
     }
 
+    pub fn is_unavailable(&self, node_id: &str) -> bool {
+        self.state.lock().expect("worker state").unavailable.contains(node_id)
+    }
+
     #[cfg(test)]
     fn registry_is_empty(&self) -> bool {
         self.responses.lock().unwrap().is_empty() && self.tunnels.lock().unwrap().is_empty()

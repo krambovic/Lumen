@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 83
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 89
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -301,12 +301,17 @@ client, core/resource updaters, zapret and discord proxy managers.
   skips locked profiles and subscriptions in backoff. Cancellation and shutdown
   drop queued batches and active network work. The dispatcher exposes a deadline
   and a cancellation-safe receive for the application event loop.
+- worker_service and probe_targets: select endpoint or full-profile measurement
+  targets, including Xray balancers and nested sing-box selectors, and run
+  TCP/ICMP, HTTP and real latency, speed, and connectivity checks. The service
+  applies current-worker results on the state owner, retains bounded history,
+  emits progress and save requests, and keeps cancelled workers until cleanup.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-app
-app_controller (3285), application/* (connection_service, worker_service,
-runtime_services), app_updater (1173), qthread_utils equivalents.
+app_controller (3285), application/* (connection_service, runtime_services),
+app_updater (1173), qthread_utils equivalents outside the measurement service.
 
 ### lumen-ui (egui)
 Pages from `qml_app/qml`: Dashboard, Nodes, Configs, Routing, Zapret,
