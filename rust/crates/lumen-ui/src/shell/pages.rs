@@ -12,11 +12,19 @@ use super::theme::Theme;
 mod diagnostics_export;
 mod history;
 mod logs;
+mod updates;
 
 #[derive(Default)]
 pub(super) struct PageState {
     history: history::HistoryPage,
     logs: logs::LogsPage,
+    updates: updates::UpdatesPage,
+}
+
+impl PageState {
+    pub(super) fn on_event(&mut self, event: &UiEvent) {
+        self.updates.on_event(event);
+    }
 }
 
 /// Everything a page implementation may touch, re-exported to the future
@@ -55,7 +63,7 @@ pub(super) fn render_page(
         Page::Zapret => placeholder(ui, page_ctx.theme, page),
         Page::Logs => state.logs.render(ui, page_ctx),
         Page::History => state.history.render(ui, page_ctx),
-        Page::Updates => placeholder(ui, page_ctx.theme, page),
+        Page::Updates => state.updates.render(ui, page_ctx),
         Page::Settings => placeholder(ui, page_ctx.theme, page),
         Page::About => placeholder(ui, page_ctx.theme, page),
     }

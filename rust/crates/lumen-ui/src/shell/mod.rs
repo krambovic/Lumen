@@ -645,6 +645,7 @@ impl ShellApp {
     /// Bridge-originated toasts (`toast`, `actionToast` signals).
     fn pump_bridge_events(&mut self, ctx: &egui::Context) {
         for event in self.bridge.take_events() {
+            self.page_state.on_event(&event);
             match event {
                 UiEvent::Toast { level, message } => self.toasts.show(message, level, "", ""),
                 UiEvent::ActionToast {

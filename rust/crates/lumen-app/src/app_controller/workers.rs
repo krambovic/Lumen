@@ -127,10 +127,10 @@ impl AppController {
     // ── Xray core updates ──────────────────────────────────────────────────
 
     /// Python `run_xray_core_update`.
-    pub fn run_xray_core_update(&mut self, apply_update: bool, silent: bool) {
+    pub fn run_xray_core_update(&mut self, apply_update: bool, silent: bool) -> bool {
         if !self.profile_loaded() {
             self.emit_status("warning", "Сначала откройте зашифрованный профиль");
-            return;
+            return false;
         }
         let effective_proxy_url = if self.connected {
             self.get_effective_http_proxy_url()
@@ -139,7 +139,7 @@ impl AppController {
         };
         let connection = self.xray_update_connection();
         let mut events = Vec::new();
-        self.updates.run_xray_core_update(
+        let started = self.updates.run_xray_core_update(
             &self.state.settings,
             connection,
             XrayUpdateRequest {
@@ -152,6 +152,7 @@ impl AppController {
         for event in events {
             self.dispatch_xray_update_event(event);
         }
+        started
     }
 
     pub(crate) fn xray_update_connection(&self) -> XrayUpdateConnection {

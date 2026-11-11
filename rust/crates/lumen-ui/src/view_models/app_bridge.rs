@@ -287,6 +287,7 @@ pub struct AppBridge {
     power_state: lumen_platform::power_reconnect::PowerReconnectState,
     app_update: Option<lumen_app::app_update_check::AppUpdate>,
     update_check: Option<tokio::task::JoinHandle<()>>,
+    update_check_silent: bool,
     update_download: Option<lumen_app::app_updater::AppUpdateDownloader>,
     warp_cancel: Option<tokio::sync::oneshot::Sender<()>>,
 }
@@ -750,6 +751,7 @@ impl AppBridge {
             power_state: Default::default(),
             app_update: None,
             update_check: None,
+            update_check_silent: false,
             update_download: None,
             warp_cancel: None,
         }
@@ -2616,16 +2618,22 @@ impl AppBridge {
 
     /// Python `setReleaseChannel`.
     pub fn set_release_channel(&mut self, channel: &str) {
+        if self.app_update_in_progress() {
+            return;
+        }
         let normalized = match channel.trim().to_lowercase().as_str() {
             "prerelease" | "pre-release" | "pre" | "beta" | "nightly" => "prerelease",
             _ => "stable",
         };
-        let mut settings = self.controller.lock().state.settings.clone();
-        if settings.release_channel == normalized {
-            return;
+        {
+            let mut controller = self.controller.lock();
+            if !controller.profile_loaded() || controller.state.settings.release_channel == normalized {
+                return;
+            }
+            let mut settings = controller.state.settings.clone();
+            settings.release_channel = normalized.to_string();
+            controller.update_settings(settings);
         }
-        settings.release_channel = normalized.to_string();
-        self.controller.lock().update_settings(settings);
         self.check_app_update();
     }
 
@@ -3423,15 +3431,20 @@ impl AppBridge {
         self.start_app_update_check(false);
     }
 
+    pub fn app_update_in_progress(&self) -> bool {
+        self.update_check.is_some() || self.update_download.is_some()
+    }
+
     /// Python `_start_app_update_check`. The ported `app_update_check`
     /// performs release discovery; the shell receives progress via
     /// [`UiEvent::AppUpdateState`].
     pub fn start_app_update_check(&mut self, silent: bool) {
-        if self.quitting || self.update_check.is_some() || self.update_download.is_some() {
+        if self.quitting || self.app_update_in_progress() {
             return;
         }
         let channel = self.release_channel();
         let proxy_url = self.effective_http_proxy_url_for_background();
+        self.update_check_silent = silent;
         if !silent {
             self.outbox
                 .push_back(UiEvent::AppUpdateState(json!({"phase": "checking"})));
@@ -3454,17 +3467,34 @@ impl AppBridge {
         result: Result<Option<lumen_app::app_update_check::AppUpdate>, String>,
     ) {
         self.update_check.take();
+        let silent = std::mem::take(&mut self.update_check_silent);
         if self.quitting {
             return;
         }
         match result {
             Ok(Some(update)) => {
-                let payload = json!({"phase": "available", "version": update.version, "notes": update.notes, "isDowngrade": update.is_downgrade});
+                let notes = update.notes.trim();
+                let notes = if let Some((cut, _)) = notes.char_indices().nth(1200) {
+                    format!("{}…", notes[..cut].trim_end())
+                } else {
+                    notes.to_string()
+                };
+                let payload = json!({"phase": "available", "version": update.version, "notes": notes, "isDowngrade": update.is_downgrade});
                 let automatic = lumen_app::app_update_check::should_auto_install(
                     Some(&update),
                     self.settings_cached.app_auto_update,
                 );
+                if silent {
+                    let key = if update.is_downgrade {
+                        "Доступен откат к v{version}"
+                    } else {
+                        "Доступно обновление v{version}"
+                    };
+                    self.notify("info", &tr(key, &[("version", &update.version)]));
+                }
                 self.app_update = Some(update);
+                self.updates_available = true;
+                self.changes.updates_available = true;
                 self.outbox.push_back(UiEvent::AppUpdateState(payload));
                 if automatic {
                     self.install_app_update();
@@ -3472,12 +3502,15 @@ impl AppBridge {
             }
             Ok(None) => {
                 self.app_update = None;
-                self.outbox
-                    .push_back(UiEvent::AppUpdateState(json!({"phase": "uptodate"})));
+                if !silent {
+                    self.outbox
+                        .push_back(UiEvent::AppUpdateState(json!({"phase": "uptodate"})));
+                }
             }
-            Err(error) => self.outbox.push_back(UiEvent::AppUpdateState(
+            Err(error) if !silent => self.outbox.push_back(UiEvent::AppUpdateState(
                 json!({"phase": "error", "message": error}),
             )),
+            Err(_) => {}
         }
     }
 
@@ -3532,7 +3565,14 @@ impl AppBridge {
 
     /// Python `releaseChannel`.
     pub fn release_channel(&self) -> String {
-        let value = self.settings_cached.release_channel.trim().to_lowercase();
+        let value = self
+            .controller
+            .lock()
+            .state
+            .settings
+            .release_channel
+            .trim()
+            .to_lowercase();
         if matches!(
             value.as_str(),
             "prerelease" | "pre-release" | "pre" | "beta" | "nightly"
@@ -3563,18 +3603,20 @@ impl AppBridge {
 
     /// Python `checkXrayUpdate`.
     pub fn check_xray_update(&mut self) {
-        self.outbox.push_back(UiEvent::XrayUpdateState(
-            json!({"phase": "checking", "percent": 0}),
-        ));
-        self.controller.lock().run_xray_core_update(false, false);
+        if self.controller.lock().run_xray_core_update(false, false) {
+            self.outbox.push_back(UiEvent::XrayUpdateState(
+                json!({"phase": "checking", "percent": 0}),
+            ));
+        }
     }
 
     /// Python `updateXrayCore`.
     pub fn update_xray_core(&mut self) {
-        self.outbox.push_back(UiEvent::XrayUpdateState(
-            json!({"phase": "updating", "percent": 0}),
-        ));
-        self.controller.lock().run_xray_core_update(true, false);
+        if self.controller.lock().run_xray_core_update(true, false) {
+            self.outbox.push_back(UiEvent::XrayUpdateState(
+                json!({"phase": "updating", "percent": 0}),
+            ));
+        }
     }
 
     /// Python `checkSingboxUpdate` / `updateSingboxCore` /

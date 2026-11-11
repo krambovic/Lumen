@@ -67,7 +67,7 @@ impl XrayUpdateService {
         request: XrayUpdateRequest,
         effective_proxy_url: Option<String>,
         mut emit: impl FnMut(XrayUpdateEvent),
-    ) {
+    ) -> bool {
         let Some(options) = self.prepare_start(
             settings,
             connection,
@@ -75,7 +75,7 @@ impl XrayUpdateService {
             effective_proxy_url,
             &mut emit,
         ) else {
-            return;
+            return false;
         };
         self.worker = Some(XrayCoreUpdateWorker::start(options));
         if !request.silent {
@@ -86,6 +86,7 @@ impl XrayUpdateService {
             };
             emit(XrayUpdateEvent::status("info", message));
         }
+        true
     }
 
     /// The receive is cancellation-safe for use in the controller's event loop.
@@ -248,6 +249,7 @@ impl XrayUpdateService {
         }
         let first_pass = std::mem::take(&mut self.apply_after_check);
         if first_pass && status == Available {
+            emit(XrayUpdateEvent::Progress(0));
             if !self.silent {
                 emit(XrayUpdateEvent::status("info", "Обновление Xray..."));
             }
@@ -332,7 +334,10 @@ mod tests {
             .unwrap();
         assert!(install.apply_update);
         assert_eq!(install.proxy_url, options.proxy_url);
-        assert_eq!(events, [XrayUpdateEvent::Result(available)]);
+        assert_eq!(
+            events,
+            [XrayUpdateEvent::Result(available), XrayUpdateEvent::Progress(0)]
+        );
     }
 
     #[test]
