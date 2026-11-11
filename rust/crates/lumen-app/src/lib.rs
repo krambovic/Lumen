@@ -13,6 +13,7 @@ pub mod runtime_introspection;
 pub mod server_preflight;
 pub mod session_state;
 pub mod subscription_service;
+pub mod subscription_worker;
 pub mod signature_service;
 #[cfg(windows)]
 pub mod single_instance;

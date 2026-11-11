@@ -5,6 +5,7 @@
 
 pub mod fetcher;
 pub mod presentation;
+pub mod response;
 pub mod text;
 
 pub use fetcher::{fetch_subscription_http, SubscriptionFetcherError, SubscriptionHttpPayload};

@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 255 tests, lumen-platform 67, lumen-engines 194, lumen-app 66
+Last verified: lumen-core 258 tests, lumen-platform 67, lumen-engines 194, lumen-app 68
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -24,7 +24,10 @@ client, core/resource updaters, zapret and discord proxy managers.
 - config/: xray_builder, xray_inbounds, xray_fragments, multiplex,
   proxy_chain, bootstrap_dns, runtime_security (`bootstrap_dns.rs` = alias)
 - crypt/: happ (+keys), incy
-- subscription/: fetcher (safe redirects), presentation, text
+- subscription/: fetcher (safe redirects), presentation, text, and HTTP
+  response parsing. The response parser keeps conditional cache headers,
+  decodes link lists, preserves structured JSON for the node parser, and merges
+  quota, Happ directives and provider metadata in Python precedence order.
 - routing_presets, routing_rule_import, routing_runtime, node_transport,
   probe_capabilities, secret_scrubber, security
 - http_utils: direct client (TUN bypass via /32 routes + raw UDP DNS,
@@ -278,13 +281,18 @@ client, core/resource updaters, zapret and discord proxy managers.
   and reconciles it with the saved nodes. Refreshes preserve identities and
   unchanged measurements, reject partial parses, and retain a missing active
   node. The preparation is bound to the input text and filter settings.
+- subscription_worker: downloads an ordered import/refresh batch and prepares
+  nodes off the async executor. Each job supplies a resolved HTTP URL and
+  client profile. It sends conditional validators, skips parsing on HTTP 304,
+  reports scrubbed errors per job, and cancels pending network work on stop.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-app
-app_controller (3285), application/* (subscription fetching and metadata in node_service,
-connection_service, worker_service, runtime_services), subscription_worker, app_updater (1173),
-qthread_utils equivalents.
+app_controller (3285), application/* (provider profile selection and retries,
+encrypted-link and converter orchestration, subscription metadata and cache
+persistence in node_service, connection_service, worker_service,
+runtime_services), app_updater (1173), qthread_utils equivalents.
 
 ### lumen-ui (egui)
 Pages from `qml_app/qml`: Dashboard, Nodes, Configs, Routing, Zapret,
