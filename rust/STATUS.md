@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 255 tests, lumen-platform 67, lumen-engines 194, lumen-app 56
+Last verified: lumen-core 255 tests, lumen-platform 67, lumen-engines 194, lumen-app 58
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -266,6 +266,10 @@ client, core/resource updaters, zapret and discord proxy managers.
   deep-link codec. The primary receives typed activation, tray and deep-link
   requests. A true autostart stays in the tray, while a relaunch or incoming
   deep link requests foreground activation.
+- diagnostics_service: captures state, recent logs and upload consent before
+  queuing a background export. Uses the existing redacted ZIP builder and
+  engine version probes. Upload is optional and tied to the captured consent.
+  The archive name includes a unique suffix for concurrent exports.
 
 ## Left to port (Python source -> target crate)
 
@@ -273,7 +277,6 @@ client, core/resource updaters, zapret and discord proxy managers.
 app_controller (3285), application/* (node_service, connection_service,
 worker_service, runtime_services), subscription_worker, app_updater (1173),
 qthread_utils equivalents.
-`export_diagnostics` + upload: see app_controller.py:2970.
 
 ### lumen-ui (egui)
 Pages from `qml_app/qml`: Dashboard, Nodes, Configs, Routing, Zapret,

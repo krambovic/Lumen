@@ -3,6 +3,7 @@
 pub mod auto_switch_service;
 pub mod config_documents;
 pub mod config_profiles;
+pub mod diagnostics_service;
 pub mod health_listener;
 pub mod live_metrics_worker;
 pub mod node_runtime_service;
