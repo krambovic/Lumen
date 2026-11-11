@@ -11,6 +11,10 @@ use lumen_core::link_parser::{
 use lumen_core::models::{AppState, Node};
 use serde_json::{Map, Value};
 
+use crate::subscription_service::{
+    PreparedSubscription, SubscriptionApplyResult, SubscriptionTarget, reconcile_subscription,
+};
+
 const DEFAULT_GROUP: &str = "Default";
 const COUNTRY_LOOKUP_DELAY: Duration = Duration::from_millis(500);
 
@@ -60,6 +64,26 @@ pub struct NodeService<'a> {
 }
 
 impl NodeService<'_> {
+    pub fn apply_subscription_nodes(
+        &mut self,
+        text: &str,
+        prepared: PreparedSubscription,
+        target: SubscriptionTarget<'_>,
+    ) -> SubscriptionApplyResult {
+        let result = reconcile_subscription(self.state, text, prepared, target);
+        if result.applied {
+            self.notify(NodeEvent::NodesChanged);
+            self.notify(NodeEvent::SelectionChanged);
+            if result.active_outbound_changed && self.connection_requested() {
+                *self.desired_connected = true;
+                self.notify(NodeEvent::TransitionRequested(
+                    "active subscription updated",
+                ));
+            }
+        }
+        result
+    }
+
     /// Only this user-initiated entry point treats text as a local file reference.
     pub fn import_from_text(
         &mut self,
@@ -364,7 +388,7 @@ fn normalized_group(group: &str) -> &str {
     }
 }
 
-fn group_key(group: &str) -> String {
+pub(crate) fn group_key(group: &str) -> String {
     let group = if group.is_empty() {
         DEFAULT_GROUP
     } else {

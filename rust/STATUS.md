@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 255 tests, lumen-platform 67, lumen-engines 194, lumen-app 62
+Last verified: lumen-core 255 tests, lumen-platform 67, lumen-engines 194, lumen-app 66
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -274,12 +274,16 @@ client, core/resource updaters, zapret and discord proxy managers.
   and deletion, ordering and selection. Uses Unicode case folding to deduplicate
   links within groups. Group deletion also removes linked subscriptions and
   their nodes. Emits save and connection transition requests for the controller.
+- subscription_service: prepares downloaded text with include/exclude filters
+  and reconciles it with the saved nodes. Refreshes preserve identities and
+  unchanged measurements, reject partial parses, and retain a missing active
+  node. The preparation is bound to the input text and filter settings.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-app
-app_controller (3285), application/* (subscription operations in node_service, connection_service,
-worker_service, runtime_services), subscription_worker, app_updater (1173),
+app_controller (3285), application/* (subscription fetching and metadata in node_service,
+connection_service, worker_service, runtime_services), subscription_worker, app_updater (1173),
 qthread_utils equivalents.
 
 ### lumen-ui (egui)
