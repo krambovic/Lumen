@@ -268,6 +268,7 @@ mod tests {
             panic!("expected a rejected download");
         };
         assert!(result.response.text.is_empty());
+        assert_eq!(result.response.status, 404);
         assert!(result.prepared.is_none());
         assert_eq!(result.errors.len(), 1);
         assert!(result.errors[0].contains("HTTP 404"));
@@ -278,6 +279,46 @@ mod tests {
                 total: 1
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn rejected_http_response_carries_retry_after_to_state_owner() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/rate-limit", listener.local_addr().unwrap());
+        let mut job = SubscriptionJob::new(url.clone(), SubscriptionJobKind::Update);
+        job.client_profile = "Lumen".into();
+        job.use_proxy_tun = true;
+        job.use_real_hwid = false;
+        let mut worker = SubscriptionFetchWorker::start(24, vec![job]);
+        let (mut socket, _) = timeout(TEST_TIMEOUT, request(&listener)).await.unwrap();
+        socket.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 7200\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        let Some(SubscriptionWorkerEvent::Fetched { job, download, .. }) = next(&mut worker).await
+        else {
+            panic!("expected an HTTP failure");
+        };
+        let mut state = lumen_core::models::AppState {
+            subscriptions: vec![serde_json::json!({"url": url, "id": "sub", "etag": "cached"})],
+            ..Default::default()
+        };
+        let mut desired = false;
+        let mut service = crate::node_service::NodeService {
+            state: &mut state,
+            connected: false,
+            desired_connected: &mut desired,
+            can_connect_without_selected_node: false,
+            emit: &mut |_, _| {},
+        };
+        let result = service.apply_fetched_subscription(&job, download);
+        assert_eq!(result.errors.len(), 1);
+        let record = &state.subscriptions[0];
+        assert_eq!(record["last_status"], 429);
+        assert_eq!(record["etag"], "cached");
+        let checked =
+            chrono::DateTime::parse_from_rfc3339(record["last_checked_at"].as_str().unwrap())
+                .unwrap();
+        let retry = chrono::DateTime::parse_from_rfc3339(record["backoff_until"].as_str().unwrap())
+            .unwrap();
+        assert_eq!((retry - checked).num_seconds(), 7200);
     }
 
     #[tokio::test]

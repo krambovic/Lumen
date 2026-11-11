@@ -46,8 +46,6 @@ const FETCH_FAILED: &str = "Не удалось загрузить подпис�
 const PROVIDER_SAYS: &str = "Провайдер сообщает: ";
 const PROVIDER_PLACEHOLDER: &str = "Провайдер подписки вернул служебное сообщение";
 static MACHINE_HWID: OnceLock<Option<String>> = OnceLock::new();
-static HTTP_ERROR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)http error\s+(\d{3})").unwrap());
 static NOTICE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"«([^»]*)»").unwrap());
 static NOTICE_PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[^\w@#]+").unwrap());
 
@@ -229,8 +227,18 @@ pub(super) async fn fetch(
                     )
                 });
                 push_unique(&mut attempts, message);
-                last_response = SubscriptionResponse::default();
-                if !retried && matches!(http_status(&error), Some(404 | 410)) {
+                let permanent = matches!(http_status(&error), Some(404 | 410));
+                if let SubscriptionFetcherError::Http {
+                    status, headers, ..
+                } = error
+                {
+                    last_response = SubscriptionResponse {
+                        status,
+                        headers,
+                        ..Default::default()
+                    };
+                }
+                if !retried && permanent {
                     break;
                 }
                 continue;
@@ -488,8 +496,8 @@ fn format_notices(notices: &[String], limit: usize) -> String {
 }
 
 fn http_status(error: &SubscriptionFetcherError) -> Option<u16> {
-    if let SubscriptionFetcherError::Http(message) = error {
-        HTTP_ERROR.captures(message)?.get(1)?.as_str().parse().ok()
+    if let SubscriptionFetcherError::Http { status, .. } = error {
+        Some(*status)
     } else {
         None
     }

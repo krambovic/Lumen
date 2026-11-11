@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 72
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 78
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -289,12 +289,17 @@ client, core/resource updaters, zapret and discord proxy managers.
   responses, provider notices and retries, resolves Happ AUTO placeholders and
   requires both MagVPN representations before preparing nodes. Reports scrubbed
   errors per job and cancels pending network work on stop.
+- subscription_cache and subscription_lifecycle: build refresh jobs from saved
+  settings, apply worker results through NodeService, and request a save after
+  committing nodes and records in memory. Keep validators and quota on HTTP 304,
+  force a full fetch after a parser revision change or local node removal, and
+  honor Retry-After when scheduling automatic refreshes. Successful refreshes
+  merge provider metadata, preserve node identities, and handle URL migration.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-app
-app_controller (3285), application/* (subscription metadata and cache
-persistence in node_service, connection_service, worker_service,
+app_controller (3285), application/* (connection_service, worker_service,
 runtime_services), app_updater (1173), qthread_utils equivalents.
 
 ### lumen-ui (egui)

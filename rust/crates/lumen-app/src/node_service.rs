@@ -71,6 +71,11 @@ impl NodeService<'_> {
         target: SubscriptionTarget<'_>,
     ) -> SubscriptionApplyResult {
         let result = reconcile_subscription(self.state, text, prepared, target);
+        self.notify_subscription_nodes(&result);
+        result
+    }
+
+    pub(crate) fn notify_subscription_nodes(&mut self, result: &SubscriptionApplyResult) {
         if result.applied {
             self.notify(NodeEvent::NodesChanged);
             self.notify(NodeEvent::SelectionChanged);
@@ -81,7 +86,6 @@ impl NodeService<'_> {
                 ));
             }
         }
-        result
     }
 
     /// Only this user-initiated entry point treats text as a local file reference.
@@ -354,7 +358,7 @@ impl NodeService<'_> {
         self.connected || *self.desired_connected
     }
 
-    fn notify(&mut self, event: NodeEvent) {
+    pub(crate) fn notify(&mut self, event: NodeEvent) {
         (self.emit)(event, self.state);
     }
 
@@ -362,6 +366,65 @@ impl NodeService<'_> {
         self.notify(NodeEvent::NodesChanged);
         self.notify(NodeEvent::SaveRequested);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn applying_not_modified_preserves_nodes_and_quota_and_refreshes_cache() {
+    use lumen_core::constants::SUBSCRIPTION_PARSER_REVISION;
+    use lumen_core::subscription::response::SubscriptionResponse;
+    use serde_json::json;
+
+    use crate::subscription_worker::{SubscriptionDownload, SubscriptionJob, SubscriptionJobKind};
+
+    let url = "https://sub.example/key";
+    let mut state = AppState {
+        nodes: vec![Node {
+            id: "node".into(),
+            subscription_id: "sub".into(),
+            ..Default::default()
+        }],
+        subscriptions: vec![json!({
+            "id": "sub", "url": url, "group": "Group", "node_count": 2,
+            "parser_revision": SUBSCRIPTION_PARSER_REVISION,
+            "userinfo": {"upload": 45}, "last_modified": "saved", "failure_count": 3,
+        })],
+        ..Default::default()
+    };
+    let mut events = Vec::new();
+    let mut desired = false;
+    let mut service = NodeService {
+        state: &mut state,
+        connected: false,
+        desired_connected: &mut desired,
+        can_connect_without_selected_node: false,
+        emit: &mut |event, _| events.push(event),
+    };
+    let job = SubscriptionJob::new(url.into(), SubscriptionJobKind::Update);
+    let download = SubscriptionDownload {
+        response: SubscriptionResponse {
+            status: 304,
+            not_modified: true,
+            headers: [("etag".into(), "fresh".into())].into(),
+            userinfo: [("upload".into(), json!(0))].into_iter().collect(),
+            ..Default::default()
+        },
+        errors: Vec::new(),
+        prepared: None,
+    };
+    let result = service.apply_fetched_subscription(&job, Ok(download));
+    assert!(result.errors.is_empty());
+    let record = &state.subscriptions[0];
+    assert_eq!(record["node_count"], 2);
+    assert_eq!(record["userinfo"]["upload"], 45);
+    assert_eq!(record["last_modified"], "saved");
+    assert_eq!(record["etag"], "fresh");
+    assert_eq!(record["failure_count"], 0);
+    assert_eq!(state.nodes[0].id, "node");
+    assert_eq!(
+        events,
+        [NodeEvent::SubscriptionsChanged, NodeEvent::SaveRequested]
+    );
 }
 
 pub fn all_groups(state: &AppState) -> Vec<String> {

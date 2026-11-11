@@ -12,7 +12,9 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v5"] }
+url = { workspace = true }
+httpdate = "1"
 chrono = { workspace = true }
 base64 = { workspace = true }
 regex = { workspace = true }

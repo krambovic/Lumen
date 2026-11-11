@@ -45,8 +45,12 @@ pub enum SubscriptionFetcherError {
     #[error("{0}")]
     Timeout(String),
     /// Python `urllib.error.HTTPError` ("HTTP Error <code>: <reason>").
-    #[error("{0}")]
-    Http(String),
+    #[error("HTTP Error {status}: {reason}")]
+    Http {
+        status: u16,
+        reason: String,
+        headers: BTreeMap<String, String>,
+    },
 }
 
 /// Python `(scheme, hostname, effective port)` origin triple.
@@ -110,7 +114,11 @@ fn strip_headers_cross_origin(headers: &mut BTreeMap<String, String>, source: &U
 }
 
 fn http_error(status: u16, reason: &str) -> SubscriptionFetcherError {
-    SubscriptionFetcherError::Http(format!("HTTP Error {status}: {reason}"))
+    SubscriptionFetcherError::Http {
+        status,
+        reason: reason.into(),
+        headers: BTreeMap::new(),
+    }
 }
 
 fn request_error(error: reqwest::Error) -> SubscriptionFetcherError {
@@ -321,10 +329,11 @@ async fn download_with_client(
         }
 
         if !(200..300).contains(&status) {
-            return Err(http_error(
+            return Err(SubscriptionFetcherError::Http {
                 status,
-                response.status().canonical_reason().unwrap_or(""),
-            ));
+                reason: response.status().canonical_reason().unwrap_or("").into(),
+                headers: collect_headers(response.headers()),
+            });
         }
 
         let declared_size = response
