@@ -7,6 +7,7 @@ pub mod diagnostics_service;
 pub mod health_listener;
 pub mod live_metrics_worker;
 pub mod node_runtime_service;
+pub mod node_service;
 pub mod profile_service;
 pub mod runtime_introspection;
 pub mod server_preflight;

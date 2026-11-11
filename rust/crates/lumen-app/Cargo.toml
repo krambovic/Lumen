@@ -24,6 +24,7 @@ tonic = { workspace = true }
 prost = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+caseless = "0.2.2"
 parking_lot = { workspace = true }
 windows = { workspace = true }
 tempfile = "3"
