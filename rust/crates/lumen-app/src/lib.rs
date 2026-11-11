@@ -1,6 +1,7 @@
 //! Lumen application orchestration: controller, transition engine, services.
 
 pub mod auto_switch_service;
+pub mod app_update_check;
 pub mod config_documents;
 pub mod config_profiles;
 pub mod connection_service;

@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 98
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 101
 (cargo 1.99.1, Windows).
 
 ## Scope rule: engines stay in Go
@@ -313,12 +313,15 @@ client, core/resource updaters, zapret and discord proxy managers.
   traffic history, and ordered shutdown with one worker deadline. The
   controller interfaces expose the state, events and manager hooks used by
   these services.
+- app_update_check: discovers stable and prerelease Windows releases, selects
+  a setup or portable asset, reads its SHA-256 from release metadata or a
+  sidecar, and prevents automatic installation of a rollback.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-app
-app_controller (3285), app_updater (1173), and controller wiring for worker
-lifecycle and shutdown.
+app_controller (3285), the app update download/install/restart flow, and
+controller wiring for worker lifecycle and shutdown.
 
 ### lumen-ui (egui)
 Pages from `qml_app/qml`: Dashboard, Nodes, Configs, Routing, Zapret,
