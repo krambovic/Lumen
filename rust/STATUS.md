@@ -4,8 +4,10 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app --lib`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 101
-(cargo 1.99.1, Windows).
+Last verified: lumen-core 261 tests, lumen-platform 101, lumen-engines 194, lumen-app 137
+(cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
+diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
+(shutdown() revokes consent globally; the globals are process-wide).
 
 ## Scope rule: engines stay in Go
 xray-core and sing-box are NOT ported. They remain the original upstream Go
@@ -210,8 +212,22 @@ client, core/resource updaters, zapret and discord proxy managers.
   `native_test_config`. The former `lumen-core` stub is removed.
 
 ### lumen-app
-- runtime_introspection: profile proxy detection, Xray inbound ports and
-  Xray/sing-box ping targets.
+- app_controller (module folder): the Python AppController ported whole —
+  `AppEvent` signal enum, queued `ControllerTask` event loop with worker/
+  subscription/metrics/resource polling and deadline timers, transition
+  machinery, session capture, persistence with all state migrations and the
+  save queue, startup/admin reconciliation, config/template path resolution
+  for both engines, the full connection flow incl. the Zapret group (trusted
+  DoH pool, server binding, autostart), proxy/Discord wiring, subscriptions
+  dispatch, workers, logging filters, master-password lock, diagnostics and
+  shutdown. Implements `OperationsController`, `RuntimeController`,
+  `ConnectionController`, `ShutdownController` and `PowerReconnectController`
+  so the ported flows plug in unchanged. 15 controller tests. Documented
+  deviations: Qt signals -> `AppEvent` + queued tasks, import/update calls
+  go through the subscription dispatcher (event-reported), and
+  `owned_core_process_pids` returns an empty set (managers keep handles
+  private; path-based ownership remains the working signal).
+- app_updater (module folder): the download/install/restart half. Segmented
 - health_listener: authenticated loopback probes for both cores. A new
   sing-box probe uses its target selector's configured default and adds a
   pinned route only when the classifier confirms a proxy path.
@@ -316,12 +332,16 @@ client, core/resource updaters, zapret and discord proxy managers.
 - app_update_check: discovers stable and prerelease Windows releases, selects
   a setup or portable asset, reads its SHA-256 from release metadata or a
   sidecar, and prevents automatic installation of a rollback.
+- app_updater (module folder): the download/install/restart half. Segmented
+  range downloads over a proxy/plain/direct opener with the shared safe
+  redirect policy, cancellation-aware chunk reads, SHA-256 staging with the
+  byte-identical elevated PowerShell scripts (a fixture test compares the
+  generator output against the AST-evaluated Python scripts), target
+  directory resolution (portable markers, legacy renames, uninstall-registry
+  InstallLocation), ShellExecuteW "runas" launch, and a worker whose channel
+  events replace the PyQt6 signals.
 
 ## Left to port (Python source -> target crate)
-
-### lumen-app
-app_controller (3285), the app update download/install/restart flow, and
-controller wiring for worker lifecycle and shutdown.
 
 ### lumen-ui (egui)
 Pages from `qml_app/qml`: Dashboard, Nodes, Configs, Routing, Zapret,

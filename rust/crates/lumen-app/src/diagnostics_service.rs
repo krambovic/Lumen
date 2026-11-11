@@ -103,6 +103,9 @@ mod tests {
 
     #[test]
     fn export_uses_captured_logs_and_selected_sections() -> anyhow::Result<()> {
+        // The export validates the global consent epoch; hold the shared lock
+        // so controller tests cannot revoke consent mid-export.
+        let _consent = crate::test_support::CONSENT_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let dir = tempfile::tempdir()?;
         let mut logs = vec!["original sample".into()];
         let request = DiagnosticsExport::capture(
