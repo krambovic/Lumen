@@ -50,7 +50,6 @@ use lumen_core::routing_rule_import::{
     normalize_routing_address, parse_routing_rules, split_routing_addresses,
 };
 use lumen_core::service_presets::SERVICE_PRESETS;
-use lumen_core::traffic_history::TrafficHistoryStorage;
 use lumen_core::warp_generator::WARP_GROUP;
 use lumen_core::zapret_strategies as strategies;
 use lumen_platform::process_conflicts::{scan_network_conflicts, terminate_scanned_conflicts};
@@ -3388,18 +3387,17 @@ impl AppBridge {
 
     /// Python `historyData`.
     pub fn history_data(&self, days: i64) -> Value {
-        // The controller keeps its traffic history private; the storage is
-        // mirrored through the shared history file, so read a fresh handle.
-        let storage = TrafficHistoryStorage::new();
-        history_helpers::build_history_payload(Some(&storage), if days == 0 { 30 } else { days })
+        let controller = self.controller.lock();
+        history_helpers::build_history_payload(
+            Some(controller.traffic_history()),
+            if days == 0 { 30 } else { days },
+        )
     }
 
     /// Python `clearTrafficHistory`.
     pub fn clear_traffic_history(&mut self) {
-        // See `history_data`: the storage handle mirrors the shared file.
-        let storage = TrafficHistoryStorage::new();
-        storage.clear();
-        self.notify("success", "История очищена");
+        self.controller.lock().traffic_history().clear();
+        self.notify("success", &tr("История очищена", &[]));
     }
 
     /// Python `updatesInitialState`.

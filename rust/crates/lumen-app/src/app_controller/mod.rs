@@ -530,6 +530,10 @@ impl AppController {
         self.events.subscribe()
     }
 
+    pub fn traffic_history(&self) -> &TrafficHistoryStorage {
+        &self.traffic_history
+    }
+
     /// Queue work onto the owner task (Python queued connections).
     pub fn submit(&self, task: ControllerTask) {
         let _ = self.tasks.0.send(task);

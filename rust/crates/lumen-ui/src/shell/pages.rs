@@ -10,10 +10,12 @@ use super::navigation::Page;
 use super::theme::Theme;
 
 mod diagnostics_export;
+mod history;
 mod logs;
 
 #[derive(Default)]
 pub(super) struct PageState {
+    history: history::HistoryPage,
     logs: logs::LogsPage,
 }
 
@@ -52,7 +54,7 @@ pub(super) fn render_page(
         Page::Configs => placeholder(ui, page_ctx.theme, page),
         Page::Zapret => placeholder(ui, page_ctx.theme, page),
         Page::Logs => state.logs.render(ui, page_ctx),
-        Page::History => placeholder(ui, page_ctx.theme, page),
+        Page::History => state.history.render(ui, page_ctx),
         Page::Updates => placeholder(ui, page_ctx.theme, page),
         Page::Settings => placeholder(ui, page_ctx.theme, page),
         Page::About => placeholder(ui, page_ctx.theme, page),
