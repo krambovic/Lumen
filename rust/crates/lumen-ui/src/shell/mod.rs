@@ -231,6 +231,7 @@ pub struct ShellApp {
     taskbar_tick_deadline: Instant,
     last_settings_token: u64,
     page_events: std::collections::VecDeque<UiEvent>,
+    page_state: pages::PageState,
 }
 
 /// The network conflict FluentDialog state (Main.qml `networkConflictDialog`).
@@ -285,6 +286,7 @@ impl ShellApp {
             taskbar_tick_deadline: Instant::now() + Duration::from_secs(1),
             last_settings_token: 0,
             page_events: std::collections::VecDeque::new(),
+            page_state: pages::PageState::default(),
         }
     }
 
@@ -662,6 +664,7 @@ impl ShellApp {
                     })
                 }
                 UiEvent::AdminRelaunchRequested => self.restart_admin(ctx),
+                UiEvent::OpenDirectory(path) => win_native::open_directory(&path),
                 UiEvent::TrayNotify { title, message } => {
                     toast::show_toast(&title, &message, toast::AUMID);
                 }
@@ -1026,9 +1029,13 @@ impl ShellApp {
         );
         egui::Area::new(egui::Id::unique("lumen-page-stack"))
             .order(egui::Order::Middle)
+            .movable(false)
             .fixed_pos(page_rect.min)
             .default_size(page_rect.size())
             .show(ctx, |ui| {
+                ui.set_width(page_rect.width());
+                ui.set_height(page_rect.height());
+                ui.shrink_clip_rect(page_rect);
                 let current = self.navigation.current;
                 let mut hooks = pages::ShellHooks::default();
                 {
@@ -1039,7 +1046,7 @@ impl ShellApp {
                         events: self.page_events.make_contiguous(),
                         shell: &mut hooks,
                     };
-                    pages::render_page(current, ui, &mut page_ctx);
+                    pages::render_page(current, ui, &mut page_ctx, &mut self.page_state);
                 }
                 if hooks.open_configs_requested {
                     self.navigation.current = Page::Configs;

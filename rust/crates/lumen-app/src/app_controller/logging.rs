@@ -89,7 +89,7 @@ impl AppController {
     }
 
     /// Python `_log`: route a log line to its domain file + the UI.
-    pub(crate) fn log(&mut self, line: &str) {
+    pub fn log(&mut self, line: &str) {
         let line = clean_log_text(line);
         if line.is_empty() {
             return;

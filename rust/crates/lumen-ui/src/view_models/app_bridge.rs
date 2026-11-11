@@ -114,6 +114,7 @@ pub enum UiEvent {
     },
     NodeImported(String),
     SubscriptionImported(String),
+    OpenDirectory(PathBuf),
 }
 
 /// Python property-change notify signals as explicit flags the shell reads
@@ -1067,7 +1068,8 @@ impl AppBridge {
     pub fn clear_logs(&mut self) {
         self.pending_ui_logs.clear();
         self.log_model.clear();
-        self.flush_ui_logs();
+        let marker = tr("Журнал очищен; новые логи продолжают поступать", &[]);
+        self.controller.lock().log(&format!("[app] {marker}"));
     }
 
     // ── controller → UI slots (Python `_on_*`) ─────────────────────────────
@@ -1179,10 +1181,7 @@ impl AppBridge {
             AppEvent::SubscriptionImported(group) => {
                 self.outbox.push_back(UiEvent::SubscriptionImported(group));
             }
-            AppEvent::DiagnosticsFinished(result) => match result {
-                Ok(path) => self.on_diagnostics_finished(&path.to_string_lossy(), ""),
-                Err(error) => self.on_diagnostics_finished("", &error),
-            },
+            AppEvent::DiagnosticsFinished(result) => self.on_diagnostics_finished(result),
             AppEvent::PassphraseRequired => {
                 let message = tr(
                     "Данные зашифрованы: укажите пароль шифрования в разделе «Данные», иначе серверы не будут загружены",
@@ -5105,22 +5104,29 @@ impl AppBridge {
     }
 
     /// Python `_on_diagnostics_finished`.
-    pub fn on_diagnostics_finished(&mut self, path: &str, error: &str) {
+    fn on_diagnostics_finished(&mut self, result: Result<PathBuf, String>) {
         self.diagnostics_exporting = false;
         if self.quitting {
             return;
         }
-        if !error.is_empty() {
-            self.notify(
-                "error",
-                &tr(
-                    "Не удалось собрать диагностику: {error}",
-                    &[("error", error)],
-                ),
-            );
-            return;
+        let path = match result {
+            Ok(path) => path,
+            Err(error) => {
+                self.notify(
+                    "error",
+                    &tr(
+                        "Не удалось собрать диагностику: {error}",
+                        &[("error", &error)],
+                    ),
+                );
+                return;
+            }
+        };
+        if let Some(directory) = path.parent() {
+            self.outbox
+                .push_back(UiEvent::OpenDirectory(directory.to_path_buf()));
         }
-        let name = Path::new(path)
+        let name = path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default();

@@ -1,17 +1,4 @@
-//! Page dispatch skeleton (the `LazyPageLoader` stack inside Main.qml's
-//! `pageStack`).
-//!
-//! # Extension point for page agents
-//!
-//! `render_page` is the single seam the application shell uses to paint the
-//! active page. Two more agents port the pages from `qml_app/qml/*.qml` into
-//! this module (`pages/dashboard.rs`, `pages/nodes.rs`, ...); every arm below
-//! becomes `super::nodes::render(ui, page_ctx)` once that lands. The pages
-//! receive a [`PageContext`] with the resolved [`Theme`], the view-model
-//! bridge and shell hooks — nothing else should reach the window frame.
-//!
-//! Until the page modules exist each arm renders a themed placeholder panel
-//! carrying the localized page title, so navigation state remains testable.
+//! Page dispatch for the `LazyPageLoader` stack in `Main.qml`.
 
 use egui::{Context, Ui};
 
@@ -21,6 +8,14 @@ use crate::view_models::{AppBridge, app_bridge::UiEvent};
 
 use super::navigation::Page;
 use super::theme::Theme;
+
+mod diagnostics_export;
+mod logs;
+
+#[derive(Default)]
+pub(super) struct PageState {
+    logs: logs::LogsPage,
+}
 
 /// Everything a page implementation may touch, re-exported to the future
 /// `pages/*` modules.
@@ -41,16 +36,22 @@ pub struct ShellHooks {
 }
 
 /// Render the active page into the content window.
-pub fn render_page(page: Page, ui: &mut Ui, page_ctx: &mut PageContext) {
+pub(super) fn render_page(
+    page: Page,
+    ui: &mut Ui,
+    page_ctx: &mut PageContext,
+    state: &mut PageState,
+) {
+    if page != Page::Logs {
+        state.logs.on_hidden();
+    }
     match page {
-        // EXTENSION POINT: replace each arm with the real page module when it
-        // lands (STATUS.md lists the pages as a separate porting assignment).
         Page::Dashboard => placeholder(ui, page_ctx.theme, page),
         Page::Nodes => placeholder(ui, page_ctx.theme, page),
         Page::Routing => placeholder(ui, page_ctx.theme, page),
         Page::Configs => placeholder(ui, page_ctx.theme, page),
         Page::Zapret => placeholder(ui, page_ctx.theme, page),
-        Page::Logs => placeholder(ui, page_ctx.theme, page),
+        Page::Logs => state.logs.render(ui, page_ctx),
         Page::History => placeholder(ui, page_ctx.theme, page),
         Page::Updates => placeholder(ui, page_ctx.theme, page),
         Page::Settings => placeholder(ui, page_ctx.theme, page),

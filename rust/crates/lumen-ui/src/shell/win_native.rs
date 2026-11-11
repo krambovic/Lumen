@@ -13,6 +13,28 @@ use lumen_core::constants::{APP_NAME, app_icon_path};
 
 pub const APP_USER_MODEL_ID: &str = "Lumen.Lumen";
 
+pub(super) fn open_directory(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+        use windows::core::{HSTRING, PCWSTR, w};
+
+        let path = HSTRING::from(path.as_os_str());
+        unsafe {
+            ShellExecuteW(
+                None,
+                w!("open"),
+                PCWSTR(path.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+}
+
 // DWM attribute values from `_apply_mica`.
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 const DWMWA_USE_IMMERSIVE_DARK_MODE_OLD: u32 = 19; // builds < 18985

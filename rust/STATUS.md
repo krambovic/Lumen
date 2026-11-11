@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 138, lumen-ui 92
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 138, lumen-ui 94
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -351,13 +351,17 @@ client, core/resource updaters, zapret and discord proxy managers.
   activation and deep links. PageContext carries the bridge, theme, and
   page events. Country flags and the window/tray icon are available in the
   standalone binary.
+- Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
+  selectable live entries, severity filters, autoscroll, clear marker and log
+  actions. Export offers the original archive sections and consent-gated
+  upload. The shell opens the output directory on successful export.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-ui (egui)
 Pages from `qml_app/qml`: Dashboard, Nodes, Configs, Routing, Zapret,
-Settings, Updates, History, Logs, About, Onboarding and page-specific dialogs.
-The shell currently renders the themed page titles through its page dispatcher.
+Settings, Updates, History, About, Onboarding and their page-specific dialogs.
+These pages currently render themed titles through the page dispatcher.
 
 ## Known warnings to clean
 None — the lumen-core list was cleaned in the same pass as the direct-route
