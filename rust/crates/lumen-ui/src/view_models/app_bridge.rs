@@ -4347,7 +4347,21 @@ impl AppBridge {
 
     /// Python `selectTemplate`.
     pub fn select_template(&mut self, core: &str, relative_path: &str) -> Value {
-        if (core != "singbox" && core != "xray") || relative_path.is_empty() {
+        self.load_config_template(core, Path::new(relative_path), false)
+    }
+
+    pub fn config_template_directory(&self, core: &str) -> PathBuf {
+        let controller = self.controller.lock();
+        if core == "xray" { controller.get_xray_template_dir() } else { controller.get_singbox_template_dir() }
+    }
+
+    /// Python `importTemplate` after the shell's file picker returns a path.
+    pub fn import_config_template(&mut self, core: &str, path: &Path) -> Value {
+        self.load_config_template(core, path, true)
+    }
+
+    fn load_config_template(&mut self, core: &str, selected: &Path, imported: bool) -> Value {
+        if (core != "singbox" && core != "xray") || selected.as_os_str().is_empty() {
             let controller = self.controller.clone();
             let mut controller = controller.lock();
             let core = if core != "singbox" && core != "xray" {
@@ -4361,19 +4375,26 @@ impl AppBridge {
         let mut controller = controller.lock();
         let import = |controller: &mut AppController| -> Result<(PathBuf, String), anyhow::Error> {
             if core == "singbox" {
-                controller.import_singbox_template(Path::new(relative_path))
+                controller.import_singbox_template(selected)
             } else {
-                controller.import_xray_template(Path::new(relative_path))
+                controller.import_xray_template(selected)
             }
         };
         match import(&mut controller) {
             Ok((path, text)) => {
-                let name = Path::new(relative_path)
+                let name = selected
                     .file_name()
                     .map(|name| name.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let message = tr("Применён шаблон: {name}", &[("name", &name)]);
-                self.notify("success", &message);
+                let message = if imported {
+                    self.notify("success", &tr("Импортирован template: {name}", &[("name", &name)]));
+                    let active = path.file_name().unwrap_or_default().to_string_lossy();
+                    tr("Импортирован template и обновлена активная копия: {name}", &[("name", &active)])
+                } else {
+                    let message = tr("Применён шаблон: {name}", &[("name", &name)]);
+                    self.notify("success", &message);
+                    message
+                };
                 configs_helpers::build_state(
                     &mut controller,
                     core,

@@ -13,6 +13,48 @@ use lumen_core::constants::{APP_NAME, app_icon_path};
 
 pub const APP_USER_MODEL_ID: &str = "Lumen.Lumen";
 
+#[cfg(windows)]
+pub(super) fn pick_json_file(directory: &std::path::Path, title: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    use windows::Win32::UI::Controls::Dialogs::{
+        CommDlgExtendedError, GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY,
+        OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+    };
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
+    use windows::core::{PCWSTR, PWSTR, w};
+
+    let directory: Vec<u16> = directory.as_os_str().encode_wide().chain([0]).collect();
+    let title = to_wide(title);
+    let mut path = vec![0_u16; 32_768];
+    let mut options = OPENFILENAMEW {
+        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        hwndOwner: unsafe { GetActiveWindow() },
+        lpstrFilter: w!("JSON files (*.json)\0*.json\0"),
+        nFilterIndex: 1,
+        lpstrFile: PWSTR(path.as_mut_ptr()),
+        nMaxFile: path.len() as u32,
+        lpstrInitialDir: PCWSTR(directory.as_ptr()),
+        lpstrTitle: PCWSTR(title.as_ptr()),
+        Flags: OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST,
+        ..Default::default()
+    };
+    // The dialog borrows the UTF-16 buffers until GetOpenFileNameW returns.
+    if unsafe { GetOpenFileNameW(&mut options) }.as_bool() {
+        let length = path.iter().position(|&unit| unit == 0).unwrap_or(path.len());
+        return Ok(Some(OsString::from_wide(&path[..length]).into()));
+    }
+    let error = unsafe { CommDlgExtendedError() }.0;
+    anyhow::ensure!(error == 0, "Windows file dialog error 0x{error:04X}");
+    Ok(None)
+}
+
+#[cfg(not(windows))]
+pub(super) fn pick_json_file(_directory: &std::path::Path, _title: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
+    anyhow::bail!("The native JSON file dialog requires Windows")
+}
+
 pub(super) fn open_directory(path: &std::path::Path) {
     #[cfg(windows)]
     {

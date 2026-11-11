@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 138, lumen-ui 99
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 194, lumen-app 138, lumen-ui 103
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -363,11 +363,16 @@ client, core/resource updaters, zapret and discord proxy managers.
   application release notes, and checks, installation, status and progress for
   the app, Xray, sing-box extended, GeoIP/GeoSite and droute. The page tracks
   update events while hidden and during Xray's check-to-install transition.
+- Configs (`ConfigsPage.qml`, `CodeEditor.qml`): independent sing-box and Xray
+  drafts, active config and template selection, native JSON picker, template
+  reset, discard confirmation, and formatting, validation, saving and applying
+  with the existing controller. The editor has a fixed line-number gutter,
+  current-line highlighting, error navigation and Ctrl+S.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-ui (egui)
-Pages from `qml_app/qml`: Dashboard, Nodes, Configs, Routing, Zapret,
+Pages from `qml_app/qml`: Dashboard, Nodes, Routing, Zapret,
 Settings and About, with their page-specific dialogs. These pages currently
 render themed titles through the page dispatcher. The onboarding overlay is
 also unported.
