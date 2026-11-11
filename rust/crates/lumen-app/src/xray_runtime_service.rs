@@ -47,6 +47,42 @@ pub struct XrayRuntimeConfig {
     pub health_proxy_url: String,
 }
 
+impl lumen_engines::xray::operations::XrayRuntimeConfigView for XrayRuntimeConfig {
+    fn config(&self) -> &Value {
+        &self.config
+    }
+    fn config_mut(&mut self) -> &mut Value {
+        &mut self.config
+    }
+    fn source_path(&self) -> &Path {
+        &self.source_path
+    }
+    fn used_selected_node(&self) -> bool {
+        self.used_selected_node
+    }
+    fn socks_port(&self) -> i64 {
+        self.socks_port
+    }
+    fn http_port(&self) -> i64 {
+        self.http_port
+    }
+    fn api_port(&self) -> i64 {
+        self.api_port
+    }
+    fn inbound_tags(&self) -> &[String] {
+        &self.inbound_tags
+    }
+    fn ping_host(&self) -> &str {
+        &self.ping_host
+    }
+    fn ping_port(&self) -> i64 {
+        self.ping_port
+    }
+    fn health_proxy_url(&self) -> &str {
+        &self.health_proxy_url
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum XrayRuntimeEvent {
     Log(String),

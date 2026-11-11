@@ -3,6 +3,7 @@
 pub mod auto_switch_service;
 pub mod config_documents;
 pub mod config_profiles;
+pub mod connection_service;
 pub mod diagnostics_service;
 pub mod health_listener;
 pub mod live_metrics_worker;
@@ -11,6 +12,7 @@ pub mod node_service;
 pub mod profile_service;
 mod probe_targets;
 pub mod runtime_introspection;
+pub mod runtime_services;
 pub mod server_preflight;
 pub mod session_state;
 pub mod subscription_cache;

@@ -159,6 +159,10 @@ impl LiveMetricsWorker {
         self.control.xray.close();
     }
 
+    pub fn is_finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
     /// Stop and wait for the background thread, including any in-flight process scan.
     pub fn join(mut self) -> io::Result<()> {
         self.stop();
