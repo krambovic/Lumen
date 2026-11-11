@@ -6,6 +6,7 @@
 //! ("lumen-proxy") and (2) the direct in-process connection ("direct").
 
 use std::collections::BTreeMap;
+use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -110,6 +111,22 @@ fn strip_headers_cross_origin(headers: &mut BTreeMap<String, String>, source: &U
 
 fn http_error(status: u16, reason: &str) -> SubscriptionFetcherError {
     SubscriptionFetcherError::Http(format!("HTTP Error {status}: {reason}"))
+}
+
+fn request_error(error: reqwest::Error) -> SubscriptionFetcherError {
+    let error = error.without_url();
+    let mut message = error.to_string();
+    let mut cause = error.source();
+    while let Some(inner) = cause {
+        message.push_str(": ");
+        message.push_str(&inner.to_string());
+        cause = inner.source();
+    }
+    if error.is_timeout() {
+        SubscriptionFetcherError::Timeout(message)
+    } else {
+        SubscriptionFetcherError::Unavailable(message)
+    }
 }
 
 fn collect_headers(headers: &reqwest::header::HeaderMap) -> BTreeMap<String, String> {
@@ -259,13 +276,7 @@ async fn download_with_client(
                 request = request.header(name, value);
             }
         }
-        let response = request.send().await.map_err(|exc| {
-            if exc.is_timeout() {
-                SubscriptionFetcherError::Timeout(exc.to_string())
-            } else {
-                SubscriptionFetcherError::Unavailable(exc.to_string())
-            }
-        })?;
+        let response = request.send().await.map_err(request_error)?;
         let status = response.status().as_u16();
 
         if matches!(status, 301 | 302 | 303 | 307 | 308) {
@@ -341,13 +352,7 @@ async fn download_with_client(
                     }
                 }
                 Ok(None) => break,
-                Err(exc) => {
-                    return Err(if exc.is_timeout() {
-                        SubscriptionFetcherError::Timeout(exc.to_string())
-                    } else {
-                        SubscriptionFetcherError::Unavailable(exc.to_string())
-                    })
-                }
+                Err(error) => return Err(request_error(error)),
             }
         }
 

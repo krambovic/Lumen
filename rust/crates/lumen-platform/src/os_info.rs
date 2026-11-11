@@ -48,6 +48,50 @@ pub fn windows_version() -> Option<(u32, u32, u32)> {
     None
 }
 
+/// Derive the provider HWID without exposing the Windows installation GUID.
+#[cfg(windows)]
+pub fn subscription_hwid(install_id: &str) -> Option<String> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    use uuid::Uuid;
+    use winreg::{
+        RegKey,
+        enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY},
+    };
+
+    let machine = RegKey::predef(HKEY_LOCAL_MACHINE);
+    for view in [KEY_WOW64_64KEY, 0] {
+        let Ok(key) =
+            machine.open_subkey_with_flags(r"SOFTWARE\Microsoft\Cryptography", KEY_READ | view)
+        else {
+            continue;
+        };
+        let Ok(raw) = key.get_value::<String, _>("MachineGuid") else {
+            continue;
+        };
+        let guid = raw.trim().trim_matches(['{', '}']);
+        if guid.is_empty() || guid.contains(['\r', '\n']) {
+            continue;
+        }
+        let guid = Uuid::parse_str(guid)
+            .map(|guid| guid.to_string())
+            .unwrap_or_else(|_| guid.chars().take(256).collect());
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(install_id.as_bytes()).expect("HMAC accepts any key size");
+        mac.update(guid.as_bytes());
+        let digest = mac.finalize().into_bytes();
+        let mut bytes = [0; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        return Some(Uuid::from_bytes(bytes).to_string());
+    }
+    None
+}
+
+#[cfg(not(windows))]
+pub fn subscription_hwid(_install_id: &str) -> Option<String> {
+    None
+}
+
 /// Python `sys.platform`.
 pub fn sys_platform() -> &'static str {
     if cfg!(windows) {

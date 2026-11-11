@@ -86,6 +86,7 @@ static EMAIL: LazyLock<Regex> =
 static FILE_NAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)filename\*?=(?:UTF-8''|")?([^";]+)"#).unwrap());
 
+#[derive(Default)]
 pub struct SubscriptionResponse {
     pub text: String,
     pub userinfo: Map<String, Value>,
@@ -111,13 +112,13 @@ impl SubscriptionResponse {
         } else {
             let raw = String::from_utf8_lossy(&payload.body);
             let (text, directives) = body_directives(raw.trim());
-            merge(&mut userinfo, directives);
-            merge(&mut userinfo, json_metadata(&text));
+            merge_subscription_info(&mut userinfo, directives);
+            merge_subscription_info(&mut userinfo, json_metadata(&text));
             decode_subscription_blob(&text)
                 .filter(|decoded| decoded.contains("://"))
                 .unwrap_or(text)
         };
-        merge(&mut userinfo, header_metadata(&headers, profile));
+        merge_subscription_info(&mut userinfo, header_metadata(&headers, profile));
         Self {
             text,
             userinfo,
@@ -461,7 +462,7 @@ fn normalize_field(field: &str, raw: &str) -> Option<Value> {
     (!value.is_empty()).then(|| json!(value))
 }
 
-fn merge(target: &mut Map<String, Value>, mut extra: Map<String, Value>) {
+pub fn merge_subscription_info(target: &mut Map<String, Value>, mut extra: Map<String, Value>) {
     if let Some(Value::Object(premium)) = extra.remove("premiumFeatures") {
         let mut combined = match target.remove("premiumFeatures") {
             Some(Value::Object(existing)) => existing,

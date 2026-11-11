@@ -5,6 +5,7 @@
 
 pub mod fetcher;
 pub mod presentation;
+pub mod request;
 pub mod response;
 pub mod text;
 

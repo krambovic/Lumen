@@ -1,12 +1,12 @@
 //! Background fetch and preparation for an ordered batch of subscriptions.
 
+mod negotiation;
+
 use std::collections::BTreeMap;
 
-use lumen_core::constants::APP_VERSION;
-use lumen_core::link_parser::MAX_IMPORT_BYTES;
 use lumen_core::models::AppSettings;
 use lumen_core::secret_scrubber::scrub_text;
-use lumen_core::subscription::{fetcher::fetch_subscription_http, response::SubscriptionResponse};
+use lumen_core::subscription::response::SubscriptionResponse;
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 
@@ -22,8 +22,13 @@ pub struct SubscriptionJob {
     pub url: String,
     pub kind: SubscriptionJobKind,
     pub name: String,
+    /// An explicit client profile bypasses the provider fallback sequence.
     pub client_profile: String,
     pub headers: BTreeMap<String, String>,
+    pub user_agent: String,
+    pub hwid: String,
+    pub use_real_hwid: bool,
+    pub converter_url: String,
     pub use_proxy_tun: bool,
     pub proxy_url: String,
     pub etag: String,
@@ -38,14 +43,12 @@ impl SubscriptionJob {
             url,
             kind,
             name: String::new(),
-            client_profile: "Lumen".into(),
-            headers: BTreeMap::from([
-                ("accept".into(), "*/*".into()),
-                (
-                    "user-agent".into(),
-                    format!("Lumen-Subscription/Windows-{APP_VERSION}"),
-                ),
-            ]),
+            client_profile: String::new(),
+            headers: BTreeMap::new(),
+            user_agent: String::new(),
+            hwid: String::new(),
+            use_real_hwid: true,
+            converter_url: String::new(),
             use_proxy_tun: false,
             proxy_url: String::new(),
             etag: String::new(),
@@ -54,27 +57,11 @@ impl SubscriptionJob {
             exclude_regex: String::new(),
         }
     }
-
-    fn request_headers(&self) -> BTreeMap<String, String> {
-        let mut headers: BTreeMap<_, _> = self
-            .headers
-            .iter()
-            .map(|(key, value)| (key.to_ascii_lowercase(), value.clone()))
-            .collect();
-        for (name, value) in [
-            ("if-none-match", &self.etag),
-            ("if-modified-since", &self.last_modified),
-        ] {
-            if !value.trim().is_empty() {
-                headers.insert(name.into(), value.trim().into());
-            }
-        }
-        headers
-    }
 }
 
 pub struct SubscriptionDownload {
     pub response: SubscriptionResponse,
+    pub errors: Vec<String>,
     pub prepared: Option<PreparedSubscription>,
 }
 
@@ -96,7 +83,7 @@ pub struct SubscriptionFetchWorker {
 }
 
 impl SubscriptionFetchWorker {
-    /// Start a batch with each job's resolved HTTP URL and client profile.
+    /// Start a batch of subscription imports or refreshes.
     pub fn start(batch_id: u64, jobs: Vec<SubscriptionJob>) -> Self {
         let (stop, mut stopping) = watch::channel(false);
         let (send, events) = mpsc::channel(8);
@@ -152,23 +139,11 @@ async fn run_batch(
 }
 
 async fn download(job: &SubscriptionJob) -> Result<SubscriptionDownload, String> {
-    let payload = fetch_subscription_http(
-        &job.url,
-        &job.request_headers(),
-        20.0,
-        MAX_IMPORT_BYTES,
-        job.use_proxy_tun,
-        &job.proxy_url,
-        false,
-        None,
-    )
-    .await
-    .map_err(scrub_error)?;
-    let profile = job.client_profile.clone();
+    let (response, errors) = negotiation::fetch(job).await.map_err(scrub_error)?;
+    let errors = errors.into_iter().map(scrub_error).collect();
     let include = job.include_regex.clone();
     let exclude = job.exclude_regex.clone();
     tokio::task::spawn_blocking(move || {
-        let response = SubscriptionResponse::from_http(payload, &profile);
         let prepared = (!response.text.is_empty() && !response.not_modified).then(|| {
             let settings = AppSettings {
                 subscription_include_regex: include,
@@ -177,7 +152,11 @@ async fn download(job: &SubscriptionJob) -> Result<SubscriptionDownload, String>
             };
             PreparedSubscription::parse(&response.text, &settings)
         });
-        SubscriptionDownload { response, prepared }
+        SubscriptionDownload {
+            response,
+            errors,
+            prepared,
+        }
     })
     .await
     .map_err(scrub_error)
@@ -216,6 +195,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retries_the_next_profile_after_a_client_stub_and_keeps_validators() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "http://{}/?providerid=local",
+            listener.local_addr().unwrap()
+        );
+        let mut job = SubscriptionJob::new(url, SubscriptionJobKind::Update);
+        job.use_proxy_tun = true;
+        job.use_real_hwid = false;
+        job.etag = "\"saved\"".into();
+        let mut worker = SubscriptionFetchWorker::start(12, vec![job]);
+        let (mut first, headers) = timeout(TEST_TIMEOUT, request(&listener)).await.unwrap();
+        assert!(headers.contains("Lumen-Subscription/Windows-"));
+        let body = LINK.replace("First", "client%20not%20supported");
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        first.write_all(reply.as_bytes()).await.unwrap();
+        drop(first);
+        let event = timeout(TEST_TIMEOUT, async {
+            tokio::select! {
+                incoming = request(&listener) => incoming,
+                _ = worker.recv() => panic!("worker accepted the client stub"),
+            }
+        })
+        .await
+        .unwrap();
+        let (mut second, headers) = event;
+        assert!(headers.contains("Happ/2.18.3/Windows/"));
+        assert!(headers.contains("if-none-match: \"saved\""));
+        second
+            .write_all(b"HTTP/1.1 304 Not Modified\r\nETag: \"saved\"\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+
+        let Some(SubscriptionWorkerEvent::Fetched {
+            batch_id: 12,
+            download: Ok(result),
+            ..
+        }) = next(&mut worker).await
+        else {
+            panic!("expected the conditional response");
+        };
+        assert!(result.response.not_modified);
+        assert_eq!(result.response.userinfo["clientProfile"], "Happ Windows");
+        assert_eq!(result.response.userinfo["providerId"], "local");
+        assert!(result.prepared.is_none());
+    }
+
+    #[tokio::test]
+    async fn permanent_not_found_finishes_without_trying_other_profiles() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut job = SubscriptionJob::new(
+            format!("http://{}/missing", listener.local_addr().unwrap()),
+            SubscriptionJobKind::Update,
+        );
+        job.use_proxy_tun = true;
+        job.use_real_hwid = false;
+        let mut worker = SubscriptionFetchWorker::start(20, vec![job]);
+        let (mut socket, _) = timeout(TEST_TIMEOUT, request(&listener)).await.unwrap();
+        socket
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let Some(SubscriptionWorkerEvent::Fetched {
+            download: Ok(result),
+            ..
+        }) = next(&mut worker).await
+        else {
+            panic!("expected a rejected download");
+        };
+        assert!(result.response.text.is_empty());
+        assert!(result.prepared.is_none());
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].contains("HTTP 404"));
+        assert!(matches!(
+            next(&mut worker).await,
+            Some(SubscriptionWorkerEvent::Completed {
+                batch_id: 20,
+                total: 1
+            })
+        ));
+    }
+
+    #[tokio::test]
     async fn batches_success_failure_and_not_modified_in_job_order() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -244,12 +309,14 @@ mod tests {
         let mut import =
             SubscriptionJob::new(format!("{base}/import"), SubscriptionJobKind::Import);
         import.use_proxy_tun = true;
+        import.use_real_hwid = false;
         import.include_regex = "First".into();
         let mut failure = SubscriptionJob::new("invalid URL".into(), SubscriptionJobKind::Import);
         failure.use_proxy_tun = true;
         let mut update =
             SubscriptionJob::new(format!("{base}/update"), SubscriptionJobKind::Update);
         update.use_proxy_tun = true;
+        update.use_real_hwid = false;
         update.etag = "\"saved\"".into();
         update.last_modified = "Sat, 29 Aug 2026 00:00:00 GMT".into();
         let mut worker = SubscriptionFetchWorker::start(7, vec![import, failure, update]);
@@ -303,6 +370,7 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let mut job = SubscriptionJob::new(url, SubscriptionJobKind::Update);
         job.use_proxy_tun = true;
+        job.use_real_hwid = false;
         let mut worker = SubscriptionFetchWorker::start(1, vec![job]);
         let (mut stream, _) = timeout(TEST_TIMEOUT, request(&listener)).await.unwrap();
         stream
