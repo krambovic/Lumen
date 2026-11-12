@@ -7,7 +7,7 @@
 //! Module map:
 //! - [`theme`] — Theme.qml design tokens
 //! - [`navigation`] — the rail model from Main.qml
-//! - [`pages`] — page dispatch (extension point for the page agents)
+//! - [`pages`] — page dispatch
 //! - [`toast`] — ToastHost.qml + Windows toast.py
 //! - [`tray`] — tray.py QmlTray
 //! - [`geometry`] — window_geometry.py
@@ -19,6 +19,7 @@ pub mod navigation;
 pub mod pages;
 mod onboarding;
 pub mod reveal;
+mod startup_diagnostics;
 pub mod theme;
 pub mod toast;
 pub mod tray;
@@ -73,10 +74,7 @@ pub fn tray_available() -> bool {
 
 /// Port of `main_qml.main()`. Returns the process exit code.
 pub fn run() -> i32 {
-    // `_install_crash_guards`, `_enable_gpu_friendly_defaults` and
-    // `_install_message_filter` are Qt-specific: Rust panics do not abort the
-    // process from egui callbacks, the render backend is fixed to glow
-    // (OpenGL) at compile time and egui performs no clipboard MIME probing.
+    // The rendering backend is fixed to glow (OpenGL) at compile time.
     win_native::set_app_user_model_id();
 
     let launch_arguments: Vec<String> = std::env::args().collect();
@@ -104,7 +102,11 @@ pub fn run() -> i32 {
             }
         };
 
+    let diagnostics = startup_diagnostics::StartupDiagnostics::install(
+        &lumen_core::constants::log_dir(),
+    );
     let mut bridge = AppBridge::new();
+    diagnostics.report_previous();
     {
         let handle = bridge.runtime_handle();
         let _entered = handle.enter();
@@ -189,7 +191,13 @@ pub fn run() -> i32 {
     if let Some(window) = power_window.as_ref() {
         window.close();
     }
-    result.is_ok().then_some(0).unwrap_or(1)
+    match result {
+        Ok(()) => 0,
+        Err(error) => {
+            diagnostics.report_renderer_failure(&error);
+            1
+        }
+    }
 }
 
 // ── Shell application ────────────────────────────────────────────────────

@@ -45,8 +45,7 @@ impl Page {
         self as usize
     }
 
-    /// The localized page title (used by the placeholder page panels until the
-    /// page agents land).
+    /// The source title for localization.
     pub fn title(self) -> &'static str {
         match self {
             Page::Dashboard => "\u{041F}\u{0430}\u{043D}\u{0435}\u{043B}\u{044C}",

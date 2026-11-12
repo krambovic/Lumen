@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 111
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 113
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -387,6 +387,9 @@ client, core/resource updaters, zapret and discord proxy managers.
   and file import, tests, and link, QR and JSON export.
 - The dashboard and server table render the original flag sprite, with the
   existing stripe and emoji fallbacks for countries outside the sprite.
+- The Windows GUI records Rust panics and window initialization failures in
+  the crash log. The next primary launch imports the previous report into
+  the application log.
 - Settings: appearance, networking, startup and tests, subscriptions, DNS,
   updates and data, including the native file selectors, color and reset
   dialogs, profile passwords and backup handling.
@@ -423,6 +426,9 @@ are handled inside their porting commits.
   VLESS, Trojan, Shadowsocks and Hysteria2 in four proxy/TUN scenarios after
   masking the random Clash API secret. Both cores accepted all seven
   generated configurations.
+- Xray and sing-box extended both relayed a real HTTP request through an
+  isolated local VLESS server from each of the generated SOCKS and HTTP
+  proxy listeners.
 - Full desktop verification covers launching the installed application,
   upgrading a Python installation, connecting in proxy and TUN modes,
   and comparing generated runtime configurations against Python.
