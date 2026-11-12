@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 109
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 110
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -382,13 +382,14 @@ client, core/resource updaters, zapret and discord proxy managers.
 - Dashboard: connect and mode controls, quick connect, searchable server list,
   batch test and server actions, shared protocol editor and QR dialog, live
   rates, latency history, traffic totals and the routing preset picker.
+- Nodes: sortable and resizable server table, selection and bulk operations,
+  node and subscription inspectors, group and subscription dialogs, clipboard
+  and file import, tests, and link, QR and JSON export.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-ui (egui)
-Pages from `qml_app/qml`: Nodes and Settings, with their
-page-specific dialogs. These pages currently render themed titles through
-the page dispatcher.
+Settings and its page-specific dialogs are the remaining QML page.
 
 ## Known warnings to clean
 None — the lumen-core list was cleaned in the same pass as the direct-route

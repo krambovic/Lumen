@@ -5507,6 +5507,42 @@ impl AppBridge {
     }
 
     /// Python `copyOutboundJson`.
+    pub fn node_json_for_export(&mut self, node_id: &str, runtime: bool) -> Option<(String, &'static str)> {
+        let node = (!node_id.is_empty()).then_some(node_id);
+        let (payload, name) = {
+            let mut controller = self.controller.lock();
+            if runtime {
+                let settings = &controller.state.settings;
+                let selected = node.and_then(|id| controller.state.nodes.iter().find(|node| node.id == id));
+                let singbox = controller.is_singbox_editor_mode() || (!settings.tun_mode && lumen_app::node_runtime_service::proxy_core_for_node(selected, &settings.core_preference) == "singbox");
+                (controller.export_runtime_config_json(node), if singbox { "singbox_config.json" } else { "xray_config.json" })
+            } else { (controller.export_node_outbound_json(node), "outbound.json") }
+        };
+        if payload.is_none() { self.notify("warning", &tr("Выберите сервер для экспорта", &[])); }
+        payload.map(|payload| (payload, name))
+    }
+
+    pub fn finish_json_export(&mut self, path: anyhow::Result<Option<PathBuf>>, payload: &str) -> bool {
+        match path {
+            Ok(None) => {
+                self.notify("info", &tr("Экспорт отменён, JSON скопирован в буфер обмена", &[]));
+                true
+            }
+            Ok(Some(path)) => {
+                match std::fs::write(&path, payload) {
+                    Ok(()) => self.notify("success", &tr("JSON экспортирован: {path}", &[("path", &path.to_string_lossy())])),
+                    Err(error) => self.notify("error", &tr("Не удалось сохранить файл: {error}", &[("error", &error.to_string())])),
+                }
+                false
+            }
+            Err(error) => {
+                self.notify("error", &tr("Не удалось сохранить файл: {error}", &[("error", &error.to_string())]));
+                false
+            }
+        }
+    }
+
+    /// Python `copyOutboundJson`.
     pub fn copy_outbound_json(&mut self, node_id: &str) -> Option<String> {
         let payload = self
             .controller

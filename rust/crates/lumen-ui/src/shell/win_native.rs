@@ -17,22 +17,34 @@ pub(super) fn pick_json_file(directory: &std::path::Path, title: &str) -> anyhow
     pick_file(directory, title, "JSON files (*.json)\0*.json\0")
 }
 
-#[cfg(windows)]
+pub(super) fn save_json_file(title: &str, suggested: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
+    file_dialog(std::path::Path::new(""), title, "JSON files (*.json)\0*.json\0", Some(suggested))
+}
+
 pub(super) fn pick_file(directory: &std::path::Path, title: &str, filter: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
+    file_dialog(directory, title, filter, None)
+}
+
+#[cfg(windows)]
+fn file_dialog(directory: &std::path::Path, title: &str, filter: &str, suggested: Option<&str>) -> anyhow::Result<Option<std::path::PathBuf>> {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
     use windows::Win32::UI::Controls::Dialogs::{
-        CommDlgExtendedError, GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY,
-        OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+        CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY,
+        OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
-    use windows::core::{PCWSTR, PWSTR};
+    use windows::core::{PCWSTR, PWSTR, w};
 
     let directory: Vec<u16> = directory.as_os_str().encode_wide().chain([0]).collect();
     let title = to_wide(title);
     let filter = to_wide(filter);
     let mut path = vec![0_u16; 32_768];
+    if let Some(suggested) = suggested {
+        for (target, source) in path.iter_mut().zip(suggested.encode_utf16()) { *target = source; }
+    }
+    let flags = if suggested.is_some() { OFN_OVERWRITEPROMPT } else { OFN_FILEMUSTEXIST | OFN_HIDEREADONLY };
     let mut options = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
         hwndOwner: unsafe { GetActiveWindow() },
@@ -40,13 +52,17 @@ pub(super) fn pick_file(directory: &std::path::Path, title: &str, filter: &str) 
         nFilterIndex: 1,
         lpstrFile: PWSTR(path.as_mut_ptr()),
         nMaxFile: path.len() as u32,
-        lpstrInitialDir: PCWSTR(directory.as_ptr()),
+        lpstrInitialDir: if directory.len() > 1 { PCWSTR(directory.as_ptr()) } else { PCWSTR::null() },
         lpstrTitle: PCWSTR(title.as_ptr()),
-        Flags: OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST,
+        lpstrDefExt: if suggested.is_some() { w!("json") } else { PCWSTR::null() },
+        Flags: flags | OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST,
         ..Default::default()
     };
     // The dialog borrows the UTF-16 buffers until GetOpenFileNameW returns.
-    if unsafe { GetOpenFileNameW(&mut options) }.as_bool() {
+    let result = unsafe {
+        if suggested.is_some() { GetSaveFileNameW(&mut options) } else { GetOpenFileNameW(&mut options) }
+    };
+    if result.as_bool() {
         let length = path.iter().position(|&unit| unit == 0).unwrap_or(path.len());
         return Ok(Some(OsString::from_wide(&path[..length]).into()));
     }
@@ -56,7 +72,7 @@ pub(super) fn pick_file(directory: &std::path::Path, title: &str, filter: &str) 
 }
 
 #[cfg(not(windows))]
-pub(super) fn pick_file(_directory: &std::path::Path, _title: &str, _filter: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
+fn file_dialog(_directory: &std::path::Path, _title: &str, _filter: &str, _suggested: Option<&str>) -> anyhow::Result<Option<std::path::PathBuf>> {
     anyhow::bail!("The native file dialog requires Windows")
 }
 

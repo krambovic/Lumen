@@ -18,6 +18,7 @@ mod history;
 mod logs;
 mod node_editor;
 mod node_qr;
+mod nodes;
 mod routing;
 mod updates;
 mod zapret;
@@ -28,6 +29,7 @@ pub(super) struct PageState {
     configs: configs::ConfigsPage,
     dashboard: dashboard::DashboardPage,
     node_qr: node_qr::NodeQr,
+    nodes: nodes::NodesPage,
     history: history::HistoryPage,
     logs: logs::LogsPage,
     routing: routing::RoutingPage,
@@ -39,6 +41,7 @@ impl PageState {
     pub(super) fn on_event(&mut self, event: &UiEvent) {
         self.updates.on_event(event);
         self.node_qr.on_event(event);
+        self.nodes.on_event(event);
     }
 }
 
@@ -78,7 +81,7 @@ pub(super) fn render_page(
         .observe(page_ctx.bridge, page == Page::Dashboard);
     match page {
         Page::Dashboard => state.dashboard.render(ui, page_ctx),
-        Page::Nodes => placeholder(ui, page_ctx.theme, page),
+        Page::Nodes => state.nodes.render(ui, page_ctx),
         Page::Routing => state.routing.render(ui, page_ctx),
         Page::Configs => state.configs.render(ui, page_ctx),
         Page::Zapret => state.zapret.render(ui, page_ctx),
