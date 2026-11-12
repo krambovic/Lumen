@@ -17,6 +17,7 @@
 pub mod geometry;
 pub(crate) mod motion;
 pub(crate) mod widgets;
+mod wheel;
 pub mod navigation;
 pub mod pages;
 mod onboarding;
@@ -234,6 +235,7 @@ pub struct ShellApp {
     system_dark: bool,
     system_dark_refresh_at: Instant,
     installed_font_family: Option<String>,
+    wheel: wheel::WheelGlide,
     conflict_dialog: Option<ConflictDialog>,
     lock_password: String,
     lock_error_visible: bool,
@@ -292,6 +294,7 @@ impl ShellApp {
             system_dark: false,
             system_dark_refresh_at: Instant::now(),
             installed_font_family: None,
+            wheel: wheel::WheelGlide::default(),
             conflict_dialog: None,
             lock_password: String::new(),
             lock_error_visible: false,
@@ -317,7 +320,7 @@ impl ShellApp {
         self.refresh_system_scheme(true);
         let theme = self.theme();
         theme::apply_fonts(&cc.egui_ctx, &theme);
-        self.installed_font_family = Some(theme.font_family.clone());
+        self.installed_font_family = Some(theme::font_key(&theme));
         theme::apply_visuals(&cc.egui_ctx, &theme);
     }
 
@@ -556,6 +559,9 @@ impl ShellApp {
         self.bridge.set_tray_available(self.tray.is_some());
         self.bridge.start_deferred();
         self.deferred_fallback_deadline = Some(Instant::now() + START_DEFERRED_FALLBACK);
+        if let Some(hwnd) = win_native::find_main_window(APP_NAME) {
+            win_native::install_custom_frame(hwnd);
+        }
         self.apply_mica(ctx, true);
         // QTimer.singleShot(800, _cleanup_legacy_files): the legacy startup
         // cleanup must never hold the GUI before the window is visible.
@@ -1138,43 +1144,51 @@ impl ShellApp {
         if !supported || self.bridge.locked() {
             return;
         }
-        egui::Area::new(egui::Id::unique("lumen-drop-overlay"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(ctx.viewport_rect().min).default_size(ctx.viewport_rect().size())
-            .interactable(false)
-            .show(ctx, |ui| {
-                let rect = ui.max_rect();
-                let fill = if theme.dark {
-                    Color32::from_rgba_unmultiplied(10, 13, 18, 224)
-                } else {
-                    Color32::from_rgba_unmultiplied(245, 248, 252, 230)
-                };
-                ui.painter().rect_filled(rect, 0.0, fill);
-                ui.painter().rect_stroke(
-                    rect,
-                    0.0,
-                    egui::Stroke::new(2.0, theme.accent),
-                    egui::StrokeKind::Inside,
-                );
-                ui.vertical_centered(|ui| {
-                    ui.add_space(rect.height() * 0.35);
-                    ui.label(egui::RichText::new("\u{E8B7}").size(42.0).color(theme.accent));
-                    ui.add_space(theme.spacing as f32);
-                    ui.label(
-                        egui::RichText::new(tr(
-                            "\u{041E}\u{0442}\u{043F}\u{0443}\u{0441}\u{0442}\u{0438}\u{0442}\u{0435} \u{0444}\u{0430}\u{0439}\u{043B}\u{044B} \u{0434}\u{043B}\u{044F} \u{0438}\u{043C}\u{043F}\u{043E}\u{0440}\u{0442}\u{0430}",
-                            &[],
-                        ))
-                        .size(theme.font_strong as f32)
-                        .color(theme.text),
-                    );
-                    ui.label(
-                        egui::RichText::new(".conf  .txt  .json  .yaml  .yml")
-                            .size(theme.font_small as f32)
-                            .color(theme.text_muted),
-                    );
-                });
-            });
+        // Painted straight onto a foreground layer: an `Area` sizes itself to
+        // its content and covered only part of the window.
+        let rect = ctx.viewport_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("lumen-drop-overlay"),
+        ));
+        let fill = if theme.dark {
+            Color32::from_rgba_unmultiplied(10, 13, 18, 224)
+        } else {
+            Color32::from_rgba_unmultiplied(245, 248, 252, 230)
+        };
+        painter.rect_filled(rect, 0.0, fill);
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(2.0, theme.accent),
+            egui::StrokeKind::Inside,
+        );
+        // Centred column with 12 px spacing, as in the QML ColumnLayout.
+        let title = painter.layout_no_wrap(
+            tr(
+                "\u{041E}\u{0442}\u{043F}\u{0443}\u{0441}\u{0442}\u{0438}\u{0442}\u{0435} \u{0444}\u{0430}\u{0439}\u{043B}\u{044B} \u{0434}\u{043B}\u{044F} \u{0438}\u{043C}\u{043F}\u{043E}\u{0440}\u{0442}\u{0430}",
+                &[],
+            ),
+            theme::semibold(theme.font_strong as f32),
+            theme.text,
+        );
+        let glyph = painter.layout_no_wrap(
+            "\u{E8B7}".to_owned(),
+            FontId::proportional(42.0),
+            theme.accent,
+        );
+        let hint = painter.layout_no_wrap(
+            ".conf  .txt  .json  .yaml  .yml".to_owned(),
+            FontId::proportional(theme.font_small as f32),
+            theme.text_muted,
+        );
+        let height = glyph.size().y + title.size().y + hint.size().y + 24.0;
+        let mut y = rect.center().y - height / 2.0;
+        for (galley, color) in [(glyph, theme.accent), (title, theme.text), (hint, theme.text_muted)] {
+            let size = galley.size();
+            painter.galley(egui::pos2(rect.center().x - size.x / 2.0, y), galley, color);
+            y += size.y + 12.0;
+        }
     }
 
     /// The master-password lock overlay (Main.qml `lockOverlay`).
@@ -1388,6 +1402,13 @@ impl eframe::App for ShellApp {
         [0.0; 4]
     }
 
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let animated = self.bridge.settings().ui_animations;
+        if self.wheel.apply(raw_input, animated, egui::Modifiers::CTRL) {
+            ctx.request_repaint();
+        }
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let handle = self.bridge.runtime_handle();
         let _entered = handle.enter();
@@ -1461,9 +1482,9 @@ impl eframe::App for ShellApp {
         let _entered = handle.enter();
         // 1. Theme + fonts + visuals (Theme bindings in Component.onCompleted).
         let theme = self.theme();
-        if self.installed_font_family.as_deref() != Some(theme.font_family.as_str()) {
+        if self.installed_font_family.as_deref() != Some(theme::font_key(&theme).as_str()) {
             theme::apply_fonts(ctx, &theme);
-            self.installed_font_family = Some(theme.font_family.clone());
+            self.installed_font_family = Some(theme::font_key(&theme));
         }
         theme::apply_visuals(ctx, &theme);
 

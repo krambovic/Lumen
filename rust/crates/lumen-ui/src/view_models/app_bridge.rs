@@ -5642,26 +5642,14 @@ impl AppBridge {
         if target.is_empty() {
             return;
         }
-        self.notify("info", &tr("Подписка обновляется...", &[]));
+        // The dispatcher reports the "updating" status itself; a second
+        // notification here showed the toast twice.
         let _ = self.controller.lock().update_subscription(&target);
     }
 
     /// Python `updateAllSubscriptions`.
     pub fn update_all_subscriptions(&mut self) {
-        let has_urls = {
-            let controller = self.controller.lock();
-            controller.state.subscriptions.iter().any(|item| {
-                !item
-                    .get("url")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim()
-                    .is_empty()
-            })
-        };
-        if has_urls {
-            self.notify("info", &tr("Подписки обновляются...", &[]));
-        }
+        // The dispatcher reports the "updating" status itself.
         let _ = self.controller.lock().update_all_subscriptions();
     }
 

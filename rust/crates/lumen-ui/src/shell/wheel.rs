@@ -1,0 +1,179 @@
+//! Mouse-wheel glide of `FluentScroll.qml`: every notch moves the target by
+//! `wheelStep` (92 px) and the view eases to it over `glide` (540 ms,
+//! `Easing.OutQuint`). egui's own wheel handling steps 40 px per notch and
+//! settles in about 100 ms, which reads as a jump next to the QML client.
+//!
+//! The glide rewrites line-unit wheel events in the raw input into small
+//! point-unit deltas, so every scroll area follows it without changes.
+
+use egui::{Event, Modifiers, MouseWheelSource, MouseWheelUnit, RawInput, TouchPhase, Vec2};
+
+use super::motion::ease_out_quint;
+
+const WHEEL_STEP: f32 = 92.0;
+const GLIDE_SECONDS: f64 = 0.54;
+/// egui adds its own smoothing to point deltas of 8 px and more.
+const MAX_EVENT_DELTA: f32 = 7.0;
+
+#[derive(Default)]
+pub(crate) struct WheelGlide {
+    /// Start, end and already emitted travel of the running animation.
+    from: Vec2,
+    to: Vec2,
+    emitted: Vec2,
+    start: f64,
+    running: bool,
+    modifiers: Modifiers,
+    source: Option<MouseWheelSource>,
+}
+
+impl WheelGlide {
+    fn position(&self, now: f64) -> Vec2 {
+        let progress = ((now - self.start) / GLIDE_SECONDS).clamp(0.0, 1.0) as f32;
+        self.from + (self.to - self.from) * ease_out_quint(progress)
+    }
+
+    /// Replace wheel notches in `raw` with this frame's share of the glide.
+    /// Returns `true` while the animation needs further frames.
+    pub(crate) fn apply(&mut self, raw: &mut RawInput, animated: bool, zoom: Modifiers) -> bool {
+        let now = raw.time.unwrap_or(0.0);
+        let mut notches = Vec2::ZERO;
+        raw.events.retain(|event| match event {
+            Event::MouseWheel {
+                unit: MouseWheelUnit::Line,
+                delta,
+                phase: TouchPhase::Move,
+                source,
+                modifiers,
+            } if !modifiers.matches_any(zoom) => {
+                notches += *delta;
+                self.modifiers = *modifiers;
+                self.source = Some(*source);
+                false
+            }
+            _ => true,
+        });
+        if notches != Vec2::ZERO {
+            // `scrollAnim.to = (running ? to : contentY) - notches * wheelStep`.
+            let current = if self.running { self.position(now) } else { self.emitted };
+            let base = if self.running { self.to } else { current };
+            self.from = current;
+            self.to = base + notches * WHEEL_STEP;
+            self.start = if animated { now } else { now - GLIDE_SECONDS };
+            self.running = true;
+        }
+        if !self.running {
+            return false;
+        }
+        let position = self.position(now);
+        let mut delta = position - self.emitted;
+        self.emitted = position;
+        if now - self.start >= GLIDE_SECONDS {
+            self.running = false;
+            // Keep the accumulators small; only differences matter.
+            self.from = Vec2::ZERO;
+            self.to = Vec2::ZERO;
+            self.emitted = Vec2::ZERO;
+        }
+        let source = self.source.unwrap_or(MouseWheelSource::Unknown);
+        while delta.length() > 0.01 {
+            let step = if delta.length() > MAX_EVENT_DELTA {
+                delta * (MAX_EVENT_DELTA / delta.length())
+            } else {
+                delta
+            };
+            delta -= step;
+            raw.events.push(Event::MouseWheel {
+                unit: MouseWheelUnit::Point,
+                delta: step,
+                phase: TouchPhase::Move,
+                source,
+                modifiers: self.modifiers,
+            });
+        }
+        self.running
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn notch(lines: f32) -> Event {
+        Event::MouseWheel {
+            unit: MouseWheelUnit::Line,
+            delta: Vec2::new(0.0, lines),
+            phase: TouchPhase::Move,
+            source: MouseWheelSource::Unknown,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn travelled(raw: &RawInput) -> f32 {
+        raw.events
+            .iter()
+            .map(|event| match event {
+                Event::MouseWheel { unit: MouseWheelUnit::Point, delta, .. } => {
+                    assert!(delta.length() <= MAX_EVENT_DELTA + 0.001);
+                    delta.y
+                }
+                other => panic!("unexpected event {other:?}"),
+            })
+            .sum()
+    }
+
+    #[test]
+    fn a_notch_travels_one_wheel_step_over_the_glide() {
+        let mut glide = WheelGlide::default();
+        let mut total = 0.0;
+        let mut running = true;
+        let mut frame = 0;
+        while running {
+            let mut raw = RawInput { time: Some(frame as f64 / 60.0), ..Default::default() };
+            if frame == 0 {
+                raw.events.push(notch(-1.0));
+            }
+            running = glide.apply(&mut raw, true, Modifiers::CTRL);
+            total += travelled(&raw);
+            frame += 1;
+        }
+        assert!((total + WHEEL_STEP).abs() < 0.1, "travelled {total}");
+        // 540 ms at 60 Hz.
+        assert!((32..=34).contains(&frame), "frames {frame}");
+    }
+
+    #[test]
+    fn a_second_notch_extends_the_running_target() {
+        let mut glide = WheelGlide::default();
+        let mut total = 0.0;
+        for frame in 0..200 {
+            let mut raw = RawInput { time: Some(frame as f64 / 60.0), ..Default::default() };
+            if frame == 0 || frame == 6 {
+                raw.events.push(notch(1.0));
+            }
+            glide.apply(&mut raw, true, Modifiers::CTRL);
+            total += travelled(&raw);
+        }
+        assert!((total - 2.0 * WHEEL_STEP).abs() < 0.1, "travelled {total}");
+    }
+
+    #[test]
+    fn zoom_wheel_and_disabled_animations_are_not_glided() {
+        let mut glide = WheelGlide::default();
+        let mut raw = RawInput { time: Some(1.0), ..Default::default() };
+        raw.events.push(Event::MouseWheel {
+            unit: MouseWheelUnit::Line,
+            delta: Vec2::new(0.0, 1.0),
+            phase: TouchPhase::Move,
+            source: MouseWheelSource::Unknown,
+            modifiers: Modifiers::CTRL,
+        });
+        assert!(!glide.apply(&mut raw, true, Modifiers::CTRL));
+        assert_eq!(raw.events.len(), 1);
+
+        let mut raw = RawInput { time: Some(2.0), ..Default::default() };
+        raw.events.push(notch(1.0));
+        assert!(!glide.apply(&mut raw, false, Modifiers::CTRL));
+        assert!((travelled(&raw) - WHEEL_STEP).abs() < 0.1);
+    }
+}

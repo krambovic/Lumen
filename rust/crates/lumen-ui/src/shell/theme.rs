@@ -1881,6 +1881,16 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
 
         // The icon font supplies the Private Use Area glyphs used by QML.
         proportional.push("Segoe Fluent Icons".into());
+        // Segoe UI has no CJK glyphs; Qt falls back to the system font for
+        // the Chinese translation, so do the same.
+        if let Some(font) = std::env::var_os("WINDIR")
+            .and_then(|root| read_font_file(&PathBuf::from(root).join("Fonts").join("msyh.ttc")))
+        {
+            definitions
+                .font_data
+                .insert("Microsoft YaHei".into(), FontData::from_owned(font).into());
+            proportional.push("Microsoft YaHei".into());
+        }
         for (family, stem) in [("Segoe UI Semibold", "seguisb"), ("Segoe UI Bold", "segoeuib")] {
             let mut fonts = proportional.clone();
             if let Some(index) = fonts.iter().position(|name| name == stem) {
@@ -1912,6 +1922,11 @@ pub(super) fn semibold(size: f32) -> egui::FontId {
 
 pub(super) fn bold(size: f32) -> egui::FontId {
     egui::FontId::new(size, FontFamily::Name("Segoe UI Bold".into()))
+}
+
+/// Everything `apply_fonts` depends on; the shell reinstalls when it changes.
+pub fn font_key(theme: &Theme) -> String {
+    format!("{}@{}", theme.font_family, theme.font_scale)
 }
 
 /// Install the Segoe UI + Segoe Fluent Icons fonts once per session and keep
@@ -1962,6 +1977,16 @@ pub fn apply_fonts(ctx: &Context, theme: &Theme) {
 pub fn apply_visuals(ctx: &Context, theme: &Theme) {
     let mut style = Style::clone(&ctx.global_style());
     style.visuals.dark_mode = theme.dark;
+    // Glyph coverage is tuned per scheme: the dark-mode curve thins dark text
+    // on light surfaces. Whole-pixel glyph positions keep hinted stems sharp.
+    style.visuals.text_options.color_transfer_function = if theme.dark {
+        egui::epaint::FontColorTransferFunction::DARK_MODE_DEFAULT
+    } else {
+        egui::epaint::FontColorTransferFunction::LIGHT_MODE_DEFAULT
+    };
+    style.visuals.text_options.subpixel_binning = false;
+    // QML `Text` is not selectable.
+    style.interaction.selectable_labels = false;
     style.visuals.override_text_color = Some(theme.text);
     style.visuals.selection.bg_fill = theme.accent_soft;
     style.visuals.selection.stroke = egui::Stroke::new(1.0, theme.accent);

@@ -2101,8 +2101,9 @@ fn setting_row<R>(
     subtitle: &str,
     right: impl FnOnce(&mut Ui) -> R,
 ) -> R {
-    // Title (19) + 2 + subtitle (16); a lone title still clears a 32 px control.
-    let height = if subtitle.is_empty() { 32.0 } else { 37.0 };
+    // Title (19) + 2 + subtitle (16) at 100% font scale; a lone title still
+    // clears a 32 px control.
+    let height = (if subtitle.is_empty() { 32.0 } else { 37.0 }) * (theme.font_scale as f32).max(1.0);
     right_row(ui, height, |ui| {
         let result = right(ui);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {

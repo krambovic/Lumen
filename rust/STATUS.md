@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 127
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 132
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -392,6 +392,33 @@ client, core/resource updaters, zapret and discord proxy managers.
     settings pages. Known gaps: the QML rail scrolls when the window is too
     short while the Rust rail keeps its fixed groups, and the dashboard
     search field overflows its card by a few pixels at 640 px width.
+  - Window frame (`win_native::install_custom_frame`): the frameless
+    window is subclassed for `WM_NCHITTEST` (6 px resize borders and
+    corners) and `WM_NCCALCSIZE`. With an auto-hidden taskbar the work area
+    equals the monitor, and a client that covers the monitor exactly is
+    treated as fullscreen: it loses per-pixel alpha, so the backdrop turns
+    black and stays black until the process restarts. The maximized client
+    therefore keeps one spare row at the bottom.
+  - Text: `apply_visuals` sets the glyph coverage curve per scheme (the
+    dark-mode curve thinned text in light themes), turns sub-pixel glyph
+    binning off so hinted stems stay sharp, and disables label selection.
+    Text styles are reinstalled when the font scale changes
+    (`theme::font_key`). Microsoft YaHei is the CJK fallback. Setting and
+    routing rows scale their height with the font scale.
+  - `shell/wheel.rs` ports the `FluentScroll.qml` wheel glide (92 px per
+    notch, 540 ms `OutQuint`) by rewriting wheel notches in
+    `raw_input_hook`, so every scroll area follows it. Rendering is on the
+    GPU through glow; a release build spends about 1 ms of CPU per frame
+    on the settings page at 144 Hz.
+  - Toasts and the file-drop overlay are painted on a foreground layer
+    with explicit geometry. An auto-sized `Area` kept toasts at the widest
+    width seen and covered only part of the window with the drop overlay.
+    The subscription "updating" toast is reported once, by the dispatcher.
+  - Onboarding (`OnboardingOverlay.qml`) was rebuilt on explicit grids: it
+    starts below the title bar, which stays usable, and matches the QML
+    card, step rail, logo mark and all six steps at 1280x760 and 640x480.
+    Not ported: the blurred snapshot behind the card, the exit animation
+    and the per-element staggered reveal.
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated

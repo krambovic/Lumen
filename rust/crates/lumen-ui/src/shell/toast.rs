@@ -4,7 +4,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use egui::{Align2, Color32, Context, Ui, Vec2};
+use egui::{Color32, Context, Ui, Vec2};
 
 use super::theme::Theme;
 
@@ -249,67 +249,109 @@ impl ToastHost {
         let entries = self.entries.clone();
         let mut pressed_action: Option<String> = None;
 
-        egui::Area::new(egui::Id::unique("lumen-toast-host"))
-            .order(egui::Order::Foreground)
-            .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-18.0, -18.0))
-            .interactable(true)
-            .show(ctx, |ui: &mut Ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                for entry in &entries {
-                    let elapsed = now.duration_since(entry.born);
-                    let alpha = if elapsed > TOAST_LIFETIME {
-                        let into_fade =
-                            (elapsed - TOAST_LIFETIME).as_secs_f64() / TOAST_FADE.as_secs_f64();
-                        1.0 - into_fade.clamp(0.0, 1.0)
-                    } else {
-                        let appear = elapsed.as_secs_f64() / TOAST_APPEAR.as_secs_f64();
-                        appear.clamp(0.0, 1.0)
-                    };
-                    if alpha < 1.0 {
-                        animating = true;
-                    }
-                    let fade = |color: Color32| -> Color32 {
-                        Color32::from_rgba_unmultiplied(
-                            color.r(),
-                            color.g(),
-                            color.b(),
-                            ((color.a() as f32) * alpha as f32).round() as u8,
+        // Laid out by hand from the bottom-right corner. Each card is as wide
+        // as its content up to 420 px (ToastHost.qml); an auto-sized `Area`
+        // kept the widest size it had ever seen.
+        let screen = ctx.viewport_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("lumen-toast-host"),
+        ));
+        let font = egui::FontId::proportional(theme.font_normal as f32);
+        let mut bottom = screen.bottom() - 18.0;
+        for (index, entry) in entries.iter().enumerate().rev() {
+            let elapsed = now.duration_since(entry.born);
+            let alpha = if elapsed > TOAST_LIFETIME {
+                let into_fade = (elapsed - TOAST_LIFETIME).as_secs_f64() / TOAST_FADE.as_secs_f64();
+                1.0 - into_fade.clamp(0.0, 1.0)
+            } else {
+                (elapsed.as_secs_f64() / TOAST_APPEAR.as_secs_f64()).clamp(0.0, 1.0)
+            };
+            if alpha < 1.0 {
+                animating = true;
+            }
+            let fade = |color: Color32| -> Color32 {
+                Color32::from_rgba_unmultiplied(
+                    color.r(),
+                    color.g(),
+                    color.b(),
+                    ((color.a() as f32) * alpha as f32).round() as u8,
+                )
+            };
+            let has_action = !entry.action_id.is_empty();
+            let button_size = if has_action {
+                let label = painter.layout_no_wrap(
+                    entry.action_label.clone(),
+                    font.clone(),
+                    theme.accent_text,
+                );
+                Vec2::new(label.size().x + 24.0, theme.control_height as f32)
+            } else {
+                Vec2::ZERO
+            };
+            // 14 px side padding, the 4 px kind bar and 10 px row spacing.
+            let reserved = 4.0 + 10.0 + if has_action { button_size.x + 10.0 } else { 0.0 };
+            let max_width = 420.0_f32.min(screen.width() - 36.0);
+            let text_width = (max_width - 28.0 - reserved).max(40.0);
+            let galley = painter.layout(
+                lumen_core::i18n::tr(&entry.message, &[]),
+                font.clone(),
+                fade(theme.text),
+                text_width,
+            );
+            let row_height = galley.size().y.max(button_size.y);
+            let size = Vec2::new(galley.size().x + reserved + 28.0, row_height + 20.0);
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(screen.right() - 18.0 - size.x, bottom - size.y),
+                size,
+            );
+            bottom = rect.top() - 8.0;
+
+            painter.rect(
+                rect,
+                theme.radius as f32,
+                fade(theme.flyout),
+                egui::Stroke::new(1.0, fade(theme.flyout_border)),
+                egui::StrokeKind::Inside,
+            );
+            let bar = egui::Rect::from_center_size(
+                egui::pos2(rect.left() + 16.0, rect.center().y),
+                Vec2::new(4.0, galley.size().y),
+            );
+            painter.rect_filled(bar, 2.0, fade(self.kind_color(theme, &entry.kind)));
+            let text_pos = egui::pos2(
+                rect.left() + 28.0,
+                rect.center().y - galley.size().y / 2.0,
+            );
+            painter.galley(text_pos, galley, fade(theme.text));
+
+            if has_action {
+                let button_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        rect.right() - 14.0 - button_size.x,
+                        rect.center().y - button_size.y / 2.0,
+                    ),
+                    button_size,
+                );
+                // Above the painted cards, which share the foreground order.
+                egui::Area::new(egui::Id::unique(("lumen-toast-action", index)))
+                    .order(egui::Order::Tooltip)
+                    .fixed_pos(button_rect.min)
+                    .show(ctx, |ui: &mut Ui| {
+                        let button = egui::Button::new(
+                            egui::RichText::new(&entry.action_label)
+                                .color(fade(theme.accent_text))
+                                .size(theme.font_normal as f32),
                         )
-                    };
-                    egui::Frame::NONE
-                        .fill(fade(theme.flyout))
-                        .stroke(egui::Stroke::new(1.0, fade(theme.flyout_border)))
-                        .corner_radius(theme.radius as f32)
-                        .inner_margin(egui::Margin::symmetric(14, 10))
-                        .show(ui, |ui: &mut Ui| {
-                            ui.horizontal(|ui: &mut Ui| {
-                                let color = self.kind_color(theme, &entry.kind);
-                                let (rect, _) = ui.allocate_exact_size(
-                                    Vec2::new(4.0, theme.font_normal as f32 * 1.6),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().rect_filled(rect, 2.0, fade(color));
-                                let label = lumen_core::i18n::tr(&entry.message, &[]);
-                                let text = egui::RichText::new(&label)
-                                    .color(fade(theme.text))
-                                    .size(theme.font_normal as f32);
-                                ui.add(egui::Label::new(text).wrap_mode(egui::TextWrapMode::Wrap));
-                                if !entry.action_id.is_empty() {
-                                    let button = egui::Button::new(
-                                        egui::RichText::new(&entry.action_label)
-                                            .color(fade(theme.accent_text))
-                                            .size(theme.font_normal as f32),
-                                    )
-                                    .fill(fade(theme.accent))
-                                    .corner_radius(theme.radius_small as f32);
-                                    if ui.add(button).clicked() {
-                                        pressed_action = Some(entry.action_id.clone());
-                                    }
-                                }
-                            });
-                        });
-                }
-            });
+                        .fill(fade(theme.accent))
+                        .corner_radius(theme.radius_small as f32)
+                        .min_size(button_size);
+                        if ui.add(button).clicked() {
+                            pressed_action = Some(entry.action_id.clone());
+                        }
+                    });
+            }
+        }
         if animating {
             ctx.request_repaint_after(Duration::from_millis(16));
         }

@@ -824,6 +824,113 @@ pub fn find_main_window(title: &str) -> Option<windows::Win32::Foundation::HWND>
     }
 }
 
+// ── Custom frame ─────────────────────────────────────────────────────────
+
+/// Resize border of the frameless window, in physical pixels.
+const RESIZE_BORDER: i32 = 6;
+
+/// Give the frameless shell window the native frame behaviour QWindowKit
+/// provided: resize borders through `WM_NCHITTEST`, and a maximized client
+/// area that stops at the monitor work area (winit leaves it 8 px past every
+/// screen edge and over the taskbar).
+pub fn install_custom_frame(hwnd: windows::Win32::Foundation::HWND) {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+        };
+        use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowRect, IsZoomed, NCCALCSIZE_PARAMS, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos, WM_NCCALCSIZE, WM_NCHITTEST,
+        };
+
+        unsafe extern "system" fn frame_proc(
+            hwnd: HWND,
+            message: u32,
+            wparam: WPARAM,
+            lparam: LPARAM,
+            _id: usize,
+            _data: usize,
+        ) -> LRESULT {
+            unsafe {
+                let zoomed = IsZoomed(hwnd).as_bool();
+                match message {
+                    WM_NCCALCSIZE if wparam.0 != 0 => {
+                        if zoomed {
+                            let params = &mut *(lparam.0 as *mut NCCALCSIZE_PARAMS);
+                            let mut info = MONITORINFO {
+                                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                                ..Default::default()
+                            };
+                            let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                            if GetMonitorInfoW(monitor, &mut info).as_bool() {
+                                let mut client = info.rcWork;
+                                // With an auto-hidden taskbar the work area is
+                                // the whole monitor. A client that covers the
+                                // monitor exactly is treated as fullscreen: it
+                                // loses per-pixel alpha, and with it the
+                                // backdrop, until the process restarts. One
+                                // spare row also lets the taskbar slide in.
+                                if client == info.rcMonitor {
+                                    client.bottom -= 1;
+                                }
+                                params.rgrc[0] = client;
+                            }
+                        }
+                        return LRESULT(0);
+                    }
+                    WM_NCHITTEST if !zoomed => {
+                        let x = (lparam.0 & 0xFFFF) as i16 as i32;
+                        let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+                        let mut rect = RECT::default();
+                        if GetWindowRect(hwnd, &mut rect).is_ok() {
+                            let left = x < rect.left + RESIZE_BORDER;
+                            let right = x >= rect.right - RESIZE_BORDER;
+                            let top = y < rect.top + RESIZE_BORDER;
+                            let bottom = y >= rect.bottom - RESIZE_BORDER;
+                            // HTLEFT..HTBOTTOMRIGHT
+                            let hit = match (left, right, top, bottom) {
+                                (true, _, true, _) => 13,
+                                (_, true, true, _) => 14,
+                                (true, _, _, true) => 16,
+                                (_, true, _, true) => 17,
+                                (true, ..) => 10,
+                                (_, true, ..) => 11,
+                                (_, _, true, _) => 12,
+                                (_, _, _, true) => 15,
+                                _ => 0,
+                            };
+                            if hit != 0 {
+                                return LRESULT(hit);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            }
+        }
+
+        if SetWindowSubclass(hwnd, Some(frame_proc), 1, 0).as_bool() {
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = hwnd;
+    }
+}
+
 // ── Hidden power-event window ────────────────────────────────────────────
 
 /// `_activate_window` Win32 tail: restore the tray-hidden shell window and

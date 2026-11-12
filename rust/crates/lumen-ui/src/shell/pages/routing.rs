@@ -346,7 +346,7 @@ impl RoutingPage {
                 bridge.set_bypass_lan(bypass);
             }
             hline(ui, theme, 0.0);
-            right_row(ui, 37.0, |ui| {
+            right_row(ui, 37.0 * (theme.font_scale as f32).max(1.0), |ui| {
                 if let Some(action) = action_combo(
                     ui,
                     "default-outbound",
@@ -368,7 +368,7 @@ impl RoutingPage {
             let tun = bridge.tun_mode();
             let discord = bridge.discord_proxy();
             ui.add_enabled_ui(!tun, |ui| {
-                right_row(ui, 37.0, |ui| {
+                right_row(ui, 37.0 * (theme.font_scale as f32).max(1.0), |ui| {
                     if let Some(value) = switch_widget(ui, theme, discord, !tun) {
                         bridge.set_discord_proxy(value);
                     }
