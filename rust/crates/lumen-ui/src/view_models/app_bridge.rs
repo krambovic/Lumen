@@ -3728,25 +3728,26 @@ impl AppBridge {
     }
 
     /// Python `savePreset`.
-    pub fn save_preset(&mut self, name: &str, description: &str, content: &str) {
+    pub fn save_preset(&mut self, name: &str, description: &str, content: &str) -> bool {
         let name = name.trim().to_string();
         if name.is_empty() {
             self.notify("warning", "Укажите имя пресета");
-            return;
+            return false;
         }
         if name.chars().any(|c| "\\/:*?\"<>|".contains(c)) {
             self.notify("warning", "Недопустимые символы в имени");
-            return;
+            return false;
         }
-        let info = lumen_engines::zapret_manager::save_preset(&name, content, description);
-        if info.file_path.is_file() {
+        if lumen_engines::zapret_manager::save_preset(&name, content, description).is_ok() {
             self.notify(
                 "success",
                 &tr("Пресет сохранён: {name}", &[("name", &name)]),
             );
             self.changes.settings = true;
+            true
         } else {
             self.notify("error", "Не удалось сохранить пресет");
+            false
         }
     }
 
@@ -3761,8 +3762,7 @@ impl AppBridge {
         let old_name = old_name.trim().to_string();
         let name = name.trim().to_string();
         if old_name.is_empty() || old_name == name {
-            self.save_preset(&name, description, content);
-            return true;
+            return self.save_preset(&name, description, content);
         }
         if name.is_empty() || name.chars().any(|c| "\\/:*?\"<>|".contains(c)) {
             self.notify("warning", &tr("Недопустимое имя пресета", &[]));
@@ -3791,8 +3791,7 @@ impl AppBridge {
         }
         self.controller.lock().update_settings(settings);
         self.changes.settings = true;
-        self.save_preset(&name, description, content);
-        true
+        self.save_preset(&name, description, content)
     }
 
     /// Python `deletePreset`.
@@ -3802,7 +3801,12 @@ impl AppBridge {
         }
         let active = {
             let controller = self.controller.lock();
-            controller.zapret.current_preset().is_empty() && controller.zapret.running()
+            let current = controller.zapret.current_preset();
+            controller.zapret.running() && if current.is_empty() {
+                controller.zapret.server_scope().is_none() && controller.state.settings.zapret_preset == name
+            } else {
+                current == name
+            }
         };
         if active {
             self.controller.lock().zapret.stop_with(false, true, true);

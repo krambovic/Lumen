@@ -1,7 +1,5 @@
 //! Raw sing-box and Xray configuration editors from `ConfigsPage.qml`.
 
-mod code_editor;
-
 use std::sync::LazyLock;
 
 use egui::{Button, ComboBox, Frame, Id, Key, Modal, Modifiers, RichText, Stroke, Ui};
@@ -10,6 +8,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use super::PageContext;
+use super::code_editor;
 use crate::shell::{theme::Theme, win_native};
 use crate::view_models::AppBridge;
 

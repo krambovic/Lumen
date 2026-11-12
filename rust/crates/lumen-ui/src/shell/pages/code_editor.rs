@@ -25,20 +25,21 @@ pub(super) fn show(
     theme: &Theme,
     key: impl std::hash::Hash + std::fmt::Debug,
     hint: &str,
-    text: &mut String,
+    text: &mut dyn egui::TextBuffer,
     height: f32,
     jump: Option<usize>,
 ) {
     let id = Id::unique(("lumen-config-code", key));
     let font = FontId::monospace(13.0);
-    let digits = line_count(text).ilog10() + 1;
+    let digits = line_count(text.as_str()).ilog10() + 1;
     let gutter_width = (digits as f32 * 8.0 + 16.0).max(36.0);
 
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let (gutter, _) = ui.allocate_exact_size(vec2(gutter_width, height), Sense::hover());
         let width = ui.available_width().max(1.0);
-        let jump = jump.map(|line| line_cursor(text, line.clamp(1, line_count(text))));
+        let jump =
+            jump.map(|line| line_cursor(text.as_str(), line.clamp(1, line_count(text.as_str()))));
         if let Some(cursor) = jump {
             let mut state = TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
             state.cursor.set_char_range(Some(CCursorRange::one(cursor)));
@@ -74,7 +75,8 @@ pub(super) fn show(
                     .desired_rows(1)
                     .layouter(&mut layouter)
                     .show(ui);
-                if editor.response.has_focus()
+                if text.is_mutable()
+                    && editor.response.has_focus()
                     && let Some(selection) = editor.cursor_range
                 {
                     let cursor = editor

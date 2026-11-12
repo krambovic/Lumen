@@ -500,7 +500,7 @@ fn remove_preset_files_in(name: &str, builtin: &Path, user: &Path) -> bool {
 }
 
 /// Write a preset file with updated metadata headers.
-pub fn save_preset(name: &str, content: &str, description: &str) -> PresetInfo {
+pub fn save_preset(name: &str, content: &str, description: &str) -> std::io::Result<PresetInfo> {
     save_preset_in(
         name,
         content,
@@ -516,10 +516,10 @@ fn save_preset_in(
     description: &str,
     builtin: &Path,
     user: &Path,
-) -> PresetInfo {
+) -> std::io::Result<PresetInfo> {
     let existing = preset_path_in(name, builtin, user);
     let path = user.join(format!("{name}.txt"));
-    let _ = fs::create_dir_all(user);
+    fs::create_dir_all(user)?;
 
     // Preserve original Created date if the file exists
     let mut created = String::new();
@@ -561,7 +561,7 @@ fn save_preset_in(
         "# Preset: {name}\n# Description: {description}\n# Created: {created}\n# Modified: {now}\n\n"
     );
     let full_text = format!("{header}{}\n", body_lines.join("\n"));
-    let _ = write_text_native(&path, &full_text);
+    write_text_native(&path, &full_text)?;
     invalidate_preset_cache();
 
     let arg_count = body_lines
@@ -571,14 +571,14 @@ fn save_preset_in(
             !stripped.is_empty() && !stripped.starts_with('#')
         })
         .count() as i64;
-    PresetInfo {
+    Ok(PresetInfo {
         name: name.to_string(),
         description: description.to_string(),
         created,
         modified: now,
         arg_count,
         file_path: path,
-    }
+    })
 }
 
 /// Rename a preset file. Returns the new PresetInfo or None on failure.
@@ -610,7 +610,7 @@ fn rename_preset_in(
         1,
     );
     let _ = fs::create_dir_all(user);
-    let _ = write_text_native(&new_path, &text);
+    write_text_native(&new_path, &text).ok()?;
     remove_preset_files_in(old_name, builtin, user);
     invalidate_preset_cache();
 
@@ -1870,7 +1870,7 @@ mod tests {
             "описание",
             builtin.path(),
             user.path(),
-        );
+        ).unwrap();
         assert_eq!(info.name, "custom");
         assert_eq!(info.description, "описание");
         assert_eq!(info.arg_count, 2);
@@ -1889,6 +1889,16 @@ mod tests {
         let renamed_text = fs::read_to_string(user.path().join("renamed.txt")).unwrap();
         assert!(renamed_text.contains("# Preset: renamed"));
         assert!(renamed_text.contains("--filter-tcp=443"));
+    }
+
+    #[test]
+    fn failed_rename_preserves_the_original_preset() {
+        let builtin = tempfile::tempdir().unwrap();
+        let user = tempfile::NamedTempFile::new().unwrap();
+        let original = builtin.path().join("old.txt");
+        fs::write(&original, "--filter-tcp=443\n").unwrap();
+        assert!(rename_preset_in("old", "new", builtin.path(), user.path()).is_none());
+        assert!(original.is_file());
     }
 
     #[test]

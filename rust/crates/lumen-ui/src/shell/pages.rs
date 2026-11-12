@@ -9,12 +9,14 @@ use crate::view_models::{AppBridge, app_bridge::UiEvent};
 use super::navigation::Page;
 use super::theme::Theme;
 
+mod code_editor;
 mod configs;
 mod diagnostics_export;
 mod history;
 mod logs;
 mod routing;
 mod updates;
+mod zapret;
 
 #[derive(Default)]
 pub(super) struct PageState {
@@ -23,6 +25,7 @@ pub(super) struct PageState {
     logs: logs::LogsPage,
     routing: routing::RoutingPage,
     updates: updates::UpdatesPage,
+    zapret: zapret::ZapretPage,
 }
 
 impl PageState {
@@ -59,12 +62,15 @@ pub(super) fn render_page(
     if page != Page::Logs {
         state.logs.on_hidden();
     }
+    if page != Page::Zapret {
+        state.zapret.on_hidden();
+    }
     match page {
         Page::Dashboard => placeholder(ui, page_ctx.theme, page),
         Page::Nodes => placeholder(ui, page_ctx.theme, page),
         Page::Routing => state.routing.render(ui, page_ctx),
         Page::Configs => state.configs.render(ui, page_ctx),
-        Page::Zapret => placeholder(ui, page_ctx.theme, page),
+        Page::Zapret => state.zapret.render(ui, page_ctx),
         Page::Logs => state.logs.render(ui, page_ctx),
         Page::History => state.history.render(ui, page_ctx),
         Page::Updates => state.updates.render(ui, page_ctx),
