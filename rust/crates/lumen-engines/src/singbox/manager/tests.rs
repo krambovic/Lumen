@@ -712,11 +712,13 @@ fn starts_and_stops_a_local_proxy_core() -> Result<()> {
 
     assert!(manager.start(exe_str, &config, false));
     assert!(manager.is_running());
+    assert!(manager.process_id().is_some());
     let saved = fs::read_to_string(&config_path)?;
     assert!(saved.contains(r#""listen_port""#));
 
     assert!(manager.stop(true, true));
     assert!(!manager.is_running());
+    assert_eq!(manager.process_id(), None);
 
     let seen = drain(&mut events);
     assert!(seen.iter().any(|event| matches!(event, SingboxEvent::Started)));

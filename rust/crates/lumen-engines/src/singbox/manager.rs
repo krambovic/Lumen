@@ -485,6 +485,11 @@ impl SingBoxManager {
         self.shared.state.lock().running
     }
 
+    pub fn process_id(&self) -> Option<u32> {
+        let process = self.shared.state.lock().process.clone();
+        process.map(|child| child.lock().id())
+    }
+
     pub fn last_exit_code(&self) -> Option<i32> {
         self.shared.state.lock().last_exit_code
     }

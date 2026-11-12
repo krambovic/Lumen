@@ -25,6 +25,24 @@ fn test_node(id: &str, scheme: &str, outbound: Value) -> Node {
 }
 
 #[test]
+fn exposes_temporary_core_ids_until_unregistered() -> std::io::Result<()> {
+    let worker = SpeedTestWorker::new(Vec::new(), "xray.exe");
+    let mut child = std::process::Command::new(std::env::current_exe()?)
+        .arg("--list")
+        .stdout(std::process::Stdio::null())
+        .spawn()?;
+    let id = child.id();
+    child.wait()?;
+    let child = Arc::new(Mutex::new(child));
+
+    worker.register_process(&child);
+    assert_eq!(worker.process_ids(), [id]);
+    worker.unregister_process(&child);
+    assert!(worker.process_ids().is_empty());
+    Ok(())
+}
+
+#[test]
 fn configured_speed_concurrency_is_not_capped_at_six() {
     assert_eq!(resolve_speed_test_concurrency(30, 10), 10);
 }

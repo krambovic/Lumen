@@ -980,12 +980,14 @@ impl AppController {
         false
     }
 
-    /// Python `owned_core_process_pids`: main and temporary core PIDs owned by
-    /// this Lumen instance. The ported managers keep their child handles
-    /// private, so the PID set is currently empty and ownership filtering
-    /// relies on the canonical executable paths below.
+    /// Main and temporary core PIDs owned by this Lumen instance.
     pub fn owned_core_process_pids(&self) -> HashSet<u32> {
-        HashSet::new()
+        let mut pids = [self.xray.process_id(), self.singbox.process_id()]
+            .into_iter()
+            .flatten()
+            .collect();
+        self.workers.extend_core_process_pids(&mut pids);
+        pids
     }
 
     /// Python `owned_core_executable_paths`: configured core paths used by

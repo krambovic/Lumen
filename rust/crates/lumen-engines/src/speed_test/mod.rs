@@ -240,6 +240,16 @@ impl SpeedTestWorker {
         self.state.lock().expect("worker state").unavailable.contains(node_id)
     }
 
+    pub fn process_ids(&self) -> Vec<u32> {
+        self.state
+            .lock()
+            .expect("worker state")
+            .processes
+            .keys()
+            .copied()
+            .collect()
+    }
+
     #[cfg(test)]
     fn registry_is_empty(&self) -> bool {
         self.responses.lock().unwrap().is_empty() && self.tunnels.lock().unwrap().is_empty()

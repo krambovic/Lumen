@@ -47,14 +47,17 @@ fn starts_a_validated_core_and_keeps_it_running_when_a_new_config_is_invalid() -
 
     assert!(manager.start(exe, &config, false));
     assert!(manager.is_running());
+    let running_pid = manager.process_id().expect("active Xray process");
     let saved = fs::read_to_string(&config_path)?;
     assert!(saved.contains(r"\u041f\u0440\u0438\u043c\u0435\u0440"));
     config["reject"] = json!(true);
     assert!(!manager.start(exe, &config, false));
     assert!(manager.is_running());
+    assert_eq!(manager.process_id(), Some(running_pid));
     assert_eq!(fs::read_to_string(&config_path)?, saved);
     assert!(manager.stop(true, false));
     assert!(!manager.is_running());
+    assert_eq!(manager.process_id(), None);
     assert!(manager.last_exit_expected());
     assert_eq!(fs::read_dir(dir.path())?.count(), 1);
 

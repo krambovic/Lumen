@@ -153,6 +153,11 @@ impl XrayManager {
         self.shared.state.lock().running
     }
 
+    pub fn process_id(&self) -> Option<u32> {
+        let process = self.shared.state.lock().process.clone();
+        process.map(|child| child.lock().id())
+    }
+
     pub fn last_exit_expected(&self) -> bool {
         self.shared.state.lock().last_exit_expected
     }

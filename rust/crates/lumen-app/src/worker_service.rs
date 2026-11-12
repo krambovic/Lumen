@@ -115,6 +115,11 @@ struct RunningConnectivity {
     task: tokio::task::JoinHandle<()>,
 }
 
+struct RetiredProbe {
+    worker: ProbeWorker,
+    thread: JoinHandle<()>,
+}
+
 pub struct WorkerMessage {
     id: u64,
     event: Message,
@@ -135,7 +140,7 @@ pub struct WorkerService {
     ping: Option<RunningProbe>,
     speed: Option<RunningProbe>,
     connectivity: Option<RunningConnectivity>,
-    retired: Vec<JoinHandle<()>>,
+    retired: Vec<RetiredProbe>,
     retired_connectivity: Vec<tokio::task::JoinHandle<()>>,
     sequence: u64,
     send: UnboundedSender<WorkerMessage>,
@@ -161,6 +166,18 @@ impl Default for WorkerService {
 impl WorkerService {
     pub fn is_running(&self) -> bool {
         self.ping.is_some() || self.speed.is_some() || self.connectivity.is_some()
+    }
+
+    pub(crate) fn extend_core_process_pids(&self, pids: &mut HashSet<u32>) {
+        let active = [&self.ping, &self.speed]
+            .into_iter()
+            .flatten()
+            .map(|probe| &probe.worker);
+        for worker in active.chain(self.retired.iter().map(|probe| &probe.worker)) {
+            if let ProbeWorker::Proxy(worker) = worker {
+                pids.extend(worker.process_ids());
+            }
+        }
     }
 
     pub fn ping_nodes(
@@ -209,7 +226,7 @@ impl WorkerService {
         };
         if let Some(previous) = self.ping.take() {
             previous.worker.cancel();
-            self.retired.push(previous.thread);
+            self.retire_probe(previous);
         }
         clear_measurements(state, &running.targets, TestKind::Ping, &mut emit);
         progress(&mut emit, TestKind::Ping, 0, running.total, false);
@@ -398,7 +415,7 @@ impl WorkerService {
                     status(&mut emit, "success", "Тест скорости завершён");
                 }
             }
-            self.retired.push(probe.thread);
+            self.retire_probe(probe);
             return;
         }
         let probe = slot.as_mut().expect("matched active worker");
@@ -409,7 +426,7 @@ impl WorkerService {
     pub fn stop_workers(&mut self) {
         for probe in [self.ping.take(), self.speed.take()].into_iter().flatten() {
             probe.worker.cancel();
-            self.retired.push(probe.thread);
+            self.retire_probe(probe);
         }
         if let Some(worker) = self.connectivity.take() {
             worker.task.abort();
@@ -463,12 +480,19 @@ impl WorkerService {
         self.retired_connectivity.retain(|task| !task.is_finished());
         let mut index = 0;
         while index < self.retired.len() {
-            if self.retired[index].is_finished() {
-                let _ = self.retired.swap_remove(index).join();
+            if self.retired[index].thread.is_finished() {
+                let _ = self.retired.swap_remove(index).thread.join();
             } else {
                 index += 1;
             }
         }
+    }
+
+    fn retire_probe(&mut self, probe: RunningProbe) {
+        self.retired.push(RetiredProbe {
+            worker: probe.worker,
+            thread: probe.thread,
+        });
     }
 }
 
