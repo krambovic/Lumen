@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 119
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 120
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -370,6 +370,13 @@ client, core/resource updaters, zapret and discord proxy managers.
   independently scrolling session, daily and process tables with three-state
   column sorting. The page reads and clears the controller's live traffic
   history, using its existing asynchronous writer.
+  The toolbar and proportional summary cards follow QML. Table cards keep
+  fixed heights and pinned headings. Columns shrink to fit narrow windows.
+  Daily totals map the storage tuple in upload/download order, with separate
+  display and numeric sort values for each column.
+  Compared both running clients with the same traffic history in the dark
+  theme at 1280×760 and 640×360. Exercised period changes, sorting, scrolling
+  inside a table and scrolling the page to the process table in Rust.
 - Updates (`UpdatesPage.qml`): application and Xray channel selection,
   application release notes, and checks, installation, status and progress for
   the app, Xray, sing-box extended, GeoIP/GeoSite and droute. The page tracks

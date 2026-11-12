@@ -223,20 +223,8 @@ pub fn build_history_payload(
     let mut daily_pairs: Vec<(&String, &(u64, u64))> = daily.iter().collect();
     daily_pairs.sort_by(|a, b| b.0.cmp(a.0));
     let daily_rows: Vec<serde_json::Value> = daily_pairs
-        .iter()
-        .map(|(date_key, totals)| {
-            let down = totals.0 as i64;
-            let up = totals.1 as i64;
-            json!({
-                "day": date_key,
-                "down": fmt_bytes(down),
-                "hasDown": down > 0,
-                "up": fmt_bytes(up),
-                // Raw values for client-side column sorting.
-                "downB": down,
-                "upB": up,
-            })
-        })
+        .into_iter()
+        .map(|(date_key, &totals)| daily_row(date_key, totals))
         .collect();
 
     let proc_totals = storage.get_process_totals(days);
@@ -276,6 +264,17 @@ pub fn build_history_payload(
         "sessions": session_rows,
         "daily": daily_rows,
         "procs": proc_rows,
+    })
+}
+
+fn daily_row(date: &str, (upload, download): (u64, u64)) -> serde_json::Value {
+    serde_json::json!({
+        "day": date,
+        "down": fmt_bytes(download as i64),
+        "hasDown": download > 0,
+        "up": fmt_bytes(upload as i64),
+        "downB": download,
+        "upB": upload,
     })
 }
 
@@ -352,5 +351,15 @@ mod tests {
         assert_eq!(payload["summaryDown"], "0 B");
         assert_eq!(payload["summarySessions"], 0);
         assert!(payload["sessions"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn daily_rows_keep_upload_and_download_in_their_own_columns() {
+        let row = daily_row("2026-11-12", (512, 2048));
+        assert_eq!(row["down"], "2.0 KB");
+        assert_eq!(row["downB"], 2048);
+        assert_eq!(row["up"], "512 B");
+        assert_eq!(row["upB"], 512);
+        assert_eq!(daily_row("2026-11-12", (512, 0))["hasDown"], false);
     }
 }

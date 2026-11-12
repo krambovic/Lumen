@@ -3,18 +3,20 @@
 use std::cmp::Ordering;
 
 use egui::{
-    Align, Button, ComboBox, FontId, Frame, Label, Layout, RichText, ScrollArea, Stroke, Ui,
+    Align, ComboBox, FontId, Frame, Label, Layout, Margin, RichText, ScrollArea, Sense, Stroke, Ui,
+    vec2,
 };
 use egui_extras::{Column, TableBuilder};
 use lumen_core::i18n::tr;
 use serde_json::Value;
 
 use super::PageContext;
-use crate::shell::theme::Theme;
+use crate::shell::theme::{Theme, semibold};
 use crate::view_models::history_helpers::{mode_label_for, route_label_for};
 
 const PERIODS: [(i64, &str); 3] = [(7, "За 7 дней"), (30, "За 30 дней"), (3650, "За всё время")];
 const ROW_HEIGHT: f32 = 34.0;
+const TABLE_GAP: f32 = 12.0;
 
 struct HistoryColumn {
     key: &'static str,
@@ -241,12 +243,22 @@ impl HistoryPage {
     }
 
     fn toolbar(&mut self, ui: &mut Ui, theme: &Theme) -> (bool, bool) {
-        let title = RichText::new(tr("История", &[]))
-            .size(theme.font_title as f32)
-            .strong();
+        let title = RichText::new(tr("История", &[])).font(semibold(theme.font_title as f32));
         let period = ComboBox::from_id_salt("history-period")
-            .selected_text(tr(PERIODS[self.period].1, &[]))
-            .width(145.0);
+            .selected_text(
+                RichText::new(tr(PERIODS[self.period].1, &[])).size(theme.font_normal as f32),
+            )
+            .width(180.0)
+            .icon(|ui, rect, visuals, _| {
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "\u{e70d}",
+                    FontId::proportional(12.0),
+                    visuals.text_color(),
+                );
+            });
+        let height = theme.control_height as f32;
         let select_period = |ui: &mut Ui| {
             period.show_ui(ui, |ui| {
                 for (index, (_, label)) in PERIODS.iter().enumerate() {
@@ -257,27 +269,44 @@ impl HistoryPage {
         if ui.available_width() < 500.0 {
             ui.label(title);
             ui.horizontal_wrapped(|ui| {
+                toolbar_style(ui, height);
                 select_period(ui);
                 (
-                    ui.button(tr("Обновить", &[])).clicked(),
-                    ui.button(tr("Сбросить", &[])).clicked(),
+                    toolbar_button(ui, theme, "\u{e72c}", "Обновить"),
+                    toolbar_button(ui, theme, "\u{e74d}", "Сбросить"),
                 )
             })
             .inner
         } else {
-            ui.horizontal(|ui| {
-                ui.label(title);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let clear = ui.button(tr("Сбросить", &[])).clicked();
-                    let refresh = ui.button(tr("Обновить", &[])).clicked();
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), height),
+                Layout::right_to_left(Align::Center),
+                |ui| {
+                    toolbar_style(ui, height);
+                    let clear = toolbar_button(ui, theme, "\u{e74d}", "Сбросить");
+                    let refresh = toolbar_button(ui, theme, "\u{e72c}", "Обновить");
                     select_period(ui);
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| ui.label(title));
                     (refresh, clear)
-                })
-                .inner
-            })
+                },
+            )
             .inner
         }
     }
+}
+
+fn toolbar_style(ui: &mut Ui, height: f32) {
+    let spacing = ui.spacing_mut();
+    spacing.interact_size.y = height;
+    spacing.item_spacing.x = 6.0;
+    spacing.button_padding = vec2(14.0, 0.0);
+}
+
+fn toolbar_button(ui: &mut Ui, theme: &Theme, glyph: &str, caption: &str) -> bool {
+    ui.button(
+        RichText::new(format!("{glyph}  {}", tr(caption, &[]))).size(theme.font_normal as f32),
+    )
+    .clicked()
 }
 
 fn rows<'a>(data: &'a Value, spec: &TableSpec) -> &'a [Value] {
@@ -292,34 +321,60 @@ fn card(theme: &Theme) -> Frame {
         .fill(theme.card)
         .stroke(Stroke::new(1.0, theme.border_solid))
         .corner_radius(theme.radius as u8)
-        .inner_margin(12.0)
 }
 
 fn render_summary(ui: &mut Ui, theme: &Theme, data: &Value) {
     let down = data["summaryDown"].as_str().unwrap_or("0 B");
     let up = data["summaryUp"].as_str().unwrap_or("0 B");
     let sessions = data["summarySessions"].as_u64().unwrap_or(0).to_string();
-    ui.columns(3, |columns| {
-        for (ui, (title, value, color)) in columns.iter_mut().zip([
-            ("Загружено", down, theme.success),
-            ("Отдано", up, theme.text),
-            ("Сессий", sessions.as_str(), theme.text),
-        ]) {
-            card(theme).show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.spacing_mut().item_spacing.y = 4.0;
-                ui.label(
-                    RichText::new(tr(title, &[]))
-                        .size(theme.font_small as f32)
-                        .color(theme.text_muted),
-                );
-                ui.label(
-                    RichText::new(value)
-                        .size(theme.font_title as f32)
-                        .color(color)
-                        .strong(),
-                );
-            });
+    let tiles = [
+        ("Загружено", down, theme.success),
+        ("Отдано", up, theme.text),
+        ("Сессий", sessions.as_str(), theme.text),
+    ]
+    .map(|(title, value, color)| (tr(title, &[]), value, color));
+    let caption_font = FontId::proportional(theme.font_small as f32);
+    let value_font = semibold(theme.font_title as f32);
+    let preferred = tiles.each_ref().map(|(title, value, _)| {
+        let measure = |text: &str, font| {
+            ui.painter()
+                .layout_no_wrap(text.to_owned(), font, theme.text)
+                .size()
+                .x
+        };
+        32.0 + measure(title, caption_font.clone()).max(measure(value, value_font.clone()))
+    });
+    let spacing = theme.spacing as f32;
+    let width = (ui.available_width() - 2.0 * spacing).max(0.0);
+    let scale = width / preferred.iter().sum::<f32>();
+    let content_height = caption_font.size + value_font.size + 15.0;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = spacing;
+        for ((title, value, color), width) in tiles.into_iter().zip(preferred) {
+            let tile_width = width * scale;
+            ui.allocate_ui_with_layout(
+                vec2(tile_width, content_height + 32.0),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    card(theme).inner_margin(15.0).show(ui, |ui| {
+                        ui.set_width((tile_width - 32.0).max(0.0));
+                        ui.set_min_height(content_height);
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        ui.add(
+                            Label::new(
+                                RichText::new(title)
+                                    .font(caption_font.clone())
+                                    .color(theme.text_muted),
+                            )
+                            .truncate(),
+                        );
+                        ui.add(
+                            Label::new(RichText::new(value).font(value_font.clone()).color(color))
+                                .truncate(),
+                        );
+                    });
+                },
+            );
         }
     });
 }
@@ -331,81 +386,101 @@ fn render_table(
     rows: &[Value],
     state: &mut TableState,
 ) {
-    ui.label(
-        RichText::new(tr(spec.title, &[]))
-            .size(theme.font_strong as f32)
-            .strong(),
-    );
-    card(theme).show(ui, |ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(8.0, 1.0);
-        let fixed_width: f32 = spec.columns.iter().map(|column| column.width).sum();
-        let scale = ((ui.available_width() - 104.0) / fixed_width).clamp(0.25, 1.0);
-        let mut table = TableBuilder::new(ui)
-            .id_salt(spec.key)
-            .min_scrolled_height(spec.height)
-            .max_scroll_height(spec.height)
-            .auto_shrink([false, false]);
-        for column in spec.columns {
-            let width = if column.width == 0.0 {
-                Column::remainder()
-            } else {
-                Column::exact(column.width * scale)
-            };
-            table = table.column(width.clip(true));
-        }
-        let output = table
-            .header(28.0, |mut header| {
-                for column in spec.columns {
-                    header.col(|ui| {
-                        ui.with_layout(column.layout(), |ui| {
-                            let arrow = state.sort.arrow(column.key);
-                            let color = if arrow.is_empty() {
-                                theme.text_muted
-                            } else {
-                                theme.text
-                            };
-                            let title = format!("{}{arrow}", tr(column.title, &[]));
-                            let button = Button::new(
-                                RichText::new(title)
-                                    .size(theme.font_small as f32)
-                                    .color(color)
-                                    .strong(),
-                            )
-                            .frame(false)
-                            .truncate();
-                            if ui.add(button).clicked() {
-                                state.sort.cycle(column.key);
-                                state.sort.order(rows, &mut state.order);
-                            }
-                        });
-                    });
-                }
-            })
-            .body(|body| {
-                body.rows(ROW_HEIGHT, rows.len(), |mut row| {
-                    let data = &rows[state.order[row.index()]];
+    ui.add_space(4.0);
+    ui.label(RichText::new(tr(spec.title, &[])).font(semibold(theme.font_strong as f32)));
+    card(theme)
+        .inner_margin(Margin {
+            left: 13,
+            right: 2,
+            top: 0,
+            bottom: 0,
+        })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing = vec2(TABLE_GAP, 0.0);
+            // Leave the scrollbar in the card's right inset, beside the last column.
+            let columns_width =
+                ui.available_width() - 11.0 - TABLE_GAP * (spec.columns.len() - 1) as f32;
+            let fixed_width: f32 = spec.columns.iter().map(|column| column.width).sum();
+            let scale = ((columns_width - 86.0) / fixed_width).clamp(0.0, 1.0);
+            let header_height = 25.0 + theme.font_small as f32;
+            let body_height = spec.height + 50.0 - header_height;
+            let mut table = TableBuilder::new(ui)
+                .id_salt(spec.key)
+                .min_scrolled_height(body_height)
+                .max_scroll_height(body_height)
+                .auto_shrink([false, false]);
+            for column in spec.columns {
+                let width = if column.width == 0.0 {
+                    Column::exact((columns_width - fixed_width * scale).max(0.0))
+                } else {
+                    Column::exact(column.width * scale)
+                };
+                table = table.column(width.clip(true));
+            }
+            let output = table
+                .header(header_height, |mut header| {
                     for column in spec.columns {
-                        row.col(|ui| {
+                        header.col(|ui| {
                             ui.with_layout(column.layout(), |ui| {
-                                ui.add(Label::new(column.cell(data, theme)).truncate());
+                                let arrow = state.sort.arrow(column.key);
+                                let color = if arrow.is_empty() {
+                                    theme.text_muted
+                                } else {
+                                    theme.text
+                                };
+                                let title = format!("{}{arrow}", tr(column.title, &[]));
+                                ui.add(
+                                    Label::new(
+                                        RichText::new(title)
+                                            .font(semibold(theme.font_small as f32))
+                                            .color(color),
+                                    )
+                                    .truncate(),
+                                );
+                                if ui
+                                    .interact(
+                                        ui.max_rect(),
+                                        ui.scope_id().with(column.key),
+                                        Sense::click(),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    state.sort.cycle(column.key);
+                                    state.sort.order(rows, &mut state.order);
+                                }
                             });
                         });
                     }
+                })
+                .body(|body| {
+                    body.rows(ROW_HEIGHT, rows.len(), |mut row| {
+                        let data = &rows[state.order[row.index()]];
+                        for column in spec.columns {
+                            row.col(|ui| {
+                                ui.with_layout(column.layout(), |ui| {
+                                    ui.add(Label::new(column.cell(data, theme)).truncate());
+                                });
+                            });
+                        }
+                    });
                 });
-            });
-        let body = output.inner_rect;
-        ui.painter()
-            .hline(body.x_range(), body.top(), Stroke::new(1.0, theme.divider));
-        if rows.is_empty() {
-            ui.painter().text(
-                body.center(),
-                egui::Align2::CENTER_CENTER,
-                tr("Нет записей", &[]),
-                FontId::proportional(theme.font_small as f32),
-                theme.text_faint,
+            let body = output.inner_rect;
+            ui.painter().hline(
+                body.left()..=body.right() - 11.0,
+                body.top(),
+                Stroke::new(1.0, theme.divider),
             );
-        }
-    });
+            if rows.is_empty() {
+                ui.painter().text(
+                    body.center(),
+                    egui::Align2::CENTER_CENTER,
+                    tr("Нет записей", &[]),
+                    FontId::proportional(theme.font_small as f32),
+                    theme.text_faint,
+                );
+            }
+        });
 }
 
 #[cfg(test)]
@@ -437,6 +512,7 @@ mod tests {
     fn history_summary_and_tables_fit_after_resize() {
         let ctx = egui::Context::default();
         let theme = Theme::resolve(&Default::default());
+        crate::shell::theme::apply_fonts(&ctx, &theme);
         let data = json!({
             "summaryDown": "1.0 KB", "summarySessions": 1,
             "sessions": [{"date": "11.11.2026 18:42", "node": "A long server name for a narrow column",
