@@ -645,6 +645,7 @@ async fn download_segment(
     if downloaded != expected_length {
         bail!("Сервер вернул неполный фрагмент установщика");
     }
+    file.flush().await?;
     Ok(())
 }
 
@@ -681,6 +682,7 @@ async fn download_single(
             let _ = events.send(AppUpdateDownloadEvent::Progress(percent(downloaded, total)));
         }
     }
+    file.flush().await?;
     Ok(())
 }
 

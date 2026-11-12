@@ -227,7 +227,6 @@ client, core/resource updaters, zapret and discord proxy managers.
   go through the subscription dispatcher (event-reported), and
   `owned_core_process_pids` returns an empty set (managers keep handles
   private; path-based ownership remains the working signal).
-- app_updater (module folder): the download/install/restart half. Segmented
 - health_listener: authenticated loopback probes for both cores. A new
   sing-box probe uses its target selector's configured default and adds a
   pinned route only when the classifier confirms a proxy path.
@@ -334,12 +333,12 @@ client, core/resource updaters, zapret and discord proxy managers.
   sidecar, and prevents automatic installation of a rollback.
 - app_updater (module folder): the download/install/restart half. Segmented
   range downloads over a proxy/plain/direct opener with the shared safe
-  redirect policy, cancellation-aware chunk reads, SHA-256 staging with the
-  byte-identical elevated PowerShell scripts (a fixture test compares the
-  generator output against the AST-evaluated Python scripts), target
-  directory resolution (portable markers, legacy renames, uninstall-registry
-  InstallLocation), ShellExecuteW "runas" launch, and a worker whose channel
-  events replace the PyQt6 signals.
+  redirect policy, cancellation-aware chunk reads and flushed files before
+  assembly or SHA-256 verification. The elevated PowerShell scripts resolve
+  portable markers, legacy paths and the uninstall registry. Portable updates
+  merge bundled resources into the existing data directory before replacing
+  program files. ShellExecuteW "runas" launches the scripts, and the worker
+  reports progress through its event channel.
 
 ### lumen-ui
 - view_models: the bridge and node editor, node/process/log models, history,
@@ -429,6 +428,8 @@ are handled inside their porting commits.
 - Xray and sing-box extended both relayed a real HTTP request through an
   isolated local VLESS server from each of the generated SOCKS and HTTP
   proxy listeners.
-- Full desktop verification covers launching the installed application,
-  upgrading a Python installation, connecting in proxy and TUN modes,
-  and comparing generated runtime configurations against Python.
+- The portable update applied the release ZIP to an isolated profile. The
+  script preserved the profile and its custom template, deployed the bundled
+  resources and passed the new executable's version probe.
+- The live TUN, full desktop launch and Inno Setup upgrade scenarios require
+  desktop verification.

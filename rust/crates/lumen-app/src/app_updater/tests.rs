@@ -307,13 +307,15 @@ fn installed_update_script_matches_the_python_layout() {
 }
 
 #[test]
-fn portable_update_script_matches_the_python_layout() {
+fn portable_update_script_preserves_the_profile_and_refreshes_bundled_data() {
     let script = build_update_script(&script_context(true));
     assert!(script.contains(
         "if (-not (Test-Path -LiteralPath $fallbackExe)) { $fallbackExe = Join-Path $currentAppDir 'LumenKVN.exe' }"
     ));
     assert!(script.contains("Expand-Archive -LiteralPath $setupPath -DestinationPath $tempExtractDir -Force"));
     assert!(script.contains("-ne 'data' -and $name -ne 'portable.txt' -and $name -ne 'portable'"));
+    assert!(script.contains("Copy-Item -LiteralPath $bundledDataDir -Destination $appDir -Recurse -Force -ErrorAction Stop"));
+    assert!(script.contains("if ($_.Name -ine 'data') {"));
     assert!(!script.contains("$setupLog"));
     assert!(script.ends_with("\r\n"));
 }
@@ -656,7 +658,11 @@ const PORTABLE_REFERENCE: &str = concat!(
     "    $targetDataDir = Join-Path $appDir 'data'\r\n",
     "    New-Item -ItemType Directory -Path $appDir -Force | Out-Null\r\n",
     "    if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir) -and -not (Test-Path -LiteralPath $targetDataDir)) {\r\n",
-    "        Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force\r\n",
+    "        Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force -ErrorAction Stop\r\n",
+    "    }\r\n",
+    "    $bundledDataDir = Join-Path $srcDir 'data'\r\n",
+    "    if (Test-Path -LiteralPath $bundledDataDir -PathType Container) {\r\n",
+    "        Copy-Item -LiteralPath $bundledDataDir -Destination $appDir -Recurse -Force -ErrorAction Stop\r\n",
     "    }\r\n",
     "    Get-ChildItem -Path $appDir -Force | ForEach-Object {\r\n",
     "        $name = $_.Name.ToLower()\r\n",
@@ -665,7 +671,9 @@ const PORTABLE_REFERENCE: &str = concat!(
     "        }\r\n",
     "    }\r\n",
     "    Get-ChildItem -Path $srcDir -Force | ForEach-Object {\r\n",
-    "        Move-Item -LiteralPath $_.FullName -Destination $appDir -Force\r\n",
+    "        if ($_.Name -ine 'data') {\r\n",
+    "            Move-Item -LiteralPath $_.FullName -Destination $appDir -Force -ErrorAction Stop\r\n",
+    "        }\r\n",
     "    }\r\n",
     "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated Lumen.exe was not found' }\r\n",
     "    $started = Start-Process -FilePath $exePath -ArgumentList '--relaunched' -WorkingDirectory $appDir -PassThru -ErrorAction Stop\r\n",
@@ -825,10 +833,10 @@ fn reference_context(portable: bool) -> UpdateScriptContext {
     }
 }
 
-/// The generated scripts must stay byte-identical to `app_updater.py`
+/// Keep the generated Windows scripts byte-identical to the fixtures
 /// (CRLF-joined line list with these exact context values).
 #[test]
-fn update_scripts_are_byte_identical_to_the_python_generator() {
+fn update_scripts_match_the_windows_fixtures() {
     assert_eq!(build_update_script(&reference_context(true)), PORTABLE_REFERENCE);
     assert_eq!(
         build_update_script(&reference_context(false)),

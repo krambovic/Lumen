@@ -1,4 +1,4 @@
-//! Byte-identical ports of the elevated PowerShell install/restart scripts.
+//! Elevated PowerShell install and restart scripts for the Windows client.
 
 use std::path::PathBuf;
 
@@ -17,8 +17,7 @@ pub struct UpdateScriptContext {
     pub portable: bool,
 }
 
-/// `"\r\n".join([...])` of the portable or installed script, 1:1 with
-/// `app_updater.py`.
+/// Build the script for the portable or installed package.
 pub fn build_update_script(ctx: &UpdateScriptContext) -> String {
     let lines = if ctx.portable {
         portable_script(ctx)
@@ -131,7 +130,11 @@ fn portable_script(ctx: &UpdateScriptContext) -> Vec<String> {
         "    $targetDataDir = Join-Path $appDir 'data'".to_string(),
         "    New-Item -ItemType Directory -Path $appDir -Force | Out-Null".to_string(),
         "    if ($currentAppDir -ine $appDir -and (Test-Path -LiteralPath $currentDataDir) -and -not (Test-Path -LiteralPath $targetDataDir)) {".to_string(),
-        "        Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force".to_string(),
+        "        Copy-Item -LiteralPath $currentDataDir -Destination $appDir -Recurse -Force -ErrorAction Stop".to_string(),
+        "    }".to_string(),
+        "    $bundledDataDir = Join-Path $srcDir 'data'".to_string(),
+        "    if (Test-Path -LiteralPath $bundledDataDir -PathType Container) {".to_string(),
+        "        Copy-Item -LiteralPath $bundledDataDir -Destination $appDir -Recurse -Force -ErrorAction Stop".to_string(),
         "    }".to_string(),
         "    Get-ChildItem -Path $appDir -Force | ForEach-Object {".to_string(),
         "        $name = $_.Name.ToLower()".to_string(),
@@ -140,7 +143,9 @@ fn portable_script(ctx: &UpdateScriptContext) -> Vec<String> {
         "        }".to_string(),
         "    }".to_string(),
         "    Get-ChildItem -Path $srcDir -Force | ForEach-Object {".to_string(),
-        "        Move-Item -LiteralPath $_.FullName -Destination $appDir -Force".to_string(),
+        "        if ($_.Name -ine 'data') {".to_string(),
+        "            Move-Item -LiteralPath $_.FullName -Destination $appDir -Force -ErrorAction Stop".to_string(),
+        "        }".to_string(),
         "    }".to_string(),
         "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated Lumen.exe was not found' }".to_string(),
         "    $started = Start-Process -FilePath $exePath -ArgumentList '--relaunched' -WorkingDirectory $appDir -PassThru -ErrorAction Stop".to_string(),
