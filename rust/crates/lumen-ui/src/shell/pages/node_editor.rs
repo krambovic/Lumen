@@ -105,7 +105,7 @@ impl NodeEditor {
                     ui.label(tr("Протокол", &[]));
                     if creating {
                         let mut protocol = draft.protocol.clone();
-                        ComboBox::from_id_salt("node-edit-protocol")
+                        ComboBox::from_id_salt("node-edit-protocol").icon(crate::shell::widgets::combo_chevron)
                             .selected_text(&protocol)
                             .show_ui(ui, |ui| {
                                 for option in bridge.manual_node_protocols() {
@@ -157,7 +157,7 @@ impl NodeEditor {
                                 {
                                     selected = first.into();
                                 }
-                                ComboBox::from_id_salt(("node-edit-field", key))
+                                ComboBox::from_id_salt(("node-edit-field", key)).icon(crate::shell::widgets::combo_chevron)
                                     .selected_text(&selected)
                                     .show_ui(ui, |ui| {
                                         for option in options.iter().filter_map(Value::as_str) {

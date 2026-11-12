@@ -149,6 +149,7 @@ impl RoutingPage {
                 section(ui, theme, "Приложения");
                 ui.horizontal_wrapped(|ui| {
                     fluent_button::style(ui);
+                    ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                     if ui
                         .add(fluent_button::button(
                             theme,
@@ -194,6 +195,7 @@ impl RoutingPage {
                 section(ui, theme, "Домены и IP");
                 ui.horizontal_wrapped(|ui| {
                     fluent_button::style(ui);
+                    ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                     if ui
                         .add(fluent_button::button(
                             theme,
@@ -259,52 +261,65 @@ impl RoutingPage {
             ui.spacing_mut().item_spacing.y = 12.0;
             let built_in = bridge.regional_routing_presets();
             if ui.available_width() >= PRESET_GRID_MIN_WIDTH {
-                ui.columns(3, |columns| {
-                    columns[0].vertical(|ui| {
-                        ui.set_min_width(ui.available_width());
-                        caption(ui, theme, "Быстрые пресеты маршрутизации");
-                        ui.add_space(4.0);
-                        if let Some(id) = preset_combo(ui, "built-in", &built_in, &active) {
-                            bridge.apply_routing_preset(&id);
-                        }
-                    });
-                    columns[1].vertical(|ui| {
-                        ui.set_min_width(ui.available_width());
-                        caption(ui, theme, "Свои пресеты маршрутизации");
-                        ui.add_space(4.0);
-                        ui.add_enabled_ui(!custom.is_empty(), |ui| {
-                            if let Some(id) = preset_combo(ui, "custom", &custom, &active) {
-                                bridge.apply_custom_routing_preset(&id);
-                            }
-                        });
-                    });
-                    // Icon buttons sit on the grid row baseline (QML AlignBottom).
-                    columns[2].allocate_ui_with_layout(
-                        vec2(columns[2].available_width(), 54.0),
-                        Layout::bottom_up(Align::LEFT),
+                // GridLayout: two equal preset columns and the icon buttons,
+                // 16 px apart; each column is caption + 4 + combo.
+                let buttons = 2.0 * theme.control_height as f32 + 8.0;
+                let column = ((ui.available_width() - buttons - 32.0) / 2.0).max(0.0);
+                let height = 20.0 + theme.control_height as f32;
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 16.0;
+                    ui.allocate_ui_with_layout(
+                        vec2(column, height),
+                        Layout::top_down(Align::Min),
                         |ui| {
-                            ui.spacing_mut().item_spacing.x = 8.0;
+                            ui.set_width(column);
+                            ui.spacing_mut().item_spacing.y = 4.0;
+                            caption(ui, theme, "Быстрые пресеты маршрутизации");
+                            if let Some(id) = preset_combo(ui, "built-in", &built_in, &active) {
+                                bridge.apply_routing_preset(&id);
+                            }
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        vec2(column, height),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            ui.set_width(column);
+                            ui.spacing_mut().item_spacing.y = 4.0;
+                            caption(ui, theme, "Свои пресеты маршрутизации");
+                            ui.add_enabled_ui(!custom.is_empty(), |ui| {
+                                if let Some(id) = preset_combo(ui, "custom", &custom, &active) {
+                                    bridge.apply_custom_routing_preset(&id);
+                                }
+                            });
+                        },
+                    );
+                    // Icon buttons line up with the combos (QML AlignBottom).
+                    ui.allocate_ui_with_layout(
+                        vec2(buttons, height),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            ui.add_space(height - theme.control_height as f32);
                             ui.horizontal(|ui| {
-                                if fluent_button::icon(
-                                    ui,
-                                    theme,
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                if crate::shell::widgets::FluentButton::icon(
                                     "\u{e74e}",
                                     &tr("Сохранить текущие правила как пресет", &[]),
-                                    true,
                                 )
+                                .show(ui, theme)
                                 .clicked()
                                 {
                                     self.open(Dialog::Save);
                                 }
                                 let custom_active =
                                     custom.iter().any(|preset| field(preset, "id") == active);
-                                if fluent_button::icon(
-                                    ui,
-                                    theme,
+                                if crate::shell::widgets::FluentButton::icon(
                                     "\u{e74d}",
                                     &tr("Удалить выбранный пользовательский пресет", &[]),
-                                    custom_active,
                                 )
+                                .enabled(custom_active)
+                                .show(ui, theme)
                                 .clicked()
                                 {
                                     bridge.delete_routing_preset(&active);
@@ -331,7 +346,7 @@ impl RoutingPage {
                 bridge.set_bypass_lan(bypass);
             }
             hline(ui, theme, 0.0);
-            right_row(ui, 48.0, |ui| {
+            right_row(ui, 37.0, |ui| {
                 if let Some(action) = action_combo(
                     ui,
                     "default-outbound",
@@ -343,6 +358,7 @@ impl RoutingPage {
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
                         ui.label(text("По умолчанию (TUN)", theme));
                         caption(ui, theme, TUN_DEFAULT_HINT);
                     });
@@ -352,7 +368,7 @@ impl RoutingPage {
             let tun = bridge.tun_mode();
             let discord = bridge.discord_proxy();
             ui.add_enabled_ui(!tun, |ui| {
-                right_row(ui, 48.0, |ui| {
+                right_row(ui, 37.0, |ui| {
                     if let Some(value) = switch_widget(ui, theme, discord, !tun) {
                         bridge.set_discord_proxy(value);
                     }
@@ -368,6 +384,7 @@ impl RoutingPage {
                                     }),
                             );
                             ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
                                 ui.label(text("Discord Voice", theme));
                                 caption(
                                     ui,
@@ -394,12 +411,13 @@ impl RoutingPage {
         active: &str,
     ) {
         caption(ui, theme, "Быстрые пресеты маршрутизации");
-        ui.add_space(4.0);
+        // Caption sits 4 px above its combo; the card spacing is 12.
+        ui.add_space(4.0 - ui.spacing().item_spacing.y);
         if let Some(id) = preset_combo(ui, "built-in", built_in, active) {
             bridge.apply_routing_preset(&id);
         }
         caption(ui, theme, "Свои пресеты маршрутизации");
-        ui.add_space(4.0);
+        ui.add_space(4.0 - ui.spacing().item_spacing.y);
         ui.add_enabled_ui(!custom.is_empty(), |ui| {
             if let Some(id) = preset_combo(ui, "custom", custom, active) {
                 bridge.apply_custom_routing_preset(&id);
@@ -596,6 +614,7 @@ fn rules(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, processes: bool) {
                 },
             );
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                ui.add_space(14.0);
                 ui.label(
                     RichText::new(tr(title, &[]))
                         .size(theme.font_small as f32)
@@ -611,9 +630,15 @@ fn rules(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, processes: bool) {
                 vec2(ui.available_width(), 90.0),
                 Layout::top_down(Align::Center),
                 |ui| {
-                    ui.add_space(18.0);
-                    ui.label(text(empty, theme));
-                    caption(ui, theme, hint);
+                    // Centred column: muted title, 6 px, faint hint.
+                    ui.add_space(24.0);
+                    ui.label(text(empty, theme).color(theme.text_muted));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(tr(hint, &[]))
+                            .size(theme.font_small as f32)
+                            .color(theme.text_faint),
+                    );
                 },
             );
         }
@@ -789,7 +814,7 @@ fn combo<'a>(
     width: f32,
 ) -> Option<String> {
     let mut picked = None;
-    ComboBox::from_id_salt(id)
+    ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
         .width(width)
         .truncate()
         .selected_text(label)
@@ -806,7 +831,9 @@ fn combo<'a>(
 
 /// QML `Switch` as a 44×20 Fluent pill (same drawing as the logs autoscroll).
 fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
-    let (rect, mut response) = ui.allocate_exact_size(vec2(44.0, 20.0), Sense::click());
+    // The Universal `Switch` keeps 8 px of padding after its 44x20 track.
+    let (slot, mut response) = ui.allocate_exact_size(vec2(52.0, 20.0), Sense::click());
+    let rect = egui::Rect::from_min_size(slot.min, vec2(44.0, 20.0));
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, checked, "")
     });
@@ -820,20 +847,30 @@ fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Op
     let fade = |color: Color32| {
         Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
     };
-    let fill = fade(if checked { theme.accent } else { theme.control_fill });
-    let stroke = if checked || !enabled {
-        Stroke::NONE
+    // Universal off state: transparent track, 2 px outline at 60% of the
+    // text colour and a knob at 80%.
+    let ink = |opacity: f32| {
+        let text = theme.text;
+        let alpha = (f32::from(alpha) * opacity) as u8;
+        Color32::from_rgba_unmultiplied(text.r(), text.g(), text.b(), alpha)
+    };
+    let (fill, stroke) = if checked {
+        (fade(theme.accent), Stroke::NONE)
     } else {
-        Stroke::new(1.0, fade(theme.border_solid))
+        (Color32::TRANSPARENT, Stroke::new(2.0, ink(0.6)))
     };
     ui.painter()
         .rect(rect, 10.0, fill, stroke, egui::StrokeKind::Inside);
-    let knob_x = if checked {
-        rect.right() - 10.0
-    } else {
-        rect.left() + 10.0
-    };
-    let knob = fade(if checked { theme.accent_text } else { theme.text_muted });
+    let knob_x = rect.left()
+        + crate::shell::motion::follow(
+            ui.ctx(),
+            theme,
+            response.id.with("knob"),
+            if checked { rect.width() - 10.0 } else { 10.0 },
+            120.0,
+            crate::shell::motion::ease_out_cubic,
+        );
+    let knob = if checked { fade(theme.accent_text) } else { ink(0.8) };
     ui.painter()
         .circle_filled(egui::pos2(knob_x, rect.center().y), 5.0, knob);
     value
@@ -863,12 +900,12 @@ fn warning_band(ui: &mut Ui, theme: &Theme) {
 
 /// 1px `Theme.divider` line, optionally inset by 14pt like the table cards.
 fn hline(ui: &mut Ui, theme: &Theme, inset: f32) {
-    ui.horizontal(|ui| {
-        ui.add_space(inset);
-        let (rect, _) =
-            ui.allocate_exact_size(vec2(ui.available_width().max(0.0), 1.0), Sense::hover());
-        ui.painter().rect_filled(rect, 0.0, theme.divider);
-    });
+    // Allocated directly: a `horizontal` row would pad the line to a full
+    // interact height. The inset applies to both ends, as in QML.
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width().max(0.0), 1.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect.shrink2(vec2(inset, 0.0)), 0.0, theme.divider);
 }
 
 fn section(ui: &mut Ui, theme: &Theme, title: &str) {
@@ -903,11 +940,7 @@ fn right_row<R>(ui: &mut Ui, height: f32, content: impl FnOnce(&mut Ui) -> R) ->
 }
 
 fn card(ui: &mut Ui, theme: &Theme, padding: f32, content: impl FnOnce(&mut Ui)) {
-    Frame::new()
-        .fill(theme.card)
-        .stroke(Stroke::new(1.0, theme.border_solid))
-        .corner_radius(theme.radius as u8)
-        .inner_margin(padding)
+    crate::shell::widgets::card_frame(theme, padding.max(1.0))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             content(ui);

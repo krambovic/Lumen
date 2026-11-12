@@ -452,7 +452,7 @@ impl NodesPage {
                     }),
             );
             let options = sorts.collect::<Vec<_>>();
-            ComboBox::from_id_salt("node-sort-order")
+            ComboBox::from_id_salt("node-sort-order").icon(crate::shell::widgets::combo_chevron)
                 .width(sort_width)
                 .height(350.0)
                 .selected_text(tr(
@@ -1147,7 +1147,7 @@ impl NodesPage {
                         .iter()
                         .find(|sub| field(sub, "id") == self.info_id)
                         .or_else(|| subs.first());
-                    ComboBox::from_id_salt("nodes-subscription-info")
+                    ComboBox::from_id_salt("nodes-subscription-info").icon(crate::shell::widgets::combo_chevron)
                         .selected_text(selected.map(subscription::name).unwrap_or_default())
                         .show_ui(ui, |ui| {
                             for sub in subs {
@@ -1172,7 +1172,7 @@ impl NodesPage {
                 }
                 Dialog::Move(ids) => {
                     ui.label(tr("Выбрано: {count}", &[("count", &ids.len().to_string())]));
-                    ComboBox::from_id_salt("nodes-move-group")
+                    ComboBox::from_id_salt("nodes-move-group").icon(crate::shell::widgets::combo_chevron)
                         .selected_text(if self.second.is_empty() {
                             tr("Выберите группу", &[])
                         } else {

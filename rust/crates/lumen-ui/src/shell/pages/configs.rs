@@ -381,7 +381,7 @@ fn profile_picker(
         .unwrap_or_else(|| tr(empty, &[]));
     let mut selection = None;
     ui.add_enabled_ui(!items.is_empty(), |ui| {
-        ComboBox::from_id_salt(id)
+        ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
             .selected_text(label)
             .width(width)
             .truncate()

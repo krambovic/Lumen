@@ -376,7 +376,22 @@ client, core/resource updaters, zapret and discord proxy managers.
     `section_title`, `BigValue`, `bordered_rect` (a QML border replaces the
     fill at the edge; egui strokes blend over it) and `StatusRing`
     (`StatusRing.qml` with the busy spin and settle animations).
-    Pages other than the dashboard still use stock egui buttons and combos.
+    The dashboard and the routing preset toolbar use them. Other pages keep
+    stock egui buttons and combos, restyled in `theme.rs` (small corners, no
+    hover expansion, Fluent borders, accent open state, overlay scrollbars,
+    110 ms widget animations) with the `widgets::combo_chevron` glyph painted
+    over stock combos. Their hover/press colour animations are egui's, not
+    the `AccentButton.qml` ones.
+  - The settings and routing `Switch` follows the Universal style: the off
+    state is a transparent track with a 2 px outline at 60% of the text
+    colour and a knob at 80%; the knob slides in 120 ms.
+  - Divider lines are allocated as exact 1 px items with a symmetric inset.
+    They used to sit in a `horizontal` row, which added about 19 px per
+    divider on the settings and routing pages.
+  - Compared at 1280x760, 960x640 and 640x480 on the dashboard, routing and
+    settings pages. Known gaps: the QML rail scrolls when the window is too
+    short while the Rust rail keeps its fixed groups, and the dashboard
+    search field overflows its card by a few pixels at 640 px width.
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated

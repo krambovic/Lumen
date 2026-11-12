@@ -1993,6 +1993,34 @@ pub fn apply_visuals(ctx: &Context, theme: &Theme) {
     };
     style.spacing.item_spacing = Vec2::splat(theme.spacing as f32);
     style.spacing.button_padding = Vec2::new(theme.spacing as f32, theme.spacing as f32 / 2.0);
+    // Stock egui widgets follow the Fluent controls: `radiusSmall` corners, a
+    // hairline `borderSolid` outline in every state (accent while open), no
+    // hover growth. `interact_size` stays at the egui default: it is also the
+    // minimum height of every `ui.horizontal` row.
+    let corner = egui::CornerRadius::same(theme.radius_small as u8);
+    let widgets = &mut style.visuals.widgets;
+    for visuals in [
+        &mut widgets.noninteractive,
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+        &mut widgets.open,
+    ] {
+        visuals.corner_radius = corner;
+        visuals.expansion = 0.0;
+    }
+    widgets.active.bg_stroke = egui::Stroke::new(1.0, theme.border_solid);
+    widgets.open.weak_bg_fill = theme.control_fill;
+    widgets.open.bg_fill = theme.control_fill;
+    widgets.open.fg_stroke = egui::Stroke::new(1.0, theme.text);
+    widgets.open.bg_stroke = egui::Stroke::new(1.0, theme.accent);
+    style.visuals.menu_corner_radius = egui::CornerRadius::same(8);
+    style.visuals.window_corner_radius = egui::CornerRadius::same(8);
+    // FluentScrollBar: a thin overlay bar that widens under the pointer.
+    style.spacing.scroll = egui::style::ScrollStyle::floating();
+    style.spacing.scroll.floating_width = 2.0;
+    style.spacing.scroll.bar_width = 6.0;
+    style.animation_time = if theme.anim_fast > 0 { 0.11 } else { 0.0 };
     ctx.set_global_style(style);
 }
 

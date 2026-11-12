@@ -404,6 +404,17 @@ pub(crate) fn combo<S: AsRef<str>>(
     picked
 }
 
+/// `FluentCombo.qml` chevron for stock `egui::ComboBox` fields.
+pub(crate) fn combo_chevron(ui: &Ui, rect: Rect, _visuals: &egui::style::WidgetVisuals, _open: bool) {
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "\u{e70d}",
+        FontId::proportional(12.0),
+        ui.visuals().widgets.noninteractive.fg_stroke.color,
+    );
+}
+
 /// A pointing-hand hit area for hand-painted rows and tabs.
 pub(crate) fn hit(ui: &Ui, rect: Rect, id: Id) -> Response {
     ui.interact(rect, id, Sense::click())

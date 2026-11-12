@@ -14,8 +14,9 @@ use lumen_core::{constants::APP_VERSION, i18n::tr, models::AppSettings};
 
 use super::{PageContext, fluent_button};
 use crate::shell::{
+    motion,
     theme::{Theme, hex_color, semibold},
-    win_native,
+    widgets, win_native,
 };
 use crate::view_models::AppBridge;
 
@@ -94,6 +95,10 @@ const SPEED_URLS: &[(&str, &str)] = &[
 #[derive(Default)]
 pub(super) struct SettingsPage {
     tab: usize,
+    /// `displayedTab`: lags `tab` while the exit animation runs.
+    displayed: usize,
+    /// Start time and direction of the running tab transition.
+    transition: Option<(f64, f32)>,
     subscription: Option<SubscriptionDraft>,
     dns: Option<DnsDraft>,
     reset: bool,
@@ -130,21 +135,40 @@ impl SettingsPage {
         let theme = page.theme;
         let settings = bridge.settings().clone();
         let compact = bridge.compact_mode();
-        ui.label(
-            RichText::new(tr("Настройки", &[]))
-                .size(theme.font_title as f32)
-                .family(crate::shell::theme::semibold_family()),
+        // Root ColumnLayout: 20 px above, 12 px right, 8 px below, `spacingLarge` gaps.
+        let mut column = ui.available_rect_before_wrap();
+        column.min.y += 20.0;
+        column.max.x -= 12.0;
+        column.max.y -= 8.0;
+        let mut column_ui = ui.new_child(egui::UiBuilder::new().max_rect(column));
+        let ui = &mut column_ui;
+        ui.spacing_mut().item_spacing.y = theme.spacing_large as f32;
+        let title = widgets::galley(
+            ui,
+            &tr("Настройки", &[]),
+            semibold(theme.font_title as f32),
+            theme.text,
         );
+        let (title_rect, _) = ui.allocate_exact_size(title.size(), Sense::hover());
+        ui.painter().galley(title_rect.min, title, theme.text);
         self.tab_bar(ui, theme, compact);
         if let Some(error) = &self.file_error {
             ui.colored_label(theme.danger, error);
         }
+        let (opacity, offset) = self.tab_transition(page.ctx, theme, ui.available_width());
+        let viewport = ui.available_rect_before_wrap();
+        let shown = self.displayed;
+        let mut stack =
+            ui.new_child(egui::UiBuilder::new().max_rect(viewport.translate(vec2(offset, 0.0))));
+        stack.set_clip_rect(viewport.intersect(ui.clip_rect()));
+        stack.multiply_opacity(opacity);
+        let ui = &mut stack;
         ScrollArea::vertical()
-            .id_salt(("settings", self.tab))
+            .id_salt(("settings", shown))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = theme.spacing_large as f32;
-                match self.tab {
+                match shown {
                     0 => self.appearance(ui, theme, bridge, &settings, compact),
                     1 => network(ui, theme, bridge, &settings, compact),
                     2 => startup(ui, theme, bridge, &settings, compact),
@@ -162,6 +186,41 @@ impl SettingsPage {
         {
             self.color = None;
         }
+    }
+
+    /// `tabExit` (70/90 ms) then `tabEnter` (120/220 ms): returns the stack
+    /// opacity and horizontal offset, switching `displayed` between the two.
+    fn tab_transition(&mut self, ctx: &Context, theme: &Theme, width: f32) -> (f32, f32) {
+        if self.displayed == self.tab && self.transition.is_none() {
+            return (1.0, 0.0);
+        }
+        if theme.anim_fast == 0 {
+            self.displayed = self.tab;
+            self.transition = None;
+            return (1.0, 0.0);
+        }
+        let now = ctx.input(|input| input.time);
+        let enter = (width * 0.035).clamp(24.0, 40.0).round();
+        let exit = (enter * 0.35).round();
+        let direction = if self.tab >= self.displayed { 1.0 } else { -1.0 };
+        let (start, direction) = *self.transition.get_or_insert((now, direction));
+        let elapsed = (now - start) as f32;
+        ctx.request_repaint();
+        if elapsed < 0.09 {
+            let fade = (elapsed / 0.07).min(1.0).powi(3);
+            let slide = (elapsed / 0.09).powi(3);
+            return (1.0 - 0.14 * fade, -direction * exit * slide);
+        }
+        self.displayed = self.tab;
+        let elapsed = elapsed - 0.09;
+        if elapsed >= 0.22 {
+            self.transition = None;
+            return (1.0, 0.0);
+        }
+        (
+            0.86 + 0.14 * motion::ease_out_cubic(elapsed / 0.12),
+            direction * enter * (1.0 - motion::ease_out_quint(elapsed / 0.22)),
+        )
     }
 
     /// Icon tab strip with the half-width accent underline (`tabRow` +
@@ -187,13 +246,24 @@ impl SettingsPage {
                     let (rect, response) =
                         ui.allocate_exact_size(vec2(tab_width, height), Sense::click());
                     let current = self.tab == index;
-                    if current {
-                        ui.painter()
-                            .rect_filled(rect, theme.radius_small as u8, theme.accent_soft);
-                    } else if response.hovered() {
-                        ui.painter()
-                            .rect_filled(rect, theme.radius_small as u8, theme.nav_hover);
-                    }
+                    let highlight = motion::toggle(
+                        ui.ctx(),
+                        theme,
+                        Id::unique(("settings-tab-fill", index)),
+                        current || response.hovered(),
+                        140.0,
+                        motion::linear,
+                    );
+                    let fill = if current {
+                        theme.accent_soft
+                    } else {
+                        theme.nav_hover
+                    };
+                    ui.painter().rect_filled(
+                        rect,
+                        theme.radius_small as u8,
+                        fill.gamma_multiply(highlight),
+                    );
                     // Painted directly so the click response keeps the hit.
                     let galley = ui.painter().layout_job(tab_job(
                         theme,
@@ -215,7 +285,14 @@ impl SettingsPage {
                         let underline_width = tab_width * 0.5;
                         let underline = egui::Rect::from_min_size(
                             egui::pos2(
-                                rect.left() + (tab_width - underline_width) * 0.5,
+                                motion::follow(
+                                    ui.ctx(),
+                                    theme,
+                                    Id::unique("settings-tab-indicator"),
+                                    rect.left() + (tab_width - underline_width) * 0.5,
+                                    240.0,
+                                    motion::ease_out_quint,
+                                ),
                                 rect.bottom() - 2.5,
                             ),
                             vec2(underline_width, 2.5),
@@ -2024,7 +2101,8 @@ fn setting_row<R>(
     subtitle: &str,
     right: impl FnOnce(&mut Ui) -> R,
 ) -> R {
-    let height = if subtitle.is_empty() { 32.0 } else { 46.0 };
+    // Title (19) + 2 + subtitle (16); a lone title still clears a 32 px control.
+    let height = if subtitle.is_empty() { 32.0 } else { 37.0 };
     right_row(ui, height, |ui| {
         let result = right(ui);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -2034,6 +2112,8 @@ fn setting_row<R>(
                     vec2(22.0, height),
                     Layout::left_to_right(Align::Center),
                     |ui| {
+                        // Keep the full 22 px glyph slot; egui shrinks it to the glyph.
+                        ui.set_min_width(22.0);
                         ui.label(
                             RichText::new(glyph)
                                 .size(16.0)
@@ -2043,6 +2123,7 @@ fn setting_row<R>(
                 );
             }
             ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
                 ui.label(RichText::new(tr(title, &[])).size(theme.font_normal as f32));
                 if !subtitle.is_empty() {
                     ui.label(
@@ -2058,25 +2139,23 @@ fn setting_row<R>(
 }
 
 fn card(ui: &mut Ui, theme: &Theme, content: impl FnOnce(&mut Ui)) {
-    Frame::new()
-        .fill(theme.card)
-        .stroke(Stroke::new(1.0, theme.border_solid))
-        .corner_radius(theme.radius as u8)
-        .inner_margin(theme.spacing_large as f32)
+    widgets::card_frame(theme, theme.spacing_large as f32)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
+            // Card ColumnLayout `spacing: 14`.
+            ui.spacing_mut().item_spacing.y = 14.0;
             content(ui);
         });
 }
 
 /// 1px `Theme.divider` line.
 fn hline(ui: &mut Ui, theme: &Theme, inset: f32) {
-    ui.horizontal(|ui| {
-        ui.add_space(inset);
-        let (rect, _) =
-            ui.allocate_exact_size(vec2(ui.available_width().max(0.0), 1.0), Sense::hover());
-        ui.painter().rect_filled(rect, 0.0, theme.divider);
-    });
+    // Allocated directly: a `horizontal` row would pad the line to a full
+    // interact height. The inset applies to both ends, as in QML.
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width().max(0.0), 1.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect.shrink2(vec2(inset, 0.0)), 0.0, theme.divider);
 }
 
 fn caption(ui: &mut Ui, theme: &Theme, text: &str) {
@@ -2127,7 +2206,7 @@ fn styled_combo(
         .map(|(_, label)| *label)
         .unwrap_or("");
     let mut picked = None;
-    ComboBox::from_id_salt(id)
+    ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
         .width(width)
         .truncate()
         .selected_text(tr(label, &[]))
@@ -2212,7 +2291,9 @@ fn percent_slider(
 
 /// QML `Switch` as a 44×20 Fluent pill.
 fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
-    let (rect, mut response) = ui.allocate_exact_size(vec2(44.0, 20.0), Sense::click());
+    // The Universal `Switch` keeps 8 px of padding after its 44x20 track.
+    let (slot, mut response) = ui.allocate_exact_size(vec2(52.0, 20.0), Sense::click());
+    let rect = egui::Rect::from_min_size(slot.min, vec2(44.0, 20.0));
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, checked, "")
     });
@@ -2225,20 +2306,30 @@ fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Op
     let alpha = if enabled { 255 } else { 115 };
     let fade =
         |color: Color32| Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
-    let fill = fade(if checked { theme.accent } else { theme.control_fill });
-    let stroke = if checked || !enabled {
-        Stroke::NONE
+    // Universal off state: transparent track, 2 px outline at 60% of the
+    // text colour and a knob at 80%.
+    let ink = |opacity: f32| {
+        let text = theme.text;
+        let alpha = (f32::from(alpha) * opacity) as u8;
+        Color32::from_rgba_unmultiplied(text.r(), text.g(), text.b(), alpha)
+    };
+    let (fill, stroke) = if checked {
+        (fade(theme.accent), Stroke::NONE)
     } else {
-        Stroke::new(1.0, fade(theme.border_solid))
+        (Color32::TRANSPARENT, Stroke::new(2.0, ink(0.6)))
     };
     ui.painter()
         .rect(rect, 10.0, fill, stroke, egui::StrokeKind::Inside);
-    let knob_x = if checked {
-        rect.right() - 10.0
-    } else {
-        rect.left() + 10.0
-    };
-    let knob = fade(if checked { theme.accent_text } else { theme.text_muted });
+    let knob_x = rect.left()
+        + motion::follow(
+            ui.ctx(),
+            theme,
+            response.id.with("knob"),
+            if checked { rect.width() - 10.0 } else { 10.0 },
+            120.0,
+            motion::ease_out_cubic,
+        );
+    let knob = if checked { fade(theme.accent_text) } else { ink(0.8) };
     ui.painter()
         .circle_filled(egui::pos2(knob_x, rect.center().y), 5.0, knob);
     value

@@ -244,7 +244,7 @@ impl HistoryPage {
 
     fn toolbar(&mut self, ui: &mut Ui, theme: &Theme) -> (bool, bool) {
         let title = RichText::new(tr("История", &[])).font(semibold(theme.font_title as f32));
-        let period = ComboBox::from_id_salt("history-period")
+        let period = ComboBox::from_id_salt("history-period").icon(crate::shell::widgets::combo_chevron)
             .selected_text(
                 RichText::new(tr(PERIODS[self.period].1, &[])).size(theme.font_normal as f32),
             )

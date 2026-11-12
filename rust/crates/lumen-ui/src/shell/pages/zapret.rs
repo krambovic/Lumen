@@ -806,7 +806,7 @@ fn searchable(
 ) -> Option<String> {
     let id = ui.make_persistent_id(key);
     ui.add_enabled_ui(!items.is_empty(), |ui| {
-        ComboBox::from_id_salt(id)
+        ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
             .width(width)
             .truncate()
             .selected_text(label)
