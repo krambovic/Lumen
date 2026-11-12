@@ -19,6 +19,7 @@ mod node_editor;
 mod node_qr;
 mod nodes;
 mod routing;
+mod search_field;
 mod settings;
 mod updates;
 mod zapret;

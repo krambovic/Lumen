@@ -4,11 +4,11 @@ use std::collections::{HashSet, VecDeque};
 
 use egui::{
     Align, Button, Color32, ComboBox, Frame, Id, Key, Layout, Modal, Modifiers, RichText,
-    ScrollArea, Sense, Stroke, TextEdit, Ui, vec2,
+    ScrollArea, Sense, Stroke, Ui, vec2,
 };
 use lumen_core::i18n::tr;
 
-use super::{PageContext, flag, node_editor::NodeEditor};
+use super::{PageContext, flag, node_editor::NodeEditor, search_field};
 use crate::shell::theme::Theme;
 use crate::view_models::AppBridge;
 
@@ -357,7 +357,13 @@ impl DashboardPage {
                     });
                 });
             ui.separator();
-            let (search, cleared) = server_search(ui, theme, &mut self.query);
+            let (search, cleared) = search_field::show(
+                ui,
+                theme,
+                &mut self.query,
+                &tr("Поиск по имени, протоколу, стране", &[]),
+                true,
+            );
             if search.changed() || cleared {
                 self.selection.clear();
                 bridge.set_dashboard_node_filter(&self.query);
@@ -736,59 +742,6 @@ impl DashboardPage {
             );
         });
     }
-}
-
-fn server_search(ui: &mut Ui, theme: &Theme, query: &mut String) -> (egui::Response, bool) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
-    ui.painter()
-        .rect_filled(rect, theme.radius_small as f32, theme.control_fill);
-    ui.painter().text(
-        egui::pos2(rect.left() + 10.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        "\u{e721}",
-        egui::FontId::proportional(14.0),
-        theme.text_faint,
-    );
-    let edit_rect = egui::Rect::from_min_max(
-        rect.min + vec2(34.0, 0.0),
-        rect.max - vec2(if query.is_empty() { 10.0 } else { 32.0 }, 0.0),
-    );
-    let response = ui.place(
-        edit_rect,
-        TextEdit::singleline(query)
-            .frame(Frame::NONE)
-            .vertical_align(Align::Center)
-            .margin(egui::Margin::ZERO)
-            .hint_text(
-                RichText::new(tr("Поиск по имени, протоколу, стране", &[])).color(theme.text_faint),
-            ),
-    );
-    let cleared = !query.is_empty()
-        && ui
-            .place(
-                egui::Rect::from_min_size(
-                    egui::pos2(rect.right() - 32.0, rect.top()),
-                    vec2(32.0, 32.0),
-                ),
-                Button::new("\u{e711}").frame(false),
-            )
-            .clicked();
-    if cleared {
-        query.clear();
-        response.request_focus();
-    }
-    let border = if response.has_focus() {
-        theme.accent
-    } else {
-        theme.border_solid
-    };
-    ui.painter().rect_stroke(
-        rect,
-        theme.radius_small as f32,
-        Stroke::new(1.0, border),
-        egui::StrokeKind::Inside,
-    );
-    (response, cleared)
 }
 
 fn latency_chart(ui: &mut Ui, theme: &Theme, samples: &VecDeque<i64>) {

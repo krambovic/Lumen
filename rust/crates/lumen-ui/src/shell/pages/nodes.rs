@@ -12,10 +12,10 @@ use egui_extras::{Column, TableBuilder};
 use lumen_core::i18n::tr;
 use serde_json::{Value, json};
 
-use super::{PageContext, flag, node_editor::NodeEditor};
+use super::{PageContext, flag, node_editor::NodeEditor, search_field};
 use crate::shell::{
     onboarding::{import_clipboard, import_config_file},
-    theme::Theme,
+    theme::{Theme, semibold},
     win_native,
 };
 use crate::view_models::{AppBridge, app_bridge::UiEvent, node_list_model::NodeListModel};
@@ -25,13 +25,19 @@ const COLUMNS: [(&str, &str, &str, f32, f32); 10] = [
     ("type", "scheme", "Тип", 80.0, 56.0),
     ("transport", "transport", "Транспорт", 92.0, 60.0),
     ("address", "address", "Адрес", 160.0, 110.0),
-    ("port", "", "Порт", 60.0, 48.0),
+    ("port", "", "Порт", 60.0, 44.0),
     ("group", "group", "Группа", 120.0, 70.0),
     ("ping", "ping", "Пинг", 76.0, 56.0),
     ("speed", "speed", "Скорость", 100.0, 76.0),
     ("status", "status", "Статус", 64.0, 50.0),
-    ("last", "last", "Последнее использование", 130.0, 70.0),
+    ("last", "last", "Последнее", 130.0, 70.0),
 ];
+
+const INSPECTOR_BREAKPOINT: f32 = 1100.0;
+const INSPECTOR_WIDTH: f32 = 300.0;
+const TABLE_LEFT_PAD: f32 = 12.0;
+const TABLE_RIGHT_PAD: f32 = 26.0;
+const TABLE_CARD_MARGIN: f32 = 20.0;
 
 #[derive(Clone)]
 enum Dialog {
@@ -55,8 +61,8 @@ pub(super) struct NodesPage {
     info_id: String,
     inspector_node: bool,
     widths: Option<Vec<f32>>,
-    last_widths: Vec<f32>,
-    last_auto_width: Option<i32>,
+    resized_column: Option<usize>,
+    resize_origin: Option<(usize, f32, f32)>,
     scroll_row: Option<usize>,
     imported_node: Option<String>,
     imported_group: Option<String>,
@@ -89,32 +95,40 @@ impl NodesPage {
         let selected_sub = subscriptions
             .iter()
             .find(|sub| field(sub, "id") == bridge.selected_subscription_id());
-        self.toolbar(ui, theme, bridge, &subscriptions, selected_sub);
-        if let Some(error) = &self.file_error {
-            ui.colored_label(theme.danger, error);
-        }
-        self.shortcuts(ui, bridge);
-        if ui.available_width() >= 850.0 {
-            let left = (ui.available_width() * 0.69).max(440.0);
-            ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(left, ui.available_height()),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| self.table(ui, theme, bridge, ui.available_height()),
-                );
-                self.inspector(ui, theme, bridge, selected_sub, ui.available_height());
-            });
-        } else {
+        let show_inspector = ui.available_width() >= INSPECTOR_BREAKPOINT;
+        let spacing = theme.spacing as f32;
+        Frame::new().inner_margin(spacing).show(ui, |ui| {
+            ui.spacing_mut().item_spacing = egui::Vec2::splat(spacing);
+            self.toolbar(ui, theme, bridge, &subscriptions, selected_sub);
+            if let Some(error) = &self.file_error {
+                ui.colored_label(theme.danger, error);
+            }
+            self.shortcuts(ui, bridge);
             let height = ui.available_height();
-            self.table(ui, theme, bridge, (height * 0.60).max(130.0));
-            self.inspector(
-                ui,
-                theme,
-                bridge,
-                selected_sub,
-                ui.available_height().max(70.0),
-            );
-        }
+            if show_inspector {
+                let left = ui.available_width() - INSPECTOR_WIDTH - spacing;
+                ui.horizontal_top(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left, height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(left);
+                            self.table(ui, theme, bridge, height);
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(INSPECTOR_WIDTH, height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(INSPECTOR_WIDTH);
+                            self.inspector(ui, theme, bridge, selected_sub, height);
+                        },
+                    );
+                });
+            } else {
+                self.table(ui, theme, bridge, height);
+            }
+        });
         if let Some(id) = self.editor.render(page.ctx, theme, bridge) {
             self.reveal(bridge, &id);
         }
@@ -176,11 +190,43 @@ impl NodesPage {
         selected_sub: Option<&Value>,
     ) {
         let group = bridge.node_filter_group();
-        ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(tr("Серверы", &[]))
-                    .size(theme.font_title as f32)
-                    .strong(),
+        let available = ui.available_width();
+        let source_width = (available * 0.24)
+            .clamp(240.0, 340.0)
+            .min((available - 238.0).max(100.0));
+        toolbar_row(ui, 10.0, |ui| {
+            menu(
+                ui,
+                Button::new(
+                    RichText::new(format!("\u{e710}  {}", tr("Добавить", &[])))
+                        .color(theme.accent_text),
+                )
+                .fill(theme.accent),
+                112.0,
+                |ui| {
+                    if button(ui, "Импорт подписки") {
+                        self.open(Dialog::Subscription);
+                        ui.close();
+                    }
+                    if button(ui, "Импорт из буфера") {
+                        import_clipboard(bridge);
+                        ui.close();
+                    }
+                    if button(ui, "Импорт файла конфигурации") {
+                        self.file_error = import_config_file(bridge)
+                            .err()
+                            .map(|error| error.to_string());
+                        ui.close();
+                    }
+                    if button(ui, "Добавить сервер вручную") {
+                        self.editor.create(bridge, &group);
+                        ui.close();
+                    }
+                    if button(ui, "Создать группу") {
+                        self.open(Dialog::Group);
+                        ui.close();
+                    }
+                },
             );
             let name = if let Some(sub) = selected_sub {
                 subscription::name(sub).to_string()
@@ -189,7 +235,42 @@ impl NodesPage {
             } else {
                 group.clone()
             };
-            ui.menu_button(name, |ui| {
+            let mut label = egui::text::LayoutJob::default();
+            label.append(
+                &name,
+                0.0,
+                egui::TextFormat {
+                    font_id: semibold(theme.font_normal as f32),
+                    color: theme.text,
+                    ..Default::default()
+                },
+            );
+            if let Some(status) = selected_sub.map(subscription::Status::new)
+                && let Some(summary) = status.summary()
+            {
+                let (usage, time) = summary.split_once(" · ").unwrap_or((&summary, ""));
+                label.append(
+                    usage,
+                    10.0,
+                    egui::TextFormat {
+                        font_id: egui::FontId::proportional(11.0),
+                        color: status.color(theme),
+                        ..Default::default()
+                    },
+                );
+                if !time.is_empty() {
+                    label.append(
+                        &format!(" · {time}"),
+                        0.0,
+                        egui::TextFormat {
+                            font_id: egui::FontId::proportional(11.0),
+                            color: theme.text_muted,
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+            let picker = menu(ui, Button::new(label).truncate(), source_width, |ui| {
                 if button(ui, "Все серверы") {
                     self.choose_source(bridge, "", "");
                     ui.close();
@@ -253,37 +334,30 @@ impl NodesPage {
                     ui.close();
                 }
             });
-            ui.menu_button(tr("Добавить", &[]), |ui| {
-                if button(ui, "Импорт подписки") {
-                    self.open(Dialog::Subscription);
-                    ui.close();
-                }
-                if button(ui, "Импорт из буфера") {
-                    import_clipboard(bridge);
-                    ui.close();
-                }
-                if button(ui, "Импорт файла конфигурации") {
-                    self.file_error = import_config_file(bridge)
-                        .err()
-                        .map(|error| error.to_string());
-                    ui.close();
-                }
-                if button(ui, "Добавить сервер вручную") {
-                    self.editor.create(bridge, &group);
-                    ui.close();
-                }
-                if button(ui, "Создать группу") {
-                    self.open(Dialog::Group);
-                    ui.close();
+            ui.painter().text(
+                egui::pos2(picker.rect.right() - 12.0, picker.rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                "\u{e70d}",
+                egui::FontId::proportional(9.0),
+                theme.text_muted,
+            );
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label(RichText::new(tr("Серверы", &[])).font(semibold(theme.font_title as f32)));
+                if !self.picked.is_empty() && ui.available_width() > 76.0 {
+                    ui.label(
+                        RichText::new(tr(
+                            "Выбрано: {count}",
+                            &[("count", &self.picked.len().to_string())],
+                        ))
+                        .size(theme.font_small as f32)
+                        .color(theme.text_muted),
+                    );
                 }
             });
-            if button(ui, "Пинг") {
-                let targets = self.targets(bridge);
-                if !targets.is_empty() {
-                    bridge.ping_nodes(Some(&targets));
-                }
-            }
-            ui.menu_button(tr("Ещё", &[]), |ui| {
+        });
+        let sort_width = (available - 345.0).clamp(100.0, 190.0);
+        toolbar_row(ui, 8.0, |ui| {
+            menu(ui, Button::new("\u{e712}"), 32.0, |ui| {
                 if button(ui, "Выбрать все") {
                     self.select_all(bridge);
                     ui.close();
@@ -330,21 +404,37 @@ impl NodesPage {
                     ui.close();
                 }
             });
-        });
-        ui.horizontal_wrapped(|ui| {
             if ui
-                .add(
-                    TextEdit::singleline(&mut self.query)
-                        .desired_width(230.0)
-                        .hint_text(tr("Поиск", &[])),
+                .add_sized(
+                    [81.0, 32.0],
+                    Button::new(format!("\u{e724}  {}", tr("Пинг", &[]))),
                 )
-                .changed()
+                .clicked()
             {
-                bridge.set_node_filter(&group, &self.query);
-                self.picked.clear();
+                let targets = self.targets(bridge);
+                if !targets.is_empty() {
+                    bridge.ping_nodes(Some(&targets));
+                }
             }
             let key = bridge.node_sort_key();
             let ascending = bridge.node_sort_ascending();
+            if ui
+                .add_sized(
+                    [32.0, 32.0],
+                    Button::new(if ascending { "\u{e74a}" } else { "\u{e74b}" }),
+                )
+                .on_hover_text(tr(
+                    if ascending {
+                        "По возрастанию"
+                    } else {
+                        "По убыванию"
+                    },
+                    &[],
+                ))
+                .clicked()
+            {
+                bridge.set_node_sort(&key, !ascending);
+            }
             let mut next = None;
             let sorts = std::iter::once(("manual", "Вручную")).chain(
                 COLUMNS
@@ -363,6 +453,8 @@ impl NodesPage {
             );
             let options = sorts.collect::<Vec<_>>();
             ComboBox::from_id_salt("node-sort-order")
+                .width(sort_width)
+                .height(350.0)
                 .selected_text(tr(
                     options
                         .iter()
@@ -380,21 +472,19 @@ impl NodesPage {
             if let Some(key) = next {
                 bridge.set_node_sort(key, true);
             }
-            if ui
-                .add_enabled(
-                    key != "manual",
-                    Button::new(if ascending { "▲" } else { "▼" }),
-                )
-                .clicked()
-            {
-                bridge.set_node_sort(&key, !ascending);
-            }
-            if !self.picked.is_empty() {
-                ui.label(tr(
-                    "Выбрано: {count}",
-                    &[("count", &self.picked.len().to_string())],
-                ));
-            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let (response, _) = search_field::show(
+                    ui,
+                    theme,
+                    &mut self.query,
+                    &tr("Поиск серверов…", &[]),
+                    false,
+                );
+                if response.changed() {
+                    bridge.set_node_filter(&group, &self.query);
+                    self.picked.clear();
+                }
+            });
         });
     }
 
@@ -462,54 +552,67 @@ impl NodesPage {
                 );
             }
         }
-        let width = ui.available_width();
-        let auto_width = width.round() as i32;
-        let auto_reflow = self.widths.is_none() && self.last_auto_width != Some(auto_width);
-        self.last_auto_width = Some(auto_width);
-        let preferred = self.widths.clone().unwrap_or_else(|| fit_widths(width));
-        let table_width = preferred.iter().sum::<f32>() + 72.0;
+        let width = (ui.available_width() - 2.0 * TABLE_CARD_MARGIN).max(0.0);
+        let preferred = fit_widths(width, self.widths.as_deref(), self.resized_column);
+        let table_width = preferred.iter().sum::<f32>() + TABLE_LEFT_PAD + TABLE_RIGHT_PAD;
+        let scroll_height = (height
+            - 2.0 * TABLE_CARD_MARGIN
+            - 30.0
+            - if table_width > width + 1.0 { 12.0 } else { 0.0 })
+        .max(0.0);
         let mut sort_clicked = None;
-        let mut measured = Vec::new();
+        let mut resized = None;
         Frame::new()
             .fill(theme.card)
             .stroke(Stroke::new(1.0, theme.border_solid))
             .corner_radius(theme.radius as u8)
+            .inner_margin(TABLE_CARD_MARGIN - 1.0)
             .show(ui, |ui| {
+                ui.set_min_height((height - 2.0 * TABLE_CARD_MARGIN).max(0.0));
+                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                ui.visuals_mut().selection.bg_fill = theme.accent_soft;
                 ScrollArea::horizontal()
                     .id_salt("nodes-columns")
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        ui.set_width(table_width.max(width - 4.0));
+                        ui.set_width(table_width.max(width));
                         let mut table = TableBuilder::new(ui)
                             .id_salt("nodes-table")
-                            .resizable(true)
-                            .striped(true)
+                            .striped(false)
                             .sense(Sense::click_and_drag())
                             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                            .min_scrolled_height((height - 62.0).max(62.0))
-                            .max_scroll_height((height - 62.0).max(62.0))
+                            .min_scrolled_height(scroll_height)
+                            .max_scroll_height(scroll_height)
                             .auto_shrink([false, false]);
-                        for (column, width) in COLUMNS.iter().zip(&preferred) {
-                            table = table.column(
-                                Column::initial(*width)
-                                    .at_least(column.4)
-                                    .at_most(2000.0)
-                                    .clip(true),
-                            );
-                        }
-                        if auto_reflow {
-                            table.reset();
+                        for (index, width) in preferred.iter().enumerate() {
+                            table = table.column(Column::exact(
+                                *width + if index == 0 { TABLE_LEFT_PAD } else { 0.0 },
+                            ));
                         }
                         if let Some(index) = self.scroll_row.take() {
                             table = table.scroll_to_row(index, Some(egui::Align::Center));
                         }
+                        let mut header_cells = [egui::Rect::NOTHING; COLUMNS.len()];
                         table
                             .header(30.0, |mut row| {
-                                for (_, key, label, _, _) in COLUMNS {
+                                for (index, (_, key, label, _, _)) in
+                                    COLUMNS.into_iter().enumerate()
+                                {
                                     row.col(|ui| {
+                                        header_cells[index] = ui.max_rect();
+                                        row_rule(ui, theme);
+                                        ui.add_space(if index == 0 {
+                                            TABLE_LEFT_PAD + 4.0
+                                        } else {
+                                            4.0
+                                        });
                                         let caption = tr(label, &[]);
                                         if key.is_empty() {
-                                            ui.label(caption);
+                                            ui.label(
+                                                RichText::new(caption)
+                                                    .font(semibold(12.0))
+                                                    .color(theme.text_faint),
+                                            );
                                         } else {
                                             let arrow = if key == sort {
                                                 if ascending { " ▲" } else { " ▼" }
@@ -518,9 +621,13 @@ impl NodesPage {
                                             };
                                             if ui
                                                 .add(
-                                                    Button::new(format!("{caption}{arrow}"))
-                                                        .frame(false)
-                                                        .truncate(),
+                                                    Button::new(
+                                                        RichText::new(format!("{caption}{arrow}"))
+                                                            .font(semibold(12.0))
+                                                            .color(theme.text_faint),
+                                                    )
+                                                    .frame(false)
+                                                    .truncate(),
                                                 )
                                                 .clicked()
                                             {
@@ -531,13 +638,29 @@ impl NodesPage {
                                 }
                             })
                             .body(|body| {
-                                measured.extend_from_slice(body.widths());
                                 body.rows(row_height, ids.len(), |mut row| {
                                     let index = row.index();
                                     let id = &ids[index];
                                     row.set_selected(self.picked.contains(id));
                                     for column in 0..COLUMNS.len() {
                                         row.col(|ui| {
+                                            row_rule(ui, theme);
+                                            if column == 0 && bridge.node_model.selected_at(index) {
+                                                let rect = ui.max_rect();
+                                                ui.painter().rect_filled(
+                                                    egui::Rect::from_min_size(
+                                                        rect.min,
+                                                        egui::vec2(3.0, rect.height()),
+                                                    ),
+                                                    0.0,
+                                                    theme.accent,
+                                                );
+                                            }
+                                            ui.add_space(if column == 0 {
+                                                TABLE_LEFT_PAD + 4.0
+                                            } else {
+                                                4.0
+                                            });
                                             render_cell(
                                                 ui,
                                                 theme,
@@ -573,13 +696,45 @@ impl NodesPage {
                                     });
                                 });
                             });
+                        // Register handles after the table so its cells cannot claim the drag.
+                        for (index, rect) in header_cells.into_iter().enumerate() {
+                            let grip = egui::Rect::from_min_max(
+                                egui::pos2(rect.right() - 5.0, rect.top()),
+                                egui::pos2(rect.right() + 4.0, rect.bottom()),
+                            );
+                            let handle = ui
+                                .interact(
+                                    grip,
+                                    ui.id().with(("column-width", index)),
+                                    Sense::drag(),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::ResizeColumn);
+                            if handle.drag_started_by(egui::PointerButton::Primary)
+                                && let Some(origin) = ui.input(|input| input.pointer.press_origin())
+                            {
+                                self.resize_origin = Some((index, preferred[index], origin.x));
+                            }
+                            if (handle.dragged() || handle.drag_stopped())
+                                && let Some((column, width, start_x)) = self.resize_origin
+                                && column == index
+                                && let Some(pointer) = handle.interact_pointer_pos()
+                            {
+                                let width =
+                                    (width + pointer.x - start_x).clamp(COLUMNS[index].4, 2000.0);
+                                resized = Some((index, width));
+                            }
+                            if handle.hovered() || handle.dragged() {
+                                ui.painter().vline(
+                                    rect.right(),
+                                    rect.y_range(),
+                                    Stroke::new(1.0, theme.accent),
+                                );
+                            }
+                        }
                     });
             });
         if released {
             self.drag_start = None;
-        }
-        if ids.is_empty() {
-            ui.label(tr("Серверов нет — импортируйте ссылку или подписку", &[]));
         }
         if let Some(key) = sort_clicked {
             if key == sort && !ascending {
@@ -588,19 +743,21 @@ impl NodesPage {
                 bridge.set_node_sort(key, key != sort);
             }
         }
-        if !auto_reflow
-            && !self.last_widths.is_empty()
-            && measured != self.last_widths
-            && (released || ui.input(|input| input.pointer.primary_down()))
+        if let Some((index, width)) = resized {
+            let widths = self.widths.get_or_insert(preferred);
+            widths[index] = width;
+            self.resized_column = Some(index);
+        }
+        if released
+            && self.resize_origin.take().is_some()
+            && let Some(widths) = &self.widths
         {
-            self.widths = Some(measured.clone());
             let mut layout = serde_json::Map::from_iter([("manual".into(), json!(true))]);
-            for (column, value) in COLUMNS.iter().zip(&measured) {
+            for (column, value) in COLUMNS.iter().zip(widths) {
                 layout.insert(column.0.into(), json!(value.round()));
             }
             bridge.set_node_table_layout(&Value::Object(layout));
         }
-        self.last_widths = measured;
     }
 
     fn pick_row(&mut self, ids: &[String], index: usize, modifiers: Modifiers) {
@@ -751,105 +908,204 @@ impl NodesPage {
         sub: Option<&Value>,
         height: f32,
     ) {
-        ScrollArea::vertical()
-            .id_salt("nodes-inspector")
-            .max_height(height)
+        let selected_sub = sub.filter(|_| !self.inspector_node);
+        let id = self
+            .anchor
+            .as_ref()
+            .filter(|id| self.picked.contains(*id))
+            .or_else(|| self.picked.iter().next())
+            .map(String::as_str)
+            .unwrap_or_else(|| bridge.selected_node_id())
+            .to_owned();
+        let details = bridge.node_details(&id);
+        let has_node = details.get("id").is_some();
+        Frame::new()
+            .fill(theme.card)
+            .stroke(Stroke::new(1.0, theme.border_solid))
+            .corner_radius(theme.radius as u8)
             .show(ui, |ui| {
+                ui.set_min_size(egui::vec2(INSPECTOR_WIDTH - 2.0, (height - 2.0).max(0.0)));
+                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
                 if sub.is_some() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.selectable_value(&mut self.inspector_node, false, tr("Подписка", &[]));
-                        ui.selectable_value(&mut self.inspector_node, true, tr("Сервер", &[]));
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        for (node, label) in [(false, "Подписка"), (true, "Сервер")] {
+                            let active = node == self.inspector_node;
+                            let label = RichText::new(tr(label, &[])).color(if active {
+                                theme.text
+                            } else {
+                                theme.text_muted
+                            });
+                            let tab = ui.add(
+                                Button::new(if active { label.strong() } else { label })
+                                    .min_size(egui::vec2(80.0, 38.0))
+                                    .frame(false),
+                            );
+                            if active {
+                                let x = tab.rect.center().x;
+                                let y = tab.rect.bottom() - 1.5;
+                                ui.painter().line_segment(
+                                    [egui::pos2(x - 28.0, y), egui::pos2(x + 28.0, y)],
+                                    Stroke::new(3.0, theme.accent),
+                                );
+                            }
+                            if tab.clicked() {
+                                self.inspector_node = node;
+                            }
+                        }
                     });
+                    inspector_rule(ui, theme);
                 }
-                if let Some(sub) = sub.filter(|_| !self.inspector_node) {
-                    subscription::inspector(ui, theme, sub);
-                    let url = field(sub, "url");
-                    ui.horizontal_wrapped(|ui| {
-                        if button(ui, "Обновить") {
-                            bridge.update_subscription(url);
-                        }
-                        if button(ui, "Свойства подписки") {
-                            self.open_info(sub);
-                        }
-                        if sub["presentation"]["hideUrl"].as_bool() != Some(true)
-                            && button(ui, "Копировать ссылку")
-                        {
-                            copy(ui, bridge.copy_text(url));
-                        }
-                        if button(ui, "Удалить подписку (с серверами)") {
-                            bridge.remove_subscription(url, true);
-                        }
-                    });
-                    return;
-                }
-                let selected = self
-                    .anchor
-                    .as_ref()
-                    .filter(|id| self.picked.contains(*id))
-                    .or_else(|| self.picked.iter().next())
-                    .map(String::as_str)
-                    .unwrap_or_else(|| bridge.selected_node_id());
-                let id = selected.to_string();
-                let details = bridge.node_details(&id);
-                if details.get("id").is_none() {
-                    ui.label(tr("Выберите сервер", &[]));
-                    return;
-                }
-                ui.heading(field(&details, "name"));
-                let port = details["port"].as_i64().unwrap_or(0);
-                let address = if port > 0 {
-                    format!("{}:{port}", field(&details, "server"))
+                let footer_height = if selected_sub.is_some() {
+                    55.0
+                } else if has_node {
+                    93.0
                 } else {
-                    field(&details, "server").to_string()
+                    0.0
                 };
-                property(ui, "Адрес", &address);
-                for (label, key) in [
-                    ("Протокол", "protocol"),
-                    ("Транспорт", "transport"),
-                    ("Безопасность", "security"),
-                    ("SNI", "sni"),
-                    ("Отпечаток", "fingerprint"),
-                    ("Страна", "country"),
-                    ("Группа", "group"),
-                    ("Подписка", "subscription"),
-                    ("Описание", "description"),
-                ] {
-                    property(ui, label, field(&details, key));
+                let body_height =
+                    (height - footer_height - if sub.is_some() { 41.0 } else { 2.0 }).max(0.0);
+                ScrollArea::vertical()
+                    .id_salt("nodes-inspector")
+                    .max_width(INSPECTOR_WIDTH - 2.0)
+                    .max_height(body_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        Frame::new().inner_margin(13).show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 8.0;
+                            if let Some(sub) = selected_sub {
+                                subscription::inspector(ui, theme, sub);
+                            } else if has_node {
+                                ui.horizontal(|ui| {
+                                    flag::show(
+                                        ui,
+                                        field(&details, "country"),
+                                        egui::vec2(24.0, 18.0),
+                                    );
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(field(&details, "name"))
+                                                .size(18.0)
+                                                .strong(),
+                                        )
+                                        .truncate(),
+                                    );
+                                });
+                                let port = details["port"].as_i64().unwrap_or(0);
+                                let address = if port > 0 {
+                                    format!("{}:{port}", field(&details, "server"))
+                                } else {
+                                    field(&details, "server").to_string()
+                                };
+                                property(ui, "Адрес", &address);
+                                for (label, key) in [
+                                    ("Протокол", "protocol"),
+                                    ("Транспорт", "transport"),
+                                    ("Безопасность", "security"),
+                                    ("SNI", "sni"),
+                                    ("Отпечаток", "fingerprint"),
+                                    ("Страна", "country"),
+                                    ("Группа", "group"),
+                                    ("Подписка", "subscription"),
+                                    ("Описание", "description"),
+                                ] {
+                                    property(ui, label, field(&details, key));
+                                }
+                                let ping_kind = match field(&details, "pingKind") {
+                                    "proxy" => "Через прокси",
+                                    "tcping_endpoint" => "TCP до адреса",
+                                    "icmp_endpoint" => "ICMP до адреса",
+                                    "unavailable" => "Недоступно",
+                                    _ => "",
+                                };
+                                property(ui, "Тип пинга", &tr(ping_kind, &[]));
+                                property(
+                                    ui,
+                                    "Последнее использование",
+                                    &subscription::time_label(&details["lastUsed"]),
+                                );
+                                let ping = details["ping"].as_i64().unwrap_or(-1);
+                                if ping >= 0 {
+                                    property(ui, "Пинг", &format!("{ping} ms"));
+                                }
+                            } else {
+                                ui.label(
+                                    RichText::new(tr("Выберите сервер", &[]))
+                                        .color(theme.text_muted),
+                                );
+                            }
+                        });
+                    });
+                if footer_height > 0.0 {
+                    inspector_rule(ui, theme);
+                    Frame::new().inner_margin(11).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                        ui.spacing_mut().button_padding.x = 7.0;
+                        ui.spacing_mut().button_padding.y = 0.0;
+                        if let Some(sub) = selected_sub {
+                            let url = field(sub, "url");
+                            let can_copy = sub["presentation"]["hideUrl"].as_bool() != Some(true);
+                            ui.horizontal(|ui| {
+                                let update_width = (ui.available_width()
+                                    - if can_copy { 114.0 } else { 76.0 })
+                                .max(32.0);
+                                if ui
+                                    .add_sized(
+                                        [update_width, 32.0],
+                                        Button::new(format!("  {}", tr("Обновить", &[]))),
+                                    )
+                                    .clicked()
+                                {
+                                    bridge.update_subscription(url);
+                                }
+                                if icon_button(ui, "", "Свойства подписки") {
+                                    self.open_info(sub);
+                                }
+                                if can_copy && icon_button(ui, "", "Копировать ссылку")
+                                {
+                                    copy(ui, bridge.copy_text(url));
+                                }
+                                if ui
+                                    .add_sized([32.0, 32.0], Button::new("").fill(theme.danger))
+                                    .on_hover_text(tr("Удалить подписку (с серверами)", &[]))
+                                    .clicked()
+                                {
+                                    bridge.remove_subscription(url, true);
+                                }
+                            });
+                        } else if has_node {
+                            let active = Button::new(
+                                RichText::new(format!("  {}", tr("Установить как активный", &[])))
+                                    .color(theme.accent_text),
+                            )
+                            .fill(theme.accent);
+                            if ui.add_sized([ui.available_width(), 32.0], active).clicked() {
+                                bridge.select_node(&id);
+                            }
+                            ui.horizontal(|ui| {
+                                let edit_width = (ui.available_width() - 114.0).max(32.0);
+                                if ui
+                                    .add_sized(
+                                        [edit_width, 32.0],
+                                        Button::new(format!("  {}", tr("Редактировать", &[]))),
+                                    )
+                                    .clicked()
+                                {
+                                    self.editor.edit(bridge, &id);
+                                }
+                                if icon_button(ui, "", "Пинг") {
+                                    bridge.ping_nodes(Some(&HashSet::from([id.clone()])));
+                                }
+                                if icon_button(ui, "", "Копировать ссылку") {
+                                    copy(ui, bridge.copy_node_link(&id));
+                                }
+                                if icon_button(ui, "", "Экспорт в QR-код") {
+                                    bridge.show_node_qr(&id);
+                                }
+                            });
+                        }
+                    });
                 }
-                let ping_kind = match field(&details, "pingKind") {
-                    "proxy" => "Через прокси",
-                    "tcping_endpoint" => "TCP до адреса",
-                    "icmp_endpoint" => "ICMP до адреса",
-                    "unavailable" => "Недоступно",
-                    _ => "",
-                };
-                property(ui, "Тип пинга", &tr(ping_kind, &[]));
-                property(
-                    ui,
-                    "Последнее использование",
-                    &subscription::time_label(&details["lastUsed"]),
-                );
-                let ping = details["ping"].as_i64().unwrap_or(-1);
-                if ping >= 0 {
-                    property(ui, "Пинг", &format!("{ping} ms"));
-                }
-                ui.horizontal_wrapped(|ui| {
-                    if button(ui, "Установить как активный") {
-                        bridge.select_node(&id);
-                    }
-                    if button(ui, "Редактировать") {
-                        self.editor.edit(bridge, &id);
-                    }
-                    if button(ui, "Пинг") {
-                        bridge.ping_nodes(Some(&HashSet::from([id.clone()])));
-                    }
-                    if button(ui, "Копировать ссылку") {
-                        copy(ui, bridge.copy_node_link(&id));
-                    }
-                    if button(ui, "Экспорт в QR-код") {
-                        bridge.show_node_qr(&id);
-                    }
-                });
             });
     }
 
@@ -986,43 +1242,125 @@ impl NodesPage {
     }
 }
 
-fn fit_widths(available: f32) -> Vec<f32> {
-    let content = (available - 72.0).max(0.0);
-    let total = COLUMNS.iter().map(|column| column.3).sum::<f32>();
-    let min = COLUMNS.iter().map(|column| column.4).sum::<f32>();
-    let fraction = ((content - min) / (total - min)).clamp(0.0, 1.0);
-    COLUMNS
+fn fit_widths(available: f32, manual: Option<&[f32]>, resized: Option<usize>) -> Vec<f32> {
+    let content = (available - TABLE_LEFT_PAD - TABLE_RIGHT_PAD).floor();
+    if let Some(manual) = manual {
+        let mut widths = manual.to_vec();
+        let extra = content - widths.iter().sum::<f32>();
+        if extra >= 0.0 {
+            *widths.last_mut().expect("last table column") += extra;
+        } else {
+            shrink_widths(&mut widths, -extra, 0, resized);
+        }
+        return widths;
+    }
+    let mut widths = COLUMNS.map(|column| column.3);
+    let extra = content - widths.iter().sum::<f32>();
+    if extra >= 0.0 {
+        widths[0] += extra;
+        return widths.to_vec();
+    }
+    let cut = (-extra).min(widths[0] - COLUMNS[0].4);
+    widths[0] -= cut;
+    shrink_widths(&mut widths, -extra - cut, 1, None);
+    widths.to_vec()
+}
+
+fn shrink_widths(widths: &mut [f32], deficit: f32, start: usize, keep: Option<usize>) {
+    let slack = |index: usize, width: f32| {
+        if Some(index) == keep {
+            0.0
+        } else {
+            (width - COLUMNS[index].4).max(0.0)
+        }
+    };
+    let room = widths
         .iter()
         .enumerate()
-        .map(|(index, column)| {
-            column.4
-                + (column.3 - column.4) * fraction
-                + if index == 0 {
-                    (content - total).max(0.0)
-                } else {
-                    0.0
-                }
-        })
-        .collect()
+        .skip(start)
+        .map(|(index, &width)| slack(index, width))
+        .sum::<f32>();
+    if room > 0.0 {
+        let fraction = (deficit / room).min(1.0);
+        for (index, width) in widths.iter_mut().enumerate().skip(start) {
+            *width = (*width - slack(index, *width) * fraction).round();
+        }
+    }
+}
+
+fn toolbar_row(ui: &mut Ui, spacing: f32, content: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), 32.0),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = spacing;
+            ui.spacing_mut().interact_size.y = 32.0;
+            ui.spacing_mut().button_padding.x = 8.0;
+            ui.spacing_mut().button_padding.y = 0.0;
+            content(ui);
+        },
+    );
+}
+
+fn menu(
+    ui: &mut Ui,
+    button: Button<'_>,
+    width: f32,
+    content: impl FnOnce(&mut Ui),
+) -> egui::Response {
+    let response = ui.add_sized([width, 32.0], button);
+    egui::Popup::menu(&response).show(content);
+    response
+}
+
+fn icon_button(ui: &mut Ui, glyph: &str, label: &str) -> bool {
+    ui.add_sized([32.0, 32.0], Button::new(glyph))
+        .on_hover_text(tr(label, &[]))
+        .clicked()
 }
 
 fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, column: usize) {
-    let mut color = theme.text;
+    let mut color = if matches!(column, 3 | 7 | 8) {
+        theme.text
+    } else {
+        theme.text_muted
+    };
     let text = match column {
         0 => {
-            flag::show(ui, &model.country_at(row), egui::vec2(22.0, 16.0));
-            model.name_at(row)
+            flag::show(ui, &model.country_at(row), egui::vec2(24.0, 18.0));
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                let name = model.name_at(row);
+                ui.add(egui::Label::new(RichText::new(&name).size(13.0)).truncate())
+                    .on_hover_text(name);
+                let description = model.description_at(row);
+                if !description.is_empty() {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(description)
+                                .size(10.0)
+                                .color(theme.text_muted),
+                        )
+                        .truncate(),
+                    );
+                }
+            });
+            return;
         }
-        1 => model.protocol_at(row),
+        1 => model.scheme_at(row),
         2 => model.transport_at(row),
         3 => model.server_at(row),
-        4 => model.port_at(row).to_string(),
+        4 => match model.port_at(row) {
+            port if port > 0 => port.to_string(),
+            _ => "—".into(),
+        },
         5 => model.group_at(row),
         6 => {
             let ping = model.ping_at(row);
             color = theme.ping_color((ping >= 0).then_some(ping));
             if model.pinging_at(row) {
-                "…".into()
+                ui.spinner();
+                return;
             } else if ping < 0 {
                 "—".into()
             } else {
@@ -1033,6 +1371,7 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
             let progress = model.speed_progress_at(row);
             let speed = model.speed_at(row);
             if progress >= 0 {
+                color = theme.accent;
                 format!("{progress}%")
             } else if speed >= 0.0 {
                 format!("{speed:.1} MB/s")
@@ -1041,23 +1380,40 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
             }
         }
         8 => {
-            if !model.runtime_supported_at(row) {
-                color = theme.warning;
-                tr("Недоступно", &[])
-            } else if !model.tested_at(row) {
-                "—".into()
-            } else if model.alive_at(row) {
+            if model.alive_at(row) {
                 color = theme.success;
-                tr("Доступен", &[])
-            } else {
+                "OK".into()
+            } else if model.tested_at(row) {
                 color = theme.danger;
-                tr("Недоступно", &[])
+                "✕".into()
+            } else {
+                color = theme.text_faint;
+                "—".into()
             }
         }
         _ => subscription::time_label(&json!(model.last_used_at(row))),
     };
-    ui.add(egui::Label::new(RichText::new(&text).size(13.0).color(color)).truncate())
+    let label = RichText::new(&text).size(13.0).color(color);
+    ui.add(egui::Label::new(if column == 8 { label.strong() } else { label }).truncate())
         .on_hover_text(text);
+}
+
+fn row_rule(ui: &Ui, theme: &Theme) {
+    let rect = ui.max_rect();
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        Stroke::new(1.0, theme.divider),
+    );
+}
+
+fn inspector_rule(ui: &mut Ui, theme: &Theme) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        Stroke::new(1.0, theme.divider),
+    );
 }
 
 fn visible_ids(bridge: &AppBridge) -> Vec<String> {
@@ -1113,5 +1469,89 @@ fn export_json(ui: &Ui, bridge: &mut AppBridge, id: &str, runtime: bool) {
         ) {
             ui.ctx().copy_text(payload);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automatic_widths_match_qml_at_wide_and_narrow_sizes() {
+        let default = COLUMNS.map(|column| column.3);
+        let full = default.iter().sum::<f32>() + TABLE_LEFT_PAD + TABLE_RIGHT_PAD;
+        let wide = fit_widths(full + 60.0, None, None);
+        assert_eq!(wide[0], 260.0);
+        assert_eq!(&wide[1..], &default[1..]);
+        let reduced = fit_widths(full - 40.0, None, None);
+        assert_eq!(reduced[0], 160.0);
+        assert_eq!(&reduced[1..], &default[1..]);
+        let minimum = fit_widths(530.0, None, None);
+        assert_eq!(minimum, COLUMNS.map(|column| column.4));
+    }
+
+    #[test]
+    fn resized_column_keeps_its_width_when_the_window_shrinks() {
+        let mut widths = COLUMNS.map(|column| column.3);
+        widths[1] = 240.0;
+        let fitted = fit_widths(950.0, Some(&widths), Some(1));
+        assert_eq!(fitted[1], 240.0);
+        assert!(fitted[0] < widths[0]);
+    }
+
+    #[test]
+    fn dragging_the_header_writes_the_manual_layout_on_release() {
+        let path =
+            std::env::temp_dir().join(format!("lumen-table-test-{}.enc", uuid::Uuid::new_v4()));
+        let storage = lumen_core::storage::StateStorage::new(path);
+        let controller = lumen_app::app_controller::AppController::with_storage(storage);
+        let mut bridge = AppBridge::with_controller(controller);
+        let mut page = NodesPage::default();
+        let theme = Theme::resolve(&Default::default());
+        let ctx = egui::Context::default();
+        let mut geometry = (egui::Pos2::ZERO, 0.0);
+        let mut frame = |events| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 480.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let origin = ui.next_widget_position();
+                let widths = fit_widths(ui.available_width() - 2.0 * TABLE_CARD_MARGIN, None, None);
+                let start = origin
+                    + egui::vec2(
+                        TABLE_CARD_MARGIN + TABLE_LEFT_PAD + widths[0] - 1.0,
+                        TABLE_CARD_MARGIN + 15.0,
+                    );
+                geometry = (start, widths[0]);
+                page.table(ui, &theme, &mut bridge, 340.0);
+            });
+            output.textures_delta.clear();
+            geometry
+        };
+        let (from, original_width) = frame(vec![]);
+        let to = from + egui::vec2(50.0, 0.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(from)]);
+        frame(vec![button(from, true)]);
+        frame(vec![egui::Event::PointerMoved(to)]);
+        frame(vec![button(to, false)]);
+
+        let controller = bridge.controller();
+        let layout = &controller.lock().state.settings.node_table_layout;
+        assert_eq!(layout["manual"], true);
+        assert_eq!(
+            layout["name"].as_f64().unwrap() as f32,
+            original_width + 50.0
+        );
     }
 }

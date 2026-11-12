@@ -1881,11 +1881,23 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
 
         // The icon font supplies the Private Use Area glyphs used by QML.
         proportional.push("Segoe Fluent Icons".into());
+        let mut semibold = proportional.clone();
+        if definitions.font_data.contains_key("segoeuisb") {
+            semibold.retain(|name| name != "segoeuisb");
+            semibold.insert(0, "segoeuisb".into());
+        }
+        definitions
+            .families
+            .insert(FontFamily::Name("Segoe UI Semibold".into()), semibold);
         definitions
             .families
             .insert(FontFamily::Proportional, proportional);
         LoadedFonts { definitions }
     })
+}
+
+pub(super) fn semibold(size: f32) -> egui::FontId {
+    egui::FontId::new(size, FontFamily::Name("Segoe UI Semibold".into()))
 }
 
 /// Install the Segoe UI + Segoe Fluent Icons fonts once per session and keep

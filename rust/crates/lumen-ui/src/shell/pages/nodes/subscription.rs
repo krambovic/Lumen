@@ -120,65 +120,176 @@ pub(super) fn inspector(ui: &mut Ui, theme: &Theme, sub: &Value) {
     let info = &sub["userinfo"];
     let presentation = &sub["presentation"];
     let title = field(info, "profileTitle");
-    ui.heading(if title.is_empty() { name(sub) } else { title });
+    let state = Status::new(sub);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), 24.0),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            if !state.state.is_empty() {
+                let color = if state.active {
+                    theme.success
+                } else {
+                    theme.danger
+                };
+                egui::Frame::new()
+                    .fill(color.gamma_multiply(0.16))
+                    .corner_radius(12)
+                    .inner_margin(egui::Margin::symmetric(8, 3))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(format!("● {}", state.state))
+                                .size(11.0)
+                                .color(color),
+                        );
+                    });
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let title = if title.is_empty() { name(sub) } else { title };
+                ui.add(egui::Label::new(RichText::new(title).size(16.0).strong()).truncate());
+            });
+        },
+    );
+    let quota_visible = state.used.is_some() || state.limit.is_some();
+    ui.allocate_ui_with_layout(
+        egui::vec2(
+            ui.available_width(),
+            if quota_visible { 104.0 } else { 54.0 },
+        ),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 14.0;
+            if quota_visible {
+                traffic_ring(ui, theme, &state);
+            }
+            let expiry = time_label(expiration(info));
+            if !expiry.is_empty() {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 58.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.y = 3.0;
+                        ui.label(
+                            RichText::new(tr("Истекает", &[]))
+                                .size(12.0)
+                                .color(theme.text_muted),
+                        );
+                        ui.label(RichText::new(expiry).size(14.0));
+                        if let Some(days) = state.days {
+                            let text = if days <= 0 {
+                                tr("Подписка истекла", &[])
+                            } else {
+                                tr("осталось {days} дн.", &[("days", &days.to_string())])
+                            };
+                            ui.label(RichText::new(text).size(12.0).color(state.color(theme)));
+                        }
+                    },
+                );
+            }
+        },
+    );
     let description = field(presentation, "description");
     if !description.is_empty() && !description.eq_ignore_ascii_case(name(sub)) {
-        ui.label(description);
-    }
-    let state = Status::new(sub);
-    if !state.state.is_empty() {
-        ui.colored_label(
-            if state.active {
-                theme.success
-            } else {
-                theme.danger
-            },
-            &state.state,
+        ui.label(
+            RichText::new(description)
+                .size(12.0)
+                .color(theme.text_muted),
         );
     }
-    if let Some(summary) = state.summary() {
-        ui.colored_label(state.color(theme), summary);
-    }
-    if let Some(fraction) = state.fraction() {
-        ui.add(
-            egui::ProgressBar::new(fraction)
-                .desired_height(5.0)
-                .fill(state.color(theme)),
-        );
-    }
-    property(ui, "Истекает", &time_label(expiration(info)));
-    property(ui, "Обновлено", &time_label(&sub["updated_at"]));
-    property(ui, "Серверов", &field_value(&sub["node_count"]));
     for banner in presentation["banners"].as_array().into_iter().flatten() {
-        ui.group(|ui| {
-            ui.label(field(banner, "text"));
-            let url = field(banner, "url");
-            let label = field(banner, "button");
-            if !url.is_empty()
-                && ui
-                    .button(if label.is_empty() {
-                        tr("Открыть", &[])
-                    } else {
-                        label.into()
-                    })
-                    .clicked()
-            {
-                open_url(ui, url);
-            }
-        });
+        egui::Frame::new()
+            .fill(theme.accent_soft)
+            .corner_radius(theme.radius_small as u8)
+            .inner_margin(8)
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.label(RichText::new(field(banner, "text")).size(12.0));
+                let url = field(banner, "url");
+                let label = field(banner, "button");
+                if !url.is_empty()
+                    && ui
+                        .button(if label.is_empty() {
+                            tr("Открыть", &[])
+                        } else {
+                            label.into()
+                        })
+                        .clicked()
+                {
+                    open_url(ui, url);
+                }
+            });
+    }
+    let announcement = field(presentation, "announcement");
+    if !announcement.is_empty() {
+        egui::Frame::new()
+            .fill(theme.accent.gamma_multiply(0.14))
+            .corner_radius(theme.radius_small as u8)
+            .inner_margin(8)
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.label(RichText::new(announcement).size(12.0));
+            });
     }
     ui.horizontal_wrapped(|ui| {
         for link in presentation["links"].as_array().into_iter().flatten() {
-            if ui.button(tr(field(link, "label"), &[])).clicked() {
+            if ui.link(tr(field(link, "label"), &[])).clicked() {
                 open_url(ui, field(link, "url"));
             }
         }
     });
 }
 
+fn traffic_ring(ui: &mut Ui, theme: &Theme, state: &Status) {
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(104.0), egui::Sense::hover());
+    let center = rect.center();
+    let radius = 46.0;
+    let painter = ui.painter();
+    painter.circle_stroke(
+        center,
+        radius,
+        egui::Stroke::new(
+            8.0,
+            Color32::from_black_alpha(if theme.dark { 64 } else { 22 }),
+        ),
+    );
+    if let Some(fraction) = state.fraction().filter(|fraction| *fraction > 0.0) {
+        let color = state.color(theme);
+        let points = (0..=64)
+            .map(|i| {
+                let angle = std::f32::consts::TAU * fraction * i as f32 / 64.0
+                    - std::f32::consts::FRAC_PI_2;
+                center + egui::vec2(angle.cos(), angle.sin()) * radius
+            })
+            .collect::<Vec<_>>();
+        painter.circle_filled(points[0], 4.0, color);
+        painter.circle_filled(points[64], 4.0, color);
+        painter.add(egui::Shape::line(points, egui::Stroke::new(8.0, color)));
+    }
+    let used = state.used.map_or_else(|| "—".to_string(), bytes);
+    painter.text(
+        center - egui::vec2(0.0, 7.0),
+        egui::Align2::CENTER_CENTER,
+        used,
+        egui::FontId::proportional(16.0),
+        theme.text,
+    );
+    let limit = state.limit.filter(|limit| *limit > 0.0).map_or_else(
+        || "∞".to_string(),
+        |limit| tr("из {total}", &[("total", &bytes(limit))]),
+    );
+    painter.text(
+        center + egui::vec2(0.0, 11.0),
+        egui::Align2::CENTER_CENTER,
+        limit,
+        egui::FontId::proportional(11.0),
+        theme.text_muted,
+    );
+}
+
 pub(super) fn details(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, sub: &Value) {
     let info = &sub["userinfo"];
     inspector(ui, theme, sub);
+    property(ui, "Обновлено", &time_label(&sub["updated_at"]));
+    property(ui, "Серверов", &field_value(&sub["node_count"]));
     let url = field(sub, "url");
     if !url.is_empty() {
         if sub["presentation"]["hideUrl"].as_bool() == Some(true) {
