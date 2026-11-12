@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 105
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 107
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -375,14 +375,17 @@ client, core/resource updaters, zapret and discord proxy managers.
 - Zapret (`ZapretPage.qml`): preset search, preview, import, editing, rename
   and delete, manual start/stop, and searchable server-specific strategy and
   preset bindings. The page shares the plain-text editor with Configs.
+- About and onboarding: project links, support dialogs with the bundled USDT
+  QR image, replayable first-run setup, and upgrade notes. Setup applies the
+  selected language, appearance, routing, imports, WARP and system settings
+  through the existing bridge. The egui modal uses a dimmed backdrop.
 
 ## Left to port (Python source -> target crate)
 
 ### lumen-ui (egui)
-Pages from `qml_app/qml`: Dashboard, Nodes,
-Settings and About, with their page-specific dialogs. These pages currently
-render themed titles through the page dispatcher. The onboarding overlay is
-also unported.
+Pages from `qml_app/qml`: Dashboard, Nodes and Settings, with their
+page-specific dialogs. These pages currently render themed titles through
+the page dispatcher.
 
 ## Known warnings to clean
 None — the lumen-core list was cleaned in the same pass as the direct-route

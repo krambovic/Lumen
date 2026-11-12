@@ -2435,6 +2435,7 @@ name = "lumen-ui"
 version = "2.1.4"
 dependencies = [
  "anyhow",
+ "arboard",
  "base64 0.22.1",
  "chrono",
  "eframe",

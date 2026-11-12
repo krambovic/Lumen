@@ -30,3 +30,4 @@ parking_lot = { workspace = true }
 windows = { workspace = true }
 tray-icon = { workspace = true }
 muda = { workspace = true }
+arboard = { version = "3.7", default-features = false }

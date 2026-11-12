@@ -17,6 +17,7 @@
 pub mod geometry;
 pub mod navigation;
 pub mod pages;
+mod onboarding;
 pub mod reveal;
 pub mod theme;
 pub mod toast;
@@ -232,6 +233,7 @@ pub struct ShellApp {
     last_settings_token: u64,
     page_events: std::collections::VecDeque<UiEvent>,
     page_state: pages::PageState,
+    onboarding: onboarding::Onboarding,
 }
 
 /// The network conflict FluentDialog state (Main.qml `networkConflictDialog`).
@@ -287,6 +289,7 @@ impl ShellApp {
             last_settings_token: 0,
             page_events: std::collections::VecDeque::new(),
             page_state: pages::PageState::default(),
+            onboarding: onboarding::Onboarding::default(),
         }
     }
 
@@ -1397,6 +1400,9 @@ impl eframe::App for ShellApp {
         self.paint_pages(ctx, &theme);
         self.page_events.clear();
         self.paint_drop_overlay(ctx, &theme);
+        if self.onboarding.render(ctx, &theme, &mut self.bridge) {
+            self.navigation.current = Page::Dashboard;
+        }
         self.paint_conflict_dialog(ctx, &theme);
         self.paint_lock_overlay(ctx, &theme);
         if let Some(action_id) = self.toasts.render(ctx, &theme) {

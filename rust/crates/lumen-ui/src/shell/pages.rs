@@ -9,6 +9,7 @@ use crate::view_models::{AppBridge, app_bridge::UiEvent};
 use super::navigation::Page;
 use super::theme::Theme;
 
+pub(super) mod about;
 mod code_editor;
 mod configs;
 mod diagnostics_export;
@@ -20,6 +21,7 @@ mod zapret;
 
 #[derive(Default)]
 pub(super) struct PageState {
+    about: about::AboutPage,
     configs: configs::ConfigsPage,
     history: history::HistoryPage,
     logs: logs::LogsPage,
@@ -75,7 +77,7 @@ pub(super) fn render_page(
         Page::History => state.history.render(ui, page_ctx),
         Page::Updates => state.updates.render(ui, page_ctx),
         Page::Settings => placeholder(ui, page_ctx.theme, page),
-        Page::About => placeholder(ui, page_ctx.theme, page),
+        Page::About => state.about.render(ui, page_ctx),
     }
 }
 
