@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 118
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 119
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -359,6 +359,13 @@ client, core/resource updaters, zapret and discord proxy managers.
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated
   upload. The shell opens the output directory on successful export.
+  The page uses the QML search and action row, severity buttons, right-aligned
+  autoscroll switch and inset log card. Entry height follows wrapped text and
+  optional actions. At the minimum window width the filter buttons reduce
+  horizontal padding to keep the toolbar controls accessible. Compared the
+  running clients in the dark theme at 1280×760 and 640×360 with the same
+  sample entries, and exercised severity filtering, the autoscroll switch
+  and opening the diagnostics dialog in the Rust client.
 - History (`HistoryPage.qml`): period selection, refresh, reset, summary and
   independently scrolling session, daily and process tables with three-state
   column sorting. The page reads and clears the controller's live traffic
