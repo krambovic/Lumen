@@ -11,8 +11,8 @@ use super::helpers::{
     py_int_or, py_int_value, py_str_or, py_str, py_truthy, PyUrlSplit,
 };
 use super::schemes::{json_name, parse_naive_link};
-use super::wireguard::normalize_singbox_wireguard_endpoints;
 use super::{parse_links_text, parse_single, LinkParseError, Node, MAX_IMPORT_NODES};
+use crate::wireguard_normalization::{normalize_singbox_wireguard_endpoints, normalize_wireguard_endpoint};
 
 // ── shared lookups ──
 
@@ -845,7 +845,8 @@ pub(super) fn native_singbox_outbound(payload: &Value) -> Result<Value, LinkPars
         }
         protocol = "openvpn".to_string();
     } else if protocol == "wireguard" || protocol == "awg" || protocol == "warp" {
-        native = super::wireguard::normalize_wireguard_endpoint(&native)?;
+        native = normalize_wireguard_endpoint(&native)
+            .map_err(|error| LinkParseError::new(error.to_string()))?;
         protocol = py_str_or(native.get("type"), "custom").to_lowercase();
     }
     let final_protocol = if protocol == "wireguard"
@@ -879,7 +880,8 @@ pub(super) fn native_singbox_config(payload: &Value) -> Result<Value, LinkParseE
             obj.remove(metadata_key);
         }
     }
-    normalize_singbox_wireguard_endpoints(&mut config)?;
+    normalize_singbox_wireguard_endpoints(&mut config)
+        .map_err(|error| LinkParseError::new(error.to_string()))?;
 
     let mut used_openvpn_names: Vec<String> = Vec::new();
     let mut openvpn_index: usize = 0;

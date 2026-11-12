@@ -163,10 +163,10 @@ pub fn normalize_wireguard_endpoint(endpoint: &Value) -> Result<Value> {
 
     let local_address = take_key(obj, "local_address");
     let address_value = match obj.get("address") {
+        None | Some(Value::Null) => local_address,
         Some(Value::String(s)) if s.is_empty() => local_address,
         Some(Value::Array(a)) if a.is_empty() => local_address,
         Some(v) => v.clone(),
-        None => local_address,
     };
     obj.insert(
         "address".into(),
@@ -590,11 +590,12 @@ mod tests {
             peers[0]["allowed_ips"],
             json!(["0.0.0.0/0", "::/0"])
         );
-        // local_address fallback when address is missing.
+        // An explicit null address also falls back to the legacy local address.
         let normalized = normalize_wireguard_endpoint(&json!({
             "type": "wireguard",
             "server": "s",
             "peer_public_key": "K",
+            "address": null,
             "local_address": ["10.0.0.3/32"],
             "private_key": "P",
         }))

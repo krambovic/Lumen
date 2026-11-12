@@ -23,6 +23,8 @@ client, core/resource updaters, zapret and discord proxy managers.
 - i18n catalogs, release_notes, country_flags, traffic_history
 - link_parser (all schemes, clash, json import, openvpn hook, wireguard)
 - openvpn_import/normalization, wireguard_normalization, warp_generator
+- Sing-box imports and runtime share WireGuard/AWG/WARP endpoint normalization.
+  Legacy profiles with a null address retain the `local_address` value.
 - config/: xray_builder, xray_inbounds, xray_fragments, multiplex,
   proxy_chain, bootstrap_dns, runtime_security (`bootstrap_dns.rs` = alias)
 - Xray DNS expands Lumen's local exclusion list through the shared routing
