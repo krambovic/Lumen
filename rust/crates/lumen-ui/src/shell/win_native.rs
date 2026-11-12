@@ -13,8 +13,12 @@ use lumen_core::constants::{APP_NAME, app_icon_path};
 
 pub const APP_USER_MODEL_ID: &str = "Lumen.Lumen";
 
-#[cfg(windows)]
 pub(super) fn pick_json_file(directory: &std::path::Path, title: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
+    pick_file(directory, title, "JSON files (*.json)\0*.json\0")
+}
+
+#[cfg(windows)]
+pub(super) fn pick_file(directory: &std::path::Path, title: &str, filter: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
@@ -23,15 +27,16 @@ pub(super) fn pick_json_file(directory: &std::path::Path, title: &str) -> anyhow
         OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
-    use windows::core::{PCWSTR, PWSTR, w};
+    use windows::core::{PCWSTR, PWSTR};
 
     let directory: Vec<u16> = directory.as_os_str().encode_wide().chain([0]).collect();
     let title = to_wide(title);
+    let filter = to_wide(filter);
     let mut path = vec![0_u16; 32_768];
     let mut options = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
         hwndOwner: unsafe { GetActiveWindow() },
-        lpstrFilter: w!("JSON files (*.json)\0*.json\0"),
+        lpstrFilter: PCWSTR(filter.as_ptr()),
         nFilterIndex: 1,
         lpstrFile: PWSTR(path.as_mut_ptr()),
         nMaxFile: path.len() as u32,
@@ -51,8 +56,8 @@ pub(super) fn pick_json_file(directory: &std::path::Path, title: &str) -> anyhow
 }
 
 #[cfg(not(windows))]
-pub(super) fn pick_json_file(_directory: &std::path::Path, _title: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
-    anyhow::bail!("The native JSON file dialog requires Windows")
+pub(super) fn pick_file(_directory: &std::path::Path, _title: &str, _filter: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
+    anyhow::bail!("The native file dialog requires Windows")
 }
 
 pub(super) fn open_directory(path: &std::path::Path) {

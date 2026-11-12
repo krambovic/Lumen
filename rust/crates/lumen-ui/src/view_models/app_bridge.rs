@@ -6229,6 +6229,20 @@ impl AppBridge {
     }
 
     /// Python `importDomainRulesFile` (the shell passes the payload).
+    pub fn import_domain_rules_file(&mut self, file: &Path) {
+        match std::fs::read_to_string(file) {
+            Ok(text) => self.import_domain_rules_file_payload(
+                text.strip_prefix('\u{feff}').unwrap_or(&text),
+                file.extension().and_then(|ext| ext.to_str()).unwrap_or_default(),
+            ),
+            Err(error) => self.notify_rule_import_error(&error.to_string()),
+        }
+    }
+
+    pub fn notify_rule_import_error(&mut self, error: &str) {
+        self.notify("error", &tr("Не удалось импортировать правила: {error}", &[("error", error)]));
+    }
+
     pub fn import_domain_rules_file_payload(&mut self, payload: &str, suffix: &str) {
         let accepted_lines = match parse_routing_rules(payload, suffix) {
             Ok(lines) => lines,

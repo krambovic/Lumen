@@ -13,6 +13,7 @@ mod configs;
 mod diagnostics_export;
 mod history;
 mod logs;
+mod routing;
 mod updates;
 
 #[derive(Default)]
@@ -20,6 +21,7 @@ pub(super) struct PageState {
     configs: configs::ConfigsPage,
     history: history::HistoryPage,
     logs: logs::LogsPage,
+    routing: routing::RoutingPage,
     updates: updates::UpdatesPage,
 }
 
@@ -60,7 +62,7 @@ pub(super) fn render_page(
     match page {
         Page::Dashboard => placeholder(ui, page_ctx.theme, page),
         Page::Nodes => placeholder(ui, page_ctx.theme, page),
-        Page::Routing => placeholder(ui, page_ctx.theme, page),
+        Page::Routing => state.routing.render(ui, page_ctx),
         Page::Configs => state.configs.render(ui, page_ctx),
         Page::Zapret => placeholder(ui, page_ctx.theme, page),
         Page::Logs => state.logs.render(ui, page_ctx),
