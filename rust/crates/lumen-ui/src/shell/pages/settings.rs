@@ -1,28 +1,33 @@
 //! The seven sections and dialogs of `SettingsPage.qml`.
+//!
+//! Mirrors the QML structure: an icon tab bar with an accent underline, then
+//! cards of `SettingRow`s — glyph + title/subtitle on the left, controls
+//! pinned to the right.
 
 use std::path::Path;
 
 use egui::{
-    Button, Color32, ComboBox, Context, Frame, Id, Modal, RichText, ScrollArea, Stroke, TextEdit,
-    Ui,
+    Align, Button, Color32, ComboBox, Context, FontId, Frame, Id, Layout, Modal, RichText,
+    ScrollArea, Sense, Stroke, TextEdit, TextFormat, Ui, text::LayoutJob, vec2,
 };
-use lumen_core::{i18n::tr, models::AppSettings};
+use lumen_core::{constants::APP_VERSION, i18n::tr, models::AppSettings};
 
-use super::PageContext;
+use super::{PageContext, fluent_button};
 use crate::shell::{
-    theme::{Theme, hex_color},
+    theme::{Theme, hex_color, semibold},
     win_native,
 };
 use crate::view_models::AppBridge;
 
-const TABS: [&str; 7] = [
-    "Внешний вид",
-    "Сеть",
-    "Запуск и тесты",
-    "Подписки",
-    "DNS",
-    "Обновления",
-    "Данные",
+/// QML `tabModel` — glyphs with the labels shown from a 1220px page width.
+const TABS: [(&str, &str); 7] = [
+    ("\u{e790}", "Внешний вид"),
+    ("\u{e774}", "Сеть"),
+    ("\u{e7e8}", "Запуск и тесты"),
+    ("\u{e8c8}", "Подписки"),
+    ("\u{e774}", "DNS"),
+    ("\u{e895}", "Обновления"),
+    ("\u{e74e}", "Данные"),
 ];
 const PALETTES: &[(&str, &str)] = &[
     ("default", "Default"),
@@ -68,10 +73,7 @@ const DNS_STRATEGIES: &[(&str, &str)] = &[
     ("ipv6_only", "ipv6_only"),
 ];
 const SPEED_URLS: &[(&str, &str)] = &[
-    (
-        "https://cachefly.cachefly.net/100mb.test",
-        "Cachefly 100 MB",
-    ),
+    ("https://cachefly.cachefly.net/100mb.test", "Cachefly 100 MB"),
     ("https://cachefly.cachefly.net/50mb.test", "Cachefly 50 MB"),
     ("https://cachefly.cachefly.net/10mb.test", "Cachefly 10 MB"),
     ("https://cachefly.cachefly.net/1mb.test", "Cachefly 1 MB"),
@@ -133,16 +135,7 @@ impl SettingsPage {
                 .size(theme.font_title as f32)
                 .strong(),
         );
-        ui.horizontal_wrapped(|ui| {
-            for (index, key) in TABS.iter().enumerate() {
-                let key = if index == 2 && compact {
-                    "Запуск"
-                } else {
-                    key
-                };
-                ui.selectable_value(&mut self.tab, index, tr(key, &[]));
-            }
-        });
+        self.tab_bar(ui, theme, compact);
         if let Some(error) = &self.file_error {
             ui.colored_label(theme.danger, error);
         }
@@ -162,13 +155,80 @@ impl SettingsPage {
                 }
             });
         if self.reset {
-            self.reset_dialog(page.ctx, bridge);
+            self.reset_dialog(page.ctx, theme, bridge);
         }
         if let Some(color) = self.color.as_mut()
             && color_dialog(page.ctx, theme, bridge, color)
         {
             self.color = None;
         }
+    }
+
+    /// Icon tab strip with the half-width accent underline (`tabRow` +
+    /// `tabIndicator` in SettingsPage.qml).
+    fn tab_bar(&mut self, ui: &mut Ui, theme: &Theme, compact: bool) {
+        let scale = if ui.available_width() < 760.0 { 0.82 } else { 1.0 };
+        let height = (40.0 * theme.font_scale as f32).max(32.0);
+        let font_size = (theme.font_normal as f32 * scale).round();
+        let show_labels = ui.available_width() >= 1220.0;
+        let tab_width =
+            (ui.available_width() - 4.0 * (TABS.len() - 1) as f32) / TABS.len() as f32;
+        ui.allocate_ui_with_layout(
+            vec2(ui.available_width(), height),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for (index, (glyph, label)) in TABS.iter().enumerate() {
+                    let label = if index == 2 && compact {
+                        tr("Запуск", &[])
+                    } else {
+                        tr(label, &[])
+                    };
+                    let (rect, response) =
+                        ui.allocate_exact_size(vec2(tab_width, height), Sense::click());
+                    let current = self.tab == index;
+                    if current {
+                        ui.painter()
+                            .rect_filled(rect, theme.radius_small as u8, theme.accent_soft);
+                    } else if response.hovered() {
+                        ui.painter()
+                            .rect_filled(rect, theme.radius_small as u8, theme.nav_hover);
+                    }
+                    // Painted directly so the click response keeps the hit.
+                    let galley = ui.painter().layout_job(tab_job(
+                        theme,
+                        glyph,
+                        &label,
+                        current,
+                        show_labels,
+                        font_size,
+                    ));
+                    ui.painter().galley(
+                        egui::pos2(
+                            rect.center().x - galley.size().x / 2.0,
+                            rect.center().y - galley.size().y / 2.0,
+                        ),
+                        galley,
+                        theme.text,
+                    );
+                    if current {
+                        let underline_width = tab_width * 0.5;
+                        let underline = egui::Rect::from_min_size(
+                            egui::pos2(
+                                rect.left() + (tab_width - underline_width) * 0.5,
+                                rect.bottom() - 2.5,
+                            ),
+                            vec2(underline_width, 2.5),
+                        );
+                        ui.painter().rect_filled(underline, 2.0, theme.accent);
+                    }
+                    if response.clicked() {
+                        self.tab = index;
+                    }
+                }
+            },
+        );
+        hline(ui, theme, 0.0);
     }
 
     fn appearance(
@@ -179,24 +239,45 @@ impl SettingsPage {
         s: &AppSettings,
         compact: bool,
     ) {
-        group(ui, theme, "Тема", |ui| {
-            choose(
-                ui,
-                "Тема",
-                &s.theme,
-                &[
-                    ("system", "Системная"),
-                    ("light", "Светлая"),
-                    ("dark", "Тёмная"),
-                ],
-                |value| bridge.set_theme(value),
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Тема", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
             );
-            choose(
+            setting_row(
                 ui,
+                theme,
+                "\u{e790}",
+                "Тема",
+                "Выберите светлую, тёмную или системную тему",
+                |ui| {
+                    styled_combo(
+                        ui,
+                        "theme",
+                        &s.theme,
+                        &[
+                            ("system", "Системная"),
+                            ("light", "Светлая"),
+                            ("dark", "Тёмная"),
+                        ],
+                        210.0,
+                        |value| bridge.set_theme(value),
+                    );
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e771}",
                 "Палитра (пресет)",
-                &s.ui_theme_preset,
-                PALETTES,
-                |value| bridge.set_ui_theme_preset(value),
+                "Готовая цветовая тема поверх светлой/тёмной",
+                |ui| {
+                    styled_combo(ui, "palette", &s.ui_theme_preset, PALETTES, 210.0, |value| {
+                        bridge.set_ui_theme_preset(value)
+                    });
+                },
             );
             let codes = bridge.available_languages();
             let labels = bridge.language_labels();
@@ -205,156 +286,258 @@ impl SettingsPage {
                 .zip(&labels)
                 .map(|(code, label)| (code.as_str(), label.as_str()))
                 .collect::<Vec<_>>();
-            choose(ui, "Язык", &s.language, &languages, |value| {
-                bridge.set_language(value)
-            });
-            ui.horizontal_wrapped(|ui| {
-                ui.label(tr("Цвет акцента", &[]));
-                if ui
-                    .add(Button::new(&s.accent_color).fill(theme.accent))
-                    .clicked()
-                {
-                    self.color = Some(ColorDraft::new(&s.accent_color, 0.0, false));
-                }
-            });
+            setting_row(
+                ui,
+                theme,
+                "\u{e774}",
+                "Язык",
+                "При первом запуске выбирается по языку системы",
+                |ui| {
+                    styled_combo(ui, "language", &s.language, &languages, 210.0, |value| {
+                        bridge.set_language(value)
+                    });
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e2b1}",
+                "Цвет акцента",
+                "Цвет акцента для элементов интерфейса",
+                |ui| {
+                    if accent_picker(ui, theme, theme.accent).clicked() {
+                        self.color = Some(ColorDraft::new(&s.accent_color, 0.0, false));
+                    }
+                },
+            );
             if !compact {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(tr("Свой базовый тон", &[]));
-                    let label = if s.ui_base_tint.is_empty() {
-                        "—"
-                    } else {
-                        &s.ui_base_tint
-                    };
-                    if ui
-                        .add(
-                            Button::new(label)
-                                .fill(hex_color(&s.ui_base_tint).unwrap_or(theme.control_fill)),
-                        )
-                        .clicked()
-                    {
-                        let (base, mute) = s
-                            .ui_base_tint_src
-                            .split_once('|')
-                            .map(|(hex, mute)| (hex, mute.parse().unwrap_or(0.0)))
-                            .unwrap_or_else(|| {
-                                if s.ui_base_tint.is_empty() {
-                                    ("#5B6B8C", 0.6)
-                                } else {
-                                    (s.ui_base_tint.as_str(), 0.0)
-                                }
-                            });
-                        self.color = Some(ColorDraft::new(base, mute, true));
-                    }
-                    if !s.ui_base_tint.is_empty() && button(ui, "Сбросить") {
-                        bridge.set_ui_base_tint("");
-                        bridge.set_ui_base_tint_src("");
-                    }
-                });
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e7e6}",
+                    "Свой базовый тон",
+                    "Кастомный цвет подложки окна (поверх пресета)",
+                    |ui| {
+                        if !s.ui_base_tint.is_empty() && ghost(ui, theme, "Сбросить") {
+                            bridge.set_ui_base_tint("");
+                            bridge.set_ui_base_tint_src("");
+                        }
+                        let tint = hex_color(&s.ui_base_tint);
+                        if base_tint_picker(ui, theme, tint).clicked() {
+                            let (base, mute) = s
+                                .ui_base_tint_src
+                                .split_once('|')
+                                .map(|(hex, mute)| (hex, mute.parse().unwrap_or(0.0)))
+                                .unwrap_or_else(|| {
+                                    if s.ui_base_tint.is_empty() {
+                                        ("#5B6B8C", 0.6)
+                                    } else {
+                                        (s.ui_base_tint.as_str(), 0.0)
+                                    }
+                                });
+                            self.color = Some(ColorDraft::new(base, mute, true));
+                        }
+                    },
+                );
             }
         });
-        group(ui, theme, "Обои", |ui| {
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Обои", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
+            );
             let wallpaper = bridge.ui_wallpaper();
-            ui.horizontal_wrapped(|ui| {
-                ui.label(tr("Обои окна", &[]));
-                if !wallpaper.is_empty() {
-                    ui.label(
-                        Path::new(&wallpaper)
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy(),
-                    );
-                }
-                if button(ui, "Выбрать…") {
-                    let filter = format!(
-                        "{} (*.png *.jpg *.jpeg *.bmp *.webp)\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0",
-                        tr("Изображения", &[])
-                    );
-                    self.file_error = pick(
-                        &tr("Выберите изображение", &[]),
-                        &filter,
-                        |path| bridge.set_ui_wallpaper(&path.to_string_lossy()),
-                    );
-                }
-                if !wallpaper.is_empty() && button(ui, "Сбросить") {
-                    bridge.set_ui_wallpaper("");
-                }
-            });
+            setting_row(
+                ui,
+                theme,
+                "\u{eb9f}",
+                "Обои окна",
+                "Фоновое изображение под интерфейсом",
+                |ui| {
+                    if !wallpaper.is_empty() && ghost(ui, theme, "Сбросить") {
+                        bridge.set_ui_wallpaper("");
+                    }
+                    if accent_button(ui, theme, "Выбрать…") {
+                        let filter = format!(
+                            "{} (*.png *.jpg *.jpeg *.bmp *.webp)\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0",
+                            tr("Изображения", &[])
+                        );
+                        self.file_error = pick(
+                            &tr("Выберите изображение", &[]),
+                            &filter,
+                            |path| bridge.set_ui_wallpaper(&path.to_string_lossy()),
+                        );
+                    }
+                },
+            );
             if !compact && !wallpaper.is_empty() {
-                percent(
+                setting_row(
                     ui,
+                    theme,
+                    "\u{e890}",
                     "Непрозрачность обоев",
-                    s.ui_wallpaper_opacity,
-                    |value| bridge.set_ui_wallpaper_opacity(value),
+                    "Насколько ярко видно изображение, %",
+                    |ui| {
+                        percent_slider(
+                            ui,
+                            theme,
+                            "wallpaper-opacity",
+                            s.ui_wallpaper_opacity,
+                            |v| bridge.set_ui_wallpaper_opacity(v),
+                        );
+                    },
                 );
-                percent(
+                setting_row(
                     ui,
+                    theme,
+                    "\u{e7b3}",
                     "Размытие обоев",
-                    s.ui_wallpaper_blur,
-                    |value| bridge.set_ui_wallpaper_blur(value),
+                    "Сила размытия фона, 0–100",
+                    |ui| {
+                        percent_slider(ui, theme, "wallpaper-blur", s.ui_wallpaper_blur, |v| {
+                            bridge.set_ui_wallpaper_blur(v)
+                        });
+                    },
                 );
-                percent(
+                setting_row(
                     ui,
+                    theme,
+                    "\u{e706}",
                     "Яркость обоев",
-                    s.ui_wallpaper_brightness,
-                    |value| bridge.set_ui_wallpaper_brightness(value),
+                    "100 = оригинал, меньше = темнее",
+                    |ui| {
+                        percent_slider(
+                            ui,
+                            theme,
+                            "wallpaper-brightness",
+                            s.ui_wallpaper_brightness,
+                            |v| bridge.set_ui_wallpaper_brightness(v),
+                        );
+                    },
                 );
             }
         });
-        group(ui, theme, "Интерфейс", |ui| {
-            choose(
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Интерфейс", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
+            );
+            setting_row(
                 ui,
+                theme,
+                "\u{e799}",
                 "Плотность",
-                &s.ui_density,
-                &[
-                    ("compact", "Компактная"),
-                    ("comfortable", "Обычная"),
-                    ("spacious", "Свободная"),
-                ],
-                |value| bridge.set_ui_density(value),
+                "Насколько компактно расположены элементы",
+                |ui| {
+                    styled_combo(
+                        ui,
+                        "density",
+                        &s.ui_density,
+                        &[
+                            ("compact", "Компактная"),
+                            ("comfortable", "Обычная"),
+                            ("spacious", "Свободная"),
+                        ],
+                        210.0,
+                        |value| bridge.set_ui_density(value),
+                    );
+                },
             );
-            number(
+            setting_row(
                 ui,
+                theme,
+                "\u{e8e9}",
                 "Масштаб интерфейса",
-                s.ui_font_scale,
-                80..=140,
-                5.0,
-                |value| bridge.set_ui_font_scale(value),
+                "Размер шрифта и всего интерфейса, % (80–140)",
+                |ui| {
+                    spin(ui, s.ui_font_scale, 80..=140, 5.0, |value| {
+                        bridge.set_ui_font_scale(value)
+                    });
+                },
             );
             if !compact {
-                number(
+                setting_row(
                     ui,
+                    theme,
+                    "\u{e8b3}",
                     "Скругление углов",
-                    s.ui_corner_radius,
-                    0..=20,
-                    1.0,
-                    |value| bridge.set_ui_corner_radius(value),
+                    "Радиус скругления карточек и кнопок, px",
+                    |ui| {
+                        spin(ui, s.ui_corner_radius, 0..=20, 1.0, |value| {
+                            bridge.set_ui_corner_radius(value)
+                        });
+                    },
                 );
             }
-            toggles(
+            setting_row(
                 ui,
-                bridge,
-                &[("Анимации", s.ui_animations, AppBridge::set_ui_animations)],
+                theme,
+                "\u{e945}",
+                "Анимации",
+                "Плавные переходы и движение интерфейса",
+                |ui| {
+                    switch_setting(ui, theme, s.ui_animations, true, |value| {
+                        bridge.set_ui_animations(value)
+                    });
+                },
             );
-            toggle(ui, "Компактный режим", compact, |value| {
-                bridge.set_interface_mode(if value { "compact" } else { "full" })
-            });
+            setting_row(
+                ui,
+                theme,
+                "\u{e890}",
+                "Компактный режим",
+                "Скрыть сложные и профессиональные настройки",
+                |ui| {
+                    switch_setting(ui, theme, compact, true, |value| {
+                        bridge.set_interface_mode(if value { "compact" } else { "full" })
+                    });
+                },
+            );
         });
-        group(ui, theme, "Прозрачность", |ui| {
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Прозрачность", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
+            );
             let active = s.ui_backdrop != "solid";
-            ui.add_enabled_ui(bridge.ui_backdrop_available() || active, |ui| {
-                toggle(ui, "Прозрачность", active, |value| {
-                    bridge.set_ui_backdrop(if value { "mica" } else { "solid" })
-                });
-            });
+            let available = bridge.ui_backdrop_available() || active;
+            setting_row(
+                ui,
+                theme,
+                "\u{e790}",
+                "Прозрачность",
+                "Использовать системные эффекты фона Windows 11",
+                |ui| {
+                    switch_setting(ui, theme, active, available, |value| {
+                        bridge.set_ui_backdrop(if value { "mica" } else { "solid" })
+                    });
+                },
+            );
             if !compact {
-                ui.add_enabled_ui(active, |ui| {
-                    percent(
-                        ui,
-                        "Сила прозрачности",
-                        s.ui_transparency_strength,
-                        |value| bridge.set_ui_transparency_strength(value),
-                    )
-                });
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e9e9}",
+                    "Сила прозрачности",
+                    "0: Mica почти выключена, 100: максимум Mica",
+                    |ui| {
+                        ui.add_enabled_ui(active, |ui| {
+                            percent_slider(
+                                ui,
+                                theme,
+                                "transparency-strength",
+                                s.ui_transparency_strength,
+                                |v| bridge.set_ui_transparency_strength(v),
+                            );
+                        });
+                    },
+                );
             }
         });
     }
@@ -367,26 +550,50 @@ impl SettingsPage {
         s: &AppSettings,
         compact: bool,
     ) {
-        group(ui, theme, "Подписки", |ui| {
-            choose(
-                ui,
-                "Автообновление подписок",
-                &s.subscription_auto_update_minutes.to_string(),
-                &[
-                    ("0", "Выкл"),
-                    ("30", "30 мин"),
-                    ("60", "1 час"),
-                    ("240", "4 часа"),
-                    ("720", "12 часов"),
-                    ("1440", "24 часа"),
-                ],
-                |value| bridge.set_subscription_auto_update_minutes(value.parse().unwrap_or(0)),
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Подписки", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
             );
-            toggle(
+            setting_row(
                 ui,
+                theme,
+                "\u{e895}",
+                "Автообновление подписок",
+                "Как часто фоново обновлять подписки (прокси/VPN не отключается)",
+                |ui| {
+                    styled_combo(
+                        ui,
+                        "sub-auto",
+                        &s.subscription_auto_update_minutes.to_string(),
+                        &[
+                            ("0", "Выкл"),
+                            ("30", "30 мин"),
+                            ("60", "1 час"),
+                            ("240", "4 часа"),
+                            ("720", "12 часов"),
+                            ("1440", "24 часа"),
+                        ],
+                        200.0,
+                        |value| {
+                            bridge.set_subscription_auto_update_minutes(value.parse().unwrap_or(0))
+                        },
+                    );
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e8a7}",
                 "Загружать подписки через прокси/TUN",
-                s.subscription_use_proxy_tun,
-                |value| bridge.set_subscription_use_proxy_tun(value),
+                "Импорт и обновление используют активное подключение Lumen; без подключения — системную сеть",
+                |ui| {
+                    switch_setting(ui, theme, s.subscription_use_proxy_tun, true, |value| {
+                        bridge.set_subscription_use_proxy_tun(value)
+                    });
+                },
             );
         });
         if compact {
@@ -401,58 +608,141 @@ impl SettingsPage {
             converter: s.subscription_converter_enabled,
             converter_url: s.subscription_converter_url.clone(),
         });
-        group(ui, theme, "Фильтры regex", |ui| {
-            ui.label(tr("Каждая строка — отдельное выражение. Фильтр применяется к имени, адресу, протоколу и исходной ссылке сервера.", &[]));
-            area(ui, "Включать", &mut draft.include, "NL|DE|Reality");
-            area(ui, "Исключать", &mut draft.exclude, "expired|traffic limit");
-        });
-        group(ui, theme, "Параметры запроса", |ui| {
-            field(
-                ui,
-                "User-Agent",
-                &mut draft.agent,
-                "Happ/2.18.3/Windows/2606241603601",
-                false,
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Фильтры regex", &[]))
+                    .size(theme.font_normal as f32)
+                    .strong(),
             );
-            ui.checkbox(&mut draft.real_hwid, tr("Отправлять настоящий HWID", &[]));
-            ui.add_enabled_ui(!draft.real_hwid, |ui| {
-                field(
-                    ui,
-                    "HWID",
-                    &mut draft.hwid,
-                    "00000000-0000-4000-8000-000000000000",
-                    false,
-                )
-            });
-            ui.checkbox(&mut draft.converter, tr("Конвертация подписки", &[]));
-            field(
-                ui,
-                "URL",
-                &mut draft.converter_url,
-                "https://converter.example/sub?url={url}",
-                false,
+            ui.label(
+                RichText::new(tr("Каждая строка — отдельное выражение. Фильтр применяется к имени, адресу, протоколу и исходной ссылке сервера.", &[]))
+                    .size(theme.font_small as f32)
+                    .color(theme.text_faint),
             );
-            if button(ui, "Сохранить настройки подписок") {
-                bridge.set_subscription_user_agent(&draft.agent);
-                bridge.set_subscription_include_regex(&draft.include);
-                bridge.set_subscription_exclude_regex(&draft.exclude);
-                bridge.set_subscription_use_real_hwid(draft.real_hwid);
-                bridge.set_subscription_hwid(&draft.hwid);
-                bridge.set_subscription_converter_enabled(draft.converter);
-                bridge.set_subscription_converter_url(&draft.converter_url);
+            if ui.available_width() >= 900.0 {
+                ui.columns(2, |columns| {
+                    columns[0].vertical(|ui| {
+                        caption(ui, theme, "Включать");
+                        styled_area(ui, &mut draft.include, "NL|DE|Reality", 86.0);
+                    });
+                    columns[1].vertical(|ui| {
+                        caption(ui, theme, "Исключать");
+                        styled_area(ui, &mut draft.exclude, "expired|traffic limit", 86.0);
+                    });
+                });
+            } else {
+                caption(ui, theme, "Включать");
+                styled_area(ui, &mut draft.include, "NL|DE|Reality", 86.0);
+                caption(ui, theme, "Исключать");
+                styled_area(ui, &mut draft.exclude, "expired|traffic limit", 86.0);
             }
+        });
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Параметры запроса", &[]))
+                    .size(theme.font_normal as f32)
+                    .strong(),
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e8d4}",
+                "User-Agent",
+                "Пустое поле использует полный профиль запросов Happ для Windows",
+                |ui| {
+                    plain_field(ui, &mut draft.agent, "Happ/2.18.3/Windows/2606241603601", 360.0);
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e72e}",
+                "Отправлять настоящий HWID",
+                "Использовать MachineGuid текущей установки Windows вместо указанного вручную",
+                |ui| {
+                    switch_setting(ui, theme, draft.real_hwid, true, |value| {
+                        draft.real_hwid = value;
+                    });
+                },
+            );
+            if !draft.real_hwid {
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e950}",
+                    "HWID",
+                    "Идентификатор устройства для заголовка X-Hwid; пустое поле использует стандартное значение Happ",
+                    |ui| {
+                        plain_field(
+                            ui,
+                            &mut draft.hwid,
+                            "00000000-0000-4000-8000-000000000000",
+                            360.0,
+                        );
+                    },
+                );
+            }
+            setting_row(
+                ui,
+                theme,
+                "\u{e8ab}",
+                "Конвертация подписки",
+                "Перед загрузкой передавать URL сервису-конвертеру",
+                |ui| {
+                    switch_setting(ui, theme, draft.converter, true, |value| {
+                        draft.converter = value;
+                    });
+                },
+            );
+            ui.add_enabled_ui(draft.converter, |ui| {
+                plain_field(
+                    ui,
+                    &mut draft.converter_url,
+                    "https://converter.example/sub?url={url}",
+                    ui.available_width().max(120.0),
+                );
+            });
+            right_row(ui, theme.control_height as f32, |ui| {
+                if accent_button_glyph(ui, theme, "\u{e74e}", "Сохранить настройки подписок") {
+                    bridge.set_subscription_user_agent(&draft.agent);
+                    bridge.set_subscription_include_regex(&draft.include);
+                    bridge.set_subscription_exclude_regex(&draft.exclude);
+                    bridge.set_subscription_use_real_hwid(draft.real_hwid);
+                    bridge.set_subscription_hwid(&draft.hwid);
+                    bridge.set_subscription_converter_enabled(draft.converter);
+                    bridge.set_subscription_converter_url(&draft.converter_url);
+                }
+            });
         });
     }
 
     fn dns(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, compact: bool) {
         let mode = bridge.dns_mode();
-        group(ui, theme, "DNS", |ui| {
-            choose(
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new("DNS")
+                    .size(theme.font_strong as f32)
+                    .strong(),
+            );
+            setting_row(
                 ui,
+                theme,
+                "\u{e774}",
                 "Режим DNS",
-                &mode,
-                &[("system", "Системный"), ("builtin", "Встроенный")],
-                |value| bridge.set_dns_mode(value),
+                "Системный DNS или встроенный DNS выбранного ядра",
+                |ui| {
+                    styled_combo(
+                        ui,
+                        "dns-mode",
+                        &mode,
+                        &[("system", "Системный"), ("builtin", "Встроенный")],
+                        210.0,
+                        |value| bridge.set_dns_mode(value),
+                    );
+                },
             );
         });
         if compact {
@@ -465,195 +755,389 @@ impl SettingsPage {
         });
         let enabled = mode == "builtin";
         ui.add_enabled_ui(enabled, |ui| {
-            group(ui, theme, "DNS-серверы", |ui| {
-                area(ui, "Прямые DNS-серверы", &mut draft.direct, "1.1.1.1");
-                ui.label(tr("Необязательно; пусто — DNS только через прокси", &[]));
-                area(
-                    ui,
-                    "DNS через прокси",
-                    &mut draft.proxy,
-                    "cloudflare-dns.com",
+            card(ui, theme, |ui| {
+                ui.spacing_mut().item_spacing.y = 14.0;
+                ui.label(
+                    RichText::new(tr("DNS-серверы", &[]))
+                        .size(theme.font_normal as f32)
+                        .strong(),
                 );
-                ui.label(tr("По одному адресу в строке", &[]));
-                if !compact {
-                    choose(
-                        ui,
-                        "Тип прямого DNS",
-                        &bridge.dns_bootstrap_type(),
-                        DNS_TYPES,
-                        |value| bridge.set_bootstrap_dns("", value),
-                    );
-                    choose(
-                        ui,
-                        "Тип proxy DNS",
-                        &bridge.dns_proxy_type(),
-                        DNS_TYPES,
-                        |value| bridge.set_proxy_dns("", value),
-                    );
-                    choose(
-                        ui,
-                        "Стратегия прямого DNS",
-                        &bridge.dns_bootstrap_strategy(),
-                        DNS_STRATEGIES,
-                        |value| bridge.set_dns_bootstrap_strategy(value),
-                    );
-                    choose(
-                        ui,
-                        "Стратегия proxy DNS",
-                        &bridge.dns_proxy_strategy(),
-                        DNS_STRATEGIES,
-                        |value| bridge.set_dns_proxy_strategy(value),
-                    );
-                    let flags: [Toggle; 5] = [
-                        (
-                            "Параллельные DNS-запросы",
-                            bridge.dns_parallel_query(),
-                            AppBridge::set_dns_parallel_query,
-                        ),
-                        (
-                            "Оптимистичный кэш",
-                            bridge.dns_optimistic_cache(),
-                            AppBridge::set_dns_optimistic_cache,
-                        ),
-                        (
-                            "Geo-проверка DNS",
-                            bridge.dns_geo_check(),
-                            AppBridge::set_dns_geo_check,
-                        ),
-                        (
-                            "Перехватывать DNS в TUN",
-                            bridge.dns_hijack_enabled(),
-                            AppBridge::set_dns_hijack_enabled,
-                        ),
-                        (
-                            "Fake DNS",
-                            bridge.dns_fake_enabled(),
-                            AppBridge::set_dns_fake_enabled,
-                        ),
-                    ];
-                    toggles(ui, bridge, &flags);
-                    area(ui, "DNS Hosts", &mut draft.hosts, "example.com=1.2.3.4");
-                    ui.label(tr(
-                        "Формат: domain=address. Несколько адресов разделяются запятыми.",
-                        &[],
-                    ));
+                let wide = ui.available_width() >= 900.0;
+                if wide {
+                    ui.columns(2, |columns| {
+                        columns[0].vertical(|ui| {
+                            ui.label(text("Прямые DNS-серверы", theme));
+                            caption(ui, theme, "Необязательно; пусто — DNS только через прокси");
+                            styled_area(ui, &mut draft.direct, "1.1.1.1", 86.0);
+                        });
+                        columns[1].vertical(|ui| {
+                            ui.label(text("DNS через прокси", theme));
+                            caption(ui, theme, "По одному адресу в строке");
+                            styled_area(ui, &mut draft.proxy, "cloudflare-dns.com", 86.0);
+                        });
+                    });
+                } else {
+                    ui.label(text("Прямые DNS-серверы", theme));
+                    caption(ui, theme, "Необязательно; пусто — DNS только через прокси");
+                    styled_area(ui, &mut draft.direct, "1.1.1.1", 86.0);
+                    ui.label(text("DNS через прокси", theme));
+                    caption(ui, theme, "По одному адресу в строке");
+                    styled_area(ui, &mut draft.proxy, "cloudflare-dns.com", 86.0);
                 }
-                if button(ui, "Применить DNS") {
-                    bridge.apply_dns_settings(&draft.direct, &draft.proxy, &draft.hosts);
+                let bootstrap_type = bridge.dns_bootstrap_type();
+                let proxy_type = bridge.dns_proxy_type();
+                let bootstrap_strategy = bridge.dns_bootstrap_strategy();
+                let proxy_strategy = bridge.dns_proxy_strategy();
+                if wide {
+                    ui.columns(2, |columns| {
+                        setting_row(&mut columns[0], theme, "\u{e8a5}", "Тип прямого DNS", "", |ui| {
+                            styled_combo(
+                                ui,
+                                "dns-bootstrap-type",
+                                &bootstrap_type,
+                                DNS_TYPES,
+                                210.0,
+                                |value| bridge.set_bootstrap_dns("", value),
+                            );
+                        });
+                        setting_row(&mut columns[1], theme, "\u{e8a5}", "Тип proxy DNS", "", |ui| {
+                            styled_combo(ui, "dns-proxy-type", &proxy_type, DNS_TYPES, 210.0, |value| {
+                                bridge.set_proxy_dns("", value)
+                            });
+                        });
+                    });
+                    ui.columns(2, |columns| {
+                        setting_row(&mut columns[0], theme, "\u{e8ef}", "Стратегия прямого DNS", "", |ui| {
+                            styled_combo(
+                                ui,
+                                "dns-bootstrap-strategy",
+                                &bootstrap_strategy,
+                                DNS_STRATEGIES,
+                                210.0,
+                                |value| bridge.set_dns_bootstrap_strategy(value),
+                            );
+                        });
+                        setting_row(&mut columns[1], theme, "\u{e8ef}", "Стратегия proxy DNS", "", |ui| {
+                            styled_combo(
+                                ui,
+                                "dns-proxy-strategy",
+                                &proxy_strategy,
+                                DNS_STRATEGIES,
+                                210.0,
+                                |value| bridge.set_dns_proxy_strategy(value),
+                            );
+                        });
+                    });
+                } else {
+                    setting_row(ui, theme, "\u{e8a5}", "Тип прямого DNS", "", |ui| {
+                        styled_combo(ui, "dns-bootstrap-type", &bootstrap_type, DNS_TYPES, 210.0, |value| {
+                            bridge.set_bootstrap_dns("", value)
+                        });
+                    });
+                    setting_row(ui, theme, "\u{e8a5}", "Тип proxy DNS", "", |ui| {
+                        styled_combo(ui, "dns-proxy-type", &proxy_type, DNS_TYPES, 210.0, |value| {
+                            bridge.set_proxy_dns("", value)
+                        });
+                    });
+                    setting_row(ui, theme, "\u{e8ef}", "Стратегия прямого DNS", "", |ui| {
+                        styled_combo(
+                            ui,
+                            "dns-bootstrap-strategy",
+                            &bootstrap_strategy,
+                            DNS_STRATEGIES,
+                            210.0,
+                            |value| bridge.set_dns_bootstrap_strategy(value),
+                        );
+                    });
+                    setting_row(ui, theme, "\u{e8ef}", "Стратегия proxy DNS", "", |ui| {
+                        styled_combo(
+                            ui,
+                            "dns-proxy-strategy",
+                            &proxy_strategy,
+                            DNS_STRATEGIES,
+                            210.0,
+                            |value| bridge.set_dns_proxy_strategy(value),
+                        );
+                    });
                 }
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e8c9}",
+                    "Параллельные DNS-запросы",
+                    "Запрашивать несколько DNS одновременно, когда ядро это поддерживает",
+                    |ui| {
+                        switch_setting(ui, theme, bridge.dns_parallel_query(), true, |value| {
+                            bridge.set_dns_parallel_query(value)
+                        });
+                    },
+                );
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e823}",
+                    "Оптимистичный кэш",
+                    "Отдавать устаревший ответ и обновлять его в фоне, когда ядро это поддерживает",
+                    |ui| {
+                        switch_setting(ui, theme, bridge.dns_optimistic_cache(), true, |value| {
+                            bridge.set_dns_optimistic_cache(value)
+                        });
+                    },
+                );
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e81e}",
+                    "Geo-проверка DNS",
+                    "Выбирать прямой или proxy DNS по правилам GeoSite пресета",
+                    |ui| {
+                        switch_setting(ui, theme, bridge.dns_geo_check(), true, |value| {
+                            bridge.set_dns_geo_check(value)
+                        });
+                    },
+                );
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e8d7}",
+                    "Перехватывать DNS в TUN",
+                    "Направлять DNS-запросы приложений во встроенный DNS",
+                    |ui| {
+                        switch_setting(ui, theme, bridge.dns_hijack_enabled(), true, |value| {
+                            bridge.set_dns_hijack_enabled(value)
+                        });
+                    },
+                );
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e8f1}",
+                    "Fake DNS",
+                    "Использовать FakeIP для DNS в TUN",
+                    |ui| {
+                        switch_setting(ui, theme, bridge.dns_fake_enabled(), true, |value| {
+                            bridge.set_dns_fake_enabled(value)
+                        });
+                    },
+                );
+            });
+            card(ui, theme, |ui| {
+                ui.spacing_mut().item_spacing.y = 14.0;
+                ui.label(
+                    RichText::new("Hosts")
+                        .size(theme.font_normal as f32)
+                        .strong(),
+                );
+                ui.label(
+                    RichText::new(tr("Формат: domain=address. Несколько адресов разделяются запятыми.", &[]))
+                        .size(theme.font_small as f32)
+                        .color(theme.text_faint),
+                );
+                styled_area(ui, &mut draft.hosts, "example.com=1.1.1.1\nlocal.test=127.0.0.1,::1", 110.0);
+                right_row(ui, theme.control_height as f32, |ui| {
+                    if accent_button_glyph(ui, theme, "\u{e74e}", "Применить DNS") {
+                        bridge.apply_dns_settings(&draft.direct, &draft.proxy, &draft.hosts);
+                    }
+                });
             });
         });
     }
 
     fn data(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, compact: bool) -> bool {
         let mut configs = false;
-        group(ui, theme, "Данные", |ui| {
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Данные", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
+            );
             let loaded = bridge.profile_loaded();
-            ui.label(tr("Пароль профиля", &[]));
-            ui.label(tr(
+            setting_row(
+                ui,
+                theme,
+                "\u{e72e}",
+                "Пароль профиля",
                 if loaded {
                     "Защитить настройки и серверы паролем"
                 } else {
                     "Профиль не открыт. Введите пароль; изменения и подключение заблокированы."
                 },
-                &[],
-            ));
-            let edit = ui.add(
-                TextEdit::singleline(&mut self.password)
-                    .password(true)
-                    .hint_text(tr("Пароль", &[])),
-            );
-            if button(
-                ui,
-                if loaded {
-                    "Задать пароль"
-                } else {
-                    "Открыть профиль"
+                |ui| {
+                    let edit = ui.add(
+                        TextEdit::singleline(&mut self.password)
+                            .desired_width(200.0)
+                            .password(true)
+                            .hint_text(tr("Пароль", &[])),
+                    );
+                    if accent_button(
+                        ui,
+                        theme,
+                        if loaded { "Задать пароль" } else { "Открыть профиль" },
+                    ) || (edit.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+                    {
+                        bridge.set_encryption_password(&self.password);
+                        self.password.clear();
+                    }
                 },
-            ) || (edit.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
-            {
-                bridge.set_encryption_password(&self.password);
-                self.password.clear();
-            }
-            ui.horizontal_wrapped(|ui| {
-                ui.label(tr("Резервная копия", &[]));
-                if button(ui, "Экспорт") {
-                    self.file_error = file_result(
-                        win_native::save_json_file(
-                            &tr("Сохранить резервную копию", &[]),
-                            "lumen-backup.json",
-                        ),
-                        |path| bridge.export_backup(&path, ""),
-                    );
-                }
-                if button(ui, "Импорт") {
-                    let filter = format!(
-                        "{}\0*.json\0{}\0*.*\0",
-                        tr("Резервная копия (*.json)", &[]),
-                        tr("Все файлы (*)", &[])
-                    );
-                    self.file_error = pick(
-                        &tr("Импорт резервной копии", &[]),
-                        &filter,
-                        |path| bridge.import_backup(&path, ""),
-                    );
-                    self.subscription = None;
-                    self.dns = None;
-                }
-            });
-            toggle(
-                ui,
-                "Телеметрия",
-                bridge.diagnostics_upload_enabled(),
-                |value| bridge.set_diagnostics_upload(value),
             );
-            ui.horizontal_wrapped(|ui| {
-                ui.label(tr("Конфиги", &[]));
-                configs = button(ui, "Открыть");
-            });
+            setting_row(
+                ui,
+                theme,
+                "\u{e74e}",
+                "Резервная копия",
+                "Экспорт и импорт настроек и серверов",
+                |ui| {
+                    if ghost_glyph(ui, theme, "\u{e74e}", "Экспорт") {
+                        self.file_error = file_result(
+                            win_native::save_json_file(
+                                &tr("Сохранить резервную копию", &[]),
+                                "lumen-backup.json",
+                            ),
+                            |path| bridge.export_backup(&path, ""),
+                        );
+                    }
+                    if ghost_glyph(ui, theme, "\u{e8b7}", "Импорт") {
+                        let filter = format!(
+                            "{}\0*.json\0{}\0*.*\0",
+                            tr("Резервная копия (*.json)", &[]),
+                            tr("Все файлы (*)", &[])
+                        );
+                        self.file_error = pick(
+                            &tr("Импорт резервной копии", &[]),
+                            &filter,
+                            |path| bridge.import_backup(&path, ""),
+                        );
+                        self.subscription = None;
+                        self.dns = None;
+                    }
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e9d9}",
+                "Телеметрия",
+                "Отправлять диагностические ошибки на сервер Lumen",
+                |ui| {
+                    switch_setting(
+                        ui,
+                        theme,
+                        bridge.diagnostics_upload_enabled(),
+                        true,
+                        |value| bridge.set_diagnostics_upload(value),
+                    );
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e943}",
+                "Конфиги",
+                "Шаблоны конфигураций Xray и sing-box",
+                |ui| {
+                    configs = ghost_glyph(ui, theme, "\u{e943}", "Открыть");
+                },
+            );
         });
         if !compact {
-            group(ui, theme, "Пути к ядрам", |ui| {
-                for (key, label, value) in [
-                    ("xray", "Ядро Xray", bridge.xray_path_display()),
+            card(ui, theme, |ui| {
+                ui.spacing_mut().item_spacing.y = 14.0;
+                ui.label(
+                    RichText::new(tr("Пути к ядрам", &[]))
+                        .size(theme.font_strong as f32)
+                        .strong(),
+                );
+                let xray = bridge.xray_path_display();
+                let singbox = bridge.singbox_path_display();
+                for (key, title, value, hint) in [
+                    (
+                        "xray",
+                        "Ядро Xray",
+                        xray,
+                        "core\\xray.exe",
+                    ),
                     (
                         "singbox",
                         "Ядро sing-box-extended",
-                        bridge.singbox_path_display(),
+                        singbox,
+                        "core\\sing-box-extended\\sing-box.exe",
                     ),
                 ] {
-                    let mut next = committed_text(ui, label, &value, false);
-                    if ui.push_id(key, |ui| button(ui, "Обзор")).inner {
-                        self.file_error = pick(
-                            &tr("Обзор", &[]),
-                            "Executable files (*.exe)\0*.exe\0",
-                            |path| next = Some(path.to_string_lossy().into_owned()),
-                        );
-                    }
-                    if let Some(path) = next {
-                        if key == "xray" {
-                            bridge.set_xray_path(&path);
-                        } else {
-                            bridge.set_singbox_path(&path);
+                    setting_row(ui, theme, "\u{e756}", title, "", |ui| {
+                        if let Some(path) = committed_field(
+                            ui,
+                            ("settings-path", key),
+                            &value,
+                            hint,
+                            240.0,
+                            false,
+                        ) {
+                            if key == "xray" {
+                                bridge.set_xray_path(&path);
+                            } else {
+                                bridge.set_singbox_path(&path);
+                            }
                         }
-                    }
+                        if ghost_glyph(ui, theme, "\u{e8b7}", "Обзор") {
+                            self.file_error = pick(
+                                &tr("Обзор", &[]),
+                                "Executable files (*.exe)\0*.exe\0",
+                                |path| {
+                                    if key == "xray" {
+                                        bridge.set_xray_path(&path.to_string_lossy());
+                                    } else {
+                                        bridge.set_singbox_path(&path.to_string_lossy());
+                                    }
+                                },
+                            );
+                        }
+                    });
                 }
             });
         }
-        group(ui, theme, "Сброс настроек", |ui| {
-            if button(ui, "Сбросить настройки") {
-                self.reset = true;
-            }
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            setting_row(
+                ui,
+                theme,
+                "\u{e777}",
+                "Сброс настроек",
+                "Вернуть настройки приложения и маршрутизации по умолчанию. Серверы и подписки останутся.",
+                |ui| {
+                    if ui.add(danger_button(theme, "Сбросить настройки")).clicked() {
+                        self.reset = true;
+                    }
+                },
+            );
         });
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(format!(
+                "{} · v{APP_VERSION}",
+                lumen_core::constants::APP_NAME
+            ))
+            .size(theme.font_small as f32)
+            .color(theme.text_faint),
+        );
         configs
     }
 
-    fn reset_dialog(&mut self, ctx: &Context, bridge: &mut AppBridge) {
+    fn reset_dialog(&mut self, ctx: &Context, theme: &Theme, bridge: &mut AppBridge) {
         let modal = Modal::new(Id::unique("settings-reset")).show(ctx, |ui| {
-            ui.set_width(420.0_f32.min((ctx.content_rect().width() - 48.0).max(0.0)));
-            ui.heading(tr("Сбросить настройки?", &[]));
+            ui.set_width(480.0_f32.min((ctx.content_rect().width() - 48.0).max(0.0)));
+            ui.label(
+                RichText::new(tr("Сбросить настройки?", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
+            );
             ui.label(tr("Настройки приложения и маршрутизации вернутся к значениям по умолчанию. Серверы и подписки не будут удалены.", &[]));
-            ui.horizontal_wrapped(|ui| (button(ui, "Отмена"), button(ui, "Сбросить"))).inner
+            right_row(ui, theme.control_height as f32, |ui| {
+                let cancel = ghost(ui, theme, "Отмена");
+                let confirm = accent_button(ui, theme, "Сбросить");
+                (cancel, confirm)
+            })
         });
         let (cancel, confirm) = modal.inner;
         if confirm {
@@ -665,144 +1149,281 @@ impl SettingsPage {
             self.reset = false;
         }
     }
+
+    // __CHUNK3__
 }
 
 fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, compact: bool) {
-    group(ui, theme, "Сеть", |ui| {
-        let region = bridge.regional_preset();
-        ui.add_enabled_ui(!bridge.regional_preset_busy(), |ui| {
-            choose(
-                ui,
-                "Региональный профиль",
-                &region,
-                &[("russia", "Россия"), ("china", "Китай"), ("iran", "Иран")],
-                |value| bridge.set_regional_preset(value),
-            );
-        });
-        if bridge.regional_preset_busy() {
-            ui.spinner();
-        }
-        choose(
-            ui,
-            "Основное ядро",
-            &s.core_preference,
-            &[
-                ("auto", "Auto"),
-                ("xray", "Xray"),
-                ("singbox", "sing-box extended"),
-            ],
-            |value| bridge.set_core_preference(value),
+    card(ui, theme, |ui| {
+        ui.spacing_mut().item_spacing.y = 14.0;
+        ui.label(
+            RichText::new(tr("Сеть", &[]))
+                .size(theme.font_strong as f32)
+                .strong(),
         );
-        toggles(
+        let region = bridge.regional_preset();
+        setting_row(
             ui,
-            bridge,
-            &[
-                (
-                    "Прокси в обход локальной сети",
-                    s.system_proxy_bypass_lan,
-                    AppBridge::set_proxy_bypass_lan,
-                ),
-                (
-                    "Настраивать прокси Firefox",
-                    s.firefox_proxy_integration,
-                    AppBridge::set_firefox_proxy_integration,
-                ),
-                (
-                    "Переподключение при смене сети",
-                    s.reconnect_on_network_change,
-                    AppBridge::set_reconnect_on_network_change,
-                ),
-                (
-                    "Предпочитать IPv6",
-                    s.prefer_ipv6,
-                    AppBridge::set_prefer_ipv6,
-                ),
-                ("Kill-switch", s.kill_switch, AppBridge::set_kill_switch),
-            ],
+            theme,
+            "\u{e909}",
+            "Региональный профиль",
+            "Меняет быстрые пресеты и источники GeoIP/GeoSite",
+            |ui| {
+                ui.add_enabled_ui(!bridge.regional_preset_busy(), |ui| {
+                    styled_combo(
+                        ui,
+                        "region",
+                        &region,
+                        &[("russia", "Россия"), ("china", "Китай"), ("iran", "Иран")],
+                        220.0,
+                        |value| bridge.set_regional_preset(value),
+                    );
+                });
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "",
+            "Основное ядро",
+            "Auto — подходящее ядро для каждого сервера",
+            |ui| {
+                info_icon(ui, theme, "Auto сам выбирает ядро для каждого сервера и может работать гибридом sing-box + Xray. Xray — всё, включая TUN, только через Xray; серверы sing-box (Hysteria2, TUIC, AWG, WARP) недоступны. sing-box extended — всё только через sing-box; серверы, которым нужен Xray, недоступны.");
+                styled_combo(
+                    ui,
+                    "core-preference",
+                    &s.core_preference,
+                    &[
+                        ("auto", "Auto"),
+                        ("xray", "Xray"),
+                        ("singbox", "sing-box extended"),
+                    ],
+                    220.0,
+                    |value| bridge.set_core_preference(value),
+                );
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "\u{e80f}",
+            "Прокси в обход локальной сети",
+            "Не проксировать адреса локальной сети",
+            |ui| {
+                switch_setting(ui, theme, s.system_proxy_bypass_lan, true, |value| {
+                    bridge.set_proxy_bypass_lan(value)
+                });
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "\u{e774}",
+            "Настраивать прокси Firefox",
+            "Принудительно записывать прокси в профили браузеров Firefox",
+            |ui| {
+                info_icon(ui, theme, "Обычно Firefox использует системный прокси автоматически. Включайте эту настройку только если Firefox его игнорирует.");
+                switch_setting(ui, theme, s.firefox_proxy_integration, true, |value| {
+                    bridge.set_firefox_proxy_integration(value)
+                });
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "\u{e895}",
+            "Переподключение при смене сети",
+            "Автоматически переподключаться при изменении сети",
+            |ui| {
+                switch_setting(ui, theme, s.reconnect_on_network_change, true, |value| {
+                    bridge.set_reconnect_on_network_change(value)
+                });
+            },
         );
         if !compact {
-            toggle(
+            setting_row(
                 ui,
+                theme,
+                "\u{e968}",
+                "Предпочитать IPv6",
+                "Использовать IPv6-адреса раньше IPv4, если сервер и сеть это поддерживают",
+                |ui| {
+                    switch_setting(ui, theme, s.prefer_ipv6, true, |value| {
+                        bridge.set_prefer_ipv6(value)
+                    });
+                },
+            );
+        }
+        setting_row(
+            ui,
+            theme,
+            "\u{e72e}",
+            "Kill-switch",
+            "При обрыве VPN блокировать трафик вместо выхода напрямую",
+            |ui| {
+                switch_setting(ui, theme, s.kill_switch, true, |value| {
+                    bridge.set_kill_switch(value)
+                });
+            },
+        );
+        if !compact {
+            setting_row(
+                ui,
+                theme,
+                "\u{e8a6}",
                 "Фрагментирование",
-                bridge.fragmentation_enabled(),
-                |value| bridge.set_fragmentation(value),
+                "Разделять TLS ClientHello на части для обхода DPI; иногда снижает стабильность",
+                |ui| {
+                    info_icon(ui, theme, "Фрагментирование делит TLS-рукопожатие на части. Может помочь обходу DPI, но иногда снижает стабильность.");
+                    switch_setting(ui, theme, bridge.fragmentation_enabled(), true, |value| {
+                        bridge.set_fragmentation(value)
+                    });
+                },
             );
             if bridge.fragmentation_enabled() {
-                let mut packets = bridge.fragment_packets();
-                let mut length = bridge.fragment_length();
-                let mut delay = bridge.fragment_delay();
-                let a = committed_text(ui, "Пакеты", &packets, false);
-                let b = committed_text(ui, "Размер фрагментации", &length, false);
-                let c = committed_text(ui, "Интервал фрагментации", &delay, false);
-                if a.is_some() || b.is_some() || c.is_some() {
-                    if let Some(value) = a {
-                        packets = value;
-                    }
-                    if let Some(value) = b {
-                        length = value;
-                    }
-                    if let Some(value) = c {
-                        delay = value;
-                    }
-                    bridge.set_fragment_settings(&packets, &length, &delay);
-                }
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e9d9}",
+                    "Настройки фрагментирования",
+                    "Fragment Settings",
+                    |ui| {
+                        info_icon(ui, theme, "Packets выбирает часть трафика, Length размер фрагментов, Delay задержку между ними.");
+                        let mut packets = bridge.fragment_packets();
+                        let mut length = bridge.fragment_length();
+                        let mut delay = bridge.fragment_delay();
+                        let a = committed_field(ui, "frag-packets", &packets, "tlshello", 100.0, false);
+                        let b = committed_field(ui, "frag-length", &length, "50-100", 100.0, false);
+                        let c = committed_field(ui, "frag-delay", &delay, "10-20", 100.0, false);
+                        if a.is_some() || b.is_some() || c.is_some() {
+                            if let Some(value) = a {
+                                packets = value;
+                            }
+                            if let Some(value) = b {
+                                length = value;
+                            }
+                            if let Some(value) = c {
+                                delay = value;
+                            }
+                            bridge.set_fragment_settings(&packets, &length, &delay);
+                        }
+                    },
+                );
             }
-            toggle(
+            setting_row(
                 ui,
+                theme,
+                "\u{e7c3}",
                 "Мультиплексирование",
-                s.multiplex_enabled,
-                |value| bridge.set_multiplexing(value),
+                "Объединять несколько соединений в один канал; зависит от поддержки сервера",
+                |ui| {
+                    info_icon(ui, theme, "Мультиплексирование объединяет несколько запросов в один канал. Может ускорить много мелких соединений, но зависит от поддержки сервера.");
+                    switch_setting(ui, theme, s.multiplex_enabled, true, |value| {
+                        bridge.set_multiplexing(value)
+                    });
+                },
             );
             if s.multiplex_enabled {
-                number(
+                setting_row(
                     ui,
+                    theme,
+                    "\u{e9d9}",
                     "Настройки мультиплексирования",
-                    s.multiplex_concurrency,
-                    1..=32,
-                    1.0,
-                    |value| bridge.set_multiplex_concurrency(value),
+                    "Multiplex Settings",
+                    |ui| {
+                        info_icon(ui, theme, "Потоки задают, сколько запросов можно вести внутри одного мультиплексированного соединения.");
+                        spin(ui, s.multiplex_concurrency, 1..=32, 1.0, |value| {
+                            bridge.set_multiplex_concurrency(value)
+                        });
+                    },
                 );
             }
         }
     });
-    group(ui, theme, "Цепочка прокси", |ui| {
-        toggle(
-            ui,
-            "Использовать цепочку",
-            s.proxy_chain_enabled,
-            |value| bridge.set_proxy_chain_enabled(value),
+    card(ui, theme, |ui| {
+        ui.spacing_mut().item_spacing.y = 14.0;
+        ui.label(
+            RichText::new(tr("Цепочка прокси", &[]))
+                .size(theme.font_strong as f32)
+                .strong(),
         );
+        setting_row(
+            ui,
+            theme,
+            "\u{e71b}",
+            "Использовать цепочку",
+            "Приложение → предыдущий прокси → выбранный сервер → выходной прокси → сайт. Работает в Xray и sing-box.",
+            |ui| {
+                switch_setting(ui, theme, s.proxy_chain_enabled, true, |value| {
+                    bridge.set_proxy_chain_enabled(value)
+                });
+            },
+        );
+        let options = bridge.proxy_chain_node_options();
+        let options = options
+            .iter()
+            .map(|(id, label)| (id.as_str(), label.as_str()))
+            .collect::<Vec<_>>();
         ui.add_enabled_ui(s.proxy_chain_enabled, |ui| {
-            let options = bridge.proxy_chain_node_options();
-            let options = options
-                .iter()
-                .map(|(id, label)| (id.as_str(), label.as_str()))
-                .collect::<Vec<_>>();
-            choose(
+            setting_row(
                 ui,
+                theme,
+                "\u{e8ab}",
                 "Предыдущий прокси",
-                &s.proxy_chain_front_node_id,
-                &options,
-                |value| bridge.set_proxy_chain_front(value),
+                "Через него идёт подключение к выбранному серверу",
+                |ui| {
+                    styled_combo(
+                        ui,
+                        "chain-front",
+                        &s.proxy_chain_front_node_id,
+                        &options,
+                        260.0,
+                        |value| bridge.set_proxy_chain_front(value),
+                    );
+                },
             );
-            choose(
+            setting_row(
                 ui,
+                theme,
+                "\u{e774}",
                 "Выходной прокси",
-                &s.proxy_chain_exit_node_id,
-                &options,
-                |value| bridge.set_proxy_chain_exit(value),
+                "Сайты видят IP этого сервера",
+                |ui| {
+                    styled_combo(
+                        ui,
+                        "chain-exit",
+                        &s.proxy_chain_exit_node_id,
+                        &options,
+                        260.0,
+                        |value| bridge.set_proxy_chain_exit(value),
+                    );
+                },
             );
         });
         if s.proxy_chain_enabled {
             let preview = bridge.proxy_chain_preview();
-            let hops = preview["hops"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|hop| hop["label"].as_str())
-                .collect::<Vec<_>>();
+            let hops = preview["hops"].as_array().cloned().unwrap_or_default();
             if hops.len() > 1 {
-                ui.label(hops.join(" → "));
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    for (index, hop) in hops.iter().enumerate() {
+                        if index > 0 {
+                            ui.label(
+                                RichText::new("\u{e76c}")
+                                    .size(10.0)
+                                    .color(theme.text_faint),
+                            );
+                        }
+                        let label = hop["label"].as_str().unwrap_or_default();
+                        let main = hop["role"].as_str() == Some("main");
+                        let fill = if main {
+                            theme.accent_soft
+                        } else {
+                            theme.control_fill
+                        };
+                        chip(ui, theme, label, fill);
+                    }
+                });
             }
             for note in preview["notes"]
                 .as_array()
@@ -810,254 +1431,497 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 .flatten()
                 .filter_map(serde_json::Value::as_str)
             {
-                ui.colored_label(theme.warning, note);
+                ui.colored_label(theme.warning, format!("⚠ {note}"));
             }
         }
     });
     if !compact {
-        group(ui, theme, "Авто-переключение", |ui| {
-            toggle(
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Авто-переключение", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
+            );
+            setting_row(
                 ui,
+                theme,
+                "\u{e895}",
                 "Включить авто-переключение",
-                s.auto_switch_enabled,
-                |value| bridge.set_auto_switch(value),
-            );
-            number(
-                ui,
-                "Порог скорости",
-                s.auto_switch_threshold_kbps,
-                1..=10000,
-                1.0,
-                |value| bridge.set_auto_switch_threshold(value),
-            );
-            number(
-                ui,
-                "Задержка",
-                s.auto_switch_delay_sec,
-                5..=300,
-                1.0,
-                |value| bridge.set_auto_switch_delay(value),
-            );
-            number(
-                ui,
-                "Пауза",
-                s.auto_switch_cooldown_sec,
-                10..=600,
-                1.0,
-                |value| bridge.set_auto_switch_cooldown(value),
-            );
-        });
-        group(ui, theme, "Прокси", |ui| {
-            number(
-                ui,
-                "SOCKS-порт",
-                s.local_socks_port,
-                1025..=65535,
-                1.0,
-                |value| bridge.set_local_socks_port(value),
-            );
-            number(
-                ui,
-                "HTTP-порт",
-                s.local_http_port,
-                1025..=65535,
-                1.0,
-                |value| bridge.set_local_http_port(value),
-            );
-            toggle(
-                ui,
-                "Авторизация прокси",
-                s.proxy_auth_enabled,
-                |value| {
-                    bridge.set_proxy_auth_enabled(value);
+                "Переключать сервер при падении скорости",
+                |ui| {
+                    switch_setting(ui, theme, s.auto_switch_enabled, true, |value| {
+                        bridge.set_auto_switch(value)
+                    });
                 },
             );
-            let user = committed_text(ui, "Логин прокси", &s.proxy_auth_username, false);
-            let password = committed_text(ui, "Пароль прокси", &s.proxy_auth_password, true);
-            if user.is_some() || password.is_some() {
-                bridge.set_proxy_auth_credentials(
-                    user.as_deref().unwrap_or(&s.proxy_auth_username),
-                    password.as_deref().unwrap_or(&s.proxy_auth_password),
-                );
-            }
-            toggles(
+            setting_row(
                 ui,
-                bridge,
-                &[
-                    (
-                        "Разрешить подключения из локальной сети",
-                        s.proxy_allow_lan,
-                        AppBridge::set_proxy_allow_lan,
-                    ),
-                    (
-                        "Sniffing только для маршрутизации",
-                        s.sniff_route_only,
-                        AppBridge::set_sniff_route_only,
-                    ),
-                ],
+                theme,
+                "\u{ec4a}",
+                "Порог скорости",
+                "КБ/с, ниже которого срабатывает переключение",
+                |ui| {
+                    spin(ui, s.auto_switch_threshold_kbps, 1..=10000, 1.0, |value| {
+                        bridge.set_auto_switch_threshold(value)
+                    });
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e916}",
+                "Задержка",
+                "Секунд низкой скорости перед переключением",
+                |ui| {
+                    spin(ui, s.auto_switch_delay_sec, 5..=300, 1.0, |value| {
+                        bridge.set_auto_switch_delay(value)
+                    });
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e81c}",
+                "Пауза",
+                "Секунд между переключениями",
+                |ui| {
+                    spin(ui, s.auto_switch_cooldown_sec, 10..=600, 1.0, |value| {
+                        bridge.set_auto_switch_cooldown(value)
+                    });
+                },
             );
         });
-        group(ui, theme, "TUN", |ui| {
-            toggle(ui, "Strict Route", s.tun_strict_route, |value| {
-                bridge.set_tun_strict_route(value)
-            });
-            choose(
-                ui,
-                "Сетевой стек TUN",
-                &s.tun_stack,
-                &[
-                    ("mixed", "mixed"),
-                    ("system", "system"),
-                    ("gvisor", "gvisor"),
-                ],
-                |value| bridge.set_tun_stack(value),
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Прокси", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
             );
-            number(ui, "MTU", s.tun_mtu, 1280..=65535, 1.0, |value| {
-                bridge.set_tun_mtu(value)
-            });
-            toggles(
+            setting_row(
                 ui,
-                bridge,
-                &[
-                    (
-                        "Блокировать QUIC/HTTP3 в TUN",
-                        s.tun_block_quic,
-                        AppBridge::set_tun_block_quic,
-                    ),
-                    (
-                        "Endpoint-Independent NAT",
-                        s.tun_endpoint_independent_nat,
-                        AppBridge::set_tun_endpoint_independent_nat,
-                    ),
-                ],
+                theme,
+                "\u{e8a6}",
+                "SOCKS-порт",
+                "Локальный порт SOCKS/mixed прокси (рекомендуется 10808)",
+                |ui| {
+                    info_icon(ui, theme, "Локальный порт для SOCKS и mixed прокси. Порт 10818 зарезервирован под Discord Voice и будет сброшен на рекомендованный. Применяется с переподключением.");
+                    spin(ui, s.local_socks_port, 1025..=65535, 1.0, |value| {
+                        bridge.set_local_socks_port(value)
+                    });
+                },
             );
+            setting_row(
+                ui,
+                theme,
+                "\u{e8a6}",
+                "HTTP-порт",
+                "Локальный порт HTTP прокси (рекомендуется 10809)",
+                |ui| {
+                    info_icon(ui, theme, "Локальный порт для HTTP прокси. Должен отличаться от SOCKS-порта; порт 10818 зарезервирован под Discord Voice. Применяется с переподключением.");
+                    spin(ui, s.local_http_port, 1025..=65535, 1.0, |value| {
+                        bridge.set_local_http_port(value)
+                    });
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e72e}",
+                "Авторизация прокси",
+                "Требовать логин и пароль для SOCKS/mixed и HTTP прокси",
+                |ui| {
+                    info_icon(ui, theme, "По умолчанию выключено. После изменения активное подключение переподключится. Клиенты системного прокси должны поддерживать HTTP-аутентификацию.");
+                    switch_setting(ui, theme, s.proxy_auth_enabled, true, |value| {
+                        bridge.set_proxy_auth_enabled(value);
+                    });
+                },
+            );
+            let mut next_user = None;
+            let mut next_password = None;
+            setting_row(
+                ui,
+                theme,
+                "\u{e77b}",
+                "Логин прокси",
+                "Имя пользователя для локального прокси",
+                |ui| {
+                    next_user = committed_field(
+                        ui,
+                        "proxy-auth-user",
+                        &s.proxy_auth_username,
+                        "Логин",
+                        240.0,
+                        false,
+                    );
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e8d7}",
+                "Пароль прокси",
+                "Пароль не показывается в интерфейсе",
+                |ui| {
+                    next_password = committed_field(
+                        ui,
+                        "proxy-auth-pass",
+                        &s.proxy_auth_password,
+                        "Пароль",
+                        240.0,
+                        true,
+                    );
+                },
+            );
+            if next_user.is_some() || next_password.is_some() {
+                bridge.set_proxy_auth_credentials(
+                    next_user.as_deref().unwrap_or(&s.proxy_auth_username),
+                    next_password.as_deref().unwrap_or(&s.proxy_auth_password),
+                );
+            }
+            setting_row(
+                ui,
+                theme,
+                "\u{e774}",
+                "Разрешить подключения из локальной сети",
+                "Открыть SOCKS/HTTP порты для других устройств вашей сети",
+                |ui| {
+                    info_icon(ui, theme, "Другие устройства вашей сети смогут использовать этот ПК как прокси (адрес — IP этого ПК и указанные выше порты). Работает в режиме прокси. Windows может запросить разрешение брандмауэра.");
+                    switch_setting(ui, theme, s.proxy_allow_lan, true, |value| {
+                        bridge.set_proxy_allow_lan(value)
+                    });
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e895}",
+                "Sniffing только для маршрутизации",
+                "Не подменять адрес назначения доменом из sniffing (рекомендуется: выключено)",
+                |ui| {
+                    info_icon(ui, theme, "Домен из sniffing используется только для правил маршрутизации, а соединение идёт на исходный IP. Может помочь, если отдельные приложения некорректно работают с подменой адреса.");
+                    switch_setting(ui, theme, s.sniff_route_only, true, |value| {
+                        bridge.set_sniff_route_only(value)
+                    });
+                },
+            );
+        });
+        let limited = bridge.limited_mode();
+        ui.add_enabled_ui(!limited, |ui| {
+            card(ui, theme, |ui| {
+                ui.spacing_mut().item_spacing.y = 14.0;
+                ui.label(
+                    RichText::new(tr("TUN", &[]))
+                        .size(theme.font_strong as f32)
+                        .strong(),
+                );
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e72e}",
+                    "Strict Route",
+                    "Ограничивать обход TUN для защиты от утечек (рекомендуется: включено)",
+                    |ui| {
+                        info_icon(ui, theme, "Защищает от DNS-утечек Windows при нескольких сетевых адаптерах, но также может ограничить трафик в обход TUN. Может нарушить Discord Voice (ICE fallback), работу WinDivert, VirtualBox и других приложений с нестандартной маршрутизацией. Применяется при следующем включении TUN.");
+                        switch_setting(ui, theme, s.tun_strict_route, true, |value| {
+                            bridge.set_tun_strict_route(value)
+                        });
+                    },
+                );
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e968}",
+                    "Сетевой стек TUN",
+                    "mixed — рекомендуется",
+                    |ui| {
+                        info_icon(ui, theme, "system — быстрее, gvisor — совместимее, mixed — system для TCP и gVisor для UDP.");
+                        styled_combo(
+                            ui,
+                            "tun-stack",
+                            &s.tun_stack,
+                            &[
+                                ("mixed", "mixed"),
+                                ("system", "system"),
+                                ("gvisor", "gvisor"),
+                            ],
+                            210.0,
+                            |value| bridge.set_tun_stack(value),
+                        );
+                    },
+                );
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e9d9}",
+                    "MTU",
+                    "Размер пакета TUN-адаптера (рекомендуется 9000)",
+                    |ui| {
+                        spin(ui, s.tun_mtu, 1280..=65535, 1.0, |value| {
+                            bridge.set_tun_mtu(value)
+                        });
+                    },
+                );
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e72c}",
+                    "Блокировать QUIC/HTTP3 в TUN",
+                    "Браузеры переходят на HTTP/2 через прокси (рекомендуется: включено)",
+                    |ui| {
+                        info_icon(ui, theme, "QUIC/HTTP3 из TUN отклоняется, чтобы браузеры использовали TCP HTTP/2 — так стабильнее через прокси. Отключайте, только если нужен HTTP/3. Применяется при следующем включении TUN.");
+                        switch_setting(ui, theme, s.tun_block_quic, true, |value| {
+                            bridge.set_tun_block_quic(value)
+                        });
+                    },
+                );
+                setting_row(
+                    ui,
+                    theme,
+                    "\u{e774}",
+                    "Endpoint-Independent NAT",
+                    "Full-cone NAT для игр и P2P (рекомендуется: выключено)",
+                    |ui| {
+                        info_icon(ui, theme, "Улучшает совместимость с играми и P2P-приложениями, но потребляет больше памяти. Работает со стеками gvisor и mixed. Применяется при следующем включении TUN.");
+                        switch_setting(
+                            ui,
+                            theme,
+                            s.tun_endpoint_independent_nat,
+                            true,
+                            |value| bridge.set_tun_endpoint_independent_nat(value),
+                        );
+                    },
+                );
+            });
         });
     }
 }
 
 fn startup(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, compact: bool) {
-    group(ui, theme, "Запуск", |ui| {
-        toggle(
-            ui,
-            "Запускать при входе",
-            s.launch_on_startup,
-            |value| bridge.set_launch_on_startup(value),
+    card(ui, theme, |ui| {
+        ui.spacing_mut().item_spacing.y = 14.0;
+        ui.label(
+            RichText::new(tr("Запуск", &[]))
+                .size(theme.font_strong as f32)
+                .strong(),
         );
-        ui.add_enabled_ui(s.launch_on_startup, |ui| {
-            toggle(
-                ui,
-                "Запускать автозапуск в трей",
-                s.launch_in_tray_on_startup,
-                |value| bridge.set_launch_in_tray_on_startup(value),
-            )
-        });
-        toggles(
+        setting_row(
             ui,
-            bridge,
-            &[
-                (
-                    "Всегда запускать от администратора",
-                    s.always_run_as_admin,
-                    AppBridge::set_always_run_as_admin,
-                ),
-                (
-                    "Автоподключение после запуска",
-                    s.auto_connect_last,
-                    AppBridge::set_auto_connect_last,
-                ),
-                (
-                    "Восстанавливать VPN после сна",
-                    s.reconnect_after_sleep,
-                    AppBridge::set_reconnect_after_sleep,
-                ),
-                (
-                    "Проверка VPN",
-                    s.block_vpn_conflicts,
-                    AppBridge::set_block_vpn_conflicts,
-                ),
-                (
-                    "Автоподключение при импорте",
-                    s.auto_connect_on_import,
-                    AppBridge::set_auto_connect_on_import,
-                ),
-            ],
+            theme,
+            "\u{e7e8}",
+            "Запускать при входе",
+            "Автозапуск вместе с Windows",
+            |ui| {
+                switch_setting(ui, theme, s.launch_on_startup, true, |value| {
+                    bridge.set_launch_on_startup(value)
+                });
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "\u{e7e8}",
+            "Запускать автозапуск в трей",
+            "При входе в Windows не показывать окно, только иконку в трее",
+            |ui| {
+                switch_setting(
+                    ui,
+                    theme,
+                    s.launch_in_tray_on_startup,
+                    s.launch_on_startup,
+                    |value| bridge.set_launch_in_tray_on_startup(value),
+                );
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "\u{e72e}",
+            "Всегда запускать от администратора",
+            "При каждом запуске Windows будет запрашивать права администратора",
+            |ui| {
+                switch_setting(ui, theme, s.always_run_as_admin, true, |value| {
+                    bridge.set_always_run_as_admin(value)
+                });
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "\u{e768}",
+            "Автоподключение после запуска",
+            "Подключаться к последнему использованному серверу при старте",
+            |ui| {
+                switch_setting(ui, theme, s.auto_connect_last, true, |value| {
+                    bridge.set_auto_connect_last(value)
+                });
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "\u{e7e8}",
+            "Восстанавливать VPN после сна",
+            "Автоматически переподключаться после выхода Windows из сна или гибернации",
+            |ui| {
+                switch_setting(ui, theme, s.reconnect_after_sleep, true, |value| {
+                    bridge.set_reconnect_after_sleep(value)
+                });
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "\u{e72e}",
+            "Проверка VPN",
+            "Не запускать Lumen при работающем другом VPN или прокси",
+            |ui| {
+                switch_setting(ui, theme, s.block_vpn_conflicts, true, |value| {
+                    bridge.set_block_vpn_conflicts(value)
+                });
+            },
+        );
+        setting_row(
+            ui,
+            theme,
+            "\u{e896}",
+            "Автоподключение при импорте",
+            "Сразу подключаться к импортированному серверу",
+            |ui| {
+                switch_setting(ui, theme, s.auto_connect_on_import, true, |value| {
+                    bridge.set_auto_connect_on_import(value)
+                });
+            },
         );
         if !compact {
-            toggle(
+            setting_row(
                 ui,
+                theme,
+                "\u{e945}",
                 "Автозапуск Zapret",
-                s.zapret_autostart,
-                |value| bridge.set_zapret_autostart(value),
+                "Запускать Zapret при старте приложения",
+                |ui| {
+                    switch_setting(ui, theme, s.zapret_autostart, true, |value| {
+                        bridge.set_zapret_autostart(value)
+                    });
+                },
             );
         }
     });
     if !compact {
-        group(
-            ui,
-            theme,
-            "Тестирование серверов",
-            |ui| {
-                choose(
-                    ui,
-                    "Способ измерения ping",
-                    &s.ping_method,
-                    &[
-                        ("tcping", "TCP ping"),
-                        ("icmp", "ICMP"),
-                        ("http", "HTTP GET"),
-                        ("real", "Реальная задержка"),
-                    ],
-                    |value| bridge.set_ping_method(value),
-                );
-                if let Some(url) =
-                    committed_text(ui, "URL теста скорости", &s.speed_test_url, false)
-                {
-                    bridge.set_speed_test_url(&url);
-                }
-                ui.menu_button(tr("Пресеты", &[]), |ui| {
-                    for (url, label) in SPEED_URLS {
-                        if ui.button(*label).clicked() {
-                            bridge.set_speed_test_url(url);
-                            ui.close();
-                        }
+        card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ui.label(
+                RichText::new(tr("Тестирование серверов", &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e724}",
+                "Способ измерения ping",
+                "TCP ping быстрее всего; ICMP — системный ping; реальная задержка — HTTP через сервер",
+                |ui| {
+                    styled_combo(
+                        ui,
+                        "ping-method",
+                        &s.ping_method,
+                        &[
+                            ("tcping", "TCP ping (быстро)"),
+                            ("icmp", "ICMP (системный)"),
+                            ("http", "HTTP GET"),
+                            ("real", "Реальная задержка (HTTP)"),
+                        ],
+                        210.0,
+                        |value| bridge.set_ping_method(value),
+                    );
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{ec4a}",
+                "URL теста скорости",
+                "Пусто — стандартный (cachefly 50MB)",
+                |ui| {
+                    if let Some(url) = committed_field(
+                        ui,
+                        "speed-url",
+                        &s.speed_test_url,
+                        "https://cachefly.cachefly.net/50mb.test",
+                        300.0,
+                        false,
+                    ) {
+                        bridge.set_speed_test_url(&url);
                     }
-                });
-                number(
-                    ui,
-                    "Параллельных проверок",
-                    s.speed_test_concurrency,
-                    0..=32,
-                    1.0,
-                    |value| bridge.set_speed_test_concurrency(value),
-                );
-            },
-        );
+                    ui.menu_button(
+                        RichText::new("\u{e70d}")
+                            .size(12.0)
+                            .color(theme.text_muted),
+                        |ui| {
+                            for (url, label) in SPEED_URLS {
+                                if ui.button(*label).clicked() {
+                                    bridge.set_speed_test_url(url);
+                                    ui.close();
+                                }
+                            }
+                        },
+                    );
+                },
+            );
+            setting_row(
+                ui,
+                theme,
+                "\u{e8c9}",
+                "Параллельных проверок",
+                "Сколько серверов тестировать одновременно (0 — авто)",
+                |ui| {
+                    spin(ui, s.speed_test_concurrency, 0..=32, 1.0, |value| {
+                        bridge.set_speed_test_concurrency(value)
+                    });
+                },
+            );
+        });
     }
 }
 
 fn updates(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings) {
-    group(ui, theme, "Обновления", |ui| {
-        toggles(
-            ui,
-            bridge,
-            &[
-                (
-                    "Проверять обновления",
-                    s.check_updates,
-                    AppBridge::set_check_updates,
-                ),
-                (
-                    "Проверять обновления ядра и geoip/geosite",
-                    s.resource_update_check,
-                    AppBridge::set_resource_update_check,
-                ),
-                (
-                    "Автообновление приложения",
-                    s.app_auto_update,
-                    AppBridge::set_app_auto_update,
-                ),
-            ],
-        )
+    card(ui, theme, |ui| {
+        ui.spacing_mut().item_spacing.y = 14.0;
+        ui.label(
+            RichText::new(tr("Обновления", &[]))
+                .size(theme.font_strong as f32)
+                .strong(),
+        );
+        for (glyph, title, subtitle, value, set) in [
+            (
+                "\u{e777}",
+                "Проверять обновления",
+                "Автоматически проверять наличие обновлений",
+                s.check_updates,
+                AppBridge::set_check_updates as fn(&mut AppBridge, bool),
+            ),
+            (
+                "\u{e72c}",
+                "Проверять обновления ядра и geoip/geosite",
+                "При запуске проверять обновления и уведомлять",
+                s.resource_update_check,
+                AppBridge::set_resource_update_check,
+            ),
+            (
+                "\u{e895}",
+                "Автообновление приложения",
+                "Автоматически скачивать и устанавливать новые версии",
+                s.app_auto_update,
+                AppBridge::set_app_auto_update,
+            ),
+        ] {
+            setting_row(ui, theme, glyph, title, subtitle, |ui| {
+                switch_setting(ui, theme, value, true, |next| set(bridge, next));
+            });
+        }
     });
 }
 
@@ -1098,7 +1962,7 @@ fn color_dialog(
             {
                 draft.base = color;
             }
-            if !draft.tint && button(ui, "Системный цвет") {
+            if !draft.tint && ghost(ui, theme, "Системный цвет") {
                 let system = bridge.system_accent();
                 if let Some(color) = hex_color(&system) {
                     draft.base = color;
@@ -1110,17 +1974,11 @@ fn color_dialog(
         ui.add(egui::Slider::new(&mut draft.mute, 0.0..=1.0).text(tr("Затемнение", &[])));
         let result = muted_color(draft.base, draft.mute);
         ui.colored_label(result, color_hex(result));
-        ui.horizontal_wrapped(|ui| {
-            let cancel = button(ui, "Отмена");
-            let accept = ui
-                .add(
-                    Button::new(RichText::new(tr("Применить", &[])).color(theme.accent_text))
-                        .fill(theme.accent),
-                )
-                .clicked();
+        right_row(ui, theme.control_height as f32, |ui| {
+            let cancel = ghost(ui, theme, "Отмена");
+            let accept = accent_button(ui, theme, "Применить");
             (cancel, accept, result)
         })
-        .inner
     });
     let (cancel, accept, result) = modal.inner;
     if accept {
@@ -1145,138 +2003,421 @@ fn color_hex(color: Color32) -> String {
     format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b())
 }
 
-fn group(ui: &mut Ui, theme: &Theme, title: &str, content: impl FnOnce(&mut Ui)) {
+/// Height-constrained right-aligned row (`QML RowLayout`); egui rows must pin
+/// their height or they inherit the scroll viewport's tall rect.
+fn right_row<R>(ui: &mut Ui, height: f32, content: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), height),
+        Layout::right_to_left(Align::Center),
+        content,
+    )
+    .inner
+}
+
+/// `SettingRow`: glyph + title/subtitle block on the left, controls pinned to
+/// the right edge (SettingsPage.qml component).
+fn setting_row<R>(
+    ui: &mut Ui,
+    theme: &Theme,
+    glyph: &str,
+    title: &str,
+    subtitle: &str,
+    right: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let height = if subtitle.is_empty() { 32.0 } else { 46.0 };
+    right_row(ui, height, |ui| {
+        let result = right(ui);
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            if !glyph.is_empty() {
+                ui.allocate_ui_with_layout(
+                    vec2(22.0, height),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.label(
+                            RichText::new(glyph)
+                                .size(16.0)
+                                .color(theme.text_muted),
+                        );
+                    },
+                );
+            }
+            ui.vertical(|ui| {
+                ui.label(RichText::new(tr(title, &[])).size(theme.font_normal as f32));
+                if !subtitle.is_empty() {
+                    ui.label(
+                        RichText::new(tr(subtitle, &[]))
+                            .size(theme.font_small as f32)
+                            .color(theme.text_faint),
+                    );
+                }
+            });
+        });
+        result
+    })
+}
+
+fn card(ui: &mut Ui, theme: &Theme, content: impl FnOnce(&mut Ui)) {
     Frame::new()
         .fill(theme.card)
         .stroke(Stroke::new(1.0, theme.border_solid))
         .corner_radius(theme.radius as u8)
-        .inner_margin(14.0)
+        .inner_margin(theme.spacing_large as f32)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 8.0;
-            ui.label(
-                RichText::new(tr(title, &[]))
-                    .size(theme.font_strong as f32)
-                    .strong(),
-            );
             content(ui);
         });
 }
 
-type Toggle = (&'static str, bool, fn(&mut AppBridge, bool));
-
-fn toggles(ui: &mut Ui, bridge: &mut AppBridge, items: &[Toggle]) {
-    for &(label, value, set) in items {
-        toggle(ui, label, value, |value| set(bridge, value));
-    }
-}
-fn toggle(ui: &mut Ui, label: &str, mut value: bool, set: impl FnOnce(bool)) {
-    if ui.checkbox(&mut value, tr(label, &[])).changed() {
-        set(value);
-    }
-}
-fn choose(
-    ui: &mut Ui,
-    label: &str,
-    active: &str,
-    options: &[(&str, &str)],
-    set: impl FnOnce(&str),
-) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label(tr(label, &[]));
-        let mut selected = active;
-        let caption = options
-            .iter()
-            .find(|option| option.0 == active)
-            .or_else(|| options.first())
-            .map_or(active, |option| option.1);
-        ComboBox::from_id_salt(label)
-            .width(185.0)
-            .selected_text(tr(caption, &[]))
-            .truncate()
-            .show_ui(ui, |ui| {
-                for &(key, caption) in options {
-                    if ui
-                        .selectable_label(key == active, tr(caption, &[]))
-                        .clicked()
-                    {
-                        selected = key;
-                        ui.close();
-                    }
-                }
-            });
-        if selected != active {
-            set(selected);
-        }
+/// 1px `Theme.divider` line.
+fn hline(ui: &mut Ui, theme: &Theme, inset: f32) {
+    ui.horizontal(|ui| {
+        ui.add_space(inset);
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(ui.available_width().max(0.0), 1.0), Sense::hover());
+        ui.painter().rect_filled(rect, 0.0, theme.divider);
     });
 }
-fn number(
-    ui: &mut Ui,
+
+fn caption(ui: &mut Ui, theme: &Theme, text: &str) {
+    ui.label(
+        RichText::new(tr(text, &[]))
+            .size(theme.font_small as f32)
+            .color(theme.text_muted),
+    );
+}
+
+fn text(text: &str, theme: &Theme) -> RichText {
+    RichText::new(tr(text, &[])).size(theme.font_normal as f32)
+}
+
+fn tab_job(
+    theme: &Theme,
+    glyph: &str,
     label: &str,
+    current: bool,
+    show_label: bool,
+    size: f32,
+) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let glyph_color = if current { theme.accent } else { theme.text_muted };
+    job.append(glyph, 0.0, TextFormat::simple(FontId::proportional(size), glyph_color));
+    if show_label {
+        let color = if current { theme.text } else { theme.text_muted };
+        let font = if current { semibold(size) } else { FontId::proportional(size) };
+        job.append(label, 8.0, TextFormat::simple(font, color));
+    }
+    job
+}
+
+/// `FluentCombo` bound to a key list; QML combos with an out-of-list value
+/// still display their first item, so the fallback mirrors that.
+fn styled_combo(
+    ui: &mut Ui,
+    id: impl egui::AsIdSalt,
+    active: &str,
+    options: &[(&str, &str)],
+    width: f32,
+    set: impl FnOnce(&str),
+) {
+    let label = options
+        .iter()
+        .find(|(key, _)| *key == active)
+        .or_else(|| options.first())
+        .map(|(_, label)| *label)
+        .unwrap_or("");
+    let mut picked = None;
+    ComboBox::from_id_salt(id)
+        .width(width)
+        .truncate()
+        .selected_text(tr(label, &[]))
+        .show_ui(ui, |ui| {
+            for &(key, caption) in options {
+                if ui
+                    .selectable_label(key == active, tr(caption, &[]))
+                    .clicked()
+                {
+                    picked = Some(key);
+                    ui.close();
+                }
+            }
+        });
+    if let Some(key) = picked
+        && key != active
+    {
+        set(key);
+    }
+}
+
+fn spin(
+    ui: &mut Ui,
     mut value: i64,
     range: std::ops::RangeInclusive<i64>,
     step: f64,
     set: impl FnOnce(i64),
 ) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label(tr(label, &[]));
-        if ui
-            .add(egui::DragValue::new(&mut value).range(range).speed(step))
-            .changed()
-        {
-            set(value);
-        }
-    });
+    if ui
+        .add(egui::DragValue::new(&mut value).range(range).speed(step))
+        .changed()
+    {
+        set(value);
+    }
 }
-fn percent(ui: &mut Ui, label: &str, value: i64, set: impl FnOnce(i64)) {
-    let id = ui.make_persistent_id(("setting-slider", label));
+
+/// `PercentSlider`: 170pt slider + right-aligned "N%" label, committing on
+/// drag release.
+fn percent_slider(
+    ui: &mut Ui,
+    theme: &Theme,
+    id_salt: &str,
+    value: i64,
+    set: impl FnOnce(i64),
+) {
+    let id = ui.make_persistent_id(("setting-slider", id_salt));
     let mut edited = ui
         .data_mut(|data| data.get_temp::<i64>(id))
         .unwrap_or(value);
-    let response = ui.add(egui::Slider::new(&mut edited, 0..=100).text(tr(label, &[])));
-    if response.dragged() {
+    let mut changed = false;
+    let mut dragging = false;
+    let mut stopped = false;
+    ui.allocate_ui_with_layout(
+        vec2(212.0, 20.0),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            ui.allocate_ui_with_layout(vec2(42.0, 18.0), Layout::right_to_left(Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("{edited}%"))
+                        .size(theme.font_small as f32)
+                        .color(theme.text_muted),
+                );
+            });
+            ui.allocate_ui_with_layout(vec2(170.0, 20.0), Layout::left_to_right(Align::Center), |ui| {
+                let response =
+                    ui.add(egui::Slider::new(&mut edited, 0..=100).step_by(5.0));
+                changed |= response.changed();
+                dragging |= response.dragged();
+                stopped |= response.drag_stopped();
+            });
+        },
+    );
+    if dragging {
         ui.data_mut(|data| data.insert_temp(id, edited));
-    } else if response.changed() || response.drag_stopped() {
+    } else if changed || stopped {
         ui.data_mut(|data| data.remove::<i64>(id));
-        set(edited);
+        if edited != value {
+            set(edited);
+        }
     }
 }
-fn field(ui: &mut Ui, label: &str, value: &mut String, hint: &str, password: bool) {
-    ui.label(tr(label, &[]));
-    ui.add(
-        TextEdit::singleline(value)
-            .desired_width(f32::INFINITY)
-            .hint_text(hint)
-            .password(password),
+
+/// QML `Switch` as a 44×20 Fluent pill.
+fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
+    let (rect, mut response) = ui.allocate_exact_size(vec2(44.0, 20.0), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, checked, "")
+    });
+    let mut value = None;
+    if enabled && response.clicked() {
+        value = Some(!checked);
+        response.mark_changed();
+    }
+    // Universal disabled opacity ≈ 0.45.
+    let alpha = if enabled { 255 } else { 115 };
+    let fade =
+        |color: Color32| Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
+    let fill = fade(if checked { theme.accent } else { theme.control_fill });
+    let stroke = if checked || !enabled {
+        Stroke::NONE
+    } else {
+        Stroke::new(1.0, fade(theme.border_solid))
+    };
+    ui.painter()
+        .rect(rect, 10.0, fill, stroke, egui::StrokeKind::Inside);
+    let knob_x = if checked {
+        rect.right() - 10.0
+    } else {
+        rect.left() + 10.0
+    };
+    let knob = fade(if checked { theme.accent_text } else { theme.text_muted });
+    ui.painter()
+        .circle_filled(egui::pos2(knob_x, rect.center().y), 5.0, knob);
+    value
+}
+
+fn switch_setting(
+    ui: &mut Ui,
+    theme: &Theme,
+    value: bool,
+    enabled: bool,
+    set: impl FnOnce(bool),
+) {
+    if let Some(next) = switch_widget(ui, theme, value, enabled) {
+        set(next);
+    }
+}
+
+/// `AccentPicker`: 56pt accent swatch that opens the colour dialog.
+fn accent_picker(ui: &mut Ui, theme: &Theme, color: Color32) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(56.0, theme.control_height as f32), Sense::click());
+    ui.painter().rect(
+        rect,
+        theme.radius_small as u8,
+        color,
+        Stroke::new(
+            1.0,
+            if response.hovered() { theme.text } else { theme.divider },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    response
+}
+
+/// `BaseTintPicker`: swatch showing "—" while no custom tint is set.
+fn base_tint_picker(ui: &mut Ui, theme: &Theme, color: Option<Color32>) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(56.0, theme.control_height as f32), Sense::click());
+    let fill = color.unwrap_or(Color32::TRANSPARENT);
+    ui.painter().rect(
+        rect,
+        theme.radius_small as u8,
+        fill,
+        Stroke::new(
+            1.0,
+            if response.hovered() { theme.text } else { theme.divider },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    if color.is_none() {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "\u{2014}",
+            FontId::proportional(theme.font_normal as f32),
+            theme.text_faint,
+        );
+    }
+    response
+}
+
+fn ghost(ui: &mut Ui, theme: &Theme, label: &str) -> bool {
+    fluent_button::style(ui);
+    ui.add(fluent_button::button(theme, "", &tr(label, &[]), false))
+        .clicked()
+}
+
+fn ghost_glyph(ui: &mut Ui, theme: &Theme, glyph: &str, label: &str) -> bool {
+    fluent_button::style(ui);
+    ui.add(fluent_button::button(theme, glyph, &tr(label, &[]), false))
+        .clicked()
+}
+
+fn accent_button(ui: &mut Ui, theme: &Theme, label: &str) -> bool {
+    fluent_button::style(ui);
+    ui.add(fluent_button::button(theme, "", &tr(label, &[]), true))
+        .clicked()
+}
+
+fn accent_button_glyph(ui: &mut Ui, theme: &Theme, glyph: &str, label: &str) -> bool {
+    fluent_button::style(ui);
+    ui.add(fluent_button::button(theme, glyph, &tr(label, &[]), true))
+        .clicked()
+}
+
+fn danger_button(theme: &Theme, label: &str) -> Button<'static> {
+    fluent_button::button(theme, "\u{e777}", &tr(label, &[]), true)
+        .fill(theme.danger_fill)
+}
+
+/// `InfoIcon`: muted ⓘ with the QML tooltip text.
+fn info_icon(ui: &mut Ui, theme: &Theme, tip: &str) {
+    let (rect, response) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "\u{e946}",
+        FontId::proportional(14.0),
+        if response.hovered() { theme.text } else { theme.text_muted },
+    );
+    response.on_hover_text(tr(tip, &[]));
+}
+
+/// Proxy-chain hop pill (`Rectangle radius 10, height 22`).
+fn chip(ui: &mut Ui, theme: &Theme, label: &str, fill: Color32) {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_string(),
+        FontId::proportional(theme.font_small as f32),
+        theme.text,
+    );
+    let width = (galley.size().x + 18.0).min(220.0).max(24.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 22.0), Sense::hover());
+    ui.painter().rect(
+        rect,
+        10.0,
+        fill,
+        Stroke::new(1.0, theme.border_solid),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        theme.text,
     );
 }
-fn area(ui: &mut Ui, label: &str, value: &mut String, hint: &str) {
-    ui.label(tr(label, &[]));
-    ScrollArea::vertical()
-        .id_salt(label)
-        .max_height(145.0)
-        .show(ui, |ui| {
-            ui.add(
-                TextEdit::multiline(value)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(3)
-                    .hint_text(hint),
-            );
-        });
+
+/// `StyledArea`: fill-width multiline field with the QML fixed height.
+fn styled_area(ui: &mut Ui, value: &mut String, hint: &str, height: f32) {
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width().max(120.0), height),
+        Layout::left_to_right(Align::TOP),
+        |ui| {
+            ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
+                ui.add(
+                    TextEdit::multiline(value)
+                        .desired_width(ui.available_width().max(120.0))
+                        .desired_rows((height / 20.0) as usize)
+                        .hint_text(hint),
+                );
+            });
+        },
+    );
 }
-fn committed_text(ui: &mut Ui, label: &str, current: &str, password: bool) -> Option<String> {
-    ui.label(tr(label, &[]));
-    let id = ui.make_persistent_id(("settings-text", label));
+
+/// `StyledField` bound to a draft saved by an explicit button.
+fn plain_field(ui: &mut Ui, value: &mut String, hint: &str, width: f32) {
+    ui.add(
+        TextEdit::singleline(value)
+            .desired_width(width)
+            .hint_text(hint),
+    );
+}
+
+/// `StyledField` with Qt `editingFinished` semantics (Enter or focus loss).
+fn committed_field(
+    ui: &mut Ui,
+    id_salt: impl core::hash::Hash + core::fmt::Debug,
+    current: &str,
+    hint: &str,
+    width: f32,
+    password: bool,
+) -> Option<String> {
+    let id = ui.make_persistent_id(("settings-text", id_salt));
     let mut value = ui
         .data_mut(|data| data.get_temp::<String>(id))
         .unwrap_or_else(|| current.into());
     let response = ui.add(
         TextEdit::singleline(&mut value)
             .id(id)
+            .desired_width(width)
             .password(password)
-            .desired_width(f32::INFINITY),
+            .hint_text(hint),
     );
-    if response.lost_focus() {
+    let committed = response.lost_focus()
+        || (response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
+    if committed {
         ui.data_mut(|data| data.remove::<String>(id));
         (value != current).then_some(value)
     } else {
@@ -1286,12 +2427,11 @@ fn committed_text(ui: &mut Ui, label: &str, current: &str, password: bool) -> Op
         None
     }
 }
-fn button(ui: &mut Ui, key: &str) -> bool {
-    ui.button(tr(key, &[])).clicked()
-}
+
 fn pick(title: &str, filter: &str, action: impl FnOnce(std::path::PathBuf)) -> Option<String> {
     file_result(win_native::pick_file(Path::new(""), title, filter), action)
 }
+
 fn file_result(
     result: anyhow::Result<Option<std::path::PathBuf>>,
     action: impl FnOnce(std::path::PathBuf),
@@ -1318,3 +2458,6 @@ mod tests {
         assert_eq!(muted_color(draft.base, 0.0), draft.base);
     }
 }
+
+
+

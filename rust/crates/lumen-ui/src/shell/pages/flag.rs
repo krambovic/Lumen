@@ -6,7 +6,7 @@ use lumen_core::country_flags::{draw_flag, get_flag_emoji};
 
 use crate::view_models::app_bridge::flag_svg;
 
-pub(super) fn show(ui: &mut Ui, country: &str, size: Vec2) {
+pub(crate) fn show(ui: &mut Ui, country: &str, size: Vec2) {
     if country.is_empty() {
         return;
     }

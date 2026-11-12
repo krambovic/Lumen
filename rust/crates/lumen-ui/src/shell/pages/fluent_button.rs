@@ -2,7 +2,7 @@ use egui::{Button, FontId, Stroke, TextFormat, Ui, text::LayoutJob, vec2};
 
 use crate::shell::theme::{Theme, semibold};
 
-pub(super) fn button(theme: &Theme, icon: &str, label: &str, accent: bool) -> Button<'static> {
+pub(crate) fn button(theme: &Theme, icon: &str, label: &str, accent: bool) -> Button<'static> {
     let height = theme.control_height as f32;
     let color = if accent {
         theme.accent_text
@@ -33,11 +33,11 @@ pub(super) fn button(theme: &Theme, icon: &str, label: &str, accent: bool) -> Bu
     button
 }
 
-pub(super) fn style(ui: &mut Ui) {
+pub(crate) fn style(ui: &mut Ui) {
     ui.spacing_mut().button_padding = vec2(14.0, 0.0);
 }
 
-pub(super) fn icon(
+pub(crate) fn icon(
     ui: &mut Ui,
     theme: &Theme,
     glyph: &str,

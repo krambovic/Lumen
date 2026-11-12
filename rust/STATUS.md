@@ -399,7 +399,20 @@ client, core/resource updaters, zapret and discord proxy managers.
 - Routing (`RoutingPage.qml`): built-in and custom presets, LAN bypass, default
   TUN route, Discord Voice, application and service routing, and domain/IP rules.
   Includes the rule and preset dialogs, domain normalization preview, text and
-  UTF-8 file import, and clipboard export.
+  UTF-8 file import, and clipboard export. Reworked to the QML layout: the
+  ghost help button sits on the title row, the preset grid stretches three
+  columns (stacking below 850pt with the same icon-only toolbar row), the
+  bypass/TUN/Discord rows pin their switches and combo to the right edge,
+  process and domain tables use the 150pt action column with icon delete
+  buttons and the 12% warning band. Compared both clients at 1280×760 and
+  640×360 and toggled the bypass switch in Rust.
+- Settings (`SettingsPage.qml`): reworked to the QML structure — the icon tab
+  bar with the half-width accent underline and 1220pt label threshold, cards
+  of SettingRow (glyph + title/subtitle on the left, controls pinned right),
+  accent/base-tint swatches, 170pt percent sliders, pills, switches, info
+  icons, the two-column regex/DNS grids and the danger reset button. All
+  seven tabs render through the same setting-row helper. Compared both
+  clients at 1280×760 and 640×360 and switched tabs in Rust.
 - Zapret (`ZapretPage.qml`): preset search, preview, import, editing, rename
   and delete, manual start/stop, and searchable server-specific strategy and
   preset bindings. The page shares the plain-text editor with Configs.
@@ -408,14 +421,19 @@ client, core/resource updaters, zapret and discord proxy managers.
   minimum width the cards stack so their actions remain reachable. Compared
   both clients in the dark theme at 1280×760 and 640×360 using the same
   presets. Checked selection, editor opening and scrolling to bindings in Rust.
+  Re-verified after the routing/settings rework.
 - About and onboarding: project links, support dialogs with the bundled USDT
   QR image, replayable first-run setup, and upgrade notes. Setup applies the
   selected language, appearance, routing, imports, WARP and system settings
-  through the existing bridge. The egui modal uses a dimmed backdrop.
-  The About page follows QML spacing, link actions and support dialogs. Links
-  wrap in narrow windows and the QR adapts to the available dialog height.
-  Compared both clients in the dark theme at 1280×760 and 640×360 and opened
-  the support and QR dialogs in the Rust preview.
+  through the existing bridge. The onboarding overlay now mirrors the QML
+  "window inside the window": full-window backdrop, 980×640 card with the
+  272pt brand + stepper side panel (compact progress pills below 760pt),
+  page headers, language pills, feature tiles, theme/palette/accent pickers,
+  region and routing choice cards, toggle rows and the summary + support
+  card on the last page, above the 76pt action bar. The About page follows
+  QML spacing, link actions and support dialogs. Links wrap in narrow
+  windows and the QR adapts to the available dialog height. Compared both
+  clients at 1280×760 and walked every onboarding step in Rust.
 - Dashboard: connect and mode controls, quick connect, searchable server list,
   batch test and server actions, shared protocol editor and QR dialog, live
   rates, latency history, traffic totals and the routing preset picker.

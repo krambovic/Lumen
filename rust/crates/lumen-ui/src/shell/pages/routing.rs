@@ -1,12 +1,19 @@
 //! Routing presets, process rules, service overrides and domain rules.
+//!
+//! Mirrors `RoutingPage.qml`: the behaviour card (presets grid, bypass switch,
+//! default TUN outbound, Discord Voice), applications table, services card,
+//! domain/IP rules and the Fluent dialogs behind them.
 
 use std::path::Path;
 
-use egui::{Button, ComboBox, Frame, Id, Modal, RichText, ScrollArea, Stroke, TextEdit, Ui};
+use egui::{
+    Align, Color32, ComboBox, Frame, Id, Layout, Modal, RichText, ScrollArea, Sense, Stroke,
+    TextEdit, Ui, vec2,
+};
 use lumen_core::i18n::tr;
 use serde_json::Value;
 
-use super::PageContext;
+use super::{PageContext, fluent_button};
 use crate::shell::{theme::Theme, win_native};
 use crate::view_models::AppBridge;
 
@@ -18,6 +25,16 @@ const ACTIONS: &[(&str, &str)] = &[
 const DEFAULT_ROUTES: &[(&str, &str)] = &[("proxy", "Прокси"), ("direct", "Напрямую")];
 
 const HELP: &str = "Быстрые пресеты зависят от регионального профиля в настройках сети. Пресет «Всё кроме региона» пускает ресурсы выбранной страны напрямую, а остальной трафик — через прокси.\n\nСервисы:\n«Прокси» — всегда вести сервис через VPN/прокси.\n«Прямой» — всегда вести сервис напрямую.\n\nПравила по приложениям работают только в режиме TUN.";
+
+const PROXY_RULES_WARNING: &str = "В режиме системного прокси правила по приложениям не работают — включите TUN, чтобы перехватывать трафик приложений.";
+const TUN_DEFAULT_HINT: &str = "Маршрут для трафика, который не совпал ни с одним правилом.";
+const DISCORD_HINT: &str = "Голос и стримы Discord через SOCKS5 без TUN";
+const DISCORD_TUN_HINT: &str = "Недоступно при включенном TUN — трафик Discord уже идет через VPN";
+const SERVICES_HINT: &str = "Быстрые переключатели для популярных сервисов (YouTube, Discord и др.). Выберите прямое подключение или прокси.";
+
+/// QML `GridLayout columns: page.width < 850 ? 1 : 3`; the page viewport sits
+/// inside the rail and 24pt margins, so the same breakpoint lands here.
+const PRESET_GRID_MIN_WIDTH: f32 = 780.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Dialog {
@@ -59,6 +76,15 @@ impl Dialog {
         }
     }
 
+    /// QML dialog `width` values (460/480/520).
+    fn width(self) -> f32 {
+        match self {
+            Self::Help | Self::Save => 460.0,
+            Self::Import => 520.0,
+            _ => 480.0,
+        }
+    }
+
     fn action_index(self) -> Option<usize> {
         match self {
             Self::Process | Self::Folder => Some(0),
@@ -91,41 +117,131 @@ impl RoutingPage {
     pub(super) fn render(&mut self, ui: &mut Ui, page: &mut PageContext<'_>) {
         let theme = page.theme;
         let bridge = &mut *page.bridge;
-        ScrollArea::vertical().id_salt("routing-page").auto_shrink([false, false]).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = theme.spacing_large as f32;
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(tr("Маршрутизация", &[])).size(theme.font_title as f32).strong());
-                if button(ui, "Справка") { self.open(Dialog::Help); }
-            });
-            self.behavior(ui, theme, bridge);
+        ScrollArea::vertical()
+            .id_salt("routing-page")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = theme.spacing_large as f32;
+                // Title + ghost help button pinned to the right edge.
+                right_row(ui, theme.control_height as f32, |ui| {
+                    fluent_button::style(ui);
+                    if ui
+                        .add(fluent_button::button(
+                            theme,
+                            "\u{e946}",
+                            &tr("Справка", &[]),
+                            false,
+                        ))
+                        .clicked()
+                    {
+                        self.open(Dialog::Help);
+                    }
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(tr("Маршрутизация", &[]))
+                                .size(theme.font_title as f32)
+                                .strong(),
+                        );
+                    });
+                });
+                self.behavior(ui, theme, bridge);
 
-            section(ui, theme, "Приложения");
-            ui.horizontal_wrapped(|ui| {
-                if button(ui, "Добавить .exe") { self.open(Dialog::Process); }
-                if button(ui, "Добавить папку") { self.open(Dialog::Folder); }
-                if button(ui, "Из запущенных") {
-                    self.open(Dialog::Running);
-                    self.running = bridge.running_processes();
-                    self.input = self.running.first().cloned().unwrap_or_default();
+                section(ui, theme, "Приложения");
+                ui.horizontal_wrapped(|ui| {
+                    fluent_button::style(ui);
+                    if ui
+                        .add(fluent_button::button(
+                            theme,
+                            "\u{e8e5}",
+                            &tr("Добавить .exe", &[]),
+                            false,
+                        ))
+                        .clicked()
+                    {
+                        self.open(Dialog::Process);
+                    }
+                    if ui
+                        .add(fluent_button::button(
+                            theme,
+                            "\u{e8b7}",
+                            &tr("Добавить папку", &[]),
+                            false,
+                        ))
+                        .clicked()
+                    {
+                        self.open(Dialog::Folder);
+                    }
+                    if ui
+                        .add(fluent_button::button(
+                            theme,
+                            "\u{e7c4}",
+                            &tr("Из запущенных", &[]),
+                            false,
+                        ))
+                        .clicked()
+                    {
+                        self.open(Dialog::Running);
+                        self.running = bridge.running_processes();
+                        self.input = self.running.first().cloned().unwrap_or_default();
+                    }
+                });
+                rules(ui, theme, bridge, true);
+                if !bridge.tun_mode() {
+                    warning_band(ui, theme);
                 }
-            });
-            rules(ui, theme, bridge, true);
-            if !bridge.tun_mode() {
-                ui.label(RichText::new(tr("В режиме системного прокси правила по приложениям не работают — включите TUN, чтобы перехватывать трафик приложений.", &[])).color(theme.warning));
-            }
 
-            services(ui, theme, bridge);
-            section(ui, theme, "Домены и IP");
-            ui.horizontal_wrapped(|ui| {
-                if button(ui, "Добавить") { self.open(Dialog::Domain); }
-                if button(ui, "Импорт") { self.open(Dialog::Import); }
-                if button(ui, "Из файла") { import_file(bridge); }
-                if button(ui, "Экспорт") && let Some(payload) = bridge.export_domain_rules() {
-                    ui.ctx().copy_text(payload);
-                }
+                services(ui, theme, bridge);
+                section(ui, theme, "Домены и IP");
+                ui.horizontal_wrapped(|ui| {
+                    fluent_button::style(ui);
+                    if ui
+                        .add(fluent_button::button(
+                            theme,
+                            "\u{e710}",
+                            &tr("Добавить", &[]),
+                            false,
+                        ))
+                        .clicked()
+                    {
+                        self.open(Dialog::Domain);
+                    }
+                    if ui
+                        .add(fluent_button::button(
+                            theme,
+                            "\u{e896}",
+                            &tr("Импорт", &[]),
+                            false,
+                        ))
+                        .clicked()
+                    {
+                        self.open(Dialog::Import);
+                    }
+                    if ui
+                        .add(fluent_button::button(
+                            theme,
+                            "\u{e8e5}",
+                            &tr("Из файла", &[]),
+                            false,
+                        ))
+                        .clicked()
+                    {
+                        import_file(bridge);
+                    }
+                    if ui
+                        .add(fluent_button::button(
+                            theme,
+                            "\u{e72d}",
+                            &tr("Экспорт", &[]),
+                            false,
+                        ))
+                        .clicked()
+                        && let Some(payload) = bridge.export_domain_rules()
+                    {
+                        ui.ctx().copy_text(payload);
+                    }
+                });
+                rules(ui, theme, bridge, false);
             });
-            rules(ui, theme, bridge, false);
-        });
         if let Some(dialog) = self.dialog {
             self.render_dialog(page.ctx, theme, bridge, dialog);
         }
@@ -139,82 +255,183 @@ impl RoutingPage {
     fn behavior(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
         let active = bridge.active_routing_preset_id();
         let custom = bridge.custom_routing_presets();
-        card(ui, theme, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.vertical(|ui| {
-                    caption(ui, theme, "Быстрые пресеты маршрутизации");
-                    if let Some(id) =
-                        presets(ui, "built-in", &bridge.regional_routing_presets(), &active)
-                    {
-                        bridge.apply_routing_preset(&id);
-                    }
-                });
-                ui.vertical(|ui| {
-                    caption(ui, theme, "Свои пресеты маршрутизации");
-                    ui.add_enabled_ui(!custom.is_empty(), |ui| {
-                        if let Some(id) = presets(ui, "custom", &custom, &active) {
-                            bridge.apply_custom_routing_preset(&id);
+        card(ui, theme, 16.0, |ui| {
+            ui.spacing_mut().item_spacing.y = 12.0;
+            let built_in = bridge.regional_routing_presets();
+            if ui.available_width() >= PRESET_GRID_MIN_WIDTH {
+                ui.columns(3, |columns| {
+                    columns[0].vertical(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        caption(ui, theme, "Быстрые пресеты маршрутизации");
+                        ui.add_space(4.0);
+                        if let Some(id) = preset_combo(ui, "built-in", &built_in, &active) {
+                            bridge.apply_routing_preset(&id);
                         }
                     });
+                    columns[1].vertical(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        caption(ui, theme, "Свои пресеты маршрутизации");
+                        ui.add_space(4.0);
+                        ui.add_enabled_ui(!custom.is_empty(), |ui| {
+                            if let Some(id) = preset_combo(ui, "custom", &custom, &active) {
+                                bridge.apply_custom_routing_preset(&id);
+                            }
+                        });
+                    });
+                    // Icon buttons sit on the grid row baseline (QML AlignBottom).
+                    columns[2].allocate_ui_with_layout(
+                        vec2(columns[2].available_width(), 54.0),
+                        Layout::bottom_up(Align::LEFT),
+                        |ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            ui.horizontal(|ui| {
+                                if fluent_button::icon(
+                                    ui,
+                                    theme,
+                                    "\u{e74e}",
+                                    &tr("Сохранить текущие правила как пресет", &[]),
+                                    true,
+                                )
+                                .clicked()
+                                {
+                                    self.open(Dialog::Save);
+                                }
+                                let custom_active =
+                                    custom.iter().any(|preset| field(preset, "id") == active);
+                                if fluent_button::icon(
+                                    ui,
+                                    theme,
+                                    "\u{e74d}",
+                                    &tr("Удалить выбранный пользовательский пресет", &[]),
+                                    custom_active,
+                                )
+                                .clicked()
+                                {
+                                    bridge.delete_routing_preset(&active);
+                                }
+                            });
+                        },
+                    );
+                });
+            } else {
+                self.presets_stacked(ui, theme, bridge, &built_in, &custom, &active);
+            }
+            let mut bypass = bridge.bypass_lan();
+            // "Label left, control right": a height-constrained right-to-left
+            // row with the label block filling the remainder (QML RowLayout).
+            right_row(ui, theme.control_height as f32, |ui| {
+                if let Some(value) = switch_widget(ui, theme, bypass, true) {
+                    bypass = value;
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.label(text("Обход локальной сети", theme));
                 });
             });
-            ui.horizontal_wrapped(|ui| {
-                if button(ui, "Сохранить текущий пресет") {
-                    self.open(Dialog::Save);
-                }
-                if ui
-                    .add_enabled(
-                        custom.iter().any(|preset| field(preset, "id") == active),
-                        Button::new(tr("Удалить пресет", &[])),
-                    )
-                    .clicked()
-                {
-                    bridge.delete_routing_preset(&active);
-                }
-            });
-            ui.separator();
-            let mut bypass = bridge.bypass_lan();
-            if ui
-                .checkbox(&mut bypass, tr("Обход локальной сети", &[]))
-                .changed()
-            {
+            if bypass != bridge.bypass_lan() {
                 bridge.set_bypass_lan(bypass);
             }
-            ui.separator();
-            ui.horizontal_wrapped(|ui| {
-                ui.label(tr("По умолчанию (TUN)", &[]));
+            hline(ui, theme, 0.0);
+            right_row(ui, 48.0, |ui| {
                 if let Some(action) = action_combo(
                     ui,
                     "default-outbound",
                     &bridge.tun_default_outbound(),
                     DEFAULT_ROUTES,
+                    160.0,
                 ) {
                     bridge.set_tun_default_outbound(&action);
                 }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(text("По умолчанию (TUN)", theme));
+                        caption(ui, theme, TUN_DEFAULT_HINT);
+                    });
+                });
             });
-            caption(
-                ui,
-                theme,
-                "Маршрут для трафика, который не совпал ни с одним правилом.",
-            );
-            ui.separator();
+            hline(ui, theme, 0.0);
             let tun = bridge.tun_mode();
-            let mut discord = bridge.discord_proxy();
-            if ui
-                .add_enabled(!tun, egui::Checkbox::new(&mut discord, "Discord Voice"))
-                .changed()
-            {
-                bridge.set_discord_proxy(discord);
+            let discord = bridge.discord_proxy();
+            ui.add_enabled_ui(!tun, |ui| {
+                right_row(ui, 48.0, |ui| {
+                    if let Some(value) = switch_widget(ui, theme, discord, !tun) {
+                        bridge.set_discord_proxy(value);
+                    }
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("\u{e767}")
+                                    .size(theme.font_normal as f32)
+                                    .color(if discord {
+                                        theme.accent
+                                    } else {
+                                        theme.text_muted
+                                    }),
+                            );
+                            ui.vertical(|ui| {
+                                ui.label(text("Discord Voice", theme));
+                                caption(
+                                    ui,
+                                    theme,
+                                    if tun { DISCORD_TUN_HINT } else { DISCORD_HINT },
+                                );
+                            });
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    /// Single-column preset stack for narrow windows; the toolbar row keeps
+    /// labelled ghost buttons (QML stacks the same grid into one column).
+    fn presets_stacked(
+        &mut self,
+        ui: &mut Ui,
+        theme: &Theme,
+        bridge: &mut AppBridge,
+        built_in: &[Value],
+        custom: &[Value],
+        active: &str,
+    ) {
+        caption(ui, theme, "Быстрые пресеты маршрутизации");
+        ui.add_space(4.0);
+        if let Some(id) = preset_combo(ui, "built-in", built_in, active) {
+            bridge.apply_routing_preset(&id);
+        }
+        caption(ui, theme, "Свои пресеты маршрутизации");
+        ui.add_space(4.0);
+        ui.add_enabled_ui(!custom.is_empty(), |ui| {
+            if let Some(id) = preset_combo(ui, "custom", custom, active) {
+                bridge.apply_custom_routing_preset(&id);
             }
-            caption(
+        });
+        // The single-column grid keeps the icon-only toolbar row (the QML
+        // third grid cell simply stacks below the combos).
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if fluent_button::icon(
                 ui,
                 theme,
-                if tun {
-                    "Недоступно при включенном TUN — трафик Discord уже идет через VPN"
-                } else {
-                    "Голос и стримы Discord через SOCKS5 без TUN"
-                },
-            );
+                "\u{e74e}",
+                &tr("Сохранить текущие правила как пресет", &[]),
+                true,
+            )
+            .clicked()
+            {
+                self.open(Dialog::Save);
+            }
+            let custom_active = custom.iter().any(|preset| field(preset, "id") == active);
+            if fluent_button::icon(
+                ui,
+                theme,
+                "\u{e74d}",
+                &tr("Удалить выбранный пользовательский пресет", &[]),
+                custom_active,
+            )
+            .clicked()
+            {
+                bridge.delete_routing_preset(active);
+            }
         });
     }
 
@@ -226,9 +443,15 @@ impl RoutingPage {
         dialog: Dialog,
     ) {
         let modal = Modal::new(Id::unique("routing-dialog")).show(ctx, |ui| {
-            ui.set_width(480.0_f32.min((ctx.content_rect().width() - 52.0).max(0.0)));
-            section(ui, theme, dialog.title());
+            ui.set_width(dialog.width().min((ctx.content_rect().width() - 52.0).max(0.0)));
+            ui.label(
+                RichText::new(tr(dialog.title(), &[]))
+                    .size(theme.font_strong as f32)
+                    .strong(),
+            );
+            ui.add_space(2.0);
             caption(ui, theme, dialog.description());
+            ui.add_space(4.0);
             match dialog {
                 Dialog::Help => {}
                 Dialog::Import => {
@@ -252,6 +475,7 @@ impl RoutingPage {
                         self.running
                             .iter()
                             .map(|name| (name.as_str(), name.clone())),
+                        ui.available_width(),
                     ) {
                         self.input = process;
                     }
@@ -281,18 +505,21 @@ impl RoutingPage {
                 }
             }
             if let Some(index) = dialog.action_index() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(tr("Действие", &[]));
+                ui.horizontal(|ui| {
+                    caption(ui, theme, "Действие");
                     if let Some(action) =
-                        action_combo(ui, "dialog-action", &self.actions[index], ACTIONS)
+                        action_combo(ui, "dialog-action", &self.actions[index], ACTIONS, 160.0)
                     {
                         self.actions[index] = action;
                     }
                 });
             }
-            ui.horizontal_wrapped(|ui| {
-                let cancel = dialog != Dialog::Help && button(ui, "Отмена");
-                let confirm = match dialog {
+            right_row(ui, theme.control_height as f32, |ui| {
+                let cancel = dialog != Dialog::Help
+                    && ui
+                        .add(fluent_button::button(theme, "", &tr("Отмена", &[]), false))
+                        .clicked();
+                let confirm_label = match dialog {
                     Dialog::Help => "Понятно",
                     Dialog::Save => "Сохранить",
                     Dialog::Import => "Импорт",
@@ -301,12 +528,11 @@ impl RoutingPage {
                 let confirm = ui
                     .add_enabled(
                         dialog == Dialog::Help || !self.input.trim().is_empty(),
-                        Button::new(tr(confirm, &[])),
+                        fluent_button::button(theme, "", &tr(confirm_label, &[]), true),
                     )
                     .clicked();
                 (confirm, cancel)
             })
-            .inner
         });
         let (confirm, cancel) = modal.inner;
         if confirm {
@@ -331,6 +557,8 @@ impl RoutingPage {
     }
 }
 
+/// Process or domain rules table (RoutingPage.qml `Card` with padding 0,
+/// inset header divider, 90pt empty state and 150pt action column).
 fn rules(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, processes: bool) {
     let (rows, key, title, empty, hint) = if processes {
         (
@@ -349,71 +577,128 @@ fn rules(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, processes: bool) {
             "Формат импорта: адрес|действие",
         )
     };
-    card(ui, theme, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            caption(ui, theme, title);
-            caption(ui, theme, "Действие");
-        });
-        ui.separator();
-        if rows.is_empty() {
-            ui.vertical_centered(|ui| {
-                ui.label(tr(empty, &[]));
-                caption(ui, theme, hint);
+    card(ui, theme, 0.0, |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.add_space(14.0);
+        right_row(ui, 16.0, |ui| {
+            ui.add_space(14.0);
+            ui.allocate_exact_size(vec2(40.0, 16.0), Sense::hover());
+            ui.allocate_ui_with_layout(
+                vec2(150.0, 16.0),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.label(
+                        RichText::new(tr("Действие", &[]))
+                            .size(theme.font_small as f32)
+                            .strong()
+                            .color(theme.text_muted),
+                    );
+                },
+            );
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                ui.label(
+                    RichText::new(tr(title, &[]))
+                        .size(theme.font_small as f32)
+                        .strong()
+                        .color(theme.text_muted),
+                );
             });
+        });
+        ui.add_space(8.0);
+        hline(ui, theme, 14.0);
+        if rows.is_empty() {
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), 90.0),
+                Layout::top_down(Align::Center),
+                |ui| {
+                    ui.add_space(18.0);
+                    ui.label(text(empty, theme));
+                    caption(ui, theme, hint);
+                },
+            );
         }
-        for row in rows {
-            let value = field(&row, key);
-            ui.horizontal_wrapped(|ui| {
-                if button(ui, "Удалить") {
-                    if processes {
-                        bridge.remove_process_rule(value);
-                    } else {
-                        bridge.remove_domain_rule(value);
-                    }
-                }
-                if let Some(action) = action_combo(ui, (key, value), field(&row, "action"), ACTIONS)
+        for (index, row) in rows.iter().enumerate() {
+            let value = field(row, key).to_string();
+            let action = field(row, "action").to_string();
+            ui.add_space(8.0);
+            right_row(ui, theme.control_height as f32, |ui| {
+                ui.add_space(14.0);
+                if ui
+                    .add(
+                        fluent_button::button(theme, "\u{e74d}", "", false)
+                            .min_size(vec2(40.0, theme.control_height as f32)),
+                    )
+                    .clicked()
                 {
                     if processes {
-                        bridge.add_process_rule(value, &action);
+                        bridge.remove_process_rule(&value);
                     } else {
-                        bridge.add_domain_rule(value, &action);
+                        bridge.remove_domain_rule(&value);
                     }
                 }
-                ui.add(egui::Label::new(value).truncate())
-                    .on_hover_text(value);
+                if let Some(next) = action_combo(ui, (key, &value), &action, ACTIONS, 150.0) {
+                    if processes {
+                        bridge.add_process_rule(&value, &next);
+                    } else {
+                        bridge.add_domain_rule(&value, &next);
+                    }
+                }
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width().max(0.0), theme.control_height as f32),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.add(egui::Label::new(text(&value, theme)).truncate())
+                            .on_hover_text(&value);
+                    },
+                );
             });
-            ui.separator();
+            ui.add_space(8.0);
+            if index + 1 < rows.len() {
+                hline(ui, theme, 14.0);
+            }
         }
+        ui.add_space(14.0);
     });
 }
 
 fn services(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
     section(ui, theme, "Сервисы");
-    card(ui, theme, |ui| {
-        caption(
-            ui,
-            theme,
-            "Быстрые переключатели для популярных сервисов (YouTube, Discord и др.). Выберите прямое подключение или прокси.",
+    card(ui, theme, 16.0, |ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.set_min_width(ui.available_width());
+        ui.label(
+            RichText::new(tr(SERVICES_HINT, &[]))
+                .size(theme.font_small as f32)
+                .color(theme.text_muted),
         );
+        ui.add_space(4.0);
         let items = bridge.service_list();
         if items.is_empty() {
             caption(ui, theme, "Список сервисов пуст.");
         }
-        for item in items {
-            let id = field(&item, "id");
-            ui.separator();
-            ui.horizontal_wrapped(|ui| {
-                ui.label(field(&item, "name"));
-                if let Some(action) =
-                    action_combo(ui, ("service", id), field(&item, "action"), &ACTIONS[..2])
-                {
-                    bridge.set_service_route(id, &action);
-                }
-            });
-            let description = field(&item, "description");
-            if !description.is_empty() {
-                caption(ui, theme, description);
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                hline(ui, theme, 0.0);
             }
+            let id = field(item, "id").to_string();
+            let name = field(item, "name").to_string();
+            let description = field(item, "description").to_string();
+            let action = field(item, "action").to_string();
+            right_row(ui, 40.0, |ui| {
+                if let Some(next) =
+                    action_combo(ui, ("service", &id), &action, &ACTIONS[..2], 150.0)
+                {
+                    bridge.set_service_route(&id, &next);
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(text(&name, theme));
+                        if !description.is_empty() {
+                            caption(ui, theme, &tr(&description, &[]));
+                        }
+                    });
+                });
+            });
         }
     });
 }
@@ -454,18 +739,24 @@ fn domain_preview(info: &Value) -> Option<(String, bool)> {
     })
 }
 
-fn presets(ui: &mut Ui, id: &str, items: &[Value], active: &str) -> Option<String> {
+/// Preset combo. QML's `FluentCombo` with a `boundIndex` of -1 keeps
+/// `currentIndex` at the first model item, so an active id outside the list
+/// still displays the first entry.
+fn preset_combo(ui: &mut Ui, id: &str, items: &[Value], active: &str) -> Option<String> {
     let label = items
         .iter()
         .find(|item| field(item, "id") == active)
-        .map_or("", |item| field(item, "name"));
+        .or_else(|| items.first())
+        .map(|item| field(item, "name").to_string())
+        .unwrap_or_default();
     combo(
         ui,
         id,
-        label,
+        &label,
         items
             .iter()
             .map(|item| (field(item, "id"), field(item, "name").into())),
+        ui.available_width(),
     )
 }
 
@@ -474,6 +765,7 @@ fn action_combo(
     id: impl egui::AsIdSalt,
     active: &str,
     options: &[(&str, &str)],
+    width: f32,
 ) -> Option<String> {
     let label = options
         .iter()
@@ -485,6 +777,7 @@ fn action_combo(
         id,
         &tr(label, &[]),
         options.iter().map(|(key, label)| (*key, tr(label, &[]))),
+        width,
     )
 }
 
@@ -493,22 +786,89 @@ fn combo<'a>(
     id: impl egui::AsIdSalt,
     label: &str,
     items: impl Iterator<Item = (&'a str, String)>,
+    width: f32,
 ) -> Option<String> {
+    let mut picked = None;
     ComboBox::from_id_salt(id)
-        .width(150.0)
+        .width(width)
         .truncate()
         .selected_text(label)
         .show_ui(ui, |ui| {
             for (key, item) in items {
                 if ui.selectable_label(item == label, item).clicked() {
+                    picked = Some(key.into());
                     ui.close();
-                    return Some(key.into());
                 }
             }
-            None
-        })
-        .inner
-        .flatten()
+        });
+    picked
+}
+
+/// QML `Switch` as a 44×20 Fluent pill (same drawing as the logs autoscroll).
+fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
+    let (rect, mut response) = ui.allocate_exact_size(vec2(44.0, 20.0), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, checked, "")
+    });
+    let mut value = None;
+    if enabled && response.clicked() {
+        value = Some(!checked);
+        response.mark_changed();
+    }
+    // Universal disabled opacity ≈ 0.45.
+    let alpha = if enabled { 255 } else { 115 };
+    let fade = |color: Color32| {
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+    };
+    let fill = fade(if checked { theme.accent } else { theme.control_fill });
+    let stroke = if checked || !enabled {
+        Stroke::NONE
+    } else {
+        Stroke::new(1.0, fade(theme.border_solid))
+    };
+    ui.painter()
+        .rect(rect, 10.0, fill, stroke, egui::StrokeKind::Inside);
+    let knob_x = if checked {
+        rect.right() - 10.0
+    } else {
+        rect.left() + 10.0
+    };
+    let knob = fade(if checked { theme.accent_text } else { theme.text_muted });
+    ui.painter()
+        .circle_filled(egui::pos2(knob_x, rect.center().y), 5.0, knob);
+    value
+}
+
+/// Full-width warning rectangle with the 12% warning tint (RoutingPage.qml).
+fn warning_band(ui: &mut Ui, theme: &Theme) {
+    let fill = Color32::from_rgba_unmultiplied(
+        theme.warning.r(),
+        theme.warning.g(),
+        theme.warning.b(),
+        31,
+    );
+    Frame::new()
+        .fill(fill)
+        .corner_radius(theme.radius_small as u8)
+        .inner_margin(10.0)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                RichText::new(tr(PROXY_RULES_WARNING, &[]))
+                    .size(theme.font_small as f32)
+                    .color(theme.warning),
+            );
+        });
+}
+
+/// 1px `Theme.divider` line, optionally inset by 14pt like the table cards.
+fn hline(ui: &mut Ui, theme: &Theme, inset: f32) {
+    ui.horizontal(|ui| {
+        ui.add_space(inset);
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(ui.available_width().max(0.0), 1.0), Sense::hover());
+        ui.painter().rect_filled(rect, 0.0, theme.divider);
+    });
 }
 
 fn section(ui: &mut Ui, theme: &Theme, title: &str) {
@@ -527,19 +887,29 @@ fn caption(ui: &mut Ui, theme: &Theme, text: &str) {
     );
 }
 
-fn button(ui: &mut Ui, label: &str) -> bool {
-    ui.button(tr(label, &[])).clicked()
+fn text(text: &str, theme: &Theme) -> RichText {
+    RichText::new(tr(text, &[])).size(theme.font_normal as f32)
 }
 
-fn card(ui: &mut Ui, theme: &Theme, content: impl FnOnce(&mut Ui)) {
+/// Height-constrained right-aligned row (`QML RowLayout`); egui rows must pin
+/// their height or they inherit the scroll viewport's tall rect.
+fn right_row<R>(ui: &mut Ui, height: f32, content: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), height),
+        Layout::right_to_left(Align::Center),
+        content,
+    )
+    .inner
+}
+
+fn card(ui: &mut Ui, theme: &Theme, padding: f32, content: impl FnOnce(&mut Ui)) {
     Frame::new()
         .fill(theme.card)
         .stroke(Stroke::new(1.0, theme.border_solid))
         .corner_radius(theme.radius as u8)
-        .inner_margin(14.0)
+        .inner_margin(padding)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 8.0;
             content(ui);
         });
 }
