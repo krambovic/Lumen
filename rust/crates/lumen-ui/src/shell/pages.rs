@@ -12,6 +12,7 @@ mod code_editor;
 mod configs;
 mod dashboard;
 mod diagnostics_export;
+mod flag;
 mod history;
 mod logs;
 mod node_editor;

@@ -7,8 +7,8 @@ use egui::{
 };
 use lumen_core::i18n::tr;
 
-use super::{PageContext, node_editor::NodeEditor};
-use crate::shell::theme::{Theme, hex_color};
+use super::{PageContext, flag, node_editor::NodeEditor};
+use crate::shell::theme::Theme;
 use crate::view_models::AppBridge;
 
 #[derive(Default)]
@@ -134,9 +134,7 @@ impl DashboardPage {
                 bridge.selected_node_name().to_string()
             };
             ui.horizontal_wrapped(|ui| {
-                if !bridge.selected_node_flag().is_empty() {
-                    ui.label(bridge.selected_node_flag());
-                }
+                flag::show(ui, bridge.selected_node_flag_country(), egui::vec2(26.0, 18.0));
                 ui.label(RichText::new(name).size(theme.font_title as f32).strong());
                 if busy {
                     ui.spinner();
@@ -333,9 +331,7 @@ impl DashboardPage {
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join(" · ");
-        let stripes = model.flag_colors_at(index);
-        let orientation = model.flag_orient_at(index);
-        let emoji = model.flag_emoji_at(index);
+        let country = model.country_at(index);
         let row = ui
             .scope_builder(
                 egui::UiBuilder::new()
@@ -353,7 +349,7 @@ impl DashboardPage {
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                flag(ui, &stripes, &orientation, &emoji);
+                                flag::show(ui, &country, egui::vec2(22.0, 16.0));
                                 let latency = if ping < 0 {
                                     "—".into()
                                 } else {
@@ -562,33 +558,6 @@ impl DashboardPage {
                     }
                 });
         });
-    }
-}
-
-fn flag(ui: &mut Ui, colors: &[String], orientation: &str, emoji: &str) {
-    if colors.is_empty() || !matches!(orientation, "h" | "v") {
-        ui.label(emoji);
-        return;
-    }
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 16.0), egui::Sense::hover());
-    let len = colors.len() as f32;
-    for (index, color) in colors.iter().enumerate() {
-        let start = index as f32 / len;
-        let end = (index + 1) as f32 / len;
-        let stripe = if orientation == "h" {
-            egui::Rect::from_min_max(
-                egui::pos2(rect.left(), rect.top() + start * rect.height()),
-                egui::pos2(rect.right(), rect.top() + end * rect.height()),
-            )
-        } else {
-            egui::Rect::from_min_max(
-                egui::pos2(rect.left() + start * rect.width(), rect.top()),
-                egui::pos2(rect.left() + end * rect.width(), rect.bottom()),
-            )
-        };
-        if let Some(color) = hex_color(color) {
-            ui.painter().rect_filled(stripe, 0.0, color);
-        }
     }
 }
 

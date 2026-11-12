@@ -12,7 +12,7 @@ use egui_extras::{Column, TableBuilder};
 use lumen_core::i18n::tr;
 use serde_json::{Value, json};
 
-use super::{PageContext, node_editor::NodeEditor};
+use super::{PageContext, flag, node_editor::NodeEditor};
 use crate::shell::{
     onboarding::{import_clipboard, import_config_file},
     theme::Theme,
@@ -1009,7 +1009,10 @@ fn fit_widths(available: f32) -> Vec<f32> {
 fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, column: usize) {
     let mut color = theme.text;
     let text = match column {
-        0 => format!("{} {}", model.flag_emoji_at(row), model.name_at(row)),
+        0 => {
+            flag::show(ui, &model.country_at(row), egui::vec2(22.0, 16.0));
+            model.name_at(row)
+        }
         1 => model.protocol_at(row),
         2 => model.transport_at(row),
         3 => model.server_at(row),

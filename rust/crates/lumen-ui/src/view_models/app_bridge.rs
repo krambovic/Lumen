@@ -243,6 +243,7 @@ pub struct AppBridge {
     selected_id: String,
     selected_name: String,
     selected_flag: String,
+    selected_flag_country: String,
     selected_flag_source: String,
     selected_latency: i64,
     selected_protocol: String,
@@ -594,19 +595,22 @@ fn flag_sprite_symbols() -> &'static std::collections::HashMap<String, (String, 
     })
 }
 
-/// Python `get_flag_svg_data_uri` — cached `data:image/svg+xml;base64,…`.
-pub fn flag_svg_data_uri(code: &str) -> String {
-    let code = code.trim().to_lowercase();
+pub(crate) fn flag_svg(code: &str) -> Option<String> {
+    let code = code.trim().to_ascii_lowercase();
     if code.len() != 2 || !code.chars().all(|c| c.is_ascii_alphabetic()) {
-        return String::new();
+        return None;
     }
-    let Some((view_box, body)) = flag_sprite_symbols().get(&code) else {
+    let (view_box, body) = flag_sprite_symbols().get(&code)?;
+    Some(format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:ns1=\"http://www.w3.org/1999/xlink\" viewBox=\"{view_box}\">{body}</svg>"
+    ))
+}
+
+/// Python `get_flag_svg_data_uri`.
+pub fn flag_svg_data_uri(code: &str) -> String {
+    let Some(svg) = flag_svg(code) else {
         return String::new();
     };
-    let svg = format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{}\">{}</svg>",
-        view_box, body
-    );
     format!(
         "data:image/svg+xml;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(svg.as_bytes())
@@ -707,6 +711,7 @@ impl AppBridge {
             selected_id: String::new(),
             selected_name: String::new(),
             selected_flag: String::new(),
+            selected_flag_country: String::new(),
             selected_flag_source: String::new(),
             selected_latency: -1,
             selected_protocol: String::new(),
@@ -1382,6 +1387,7 @@ impl AppBridge {
         self.selected_name = display_name;
         self.selected_flag = get_flag_emoji(&country);
         self.selected_flag_source = flag_svg_data_uri(&country);
+        self.selected_flag_country = country;
         self.selected_latency = node
             .as_ref()
             .and_then(|node| node.ping_ms)
@@ -6556,6 +6562,10 @@ impl AppBridge {
 
     pub fn selected_node_flag_source(&self) -> &str {
         &self.selected_flag_source
+    }
+
+    pub(crate) fn selected_node_flag_country(&self) -> &str {
+        &self.selected_flag_country
     }
 
     pub fn selected_latency(&self) -> i64 {

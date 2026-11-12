@@ -385,6 +385,8 @@ client, core/resource updaters, zapret and discord proxy managers.
 - Nodes: sortable and resizable server table, selection and bulk operations,
   node and subscription inspectors, group and subscription dialogs, clipboard
   and file import, tests, and link, QR and JSON export.
+- The dashboard and server table render the original flag sprite, with the
+  existing stripe and emoji fallbacks for countries outside the sprite.
 - Settings: appearance, networking, startup and tests, subscriptions, DNS,
   updates and data, including the native file selectors, color and reset
   dialogs, profile passwords and backup handling.
@@ -417,6 +419,10 @@ are handled inside their porting commits.
   The staged executable reported the expected version. The portable ZIP
   and Inno Setup installer both built using real Xray and sing-box extended
   binaries, and each core accepted its bundled default template.
+- The Rust and Python clients generated equivalent JSON configurations for
+  VLESS, Trojan, Shadowsocks and Hysteria2 in four proxy/TUN scenarios after
+  masking the random Clash API secret. Both cores accepted all seven
+  generated configurations.
 - Full desktop verification covers launching the installed application,
   upgrading a Python installation, connecting in proxy and TUN modes,
   and comparing generated runtime configurations against Python.

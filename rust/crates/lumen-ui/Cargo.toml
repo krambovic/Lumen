@@ -14,7 +14,7 @@ lumen-engines = { workspace = true }
 lumen-app = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
-egui_extras = { workspace = true }
+egui_extras = { workspace = true, features = ["svg"] }
 image = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
