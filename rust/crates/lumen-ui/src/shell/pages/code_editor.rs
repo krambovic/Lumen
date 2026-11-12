@@ -32,9 +32,9 @@ pub(super) fn show(
     let id = Id::unique(("lumen-config-code", key));
     let font = FontId::monospace(13.0);
     let digits = line_count(text.as_str()).ilog10() + 1;
-    let gutter_width = (digits as f32 * 8.0 + 16.0).max(36.0);
+    let gutter_width = (digits as f32 * 8.0 + 20.0).max(38.0);
 
-    ui.horizontal_top(|ui| {
+    let row = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let (gutter, _) = ui.allocate_exact_size(vec2(gutter_width, height), Sense::hover());
         let width = ui.available_width().max(1.0);
@@ -67,10 +67,9 @@ pub(super) fn show(
                 let editor = TextEdit::multiline(text)
                     .id(id)
                     .code_editor()
-                    .frame(egui::Frame::NONE)
+                    .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 7)))
                     .font(font.clone())
                     .hint_text(hint)
-                    .margin(vec2(8.0, 4.0))
                     .desired_width(width)
                     .desired_rows(1)
                     .layouter(&mut layouter)
@@ -102,7 +101,6 @@ pub(super) fn show(
 
         let clip = gutter.intersect(ui.clip_rect());
         let painter = ui.painter().with_clip_rect(clip);
-        painter.rect_filled(gutter, 0.0, theme.bg);
         painter.vline(
             gutter.right() - 1.0,
             gutter.y_range(),
@@ -125,6 +123,17 @@ pub(super) fn show(
             );
         }
     });
+    let color = if ui.memory(|memory| memory.has_focus(id)) {
+        theme.accent
+    } else {
+        theme.border_solid
+    };
+    ui.painter().rect_stroke(
+        row.response.rect,
+        theme.radius_small as u8,
+        Stroke::new(1.0, color),
+        egui::StrokeKind::Inside,
+    );
 }
 
 #[cfg(test)]

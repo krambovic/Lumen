@@ -392,6 +392,10 @@ client, core/resource updaters, zapret and discord proxy managers.
   reset, discard confirmation, and formatting, validation, saving and applying
   with the existing controller. The editor has a fixed line-number gutter,
   current-line highlighting, error navigation and Ctrl+S.
+  The core switch, aligned source fields and editor toolbar follow QML. The
+  editor uses Consolas when installed, and the toolbar and status line stay
+  visible at the minimum window size. Compared both clients at 1280×760 and
+  640×360 with the same fixtures and checked core switching and validation.
 - Routing (`RoutingPage.qml`): built-in and custom presets, LAN bypass, default
   TUN route, Discord Voice, application and service routing, and domain/IP rules.
   Includes the rule and preset dialogs, domain normalization preview, text and
@@ -403,6 +407,10 @@ client, core/resource updaters, zapret and discord proxy managers.
   QR image, replayable first-run setup, and upgrade notes. Setup applies the
   selected language, appearance, routing, imports, WARP and system settings
   through the existing bridge. The egui modal uses a dimmed backdrop.
+  The About page follows QML spacing, link actions and support dialogs. Links
+  wrap in narrow windows and the QR adapts to the available dialog height.
+  Compared both clients in the dark theme at 1280×760 and 640×360 and opened
+  the support and QR dialogs in the Rust preview.
 - Dashboard: connect and mode controls, quick connect, searchable server list,
   batch test and server actions, shared protocol editor and QR dialog, live
   rates, latency history, traffic totals and the routing preset picker.

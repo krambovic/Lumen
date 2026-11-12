@@ -1891,6 +1891,12 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
         definitions
             .families
             .insert(FontFamily::Proportional, proportional);
+        if let Some(font) = std::env::var_os("WINDIR")
+            .and_then(|root| read_font_file(&PathBuf::from(root).join("Fonts").join("consola.ttf")))
+        {
+            definitions.font_data.insert("Consolas".into(), FontData::from_owned(font).into());
+            definitions.families.entry(FontFamily::Monospace).or_default().insert(0, "Consolas".into());
+        }
         LoadedFonts { definitions }
     })
 }

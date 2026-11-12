@@ -13,6 +13,7 @@ mod configs;
 mod dashboard;
 mod diagnostics_export;
 mod flag;
+mod fluent_button;
 mod history;
 mod logs;
 mod node_editor;
