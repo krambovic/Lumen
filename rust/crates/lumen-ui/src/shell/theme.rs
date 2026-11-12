@@ -1789,7 +1789,6 @@ impl Theme {
 /// Installed UI font set (loaded once; egui renders from these).
 struct LoadedFonts {
     definitions: FontDefinitions,
-    icon_family_available: bool,
 }
 
 static LOADED_FONTS: std::sync::OnceLock<LoadedFonts> = std::sync::OnceLock::new();
@@ -1806,8 +1805,7 @@ fn icon_font_candidates() -> Vec<PathBuf> {
     if cfg!(windows) {
         if let Some(windir) = std::env::var_os("WINDIR") {
             let fonts = PathBuf::from(windir).join("Fonts");
-            paths.push(fonts.join("SegoeFluent-Icons.ttf"));
-            paths.push(fonts.join("SegoeMDL2Assets.ttf"));
+            paths.push(fonts.join("segflui.ttf"));
         }
     }
     paths.push(
@@ -1872,30 +1870,21 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
             }
         }
 
-        let mut icon_available = false;
-        for path in icon_font_candidates() {
-            if let Some(data) = read_font_file(&path) {
-                definitions.font_data.insert(
-                    "Segoe Fluent Icons".into(),
-                    FontData::from_owned(data).into(),
-                );
-                icon_available = true;
-                break;
-            }
-        }
+        let icon_font = icon_font_candidates().iter().find_map(read_font_file)
+            .map_or_else(
+                || FontData::from_static(include_bytes!(
+                    "../../../../../windows/xray_fluent/qml_app/assets/fonts/SegoeIcons.ttf"
+                )),
+                FontData::from_owned,
+            );
+        definitions.font_data.insert("Segoe Fluent Icons".into(), icon_font.into());
 
-        // Glyphs live in the Private Use Area: put the icon font last in the
-        // proportional chain so any glyph resolves automatically.
-        if icon_available {
-            proportional.push("Segoe Fluent Icons".into());
-        }
+        // The icon font supplies the Private Use Area glyphs used by QML.
+        proportional.push("Segoe Fluent Icons".into());
         definitions
             .families
             .insert(FontFamily::Proportional, proportional);
-        LoadedFonts {
-            definitions,
-            icon_family_available: icon_available,
-        }
+        LoadedFonts { definitions }
     })
 }
 

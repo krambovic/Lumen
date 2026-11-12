@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 114
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 115
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -386,6 +386,12 @@ client, core/resource updaters, zapret and discord proxy managers.
 - Dashboard: connect and mode controls, quick connect, searchable server list,
   batch test and server actions, shared protocol editor and QR dialog, live
   rates, latency history, traffic totals and the routing preset picker.
+  The layout uses the QML server column width and resize breakpoints, group
+  tabs, status ring and right-aligned transfer rates. The app traffic card
+  fills the available height and the routing picker stays at the bottom.
+- The shell keeps the title bar across the viewport, reserves space for the
+  bottom navigation items and renders the five outline icons from
+  `NavButton.qml`. The bundled Segoe icon font supplies the other glyphs.
 - Nodes: sortable and resizable server table, selection and bulk operations,
   node and subscription inspectors, group and subscription dialogs, clipboard
   and file import, tests, and link, QR and JSON export.

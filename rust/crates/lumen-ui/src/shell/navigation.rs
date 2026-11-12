@@ -279,13 +279,26 @@ pub fn draw_nav_button(
     let icon_size = (16.0 * theme.font_scale) as f32;
     let icon_pos = egui::pos2(bg_rect.left() + 11.0, bg_rect.center().y - icon_size / 2.0);
     let icon_rect = Rect::from_min_size(icon_pos, Vec2::new(18.0, icon_size));
-    ui.painter().text(
-        icon_rect.left_center(),
-        egui::Align2::LEFT_CENTER,
-        entry.glyph,
-        egui::FontId::proportional(icon_size),
-        icon_color,
-    );
+    if let Some(texture) = outline_texture(ui, entry.page) {
+        let size = (18.0 * theme.font_scale) as f32;
+        ui.painter().image(
+            texture.id(),
+            Rect::from_min_size(
+                egui::pos2(icon_rect.left(), bg_rect.center().y - size / 2.0),
+                Vec2::splat(size),
+            ),
+            Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            icon_color,
+        );
+    } else {
+        ui.painter().text(
+            icon_rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            entry.glyph,
+            egui::FontId::proportional(icon_size),
+            icon_color,
+        );
+    }
 
     if badge {
         // 8px circle, #E81123 fill with the flyout border, on the glyph corner.
@@ -310,6 +323,43 @@ pub fn draw_nav_button(
     response.clicked()
 }
 
+fn outline_texture(ui: &Ui, page: Page) -> Option<egui::TextureHandle> {
+    let name = match page {
+        Page::Nodes => "servers",
+        Page::Routing => "routing",
+        Page::Zapret => "zapret",
+        Page::History => "history",
+        Page::Logs => "logs",
+        _ => return None,
+    };
+    let id = egui::Id::unique(("nav-outline", name));
+    if let Some(texture) = ui
+        .ctx()
+        .data(|data| data.get_temp::<egui::TextureHandle>(id))
+    {
+        return Some(texture);
+    }
+    let path = include_str!("../../../../../windows/xray_fluent/qml_app/qml/NavButton.qml")
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix('"')?.split_once("\": \""))
+        .find_map(|(key, value)| (key == name).then(|| value.split('"').next()).flatten())?;
+    let svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="{path}" fill="none" stroke="white" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
+    );
+    let image = egui_extras::image::load_svg_bytes_with_size(
+        svg.as_bytes(),
+        egui::load::SizeHint::Width(72),
+        &Default::default(),
+    )
+    .ok()?;
+    let texture = ui
+        .ctx()
+        .load_texture(name, image, egui::TextureOptions::LINEAR);
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id, texture.clone()));
+    Some(texture)
+}
+
 /// Whether the updates nav entry shows the red badge (index 7 +
 /// App.updatesAvailable in Main.qml).
 pub fn updates_badge(entry: &NavEntry, updates_available: bool) -> bool {
@@ -319,6 +369,23 @@ pub fn updates_badge(entry: &NavEntry, updates_available: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn original_qml_outlines_load_for_all_five_navigation_items() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for page in [
+                Page::Nodes,
+                Page::Routing,
+                Page::Zapret,
+                Page::History,
+                Page::Logs,
+            ] {
+                assert!(outline_texture(ui, page).is_some(), "{page:?}");
+            }
+        });
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn rail_order_matches_main_qml() {

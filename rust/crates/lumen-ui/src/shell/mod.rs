@@ -824,13 +824,15 @@ impl ShellApp {
     /// Title bar interactions: drag region + window buttons (TitleBar.qml).
     fn paint_title_bar(&mut self, ctx: &egui::Context, theme: &theme::Theme) {
         let title_height = self.title_bar_height(ctx);
+        let size = Vec2::new(ctx.viewport_rect().width(), title_height);
 
         egui::Area::new(egui::Id::unique("lumen-titlebar"))
             .order(egui::Order::Middle)
+            .movable(false)
             .fixed_pos(egui::Pos2::ZERO)
-            .default_size(Vec2::new(ctx.viewport_rect().width(), title_height))
+            .default_size(size)
             .show(ctx, |ui| {
-                let bar = ui.max_rect();
+                let (bar, _) = ui.allocate_exact_size(size, Sense::hover());
 
                 // Drag region under everything (later widgets take priority).
                 let drag = ui.interact(
@@ -914,21 +916,22 @@ impl ShellApp {
         let compact_mode = self.bridge.compact_mode();
         let rail_width = self.rail_visual_width(theme);
         let title_height = self.title_bar_height(ctx);
+        let rail_height = ctx.viewport_rect().height() - title_height;
 
         egui::Area::new(egui::Id::unique("lumen-rail"))
             .order(egui::Order::Middle)
+            .movable(false)
             .fixed_pos(egui::pos2(0.0, title_height))
-            .default_size(Vec2::new(
-                rail_width,
-                ctx.viewport_rect().height() - title_height,
-            ))
+            .default_size(Vec2::new(rail_width, rail_height))
             .show(ctx, |ui| {
-                let margin_bottom = 14.0;
-                let inner_height = ui.max_rect().height() - margin_bottom;
+                ui.set_width(rail_width);
+                ui.set_height(rail_height);
 
                 egui::ScrollArea::vertical()
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        let top = ui.cursor().top();
                         ui.set_min_width(rail_width);
                         // Burger row (40 * fontScale tall).
                         let burger_height = (40.0 * theme.font_scale) as f32;
@@ -991,11 +994,13 @@ impl ShellApp {
                         }
 
                         // Stretch to the bottom section (Layout.fillHeight item).
-                        let top_rows = 5.0_f32;
                         let row_height = (40.0 * theme.font_scale) as f32;
-                        let stretch =
-                            (inner_height - burger_height - 4.0 - top_rows * (row_height + 2.0))
-                                .max(14.0);
+                        let bottom_rows = navigation::NAV_ENTRIES.iter().filter(|entry| {
+                            entry.section == navigation::Section::Bottom
+                                && self.navigation.entry_visible(entry, compact_mode)
+                        }).count() as f32;
+                        let stretch = (rail_height - 14.0 - (ui.cursor().top() - top)
+                            - bottom_rows * (row_height + 2.0)).max(14.0);
                         ui.add_space(stretch);
 
                         // Bottom section.
@@ -1038,9 +1043,8 @@ impl ShellApp {
                 screen.top() + self.title_bar_height(ctx) + 20.0,
             ),
             Vec2::new(
-                (screen.width() - rail_width - 24.0 - theme.radius as f32 - 24.0).max(0.0),
-                (screen.height() - self.title_bar_height(ctx) - 20.0 - theme.radius as f32 - 20.0)
-                    .max(0.0),
+                (screen.width() - rail_width - 48.0).max(0.0),
+                (screen.height() - self.title_bar_height(ctx) - 40.0).max(0.0),
             ),
         );
         egui::Area::new(egui::Id::unique("lumen-page-stack"))

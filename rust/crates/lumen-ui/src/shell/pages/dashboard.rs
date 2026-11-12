@@ -3,13 +3,18 @@
 use std::collections::{HashSet, VecDeque};
 
 use egui::{
-    Button, ComboBox, Frame, Id, Key, Modal, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui,
+    Align, Button, Color32, ComboBox, Frame, Id, Key, Layout, Modal, Modifiers, RichText,
+    ScrollArea, Sense, Stroke, TextEdit, Ui, vec2,
 };
 use lumen_core::i18n::tr;
 
 use super::{PageContext, flag, node_editor::NodeEditor};
 use crate::shell::theme::Theme;
 use crate::view_models::AppBridge;
+
+const GAP: f32 = 16.0;
+const SERVER_WIDTH: f32 = 420.0;
+const HERO_HEIGHT: f32 = 150.0;
 
 #[derive(Default)]
 pub(super) struct DashboardPage {
@@ -64,20 +69,29 @@ impl DashboardPage {
         {
             self.selection.clear();
         }
+        let page_width = ui.available_width();
+        let content_height = ui.available_height().max(620.0);
         ScrollArea::vertical()
             .id_salt("dashboard")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = theme.spacing_large as f32;
+                ui.spacing_mut().item_spacing = vec2(GAP, GAP);
+                let top = ui.cursor().top();
                 self.connection(ui, theme, bridge);
-                if ui.available_width() >= 960.0 {
-                    ui.columns(2, |columns| {
-                        self.servers(&mut columns[0], theme, bridge);
-                        self.stats(&mut columns[1], theme, bridge);
+                let body_height = (content_height - (ui.cursor().top() - top)).max(0.0);
+                if page_width >= 960.0 {
+                    ui.horizontal_top(|ui| {
+                        let stats_width = (ui.available_width() - SERVER_WIDTH - GAP).max(0.0);
+                        column(ui, SERVER_WIDTH, |ui| {
+                            self.servers(ui, theme, bridge, body_height);
+                        });
+                        column(ui, stats_width, |ui| {
+                            self.stats(ui, theme, bridge, Some(body_height), true);
+                        });
                     });
                 } else {
-                    self.servers(ui, theme, bridge);
-                    self.stats(ui, theme, bridge);
+                    self.servers(ui, theme, bridge, 420.0);
+                    self.stats(ui, theme, bridge, None, page_width >= 720.0);
                 }
             });
         if self.mode_help {
@@ -98,7 +112,8 @@ impl DashboardPage {
     }
 
     fn connection(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
-        card(ui, theme, |ui| {
+        let show_rates = ui.available_width() >= 760.0;
+        card(ui, theme, 19.0, |ui| {
             let connected = bridge.connected();
             let busy = bridge.transition_busy();
             let state = match (busy, bridge.transition_target_connected(), connected) {
@@ -119,27 +134,11 @@ impl DashboardPage {
                 "system" => "Системный прокси",
                 _ => "Локальный прокси",
             };
-            ui.label(
-                RichText::new(format!("{} · {}", tr(state, &[]), tr(mode_label, &[]))).color(
-                    if connected {
-                        theme.success
-                    } else {
-                        theme.text_muted
-                    },
-                ),
-            );
             let name = if bridge.selected_node_name().is_empty() {
                 tr("Сервер не выбран", &[])
             } else {
                 bridge.selected_node_name().to_string()
             };
-            ui.horizontal_wrapped(|ui| {
-                flag::show(ui, bridge.selected_node_flag_country(), egui::vec2(26.0, 18.0));
-                ui.label(RichText::new(name).size(theme.font_title as f32).strong());
-                if busy {
-                    ui.spinner();
-                }
-            });
             let caption = [
                 bridge.selected_node_protocol(),
                 bridge.selected_node_source(),
@@ -148,88 +147,165 @@ impl DashboardPage {
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join(" · ");
-            if !caption.is_empty() {
-                ui.label(RichText::new(caption).color(theme.text_muted));
-            }
+            let metrics = bridge.metrics();
+            ui.set_min_height(HERO_HEIGHT - 40.0);
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                let (ring, _) = ui.allocate_exact_size(vec2(52.0, 64.0), Sense::hover());
+                let color = if connected {
+                    theme.success
+                } else {
+                    theme.text_faint
+                };
+                ui.painter()
+                    .circle_stroke(ring.center(), 22.0, Stroke::new(4.0, color));
+                ui.painter().circle_filled(ring.center(), 7.5, color);
+                let rates_width = if show_rates { 218.0 } else { 0.0 };
+                let label_width = (ui.available_width() - rates_width).max(0.0);
+                column(ui, label_width, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.label(
+                        small(
+                            theme,
+                            format!("{} · {}", tr(state, &[]), tr(mode_label, &[])),
+                        )
+                        .color(if connected {
+                            theme.success
+                        } else {
+                            theme.text_muted
+                        }),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        flag::show(ui, bridge.selected_node_flag_country(), vec2(32.0, 24.0));
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(name)
+                                    .size(theme.font_title as f32 + 2.0)
+                                    .strong(),
+                            )
+                            .truncate(),
+                        );
+                        if busy {
+                            ui.spinner();
+                        }
+                    });
+                    if !caption.is_empty() {
+                        ui.add(egui::Label::new(small(theme, caption)).truncate());
+                    }
+                });
+                if show_rates {
+                    ui.add_space(7.0);
+                    for (label, rate) in [
+                        ("↓ Загрузка", metrics.down_bps),
+                        ("↑ Выгрузка", metrics.up_bps),
+                    ] {
+                        column(ui, 86.0, |ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.add_space(31.0);
+                            let (arrow, label) = label.split_once(' ').expect("speed label");
+                            ui.label(small(theme, format!("{arrow} {}", tr(label, &[]))));
+                            let rate = if !connected {
+                                "0 B/s".into()
+                            } else if metrics.traffic_available {
+                                speed(rate)
+                            } else {
+                                "—".into()
+                            };
+                            big_value(ui, theme, &rate);
+                        });
+                    }
+                }
+            });
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.spacing_mut().button_padding.y = 0.0;
                 let key = if connected {
                     "Отключить"
                 } else {
                     "Подключить"
                 };
                 let action = if connected {
-                    Button::new(tr(key, &[]))
+                    Button::new(format!("\u{f8ae}  {}", tr(key, &[]))).fill(theme.card_hover)
                 } else {
-                    Button::new(RichText::new(tr(key, &[])).color(theme.accent_text))
-                        .fill(theme.accent)
+                    Button::new(
+                        RichText::new(format!("\u{e768}  {}", tr(key, &[])))
+                            .color(theme.accent_text),
+                    )
+                    .fill(theme.accent)
                 };
-                if ui.add_enabled(!busy, action).clicked() {
+                if ui
+                    .add_enabled(!busy, action.min_size(vec2(180.0, 32.0)))
+                    .clicked()
+                {
                     bridge.toggle_connection();
                 }
-                for (key, label) in [
-                    ("tun", "VPN (TUN)"),
-                    ("local", "Локальный"),
-                    ("system", "Сист. прокси"),
-                ] {
-                    if ui
-                        .add_enabled(!busy, Button::selectable(mode == key, tr(label, &[])))
-                        .clicked()
-                        && key != mode
-                    {
-                        match key {
-                            "tun" => {
-                                bridge.set_tun(true);
-                            }
-                            "system" => {
-                                bridge.set_proxy(true);
-                            }
-                            _ => {
-                                if bridge.tun_mode() {
-                                    bridge.set_tun(false);
+                Frame::new()
+                    .fill(Color32::from_black_alpha(if theme.dark { 46 } else { 10 }))
+                    .stroke(Stroke::new(1.0, theme.border_solid))
+                    .corner_radius(6)
+                    .inner_margin(1)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            for (key, label) in [
+                                ("local", "Локальный"),
+                                ("system", "Сист. прокси"),
+                                ("tun", "VPN (TUN)"),
+                            ] {
+                                if ui
+                                    .add_enabled(
+                                        !busy,
+                                        Button::new(tr(label, &[]))
+                                            .fill(if mode == key {
+                                                theme.accent_soft
+                                            } else {
+                                                Color32::TRANSPARENT
+                                            })
+                                            .stroke(Stroke::NONE)
+                                            .corner_radius(4)
+                                            .min_size(vec2(89.0, 28.0)),
+                                    )
+                                    .clicked()
+                                    && key != mode
+                                {
+                                    match key {
+                                        "tun" => {
+                                            bridge.set_tun(true);
+                                        }
+                                        "system" => {
+                                            bridge.set_proxy(true);
+                                        }
+                                        _ => {
+                                            if bridge.tun_mode() {
+                                                bridge.set_tun(false);
+                                            }
+                                            if bridge.proxy_enabled() {
+                                                bridge.set_proxy(false);
+                                            }
+                                        }
+                                    }
                                 }
-                                if bridge.proxy_enabled() {
-                                    bridge.set_proxy(false);
-                                }
                             }
-                        }
-                    }
-                }
-                if ui.button(tr("Справка", &[])).clicked() {
-                    self.mode_help = true;
-                }
-            });
-            let metrics = bridge.metrics();
-            ui.separator();
-            ui.columns(2, |columns| {
-                for (ui, (caption, rate)) in columns
-                    .iter_mut()
-                    .zip([("Загрузка", metrics.down_bps), ("Выгрузка", metrics.up_bps)])
+                        })
+                    });
+                if ui
+                    .add_sized([32.0, 32.0], Button::new("\u{e946}"))
+                    .on_hover_text(tr("Справка", &[]))
+                    .clicked()
                 {
-                    ui.label(tr(caption, &[]));
-                    let rate = if !connected {
-                        "0 B/s".into()
-                    } else if !metrics.traffic_available {
-                        "—".into()
-                    } else {
-                        speed(rate)
-                    };
-                    ui.label(RichText::new(rate).size(theme.font_title as f32).strong());
+                    self.mode_help = true;
                 }
             });
         });
     }
 
-    fn servers(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
-        section(ui, theme, "Серверы");
-        card(ui, theme, |ui| {
-            let search = ui.add(
-                TextEdit::singleline(&mut self.query)
-                    .desired_width(f32::INFINITY)
-                    .hint_text(tr("Поиск по имени, протоколу, стране", &[])),
-            );
-            if search.changed() {
-                bridge.set_dashboard_node_filter(&self.query);
-            }
+    fn servers(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, height: f32) {
+        card(ui, theme, 11.0, |ui| {
+            let inner_height = height - 24.0;
+            let top = ui.cursor().top();
+            ui.set_min_height(inner_height);
+            section(ui, theme, "Серверы");
             let mut groups = bridge.group_options();
             for subscription in bridge.subscriptions() {
                 let group = subscription["group"]
@@ -242,36 +318,69 @@ impl DashboardPage {
                 }
             }
             let current = bridge.node_filter_group();
-            let label = if current.is_empty() {
-                tr("Все группы", &[])
-            } else {
-                current.clone()
-            };
-            ComboBox::from_id_salt("dashboard-groups")
-                .selected_text(label)
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(current.is_empty(), tr("Все группы", &[]))
-                        .clicked()
-                    {
-                        self.selection.clear();
-                        bridge.set_node_filter("", "");
-                    }
-                    for group in groups {
-                        if ui.selectable_label(group == current, &group).clicked() {
-                            self.selection.clear();
-                            bridge.set_node_filter(&group, "");
+            ScrollArea::horizontal()
+                .id_salt("dashboard-groups")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.add_space(5.0);
+                        for (group, label) in std::iter::once(("", tr("Все", &[])))
+                            .chain(groups.iter().map(|name| (name.as_str(), name.clone())))
+                        {
+                            let selected = group == current;
+                            let label = RichText::new(label).color(if selected {
+                                theme.text
+                            } else {
+                                theme.text_muted
+                            });
+                            let tab = ui.add(
+                                Button::new(if selected { label.strong() } else { label })
+                                    .frame(false)
+                                    .min_size(vec2(32.0, 34.0)),
+                            );
+                            if selected {
+                                let center = tab.rect.center().x;
+                                let y = tab.rect.bottom() - 3.0;
+                                ui.painter().line_segment(
+                                    [egui::pos2(center - 9.0, y), egui::pos2(center + 9.0, y)],
+                                    Stroke::new(2.0, theme.accent),
+                                );
+                            }
+                            if tab.clicked() {
+                                self.selection.clear();
+                                bridge.set_node_filter(group, "");
+                            }
+                            ui.add_space(12.0);
                         }
-                    }
+                    });
                 });
-            if ui
-                .add_enabled(
-                    !bridge.transition_busy(),
-                    Button::new(tr("Быстрое подключение", &[])),
-                )
-                .on_hover_text(tr("Лучший пинг в группе", &[]))
-                .clicked()
-            {
+            ui.separator();
+            let (search, cleared) = server_search(ui, theme, &mut self.query);
+            if search.changed() || cleared {
+                self.selection.clear();
+                bridge.set_dashboard_node_filter(&self.query);
+            }
+            let quick = ui.scope_builder(
+                egui::UiBuilder::new()
+                    .id_salt("quick-connect")
+                    .sense(Sense::click()),
+                |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.add_space(9.0);
+                        ui.label(RichText::new("\u{e945}").color(theme.accent));
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            ui.label(tr("Быстрое подключение", &[]));
+                            ui.label(small(theme, tr("Лучший пинг в группе", &[])));
+                        });
+                    });
+                },
+            );
+            if !bridge.transition_busy() && quick.response.clicked() {
                 let id = bridge.quick_connect_node_id();
                 self.quick_hint = id.is_empty();
                 if !self.quick_hint {
@@ -303,11 +412,12 @@ impl DashboardPage {
             if ids.is_empty() {
                 ui.label(tr("Серверов нет — импортируйте ссылку или подписку", &[]));
             }
+            let list_height = (inner_height - (ui.cursor().top() - top)).max(0.0);
             ScrollArea::vertical()
                 .id_salt("dashboard-node-list")
-                .max_height(345.0)
-                .auto_shrink([false, true])
-                .show_rows(ui, 37.0, ids.len(), |ui, range| {
+                .max_height(list_height)
+                .auto_shrink([false, false])
+                .show_rows(ui, 44.0, ids.len(), |ui, range| {
                     for id in &ids[range] {
                         self.server_row(ui, theme, bridge, id);
                     }
@@ -348,48 +458,64 @@ impl DashboardPage {
                         .inner_margin(3.0)
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                flag::show(ui, &country, egui::vec2(22.0, 16.0));
-                                let latency = if ping < 0 {
-                                    "—".into()
-                                } else {
-                                    format!("{ping} ms")
-                                };
-                                let width = (ui.available_width() - 76.0).max(40.0);
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(width, 28.0),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
-                                        ui.spacing_mut().item_spacing.y = 0.0;
-                                        ui.add(
-                                            egui::Label::new(RichText::new(&name).color(
-                                                if enabled {
-                                                    theme.text
-                                                } else {
-                                                    theme.text_muted
-                                                },
-                                            ))
-                                            .truncate(),
+                            ui.allocate_ui_with_layout(
+                                vec2(ui.available_width(), 37.0),
+                                Layout::left_to_right(Align::Center),
+                                |ui| {
+                                    ui.add_space(6.0);
+                                    flag::show(ui, &country, egui::vec2(22.0, 16.0));
+                                    let latency = if ping < 0 {
+                                        "—".into()
+                                    } else {
+                                        format!("{ping} ms")
+                                    };
+                                    let width = (ui.available_width() - 55.0).max(40.0);
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(width, 28.0),
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| {
+                                            ui.spacing_mut().item_spacing.y = 0.0;
+                                            ui.add(
+                                                egui::Label::new(RichText::new(&name).color(
+                                                    if enabled {
+                                                        theme.text
+                                                    } else {
+                                                        theme.text_muted
+                                                    },
+                                                ))
+                                                .truncate(),
+                                            );
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(sub)
+                                                        .size(theme.font_small as f32)
+                                                        .color(theme.text_muted),
+                                                )
+                                                .truncate(),
+                                            );
+                                        },
+                                    );
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.add_space(7.0);
+                                        ui.label(
+                                            small(theme, latency).color(
+                                                theme.ping_color((ping >= 0).then_some(ping)),
+                                            ),
                                         );
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(sub)
-                                                    .size(theme.font_small as f32)
-                                                    .color(theme.text_muted),
-                                            )
-                                            .truncate(),
-                                        );
-                                    },
-                                );
-                                ui.label(
-                                    RichText::new(latency)
-                                        .color(theme.ping_color((ping >= 0).then_some(ping))),
-                                );
-                            });
+                                    });
+                                },
+                            );
                         });
                 },
             )
             .response;
+        if selected {
+            let center = row.rect.left_center();
+            ui.painter().line_segment(
+                [center - vec2(0.0, 8.0), center + vec2(0.0, 8.0)],
+                Stroke::new(2.0, theme.accent),
+            );
+        }
         if row.clicked() {
             if ui.input(|input| input.modifiers.ctrl) {
                 if !self.selection.remove(id) {
@@ -468,113 +594,227 @@ impl DashboardPage {
         }
     }
 
-    fn stats(&self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
-        ui.columns(2, |columns| {
-            card(&mut columns[0], theme, |ui| {
+    fn stats(
+        &self,
+        ui: &mut Ui,
+        theme: &Theme,
+        bridge: &mut AppBridge,
+        height: Option<f32>,
+        side_by_side: bool,
+    ) {
+        let latency = |ui: &mut Ui| {
+            card(ui, theme, 11.0, |ui| {
+                ui.set_min_height(72.0);
+                ui.spacing_mut().item_spacing.y = 4.0;
                 section(ui, theme, "Задержка");
                 let current = bridge.metrics().latency_ms;
                 let value = if bridge.connected() && current >= 0 {
                     format!("{current} ms")
                 } else {
-                    "--".into()
+                    "-- ms".into()
                 };
-                ui.label(RichText::new(value).size(theme.font_title as f32).strong());
+                big_value(ui, theme, &value);
                 latency_chart(ui, theme, &self.latency);
             });
-            card(&mut columns[1], theme, |ui| {
+        };
+        let session = |ui: &mut Ui| {
+            card(ui, theme, 11.0, |ui| {
+                ui.set_min_height(72.0);
+                ui.spacing_mut().item_spacing.y = 4.0;
                 section(ui, theme, "Сессия");
-                ui.label(
-                    RichText::new(bytes(bridge.session_traffic_total() as f64))
-                        .size(theme.font_title as f32)
-                        .strong(),
-                );
-                ui.label(format!(
-                    "↓ {} · ↑ {} · {}{}",
-                    bytes(bridge.session_download_total() as f64),
-                    bytes(bridge.session_upload_total() as f64),
-                    tr("Пик: ", &[]),
-                    speed(self.peak)
+                big_value(ui, theme, &bytes(bridge.session_traffic_total() as f64));
+                ui.label(small(
+                    theme,
+                    format!(
+                        "↓ {} · ↑ {} · {}{}",
+                        bytes(bridge.session_download_total() as f64),
+                        bytes(bridge.session_upload_total() as f64),
+                        tr("Пик: ", &[]),
+                        speed(self.peak)
+                    ),
                 ));
             });
-        });
-        card(ui, theme, |ui| {
+        };
+        if side_by_side {
+            ui.horizontal_top(|ui| {
+                let width = (ui.available_width() - GAP) / 2.0;
+                column(ui, width, latency);
+                column(ui, width, session);
+            });
+        } else {
+            latency(ui);
+            session(ui);
+        }
+        let rows = bridge.process_model.rows();
+        let traffic_height = height.map_or(
+            (rows.len().min(6) as f32 * 30.0 + 60.0).max(150.0),
+            |height| (height - 96.0 - 60.0 - 2.0 * GAP).max(150.0),
+        );
+        card(ui, theme, 15.0, |ui| {
+            ui.set_min_height(traffic_height - 32.0);
             section(ui, theme, "Трафик приложений");
-            let rows = bridge.process_model.rows();
             if rows.is_empty() {
-                ui.label(tr(
-                    "Статистика появится, когда приложения начнут передавать данные",
-                    &[],
-                ));
+                ui.allocate_ui_with_layout(vec2(ui.available_width(), traffic_height - 68.0),
+                    Layout::left_to_right(Align::Center), |ui| {
+                    ui.label(small(theme, tr("Статистика появится, когда приложения начнут передавать данные", &[]))
+                        .color(theme.text_faint));
+                });
+                return;
             }
             ScrollArea::vertical()
                 .id_salt("dashboard-process-traffic")
-                .max_height(224.0)
-                .show(ui, |ui| {
-                    for row in rows {
-                        let name = row
-                            .name
-                            .rsplit(['/', '\\'])
-                            .next()
-                            .filter(|name| !name.is_empty())
-                            .map_or_else(|| tr("Приложение", &[]), str::to_string);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(name);
-                            ui.label(RichText::new(bytes(row.total)).color(theme.text_muted));
-                        });
-                        ui.add(
-                            egui::ProgressBar::new((row.total / self.app_peak.max(1.0)) as f32)
-                                .desired_height(4.0)
-                                .fill(theme.accent),
+                .max_height(traffic_height - 64.0)
+                .show_rows(ui, 26.0, rows.len(), |ui, range| {
+                    for row in &rows[range] {
+                        let name = row.name.rsplit(['/', '\\']).next().unwrap_or(&row.name);
+                        ui.allocate_ui_with_layout(
+                            vec2(ui.available_width(), 26.0),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = 14.0;
+                                let name_width = (ui.available_width() * 0.28).min(150.0);
+                                ui.add_sized([name_width, 26.0], egui::Label::new(name).truncate());
+                                let bar_width = (ui.available_width() - 94.0).max(8.0);
+                                let (bar, _) =
+                                    ui.allocate_exact_size(vec2(bar_width, 6.0), Sense::hover());
+                                ui.painter().rect_filled(
+                                    bar,
+                                    3.0,
+                                    Color32::from_black_alpha(if theme.dark { 56 } else { 15 }),
+                                );
+                                let ratio =
+                                    (row.total / self.app_peak.max(1.0)).clamp(0.0, 1.0) as f32;
+                                let fill = egui::Rect::from_min_size(
+                                    bar.min,
+                                    vec2(bar.width() * ratio, bar.height()),
+                                );
+                                ui.painter().rect_filled(fill, 3.0, theme.accent);
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(small(theme, bytes(row.total)));
+                                });
+                            },
                         );
                     }
                 });
         });
-        card(ui, theme, |ui| {
-            section(ui, theme, "Маршрутизация");
-            let items = bridge.routing_preset_options();
-            let active = bridge.active_routing_preset_id();
-            let current = items
-                .iter()
-                .find(|item| item["id"].as_str() == Some(&active))
-                .or_else(|| items.get(usize::from(items.len() > 1)));
-            ComboBox::from_id_salt("dashboard-routing")
-                .selected_text(
-                    current
-                        .and_then(|item| item["name"].as_str())
-                        .unwrap_or_default(),
-                )
-                .show_ui(ui, |ui| {
-                    for item in &items {
-                        let id = item["id"].as_str().unwrap_or_default();
-                        if ui
-                            .selectable_label(
-                                id == active,
-                                item["name"].as_str().unwrap_or_default(),
-                            )
-                            .clicked()
-                        {
-                            bridge.apply_routing_preset_option(id);
-                        }
-                    }
-                });
+        card(ui, theme, 13.0, |ui| {
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), 32.0),
+                Layout::right_to_left(Align::Center),
+                |ui| {
+                    let items = bridge.routing_preset_options();
+                    let active = bridge.active_routing_preset_id();
+                    let current = items
+                        .iter()
+                        .find(|item| item["id"].as_str() == Some(&active))
+                        .or_else(|| items.get(usize::from(items.len() > 1)));
+                    ComboBox::from_id_salt("dashboard-routing")
+                        .width((ui.available_width() - 115.0).clamp(90.0, 260.0))
+                        .selected_text(
+                            current
+                                .and_then(|item| item["name"].as_str())
+                                .unwrap_or_default(),
+                        )
+                        .show_ui(ui, |ui| {
+                            for item in &items {
+                                let id = item["id"].as_str().unwrap_or_default();
+                                if ui
+                                    .selectable_label(
+                                        id == active,
+                                        item["name"].as_str().unwrap_or_default(),
+                                    )
+                                    .clicked()
+                                {
+                                    bridge.apply_routing_preset_option(id);
+                                }
+                            }
+                        });
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        section(ui, theme, "Маршрутизация")
+                    });
+                },
+            );
         });
     }
 }
 
+fn server_search(ui: &mut Ui, theme: &Theme, query: &mut String) -> (egui::Response, bool) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, theme.radius_small as f32, theme.control_fill);
+    ui.painter().text(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "\u{e721}",
+        egui::FontId::proportional(14.0),
+        theme.text_faint,
+    );
+    let edit_rect = egui::Rect::from_min_max(
+        rect.min + vec2(34.0, 0.0),
+        rect.max - vec2(if query.is_empty() { 10.0 } else { 32.0 }, 0.0),
+    );
+    let response = ui.place(
+        edit_rect,
+        TextEdit::singleline(query)
+            .frame(Frame::NONE)
+            .vertical_align(Align::Center)
+            .margin(egui::Margin::ZERO)
+            .hint_text(
+                RichText::new(tr("Поиск по имени, протоколу, стране", &[])).color(theme.text_faint),
+            ),
+    );
+    let cleared = !query.is_empty()
+        && ui
+            .place(
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.right() - 32.0, rect.top()),
+                    vec2(32.0, 32.0),
+                ),
+                Button::new("\u{e711}").frame(false),
+            )
+            .clicked();
+    if cleared {
+        query.clear();
+        response.request_focus();
+    }
+    let border = if response.has_focus() {
+        theme.accent
+    } else {
+        theme.border_solid
+    };
+    ui.painter().rect_stroke(
+        rect,
+        theme.radius_small as f32,
+        Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+    (response, cleared)
+}
+
 fn latency_chart(ui: &mut Ui, theme: &Theme, samples: &VecDeque<i64>) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 35.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
     let max = samples.iter().copied().max().unwrap_or(1).max(1) as f32;
-    let slot = rect.width() / 16.0;
-    for (index, latency) in samples.iter().enumerate() {
-        let left = rect.left() + slot * (16 - samples.len() + index) as f32;
-        let top = rect.bottom() - rect.height() * *latency as f32 / max;
+    let width = ((rect.width() - 60.0) / 16.0).max(1.0);
+    for index in 0_usize..16 {
+        let latency = index
+            .checked_sub(16 - samples.len())
+            .and_then(|slot| samples.get(slot));
+        let height = latency.map_or(4.0, |ms| (18.0 * (0.25 + 0.75 * *ms as f32 / max)).max(4.0));
         let bar = egui::Rect::from_min_size(
-            egui::pos2(left, top),
-            egui::vec2((slot - 2.0).max(1.0), rect.bottom() - top),
+            egui::pos2(
+                rect.left() + (width + 4.0) * index as f32,
+                rect.bottom() - height,
+            ),
+            vec2(width, height),
         );
-        ui.painter()
-            .rect_filled(bar, 2.0, theme.ping_color(Some(*latency)));
+        let color = if latency.is_none() {
+            theme.divider
+        } else if index == 15 {
+            theme.accent
+        } else {
+            theme.accent.gamma_multiply(0.45)
+        };
+        ui.painter().rect_filled(bar, 2.0, color);
     }
 }
 
@@ -621,12 +861,34 @@ fn section(ui: &mut Ui, theme: &Theme, title: &str) {
     );
 }
 
-fn card(ui: &mut Ui, theme: &Theme, content: impl FnOnce(&mut Ui)) {
+fn small(theme: &Theme, text: impl Into<String>) -> RichText {
+    RichText::new(text)
+        .size(theme.font_small as f32)
+        .color(theme.text_muted)
+}
+
+fn big_value(ui: &mut Ui, theme: &Theme, text: &str) {
+    let (value, unit) = text.split_once(' ').unwrap_or((text, ""));
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        ui.label(RichText::new(value).size(theme.font_title as f32).strong());
+        ui.label(small(theme, unit));
+    });
+}
+
+fn column(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(width);
+        content(ui);
+    });
+}
+
+fn card(ui: &mut Ui, theme: &Theme, padding: f32, content: impl FnOnce(&mut Ui)) {
     Frame::new()
         .fill(theme.card)
         .stroke(Stroke::new(1.0, theme.border_solid))
         .corner_radius(theme.radius as u8)
-        .inner_margin(14.0)
+        .inner_margin(padding)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 7.0;
