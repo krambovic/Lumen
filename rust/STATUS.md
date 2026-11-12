@@ -337,8 +337,9 @@ client, core/resource updaters, zapret and discord proxy managers.
   assembly or SHA-256 verification. The elevated PowerShell scripts resolve
   portable markers, legacy paths and the uninstall registry. Portable updates
   merge bundled resources into the existing data directory before replacing
-  program files. ShellExecuteW "runas" launches the scripts, and the worker
-  reports progress through its event channel.
+  program files. Both scripts stop only named processes under the current
+  or target installation directory. ShellExecuteW "runas" launches the
+  scripts, and the worker reports progress through its event channel.
 
 ### lumen-ui
 - view_models: the bridge and node editor, node/process/log models, history,
