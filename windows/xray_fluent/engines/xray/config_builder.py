@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from ipaddress import ip_address, ip_network
+from ipaddress import ip_address
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -18,6 +18,7 @@ from ...routing_presets import custom_domain_rules, preset_domain_rules
 from ...routing_runtime import (
     build_xray_gui_routing_rules,
     collect_service_route_domains,
+    split_xray_domain_ip,
 )
 from ...xray_inbounds import build_xray_http_compat_inbound, build_xray_mixed_inbound
 from ...xray_fragments import apply_xray_final_fragment, apply_xray_outbound_fragment
@@ -82,18 +83,14 @@ def _xray_dns_entries(
     domains: list[str] | None = None,
 ) -> list[str | dict[str, Any]]:
     entries: list[str | dict[str, Any]] = []
-    domain_rules: list[str] = []
-    for raw in domains or []:
-        value = str(raw or "").strip()
-        if not value or value.lower().startswith(("geoip:", "ip:")):
-            continue
-        if value.startswith(("domain:", "full:", "regexp:", "keyword:", "geosite:", "ext:")):
-            domain_rules.append(value)
-            continue
-        try:
-            ip_network(value, strict=False)
-        except ValueError:
-            domain_rules.append(f"domain:{value}")
+    candidates = [
+        str(raw or "")
+        for raw in domains or []
+        if not str(raw or "").strip().lower().startswith(("geoip:", "ip:"))
+    ]
+    domain_rules, _ = split_xray_domain_ip(candidates)
+    if domains and not domain_rules:
+        return entries
     for address in addresses:
         value = _xray_dns_server(address, transport)
         if domain_rules:

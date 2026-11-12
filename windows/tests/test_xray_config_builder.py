@@ -64,7 +64,8 @@ def test_xray_builtin_dns_supports_multiple_servers_cache_hosts_and_geo() -> Non
         "https://cloudflare-dns.com/dns-query",
     }
     assert any("geosite:ru-blocked" in entry["domains"] for entry in scoped)
-    assert any("geosite:lumen-exclude" in entry["domains"] for entry in scoped)
+    assert any("domain:pusher.com" in entry["domains"] for entry in scoped)
+    assert all("geosite:lumen-exclude" not in entry["domains"] for entry in scoped)
     assert dns["servers"][-2:] == [
         "https://dns.google/dns-query",
         "https://cloudflare-dns.com/dns-query",

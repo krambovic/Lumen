@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 113
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 113
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -25,6 +25,8 @@ client, core/resource updaters, zapret and discord proxy managers.
 - openvpn_import/normalization, wireguard_normalization, warp_generator
 - config/: xray_builder, xray_inbounds, xray_fragments, multiplex,
   proxy_chain, bootstrap_dns, runtime_security (`bootstrap_dns.rs` = alias)
+- Xray DNS expands Lumen's local exclusion list through the shared routing
+  parser. An IP-only list leaves the DNS fallback on the proxy resolver.
 - crypt/: happ (+keys), incy
 - subscription/: fetcher (safe redirects), presentation, text, HTTP request and
   response parsing. The response parser keeps conditional cache headers,
@@ -429,7 +431,8 @@ are handled inside their porting commits.
 - The Rust and Python clients generated equivalent JSON configurations for
   VLESS, Trojan, Shadowsocks and Hysteria2 in four proxy/TUN scenarios after
   masking the random Clash API secret. Both cores accepted all seven
-  generated configurations.
+  generated configurations. They also accepted four configurations with the
+  blocked-only and except-Russia presets against the shipped geodata.
 - Xray and sing-box extended both relayed a real HTTP request through an
   isolated local VLESS server from each of the generated SOCKS and HTTP
   proxy listeners.

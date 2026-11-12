@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import (
+    BASE_DIR,
     DATA_DIR,
     ROUTING_DIRECT,
     ROUTING_GLOBAL,
@@ -1008,7 +1009,7 @@ def _ensure_singbox_local_rule_set(key: str) -> Path:
 def _read_domain_lists(paths: tuple[str, ...]) -> list[str]:
     values: set[str] = set()
     for relative in paths:
-        path = DATA_DIR.parent / relative
+        path = BASE_DIR / relative
         if not path.is_file():
             continue
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -1026,7 +1027,7 @@ def _read_domain_lists(paths: tuple[str, ...]) -> list[str]:
 def _read_ip_lists(paths: tuple[str, ...]) -> list[str]:
     values: set[str] = set()
     for relative in paths:
-        path = DATA_DIR.parent / relative
+        path = BASE_DIR / relative
         if not path.is_file():
             continue
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():

@@ -12,6 +12,7 @@ use crate::constants::{
     DEFAULT_DISCORD_SOCKS_PORT, DEFAULT_XRAY_STATS_API_PORT, PROXY_HOST,
 };
 use crate::models::{bool_field, int_field, str_field, str_list, str_or, Node};
+use crate::routing_runtime::split_xray_domain_ip;
 
 use super::multiplex::apply_xray_multiplex;
 use super::xray_fragments::{apply_xray_final_fragment, apply_xray_outbound_fragment};
@@ -89,31 +90,6 @@ fn xray_dns_strategy(values: &[&str]) -> String {
     }
 }
 
-/// Python `ip_network(value, strict=False)` parse check: address plus an
-/// in-range optional prefix.
-fn is_ip_network(value: &str) -> bool {
-    let (address, prefix) = match value.split_once('/') {
-        Some((a, p)) => (a, Some(p)),
-        None => (value, None),
-    };
-    let Ok(parsed) = address.parse::<IpAddr>() else {
-        return false;
-    };
-    if let Some(prefix) = prefix {
-        let Ok(prefix) = prefix.parse::<u32>() else {
-            return false;
-        };
-        let max = match parsed {
-            IpAddr::V4(_) => 32,
-            IpAddr::V6(_) => 128,
-        };
-        if prefix > max {
-            return false;
-        }
-    }
-    true
-}
-
 /// Hostname extraction matching `urlsplit(value if "://" in value else
 /// f"//{value}").hostname` for realistic DNS server strings.
 fn url_hostname(value: &str) -> String {
@@ -159,29 +135,18 @@ fn url_hostname(value: &str) -> String {
 /// Python: `_xray_dns_entries(addresses, transport, *, domains=None)`.
 fn xray_dns_entries(addresses: &[String], transport: &str, domains: &[String]) -> Vec<Value> {
     let mut entries: Vec<Value> = Vec::new();
-    let mut domain_rules: Vec<String> = Vec::new();
-    for raw in domains {
-        let value = raw.trim();
-        if value.is_empty() {
-            continue;
-        }
-        let lowered = value.to_lowercase();
-        if lowered.starts_with("geoip:") || lowered.starts_with("ip:") {
-            continue;
-        }
-        if value.starts_with("domain:")
-            || value.starts_with("full:")
-            || value.starts_with("regexp:")
-            || value.starts_with("keyword:")
-            || value.starts_with("geosite:")
-            || value.starts_with("ext:")
-        {
-            domain_rules.push(value.to_string());
-            continue;
-        }
-        if !is_ip_network(value) {
-            domain_rules.push(format!("domain:{value}"));
-        }
+    let candidates = domains
+        .iter()
+        .filter(|rule| {
+            let rule = rule.trim().to_ascii_lowercase();
+            !rule.starts_with("geoip:") && !rule.starts_with("ip:")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let (domain_rules, _) = split_xray_domain_ip(&candidates);
+    // An IP-only rule or an empty local list cannot scope this resolver.
+    if !domains.is_empty() && domain_rules.is_empty() {
+        return entries;
     }
     for address in addresses {
         let value = xray_dns_server(address, transport);
@@ -728,6 +693,7 @@ mod tests {
         assert_eq!(bootstrap["skipFallback"], json!(true));
         let domains = bootstrap["domains"].as_array().unwrap();
         assert!(domains.iter().any(|d| d == "domain:example.org"));
+        assert!(!domains.iter().any(|d| d == "geosite:lumen-exclude"));
         // Proxy DNS server normalized to a DoH URL.
         let proxy_dns = servers.last().unwrap();
         assert_eq!(proxy_dns, &json!("https://dns.google/dns-query"));
@@ -737,6 +703,16 @@ mod tests {
         assert!(rules.iter().any(|rule| rule["domain"] == json!(["full:dns.google"])
             && rule["outboundTag"] == json!("proxy")
             && rule["network"] == json!("tcp,udp")));
+    }
+
+    #[test]
+    fn ip_only_rules_do_not_add_an_unscoped_dns_resolver() {
+        let entries = xray_dns_entries(
+            &["77.88.8.8".into()],
+            "udp",
+            &["geoip:ru".into(), "10.0.0.0/8".into()],
+        );
+        assert!(entries.is_empty());
     }
 
     #[test]
