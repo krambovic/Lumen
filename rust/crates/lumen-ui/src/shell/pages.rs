@@ -12,9 +12,12 @@ use super::theme::Theme;
 pub(super) mod about;
 mod code_editor;
 mod configs;
+mod dashboard;
 mod diagnostics_export;
 mod history;
 mod logs;
+mod node_editor;
+mod node_qr;
 mod routing;
 mod updates;
 mod zapret;
@@ -23,6 +26,8 @@ mod zapret;
 pub(super) struct PageState {
     about: about::AboutPage,
     configs: configs::ConfigsPage,
+    dashboard: dashboard::DashboardPage,
+    node_qr: node_qr::NodeQr,
     history: history::HistoryPage,
     logs: logs::LogsPage,
     routing: routing::RoutingPage,
@@ -33,6 +38,7 @@ pub(super) struct PageState {
 impl PageState {
     pub(super) fn on_event(&mut self, event: &UiEvent) {
         self.updates.on_event(event);
+        self.node_qr.on_event(event);
     }
 }
 
@@ -67,8 +73,11 @@ pub(super) fn render_page(
     if page != Page::Zapret {
         state.zapret.on_hidden();
     }
+    state
+        .dashboard
+        .observe(page_ctx.bridge, page == Page::Dashboard);
     match page {
-        Page::Dashboard => placeholder(ui, page_ctx.theme, page),
+        Page::Dashboard => state.dashboard.render(ui, page_ctx),
         Page::Nodes => placeholder(ui, page_ctx.theme, page),
         Page::Routing => state.routing.render(ui, page_ctx),
         Page::Configs => state.configs.render(ui, page_ctx),
@@ -79,6 +88,7 @@ pub(super) fn render_page(
         Page::Settings => placeholder(ui, page_ctx.theme, page),
         Page::About => state.about.render(ui, page_ctx),
     }
+    state.node_qr.render(page_ctx.ctx, page_ctx.theme);
 }
 
 /// The themed stand-in panel for pages that have not been ported yet.

@@ -1398,6 +1398,7 @@ impl eframe::App for ShellApp {
         self.paint_title_bar(ctx, &theme);
         self.paint_rail(ctx, &theme);
         self.paint_pages(ctx, &theme);
+        self.bridge.clear_changes();
         self.page_events.clear();
         self.paint_drop_overlay(ctx, &theme);
         if self.onboarding.render(ctx, &theme, &mut self.bridge) {

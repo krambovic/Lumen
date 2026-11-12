@@ -2448,6 +2448,7 @@ dependencies = [
  "lumen-platform",
  "muda 0.17.2",
  "parking_lot",
+ "qrcode",
  "regex",
  "reqwest",
  "serde",
