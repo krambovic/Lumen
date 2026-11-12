@@ -290,13 +290,15 @@ fn script_context(portable: bool) -> UpdateScriptContext {
 }
 
 #[test]
-fn installed_update_script_matches_the_python_layout() {
+fn installed_update_script_waits_for_the_version_probe() {
     let script = build_update_script(&script_context(false));
     assert!(script.starts_with("$ErrorActionPreference = 'Stop'\r\n$pidToWait = 4242"));
     assert!(script.contains(r"$setupPath = 'C:\Temp\lumen_update_1\Lumen-Setup-windows-x64.exe'"));
     assert!(script.contains("Get-FileHash -LiteralPath $setupPath -Algorithm SHA256"));
     assert!(script.contains("a".repeat(64).as_str()));
-    assert!(script.contains("& $exePath '--version-file' $versionFile"));
+    assert!(script.contains(r#"('--version-file "' + $versionFile + '"')"#));
+    assert!(script.contains("-WindowStyle Hidden -Wait -PassThru"));
+    assert!(script.contains("$versionProbeExitCode = $versionProbe.ExitCode"));
     assert!(!script.contains("Start-Process -FilePath $exePath -ArgumentList '--version-file',$versionFile"));
     assert!(!script.contains("continuing because installer finished successfully"));
     assert!(script
@@ -342,7 +344,8 @@ async fn staged_script_reverifies_the_installer_hash() -> anyhow::Result<()> {
     let text = String::from_utf8(raw[3..].to_vec())?;
     assert!(text.contains("Get-FileHash -LiteralPath $setupPath -Algorithm SHA256"));
     assert!(text.contains(&digest));
-    assert!(text.contains("& $exePath '--version-file' $versionFile"));
+    assert!(text.contains(r#"('--version-file "' + $versionFile + '"')"#));
+    assert!(text.contains("-WindowStyle Hidden -Wait -PassThru"));
     assert!(!text.contains("continuing because installer finished successfully"));
     assert_eq!(
         drain(&mut receiver),
@@ -802,8 +805,9 @@ const INSTALLED_REFERENCE: &str = concat!(
     "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated Lumen.exe was not installed' }\r\n",
     "    $versionFile = Join-Path $runtimeDir 'update_version.txt'\r\n",
     "    Remove-Item -LiteralPath $versionFile -Force -ErrorAction SilentlyContinue\r\n",
-    "    & $exePath '--version-file' $versionFile\r\n",
-    "    $versionProbeExitCode = $LASTEXITCODE\r\n",
+    r#"    $versionProbe = Start-Process -FilePath $exePath -ArgumentList ('--version-file "' + $versionFile + '"') -WorkingDirectory $appDir -WindowStyle Hidden -Wait -PassThru"#,
+    "\r\n",
+    "    $versionProbeExitCode = $versionProbe.ExitCode\r\n",
     "    if ($versionProbeExitCode -ne 0) { throw ('Version probe exited with code ' + $versionProbeExitCode) }\r\n",
     "    $versionLine = Get-Content -LiteralPath $versionFile -ErrorAction SilentlyContinue | Select-Object -First 1\r\n",
     "    if ($null -eq $versionLine -or [string]::IsNullOrWhiteSpace([string]$versionLine)) { throw 'Updated executable did not write version probe file' }\r\n",

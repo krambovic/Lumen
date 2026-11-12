@@ -1111,12 +1111,11 @@ class UpdateDownloader(QThread):
                     "    if (-not (Test-Path -LiteralPath $exePath)) { throw 'Updated Lumen.exe was not installed' }",
                     "    $versionFile = Join-Path $runtimeDir 'update_version.txt'",
                     "    Remove-Item -LiteralPath $versionFile -Force -ErrorAction SilentlyContinue",
-                    # Invoke the GUI executable directly so PowerShell keeps
-                    # the version-file path as one argument even when the
-                    # install directory contains spaces (for example,
-                    # C:\\Program Files\\Lumen).
-                    "    & $exePath '--version-file' $versionFile",
-                    "    $versionProbeExitCode = $LASTEXITCODE",
+                    # Wait for the GUI executable and preserve spaces in the output path.
+                    "    $versionProbe = Start-Process -FilePath $exePath "
+                    "-ArgumentList ('--version-file \"' + $versionFile + '\"') "
+                    "-WorkingDirectory $appDir -WindowStyle Hidden -Wait -PassThru",
+                    "    $versionProbeExitCode = $versionProbe.ExitCode",
                     "    if ($versionProbeExitCode -ne 0) { throw ('Version probe exited with code ' + $versionProbeExitCode) }",
                     "    $versionLine = Get-Content -LiteralPath $versionFile -ErrorAction SilentlyContinue | Select-Object -First 1",
                     "    if ($null -eq $versionLine -or [string]::IsNullOrWhiteSpace([string]$versionLine)) { throw 'Updated executable did not write version probe file' }",

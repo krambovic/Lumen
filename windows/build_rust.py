@@ -94,13 +94,14 @@ def stage_release(executable: Path, app_dir: Path) -> None:
 
 
 def verify_executable(app_dir: Path, work: Path, version: str) -> None:
-    probe = work / "startup-probe.txt"
-    probe.unlink(missing_ok=True)
-    subprocess.run([str(app_dir / "Lumen.exe"), "--startup-probe-file", str(probe)],
-                   cwd=app_dir, check=True, timeout=45)
-    actual = probe.read_text(encoding="utf-8").strip()
-    if actual != version:
-        raise RuntimeError(f"Packaged executable reports {actual!r}, expected {version!r}")
+    for flag in ("--startup-probe-file", "--version-file"):
+        probe = work / f"{flag[2:]}.txt"
+        probe.unlink(missing_ok=True)
+        subprocess.run([str(app_dir / "Lumen.exe"), flag, str(probe)],
+                       cwd=app_dir, check=True, timeout=45)
+        actual = probe.read_text(encoding="utf-8").strip()
+        if actual != version:
+            raise RuntimeError(f"Packaged executable reports {actual!r} for {flag}, expected {version!r}")
 
 
 def main() -> int:

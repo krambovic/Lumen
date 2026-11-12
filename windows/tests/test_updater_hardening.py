@@ -81,7 +81,8 @@ def test_elevated_update_script_reverifies_the_installer_hash(monkeypatch) -> No
         script_text = launched[0].read_bytes().decode("utf-8-sig")
         assert "Get-FileHash -LiteralPath $setupPath -Algorithm SHA256" in script_text
         assert update.digest_sha256 in script_text
-        assert "& $exePath '--version-file' $versionFile" in script_text
+        assert """('--version-file "' + $versionFile + '"')""" in script_text
+        assert "-WindowStyle Hidden -Wait -PassThru" in script_text
         assert "Start-Process -FilePath $exePath -ArgumentList '--version-file',$versionFile" not in script_text
         assert "continuing because installer finished successfully" not in script_text
     finally:

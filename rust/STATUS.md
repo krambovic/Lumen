@@ -419,7 +419,10 @@ are handled inside their porting commits.
 
 ## Release verification
 - The Windows SDK build embedded the manifest, icon and version metadata.
-  The staged executable reported the expected version. The portable ZIP
+  The staged executable reported the expected version through the packaging
+  probe and the update script's `--version-file` command. The update script
+  waits for the GUI executable and passes the output path as a single
+  argument, including spaces. The portable ZIP
   and Inno Setup installer both built using real Xray and sing-box extended
   binaries, and each core accepted its bundled default template.
 - The Rust and Python clients generated equivalent JSON configurations for
@@ -432,5 +435,7 @@ are handled inside their porting commits.
 - The portable update applied the release ZIP to an isolated profile. The
   script preserved the profile and its custom template, deployed the bundled
   resources and passed the new executable's version probe.
+- Python-created plain, DPAPI and passphrase profiles loaded in Rust and
+  remained readable in Python after being updated and saved by Rust.
 - The live TUN, full desktop launch and Inno Setup upgrade scenarios require
   desktop verification.
