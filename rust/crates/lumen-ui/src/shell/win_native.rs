@@ -262,9 +262,7 @@ pub fn register_toast_protocol() -> Result<(), String> {
 fn set_reg_string(key: windows::Win32::System::Registry::HKEY, name: &str, value: &str) {
     use windows::Win32::System::Registry::{REG_SZ, RegSetValueExW};
     let name_wide = to_wide(name);
-    let mut value_wide = to_wide(value);
-    // RegSetValueExW expects a NUL-terminated buffer including the terminator.
-    value_wide.push(0);
+    let value_wide = to_wide(value);
     unsafe {
         let _ = RegSetValueExW(
             key,
@@ -280,7 +278,7 @@ fn set_reg_string(key: windows::Win32::System::Registry::HKEY, name: &str, value
 }
 
 fn to_wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().collect()
+    value.encode_utf16().chain([0]).collect()
 }
 
 // ── Legacy install cleanup ───────────────────────────────────────────────
@@ -1034,6 +1032,12 @@ pub const TRAY_REINSTALL_DELAYS: [Duration; 2] =
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn win32_strings_include_a_terminator_even_for_the_default_registry_value() {
+        assert_eq!(to_wide(""), [0]);
+        assert_eq!(to_wide("A🚀"), [0x0041, 0xd83d, 0xde80, 0]);
+    }
 
     /// test_window_frame_styling.test_windows_10_frame_uses_legacy_dark_mode_fallback
     #[test]

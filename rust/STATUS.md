@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 113
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 114
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -443,5 +443,7 @@ are handled inside their porting commits.
   resources and passed the new executable's version probe.
 - Python-created plain, DPAPI and passphrase profiles loaded in Rust and
   remained readable in Python after being updated and saved by Rust.
-- The live TUN, full desktop launch and Inno Setup upgrade scenarios require
-  desktop verification.
+- The release executable opened a visible, responsive desktop window from
+  the extracted portable directory. Startup uses NUL-terminated UTF-16
+  strings for Win32 calls, including registration of the `lumen:` protocol.
+- The live TUN and Inno Setup upgrade scenarios require desktop verification.
