@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 121
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 122
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -403,6 +403,11 @@ client, core/resource updaters, zapret and discord proxy managers.
 - Zapret (`ZapretPage.qml`): preset search, preview, import, editing, rename
   and delete, manual start/stop, and searchable server-specific strategy and
   preset bindings. The page shares the plain-text editor with Configs.
+  The desktop layout puts the preset list beside the preview and bindings,
+  with the original sidebar width range and fixed-height preset rows. At the
+  minimum width the cards stack so their actions remain reachable. Compared
+  both clients in the dark theme at 1280×760 and 640×360 using the same
+  presets. Checked selection, editor opening and scrolling to bindings in Rust.
 - About and onboarding: project links, support dialogs with the bundled USDT
   QR image, replayable first-run setup, and upgrade notes. Setup applies the
   selected language, appearance, routing, imports, WARP and system settings

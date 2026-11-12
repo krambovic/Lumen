@@ -3,14 +3,18 @@
 use std::path::Path;
 
 use egui::{
-    Button, ComboBox, Frame, Id, Key, Modal, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui,
+    Align, ComboBox, Frame, Id, Key, Layout, Modal, Modifiers, RichText, ScrollArea, Sense, Stroke,
+    TextEdit, Ui, vec2,
 };
 use lumen_core::i18n::tr;
 use serde_json::Value;
 
-use super::{PageContext, code_editor};
-use crate::shell::{theme::Theme, win_native};
-use crate::view_models::AppBridge;
+use super::{PageContext, code_editor, fluent_button, search_field};
+use crate::shell::{
+    theme::{Theme, semibold},
+    win_native,
+};
+use crate::view_models::{AppBridge, app_bridge::ZapretBindingRow};
 
 #[derive(Default, Clone, PartialEq, Eq)]
 struct PresetText {
@@ -100,22 +104,47 @@ impl ZapretPage {
             let status = bridge.zapret_status();
             let running = status["running"].as_bool() == Some(true);
             let active = field(&status, "preset");
+            let bindings = bridge.zapret_server_bindings();
+            let viewport_height = ui.available_height();
             ScrollArea::vertical().id_salt("zapret-page").auto_shrink([false, false]).show(ui, |ui| {
+                let top = ui.next_widget_position().y;
+                ui.spacing_mut().item_spacing.y = theme.spacing as f32;
                 title(ui, theme, "Zapret");
                 hint(ui, theme, "Zapret запускает winws2.exe с выбранным пресетом аргументов, чтобы обходить DPI-замедления YouTube, Discord и других сервисов. Работает независимо от VPN/прокси и требует прав администратора.");
                 if !bridge.is_admin() {
-                    ui.label(RichText::new(tr("Lumen запущен без прав администратора — Zapret не сможет запуститься.", &[])).color(theme.warning));
+                    Frame::new().fill(theme.warning.gamma_multiply(0.12))
+                        .stroke(Stroke::new(1.0, theme.warning.gamma_multiply(0.35)))
+                        .corner_radius(theme.radius_small as u8)
+                        .inner_margin(egui::Margin::symmetric(11, 5)).show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("\u{e7ba}").size(14.0).color(theme.warning));
+                                ui.label(RichText::new(tr("Lumen запущен без прав администратора — Zapret не сможет запуститься.", &[])).size(theme.font_small as f32));
+                            });
+                        });
                 }
-                if ui.available_width() >= 720.0 {
-                    ui.columns(2, |columns| {
-                        self.render_list(&mut columns[0], theme, bridge, running, active);
-                        self.render_details(&mut columns[1], theme, bridge, running);
+                let width = ui.available_width();
+                let gap = theme.spacing as f32;
+                if let Some(sidebar) = sidebar_width(width) {
+                    let remaining_height = viewport_height - (ui.next_widget_position().y - top);
+                    let preview_height = (remaining_height - 202.0 - bindings.len().min(4) as f32 * 40.0).max(180.0);
+                    ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::right_to_left(Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing.x = gap;
+                        let details = ui.allocate_ui_with_layout(vec2(width - sidebar - gap, 0.0), Layout::top_down(Align::Min), |ui| {
+                            ui.set_width(width - sidebar - gap);
+                            self.render_details(ui, theme, bridge, running, preview_height);
+                            self.render_bindings(ui, theme, bridge, &bindings);
+                        });
+                        ui.allocate_ui_with_layout(vec2(sidebar, 0.0), Layout::top_down(Align::Min), |ui| {
+                            ui.set_width(sidebar);
+                            self.render_list(ui, theme, bridge, running, active, (details.response.rect.height() - 86.0).max(160.0));
+                        });
                     });
                 } else {
-                    self.render_list(ui, theme, bridge, running, active);
-                    self.render_details(ui, theme, bridge, running);
+                    self.render_list(ui, theme, bridge, running, active, 200.0);
+                    self.render_details(ui, theme, bridge, running, 210.0);
+                    self.render_bindings(ui, theme, bridge, &bindings);
                 }
-                self.render_bindings(ui, theme, bridge);
             });
         }
         if let Some(confirm) = self.confirm {
@@ -130,31 +159,42 @@ impl ZapretPage {
         bridge: &mut AppBridge,
         running: bool,
         active: &str,
+        list_height: f32,
     ) {
-        card(ui, theme, |ui| {
-            ui.add(
-                TextEdit::singleline(&mut self.query)
-                    .hint_text(tr("Поиск пресета", &[]))
-                    .desired_width(f32::INFINITY),
+        card_with_margin(ui, theme, 9.0, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), theme.control_height as f32),
+                Layout::right_to_left(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if fluent_button::icon(ui, theme, "\u{e8b5}", &tr("Импорт из файла", &[]), true)
+                        .clicked()
+                    {
+                        self.import(bridge);
+                    }
+                    if fluent_button::icon(ui, theme, "\u{e710}", &tr("Новый пресет", &[]), true)
+                        .clicked()
+                    {
+                        self.open_editor(bridge, "");
+                    }
+                    search_field::show(ui, theme, &mut self.query, &tr("Поиск пресета", &[]), true);
+                },
             );
-            ui.horizontal_wrapped(|ui| {
-                if button(ui, "Новый пресет") {
-                    self.open_editor(bridge, "");
-                }
-                if button(ui, "Импорт из файла") {
-                    self.import(bridge);
-                }
-            });
             if let Some(error) = &self.import_error {
                 ui.label(RichText::new(error).color(theme.danger));
             }
             let query = self.query.trim().to_lowercase();
             let mut selected = None;
             let mut visible = false;
+            ui.add(egui::Separator::default().spacing(1.0));
             ScrollArea::vertical()
                 .id_salt("zapret-presets")
-                .max_height(270.0)
+                .min_scrolled_height(list_height)
+                .max_height(list_height)
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
                     for info in &self.presets {
                         let name = field(info, "name");
                         let description = field(info, "description");
@@ -164,51 +204,53 @@ impl ZapretPage {
                             continue;
                         }
                         visible = true;
-                        let label = if running && active == name {
-                            RichText::new(name).color(theme.success)
-                        } else {
-                            RichText::new(name)
-                        };
-                        let row = ui
-                            .selectable_label(self.selected == name, label)
-                            .on_hover_text(description);
-                        if !description.is_empty() {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(description)
-                                        .color(theme.text_muted)
-                                        .size(theme.font_small as f32),
-                                )
-                                .truncate(),
-                            );
-                        }
+                        let row = preset_row(
+                            ui,
+                            theme,
+                            info,
+                            self.selected == name,
+                            running && active == name,
+                        );
                         if row.clicked() || row.double_clicked() {
                             selected = Some((name.to_string(), row.double_clicked()));
                         }
                     }
+                    if !visible {
+                        ui.allocate_ui_with_layout(
+                            vec2(ui.available_width(), list_height),
+                            Layout::top_down(Align::Center),
+                            |ui| {
+                                ui.add_space((list_height * 0.5 - 42.0).max(0.0));
+                                ui.label(
+                                    RichText::new("\u{e945}").size(28.0).color(theme.text_faint),
+                                );
+                                if self.presets.is_empty() {
+                                    hint(ui, theme, "Нет пресетов Zapret");
+                                    hint(
+                                        ui,
+                                        theme,
+                                        "Создайте пресет или импортируйте файл аргументов winws2.",
+                                    );
+                                } else {
+                                    hint(ui, theme, "Ничего не найдено");
+                                }
+                            },
+                        );
+                    }
                 });
             if let Some((name, activate)) = selected {
                 self.select(bridge, &name);
+                ui.request_repaint();
                 if activate && !(running && active == name) {
                     bridge.start_zapret(&name);
                 }
             }
-            if !visible {
-                if self.presets.is_empty() {
-                    hint(ui, theme, "Нет пресетов Zapret");
-                    hint(
-                        ui,
-                        theme,
-                        "Создайте пресет или импортируйте файл аргументов winws2.",
-                    );
-                } else {
-                    hint(ui, theme, "Ничего не найдено");
-                }
-            }
+            ui.add(egui::Separator::default().spacing(1.0));
             let count = self.presets.len().to_string();
             ui.label(
                 RichText::new(tr("Пресетов: {count}", &[("count", &count)]))
-                    .color(theme.text_faint),
+                    .color(theme.text_faint)
+                    .size(theme.font_small as f32),
             );
         });
     }
@@ -219,25 +261,26 @@ impl ZapretPage {
         theme: &Theme,
         bridge: &mut AppBridge,
         running: bool,
+        preview_height: f32,
     ) {
         card(ui, theme, |ui| {
+            ui.spacing_mut().item_spacing.y = 10.0;
             let Some(preset) = self
                 .presets
                 .iter()
                 .find(|preset| field(preset, "name") == self.selected)
             else {
-                hint(ui, theme, "Выберите пресет в списке");
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), preview_height + 60.0),
+                    Layout::centered_and_justified(egui::Direction::TopDown),
+                    |ui| {
+                        hint(ui, theme, "Выберите пресет в списке");
+                    },
+                );
                 return;
             };
-            ui.label(
-                RichText::new(&self.selected)
-                    .size(theme.font_strong as f32)
-                    .strong(),
-            );
-            let description = field(preset, "description");
-            if !description.is_empty() {
-                ui.label(description);
-            }
+            let name = self.selected.clone();
+            let description = field(preset, "description").to_owned();
             let count = preset["argCount"].as_u64().unwrap_or_default().to_string();
             let mut info = tr("Аргументов: {count}", &[("count", &count)]);
             if !field(preset, "modified").is_empty() {
@@ -247,34 +290,79 @@ impl ZapretPage {
                     field(preset, "modified")
                 ));
             }
-            ui.label(RichText::new(info).color(theme.text_faint));
-            ui.horizontal_wrapped(|ui| {
-                if button(ui, "Удалить") {
-                    self.confirm = Some(Confirm::Delete);
-                }
-                if button(ui, "Изменить") {
-                    self.open_editor(bridge, &self.selected.clone());
-                }
-                let label = if running {
-                    "Остановить"
-                } else {
-                    "Запустить"
-                };
-                if ui
-                    .add(Button::new(tr(label, &[])).fill(if running {
-                        theme.danger_fill
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), 58.0),
+                Layout::right_to_left(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    fluent_button::style(ui);
+                    let (label, glyph) = if running {
+                        ("Остановить", "\u{e71a}")
                     } else {
-                        theme.accent
-                    }))
-                    .clicked()
-                {
+                        ("Запустить", "\u{e768}")
+                    };
+                    let mut action = fluent_button::button(theme, glyph, &tr(label, &[]), true);
                     if running {
-                        bridge.stop_zapret();
-                    } else {
-                        bridge.start_zapret(&self.selected);
+                        action = action.fill(theme.danger_fill);
                     }
-                }
-            });
+                    if ui.add(action).clicked() {
+                        if running {
+                            bridge.stop_zapret();
+                        } else {
+                            bridge.start_zapret(&name);
+                        }
+                    }
+                    if ui
+                        .add(fluent_button::button(
+                            theme,
+                            "\u{e70f}",
+                            &tr("Изменить", &[]),
+                            false,
+                        ))
+                        .clicked()
+                    {
+                        self.open_editor(bridge, &name);
+                    }
+                    if fluent_button::icon(ui, theme, "\u{e74d}", &tr("Удалить", &[]), true)
+                        .clicked()
+                    {
+                        self.confirm = Some(Confirm::Delete);
+                    }
+                    ui.allocate_ui_with_layout(
+                        vec2(ui.available_width(), 52.0),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(name).font(semibold(theme.font_strong as f32)),
+                                )
+                                .truncate(),
+                            );
+                            if !description.is_empty() {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(description)
+                                            .size(theme.font_small as f32)
+                                            .color(theme.text_muted),
+                                    )
+                                    .truncate(),
+                                );
+                            }
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(info)
+                                        .size(theme.font_small as f32)
+                                        .color(theme.text_faint),
+                                )
+                                .truncate(),
+                            );
+                        },
+                    );
+                },
+            );
+            ui.add(egui::Separator::default().spacing(1.0));
             let mut preview = self.preview.as_str();
             code_editor::show(
                 ui,
@@ -282,29 +370,30 @@ impl ZapretPage {
                 ("zapret-preview", &self.selected),
                 "",
                 &mut preview,
-                230.0,
+                preview_height,
                 None,
             );
         });
     }
 
-    fn render_bindings(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
+    fn render_bindings(
+        &mut self,
+        ui: &mut Ui,
+        theme: &Theme,
+        bridge: &mut AppBridge,
+        bindings: &[ZapretBindingRow],
+    ) {
         card(ui, theme, |ui| {
-            ui.label(
-                RichText::new(tr("Запуск вместе с сервером", &[]))
-                    .size(theme.font_strong as f32)
-                    .strong(),
-            );
-            hint(
-                ui,
-                theme,
-                "Стратегия или пресет работают только для IP и порта сервера, пока вы к нему подключены. Смена во время подключения переподключает сервер.",
-            );
-            let bindings = bridge.zapret_server_bindings();
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("\u{e71b}").size(16.0).color(theme.text_muted));
+                ui.label(RichText::new(tr("Запуск вместе с сервером", &[])).font(semibold(theme.font_strong as f32)));
+                ui.label(RichText::new("\u{e946}").color(theme.text_faint)).on_hover_text(tr("Стратегия или пресет работают только для IP и порта сервера, пока вы к нему подключены. Смена во время подключения переподключает сервер.", &[]));
+            });
             if !bindings.is_empty() {
                 ScrollArea::vertical()
                     .id_salt("zapret-bindings")
-                    .max_height(180.0)
+                    .max_height(160.0)
                     .show(ui, |ui| {
                         for row in bindings {
                             ui.horizontal_wrapped(|ui| {
@@ -315,7 +404,19 @@ impl ZapretPage {
                                 } else {
                                     theme.text
                                 };
-                                ui.label(RichText::new(&row.name).color(color));
+                                let glyph = if row.missing_node {
+                                    "\u{e7ba}"
+                                } else if row.active {
+                                    "\u{e73e}"
+                                } else {
+                                    "\u{e968}"
+                                };
+                                ui.label(RichText::new(glyph).color(color));
+                                ui.label(RichText::new(&row.name).color(if row.missing_node {
+                                    theme.text_muted
+                                } else {
+                                    theme.text
+                                }));
                                 if row.missing_preset {
                                     ui.label(
                                         RichText::new(tr("Пресет не найден", &[]))
@@ -341,11 +442,20 @@ impl ZapretPage {
                                         label,
                                         &row.choices,
                                         "Поиск стратегий…",
+                                        260.0,
                                     ) {
                                         bridge.set_zapret_server_binding(&row.node_id, &value);
                                     }
                                 }
-                                if button(ui, "Убрать привязку") {
+                                if fluent_button::icon(
+                                    ui,
+                                    theme,
+                                    "\u{e711}",
+                                    &tr("Убрать привязку", &[]),
+                                    true,
+                                )
+                                .clicked()
+                                {
                                     bridge.remove_zapret_server_binding(&row.node_id);
                                 }
                             });
@@ -365,10 +475,29 @@ impl ZapretPage {
                 self.choice.clear();
             }
             ui.horizontal_wrapped(|ui| {
+                fluent_button::style(ui);
+                ui.spacing_mut().interact_size.y = theme.control_height as f32;
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let width = ui.available_width();
+                let choice_width = (width * 0.43).min(260.0);
+                let bind_label = tr("Привязать", &[]);
+                let bind_width = ui
+                    .painter()
+                    .layout_no_wrap(
+                        bind_label.clone(),
+                        egui::FontId::proportional(theme.font_normal as f32),
+                        theme.text,
+                    )
+                    .size()
+                    .x
+                    + theme.font_normal as f32
+                    + 36.0;
+                let server_width = (width - choice_width - bind_width - 16.0).max(100.0);
                 let label = selected_label(&servers, &self.server)
                     .map(str::to_string)
                     .unwrap_or_else(|| tr("Все серверы уже привязаны", &[]));
-                if let Some(server) = searchable(ui, "zapret-server", &label, &servers, "Поиск")
+                if let Some(server) =
+                    searchable(ui, "zapret-server", &label, &servers, "Поиск", server_width)
                 {
                     self.server = server;
                     self.choice.clear();
@@ -390,13 +519,14 @@ impl ZapretPage {
                     selected_label(&choices, &self.choice).unwrap_or(""),
                     &choices,
                     "Поиск стратегий…",
+                    choice_width,
                 ) {
                     self.choice = choice;
                 }
                 if ui
                     .add_enabled(
                         !self.server.is_empty() && !choices.is_empty(),
-                        Button::new(tr("Привязать", &[])),
+                        fluent_button::button(theme, "\u{e710}", &bind_label, false),
                     )
                     .clicked()
                 {
@@ -465,29 +595,58 @@ impl ZapretPage {
         let draft = self.draft.as_mut().expect("preset editor is open");
         let fresh = draft.saved.name.is_empty();
         let error = name_error(&draft.current.name);
-        let mut save = false;
-        let mut close = false;
-        ui.horizontal_wrapped(|ui| {
-            let heading = if fresh {
-                tr("Новый пресет", &[])
-            } else {
-                format!("{}{}", tr("Редактирование: ", &[]), draft.saved.name)
-            };
-            ui.label(
-                RichText::new(heading)
-                    .size(theme.font_title as f32)
-                    .strong(),
-            );
-            close = button(ui, "Отмена");
-            save = ui
-                .add_enabled(error.is_none(), Button::new(tr("Сохранить", &[])))
-                .clicked();
-        });
+        ui.spacing_mut().item_spacing.y = theme.spacing as f32;
+        let heading = if fresh {
+            tr("Новый пресет", &[])
+        } else {
+            format!("{}{}", tr("Редактирование: ", &[]), draft.saved.name)
+        };
+        let (mut save, close) = ui
+            .allocate_ui_with_layout(
+                vec2(ui.available_width(), theme.control_height as f32),
+                Layout::right_to_left(Align::Center),
+                |ui| {
+                    fluent_button::style(ui);
+                    let save = ui
+                        .add_enabled(
+                            error.is_none(),
+                            fluent_button::button(theme, "\u{e74e}", &tr("Сохранить", &[]), true),
+                        )
+                        .on_hover_text("Ctrl+S")
+                        .clicked();
+                    let cancel = ui
+                        .add(fluent_button::button(theme, "", &tr("Отмена", &[]), false))
+                        .clicked();
+                    let back = ui
+                        .with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            let back = fluent_button::icon(
+                                ui,
+                                theme,
+                                "\u{e72b}",
+                                &tr("Назад к списку", &[]),
+                                true,
+                            )
+                            .clicked();
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(heading).font(semibold(theme.font_title as f32)),
+                                )
+                                .truncate(),
+                            );
+                            back
+                        })
+                        .inner;
+                    (save, cancel || back)
+                },
+            )
+            .inner;
         card(ui, theme, |ui| {
-            let name = ui.add(
-                TextEdit::singleline(&mut draft.current.name)
-                    .hint_text(tr("Имя пресета", &[]))
-                    .desired_width(f32::INFINITY),
+            let name = editor_field(
+                ui,
+                theme,
+                "Название:",
+                "Имя пресета",
+                &mut draft.current.name,
             );
             if draft.focus && fresh {
                 name.request_focus();
@@ -495,14 +654,25 @@ impl ZapretPage {
             if let Some(error) =
                 name_error(&draft.current.name).filter(|_| !draft.current.name.is_empty())
             {
-                ui.label(RichText::new(tr(error, &[])).color(theme.danger));
+                ui.horizontal(|ui| {
+                    ui.add_space(90.0);
+                    ui.label(
+                        RichText::new(tr(error, &[]))
+                            .size(theme.font_small as f32)
+                            .color(theme.danger),
+                    );
+                });
             }
-            ui.add(
-                TextEdit::singleline(&mut draft.current.description)
-                    .hint_text(tr("Краткое описание (необязательно)", &[]))
-                    .desired_width(f32::INFINITY),
+            editor_field(
+                ui,
+                theme,
+                "Описание:",
+                "Краткое описание (необязательно)",
+                &mut draft.current.description,
             );
-            let height = (ui.available_height() - 56.0).max(40.0);
+        });
+        card(ui, theme, |ui| {
+            let height = (ui.available_height() - theme.font_small as f32 - 12.0).max(30.0);
             let jump = (draft.focus && !fresh).then_some(1);
             draft.focus = false;
             code_editor::show(
@@ -517,16 +687,37 @@ impl ZapretPage {
                 height,
                 jump,
             );
-            ui.horizontal_wrapped(|ui| {
-                if !draft.metadata.is_empty() {
-                    ui.label(RichText::new(&draft.metadata).color(theme.text_faint));
-                }
-                if draft.dirty() {
-                    ui.label(RichText::new(tr("Изменено", &[])).color(theme.warning));
-                }
-                let count = argument_count(&draft.current.args).to_string();
-                ui.label(tr("Аргументов: {count}", &[("count", &count)]));
-            });
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), theme.font_small as f32 + 4.0),
+                Layout::right_to_left(Align::Center),
+                |ui| {
+                    let count = argument_count(&draft.current.args).to_string();
+                    ui.label(
+                        RichText::new(tr("Аргументов: {count}", &[("count", &count)]))
+                            .size(theme.font_small as f32)
+                            .color(theme.text_muted),
+                    );
+                    if draft.dirty() {
+                        ui.label(
+                            RichText::new(tr("Изменено", &[]))
+                                .size(theme.font_small as f32)
+                                .color(theme.warning),
+                        );
+                    }
+                    if !draft.metadata.is_empty() {
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&draft.metadata)
+                                        .size(theme.font_small as f32)
+                                        .color(theme.text_faint),
+                                )
+                                .truncate(),
+                            );
+                        });
+                    }
+                },
+            );
         });
         save |= self.confirm.is_none()
             && ui.input_mut(|input| input.consume_key(Modifiers::CTRL, Key::S));
@@ -611,11 +802,12 @@ fn searchable(
     label: &str,
     items: &[(String, String)],
     hint: &str,
+    width: f32,
 ) -> Option<String> {
     let id = ui.make_persistent_id(key);
     ui.add_enabled_ui(!items.is_empty(), |ui| {
         ComboBox::from_id_salt(id)
-            .width(190.0)
+            .width(width)
             .truncate()
             .selected_text(label)
             .show_ui(ui, |ui| {
@@ -647,6 +839,127 @@ fn selected_label<'a>(items: &'a [(String, String)], key: &str) -> Option<&'a st
         .map(|item| item.1.as_str())
 }
 
+fn sidebar_width(width: f32) -> Option<f32> {
+    (width >= 720.0).then(|| (width * 0.32).clamp(250.0, 340.0))
+}
+
+fn editor_field(
+    ui: &mut Ui,
+    theme: &Theme,
+    label: &str,
+    placeholder: &str,
+    text: &mut String,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        let height = theme.control_height as f32;
+        ui.allocate_ui_with_layout(
+            vec2(90.0, height),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.set_min_width(90.0);
+                ui.add(
+                    egui::Label::new(RichText::new(tr(label, &[])).color(theme.text_muted))
+                        .truncate(),
+                );
+            },
+        );
+        ui.add_sized(
+            vec2(ui.available_width(), height),
+            TextEdit::singleline(text).hint_text(tr(placeholder, &[])),
+        )
+    })
+    .inner
+}
+
+fn preset_row(
+    ui: &mut Ui,
+    theme: &Theme,
+    preset: &Value,
+    selected: bool,
+    active: bool,
+) -> egui::Response {
+    let name = field(preset, "name");
+    let description = field(preset, "description");
+    let summary = if description.is_empty() {
+        tr(
+            "Аргументов: {count}",
+            &[(
+                "count",
+                &preset["argCount"].as_u64().unwrap_or_default().to_string(),
+            )],
+        )
+    } else {
+        description.to_owned()
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, name));
+    let painter = ui.painter();
+    if selected || response.hovered() {
+        painter.rect_filled(
+            rect,
+            theme.radius_small as u8,
+            if selected {
+                theme.card_hover
+            } else {
+                theme.nav_hover
+            },
+        );
+    }
+    if selected {
+        let marker = egui::Rect::from_min_size(
+            egui::pos2(rect.left(), rect.center().y - 9.0),
+            vec2(3.0, 18.0),
+        );
+        painter.rect_filled(marker, 2.0, theme.accent);
+    }
+    if active {
+        painter.circle_filled(rect.left_top() + vec2(16.0, 16.0), 4.0, theme.success);
+    }
+    let normal_size = theme.font_normal as f32;
+    let font = if selected || active {
+        semibold(normal_size)
+    } else {
+        egui::FontId::proportional(normal_size)
+    };
+    for (left, top, height, text) in [
+        (
+            if active { 26.0 } else { 12.0 },
+            6.0,
+            21.0,
+            RichText::new(name)
+                .font(font)
+                .color(if active { theme.success } else { theme.text }),
+        ),
+        (
+            12.0,
+            27.0,
+            17.0,
+            RichText::new(summary)
+                .size(theme.font_small as f32)
+                .color(theme.text_muted),
+        ),
+    ] {
+        let bounds = egui::Rect::from_min_max(
+            rect.left_top() + vec2(left, top),
+            egui::pos2(rect.right() - 10.0, rect.top() + top + height),
+        );
+        let mut label = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(bounds)
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        label.add(
+            egui::Label::new(text)
+                .truncate()
+                .selectable(false)
+                .sense(Sense::hover()),
+        );
+    }
+    response
+}
+
 fn argument_count(text: &str) -> usize {
     text.lines()
         .map(str::trim)
@@ -666,11 +979,15 @@ fn name_error(name: &str) -> Option<&'static str> {
 }
 
 fn card(ui: &mut Ui, theme: &Theme, content: impl FnOnce(&mut Ui)) {
+    card_with_margin(ui, theme, 12.0, content);
+}
+
+fn card_with_margin(ui: &mut Ui, theme: &Theme, margin: f32, content: impl FnOnce(&mut Ui)) {
     Frame::new()
         .fill(theme.card)
         .stroke(Stroke::new(1.0, theme.border_solid))
         .corner_radius(theme.radius as u8)
-        .inner_margin(12.0)
+        .inner_margin(margin)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             content(ui);
@@ -681,11 +998,7 @@ fn button(ui: &mut Ui, label: &str) -> bool {
     ui.button(tr(label, &[])).clicked()
 }
 fn title(ui: &mut Ui, theme: &Theme, label: &str) {
-    ui.label(
-        RichText::new(tr(label, &[]))
-            .size(theme.font_title as f32)
-            .strong(),
-    );
+    ui.label(RichText::new(tr(label, &[])).font(semibold(theme.font_title as f32)));
 }
 fn hint(ui: &mut Ui, theme: &Theme, label: &str) {
     ui.label(
@@ -710,5 +1023,30 @@ mod tests {
         );
         assert!(name_error(" dir\\test ").is_some());
         assert!(name_error(" пример ").is_none());
+    }
+
+    #[test]
+    fn preset_sidebar_stacks_at_minimum_width_and_keeps_fixed_rows() {
+        assert_eq!(sidebar_width(540.0), None);
+        assert_eq!(sidebar_width(780.0), Some(250.0));
+        assert_eq!(sidebar_width(1180.0), Some(340.0));
+
+        let ctx = egui::Context::default();
+        let theme = Theme::resolve(&Default::default());
+        crate::shell::theme::apply_fonts(&ctx, &theme);
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ui.set_width(250.0);
+            let preset =
+                serde_json::json!({"name": "Demo", "description": "Long description ".repeat(30)});
+            let first = preset_row(ui, &theme, &preset, true, true);
+            let second = preset_row(ui, &theme, &preset, false, false);
+            assert_eq!(first.rect.height(), 50.0);
+            assert_eq!(
+                second.rect.top() - first.rect.bottom(),
+                ui.spacing().item_spacing.y
+            );
+            assert!(ui.min_rect().width() <= 250.0);
+        });
+        output.textures_delta.clear();
     }
 }
