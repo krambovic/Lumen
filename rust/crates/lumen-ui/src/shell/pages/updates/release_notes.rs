@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 use egui::{Frame, RichText, ScrollArea, Stroke, Ui};
 use regex::Regex;
 
-use crate::shell::theme::Theme;
+use crate::shell::theme::{Theme, semibold};
 
 static INLINE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -16,10 +16,9 @@ static INLINE: LazyLock<Regex> = LazyLock::new(|| {
 
 pub(super) fn render(ui: &mut Ui, theme: &Theme, notes: &str) {
     Frame::new()
-        .fill(theme.bg)
         .stroke(Stroke::new(1.0, theme.border_solid))
         .corner_radius(theme.radius_small as u8)
-        .inner_margin(10.0)
+        .inner_margin(9.0)
         .show(ui, |ui| {
             ScrollArea::vertical()
                 .id_salt("app-release-notes")
@@ -27,7 +26,9 @@ pub(super) fn render(ui: &mut Ui, theme: &Theme, notes: &str) {
                 .max_height(100.0)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let spacing = ui.spacing_mut();
+                    spacing.item_spacing.y = 2.0;
+                    spacing.interact_size.y = 0.0;
                     let normalized = notes.replace("\r\n", "\n").replace('\r', "\n");
                     for line in normalized.split('\n') {
                         if line.trim().is_empty() {
@@ -61,7 +62,11 @@ fn inline(ui: &mut Ui, theme: &Theme, text: &str, size: f32, heading: bool) {
         } else {
             theme.text_muted
         });
-        if heading { label.strong() } else { label }
+        if heading {
+            label.font(semibold(size))
+        } else {
+            label
+        }
     };
     let mut offset = 0;
     for captures in INLINE.captures_iter(text) {
@@ -74,7 +79,7 @@ fn inline(ui: &mut Ui, theme: &Theme, text: &str, size: f32, heading: bool) {
         } else if let (Some(label), Some(link)) = (captures.get(2), captures.get(3)) {
             ui.hyperlink_to(base(label.as_str()).color(theme.accent), link.as_str());
         } else if let Some(bold) = captures.get(4) {
-            ui.label(base(bold.as_str()).strong());
+            ui.label(base(bold.as_str()).font(semibold(size)));
         } else if let Some(italic) = captures.get(5).or_else(|| captures.get(6)) {
             ui.label(base(italic.as_str()).italics());
         }

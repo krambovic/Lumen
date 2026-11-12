@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 120
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 121
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -381,6 +381,12 @@ client, core/resource updaters, zapret and discord proxy managers.
   application release notes, and checks, installation, status and progress for
   the app, Xray, sing-box extended, GeoIP/GeoSite and droute. The page tracks
   update events while hidden and during Xray's check-to-install transition.
+  Cards follow the QML version rows, right-aligned Stable/Beta selectors,
+  Fluent action glyphs, 120-point release notes panel and 10-point progress
+  bars. The channel selector test covers the application beta key and blocks
+  clicks during an update. Compared both running clients in the dark theme
+  with an available app update and 42% Xray progress at 1280×760 and with idle
+  cards at 640×360. Scrolled to the droute card in the minimum-size Rust window.
 - Configs (`ConfigsPage.qml`, `CodeEditor.qml`): independent sing-box and Xray
   drafts, active config and template selection, native JSON picker, template
   reset, discard confirmation, and formatting, validation, saving and applying

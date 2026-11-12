@@ -4,13 +4,16 @@ mod release_notes;
 
 use std::sync::LazyLock;
 
-use egui::{Button, Color32, Frame, ProgressBar, RichText, ScrollArea, Stroke, Ui};
+use egui::{
+    Align, Align2, Button, Color32, FontId, Frame, Layout, RichText, ScrollArea, Sense, Stroke, Ui,
+    vec2,
+};
 use lumen_core::i18n::tr;
 use regex::Regex;
 use serde_json::Value;
 
 use super::PageContext;
-use crate::shell::theme::Theme;
+use crate::shell::theme::{Theme, semibold};
 use crate::view_models::{AppBridge, app_bridge::UiEvent};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -73,29 +76,37 @@ impl UpdateState {
         if !self.phase.busy() {
             return;
         }
-        if self.phase != Phase::Checking && !(unknown_percent && self.percent == 0) {
-            ui.add(
-                ProgressBar::new(self.percent as f32 / 100.0)
-                    .desired_height(5.0)
-                    .fill(theme.accent),
-            );
+        let (track, response) =
+            ui.allocate_exact_size(vec2(ui.available_width(), 10.0), Sense::hover());
+        let indeterminate = self.phase == Phase::Checking || (unknown_percent && self.percent == 0);
+        response.widget_info(|| {
+            let role = egui::WidgetType::ProgressIndicator;
+            if indeterminate {
+                egui::WidgetInfo::new(role)
+            } else {
+                egui::WidgetInfo::labeled(role, ui.is_enabled(), format!("{}%", self.percent))
+            }
+        });
+        if !ui.is_rect_visible(track) {
             return;
         }
-        let (track, _) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 5.0), egui::Sense::hover());
-        if ui.is_rect_visible(track) {
+        ui.painter()
+            .rect_filled(track, 0.0, theme.text_faint.gamma_multiply(0.45));
+        let (x, width) = if indeterminate {
             let phase = ui.input(|input| (input.time / 1.2).fract() as f32);
             let width = track.width() * 0.25;
-            let x = track.left() - width + phase * (track.width() + width);
-            let segment = egui::Rect::from_min_size(
-                egui::pos2(x, track.top()),
-                egui::vec2(width, track.height()),
-            );
-            ui.painter().rect_filled(track, 2.0, theme.control_fill);
-            ui.painter()
-                .rect_filled(segment.intersect(track), 2.0, theme.accent);
             ui.request_repaint();
-        }
+            (
+                track.left() - width + phase * (track.width() + width),
+                width,
+            )
+        } else {
+            (track.left(), track.width() * self.percent as f32 / 100.0)
+        };
+        let segment =
+            egui::Rect::from_min_size(egui::pos2(x, track.top()), vec2(width, track.height()));
+        ui.painter()
+            .rect_filled(segment.intersect(track), 0.0, theme.accent);
     }
 }
 
@@ -267,9 +278,7 @@ impl UpdatesPage {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = theme.spacing_large as f32;
                 ui.label(
-                    RichText::new(tr("Обновления", &[]))
-                        .size(theme.font_title as f32)
-                        .strong(),
+                    RichText::new(tr("Обновления", &[])).font(semibold(theme.font_title as f32)),
                 );
                 self.render_app(ui, theme, bridge);
                 for (component, update) in COMPONENTS.iter().zip(&self.components) {
@@ -282,19 +291,15 @@ impl UpdatesPage {
         let app = &self.app;
         let busy = app.state.phase.busy() || bridge.app_update_in_progress();
         card(ui, theme, &tr("Приложение", &[]), |ui| {
-            ui.horizontal_wrapped(|ui| {
-                version(
-                    ui,
-                    theme,
-                    "Текущая версия:",
-                    &format!("v{}", bridge.app_version()),
-                );
-                if let Some(channel) =
-                    channel_buttons(ui, theme, &bridge.release_channel(), "prerelease", busy)
-                {
-                    bridge.set_release_channel(channel);
-                }
-            });
+            if let Some(channel) = version_and_channel(
+                ui,
+                theme,
+                ("Текущая версия:", &format!("v{}", bridge.app_version())),
+                (&bridge.release_channel(), "prerelease"),
+                busy,
+            ) {
+                bridge.set_release_channel(channel);
+            }
             status(
                 ui,
                 theme,
@@ -309,14 +314,19 @@ impl UpdatesPage {
                 release_notes::render(ui, theme, &app.notes);
             }
             app.state.progress(ui, theme, false);
-            ui.horizontal_wrapped(|ui| {
-                if check_button(ui, theme, "Проверить обновления", busy) {
+            action_row(ui, |ui| {
+                if action_button(
+                    ui,
+                    theme,
+                    "\u{e72c}",
+                    tr("Проверить обновления", &[]),
+                    true,
+                    !busy,
+                ) {
                     bridge.check_app_update();
                 }
                 if app.state.phase.install_visible()
-                    && ui
-                        .add_enabled(!busy, Button::new(app.install_label()))
-                        .clicked()
+                    && action_button(ui, theme, "\u{e896}", app.install_label(), false, !busy)
                 {
                     bridge.install_app_update();
                 }
@@ -340,16 +350,18 @@ fn render_component(
         title = format!("{title} · {}", update.version);
     }
     card(ui, theme, &title, |ui| {
-        if matches!(component.key, "xray" | "singbox") {
-            ui.horizontal_wrapped(|ui| {
-                version(ui, theme, "Версия:", &update.version);
-                if xray
-                    && let Some(channel) =
-                        channel_buttons(ui, theme, &bridge.xray_release_channel(), "beta", busy)
-                {
-                    bridge.set_xray_release_channel(channel);
-                }
-            });
+        if xray {
+            if let Some(channel) = version_and_channel(
+                ui,
+                theme,
+                ("Версия:", &update.version),
+                (&bridge.xray_release_channel(), "beta"),
+                busy,
+            ) {
+                bridge.set_xray_release_channel(channel);
+            }
+        } else if component.key == "singbox" {
+            version(ui, theme, "Версия:", &update.version);
         }
         let message = match state.phase {
             Phase::Idle => tr(component.idle, &[]),
@@ -380,8 +392,8 @@ fn render_component(
             component.key != "droute" && matches!(state.phase, Phase::Updated | Phase::Error),
         );
         state.progress(ui, theme, true);
-        ui.horizontal_wrapped(|ui| {
-            if check_button(ui, theme, component.check, busy) {
+        action_row(ui, |ui| {
+            if action_button(ui, theme, "\u{e72c}", tr(component.check, &[]), true, !busy) {
                 if xray {
                     bridge.check_xray_update();
                 } else {
@@ -389,9 +401,14 @@ fn render_component(
                 }
             }
             if state.phase.install_visible()
-                && ui
-                    .add_enabled(!busy, Button::new(tr(component.install, &[])))
-                    .clicked()
+                && action_button(
+                    ui,
+                    theme,
+                    "\u{e896}",
+                    tr(component.install, &[]),
+                    false,
+                    !busy,
+                )
             {
                 if xray {
                     bridge.update_xray_core();
@@ -408,23 +425,72 @@ fn card(ui: &mut Ui, theme: &Theme, title: &str, content: impl FnOnce(&mut Ui)) 
         .fill(theme.card)
         .stroke(Stroke::new(1.0, theme.border_solid))
         .corner_radius(theme.radius as u8)
-        .inner_margin(18.0)
+        .inner_margin(17.0)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 10.0;
-            ui.label(RichText::new(title).size(theme.font_strong as f32).strong());
+            ui.label(RichText::new(title).font(semibold(theme.font_strong as f32)));
             content(ui);
         });
 }
 
 fn version(ui: &mut Ui, theme: &Theme, label: &str, version: &str) {
-    ui.label(RichText::new(tr(label, &[])).color(theme.text_muted));
-    let version = if version.is_empty() {
-        tr("не найдена", &[])
-    } else {
-        version.into()
-    };
-    ui.label(RichText::new(version).strong());
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), theme.font_normal as f32 + 4.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.label(
+                RichText::new(tr(label, &[]))
+                    .size(theme.font_normal as f32)
+                    .color(theme.text_muted),
+            );
+            let version = if version.is_empty() {
+                tr("не найдена", &[])
+            } else {
+                version.into()
+            };
+            ui.label(RichText::new(version).font(semibold(theme.font_normal as f32)));
+        },
+    );
+}
+
+fn version_and_channel(
+    ui: &mut Ui,
+    theme: &Theme,
+    (label, current_version): (&str, &str),
+    (channel, beta_key): (&str, &'static str),
+    busy: bool,
+) -> Option<&'static str> {
+    if ui.available_width() < 430.0 {
+        version(ui, theme, label, current_version);
+        return ui
+            .horizontal(|ui| {
+                ui.label(
+                    RichText::new(tr("Канал:", &[]))
+                        .size(theme.font_normal as f32)
+                        .color(theme.text_muted),
+                );
+                channel_buttons(ui, theme, channel, beta_key, busy)
+            })
+            .inner;
+    }
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), 30.0),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let selected = channel_buttons(ui, theme, channel, beta_key, busy);
+            ui.label(
+                RichText::new(tr("Канал:", &[]))
+                    .size(theme.font_normal as f32)
+                    .color(theme.text_muted),
+            );
+            version(ui, theme, label, current_version);
+            selected
+        },
+    )
+    .inner
 }
 
 fn channel_buttons(
@@ -434,36 +500,132 @@ fn channel_buttons(
     beta_key: &'static str,
     busy: bool,
 ) -> Option<&'static str> {
-    ui.label(RichText::new(tr("Канал:", &[])).color(theme.text_muted));
-    ui.add_enabled_ui(!busy, |ui| {
-        let mut selected = None;
-        for (key, label) in [("stable", "Stable"), (beta_key, "Beta")] {
-            if ui
-                .add(Button::selectable(channel == key, tr(label, &[])))
-                .clicked()
-                && key != channel
-            {
-                selected = Some(key);
-            }
+    let segments = [("stable", "Stable"), (beta_key, "Beta")].map(|(key, label)| {
+        let font = if key == channel {
+            semibold(theme.font_small as f32)
+        } else {
+            FontId::proportional(theme.font_small as f32)
+        };
+        let label = tr(label, &[]);
+        let width = (ui
+            .painter()
+            .layout_no_wrap(label.clone(), font.clone(), theme.text)
+            .size()
+            .x
+            + 26.0)
+            .max(76.0);
+        (key, label, font, width)
+    });
+    let width = segments.iter().map(|segment| segment.3).sum::<f32>() + 4.0;
+    let (track, _) = ui.allocate_exact_size(vec2(width, 30.0), Sense::hover());
+    let painter = ui.painter();
+    let fade = |color: Color32| {
+        if busy {
+            color.gamma_multiply(0.5)
+        } else {
+            color
         }
-        selected
-    })
-    .inner
+    };
+    painter.rect(
+        track,
+        15.0,
+        fade(theme.control_fill),
+        Stroke::new(1.0, fade(theme.border_solid)),
+        egui::StrokeKind::Inside,
+    );
+    let mut position = track.min + vec2(2.0, 2.0);
+    let mut selection = None;
+    for (key, label, font, width) in segments {
+        let rect = egui::Rect::from_min_size(position, vec2(width, 26.0));
+        position.x += width;
+        let active = key == channel;
+        let response = ui.interact(
+            rect,
+            ui.scope_id().with(("update-channel", beta_key, key)),
+            if busy { Sense::hover() } else { Sense::click() },
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Button, !busy, active, &label)
+        });
+        if active {
+            painter.rect_filled(rect, 13.0, fade(theme.accent));
+        } else if response.hovered() && !busy {
+            painter.rect_filled(rect, 13.0, theme.control_fill_hover);
+        }
+        let text_color = if active {
+            theme.accent_text
+        } else {
+            theme.text_muted
+        };
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            label,
+            font,
+            fade(text_color),
+        );
+        if !busy
+            && response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            && !active
+        {
+            selection = Some(key);
+        }
+    }
+    selection
 }
 
 fn status(ui: &mut Ui, theme: &Theme, phase: Phase, message: String, strong: bool) {
     let label = RichText::new(message)
         .color(phase.color(theme))
         .size(theme.font_small as f32);
-    ui.label(if strong { label.strong() } else { label });
+    ui.label(if strong {
+        label.font(semibold(theme.font_small as f32))
+    } else {
+        label
+    });
 }
 
-fn check_button(ui: &mut Ui, theme: &Theme, label: &str, busy: bool) -> bool {
-    ui.add_enabled(
-        !busy,
-        Button::new(RichText::new(tr(label, &[])).color(theme.accent_text)).fill(theme.accent),
-    )
-    .clicked()
+fn action_row(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.spacing_mut().button_padding = vec2(14.0, 0.0);
+        content(ui);
+    });
+}
+
+fn action_button(
+    ui: &mut Ui,
+    theme: &Theme,
+    icon: &str,
+    label: String,
+    accent: bool,
+    enabled: bool,
+) -> bool {
+    let size = theme.font_normal as f32;
+    let color = if accent {
+        theme.accent_text
+    } else {
+        theme.text
+    };
+    let mut text = egui::text::LayoutJob::default();
+    text.append(
+        &format!("{icon}  "),
+        0.0,
+        egui::TextFormat::simple(FontId::proportional(size), color),
+    );
+    let font = if accent {
+        semibold(size)
+    } else {
+        FontId::proportional(size)
+    };
+    text.append(&label, 0.0, egui::TextFormat::simple(font, color));
+    let mut button = Button::new(text).min_size(vec2(0.0, theme.control_height as f32));
+    if accent {
+        button = button.fill(theme.accent).stroke(Stroke::NONE);
+    }
+    ui.add_enabled(enabled, button).clicked()
 }
 
 fn text<'a>(payload: &'a Value, key: &str) -> &'a str {
@@ -520,5 +682,38 @@ mod tests {
         assert!(page.components[2].state.phase.busy());
         assert!(!page.components[0].state.phase.busy());
         assert!(!page.components[3].state.phase.busy());
+    }
+
+    #[test]
+    fn channel_switch_uses_the_component_key_and_ignores_clicks_while_busy() {
+        let ctx = egui::Context::default();
+        let theme = Theme::resolve(&Default::default());
+        crate::shell::theme::apply_fonts(&ctx, &theme);
+        let mut beta = egui::Pos2::ZERO;
+        let mut frame = |events, busy| {
+            let mut selection = None;
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                beta = ui.next_widget_position() + vec2(115.0, 15.0);
+                selection = channel_buttons(ui, &theme, "stable", "prerelease", busy);
+            });
+            output.textures_delta.clear();
+            (beta, selection)
+        };
+        let (beta, _) = frame(vec![], false);
+        let click = |pressed| egui::Event::PointerButton {
+            pos: beta,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(beta), click(true)], false);
+        assert_eq!(frame(vec![click(false)], false).1, Some("prerelease"));
+        frame(vec![], true);
+        frame(vec![click(true)], true);
+        assert_eq!(frame(vec![click(false)], true).1, None);
     }
 }
