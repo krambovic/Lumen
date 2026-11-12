@@ -392,7 +392,10 @@ client, core/resource updaters, zapret and discord proxy managers.
 ## Left to port (Python source -> target crate)
 
 All ten Windows pages and the onboarding flow are wired to the Rust shell.
-See the release checklist for packaging and integration verification.
+The Windows release and prerelease workflows package the Rust executable
+through `windows/build.py`. The portable archive and Inno Setup installer
+carry the same executable, bundled cores, assets and templates, with the
+`LumenKVN.exe` alias for updates from older installs.
 
 ## Known warnings to clean
 None — the lumen-core list was cleaned in the same pass as the direct-route
@@ -409,7 +412,11 @@ are handled inside their porting commits.
 - Subagents run at most 2 concurrently (account limit); resume failed
   agents with SendMessage after a slot frees.
 
-## Release checklist (when everything above is done)
-`cargo build --release -p lumen-ui`, run against a real xray/sing-box
-core, compare generated configs with the Python app byte-for-byte, update
-`windows/build*.py`/installer to ship the Rust binary.
+## Release verification
+- The Windows SDK build embedded the manifest, icon and version metadata.
+  The staged executable reported the expected version. The portable ZIP
+  and Inno Setup installer both built using real Xray and sing-box extended
+  binaries, and each core accepted its bundled default template.
+- Full desktop verification covers launching the installed application,
+  upgrading a Python installation, connecting in proxy and TUN modes,
+  and comparing generated runtime configurations against Python.

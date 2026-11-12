@@ -54,11 +54,8 @@ jobs:
           cache: pip
           cache-dependency-path: windows/requirements.txt
 
-      - name: Cache venv
-        uses: actions/cache@v4
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-py312-${{ hashFiles('windows/requirements.txt') }}
+      - name: Set up Rust
+        run: rustup default stable-x86_64-pc-windows-msvc
 
       - name: Cache Inno Setup
         id: cache-inno
@@ -184,11 +181,11 @@ jobs:
           Write-Host "Core binaries ready:"
           Get-ChildItem windows/core/
 
-      - name: Build QML app, installer and portable archive
+      - name: Build Rust app, installer and portable archive
         shell: pwsh
         run: |
           cd windows
-          python build_qml.py
+          python build.py
 
       - name: List release assets
         shell: pwsh

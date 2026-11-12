@@ -282,14 +282,14 @@ TLS, REALITY, отпечатки uTLS, Vision, поддерживаемые ре
 <details>
 <summary>Сборка Windows или Android из исходников</summary>
 
-**Windows** использует Python и PyQt6/QML. Для полной сборки также необходимы сетевые ядра, геоданные и ресурсы упаковки.
+**Windows** использует Rust и egui. Установите Rust с x64 MSVC, Windows SDK, Python 3.12 или новее и Inno Setup 6. Добавьте Xray, sing-box с патчами проекта, Wintun и геоданные в `windows/core` по примеру сценария сборки Windows в CI.
 
 ```powershell
 cd windows
-python -m pip install -r requirements.txt
-python run_qml.py
-python build_qml.py
+python build.py
 ```
+
+Установщик и portable-архив появятся в `windows/dist`. Для локальной проверки распакованного приложения используйте `python build.py --no-zip --no-installer --stage-dir <пустой-каталог>`. Эталонный клиент Python/QML по-прежнему запускается командой `python run_qml.py` после установки зависимостей из `windows/requirements.txt`.
 
 **Android** использует Kotlin и Jetpack Compose. Настройте JDK 17 и Android SDK.
 

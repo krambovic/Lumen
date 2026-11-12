@@ -389,31 +389,34 @@ def _validate_release_data_tree(app_dir: Path) -> None:
             raise RuntimeError("Unrecognized or modified data found in build output; packaging refused")
 
 
-def _pack_zip(path: Path) -> None:
-    _validate_release_data_tree(APP_DIR)
+def _pack_zip(path: Path, app_dir: Path | None = None) -> None:
+    app_dir = APP_DIR if app_dir is None else app_dir
+    _validate_release_data_tree(app_dir)
     if path.exists():
         path.unlink()
     _print(f"Creating {path} ...")
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
-        for item in APP_DIR.rglob("*"):
-            zf.write(item, item.relative_to(APP_DIR))
+        for item in app_dir.rglob("*"):
+            zf.write(item, item.relative_to(app_dir))
 
 
-def pack_portable_zip() -> None:
-    marker = APP_DIR / "portable"
+def pack_portable_zip(app_dir: Path | None = None) -> None:
+    app_dir = APP_DIR if app_dir is None else app_dir
+    marker = app_dir / "portable"
     created_marker = not marker.exists()
     if created_marker:
         marker.write_text("", encoding="utf-8")
     try:
-        _pack_zip(PORTABLE_ZIP_PATH)
+        _pack_zip(PORTABLE_ZIP_PATH, app_dir)
     finally:
         if created_marker and marker.exists():
             marker.unlink()
     _print(f"Portable archive ready: {PORTABLE_ZIP_PATH}")
 
 
-def build_installer() -> None:
-    _validate_release_data_tree(APP_DIR)
+def build_installer(app_dir: Path | None = None, version: str | None = None) -> None:
+    app_dir = APP_DIR if app_dir is None else app_dir
+    _validate_release_data_tree(app_dir)
     iscc = _find_iscc()
     if iscc is None:
         raise SystemExit(
@@ -421,9 +424,9 @@ def build_installer() -> None:
         )
     if INSTALLER_PATH.exists():
         INSTALLER_PATH.unlink()
-    version = _read_app_version()
+    version = _read_app_version() if version is None else version
     version_info = _numeric_version(version)
-    source_dir = _windows_path(APP_DIR)
+    source_dir = _windows_path(app_dir)
     output_dir = _windows_path(DIST_DIR)
     _run(
         [

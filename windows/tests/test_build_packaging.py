@@ -6,6 +6,31 @@ import zipfile
 import pytest
 
 import build_qml
+import build_rust
+
+
+def test_rust_staging_keeps_legacy_launcher_and_uses_fresh_data(tmp_path: Path, monkeypatch) -> None:
+    executable = tmp_path / "compiled-lumen.exe"
+    executable.write_bytes(b"rust-launcher")
+    core = tmp_path / "core"
+    core.mkdir()
+    (core / "xray.exe").write_bytes(b"core-fixture")
+    monkeypatch.setattr(build_qml, "CORE_DIR", core)
+    for name in ("ZAPRET_DIR", "DATA_TEMPLATES_DIR", "DROUTE_BUNDLE_DIR", "ASSETS_DIR"):
+        directory = tmp_path / name.lower()
+        directory.mkdir()
+        monkeypatch.setattr(build_qml, name, directory)
+    monkeypatch.setattr(build_qml, "_validate_droute_bundle", lambda _: "fixture")
+    app = tmp_path / "app"
+
+    build_rust.stage_release(executable, app)
+
+    assert (app / "Lumen.exe").read_bytes() == executable.read_bytes()
+    assert (app / "LumenKVN.exe").read_bytes() == executable.read_bytes()
+    assert (app / "core" / "xray.exe").is_file()
+    assert not (app / "_internal").exists()
+    with pytest.raises(RuntimeError, match="must be empty"):
+        build_rust.stage_release(executable, app)
 
 
 def test_bundled_droute_matches_latest_verified_release() -> None:

@@ -282,14 +282,14 @@ Expand your platform for the available controls. Some advanced options appear on
 <details>
 <summary>Build Windows or Android from source</summary>
 
-**Windows** uses Python and PyQt6/QML. Network cores, geodata and packaging assets are also required for a complete build.
+**Windows** uses Rust and egui. Install the x64 MSVC Rust toolchain, the Windows SDK, Python 3.12 or newer, and Inno Setup 6. Populate `windows/core` with the Xray and patched sing-box binaries, Wintun and geodata using the Windows build workflow as a reference.
 
 ```powershell
 cd windows
-python -m pip install -r requirements.txt
-python run_qml.py
-python build_qml.py
+python build.py
 ```
+
+The installer and portable archive are written to `windows/dist`. To keep a staged app for local testing, use `python build.py --no-zip --no-installer --stage-dir <empty-directory>`. The Python/QML reference client can still be run with `python run_qml.py` after installing `windows/requirements.txt`.
 
 **Android** uses Kotlin and Jetpack Compose. Configure JDK 17 and the Android SDK.
 

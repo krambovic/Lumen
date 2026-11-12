@@ -1,8 +1,4 @@
-"""Build Lumen.
-
-Lumen is QML-only. This wrapper keeps the old `python build.py` command
-working while delegating all packaging to build_qml.py.
-"""
+"""Build and package the Rust Windows desktop client."""
 
 from __future__ import annotations
 
@@ -15,7 +11,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 def main() -> int:
-    cmd = [sys.executable, str(ROOT / "build_qml.py"), *sys.argv[1:]]
+    cmd = [sys.executable, str(ROOT / "build_rust.py"), *sys.argv[1:]]
     return subprocess.run(cmd, cwd=str(ROOT)).returncode
 
 
