@@ -282,7 +282,7 @@ Expand your platform for the available controls. Some advanced options appear on
 <details>
 <summary>Build Windows or Android from source</summary>
 
-**Windows** uses Rust and egui. Install the x64 MSVC Rust toolchain, the Windows SDK, Python 3.12 or newer, and Inno Setup 6. Populate `windows/core` with the Xray and patched sing-box binaries, Wintun and geodata using the Windows build workflow as a reference.
+**Windows** uses Rust and egui. Install the x64 MSVC Rust toolchain, the Windows SDK, Python 3.12 or newer, and Inno Setup 6. Populate `windows/core` with Xray, patched sing-box and its Cronet DLL, Wintun and geodata using the Windows build workflow as a reference.
 
 ```powershell
 cd windows

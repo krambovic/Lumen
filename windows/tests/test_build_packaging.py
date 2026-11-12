@@ -1,12 +1,28 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import zipfile
 
 import pytest
 
 import build_qml
 import build_rust
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows packaging command")
+def test_rust_build_requires_naiveproxy_runtime(tmp_path: Path, monkeypatch, capsys) -> None:
+    core = tmp_path / "core"
+    singbox = core / "sing-box-extended"
+    singbox.mkdir(parents=True)
+    for binary in (core / "xray.exe", core / "wintun.dll", singbox / "sing-box.exe"):
+        binary.touch()
+    monkeypatch.setattr(build_qml, "CORE_DIR", core)
+    monkeypatch.setattr(sys, "argv", ["build.py"])
+
+    with pytest.raises(SystemExit, match="2"):
+        build_rust.main()
+    assert "libcronet.dll" in capsys.readouterr().err
 
 
 def test_rust_staging_keeps_legacy_launcher_and_uses_fresh_data(tmp_path: Path, monkeypatch) -> None:

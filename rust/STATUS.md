@@ -423,8 +423,9 @@ are handled inside their porting commits.
   probe and the update script's `--version-file` command. The update script
   waits for the GUI executable and passes the output path as a single
   argument, including spaces. The portable ZIP
-  and Inno Setup installer both built using real Xray and sing-box extended
-  binaries, and each core accepted its bundled default template.
+  and Inno Setup installer both built with Xray, the patched sing-box extended
+  core, its Cronet DLL for NaiveProxy, Wintun and the regional geodata bundle.
+  Each core accepted its bundled default template.
 - The Rust and Python clients generated equivalent JSON configurations for
   VLESS, Trojan, Shadowsocks and Hysteria2 in four proxy/TUN scenarios after
   masking the random Clash API secret. Both cores accepted all seven

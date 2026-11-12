@@ -113,7 +113,13 @@ def main() -> int:
     if os.name != "nt":
         parser.error("the native Windows package must be built on Windows")
 
-    for relative in ("xray.exe", "wintun.dll", "sing-box-extended/sing-box.exe"):
+    required_core_files = (
+        "xray.exe",
+        "wintun.dll",
+        "sing-box-extended/sing-box.exe",
+        "sing-box-extended/libcronet.dll",
+    )
+    for relative in required_core_files:
         if not (packaging.CORE_DIR / relative).is_file():
             parser.error(f"missing bundled core file: {packaging.CORE_DIR / relative}")
 

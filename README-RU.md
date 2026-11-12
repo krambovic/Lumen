@@ -282,7 +282,7 @@ TLS, REALITY, отпечатки uTLS, Vision, поддерживаемые ре
 <details>
 <summary>Сборка Windows или Android из исходников</summary>
 
-**Windows** использует Rust и egui. Установите Rust с x64 MSVC, Windows SDK, Python 3.12 или новее и Inno Setup 6. Добавьте Xray, sing-box с патчами проекта, Wintun и геоданные в `windows/core` по примеру сценария сборки Windows в CI.
+**Windows** использует Rust и egui. Установите Rust с x64 MSVC, Windows SDK, Python 3.12 или новее и Inno Setup 6. Добавьте Xray, sing-box с патчами проекта и его DLL Cronet, Wintun и геоданные в `windows/core` по примеру сценария сборки Windows в CI.
 
 ```powershell
 cd windows
