@@ -95,7 +95,7 @@ impl NodeEditor {
             ui.label(
                 RichText::new(tr(title, &[]))
                     .size(theme.font_title as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             ScrollArea::vertical()
                 .max_height((ctx.content_rect().height() - 148.0).max(100.0))

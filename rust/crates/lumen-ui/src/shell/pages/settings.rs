@@ -133,7 +133,7 @@ impl SettingsPage {
         ui.label(
             RichText::new(tr("Настройки", &[]))
                 .size(theme.font_title as f32)
-                .strong(),
+                .family(crate::shell::theme::semibold_family()),
         );
         self.tab_bar(ui, theme, compact);
         if let Some(error) = &self.file_error {
@@ -244,7 +244,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new(tr("Тема", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             setting_row(
                 ui,
@@ -346,7 +346,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new(tr("Обои", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             let wallpaper = bridge.ui_wallpaper();
             setting_row(
@@ -424,7 +424,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new(tr("Интерфейс", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             setting_row(
                 ui,
@@ -503,7 +503,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new(tr("Прозрачность", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             let active = s.ui_backdrop != "solid";
             let available = bridge.ui_backdrop_available() || active;
@@ -555,7 +555,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new(tr("Подписки", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             setting_row(
                 ui,
@@ -613,7 +613,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new(tr("Фильтры regex", &[]))
                     .size(theme.font_normal as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             ui.label(
                 RichText::new(tr("Каждая строка — отдельное выражение. Фильтр применяется к имени, адресу, протоколу и исходной ссылке сервера.", &[]))
@@ -643,7 +643,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new(tr("Параметры запроса", &[]))
                     .size(theme.font_normal as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             setting_row(
                 ui,
@@ -725,7 +725,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new("DNS")
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             setting_row(
                 ui,
@@ -760,7 +760,7 @@ impl SettingsPage {
                 ui.label(
                     RichText::new(tr("DNS-серверы", &[]))
                         .size(theme.font_normal as f32)
-                        .strong(),
+                        .family(crate::shell::theme::semibold_family()),
                 );
                 let wide = ui.available_width() >= 900.0;
                 if wide {
@@ -926,7 +926,7 @@ impl SettingsPage {
                 ui.label(
                     RichText::new("Hosts")
                         .size(theme.font_normal as f32)
-                        .strong(),
+                        .family(crate::shell::theme::semibold_family()),
                 );
                 ui.label(
                     RichText::new(tr("Формат: domain=address. Несколько адресов разделяются запятыми.", &[]))
@@ -950,7 +950,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new(tr("Данные", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             let loaded = bridge.profile_loaded();
             setting_row(
@@ -1047,7 +1047,7 @@ impl SettingsPage {
                 ui.label(
                     RichText::new(tr("Пути к ядрам", &[]))
                         .size(theme.font_strong as f32)
-                        .strong(),
+                        .family(crate::shell::theme::semibold_family()),
                 );
                 let xray = bridge.xray_path_display();
                 let singbox = bridge.singbox_path_display();
@@ -1130,7 +1130,7 @@ impl SettingsPage {
             ui.label(
                 RichText::new(tr("Сбросить настройки?", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             ui.label(tr("Настройки приложения и маршрутизации вернутся к значениям по умолчанию. Серверы и подписки не будут удалены.", &[]));
             right_row(ui, theme.control_height as f32, |ui| {
@@ -1159,7 +1159,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
         ui.label(
             RichText::new(tr("Сеть", &[]))
                 .size(theme.font_strong as f32)
-                .strong(),
+                .family(crate::shell::theme::semibold_family()),
         );
         let region = bridge.regional_preset();
         setting_row(
@@ -1345,7 +1345,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
         ui.label(
             RichText::new(tr("Цепочка прокси", &[]))
                 .size(theme.font_strong as f32)
-                .strong(),
+                .family(crate::shell::theme::semibold_family()),
         );
         setting_row(
             ui,
@@ -1441,7 +1441,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
             ui.label(
                 RichText::new(tr("Авто-переключение", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             setting_row(
                 ui,
@@ -1497,7 +1497,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
             ui.label(
                 RichText::new(tr("Прокси", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             setting_row(
                 ui,
@@ -1614,7 +1614,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 ui.label(
                     RichText::new(tr("TUN", &[]))
                         .size(theme.font_strong as f32)
-                        .strong(),
+                        .family(crate::shell::theme::semibold_family()),
                 );
                 setting_row(
                     ui,
@@ -1704,7 +1704,7 @@ fn startup(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
         ui.label(
             RichText::new(tr("Запуск", &[]))
                 .size(theme.font_strong as f32)
-                .strong(),
+                .family(crate::shell::theme::semibold_family()),
         );
         setting_row(
             ui,
@@ -1815,7 +1815,7 @@ fn startup(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
             ui.label(
                 RichText::new(tr("Тестирование серверов", &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             setting_row(
                 ui,
@@ -1893,7 +1893,7 @@ fn updates(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings) 
         ui.label(
             RichText::new(tr("Обновления", &[]))
                 .size(theme.font_strong as f32)
-                .strong(),
+                .family(crate::shell::theme::semibold_family()),
         );
         for (glyph, title, subtitle, value, set) in [
             (

@@ -145,7 +145,7 @@ pub(super) fn inspector(ui: &mut Ui, theme: &Theme, sub: &Value) {
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let title = if title.is_empty() { name(sub) } else { title };
-                ui.add(egui::Label::new(RichText::new(title).size(16.0).strong()).truncate());
+                ui.add(egui::Label::new(RichText::new(title).size(16.0).family(crate::shell::theme::semibold_family())).truncate());
             });
         },
     );

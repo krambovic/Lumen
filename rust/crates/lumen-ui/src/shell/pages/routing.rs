@@ -140,7 +140,7 @@ impl RoutingPage {
                         ui.label(
                             RichText::new(tr("Маршрутизация", &[]))
                                 .size(theme.font_title as f32)
-                                .strong(),
+                                .family(crate::shell::theme::semibold_family()),
                         );
                     });
                 });
@@ -447,7 +447,7 @@ impl RoutingPage {
             ui.label(
                 RichText::new(tr(dialog.title(), &[]))
                     .size(theme.font_strong as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             ui.add_space(2.0);
             caption(ui, theme, dialog.description());
@@ -590,7 +590,7 @@ fn rules(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, processes: bool) {
                     ui.label(
                         RichText::new(tr("Действие", &[]))
                             .size(theme.font_small as f32)
-                            .strong()
+                            .family(crate::shell::theme::semibold_family())
                             .color(theme.text_muted),
                     );
                 },
@@ -599,7 +599,7 @@ fn rules(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, processes: bool) {
                 ui.label(
                     RichText::new(tr(title, &[]))
                         .size(theme.font_small as f32)
-                        .strong()
+                        .family(crate::shell::theme::semibold_family())
                         .color(theme.text_muted),
                 );
             });
@@ -875,7 +875,7 @@ fn section(ui: &mut Ui, theme: &Theme, title: &str) {
     ui.label(
         RichText::new(tr(title, &[]))
             .size(theme.font_strong as f32)
-            .strong(),
+            .family(crate::shell::theme::semibold_family()),
     );
 }
 

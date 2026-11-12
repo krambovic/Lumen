@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 122
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 127
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -355,6 +355,28 @@ client, core/resource updaters, zapret and discord proxy managers.
   activation and deep links. PageContext carries the bridge, theme, and
   page events. Country flags and the window/tray icon are available in the
   standalone binary.
+- Visual parity with the QML client is checked with
+  `target/uicmp/cmp.py` (see "Visual comparison" below). Shared pieces:
+  - The window is created transparent with a zero clear colour, so the DWM
+    Mica/acrylic backdrop shows through the translucent `windowBase` veil as
+    in `Main.qml`. Before this the veils were blended over eframe's dark
+    default and every surface was about 11 levels too dark. Dithering is off
+    because Qt paints flat fills.
+  - `Font.DemiBold` text uses `seguisb.ttf` through `theme::semibold` /
+    `theme::semibold_family`. egui's `RichText::strong()` only changes the
+    colour, so it is not used for weight.
+  - `shell/motion.rs` ports the QML `Behavior`/`NumberAnimation` timings
+    (`follow`, `follow_color`, `toggle`, `progress`) and honours
+    `Theme.animations`. Wired so far: rail width and burger, nav button
+    fill/pill/ink, the `LazyPageLoader` fade + 6 px slide on page change and
+    the 900 ms start-up fade of the chrome (the 0.975 scale is not ported).
+  - `shell/widgets.rs` holds the hand-painted Fluent controls:
+    `FluentButton` (`AccentButton.qml` with the colour and press-scale
+    animations), `combo` (`FluentCombo.qml` field and flyout), `card_frame`,
+    `section_title`, `BigValue`, `bordered_rect` (a QML border replaces the
+    fill at the edge; egui strokes blend over it) and `StatusRing`
+    (`StatusRing.qml` with the busy spin and settle animations).
+    Pages other than the dashboard still use stock egui buttons and combos.
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated
@@ -434,6 +456,13 @@ client, core/resource updaters, zapret and discord proxy managers.
   QML spacing, link actions and support dialogs. Links wrap in narrow
   windows and the QR adapts to the available dialog height. Compared both
   clients at 1280×760 and walked every onboarding step in Rust.
+- Dashboard geometry is laid out from the `DashboardPage.qml` numbers with
+  painted rows instead of nested egui layouts: 20 px hero card with the
+  66 px status column, 180 px connect button, segmented mode switch and
+  right-aligned rates; pivot tabs with the animated underline; the quick
+  connect header scrolling with the 44 px server rows; 96 px latency and
+  session cards; animated process bars. At 1280x760 the overlay against the
+  QML client differs only in glyph anti-aliasing (Qt uses ClearType).
 - Dashboard: connect and mode controls, quick connect, searchable server list,
   batch test and server actions, shared protocol editor and QR dialog, live
   rates, latency history, traffic totals and the routing preset picker.
@@ -474,6 +503,20 @@ carry the same executable, bundled cores, assets and templates, with the
 None — the lumen-core list was cleaned in the same pass as the direct-route
 fetcher fix (2026-11-10). lumen-platform/lumen-engines/lumen-app warnings
 are handled inside their porting commits.
+
+## Visual comparison
+`target/uicmp/` (untracked) holds the comparison tools:
+- `build-preview.ps1` builds `LumenPreview.exe`: the debug client with the
+  single-instance guard bypassed and the start page read from
+  `LUMEN_PREVIEW_PAGE`. The `shell/mod.rs` patch is temporary and restored.
+- `cmp.py <page 0-9> [width height]` starts the preview and the QML client
+  (`qml_ref.py`) on the same isolated demo profile and captures both windows
+  with `PrintWindow`. `--screen` grabs from the screen instead, which is the
+  only way to see the DWM backdrop; run it with `--only rust|qml`.
+- The fixture sets `auto_connect_last: false`. Without it the QML client
+  connects on start, launches sing-box and enables the system proxy; a
+  killed run then leaves both behind.
+- `kill.ps1` stops only the comparison windows.
 
 ## Tooling notes for agents
 - Never put double curly braces in tool arguments (they get mangled);

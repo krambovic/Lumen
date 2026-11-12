@@ -1,10 +1,11 @@
 //! Navigation model (port of the `nav` list, `NavButton.qml` behavior and the
 //! page switching state in `Main.qml`).
 
-use egui::{Color32, Rect, Sense, Ui, Vec2};
+use egui::{Color32, Id, Rect, Sense, Ui, Vec2};
 
 use lumen_core::i18n::tr;
 
+use super::motion;
 use super::theme::Theme;
 
 /// Ordered page entries. Index == the `currentIndex` used by every page
@@ -240,42 +241,56 @@ pub fn draw_nav_button(
     let row_width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(row_width, row_height), Sense::click());
     let hovered = response.hovered();
+    let ctx = ui.ctx().clone();
+    let id = Id::unique(("lumen-nav-button", entry.page.index()));
+    let standard = motion::ease_out_cubic;
+    let emphasized = motion::ease_out_quint;
 
+    let bg_width = motion::follow(
+        &ctx,
+        theme,
+        id.with("width"),
+        if compact {
+            38.0
+        } else {
+            (row_width - 12.0).max(38.0)
+        },
+        170.0,
+        emphasized,
+    );
     let bg_rect = Rect::from_min_size(
         rect.min + Vec2::new(6.0, 0.0),
-        Vec2::new(
-            if compact {
-                38.0
-            } else {
-                (row_width - 12.0).max(38.0)
-            },
-            row_height,
-        ),
+        Vec2::new(bg_width, row_height),
     );
+    let highlight = motion::toggle(&ctx, theme, id.with("fill"), selected || hovered, 130.0, standard);
     let fill = if selected {
         theme.accent_soft
-    } else if hovered {
-        theme.nav_hover
     } else {
-        Color32::TRANSPARENT
+        theme.nav_hover
     };
-    ui.painter()
-        .rect_filled(bg_rect, theme.radius_small as f32, fill);
+    ui.painter().rect_filled(
+        bg_rect,
+        theme.radius_small as f32,
+        fill.gamma_multiply(highlight),
+    );
 
-    if selected {
-        let pill_height = row_height * 0.5;
+    let pill_grow = motion::toggle(&ctx, theme, id.with("pill-height"), selected, 210.0, emphasized);
+    let pill_alpha = motion::toggle(&ctx, theme, id.with("pill-opacity"), selected, 150.0, standard);
+    if pill_alpha > 0.0 {
+        let pill_height = row_height * 0.5 * pill_grow;
         let pill_rect = Rect::from_min_size(
             egui::pos2(bg_rect.left() + 3.0, bg_rect.center().y - pill_height / 2.0),
             Vec2::new(3.0, pill_height),
         );
-        ui.painter().rect_filled(pill_rect, 1.5, theme.accent);
+        ui.painter()
+            .rect_filled(pill_rect, 1.5, theme.accent.gamma_multiply(pill_alpha));
     }
 
-    let icon_color = if selected {
-        theme.text
-    } else {
-        theme.text_muted
-    };
+    let icon_color = motion::mix(
+        theme.text_muted,
+        theme.text,
+        motion::toggle(&ctx, theme, id.with("ink"), selected, 140.0, standard),
+    );
     let icon_size = (16.0 * theme.font_scale) as f32;
     let icon_pos = egui::pos2(bg_rect.left() + 11.0, bg_rect.center().y - icon_size / 2.0);
     let icon_rect = Rect::from_min_size(icon_pos, Vec2::new(18.0, icon_size));

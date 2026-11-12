@@ -95,7 +95,7 @@ impl DiagnosticsExport {
                 ui.label(
                     RichText::new(tr("Экспорт диагностики", &[]))
                         .size(theme.font_title as f32)
-                        .strong(),
+                        .family(crate::shell::theme::semibold_family()),
                 );
                 ui.label(
                     RichText::new(tr("Выберите, что включить в архив диагностики.", &[]))

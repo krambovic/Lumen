@@ -937,7 +937,7 @@ impl NodesPage {
                                 theme.text_muted
                             });
                             let tab = ui.add(
-                                Button::new(if active { label.strong() } else { label })
+                                Button::new(if active { label.family(crate::shell::theme::semibold_family()) } else { label })
                                     .min_size(egui::vec2(80.0, 38.0))
                                     .frame(false),
                             );
@@ -986,7 +986,7 @@ impl NodesPage {
                                         egui::Label::new(
                                             RichText::new(field(&details, "name"))
                                                 .size(18.0)
-                                                .strong(),
+                                                .family(crate::shell::theme::semibold_family()),
                                         )
                                         .truncate(),
                                     );
@@ -1134,7 +1134,7 @@ impl NodesPage {
             ui.label(
                 RichText::new(tr(title, &[]))
                     .size(theme.font_title as f32)
-                    .strong(),
+                    .family(crate::shell::theme::semibold_family()),
             );
             match &dialog {
                 Dialog::Group => edit(ui, &mut self.input, "Имя группы"),
@@ -1394,7 +1394,7 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
         _ => subscription::time_label(&json!(model.last_used_at(row))),
     };
     let label = RichText::new(&text).size(13.0).color(color);
-    ui.add(egui::Label::new(if column == 8 { label.strong() } else { label }).truncate())
+    ui.add(egui::Label::new(if column == 8 { label.family(crate::shell::theme::semibold_family()) } else { label }).truncate())
         .on_hover_text(text);
 }
 

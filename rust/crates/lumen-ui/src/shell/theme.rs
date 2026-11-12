@@ -1829,7 +1829,7 @@ fn ui_font_candidates(family: &str) -> Vec<PathBuf> {
             }
             paths.push(fonts.join("segoeui.ttf"));
             paths.push(fonts.join("segoeuib.ttf"));
-            paths.push(fonts.join("segoeuisb.ttf"));
+            paths.push(fonts.join("seguisb.ttf"));
         }
     }
     paths
@@ -1881,7 +1881,7 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
 
         // The icon font supplies the Private Use Area glyphs used by QML.
         proportional.push("Segoe Fluent Icons".into());
-        for (family, stem) in [("Segoe UI Semibold", "segoeuisb"), ("Segoe UI Bold", "segoeuib")] {
+        for (family, stem) in [("Segoe UI Semibold", "seguisb"), ("Segoe UI Bold", "segoeuib")] {
             let mut fonts = proportional.clone();
             if let Some(index) = fonts.iter().position(|name| name == stem) {
                 fonts[..=index].rotate_right(1);
@@ -1899,6 +1899,11 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
         }
         LoadedFonts { definitions }
     })
+}
+
+/// Qt `Font.DemiBold` for rich text that keeps its own size.
+pub(crate) fn semibold_family() -> FontFamily {
+    FontFamily::Name("Segoe UI Semibold".into())
 }
 
 pub(super) fn semibold(size: f32) -> egui::FontId {

@@ -344,7 +344,7 @@ impl Onboarding {
                 theme.text,
             );
             ui.vertical(|ui| {
-                ui.label(RichText::new("Lumen").size(20.0).strong());
+                ui.label(RichText::new("Lumen").size(20.0).family(crate::shell::theme::semibold_family()));
                 ui.label(
                     RichText::new(format!("v{APP_VERSION}"))
                         .size(theme.font_small as f32)
@@ -795,7 +795,7 @@ fn welcome(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
     ui.label(
         RichText::new(tr(title, &[]))
             .size(30.0)
-            .strong(),
+            .family(crate::shell::theme::semibold_family()),
     );
     ui.add_space(10.0);
     ui.label(
@@ -1043,7 +1043,7 @@ fn region_label(region: &str) -> &'static str {
 
 /// `PageHeader`: 24/28pt title + normal muted subtitle.
 fn page_header(ui: &mut Ui, theme: &Theme, title: String, subtitle: String, title_size: f32) {
-    ui.label(RichText::new(title).size(title_size).strong());
+    ui.label(RichText::new(title).size(title_size).family(crate::shell::theme::semibold_family()));
     ui.add_space(6.0);
     if !subtitle.is_empty() {
         ui.label(RichText::new(subtitle).color(theme.text_muted));
@@ -1057,7 +1057,7 @@ fn section_label(ui: &mut Ui, theme: &Theme, text: &str) {
     ui.label(
         RichText::new(text.to_uppercase())
             .size(theme.font_small as f32)
-            .strong()
+            .family(crate::shell::theme::semibold_family())
             .color(theme.text_muted),
     );
     ui.add_space(10.0);
@@ -1291,7 +1291,7 @@ fn choice_card(
                     .color(if selected { theme.accent } else { theme.text_muted }),
             );
             ui.vertical(|ui| {
-                ui.label(RichText::new(title).size(theme.font_normal as f32).strong());
+                ui.label(RichText::new(title).size(theme.font_normal as f32).family(crate::shell::theme::semibold_family()));
                 ui.label(
                     RichText::new(subtitle)
                         .size(theme.font_small as f32)
@@ -1352,7 +1352,7 @@ fn routing_card(
                     .color(if selected { theme.accent } else { theme.text_muted }),
             );
             ui.vertical(|ui| {
-                ui.label(RichText::new(title).size(theme.font_normal as f32).strong());
+                ui.label(RichText::new(title).size(theme.font_normal as f32).family(crate::shell::theme::semibold_family()));
                 if !subtitle.is_empty() {
                     ui.label(
                         RichText::new(subtitle)
@@ -1382,7 +1382,7 @@ fn feature_tile(ui: &mut Ui, theme: &Theme, width: f32, glyph: &str, title: &str
             ui.spacing_mut().item_spacing.x = 12.0;
             ui.label(RichText::new(glyph).size(18.0).color(theme.accent));
             ui.vertical(|ui| {
-                ui.label(RichText::new(tr(title, &[])).size(theme.font_normal as f32).strong());
+                ui.label(RichText::new(tr(title, &[])).size(theme.font_normal as f32).family(crate::shell::theme::semibold_family()));
                 ui.label(
                     RichText::new(tr(subtitle, &[]))
                         .size(theme.font_small as f32)
@@ -1444,7 +1444,7 @@ fn note_row(ui: &mut Ui, theme: &Theme, glyph: &str, title: &str, text: &str) {
                 }
                 ui.vertical(|ui| {
                     ui.add_space(8.0);
-                    ui.label(RichText::new(title).size(theme.font_normal as f32).strong());
+                    ui.label(RichText::new(title).size(theme.font_normal as f32).family(crate::shell::theme::semibold_family()));
                     ui.label(
                         RichText::new(text)
                             .size(theme.font_small as f32)
@@ -1524,7 +1524,7 @@ fn support_card(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, show_support
             .layout(Layout::top_down(Align::LEFT)),
     );
     card.spacing_mut().item_spacing.y = 6.0;
-    card.label(RichText::new(tr("Нравится Lumen?", &[])).strong());
+    card.label(RichText::new(tr("Нравится Lumen?", &[])).family(crate::shell::theme::semibold_family()));
     card.label(
         RichText::new(tr("Lumen бесплатный и с открытым кодом. Поставьте звезду на GitHub — так о проекте узнает больше людей. А если хотите помочь развитию — поддержите проект.", &[]))
             .size(theme.font_small as f32)

@@ -15,6 +15,8 @@
 //! - [`win_native`] — the ctypes integration blocks of main_qml.py
 
 pub mod geometry;
+pub(crate) mod motion;
+pub(crate) mod widgets;
 pub mod navigation;
 pub mod pages;
 mod onboarding;
@@ -154,6 +156,9 @@ pub fn run() -> i32 {
         .with_title(APP_NAME)
         // Main.qml draws its own title bar (the QWindowKit custom frame).
         .with_decorations(false)
+        // Main.qml `color: "transparent"`: the DWM backdrop shows through
+        // the translucent window veil.
+        .with_transparent(true)
         .with_min_inner_size([APP_MINIMUM_WIDTH as f32, APP_MINIMUM_HEIGHT as f32])
         // WindowReveal: show only after the first frame painted.
         .with_visible(false)
@@ -177,6 +182,8 @@ pub fn run() -> i32 {
         APP_NAME,
         eframe::NativeOptions {
             viewport,
+            // Qt paints flat fills; dithering would add visible noise to them.
+            dithering: false,
             ..Default::default()
         },
         Box::new(move |cc| {
@@ -757,7 +764,7 @@ impl ShellApp {
                 self.paint_wallpaper(ctx, ui.painter(), full);
 
                 // Rail metrics (Main.qml railVisualWidth).
-                let rail_width = self.rail_visual_width(theme);
+                let rail_width = self.rail_visual_width(ctx, theme);
                 let rail_rect = Rect::from_min_size(
                     egui::pos2(full.left(), full.top() + title_height),
                     Vec2::new(rail_width, full.height() - title_height),
@@ -813,12 +820,27 @@ impl ShellApp {
         TITLE_BAR_HEIGHT + if maximized { 2.0 } else { 0.0 }
     }
 
-    fn rail_visual_width(&self, theme: &theme::Theme) -> f32 {
-        if self.navigation.rail_collapsed() {
+    /// Main.qml `railVisualWidth` with its 155 ms `Behavior`.
+    fn rail_visual_width(&self, ctx: &egui::Context, theme: &theme::Theme) -> f32 {
+        let target = if self.navigation.rail_collapsed() {
             theme.rail_width_compact as f32
         } else {
             theme.rail_width as f32
-        }
+        };
+        motion::follow(
+            ctx,
+            theme,
+            egui::Id::unique("lumen-rail-width"),
+            target,
+            155.0,
+            motion::ease_out_cubic,
+        )
+    }
+
+    /// Main.qml `appChrome` start-up fade (0.35 -> 1 over 900 ms).
+    fn chrome_opacity(ctx: &egui::Context, theme: &theme::Theme) -> f32 {
+        let elapsed = motion::elapsed_since_change(ctx, egui::Id::unique("lumen-chrome-start"), ());
+        0.35 + 0.65 * motion::progress(ctx, theme, elapsed, 900.0, motion::ease_out_quint)
     }
 
     /// Title bar interactions: drag region + window buttons (TitleBar.qml).
@@ -914,7 +936,7 @@ impl ShellApp {
     /// The navigation rail (`railClip` + `railColumn` in Main.qml).
     fn paint_rail(&mut self, ctx: &egui::Context, theme: &theme::Theme) {
         let compact_mode = self.bridge.compact_mode();
-        let rail_width = self.rail_visual_width(theme);
+        let rail_width = self.rail_visual_width(ctx, theme);
         let title_height = self.title_bar_height(ctx);
         let rail_height = ctx.viewport_rect().height() - title_height;
 
@@ -926,6 +948,11 @@ impl ShellApp {
             .show(ctx, |ui| {
                 ui.set_width(rail_width);
                 ui.set_height(rail_height);
+                ui.shrink_clip_rect(Rect::from_min_size(
+                    egui::pos2(0.0, title_height),
+                    Vec2::new(rail_width, rail_height),
+                ));
+                ui.multiply_opacity(Self::chrome_opacity(ctx, theme));
 
                 egui::ScrollArea::vertical()
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
@@ -933,17 +960,27 @@ impl ShellApp {
                     .show(ui, |ui| {
                         let top = ui.cursor().top();
                         ui.set_min_width(rail_width);
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        // navFlick `anchors.topMargin: 8`.
+                        ui.add_space(8.0);
                         // Burger row (40 * fontScale tall).
                         let burger_height = (40.0 * theme.font_scale) as f32;
                         let (burger_rect, burger_response) = ui.allocate_exact_size(
                             Vec2::new(ui.available_width(), burger_height),
                             Sense::click(),
                         );
-                        let bg_width = if self.navigation.rail_collapsed() {
-                            (38.0 * theme.font_scale) as f32
-                        } else {
-                            ((38.0 * theme.font_scale) as f32).max(burger_rect.width() - 12.0)
-                        };
+                        let bg_width = motion::follow(
+                            ctx,
+                            theme,
+                            egui::Id::unique("lumen-burger-width"),
+                            if self.navigation.rail_collapsed() {
+                                (38.0 * theme.font_scale) as f32
+                            } else {
+                                ((38.0 * theme.font_scale) as f32).max(burger_rect.width() - 12.0)
+                            },
+                            170.0,
+                            motion::ease_out_quint,
+                        );
                         let bg_rect = Rect::from_min_size(
                             egui::pos2(burger_rect.left() + 6.0, burger_rect.top()),
                             Vec2::new(bg_width, burger_height),
@@ -951,11 +988,15 @@ impl ShellApp {
                         ui.painter().rect_filled(
                             bg_rect,
                             theme.radius_small as f32,
-                            if burger_response.hovered() {
-                                theme.card_hover
-                            } else {
-                                Color32::TRANSPARENT
-                            },
+                            motion::hover_color(
+                                ctx,
+                                theme,
+                                egui::Id::unique("lumen-burger-hover"),
+                                burger_response.hovered(),
+                                Color32::TRANSPARENT,
+                                theme.card_hover,
+                                130.0,
+                            ),
                         );
                         ui.painter().text(
                             egui::pos2(bg_rect.left() + 11.0, bg_rect.center().y),
@@ -968,8 +1009,8 @@ impl ShellApp {
                             self.navigation.nav_expanded = !self.navigation.nav_expanded;
                         }
 
-                        ui.add_space(4.0);
-                        ui.spacing_mut().item_spacing.y = 2.0;
+                        // 4 px spacer item between two 2 px layout gaps.
+                        ui.add_space(6.0);
 
                         // Top section.
                         for entry in navigation::NAV_ENTRIES.iter() {
@@ -1000,7 +1041,7 @@ impl ShellApp {
                                 && self.navigation.entry_visible(entry, compact_mode)
                         }).count() as f32;
                         let stretch = (rail_height - 14.0 - (ui.cursor().top() - top)
-                            - bottom_rows * (row_height + 2.0)).max(14.0);
+                            - (bottom_rows * (row_height + 2.0) - 2.0)).max(14.0);
                         ui.add_space(stretch);
 
                         // Bottom section.
@@ -1035,7 +1076,7 @@ impl ShellApp {
 
     /// The page stack (`pageStack` margins + LazyPageLoader stack).
     fn paint_pages(&mut self, ctx: &egui::Context, theme: &theme::Theme) {
-        let rail_width = self.rail_visual_width(theme);
+        let rail_width = self.rail_visual_width(ctx, theme);
         let screen = ctx.viewport_rect();
         let page_rect = Rect::from_min_size(
             egui::pos2(
@@ -1047,16 +1088,27 @@ impl ShellApp {
                 (screen.height() - self.title_bar_height(ctx) - 40.0).max(0.0),
             ),
         );
+        // LazyPageLoader: the incoming page fades in over 220 ms and settles
+        // from a 6 px offset over 260 ms.
+        let current = self.navigation.current;
+        let entered = motion::elapsed_since_change(
+            ctx,
+            egui::Id::unique("lumen-page-current"),
+            current.index(),
+        );
+        let fade = motion::progress(ctx, theme, entered, 220.0, motion::ease_out_cubic);
+        let slide = 6.0 * (1.0 - motion::progress(ctx, theme, entered, 260.0, motion::ease_out_quint));
+        let chrome_opacity = Self::chrome_opacity(ctx, theme);
         egui::Area::new(egui::Id::unique("lumen-page-stack"))
             .order(egui::Order::Middle)
             .movable(false)
-            .fixed_pos(page_rect.min)
+            .fixed_pos(page_rect.min + Vec2::new(0.0, slide))
             .default_size(page_rect.size())
             .show(ctx, |ui| {
                 ui.set_width(page_rect.width());
                 ui.set_height(page_rect.height());
                 ui.shrink_clip_rect(page_rect);
-                let current = self.navigation.current;
+                ui.multiply_opacity(fade * chrome_opacity);
                 let mut hooks = pages::ShellHooks::default();
                 {
                     let mut page_ctx = pages::PageContext {
@@ -1332,6 +1384,10 @@ fn routing_items(values: Vec<serde_json::Value>) -> Vec<RoutingPresetItem> {
 }
 
 impl eframe::App for ShellApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let handle = self.bridge.runtime_handle();
         let _entered = handle.enter();

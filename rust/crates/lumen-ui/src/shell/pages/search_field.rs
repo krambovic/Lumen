@@ -9,9 +9,14 @@ pub(super) fn show(
     placeholder: &str,
     clearable: bool,
 ) -> (egui::Response, bool) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
-    ui.painter()
-        .rect_filled(rect, theme.radius_small as f32, theme.control_fill);
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), theme.control_height as f32),
+        Sense::hover(),
+    );
+    // The focus state is only known after the edit is placed; reserve the
+    // background slot now so the text paints above it.
+    let background = ui.painter().add(egui::Shape::Noop);
+    let border_slot = ui.painter().add(egui::Shape::Noop);
     ui.painter().text(
         egui::pos2(rect.left() + 10.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -20,7 +25,7 @@ pub(super) fn show(
         theme.text_faint,
     );
     let edit_rect = egui::Rect::from_min_max(
-        rect.min + vec2(34.0, 0.0),
+        rect.min + vec2(44.0, 0.0),
         rect.max
             - vec2(
                 if !clearable || query.is_empty() {
@@ -59,11 +64,14 @@ pub(super) fn show(
     } else {
         theme.border_solid
     };
-    ui.painter().rect_stroke(
-        rect,
-        theme.radius_small as f32,
-        Stroke::new(1.0, border),
-        egui::StrokeKind::Inside,
+    let radius = theme.radius_small as f32;
+    ui.painter().set(
+        background,
+        egui::Shape::rect_filled(rect.shrink(1.0), (radius - 1.0).max(0.0), theme.control_fill),
+    );
+    ui.painter().set(
+        border_slot,
+        egui::Shape::rect_stroke(rect, radius, Stroke::new(1.0, border), egui::StrokeKind::Inside),
     );
     (response, cleared)
 }
