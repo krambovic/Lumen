@@ -973,6 +973,20 @@ impl AppBridge {
         if self.settings_cached.check_updates || self.settings_cached.app_auto_update {
             self.start_app_update_check(true);
         }
+        if self.settings_cached.resource_update_check {
+            self.start_resource_update_check();
+        }
+        if self.settings_cached.resource_update_check || self.settings_cached.xray_auto_update {
+            let controller = self.controller.clone();
+            self.runtime.spawn(async move {
+                tokio::time::sleep(Duration::from_millis(4500)).await;
+                let mut controller = controller.lock();
+                let apply = controller.state.settings.xray_auto_update;
+                if apply || controller.state.settings.resource_update_check {
+                    controller.run_xray_core_update(apply, true);
+                }
+            });
+        }
         let controller = self.controller.clone();
         self.runtime.spawn(async move {
             tokio::time::sleep(Duration::from_millis(150)).await;
@@ -3590,7 +3604,9 @@ impl AppBridge {
         }
         let controller = self.controller.clone();
         self.runtime.spawn(async move {
+            tokio::time::sleep(Duration::from_secs(4)).await;
             let mut guard = controller.lock();
+            if !guard.state.settings.resource_update_check { return; }
             let settings = guard.state.settings.clone();
             let _ = guard.run_resource_update("singbox", false, None);
             let _ = guard.run_resource_update(

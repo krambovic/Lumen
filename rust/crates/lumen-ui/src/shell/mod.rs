@@ -224,6 +224,7 @@ pub struct ShellApp {
     lock_error_visible: bool,
     was_locked: bool,
     wallpaper_path: String,
+    wallpaper_blur: i64,
     wallpaper_texture: Option<egui::TextureHandle>,
     /// Applied (dark, backdrop) for the DWM refresh dedup.
     applied_mica: Option<(bool, String)>,
@@ -281,6 +282,7 @@ impl ShellApp {
             lock_error_visible: false,
             was_locked: false,
             wallpaper_path: String::new(),
+            wallpaper_blur: 0,
             wallpaper_texture: None,
             applied_mica: None,
             last_tray_refresh: None,
@@ -698,9 +700,11 @@ impl ShellApp {
             self.wallpaper_path.clear();
             return;
         }
-        if self.wallpaper_path != path {
-            self.wallpaper_texture = load_wallpaper_texture(ctx, &path);
+        let blur = self.bridge.settings().ui_wallpaper_blur.clamp(0, 100);
+        if self.wallpaper_path != path || self.wallpaper_blur != blur {
+            self.wallpaper_texture = load_wallpaper_texture(ctx, &path, blur);
             self.wallpaper_path = path.clone();
+            self.wallpaper_blur = blur;
         }
         if let Some(texture) = self.wallpaper_texture.clone() {
             let opacity =
@@ -1295,9 +1299,10 @@ pub fn has_supported_config_drop(path: &std::path::Path) -> bool {
 }
 
 /// Decode the wallpaper image file into a texture (Main.qml `wallpaperImg`).
-fn load_wallpaper_texture(ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
+fn load_wallpaper_texture(ctx: &egui::Context, path: &str, blur: i64) -> Option<egui::TextureHandle> {
     let data = std::fs::read(path).ok()?;
     let img = image::load_from_memory(&data).ok()?;
+    let img = if blur > 0 { img.thumbnail(1920, 1080).blur(blur as f32 * 0.64) } else { img };
     let rgba = img.to_rgba8();
     let size = [rgba.width() as usize, rgba.height() as usize];
     let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());

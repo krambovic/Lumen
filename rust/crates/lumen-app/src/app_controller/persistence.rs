@@ -470,11 +470,12 @@ impl AppController {
             self.emit_status("warning", "Сначала откройте зашифрованный профиль");
             return;
         }
-        if let Err(error) = self.storage.export_backup(path, passphrase) {
-            self.emit_status(
+        match self.storage.export_backup(path, passphrase) {
+            Ok(_) => self.emit_status("success", "Резервная копия сохранена"),
+            Err(error) => self.emit_status(
                 "error",
                 &format!("Не удалось создать резервную копию: {error}"),
-            );
+            ),
         }
     }
 
@@ -493,6 +494,7 @@ impl AppController {
                 self.emit(AppEvent::SelectionChanged(self.selected_node()));
                 self.emit(AppEvent::RoutingChanged);
                 self.emit(AppEvent::SettingsChanged(self.state.settings.clone()));
+                self.emit_status("success", "Резервная копия импортирована");
             }
             Err(error) => {
                 self.emit_status(

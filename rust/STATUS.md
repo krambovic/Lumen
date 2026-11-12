@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 110
+Last verified: lumen-core 261 tests, lumen-platform 67, lumen-engines 195, lumen-app 138, lumen-ui 111
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -385,11 +385,14 @@ client, core/resource updaters, zapret and discord proxy managers.
 - Nodes: sortable and resizable server table, selection and bulk operations,
   node and subscription inspectors, group and subscription dialogs, clipboard
   and file import, tests, and link, QR and JSON export.
+- Settings: appearance, networking, startup and tests, subscriptions, DNS,
+  updates and data, including the native file selectors, color and reset
+  dialogs, profile passwords and backup handling.
 
 ## Left to port (Python source -> target crate)
 
-### lumen-ui (egui)
-Settings and its page-specific dialogs are the remaining QML page.
+All ten Windows pages and the onboarding flow are wired to the Rust shell.
+See the release checklist for packaging and integration verification.
 
 ## Known warnings to clean
 None — the lumen-core list was cleaned in the same pass as the direct-route

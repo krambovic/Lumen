@@ -2,8 +2,6 @@
 
 use egui::{Context, Ui};
 
-use lumen_core::i18n::tr;
-
 use crate::view_models::{AppBridge, app_bridge::UiEvent};
 
 use super::navigation::Page;
@@ -20,6 +18,7 @@ mod node_editor;
 mod node_qr;
 mod nodes;
 mod routing;
+mod settings;
 mod updates;
 mod zapret;
 
@@ -33,6 +32,7 @@ pub(super) struct PageState {
     history: history::HistoryPage,
     logs: logs::LogsPage,
     routing: routing::RoutingPage,
+    settings: settings::SettingsPage,
     updates: updates::UpdatesPage,
     zapret: zapret::ZapretPage,
 }
@@ -88,26 +88,8 @@ pub(super) fn render_page(
         Page::Logs => state.logs.render(ui, page_ctx),
         Page::History => state.history.render(ui, page_ctx),
         Page::Updates => state.updates.render(ui, page_ctx),
-        Page::Settings => placeholder(ui, page_ctx.theme, page),
+        Page::Settings => state.settings.render(ui, page_ctx),
         Page::About => state.about.render(ui, page_ctx),
     }
     state.node_qr.render(page_ctx.ctx, page_ctx.theme);
-}
-
-/// The themed stand-in panel for pages that have not been ported yet.
-fn placeholder(ui: &mut Ui, theme: &Theme, page: Page) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(theme.spacing_large as f32 * 2.0);
-        ui.label(
-            egui::RichText::new(tr(page.title(), &[]))
-                .size(theme.font_title as f32)
-                .color(theme.text),
-        );
-        ui.add_space(theme.spacing as f32);
-        ui.label(
-            egui::RichText::new("\u{E8FD}")
-                .size(theme.font_hero as f32)
-                .color(theme.text_faint),
-        );
-    });
 }
