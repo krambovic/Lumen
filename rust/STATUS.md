@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 134
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 139
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -430,9 +430,14 @@ client, core/resource updaters, zapret and discord proxy managers.
   - Tray (`tray.rs`, `tray_menu.rs`): events are handled as they arrive and
     wake the hidden window; only the left button release toggles it, and the
     visibility comes from `IsWindowVisible` because egui's viewport info is
-    stale while the window is hidden. The context menu is an owner-drawn
-    native popup with the `_apply_menu_style` palette and metrics, themed
-    through uxtheme's preferred app mode so the frame matches. The
+    stale while the window is hidden. The context menu (`tray_menu.rs`) is
+    its own popup window, because Windows draws the frame, padding and
+    square corners of a native menu itself. It paints the
+    `_apply_menu_style` stylesheet (1 px border, 6 px padding, 34 px items,
+    13 px separators, 210 px minimum width; 244 x 244 like the Qt menu),
+    gets the small Windows 11 corner radius and shadow from DWM, opens the
+    routing submenu 6 px beside its row, handles the arrow, Enter and Escape
+    keys, and closes on deactivation or a press outside. The
     hidden-to-tray notice is a balloon on the tray icon
     (`QSystemTrayIcon.showMessage`); the tray window is subclassed to catch
     `NIN_BALLOONUSERCLICK`, which shows the window. The PowerShell toast is
@@ -444,6 +449,20 @@ client, core/resource updaters, zapret and discord proxy managers.
     14 ms per frame.
   - Servers inspector: the subscription and server tabs follow
     `NodesPage.qml` (tiles, detail rows, ring captions, link style).
+  - Page changes cross-fade like `LazyPageLoader`: every page follows
+    `opacity: current ? 1 : 0` (220 ms) and a 6 px offset (260 ms) through
+    `motion::follow`, and a page is rendered while its opacity is above
+    zero. Leaving pages render through `pages::render_leaving_page` in a
+    non-interactive area.
+  - Settings tabs: `TabTransition` in `pages/settings.rs` is the
+    `tabExit` / `tabEnter` state machine of `activateTab` (a click during
+    the exit only changes the destination, a click during the enter starts
+    a new exit from the current values). The earlier timestamp version
+    swapped the page without an exit when tabs were switched quickly.
+  - Diagnostics export (`pages/diagnostics_export.rs`) follows
+    `DiagnosticsExportDialog.qml`: 540 px flyout, 20 px margins, 12 px
+    blocks, title and subtitle rows with switches, divider, ghost and
+    accent buttons, 40% black backdrop, and fresh defaults on every open.
   - `shell/wheel.rs` ports the `FluentScroll.qml` wheel glide (92 px per
     notch, 540 ms `OutQuint`) by rewriting wheel notches in
     `raw_input_hook`, so every scroll area follows it. Rendering is on the
@@ -462,8 +481,17 @@ client, core/resource updaters, zapret and discord proxy managers.
   - Onboarding (`OnboardingOverlay.qml`) was rebuilt on explicit grids: it
     starts below the title bar, which stays usable, and matches the QML
     card, step rail, logo mark and all six steps at 1280x760 and 640x480.
-    Not ported: the blurred snapshot behind the card, the exit animation
-    and the per-element staggered reveal.
+    Animations follow the QML: the card enters with opacity, a 0.94 scale
+    and a 28 px offset (620 ms) and leaves in 380 ms while the backdrop
+    fades after 140 ms and the dashboard settle animation restarts; steps
+    cross-fade with a 56 px slide (300 / 520 ms); page content fades in
+    from the top down over 1100 ms (`stagger_reveal`, which derives the
+    QML `rv(order)` from each shape's position); the backdrop also covers
+    the title strip. The card scale and the stagger are applied to the
+    painted shapes of the layer after the frame is built. Not ported: the
+    blurred snapshot of the dashboard behind the card (a flat `Theme.bg`
+    instead, about 8 levels darker) and the 0.975 scale of the dashboard
+    settle animation.
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated
@@ -609,7 +637,10 @@ are handled inside their porting commits.
   first). `hb_tray.py close|left|right|pick n` drives the preview's tray
   icon with synthetic clicks (keyboard picks do not reach an elevated
   preview), `hb_burst.py` records the status ring during a connect, and
-  `hb_zoom.py` uploads enlarged crops. `hb_navcycle.py` clicks through the
+  `hb_zoom.py` uploads enlarged crops. `hb_shot.py` drives the preview with
+  real mouse clicks and captures single frames or bursts (posted clicks
+  from `cmp.py --click` do not reach every egui widget), and `hb_qmenu.py`
+  renders the original tray `QMenu` for comparison. `hb_navcycle.py` clicks through the
   rail pages and lists late and slow frames per switch (the preview logs
   `LATE gap` and `SLOW cpu` lines), `hb_zapdiag.py` times the Zapret page
   sections, `hb_textcmp.py` and `hb_inkcmp.py` compare text rendering
