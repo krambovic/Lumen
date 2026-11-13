@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 132
+Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 134
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -399,17 +399,44 @@ client, core/resource updaters, zapret and discord proxy managers.
     treated as fullscreen: it loses per-pixel alpha, so the backdrop turns
     black and stays black until the process restarts. The maximized client
     therefore keeps one spare row at the bottom.
-  - Text: `apply_visuals` sets the glyph coverage curve per scheme (the
-    dark-mode curve thinned text in light themes), turns sub-pixel glyph
-    binning off so hinted stems stay sharp, and disables label selection.
+  - Text: `apply_visuals` uses linear glyph coverage (no transfer curve)
+    with sub-pixel glyph binning and hinting, which is closest to Qt
+    Quick's text; the earlier dark-mode curve and whole-pixel advances made
+    glyphs heavy and their spacing uneven. Labels are not selectable.
     Text styles are reinstalled when the font scale changes
     (`theme::font_key`). Microsoft YaHei is the CJK fallback. Setting and
     routing rows scale their height with the font scale.
+  - Bitmaps (navigation outlines, country flags) are rasterized at their
+    device pixel size and drawn on whole device pixels. Minifying 72-96 px
+    bitmaps with the bilinear sampler made them look jagged. Flags keep
+    their aspect ratio and get the QML 20% black rounded border.
+  - Controller access from the UI thread: a connect or disconnect runs on
+    the controller thread and holds the controller while the cores start.
+    Bridge getters called every frame (`profile_loaded`,
+    `routing_preset_options`, `node_details`, `history_data`, Zapret and
+    proxy-chain reads) check `controller_free()` and serve their last value
+    while it is held. `pump()` still delivers status, transition, connection
+    and log events then and defers the others. New per-frame getters that
+    lock the controller must follow the same pattern, or the window freezes
+    for the length of a connect. `target/uicmp/hb_lockdiag.py` builds a
+    preview that logs every UI-thread wait over 30 ms with its call site.
+  - Tray (`tray.rs`, `tray_menu.rs`): events are handled as they arrive and
+    wake the hidden window; only the left button release toggles it, and the
+    visibility comes from `IsWindowVisible` because egui's viewport info is
+    stale while the window is hidden. The context menu is an owner-drawn
+    native popup with the `_apply_menu_style` palette and metrics, themed
+    through uxtheme's preferred app mode so the frame matches.
+  - Servers inspector: the subscription and server tabs follow
+    `NodesPage.qml` (tiles, detail rows, ring captions, link style).
   - `shell/wheel.rs` ports the `FluentScroll.qml` wheel glide (92 px per
     notch, 540 ms `OutQuint`) by rewriting wheel notches in
     `raw_input_hook`, so every scroll area follows it. Rendering is on the
     GPU through glow; a release build spends about 1 ms of CPU per frame
-    on the settings page at 144 Hz.
+    on the settings page at 144 Hz. Measured 2026-11-13 with
+    `target/uicmp/hb_perf.ps1` on a 12-core machine: idle 0.1-0.4% of total
+    CPU (the logic tick repaints at 10 Hz), wheel scrolling about 1% with
+    7.5 ms frame gaps, and a sing-box proxy connect with a worst frame of
+    about 60 ms (400 ms before the controller-lock change above).
   - Toasts and the file-drop overlay are painted on a foreground layer
     with explicit geometry. An auto-sized `Area` kept toasts at the widest
     width seen and covered only part of the window with the drop overlay.
@@ -559,6 +586,13 @@ are handled inside their porting commits.
   connects on start, launches sing-box and enables the system proxy; a
   killed run then leaves both behind.
 - `kill.ps1` stops only the comparison windows.
+- `hb_perf.ps1 [-Connect] [-Scroll] [-Page n]` samples the release preview's
+  CPU and prints its frame-gap lines (`PREVIEW_RELEASE=1 build-preview.ps1`
+  first). `hb_tray.py close|left|right|pick n` drives the preview's tray
+  icon with synthetic clicks (keyboard picks do not reach an elevated
+  preview), `hb_burst.py` records the status ring during a connect, and
+  `hb_zoom.py` uploads enlarged crops. `upload-url.txt` must point at a
+  reachable PUT endpoint for the uploads.
 
 ## Tooling notes for agents
 - Never put double curly braces in tool arguments (they get mangled);
