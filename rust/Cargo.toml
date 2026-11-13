@@ -97,3 +97,8 @@ lumen-app = { path = "crates/lumen-app" }
 opt-level = 2
 lto = "thin"
 codegen-units = 4
+
+[patch.crates-io]
+# Subpixel (ClearType-style) text: see vendor/README.md.
+epaint = { path = "vendor/epaint" }
+egui_glow = { path = "vendor/egui_glow" }
