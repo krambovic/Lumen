@@ -399,10 +399,16 @@ client, core/resource updaters, zapret and discord proxy managers.
     treated as fullscreen: it loses per-pixel alpha, so the backdrop turns
     black and stays black until the process restarts. The maximized client
     therefore keeps one spare row at the bottom.
-  - Text: `apply_visuals` uses linear glyph coverage (no transfer curve)
-    with sub-pixel glyph binning and hinting, which is closest to Qt
-    Quick's text; the earlier dark-mode curve and whole-pixel advances made
-    glyphs heavy and their spacing uneven. Labels are not selectable.
+  - Text: the QML client draws text and icon glyphs with ClearType (RGB
+    subpixel antialiasing), which at 96 DPI has three times the horizontal
+    resolution of egui's grayscale text and is why the port looked low
+    resolution. `rust/vendor` patches epaint and egui_glow to rasterize
+    glyphs into RGB coverage and blend each channel separately (dual-source
+    blending, OpenGL 3.3); see `rust/vendor/README.md`. Stroke weight
+    matches the QML client within 3% on the settings page
+    (`target/uicmp/hb_inkcmp.py`). `apply_visuals` keeps linear coverage
+    (no transfer curve, which would discard the colour channels) with
+    sub-pixel glyph binning and hinting. Labels are not selectable.
     Text styles are reinstalled when the font scale changes
     (`theme::font_key`). Microsoft YaHei is the CJK fallback. Setting and
     routing rows scale their height with the font scale.
@@ -415,7 +421,8 @@ client, core/resource updaters, zapret and discord proxy managers.
     Bridge getters called every frame (`profile_loaded`,
     `routing_preset_options`, `node_details`, `history_data`, Zapret and
     proxy-chain reads) check `controller_free()` and serve their last value
-    while it is held. `pump()` still delivers status, transition, connection
+    while it is held. The check must not wait: a 4 ms timed lock per read
+    added up to tens of milliseconds per frame during a connect. `pump()` still delivers status, transition, connection
     and log events then and defers the others. New per-frame getters that
     lock the controller must follow the same pattern, or the window freezes
     for the length of a connect. `target/uicmp/hb_lockdiag.py` builds a
@@ -425,7 +432,16 @@ client, core/resource updaters, zapret and discord proxy managers.
     visibility comes from `IsWindowVisible` because egui's viewport info is
     stale while the window is hidden. The context menu is an owner-drawn
     native popup with the `_apply_menu_style` palette and metrics, themed
-    through uxtheme's preferred app mode so the frame matches.
+    through uxtheme's preferred app mode so the frame matches. The
+    hidden-to-tray notice is a balloon on the tray icon
+    (`QSystemTrayIcon.showMessage`); the tray window is subclassed to catch
+    `NIN_BALLOONUSERCLICK`, which shows the window. The PowerShell toast is
+    only the fallback.
+  - Zapret page: the preset list is read from disk at most every 2 s
+    (`AppBridge::zapret_presets`, cleared by every preset edit) and the
+    binding pickers are rebuilt only when the settings, the server or a
+    second change. Re-reading the files several times per frame cost about
+    14 ms per frame.
   - Servers inspector: the subscription and server tabs follow
     `NodesPage.qml` (tiles, detail rows, ring captions, link style).
   - `shell/wheel.rs` ports the `FluentScroll.qml` wheel glide (92 px per
@@ -434,9 +450,11 @@ client, core/resource updaters, zapret and discord proxy managers.
     GPU through glow; a release build spends about 1 ms of CPU per frame
     on the settings page at 144 Hz. Measured 2026-11-13 with
     `target/uicmp/hb_perf.ps1` on a 12-core machine: idle 0.1-0.4% of total
-    CPU (the logic tick repaints at 10 Hz), wheel scrolling about 1% with
-    7.5 ms frame gaps, and a sing-box proxy connect with a worst frame of
-    about 60 ms (400 ms before the controller-lock change above).
+    CPU (the logic tick repaints at 10 Hz), and wheel scrolling 1-3% on
+    every page with 0.5-1.4 ms of CPU per frame and 7 ms frame gaps.
+    During a sing-box proxy connect frames take about 0.9 ms (at most
+    1.7 ms) and the status ring holds 144 Hz. Page switches produced no
+    frame over 6 ms of CPU and no missed vsync (`hb_navcycle.py`).
   - Toasts and the file-drop overlay are painted on a foreground layer
     with explicit geometry. An auto-sized `Area` kept toasts at the widest
     width seen and covered only part of the window with the drop overlay.
@@ -591,7 +609,11 @@ are handled inside their porting commits.
   first). `hb_tray.py close|left|right|pick n` drives the preview's tray
   icon with synthetic clicks (keyboard picks do not reach an elevated
   preview), `hb_burst.py` records the status ring during a connect, and
-  `hb_zoom.py` uploads enlarged crops. `upload-url.txt` must point at a
+  `hb_zoom.py` uploads enlarged crops. `hb_navcycle.py` clicks through the
+  rail pages and lists late and slow frames per switch (the preview logs
+  `LATE gap` and `SLOW cpu` lines), `hb_zapdiag.py` times the Zapret page
+  sections, `hb_textcmp.py` and `hb_inkcmp.py` compare text rendering
+  against the QML client. `upload-url.txt` must point at a
   reachable PUT endpoint for the uploads.
 
 ## Tooling notes for agents
