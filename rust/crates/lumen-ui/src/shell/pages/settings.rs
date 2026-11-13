@@ -97,14 +97,123 @@ pub(super) struct SettingsPage {
     tab: usize,
     /// `displayedTab`: lags `tab` while the exit animation runs.
     displayed: usize,
-    /// Start time and direction of the running tab transition.
-    transition: Option<(f64, f32)>,
+    transition: TabTransition,
     subscription: Option<SubscriptionDraft>,
     dns: Option<DnsDraft>,
     reset: bool,
     color: Option<ColorDraft>,
     password: String,
     file_error: Option<String>,
+}
+
+/// `tabExit` (70/90 ms, InCubic) followed by `tabEnter` (120 ms OutCubic and
+/// 220 ms OutQuint) of SettingsPage.qml, with `activateTab`'s rules: a click
+/// during the exit only changes the destination, a click during the enter
+/// starts a new exit from the current opacity and offset, and a click on the
+/// tab that is still displayed cancels the exit.
+#[derive(Default)]
+struct TabTransition {
+    initialized: bool,
+    /// `currentTab` as of the previous frame; a change is one `activateTab`.
+    target: usize,
+    /// `tabTransitionDirection`.
+    direction: f32,
+    phase: TabPhase,
+    opacity: f32,
+    x: f32,
+}
+
+#[derive(Default, Clone, Copy)]
+enum TabPhase {
+    #[default]
+    Idle,
+    Exit { start: f64, opacity: f32, x: f32, to_x: f32 },
+    Enter { start: f64, from_x: f32 },
+}
+
+impl TabTransition {
+    /// `tabTransitionOpacity`.
+    const DIM: f32 = 0.86;
+    const EXIT: f32 = 0.09;
+    const ENTER: f32 = 0.22;
+
+    fn running(&self) -> bool {
+        !matches!(self.phase, TabPhase::Idle)
+    }
+
+    /// `resetTabTransition`.
+    fn reset(&mut self) {
+        self.phase = TabPhase::Idle;
+        self.opacity = 1.0;
+        self.x = 0.0;
+    }
+
+    fn advance(
+        &mut self,
+        now: f64,
+        tab: usize,
+        displayed: &mut usize,
+        animated: bool,
+        width: f32,
+    ) -> (f32, f32) {
+        // `tabEnterDistance` / `tabExitDistance`.
+        let enter = (width * 0.035).clamp(24.0, 40.0).round();
+        let exit = (enter * 0.35).round();
+        if !self.initialized {
+            self.initialized = true;
+            self.target = tab;
+            self.direction = 1.0;
+            self.reset();
+        }
+        if tab != self.target {
+            self.target = tab;
+            self.direction = if tab >= *displayed { 1.0 } else { -1.0 };
+            let exiting = matches!(self.phase, TabPhase::Exit { .. });
+            if *displayed == tab {
+                if exiting {
+                    self.reset();
+                }
+            } else if !exiting && animated {
+                self.phase = TabPhase::Exit {
+                    start: now,
+                    opacity: self.opacity,
+                    x: self.x,
+                    to_x: -self.direction * exit,
+                };
+            }
+        }
+        if !animated {
+            self.reset();
+            *displayed = self.target;
+            return (1.0, 0.0);
+        }
+        if let TabPhase::Exit { start, opacity, x, to_x } = self.phase {
+            let elapsed = (now - start) as f32;
+            if elapsed < Self::EXIT {
+                let fade = motion::ease_in_cubic(elapsed / 0.07);
+                let slide = motion::ease_in_cubic(elapsed / Self::EXIT);
+                self.opacity = opacity + (Self::DIM - opacity) * fade;
+                self.x = x + (to_x - x) * slide;
+            } else {
+                // `tabExit.onFinished`: only now does the page change.
+                *displayed = self.target;
+                self.phase = TabPhase::Enter {
+                    start: start + f64::from(Self::EXIT),
+                    from_x: self.direction * enter,
+                };
+            }
+        }
+        if let TabPhase::Enter { start, from_x } = self.phase {
+            let elapsed = (now - start) as f32;
+            if elapsed >= Self::ENTER {
+                self.reset();
+            } else {
+                self.opacity = Self::DIM + (1.0 - Self::DIM) * motion::ease_out_cubic(elapsed / 0.12);
+                self.x = from_x * (1.0 - motion::ease_out_quint(elapsed / Self::ENTER));
+            }
+        }
+        (self.opacity, self.x)
+    }
 }
 
 struct SubscriptionDraft {
@@ -188,39 +297,21 @@ impl SettingsPage {
         }
     }
 
-    /// `tabExit` (70/90 ms) then `tabEnter` (120/220 ms): returns the stack
-    /// opacity and horizontal offset, switching `displayed` between the two.
+    /// Stack opacity and horizontal offset of the tab transition; switches
+    /// `displayed` when the exit animation ends.
     fn tab_transition(&mut self, ctx: &Context, theme: &Theme, width: f32) -> (f32, f32) {
-        if self.displayed == self.tab && self.transition.is_none() {
-            return (1.0, 0.0);
-        }
-        if theme.anim_fast == 0 {
-            self.displayed = self.tab;
-            self.transition = None;
-            return (1.0, 0.0);
-        }
         let now = ctx.input(|input| input.time);
-        let enter = (width * 0.035).clamp(24.0, 40.0).round();
-        let exit = (enter * 0.35).round();
-        let direction = if self.tab >= self.displayed { 1.0 } else { -1.0 };
-        let (start, direction) = *self.transition.get_or_insert((now, direction));
-        let elapsed = (now - start) as f32;
-        ctx.request_repaint();
-        if elapsed < 0.09 {
-            let fade = (elapsed / 0.07).min(1.0).powi(3);
-            let slide = (elapsed / 0.09).powi(3);
-            return (1.0 - 0.14 * fade, -direction * exit * slide);
+        let result = self.transition.advance(
+            now,
+            self.tab,
+            &mut self.displayed,
+            theme.anim_fast > 0,
+            width,
+        );
+        if self.transition.running() {
+            ctx.request_repaint();
         }
-        self.displayed = self.tab;
-        let elapsed = elapsed - 0.09;
-        if elapsed >= 0.22 {
-            self.transition = None;
-            return (1.0, 0.0);
-        }
-        (
-            0.86 + 0.14 * motion::ease_out_cubic(elapsed / 0.12),
-            direction * enter * (1.0 - motion::ease_out_quint(elapsed / 0.22)),
-        )
+        result
     }
 
     /// Icon tab strip with the half-width accent underline (`tabRow` +
@@ -2291,7 +2382,7 @@ fn percent_slider(
 }
 
 /// QML `Switch` as a 44×20 Fluent pill.
-fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
+pub(super) fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
     // The Universal `Switch` keeps 8 px of padding after its 44x20 track.
     let (slot, mut response) = ui.allocate_exact_size(vec2(52.0, 20.0), Sense::click());
     let rect = egui::Rect::from_min_size(slot.min, vec2(44.0, 20.0));
@@ -2541,6 +2632,61 @@ fn file_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frames(transition: &mut TabTransition, displayed: &mut usize, tab: usize, from: f64, to: f64) -> (f32, f32) {
+        let mut last = (1.0, 0.0);
+        let mut now = from;
+        while now <= to + 1e-9 {
+            last = transition.advance(now, tab, displayed, true, 1000.0);
+            now += 0.005;
+        }
+        last
+    }
+
+    #[test]
+    fn tab_click_during_the_exit_only_changes_the_destination() {
+        let mut transition = TabTransition::default();
+        let mut displayed = 0;
+        frames(&mut transition, &mut displayed, 0, 0.0, 0.0);
+        frames(&mut transition, &mut displayed, 2, 0.01, 0.05);
+        assert_eq!(displayed, 0);
+        // A second click mid-exit: tab 2 never becomes visible.
+        frames(&mut transition, &mut displayed, 4, 0.055, 0.095);
+        assert_eq!(displayed, 0);
+        frames(&mut transition, &mut displayed, 4, 0.1, 0.12);
+        assert_eq!(displayed, 4);
+        let (opacity, x) = frames(&mut transition, &mut displayed, 4, 0.125, 0.5);
+        assert_eq!((opacity, x), (1.0, 0.0));
+        assert!(!transition.running());
+    }
+
+    #[test]
+    fn tab_click_during_the_enter_starts_a_new_exit_from_the_current_values() {
+        let mut transition = TabTransition::default();
+        let mut displayed = 0;
+        frames(&mut transition, &mut displayed, 0, 0.0, 0.0);
+        let (opacity, x) = frames(&mut transition, &mut displayed, 3, 0.01, 0.14);
+        assert_eq!(displayed, 3);
+        assert!(opacity < 1.0 && x > 0.0, "mid-enter: {opacity} {x}");
+        // Click back while the page is still sliding in.
+        let (next_opacity, next_x) = frames(&mut transition, &mut displayed, 1, 0.145, 0.145);
+        assert_eq!(displayed, 3, "the old page exits first");
+        assert!((next_opacity - opacity).abs() < 0.05 && (next_x - x).abs() < 3.0, "no jump");
+        frames(&mut transition, &mut displayed, 1, 0.15, 0.6);
+        assert_eq!(displayed, 1);
+        assert!(!transition.running());
+    }
+
+    #[test]
+    fn tab_click_on_the_displayed_tab_cancels_the_exit() {
+        let mut transition = TabTransition::default();
+        let mut displayed = 0;
+        frames(&mut transition, &mut displayed, 0, 0.0, 0.0);
+        frames(&mut transition, &mut displayed, 2, 0.01, 0.04);
+        let result = frames(&mut transition, &mut displayed, 0, 0.045, 0.045);
+        assert_eq!((displayed, result), (0, (1.0, 0.0)));
+        assert!(!transition.running());
+    }
 
     #[test]
     fn base_tint_darkening_keeps_source_color_and_reduces_value() {

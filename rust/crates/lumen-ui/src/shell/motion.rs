@@ -17,6 +17,11 @@ pub(crate) fn ease_out_quint(t: f32) -> f32 {
     1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(5)
 }
 
+/// `Easing.InCubic`.
+pub(crate) fn ease_in_cubic(t: f32) -> f32 {
+    t.clamp(0.0, 1.0).powi(3)
+}
+
 pub(crate) fn linear(t: f32) -> f32 {
     t.clamp(0.0, 1.0)
 }
