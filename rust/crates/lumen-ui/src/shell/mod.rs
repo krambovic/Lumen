@@ -866,6 +866,12 @@ impl ShellApp {
             .default_size(size)
             .show(ctx, |ui| {
                 let (bar, _) = ui.allocate_exact_size(size, Sense::hover());
+                // The onboarding backdrop covers the whole window, title strip
+                // included; only the caption text and buttons stay above it.
+                let backdrop = self.onboarding.backdrop_level();
+                if backdrop > 0.0 {
+                    ui.painter().rect_filled(bar, 0.0, theme.bg.gamma_multiply(backdrop));
+                }
 
                 // Drag region under everything (later widgets take priority).
                 let drag = ui.interact(
@@ -1099,42 +1105,67 @@ impl ShellApp {
                 (screen.height() - self.title_bar_height(ctx) - 40.0).max(0.0),
             ),
         );
-        // LazyPageLoader: the incoming page fades in over 220 ms and settles
-        // from a 6 px offset over 260 ms.
+        // LazyPageLoader: every page has `opacity: current ? 1 : 0` (220 ms,
+        // OutCubic) and a 6 px offset while it is not current (260 ms,
+        // OutQuint), and stays laid out while its opacity is above zero. A
+        // page change therefore cross-fades the old page out under the new
+        // one, and both Behaviors retarget from their current value.
         let current = self.navigation.current;
-        let entered = motion::elapsed_since_change(
-            ctx,
-            egui::Id::unique("lumen-page-current"),
-            current.index(),
-        );
-        let fade = motion::progress(ctx, theme, entered, 220.0, motion::ease_out_cubic);
-        let slide = 6.0 * (1.0 - motion::progress(ctx, theme, entered, 260.0, motion::ease_out_quint));
         let chrome_opacity = Self::chrome_opacity(ctx, theme);
-        egui::Area::new(egui::Id::unique("lumen-page-stack"))
-            .order(egui::Order::Middle)
-            .movable(false)
-            .fixed_pos(page_rect.min + Vec2::new(0.0, slide))
-            .default_size(page_rect.size())
-            .show(ctx, |ui| {
-                ui.set_width(page_rect.width());
-                ui.set_height(page_rect.height());
-                ui.shrink_clip_rect(page_rect);
-                ui.multiply_opacity(fade * chrome_opacity);
-                let mut hooks = pages::ShellHooks::default();
-                {
-                    let mut page_ctx = pages::PageContext {
-                        ctx,
-                        theme,
-                        bridge: &mut self.bridge,
-                        events: self.page_events.make_contiguous(),
-                        shell: &mut hooks,
-                    };
-                    pages::render_page(current, ui, &mut page_ctx, &mut self.page_state);
-                }
-                if hooks.open_configs_requested {
-                    self.navigation.current = Page::Configs;
-                }
-            });
+        let stack_id = egui::Id::unique("lumen-page-stack");
+        for page in Page::ALL {
+            let is_current = page == current;
+            let opacity = motion::follow(
+                ctx,
+                theme,
+                stack_id.with(("opacity", page.index())),
+                if is_current { 1.0 } else { 0.0 },
+                220.0,
+                motion::ease_out_cubic,
+            );
+            let slide = motion::follow(
+                ctx,
+                theme,
+                stack_id.with(("slide", page.index())),
+                if is_current { 0.0 } else { 6.0 },
+                260.0,
+                motion::ease_out_quint,
+            );
+            if !is_current && opacity <= 0.0 {
+                continue;
+            }
+            egui::Area::new(stack_id.with(page.index()))
+                .order(egui::Order::Middle)
+                .movable(false)
+                // Only the current page takes input.
+                .interactable(is_current)
+                .fixed_pos(page_rect.min + Vec2::new(0.0, slide))
+                .default_size(page_rect.size())
+                .show(ctx, |ui| {
+                    ui.set_width(page_rect.width());
+                    ui.set_height(page_rect.height());
+                    ui.shrink_clip_rect(page_rect);
+                    ui.multiply_opacity(opacity * chrome_opacity);
+                    let mut hooks = pages::ShellHooks::default();
+                    {
+                        let mut page_ctx = pages::PageContext {
+                            ctx,
+                            theme,
+                            bridge: &mut self.bridge,
+                            events: self.page_events.make_contiguous(),
+                            shell: &mut hooks,
+                        };
+                        if is_current {
+                            pages::render_page(page, ui, &mut page_ctx, &mut self.page_state);
+                        } else {
+                            pages::render_leaving_page(page, ui, &mut page_ctx, &mut self.page_state);
+                        }
+                    }
+                    if is_current && hooks.open_configs_requested {
+                        self.navigation.current = Page::Configs;
+                    }
+                });
+        }
     }
 
     /// The drag-drop overlay (Main.qml `configDropArea` inner Rectangle).
@@ -1501,7 +1532,10 @@ impl eframe::App for ShellApp {
         self.page_events.clear();
         self.paint_drop_overlay(ctx, &theme);
         if self.onboarding.render(ctx, &theme, &mut self.bridge) {
+            // Main.qml `onClosingStarted`: show the dashboard and restart
+            // `chromeSettleAnim` so it arrives while the card dissolves.
             self.navigation.current = Page::Dashboard;
+            ctx.data_mut(|data| data.remove::<((), f64)>(egui::Id::unique("lumen-chrome-start")));
         }
         self.paint_conflict_dialog(ctx, &theme);
         self.paint_lock_overlay(ctx, &theme);

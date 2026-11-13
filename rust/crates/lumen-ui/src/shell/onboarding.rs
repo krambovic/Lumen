@@ -133,18 +133,34 @@ pub(super) struct Onboarding {
     color_draft: Option<ColorDraft>,
     typing: bool,
     finished: bool,
+    /// `closing`: when `exitAnim` started.
+    closing_at: Option<f64>,
+    /// `backdrop.opacity`, read by the title bar.
+    backdrop: f32,
 }
 
 impl Onboarding {
     pub(super) fn render(&mut self, ctx: &Context, theme: &Theme, bridge: &mut AppBridge) -> bool {
-        if !bridge.onboarding_required() {
-            *self = Self::default();
-            return false;
-        }
-        if bridge.locked() || self.finished {
-            return false;
-        }
         let now = ctx.input(|input| input.time);
+        let animated = theme.anim_fast > 0;
+        // `exitAnim` runs for 600 ms after `completeOnboarding()`.
+        let closing = self.closing_at.map(|start| (now - start) as f32);
+        if let Some(elapsed) = closing {
+            if !animated || elapsed >= 0.6 {
+                *self = Self { finished: true, ..Self::default() };
+                return false;
+            }
+            ctx.request_repaint();
+        } else {
+            if !bridge.onboarding_required() {
+                *self = Self::default();
+                return false;
+            }
+            if bridge.locked() || self.finished {
+                self.backdrop = 0.0;
+                return false;
+            }
+        }
         if self.flow.is_empty() {
             self.flow = steps(
                 bridge.onboarding_setup_required(),
@@ -161,7 +177,8 @@ impl Onboarding {
                 bridge.apply_system_accent_quietly();
             }
             self.opened_at = Some(now);
-            self.step_changed_at = now - 10.0;
+            // `revealAnim` also runs for the first page.
+            self.step_changed_at = now;
         }
         self.step = self.step.min(self.flow.len() - 1);
         if self.step != self.last_step {
@@ -181,7 +198,7 @@ impl Onboarding {
         let region = Rect::from_min_max(pos2(screen.left(), screen.top() + title_height), screen.max);
 
         let open_elapsed = (now - self.opened_at.unwrap_or(now)) as f32;
-        let backdrop_level =
+        let mut backdrop_level =
             motion::progress(ctx, theme, open_elapsed, 420.0, motion::ease_out_cubic);
         let card_level = motion::progress(
             ctx,
@@ -190,19 +207,41 @@ impl Onboarding {
             620.0,
             motion::ease_out_quint,
         );
-        let since_step = (now - self.step_changed_at) as f32;
-        let slide = motion::progress(ctx, theme, since_step, 520.0, motion::ease_out_quint);
-        let fade = motion::progress(ctx, theme, since_step, 300.0, motion::ease_out_cubic);
+        // enterAnim: opacity 0 -> 1, scale 0.94 -> 1, y 28 -> 0 (620 ms, OutQuint).
+        let mut card_opacity = card_level;
+        let mut card_scale = 0.94 + 0.06 * card_level;
+        let mut card_offset = 28.0 * (1.0 - card_level);
+        if let Some(elapsed) = closing {
+            // exitAnim: the card leaves in 380 ms (InCubic); the backdrop
+            // follows after 140 ms over 460 ms (InOutCubic).
+            let out = motion::ease_in_cubic(elapsed / 0.38);
+            card_opacity = 1.0 - out;
+            card_scale = 1.0 - 0.06 * out;
+            card_offset = 28.0 * out;
+            backdrop_level = 1.0 - motion::ease_in_out_cubic((elapsed - 0.14) / 0.46);
+        }
+        self.backdrop = backdrop_level;
+        // StepPage `revealAnim`: 0 -> 1 linearly over 1100 ms.
+        let reveal = if animated {
+            ((now - self.step_changed_at) as f32 / 1.1).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        if reveal < 1.0 {
+            ctx.request_repaint();
+        }
         self.typing = false;
 
         egui::Area::new(Id::unique("lumen-onboarding"))
             .order(egui::Order::Foreground)
-            .interactable(true)
+            // `enabled: shown && !closing`.
+            .interactable(closing.is_none())
             .movable(false)
             .fixed_pos(region.min)
             .show(ctx, |ui| {
                 ui.set_clip_rect(region.intersect(ui.clip_rect()));
                 ui.allocate_rect(region, Sense::click_and_drag());
+                let layer_id = ui.layer_id();
                 ui.painter()
                     .rect_filled(region, 0.0, theme.bg.gamma_multiply(backdrop_level));
 
@@ -211,8 +250,10 @@ impl Onboarding {
                         .max_rect(region)
                         .layout(Layout::top_down(Align::LEFT)),
                 );
-                layer.set_opacity(card_level);
+                layer.set_opacity(card_opacity);
                 let ui = &mut layer;
+                // Everything from here on belongs to `cardLayer` and is scaled below.
+                let card_shapes = ui.painter().add(egui::Shape::Noop);
 
                 let width = (region.width() - 48.0).min(980.0).max(0.0);
                 let height = (region.height() - 40.0).min(640.0).max(0.0);
@@ -221,7 +262,7 @@ impl Onboarding {
                         region.left() + ((region.width() - width) / 2.0).round(),
                         region.top()
                             + ((region.height() - height) / 2.0).round()
-                            + 28.0 * (1.0 - card_level),
+                            + card_offset,
                     ),
                     vec2(width, height),
                 );
@@ -262,29 +303,73 @@ impl Onboarding {
                     pos2(card.right() - margin, card.bottom() - BAR_HEIGHT),
                 );
                 self.view_height = pages_rect.height();
-                let slide_x = self.step_dir * 56.0 * (1.0 - slide);
-                let mut pages_ui = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(pages_rect.translate(vec2(slide_x, 0.0)))
-                        .layout(Layout::top_down(Align::LEFT)),
-                );
-                pages_ui.set_clip_rect(pages_rect.intersect(ui.clip_rect()));
-                pages_ui.multiply_opacity(fade);
-                ScrollArea::vertical()
-                    .id_salt(("onboarding-step", self.step))
-                    .auto_shrink([false, false])
-                    .show(&mut pages_ui, |ui| {
-                        ui.spacing_mut().item_spacing = Vec2::ZERO;
-                        match current {
-                            Step::News => self.news(ui, theme, bridge),
-                            Step::Welcome => welcome(ui, theme, bridge),
-                            Step::Look => self.look(ui, theme, bridge),
-                            Step::Route => route(ui, theme, bridge),
-                            Step::Configs => self.configs(ui, theme, bridge),
-                            Step::System => system(ui, theme, bridge),
-                            Step::Done => self.done(ui, theme, bridge),
-                        }
-                    });
+                // StepPage: `opacity: current ? 1 : 0` (300 ms, OutCubic) and an
+                // x offset of -56 / +56 for pages before / after the current one
+                // (520 ms, OutQuint). A page stays visible while it fades, so a
+                // step change cross-fades the two pages.
+                for index in 0..self.flow.len() {
+                    let is_current = index == self.step;
+                    let step_id = Id::unique(("onboarding-step-motion", index));
+                    let opacity = motion::follow(
+                        ctx,
+                        theme,
+                        step_id.with("opacity"),
+                        if is_current { 1.0 } else { 0.0 },
+                        300.0,
+                        motion::ease_out_cubic,
+                    );
+                    let offset = motion::follow(
+                        ctx,
+                        theme,
+                        step_id.with("x"),
+                        if is_current {
+                            0.0
+                        } else if index < self.step {
+                            -56.0
+                        } else {
+                            56.0
+                        },
+                        520.0,
+                        motion::ease_out_quint,
+                    );
+                    if !is_current && opacity <= 0.001 {
+                        continue;
+                    }
+                    let mut pages_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(pages_rect.translate(vec2(offset, 0.0)))
+                            .layout(Layout::top_down(Align::LEFT)),
+                    );
+                    pages_ui.set_clip_rect(pages_rect.intersect(ui.clip_rect()));
+                    pages_ui.multiply_opacity(opacity);
+                    if !is_current {
+                        // `enabled: current`, without the disabled tint.
+                        pages_ui.visuals_mut().disabled_alpha = 1.0;
+                        pages_ui.disable();
+                    }
+                    let first_shape = pages_ui.painter().add(egui::Shape::Noop);
+                    let mut content_top = pages_rect.top();
+                    let step = self.flow[index];
+                    ScrollArea::vertical()
+                        .id_salt(("onboarding-step", index))
+                        .auto_shrink([false, false])
+                        .show(&mut pages_ui, |ui| {
+                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                            content_top = ui.cursor().top();
+                            match step {
+                                Step::News => self.news(ui, theme, bridge),
+                                Step::Welcome => welcome(ui, theme, bridge),
+                                Step::Look => self.look(ui, theme, bridge),
+                                Step::Route => route(ui, theme, bridge),
+                                Step::Configs => self.configs(ui, theme, bridge),
+                                Step::System => system(ui, theme, bridge),
+                                Step::Done => self.done(ui, theme, bridge),
+                            }
+                        });
+                    if is_current && reveal < 1.0 {
+                        stagger_reveal(ctx, layer_id, first_shape, content_top, reveal);
+                    }
+                }
 
                 // ── action bar ──
                 let bar = Rect::from_min_max(pos2(main_left, card.bottom() - BAR_HEIGHT), card.max);
@@ -293,7 +378,8 @@ impl Onboarding {
                     0.0,
                     theme.divider,
                 );
-                let keyboard = !ctx.egui_wants_keyboard_input() && !self.typing;
+                let keyboard =
+                    closing.is_none() && !ctx.egui_wants_keyboard_input() && !self.typing;
                 let next_key = keyboard
                     && ctx.input_mut(|input| {
                         input.consume_key(Modifiers::NONE, Key::Enter)
@@ -396,16 +482,36 @@ impl Onboarding {
                     Stroke::new(1.0, theme.flyout_border),
                     StrokeKind::Inside,
                 );
+                if (card_scale - 1.0).abs() > 0.0005 {
+                    // `cardLayer.scale` around its centre.
+                    let center = card.center().to_vec2();
+                    let transform =
+                        egui::emath::TSTransform::new(center * (1.0 - card_scale), card_scale);
+                    ctx.graphics_mut(|graphics| {
+                        let list = graphics.entry(layer_id);
+                        let end = list.next_idx();
+                        list.transform_range(card_shapes, end, transform);
+                    });
+                }
             });
         self.color_dialog(ctx, theme, bridge);
         if self.step != self.last_step {
             ctx.request_repaint();
         }
+        let finish = finish && closing.is_none();
         if finish {
-            self.finished = true;
+            // `finish()`: the profile is completed at once, the card leaves
+            // while the dashboard settles in behind it.
+            self.closing_at = Some(now);
             bridge.complete_onboarding();
+            ctx.request_repaint();
         }
         finish
+    }
+
+    /// `backdrop.opacity` of the overlay; zero while it is not shown.
+    pub(super) fn backdrop_level(&self) -> f32 {
+        self.backdrop
     }
 
     /// Brand + stepper + bottom hint (QML `side` panel).
@@ -1574,6 +1680,41 @@ fn color_hex(color: Color32) -> String {
 // ── layout primitives ───────────────────────────────────────────────────
 
 /// `Math.round(size * Theme.fontScale)`.
+/// StepPage `rv(order)`: page content fades in from the top down. The QML
+/// pages number their blocks by hand (about one per 56 px); here the order
+/// follows from where a shape sits in the page.
+fn stagger_reveal(
+    ctx: &Context,
+    layer_id: egui::LayerId,
+    first: egui::layers::ShapeIdx,
+    content_top: f32,
+    reveal: f32,
+) {
+    ctx.graphics_mut(|graphics| {
+        let list = graphics.entry(layer_id);
+        let end = list.next_idx().0;
+        for index in first.0..end {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                let top = clipped.shape.visual_bounding_rect().top();
+                if !top.is_finite() {
+                    return;
+                }
+                let level = reveal_level(reveal, ((top - content_top) / 56.0).max(0.0));
+                if level < 1.0 {
+                    egui::epaint::shape_transform::adjust_colors(&mut clipped.shape, move |color| {
+                        *color = color.gamma_multiply(level);
+                    });
+                }
+            });
+        }
+    });
+}
+
+/// `1 - (1 - clamp((reveal - order * 0.085) / 0.42))^3`.
+fn reveal_level(reveal: f32, order: f32) -> f32 {
+    motion::ease_out_cubic((reveal - order * 0.085) / 0.42)
+}
+
 fn px(theme: &Theme, size: f32) -> f32 {
     (size * theme.font_scale as f32).round()
 }

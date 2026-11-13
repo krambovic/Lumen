@@ -82,6 +82,23 @@ pub(super) fn render_page(
     state
         .dashboard
         .observe(page_ctx.bridge, page == Page::Dashboard);
+    render_page_body(page, ui, page_ctx, state);
+    state.node_qr.render(page_ctx.ctx, page_ctx.theme);
+}
+
+/// A page that is still fading out after a page change. `LazyPageLoader`
+/// keeps a page laid out while its opacity is above zero, so the old and the
+/// new page cross-fade.
+pub(super) fn render_leaving_page(
+    page: Page,
+    ui: &mut Ui,
+    page_ctx: &mut PageContext,
+    state: &mut PageState,
+) {
+    render_page_body(page, ui, page_ctx, state);
+}
+
+fn render_page_body(page: Page, ui: &mut Ui, page_ctx: &mut PageContext, state: &mut PageState) {
     match page {
         Page::Dashboard => state.dashboard.render(ui, page_ctx),
         Page::Nodes => state.nodes.render(ui, page_ctx),
@@ -94,5 +111,4 @@ pub(super) fn render_page(
         Page::Settings => state.settings.render(ui, page_ctx),
         Page::About => state.about.render(ui, page_ctx),
     }
-    state.node_qr.render(page_ctx.ctx, page_ctx.theme);
 }
