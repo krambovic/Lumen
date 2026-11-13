@@ -927,29 +927,12 @@ impl NodesPage {
                 ui.set_min_size(egui::vec2(INSPECTOR_WIDTH - 2.0, (height - 2.0).max(0.0)));
                 ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
                 if sub.is_some() {
+                    ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.add_space(10.0);
+                        ui.spacing_mut().item_spacing.x = 4.0;
                         for (node, label) in [(false, "Подписка"), (true, "Сервер")] {
-                            let active = node == self.inspector_node;
-                            let label = RichText::new(tr(label, &[])).color(if active {
-                                theme.text
-                            } else {
-                                theme.text_muted
-                            });
-                            let tab = ui.add(
-                                Button::new(if active { label.family(crate::shell::theme::semibold_family()) } else { label })
-                                    .min_size(egui::vec2(80.0, 38.0))
-                                    .frame(false),
-                            );
-                            if active {
-                                let x = tab.rect.center().x;
-                                let y = tab.rect.bottom() - 1.5;
-                                ui.painter().line_segment(
-                                    [egui::pos2(x - 28.0, y), egui::pos2(x + 28.0, y)],
-                                    Stroke::new(3.0, theme.accent),
-                                );
-                            }
-                            if tab.clicked() {
+                            if inspector_tab(ui, theme, &tr(label, &[]), node == self.inspector_node) {
                                 self.inspector_node = node;
                             }
                         }
@@ -971,68 +954,12 @@ impl NodesPage {
                     .max_height(body_height)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        Frame::new().inner_margin(13).show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 8.0;
+                        Frame::new().inner_margin(14).show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 12.0;
                             if let Some(sub) = selected_sub {
                                 subscription::inspector(ui, theme, sub);
-                            } else if has_node {
-                                ui.horizontal(|ui| {
-                                    flag::show(
-                                        ui,
-                                        field(&details, "country"),
-                                        egui::vec2(24.0, 18.0),
-                                    );
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(field(&details, "name"))
-                                                .size(18.0)
-                                                .family(crate::shell::theme::semibold_family()),
-                                        )
-                                        .truncate(),
-                                    );
-                                });
-                                let port = details["port"].as_i64().unwrap_or(0);
-                                let address = if port > 0 {
-                                    format!("{}:{port}", field(&details, "server"))
-                                } else {
-                                    field(&details, "server").to_string()
-                                };
-                                property(ui, "Адрес", &address);
-                                for (label, key) in [
-                                    ("Протокол", "protocol"),
-                                    ("Транспорт", "transport"),
-                                    ("Безопасность", "security"),
-                                    ("SNI", "sni"),
-                                    ("Отпечаток", "fingerprint"),
-                                    ("Страна", "country"),
-                                    ("Группа", "group"),
-                                    ("Подписка", "subscription"),
-                                    ("Описание", "description"),
-                                ] {
-                                    property(ui, label, field(&details, key));
-                                }
-                                let ping_kind = match field(&details, "pingKind") {
-                                    "proxy" => "Через прокси",
-                                    "tcping_endpoint" => "TCP до адреса",
-                                    "icmp_endpoint" => "ICMP до адреса",
-                                    "unavailable" => "Недоступно",
-                                    _ => "",
-                                };
-                                property(ui, "Тип пинга", &tr(ping_kind, &[]));
-                                property(
-                                    ui,
-                                    "Последнее использование",
-                                    &subscription::time_label(&details["lastUsed"]),
-                                );
-                                let ping = details["ping"].as_i64().unwrap_or(-1);
-                                if ping >= 0 {
-                                    property(ui, "Пинг", &format!("{ping} ms"));
-                                }
                             } else {
-                                ui.label(
-                                    RichText::new(tr("Выберите сервер", &[]))
-                                        .color(theme.text_muted),
-                                );
+                                server_inspector(ui, theme, &details, has_node);
                             }
                         });
                     });
@@ -1066,7 +993,7 @@ impl NodesPage {
                                     copy(ui, bridge.copy_text(url));
                                 }
                                 if ui
-                                    .add_sized([32.0, 32.0], Button::new("").fill(theme.danger))
+                                    .add_sized([32.0, 32.0], Button::new(RichText::new("").color(theme.accent_text)).fill(theme.danger_fill))
                                     .on_hover_text(tr("Удалить подписку (с серверами)", &[]))
                                     .clicked()
                                 {
@@ -1452,6 +1379,199 @@ fn edit(ui: &mut Ui, text: &mut String, hint: &str) {
             .hint_text(tr(hint, &[])),
     );
 }
+/// NodesPage.qml inspector tab: text + 20 px wide, 36 px tall, DemiBold
+/// and a 3 px accent bar under the active one.
+fn inspector_tab(ui: &mut Ui, theme: &Theme, label: &str, active: bool) -> bool {
+    let family = if active {
+        crate::shell::theme::semibold_family()
+    } else {
+        egui::FontFamily::Proportional
+    };
+    let font = egui::FontId::new(theme.font_normal as f32, family);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, theme.text);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 20.0, 36.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let color = if active || response.hovered() { theme.text } else { theme.text_muted };
+    ui.painter().galley_with_override_text_color(
+        rect.center() - galley.size() / 2.0,
+        galley.clone(),
+        color,
+    );
+    if active {
+        let width = (galley.size().x - 4.0).max(16.0);
+        let bar = egui::Rect::from_center_size(
+            egui::pos2(rect.center().x, rect.bottom() - 1.5),
+            egui::vec2(width, 3.0),
+        );
+        ui.painter().rect_filled(bar, 1.5, theme.accent);
+    }
+    response.clicked()
+}
+
+/// NodesPage.qml `serverInfo`: name, protocol line, ping / speed / status
+/// tiles and the `serverDetailRows` table.
+fn server_inspector(ui: &mut Ui, theme: &Theme, details: &Value, has_node: bool) {
+    let small = theme.font_small as f32;
+    if !has_node {
+        ui.add(
+            egui::Label::new(
+                RichText::new(tr("Выберите сервер в списке.", &[]))
+                    .size(small)
+                    .color(theme.text_muted),
+            )
+            .wrap(),
+        );
+        return;
+    }
+    let protocol = field(details, "protocol");
+    let security = field(details, "security");
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.add(
+            egui::Label::new(
+                RichText::new(field(details, "name"))
+                    .size((theme.font_strong + 2) as f32)
+                    .family(crate::shell::theme::semibold_family())
+                    .color(theme.text),
+            )
+            .wrap(),
+        );
+        let subtitle = if !security.is_empty() && !protocol.contains(security) {
+            format!("{protocol} \u{00B7} {security}")
+        } else {
+            protocol.to_owned()
+        };
+        ui.add(
+            egui::Label::new(RichText::new(subtitle).size(small).color(theme.text_muted)).truncate(),
+        );
+    });
+
+    let ping = details["ping"].as_i64().unwrap_or(-1);
+    let speed = details["speed"].as_f64().unwrap_or(-1.0);
+    let alive = field(details, "alive");
+    let tiles = [
+        (
+            tr("Пинг", &[]),
+            if ping > 0 { format!("{ping} ms") } else { "\u{2014}".to_owned() },
+            if ping > 0 { theme.ping_color(Some(ping)) } else { theme.text_faint },
+        ),
+        (
+            tr("Скорость", &[]),
+            if speed >= 0.0 { format!("{speed:.1} MB/s") } else { "\u{2014}".to_owned() },
+            if speed >= 0.0 { theme.text } else { theme.text_faint },
+        ),
+        (
+            tr("Статус", &[]),
+            match alive {
+                "ok" => "OK".to_owned(),
+                "fail" => "\u{2715}".to_owned(),
+                _ => "\u{2014}".to_owned(),
+            },
+            match alive {
+                "ok" => theme.success,
+                "fail" => theme.danger,
+                _ => theme.text_faint,
+            },
+        ),
+    ];
+    let width = ((ui.available_width() - 16.0) / 3.0).floor();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        for (label, value, color) in tiles {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 54.0), egui::Sense::hover());
+            let fill = if theme.dark {
+                egui::Color32::from_black_alpha(41)
+            } else {
+                egui::Color32::from_black_alpha(10)
+            };
+            ui.painter().rect_filled(rect, theme.radius_small as f32, fill);
+            let painter = ui.painter_at(rect);
+            let label = painter.layout_no_wrap(label, egui::FontId::proportional(small), theme.text_muted);
+            let value = painter.layout_no_wrap(
+                value,
+                egui::FontId::new(
+                    (theme.font_normal + 1) as f32,
+                    crate::shell::theme::semibold_family(),
+                ),
+                color,
+            );
+            let top = rect.center().y - (label.size().y + 2.0 + value.size().y) / 2.0;
+            let left = rect.left() + 10.0;
+            painter.galley(egui::pos2(left, top), label.clone(), theme.text_muted);
+            painter.galley(egui::pos2(left, top + label.size().y + 2.0), value, color);
+        }
+    });
+
+    let port = details["port"].as_i64().unwrap_or(0);
+    let server = field(details, "server");
+    let mut rows = vec![
+        (tr("Адрес", &[]), if port > 0 { format!("{server}:{port}") } else { server.to_owned() }),
+        (tr("Протокол", &[]), protocol.to_owned()),
+        (tr("Транспорт", &[]), field(details, "transport").to_owned()),
+        (
+            tr("Безопасность", &[]),
+            if security.is_empty() { "\u{2014}".to_owned() } else { security.to_owned() },
+        ),
+    ];
+    let mut optional = |label: String, value: String| {
+        if !value.is_empty() {
+            rows.push((label, value));
+        }
+    };
+    optional("SNI".to_owned(), field(details, "sni").to_owned());
+    optional(tr("Отпечаток", &[]), field(details, "fingerprint").to_owned());
+    optional(tr("Страна", &[]), field(details, "country").to_owned());
+    rows.push((tr("Группа", &[]), field(details, "group").to_owned()));
+    let mut optional = |label: String, value: String| {
+        if !value.is_empty() {
+            rows.push((label, value));
+        }
+    };
+    optional(tr("Подписка", &[]), field(details, "subscription").to_owned());
+    let ping_kind = match field(details, "pingKind") {
+        "proxy" => "Через прокси",
+        "tcping_endpoint" => "TCP до адреса",
+        "icmp_endpoint" => "ICMP до адреса",
+        "unavailable" => "Недоступно",
+        _ => "",
+    };
+    if !ping_kind.is_empty() {
+        optional(tr("Тип пинга", &[]), tr(ping_kind, &[]));
+    }
+    optional(
+        tr("Последнее использование", &[]),
+        subscription::time_label(&details["lastUsed"]),
+    );
+    optional(tr("Описание", &[]), field(details, "description").to_owned());
+    for (label, value) in rows {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(104.0, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(104.0);
+                    ui.add(
+                        egui::Label::new(RichText::new(label).size(small).color(theme.text_muted)).wrap(),
+                    );
+                },
+            );
+            let mut job = egui::text::LayoutJob::simple(
+                value,
+                egui::FontId::proportional(small),
+                theme.text,
+                ui.available_width(),
+            );
+            job.wrap.max_rows = 3;
+            job.wrap.break_anywhere = true;
+            ui.add(egui::Label::new(job).selectable(true));
+        });
+    }
+}
+
 fn property(ui: &mut Ui, label: &str, value: &str) {
     if !value.is_empty() {
         ui.add(

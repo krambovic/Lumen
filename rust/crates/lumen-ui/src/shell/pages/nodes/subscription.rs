@@ -138,7 +138,7 @@ pub(super) fn inspector(ui: &mut Ui, theme: &Theme, sub: &Value) {
                     .show(ui, |ui| {
                         ui.label(
                             RichText::new(format!("● {}", state.state))
-                                .size(11.0)
+                                .size(theme.font_small as f32)
                                 .color(color),
                         );
                     });
@@ -167,7 +167,7 @@ pub(super) fn inspector(ui: &mut Ui, theme: &Theme, sub: &Value) {
                     egui::vec2(ui.available_width(), 58.0),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        ui.spacing_mut().item_spacing.y = 3.0;
+                        ui.spacing_mut().item_spacing.y = 2.0;
                         ui.label(
                             RichText::new(tr("Истекает", &[]))
                                 .size(12.0)
@@ -230,8 +230,22 @@ pub(super) fn inspector(ui: &mut Ui, theme: &Theme, sub: &Value) {
             });
     }
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 14.0;
         for link in presentation["links"].as_array().into_iter().flatten() {
-            if ui.link(tr(field(link, "label"), &[])).clicked() {
+            // NodesPage.qml provider links: accent text, underlined in the
+            // text colour on hover.
+            let text = tr(field(link, "label"), &[]);
+            let font = egui::FontId::proportional((theme.font_small + 1) as f32);
+            let galley = ui.painter().layout_no_wrap(text, font, theme.accent);
+            let (rect, response) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            let color = if response.hovered() { theme.text } else { theme.accent };
+            ui.painter().galley_with_override_text_color(rect.min, galley, color);
+            if response.hovered() {
+                let y = rect.bottom() - 1.0;
+                ui.painter().hline(rect.x_range(), y, egui::Stroke::new(1.0, color));
+            }
+            if response.clicked() {
                 open_url(ui, field(link, "url"));
             }
         }
@@ -248,40 +262,61 @@ fn traffic_ring(ui: &mut Ui, theme: &Theme, state: &Status) {
         radius,
         egui::Stroke::new(
             8.0,
-            Color32::from_black_alpha(if theme.dark { 64 } else { 22 }),
+            Color32::from_black_alpha(if theme.dark { 71 } else { 20 }),
         ),
     );
-    if let Some(fraction) = state.fraction().filter(|fraction| *fraction > 0.0) {
+    // Unlimited plans draw the full ring (`limited ? fraction : 1`).
+    let limited = state.limit.is_some_and(|limit| limit > 0.0);
+    let fraction = if limited { state.fraction().unwrap_or(0.0) } else { 1.0 };
+    if fraction > 0.0 {
         let color = state.color(theme);
-        let points = (0..=64)
+        let steps = ((fraction.min(1.0) * 96.0).ceil() as usize).max(2);
+        let points = (0..=steps)
             .map(|i| {
-                let angle = std::f32::consts::TAU * fraction * i as f32 / 64.0
+                let angle = std::f32::consts::TAU * fraction.min(1.0) * i as f32 / steps as f32
                     - std::f32::consts::FRAC_PI_2;
                 center + egui::vec2(angle.cos(), angle.sin()) * radius
             })
             .collect::<Vec<_>>();
         painter.circle_filled(points[0], 4.0, color);
-        painter.circle_filled(points[64], 4.0, color);
+        painter.circle_filled(points[steps], 4.0, color);
         painter.add(egui::Shape::line(points, egui::Stroke::new(8.0, color)));
     }
     let used = state.used.map_or_else(|| "—".to_string(), bytes);
-    painter.text(
-        center - egui::vec2(0.0, 7.0),
-        egui::Align2::CENTER_CENTER,
+    let used = painter.layout_no_wrap(
         used,
-        egui::FontId::proportional(16.0),
+        egui::FontId::new(
+            (theme.font_normal + 2) as f32,
+            crate::shell::theme::semibold_family(),
+        ),
         theme.text,
     );
-    let limit = state.limit.filter(|limit| *limit > 0.0).map_or_else(
-        || "∞".to_string(),
-        |limit| tr("из {total}", &[("total", &bytes(limit))]),
-    );
-    painter.text(
-        center + egui::vec2(0.0, 11.0),
-        egui::Align2::CENTER_CENTER,
+    let (limit, limit_color) = if limited {
+        (
+            tr("из {total}", &[("total", &bytes(state.limit.unwrap_or_default()))]),
+            theme.text_muted,
+        )
+    } else {
+        (tr("Безлимитный трафик", &[]), theme.success)
+    };
+    let mut job = egui::text::LayoutJob::simple(
         limit,
-        egui::FontId::proportional(11.0),
-        theme.text_muted,
+        egui::FontId::proportional(theme.font_small as f32),
+        limit_color,
+        84.0,
+    );
+    job.halign = egui::Align::Center;
+    let limit = painter.layout_job(job);
+    let top = center.y - (used.size().y + limit.size().y) / 2.0;
+    painter.galley(
+        egui::pos2(center.x - used.size().x / 2.0, top),
+        used.clone(),
+        theme.text,
+    );
+    painter.galley(
+        egui::pos2(center.x, top + used.size().y),
+        limit,
+        limit_color,
     );
 }
 
