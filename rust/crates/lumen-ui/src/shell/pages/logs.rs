@@ -65,6 +65,7 @@ impl LogsPage {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 if log_button(ui, theme, tr("Экспорт диагностики", &[]), true).clicked()
                 {
+                    self.export = DiagnosticsExport::new();
                     self.export_open = true;
                 }
                 if log_button(ui, theme, tr("Очистить", &[]), false).clicked() {
