@@ -221,6 +221,7 @@ impl TrayController {
         let tray = builder.build().map_err(|e| e.to_string())?;
         let handler_model = model.clone();
         TrayIconEvent::set_event_handler(Some(move |event| handle_event(&handler_model, event)));
+        balloon::watch_clicks(&tray, &model);
 
         let mut controller = Self {
             tray,
@@ -325,8 +326,8 @@ impl TrayController {
     /// `notify_hidden()`: the "app hidden to tray" balloon, once per cycle.
     /// The WinRT script can die on execution policy or missing assemblies
     /// without telling us, so the in-process balloon goes first and the toast
-    /// stays as the fallback. tray-icon exposes no balloon API, so the shell
-    /// always takes the toast path with the same message.
+    /// stays as the fallback. A click on the balloon shows the window
+    /// (`messageClicked` -> `_show_window`).
     pub fn notify_hidden(&mut self) {
         if self.notified {
             return;
@@ -336,7 +337,9 @@ impl TrayController {
             "\u{041F}\u{0440}\u{0438}\u{043B}\u{043E}\u{0436}\u{0435}\u{043D}\u{0438}\u{0435} \u{0441}\u{0432}\u{0435}\u{0440}\u{043D}\u{0443}\u{0442}\u{043E} \u{0432} \u{0441}\u{0438}\u{0441}\u{0442}\u{0435}\u{043C}\u{043D}\u{044B}\u{0439} \u{0442}\u{0440}\u{0435}\u{0439}",
             &[],
         );
-        toast::show_toast(APP_NAME, &message, toast::AUMID);
+        if !balloon::show(&self.tray, APP_NAME, &message) {
+            toast::show_toast(APP_NAME, &message, toast::AUMID);
+        }
     }
 
     /// Reset the one-shot balloon flag (the window became visible again).
@@ -358,6 +361,115 @@ impl TrayController {
     pub fn set_tooltip(&mut self, text: &str) {
         let _ = self.tray.set_tooltip(Some(text));
     }
+}
+
+/// `QSystemTrayIcon.showMessage` and `messageClicked`. tray-icon has no
+/// balloon API, so the balloon is posted on its icon directly and its window
+/// is subclassed to catch the click.
+#[cfg(windows)]
+mod balloon {
+    use std::sync::Arc;
+
+    use parking_lot::Mutex;
+    use tray_icon::TrayIcon;
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Shell::{
+        DefSubclassProc, NIF_INFO, NIIF_INFO, NIM_MODIFY, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
+        SetWindowSubclass, Shell_NotifyIconGetRect, Shell_NotifyIconW,
+    };
+
+    use super::{MenuModel, TrayCommand};
+
+    /// tray-icon's `WM_USER_TRAYICON` callback message.
+    const TRAY_CALLBACK: u32 = 6002;
+    const NIN_BALLOONUSERCLICK: u32 = 0x0405;
+    const SUBCLASS_ID: usize = 0x4C55_4D45;
+
+    static SINK: Mutex<Option<Arc<Mutex<MenuModel>>>> = Mutex::new(None);
+
+    fn hwnd(tray: &TrayIcon) -> HWND {
+        HWND(tray.window_handle() as *mut _)
+    }
+
+    /// tray-icon numbers its icons from 1 and keeps the number private; find
+    /// the one registered on this window.
+    fn icon_id(window: HWND) -> Option<u32> {
+        (1..=32).find(|id| unsafe {
+            let identifier = NOTIFYICONIDENTIFIER {
+                cbSize: std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32,
+                hWnd: window,
+                uID: *id,
+                ..Default::default()
+            };
+            Shell_NotifyIconGetRect(&identifier).is_ok()
+        })
+    }
+
+    fn copy_into(target: &mut [u16], text: &str) {
+        let wide: Vec<u16> = text.encode_utf16().take(target.len() - 1).collect();
+        target[..wide.len()].copy_from_slice(&wide);
+        target[wide.len()] = 0;
+    }
+
+    pub(super) fn show(tray: &TrayIcon, title: &str, message: &str) -> bool {
+        let window = hwnd(tray);
+        let Some(id) = icon_id(window) else {
+            return false;
+        };
+        let mut data = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: window,
+            uID: id,
+            uFlags: NIF_INFO,
+            dwInfoFlags: NIIF_INFO,
+            ..Default::default()
+        };
+        // QSystemTrayIcon timeout of the Python call (2000 ms).
+        data.Anonymous.uTimeout = 2000;
+        copy_into(&mut data.szInfoTitle, title);
+        copy_into(&mut data.szInfo, message);
+        unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool()
+    }
+
+    unsafe extern "system" fn subclass_proc(
+        window: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> LRESULT {
+        if message == TRAY_CALLBACK && (lparam.0 as u32 & 0xFFFF) == NIN_BALLOONUSERCLICK {
+            if let Some(model) = SINK.lock().as_ref() {
+                model.lock().push(TrayCommand::ShowWindow);
+            }
+            return LRESULT(0);
+        }
+        unsafe { DefSubclassProc(window, message, wparam, lparam) }
+    }
+
+    pub(super) fn watch_clicks(tray: &TrayIcon, model: &Arc<Mutex<MenuModel>>) {
+        *SINK.lock() = Some(model.clone());
+        unsafe {
+            let _ = SetWindowSubclass(hwnd(tray), Some(subclass_proc), SUBCLASS_ID, 0);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod balloon {
+    use std::sync::Arc;
+
+    use parking_lot::Mutex;
+    use tray_icon::TrayIcon;
+
+    use super::MenuModel;
+
+    pub(super) fn show(_tray: &TrayIcon, _title: &str, _message: &str) -> bool {
+        false
+    }
+
+    pub(super) fn watch_clicks(_tray: &TrayIcon, _model: &Arc<Mutex<MenuModel>>) {}
 }
 
 impl Drop for TrayController {
