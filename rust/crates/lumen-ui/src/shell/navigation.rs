@@ -294,14 +294,17 @@ pub fn draw_nav_button(
     let icon_size = (16.0 * theme.font_scale) as f32;
     let icon_pos = egui::pos2(bg_rect.left() + 11.0, bg_rect.center().y - icon_size / 2.0);
     let icon_rect = Rect::from_min_size(icon_pos, Vec2::new(18.0, icon_size));
-    if let Some(texture) = outline_texture(ui, entry.page) {
+    if let Some(texture) = outline_texture(ui, entry.page, (18.0 * theme.font_scale) as f32) {
         let size = (18.0 * theme.font_scale) as f32;
+        let ppp = ui.ctx().pixels_per_point();
+        // Whole device pixels: the texture is rasterized 1:1.
+        let min = egui::pos2(
+            (icon_rect.left() * ppp).round() / ppp,
+            ((bg_rect.center().y - size / 2.0) * ppp).round() / ppp,
+        );
         ui.painter().image(
             texture.id(),
-            Rect::from_min_size(
-                egui::pos2(icon_rect.left(), bg_rect.center().y - size / 2.0),
-                Vec2::splat(size),
-            ),
+            Rect::from_min_size(min, texture.size_vec2() / ppp),
             Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             icon_color,
         );
@@ -338,7 +341,7 @@ pub fn draw_nav_button(
     response.clicked()
 }
 
-fn outline_texture(ui: &Ui, page: Page) -> Option<egui::TextureHandle> {
+fn outline_texture(ui: &Ui, page: Page, size: f32) -> Option<egui::TextureHandle> {
     let name = match page {
         Page::Nodes => "servers",
         Page::Routing => "routing",
@@ -347,7 +350,10 @@ fn outline_texture(ui: &Ui, page: Page) -> Option<egui::TextureHandle> {
         Page::Logs => "logs",
         _ => return None,
     };
-    let id = egui::Id::unique(("nav-outline", name));
+    // Rasterized at the drawn device size: a large bitmap minified by the
+    // bilinear sampler loses the 1.65 px strokes' anti-aliasing.
+    let px = (size * ui.ctx().pixels_per_point()).round().max(1.0) as u32;
+    let id = egui::Id::unique(("nav-outline", name, px));
     if let Some(texture) = ui
         .ctx()
         .data(|data| data.get_temp::<egui::TextureHandle>(id))
@@ -363,13 +369,17 @@ fn outline_texture(ui: &Ui, page: Page) -> Option<egui::TextureHandle> {
     );
     let image = egui_extras::image::load_svg_bytes_with_size(
         svg.as_bytes(),
-        egui::load::SizeHint::Width(72),
+        egui::load::SizeHint::Size {
+            width: px,
+            height: px,
+            maintain_aspect_ratio: true,
+        },
         &Default::default(),
     )
     .ok()?;
     let texture = ui
         .ctx()
-        .load_texture(name, image, egui::TextureOptions::LINEAR);
+        .load_texture(format!("{name}-{px}"), image, egui::TextureOptions::LINEAR);
     ui.ctx()
         .data_mut(|data| data.insert_temp(id, texture.clone()));
     Some(texture)
@@ -396,7 +406,7 @@ mod tests {
                 Page::History,
                 Page::Logs,
             ] {
-                assert!(outline_texture(ui, page).is_some(), "{page:?}");
+                assert!(outline_texture(ui, page, 18.0).is_some(), "{page:?}");
             }
         });
         output.textures_delta.clear();

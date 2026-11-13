@@ -1977,14 +1977,13 @@ pub fn apply_fonts(ctx: &Context, theme: &Theme) {
 pub fn apply_visuals(ctx: &Context, theme: &Theme) {
     let mut style = Style::clone(&ctx.global_style());
     style.visuals.dark_mode = theme.dark;
-    // Glyph coverage is tuned per scheme: the dark-mode curve thins dark text
-    // on light surfaces. Whole-pixel glyph positions keep hinted stems sharp.
-    style.visuals.text_options.color_transfer_function = if theme.dark {
-        egui::epaint::FontColorTransferFunction::DARK_MODE_DEFAULT
-    } else {
-        egui::epaint::FontColorTransferFunction::LIGHT_MODE_DEFAULT
-    };
-    style.visuals.text_options.subpixel_binning = false;
+    // Qt Quick draws text with linear coverage and fractional glyph advances.
+    // egui's dark-mode curve (2c - c^2) and whole-pixel advances made glyphs
+    // heavier and their spacing uneven.
+    style.visuals.text_options.color_transfer_function =
+        egui::epaint::FontColorTransferFunction::Off;
+    style.visuals.text_options.subpixel_binning = true;
+    style.visuals.text_options.font_hinting = true;
     // QML `Text` is not selectable.
     style.interaction.selectable_labels = false;
     style.visuals.override_text_color = Some(theme.text);

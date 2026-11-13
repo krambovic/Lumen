@@ -214,6 +214,9 @@ pub struct ProxyChainHop {
 /// Python `AppBridge`.
 pub struct AppBridge {
     controller: Arc<Mutex<AppController>>,
+    /// Last per-frame reads, served while a transition holds the controller.
+    read_cache: Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
+    deferred_events: VecDeque<AppEvent>,
     runtime: Arc<tokio::runtime::Runtime>,
     event_rx: broadcast::Receiver<AppEvent>,
     pump: Option<PumpHandle>,
@@ -686,6 +689,8 @@ impl AppBridge {
         set_language(&language);
         Self {
             controller: Arc::new(Mutex::new(controller)),
+            read_cache: Mutex::new(std::collections::HashMap::new()),
+            deferred_events: VecDeque::new(),
             runtime: Arc::new(runtime),
             event_rx,
             pump: None,
@@ -769,6 +774,27 @@ impl AppBridge {
 
     pub fn runtime_handle(&self) -> tokio::runtime::Handle {
         self.runtime.handle().clone()
+    }
+
+    /// Connect/disconnect transitions run on the controller thread and keep
+    /// the controller locked while the cores start (seconds). Getters the
+    /// shell calls every frame check this first and serve their last value
+    /// instead of stalling the UI thread.
+    fn controller_free(&self) -> bool {
+        self.controller.try_lock_for(Duration::from_millis(4)).is_some()
+    }
+
+    fn cached_read<T: Clone + 'static>(&self, key: &str) -> Option<T> {
+        self.read_cache.lock().get(key).and_then(|value| value.downcast_ref::<T>()).cloned()
+    }
+
+    fn remember_read<T: Send + 'static>(&self, key: String, value: T) {
+        self.read_cache.lock().insert(key, Box::new(value));
+    }
+
+    /// Whether a running transition currently holds the controller.
+    pub fn controller_busy(&self) -> bool {
+        self.controller.is_locked()
     }
 
     /// Queue controller work (Python queued connections).
@@ -1051,11 +1077,20 @@ impl AppBridge {
     /// this each frame.
     pub fn pump(&mut self) {
         self.pump_app_update_download();
-        if self.controller.is_locked() {
-            return;
+        // While a transition holds the controller, events whose handlers read
+        // it wait in `deferred_events`; status and transition events still
+        // reach the UI so the status ring spins during a connect.
+        let busy = self.controller.is_locked();
+        if !busy {
+            while let Some(event) = self.deferred_events.pop_front() {
+                self.on_controller_event(event);
+            }
         }
         loop {
             match self.event_rx.try_recv() {
+                Ok(event) if busy && !Self::lock_free_event(&event) => {
+                    self.deferred_events.push_back(event);
+                }
                 Ok(event) => self.on_controller_event(event),
                 Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
                 Err(broadcast::error::TryRecvError::Closed)
@@ -1064,6 +1099,18 @@ impl AppBridge {
                 }
             }
         }
+    }
+
+    fn lock_free_event(event: &AppEvent) -> bool {
+        matches!(
+            event,
+            AppEvent::ConnectionStatus { .. }
+                | AppEvent::TransitionStateChanged { .. }
+                | AppEvent::ConnectionChanged(_)
+                | AppEvent::LogLine(_)
+                | AppEvent::SpeedUpdated { .. }
+                | AppEvent::SpeedNodeProgress { .. }
+        )
     }
 
     fn queue_ui_log(&mut self, line: &str) {
@@ -1455,12 +1502,23 @@ impl AppBridge {
         {
             return true;
         }
-        let desired = self.controller.lock().runtime.desired_connected;
+        let desired = self
+            .controller
+            .try_lock_for(Duration::from_millis(4))
+            .map(|controller| controller.runtime.desired_connected)
+            .unwrap_or(!self.connected);
         desired || self.connected
     }
 
     fn on_transition(&mut self, busy: bool) {
-        let target = self.controller.lock().runtime.desired_connected || self.connected;
+        // A starting transition usually flips the connection state; that
+        // guess stands in while the controller is held.
+        let desired = self
+            .controller
+            .try_lock_for(Duration::from_millis(4))
+            .map(|controller| controller.runtime.desired_connected)
+            .unwrap_or(!self.connected);
+        let target = desired || self.connected;
         let connecting = if busy {
             self.transition_message_connecting(&self.runtime_message)
         } else {
@@ -1731,7 +1789,7 @@ impl AppBridge {
     }
 
     pub fn tick_power_filter(&mut self) {
-        if self.power_state.timer_is_active() {
+        if self.power_state.timer_is_active() && self.controller_free() {
             self.drive_power(|filter| {
                 filter.fire_timer_if_due();
             });
@@ -1817,6 +1875,12 @@ impl AppBridge {
 
     /// Python `toggleConnection`.
     pub fn toggle_connection(&mut self) {
+        if self.controller.is_locked() {
+            // A transition is running: queue the toggle on the controller
+            // thread instead of waiting for the cores to finish starting.
+            self.submit(Box::new(|controller: &mut AppController| controller.toggle_connection()));
+            return;
+        }
         let tun_mode = self.controller.lock().state.settings.tun_mode;
         if !self.connected && tun_mode && !is_process_elevated() {
             self.notify_action(
@@ -3415,6 +3479,16 @@ impl AppBridge {
 
     /// Python `historyData`.
     pub fn history_data(&self, days: i64) -> Value {
+        let key = format!("history_data:{days}");
+        if !self.controller_free() {
+            return self.cached_read(&key).unwrap_or_else(|| json!({}));
+        }
+        let value = self.history_data_now(days);
+        self.remember_read(key, value.clone());
+        value
+    }
+
+    fn history_data_now(&self, days: i64) -> Value {
         let controller = self.controller.lock();
         history_helpers::build_history_payload(
             Some(controller.traffic_history()),
@@ -3698,6 +3772,16 @@ impl AppBridge {
 
     /// Python `zapretStatus`.
     pub fn zapret_status(&self) -> Value {
+        let key = "zapret_status".to_string();
+        if !self.controller_free() {
+            return self.cached_read(&key).unwrap_or_else(|| json!({}));
+        }
+        let value = self.zapret_status_now();
+        self.remember_read(key, value.clone());
+        value
+    }
+
+    fn zapret_status_now(&self) -> Value {
         let running = self.zapret_manual_running();
         let preset = if running {
             self.zapret_active_preset()
@@ -3881,6 +3965,16 @@ impl AppBridge {
 
     /// Python `zapretServerBindings`.
     pub fn zapret_server_bindings(&mut self) -> Vec<ZapretBindingRow> {
+        let key = "zapret_server_bindings".to_string();
+        if !self.controller_free() {
+            return self.cached_read(&key).unwrap_or_else(|| Vec::new());
+        }
+        let value = self.zapret_server_bindings_now();
+        self.remember_read(key, value.clone());
+        value
+    }
+
+    fn zapret_server_bindings_now(&mut self) -> Vec<ZapretBindingRow> {
         let presets: Vec<(String, String)> = {
             let controller = self.controller.lock();
             let mut rows: Vec<(String, String)> = controller
@@ -4057,6 +4151,16 @@ impl AppBridge {
 
     /// Python `zapretBindingChoices`.
     pub fn zapret_binding_choices_for(&self, node_id: &str) -> Vec<(String, String)> {
+        let key = format!("zapret_binding_choices_for:{node_id}");
+        if !self.controller_free() {
+            return self.cached_read(&key).unwrap_or_else(|| Vec::new());
+        }
+        let value = self.zapret_binding_choices_for_now(node_id);
+        self.remember_read(key, value.clone());
+        value
+    }
+
+    fn zapret_binding_choices_for_now(&self, node_id: &str) -> Vec<(String, String)> {
         match self.get_node_by_id(node_id.trim()) {
             Some(node) => self.zapret_binding_choices(&node, ""),
             None => Vec::new(),
@@ -4176,6 +4280,16 @@ impl AppBridge {
 
     /// Python `proxyChainNodeOptions`.
     pub fn proxy_chain_node_options(&mut self) -> Vec<(String, String)> {
+        let key = "proxy_chain_node_options".to_string();
+        if !self.controller_free() {
+            return self.cached_read(&key).unwrap_or_else(|| Vec::new());
+        }
+        let value = self.proxy_chain_node_options_now();
+        self.remember_read(key, value.clone());
+        value
+    }
+
+    fn proxy_chain_node_options_now(&mut self) -> Vec<(String, String)> {
         let mut options: Vec<(String, String)> = vec![(String::new(), tr("Не использовать", &[]))];
         let (front, exit) = {
             let controller = self.controller.lock();
@@ -4200,6 +4314,16 @@ impl AppBridge {
 
     /// Python `proxyChainPreview` — hops for the currently selected server.
     pub fn proxy_chain_preview(&mut self) -> Value {
+        let key = "proxy_chain_preview".to_string();
+        if !self.controller_free() {
+            return self.cached_read(&key).unwrap_or_else(|| json!({}));
+        }
+        let value = self.proxy_chain_preview_now();
+        self.remember_read(key, value.clone());
+        value
+    }
+
+    fn proxy_chain_preview_now(&mut self) -> Value {
         let controller = self.controller.lock();
         let mut settings = controller.state.settings.clone();
         settings.proxy_chain_enabled = true;
@@ -5243,6 +5367,16 @@ impl AppBridge {
     /// Python `nodeDetails` — everything the servers inspector shows about one
     /// node.
     pub fn node_details(&self, node_id: &str) -> Value {
+        let key = format!("node_details:{node_id}");
+        if !self.controller_free() {
+            return self.cached_read(&key).unwrap_or_else(|| json!({}));
+        }
+        let value = self.node_details_now(node_id);
+        self.remember_read(key, value.clone());
+        value
+    }
+
+    fn node_details_now(&self, node_id: &str) -> Value {
         let controller = self.controller.lock();
         let Some(node) = controller
             .state
@@ -6459,6 +6593,16 @@ impl AppBridge {
 
     /// Python `routingPresetOptions`.
     pub fn routing_preset_options(&mut self) -> Vec<Value> {
+        let key = "routing_preset_options".to_string();
+        if !self.controller_free() {
+            return self.cached_read(&key).unwrap_or_else(|| Vec::new());
+        }
+        let value = self.routing_preset_options_now();
+        self.remember_read(key, value.clone());
+        value
+    }
+
+    fn routing_preset_options_now(&mut self) -> Vec<Value> {
         let mut items = self.regional_routing_presets();
         let custom = {
             let controller = self.controller.lock();
@@ -6634,6 +6778,16 @@ impl AppBridge {
     }
 
     pub fn profile_loaded(&self) -> bool {
+        let key = "profile_loaded".to_string();
+        if !self.controller_free() {
+            return self.cached_read(&key).unwrap_or_else(|| true);
+        }
+        let value = self.profile_loaded_now();
+        self.remember_read(key, value.clone());
+        value
+    }
+
+    fn profile_loaded_now(&self) -> bool {
         self.controller.lock().profile_loaded()
     }
 
@@ -6687,7 +6841,7 @@ impl AppBridge {
     }
 
     pub fn onboarding_required(&self) -> bool {
-        if !self.controller.lock().profile_loaded() {
+        if !self.profile_loaded() {
             return false;
         }
         self.onboarding_setup_required() || self.onboarding_show_whats_new()
