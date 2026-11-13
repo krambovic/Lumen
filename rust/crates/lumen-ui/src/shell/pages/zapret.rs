@@ -57,11 +57,24 @@ pub(super) struct ZapretPage {
     server: String,
     choice: String,
     import_error: Option<String>,
+    bind_options: Option<BindOptions>,
+}
+
+/// Server and strategy lists of the binding row. Rebuilding them walks every
+/// node and strategy, so they are kept until the settings, the picked server
+/// or a second passes.
+struct BindOptions {
+    built: std::time::Instant,
+    settings: u64,
+    server: String,
+    servers: Vec<(String, String)>,
+    choices: Vec<(String, String)>,
 }
 
 impl ZapretPage {
     pub(super) fn on_hidden(&mut self) {
         self.loaded = false;
+        self.bind_options = None;
     }
 
     fn refresh(&mut self, bridge: &AppBridge) {
@@ -462,11 +475,7 @@ impl ZapretPage {
                         }
                     });
             }
-            let servers: Vec<_> = bridge
-                .zapret_server_options()
-                .into_iter()
-                .map(|server| (server.value, server.label))
-                .collect();
+            let servers = self.bind_options(bridge).servers.clone();
             if !servers.iter().any(|item| item.0 == self.server) {
                 self.server = servers
                     .first()
@@ -474,6 +483,7 @@ impl ZapretPage {
                     .unwrap_or_default();
                 self.choice.clear();
             }
+            let choices = self.bind_options(bridge).choices.clone();
             ui.horizontal_wrapped(|ui| {
                 fluent_button::style(ui);
                 ui.spacing_mut().interact_size.y = theme.control_height as f32;
@@ -502,11 +512,6 @@ impl ZapretPage {
                     self.server = server;
                     self.choice.clear();
                 }
-                let choices = if self.server.is_empty() {
-                    Vec::new()
-                } else {
-                    bridge.zapret_binding_choices_for(&self.server)
-                };
                 if selected_label(&choices, &self.choice).is_none() {
                     self.choice = choices
                         .first()
@@ -531,9 +536,39 @@ impl ZapretPage {
                     .clicked()
                 {
                     bridge.set_zapret_server_binding(&self.server, &self.choice);
+                    self.bind_options = None;
                 }
             });
         });
+    }
+
+    fn bind_options(&mut self, bridge: &mut AppBridge) -> &BindOptions {
+        let settings = bridge.settings_changed_token();
+        let stale = self.bind_options.as_ref().is_none_or(|options| {
+            options.settings != settings
+                || options.server != self.server
+                || options.built.elapsed() >= std::time::Duration::from_secs(1)
+        });
+        if stale {
+            let servers: Vec<_> = bridge
+                .zapret_server_options()
+                .into_iter()
+                .map(|server| (server.value, server.label))
+                .collect();
+            let choices = if self.server.is_empty() {
+                Vec::new()
+            } else {
+                bridge.zapret_binding_choices_for(&self.server)
+            };
+            self.bind_options = Some(BindOptions {
+                built: std::time::Instant::now(),
+                settings,
+                server: self.server.clone(),
+                servers,
+                choices,
+            });
+        }
+        self.bind_options.as_ref().expect("bind options built above")
     }
 
     fn import(&mut self, bridge: &mut AppBridge) {

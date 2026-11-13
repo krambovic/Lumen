@@ -217,6 +217,9 @@ pub struct AppBridge {
     /// Last per-frame reads, served while a transition holds the controller.
     read_cache: Mutex<std::collections::HashMap<String, Box<dyn std::any::Any + Send>>>,
     deferred_events: VecDeque<AppEvent>,
+    /// Preset files listed from disk; the Zapret page asks for them several
+    /// times per frame.
+    zapret_presets_cache: Mutex<Option<(std::time::Instant, Vec<Value>)>>,
     runtime: Arc<tokio::runtime::Runtime>,
     event_rx: broadcast::Receiver<AppEvent>,
     pump: Option<PumpHandle>,
@@ -691,6 +694,7 @@ impl AppBridge {
             controller: Arc::new(Mutex::new(controller)),
             read_cache: Mutex::new(std::collections::HashMap::new()),
             deferred_events: VecDeque::new(),
+            zapret_presets_cache: Mutex::new(None),
             runtime: Arc::new(runtime),
             event_rx,
             pump: None,
@@ -781,7 +785,8 @@ impl AppBridge {
     /// shell calls every frame check this first and serve their last value
     /// instead of stalling the UI thread.
     fn controller_free(&self) -> bool {
-        self.controller.try_lock_for(Duration::from_millis(4)).is_some()
+        // No timed wait: several reads per frame would each add it to the frame.
+        self.controller.try_lock().is_some()
     }
 
     fn cached_read<T: Clone + 'static>(&self, key: &str) -> Option<T> {
@@ -1504,7 +1509,7 @@ impl AppBridge {
         }
         let desired = self
             .controller
-            .try_lock_for(Duration::from_millis(4))
+            .try_lock()
             .map(|controller| controller.runtime.desired_connected)
             .unwrap_or(!self.connected);
         desired || self.connected
@@ -1515,7 +1520,7 @@ impl AppBridge {
         // guess stands in while the controller is held.
         let desired = self
             .controller
-            .try_lock_for(Duration::from_millis(4))
+            .try_lock()
             .map(|controller| controller.runtime.desired_connected)
             .unwrap_or(!self.connected);
         let target = desired || self.connected;
@@ -3844,7 +3849,9 @@ impl AppBridge {
             self.notify("warning", "Недопустимые символы в имени");
             return false;
         }
-        if lumen_engines::zapret_manager::save_preset(&name, content, description).is_ok() {
+        let saved = lumen_engines::zapret_manager::save_preset(&name, content, description).is_ok();
+        self.invalidate_zapret_presets();
+        if saved {
             self.notify(
                 "success",
                 &tr("Пресет сохранён: {name}", &[("name", &name)]),
@@ -3917,7 +3924,9 @@ impl AppBridge {
         if active {
             self.controller.lock().zapret.stop_with(false, true, true);
         }
-        if lumen_engines::zapret_manager::delete_preset(name) {
+        let deleted = lumen_engines::zapret_manager::delete_preset(name);
+        self.invalidate_zapret_presets();
+        if deleted {
             self.notify("success", &tr("Пресет удалён: {name}", &[("name", name)]));
             self.changes.settings = true;
         } else {
@@ -3927,7 +3936,9 @@ impl AppBridge {
 
     /// Python `importZapretPreset` (the shell passes the picked path).
     pub fn import_zapret_preset(&mut self, path: &Path) -> String {
-        if let Some(info) = lumen_engines::zapret_manager::import_preset(path) {
+        let imported = lumen_engines::zapret_manager::import_preset(path);
+        self.invalidate_zapret_presets();
+        if let Some(info) = imported {
             self.notify(
                 "success",
                 &tr("Импортирован пресет: {name}", &[("name", &info.name)]),
@@ -3942,7 +3953,22 @@ impl AppBridge {
 
     /// Python `zapretPresets`.
     pub fn zapret_presets(&self) -> Vec<Value> {
-        zapret_helpers::list_preset_maps()
+        // Edits made in Lumen clear the cache; the TTL picks up files changed
+        // outside it.
+        const TTL: Duration = Duration::from_secs(2);
+        let mut cache = self.zapret_presets_cache.lock();
+        if let Some((loaded, presets)) = cache.as_ref()
+            && loaded.elapsed() < TTL
+        {
+            return presets.clone();
+        }
+        let presets = zapret_helpers::list_preset_maps();
+        *cache = Some((std::time::Instant::now(), presets.clone()));
+        presets
+    }
+
+    fn invalidate_zapret_presets(&self) {
+        *self.zapret_presets_cache.lock() = None;
     }
 
     /// Python `_node_option_label`.
