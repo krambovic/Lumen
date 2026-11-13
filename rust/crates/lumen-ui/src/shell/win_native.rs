@@ -826,6 +826,29 @@ pub fn find_main_window(title: &str) -> Option<windows::Win32::Foundation::HWND>
 
 // ── Custom frame ─────────────────────────────────────────────────────────
 
+/// `QWindow.isVisible()` for the shell window. egui's viewport info is not
+/// refreshed while the window is hidden and only its logic ticks, so the
+/// tray would read a stale "visible" and hide the window again.
+pub fn main_window_visible(title: &str) -> Option<bool> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible};
+        static MAIN: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+        let mut raw = MAIN.load(std::sync::atomic::Ordering::Relaxed);
+        if raw == 0 || !unsafe { IsWindow(Some(windows::Win32::Foundation::HWND(raw as *mut _))) }.as_bool() {
+            raw = find_main_window(title)?.0 as isize;
+            MAIN.store(raw, std::sync::atomic::Ordering::Relaxed);
+        }
+        let hwnd = windows::Win32::Foundation::HWND(raw as *mut _);
+        Some(unsafe { IsWindowVisible(hwnd) }.as_bool())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = title;
+        None
+    }
+}
+
 /// Resize border of the frameless window, in physical pixels.
 const RESIZE_BORDER: i32 = 6;
 

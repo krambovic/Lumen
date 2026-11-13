@@ -26,6 +26,7 @@ mod startup_diagnostics;
 pub mod theme;
 pub mod toast;
 pub mod tray;
+pub mod tray_menu;
 pub mod win_native;
 
 use std::path::PathBuf;
@@ -453,9 +454,12 @@ impl ShellApp {
 
     /// Tray commands + periodic refresh (the Python signal connections).
     fn pump_tray(&mut self, ctx: &egui::Context) {
+        let dark = self.theme().dark;
         let Some(tray) = self.tray.as_mut() else {
             return;
         };
+        tray.attach_context(ctx);
+        tray.set_dark_theme(dark);
         let commands = tray.poll_commands();
         for command in commands {
             match command {
@@ -464,10 +468,10 @@ impl ShellApp {
                         // `_hide_window`
                         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                     } else {
-                        self.request_reveal(true);
+                        self.activate_window();
                     }
                 }
-                TrayCommand::ShowWindow => self.request_reveal(true),
+                TrayCommand::ShowWindow => self.activate_window(),
                 TrayCommand::ToggleConnection => self.bridge.toggle_connection(),
                 TrayCommand::SwitchNext => self.bridge.switch_next(),
                 TrayCommand::ApplyRoutingPreset { preset_id, custom } => {
@@ -545,7 +549,8 @@ impl ShellApp {
     }
 
     fn window_visible(&self, ctx: &egui::Context) -> bool {
-        ctx.input(|input| input.viewport().visible().unwrap_or(true))
+        win_native::main_window_visible(APP_NAME)
+            .unwrap_or_else(|| ctx.input(|input| input.viewport().visible().unwrap_or(true)))
     }
 
     /// First-frame work (Python: `_on_first_frame` + the deferred timers).

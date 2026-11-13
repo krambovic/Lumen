@@ -1,19 +1,21 @@
 //! System tray (port of `qml_app/tray.py` `QmlTray`).
 //!
-//! Qt's QSystemTrayIcon + QMenu become the `tray-icon`/`muda` pair. The menu
-//! structure, action labels and refresh rules mirror the Python tray; the
-//! QSS menu styling has no muda equivalent on Windows (native menus), which
-//! is recorded in STATUS.md as the one intentional visual deviation.
+//! `tray-icon` owns the notification icon. Its events are handled the moment
+//! they arrive (the window may be hidden and only ticking its logic), and the
+//! context menu is the owner-drawn popup of [`super::tray_menu`] with the
+//! QSS palette of `_apply_menu_style`.
 
+use std::sync::Arc;
 use std::time::Instant;
 
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
+use parking_lot::Mutex;
+use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use lumen_core::constants::{APP_NAME, app_icon_path};
 use lumen_core::i18n::tr;
 
 use super::toast;
+use super::tray_menu::{self, MenuEntry};
 use super::win_native;
 
 /// One routing preset row (AppBridge.regionalRoutingPresets /
@@ -34,10 +36,10 @@ impl RoutingPresetItem {
     }
 }
 
-/// What a polled tray event asks the shell to do (the Python slots).
+/// What a tray event asks the shell to do (the Python slots).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrayCommand {
-    /// `_toggle_window` (Trigger/DoubleClick on the icon, or the show/hide item).
+    /// `_toggle_window` (Trigger on the icon, or the show/hide item).
     ToggleWindow,
     /// `_show_window` (message-click on the balloon).
     ShowWindow,
@@ -53,31 +55,97 @@ pub enum TrayCommand {
     Quit,
 }
 
-/// Cached muda items (the `_action_*` fields of QmlTray).
-struct TrayMenu {
-    menu: Menu,
-    show: MenuItem,
-    connect: MenuItem,
-    next: MenuItem,
-    routing: Submenu,
-    admin: MenuItem,
-    quit: MenuItem,
+const ID_SHOW: u32 = 1;
+const ID_CONNECT: u32 = 2;
+const ID_NEXT: u32 = 3;
+const ID_ADMIN: u32 = 4;
+const ID_QUIT: u32 = 5;
+const ID_REGIONAL: u32 = 100;
+const ID_CUSTOM: u32 = 1000;
+
+/// The `_action_*` texts and state, shared with the event handler.
+#[derive(Default)]
+struct MenuModel {
+    show: String,
+    connect: String,
+    next: String,
+    routing: String,
+    admin: String,
+    admin_enabled: bool,
+    quit: String,
+    regional: Vec<RoutingPresetItem>,
+    custom: Vec<RoutingPresetItem>,
+    dark: bool,
+    commands: Vec<TrayCommand>,
+    ctx: Option<egui::Context>,
+}
+
+impl MenuModel {
+    fn entries(&self) -> Vec<MenuEntry> {
+        let mut routing = Vec::new();
+        for (index, item) in self.regional.iter().enumerate() {
+            if !item.id.is_empty() {
+                routing.push(MenuEntry::item(ID_REGIONAL + index as u32, item.label(), true));
+            }
+        }
+        if !self.custom.is_empty() {
+            routing.push(MenuEntry::separator());
+        }
+        for (index, item) in self.custom.iter().enumerate() {
+            if !item.id.is_empty() {
+                routing.push(MenuEntry::item(ID_CUSTOM + index as u32, item.label(), true));
+            }
+        }
+        vec![
+            MenuEntry::item(ID_SHOW, self.show.clone(), true),
+            MenuEntry::item(ID_CONNECT, self.connect.clone(), true),
+            MenuEntry::item(ID_NEXT, self.next.clone(), true),
+            MenuEntry::submenu(self.routing.clone(), routing),
+            MenuEntry::separator(),
+            MenuEntry::item(ID_ADMIN, self.admin.clone(), self.admin_enabled),
+            MenuEntry::separator(),
+            MenuEntry::item(ID_QUIT, self.quit.clone(), true),
+        ]
+    }
+
+    fn command_for(&self, id: u32) -> Option<TrayCommand> {
+        let preset = |items: &[RoutingPresetItem], base: u32, custom: bool| {
+            items.get((id - base) as usize).map(|item| TrayCommand::ApplyRoutingPreset {
+                preset_id: item.id.clone(),
+                custom,
+            })
+        };
+        match id {
+            ID_SHOW => Some(TrayCommand::ToggleWindow),
+            ID_CONNECT => Some(TrayCommand::ToggleConnection),
+            ID_NEXT => Some(TrayCommand::SwitchNext),
+            ID_ADMIN => Some(TrayCommand::RestartAdmin),
+            ID_QUIT => Some(TrayCommand::Quit),
+            id if id >= ID_CUSTOM => preset(&self.custom, ID_CUSTOM, true),
+            id if id >= ID_REGIONAL => preset(&self.regional, ID_REGIONAL, false),
+            _ => None,
+        }
+    }
+
+    fn push(&mut self, command: TrayCommand) {
+        self.commands.push(command);
+        // A hidden window only ticks its logic on request; wake it now.
+        if let Some(ctx) = &self.ctx {
+            ctx.request_repaint();
+        }
+    }
 }
 
 /// Owns the tray icon and bridges it to the window + bridge, like QmlTray.
 pub struct TrayController {
     tray: TrayIcon,
-    menu_items: TrayMenu,
-    /// `self._notified` — one balloon per hide cycle.
+    model: Arc<Mutex<MenuModel>>,
+    /// `self._notified` - one balloon per hide cycle.
     notified: bool,
-    dark_theme: bool,
     // Taskbar-wait state (`_taskbar_wait_ticks` + timer).
     waiting_for_taskbar: bool,
     taskbar_wait_ticks: u32,
     reinstall_at: Vec<Instant>,
-    /// Cached routing preset lists so the submenu rebuilds only on change.
-    regional: Vec<RoutingPresetItem>,
-    custom: Vec<RoutingPresetItem>,
 }
 
 fn load_icon_image() -> Option<image::DynamicImage> {
@@ -111,106 +179,57 @@ pub fn load_window_icon() -> Option<egui::IconData> {
     })
 }
 
+/// `_on_activated`: Trigger toggles the window, Context opens the menu.
+fn handle_event(model: &Mutex<MenuModel>, event: TrayIconEvent) {
+    let TrayIconEvent::Click { button, button_state: MouseButtonState::Up, .. } = event else {
+        return;
+    };
+    match button {
+        MouseButton::Left => model.lock().push(TrayCommand::ToggleWindow),
+        MouseButton::Right => {
+            let (entries, dark) = {
+                let model = model.lock();
+                (model.entries(), model.dark)
+            };
+            // Modal; the lock is not held while the menu is open.
+            if let Some(id) = tray_menu::popup(&entries, dark) {
+                let mut model = model.lock();
+                if let Some(command) = model.command_for(id) {
+                    model.push(command);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 impl TrayController {
     /// `QmlTray.__init__` minus the bridge signal wiring (the shell drives
     /// the refreshes). Returns Err when the tray could not be created.
     pub fn new() -> Result<Self, String> {
-        let icon = load_tray_icon();
-        let show = MenuItem::with_id(
-            "tray-show",
-            tr("\u{0421}\u{043A}\u{0440}\u{044B}\u{0442}\u{044C}", &[]),
-            true,
-            None,
-        );
-        let connect = MenuItem::with_id(
-            "tray-connect",
-            tr(
-                "\u{041F}\u{043E}\u{0434}\u{043A}\u{043B}\u{044E}\u{0447}\u{0438}\u{0442}\u{044C}",
-                &[],
-            ),
-            true,
-            None,
-        );
-        let next = MenuItem::with_id(
-            "tray-next",
-            tr(
-                "\u{0421}\u{043B}\u{0435}\u{0434}\u{0443}\u{044E}\u{0449}\u{0438}\u{0439} \u{0441}\u{0435}\u{0440}\u{0432}\u{0435}\u{0440}",
-                &[],
-            ),
-            true,
-            None,
-        );
-        let routing = Submenu::with_id(
-            "tray-routing",
-            format!(
-                "{}  \u{203A}",
-                tr(
-                    "\u{041C}\u{0430}\u{0440}\u{0448}\u{0440}\u{0443}\u{0442}\u{0438}\u{0437}\u{0430}\u{0446}\u{0438}\u{044F}",
-                    &[]
-                )
-            ),
-            true,
-        );
-        let admin = MenuItem::with_id(
-            "tray-admin",
-            tr(
-                "\u{041F}\u{0435}\u{0440}\u{0435}\u{0437}\u{0430}\u{043F}\u{0443}\u{0441}\u{0442}\u{0438}\u{0442}\u{044C} \u{043E}\u{0442} \u{0430}\u{0434}\u{043C}\u{0438}\u{043D}\u{0438}\u{0441}\u{0442}\u{0440}\u{0430}\u{0442}\u{043E}\u{0440}\u{0430}",
-                &[],
-            ),
-            true,
-            None,
-        );
-        let quit = MenuItem::with_id(
-            "tray-quit",
-            tr("\u{0412}\u{044B}\u{0445}\u{043E}\u{0434}", &[]),
-            true,
-            None,
-        );
-
-        let menu = Menu::new();
-        menu.append(&show).map_err(|e| e.to_string())?;
-        menu.append(&connect).map_err(|e| e.to_string())?;
-        menu.append(&next).map_err(|e| e.to_string())?;
-        menu.append(&routing).map_err(|e| e.to_string())?;
-        menu.append(&PredefinedMenuItem::separator())
-            .map_err(|e| e.to_string())?;
-        menu.append(&admin).map_err(|e| e.to_string())?;
-        menu.append(&PredefinedMenuItem::separator())
-            .map_err(|e| e.to_string())?;
-        menu.append(&quit).map_err(|e| e.to_string())?;
-
+        let model = Arc::new(Mutex::new(MenuModel {
+            dark: true,
+            ..MenuModel::default()
+        }));
         let mut builder = TrayIconBuilder::new()
             .with_id("lumen-tray")
-            .with_menu(Box::new(menu.clone()))
             .with_tooltip(APP_NAME)
-            // Left click sends TrayIconEvent; the menu opens on right click
-            // (`_show_context_menu`).
             .with_menu_on_left_click(false);
-        if let Some(icon) = icon {
+        if let Some(icon) = load_tray_icon() {
             builder = builder.with_icon(icon);
         }
         let tray = builder.build().map_err(|e| e.to_string())?;
+        let handler_model = model.clone();
+        TrayIconEvent::set_event_handler(Some(move |event| handle_event(&handler_model, event)));
 
         let mut controller = Self {
             tray,
-            menu_items: TrayMenu {
-                menu,
-                show,
-                connect,
-                next,
-                routing,
-                admin,
-                quit,
-            },
+            model,
             notified: false,
-            dark_theme: true,
             waiting_for_taskbar: false,
             taskbar_wait_ticks: 0,
             reinstall_at: Vec::new(),
-            regional: Vec::new(),
-            custom: Vec::new(),
         };
-
         controller.refresh_actions(true, false, false);
         win_native::allow_taskbar_created_message();
         // A logon autostart can run before Explorer has created the taskbar;
@@ -221,6 +240,19 @@ impl TrayController {
             controller.taskbar_wait_ticks = 0;
         }
         Ok(controller)
+    }
+
+    /// Lets tray events wake the event loop while the window is hidden.
+    pub fn attach_context(&mut self, ctx: &egui::Context) {
+        let mut model = self.model.lock();
+        if model.ctx.is_none() {
+            model.ctx = Some(ctx.clone());
+        }
+    }
+
+    /// `_dark_theme()` for `_refresh_menu_style`.
+    pub fn set_dark_theme(&mut self, dark: bool) {
+        self.model.lock().dark = dark;
     }
 
     /// Poll one second of the taskbar-wait timer (`_wait_for_taskbar`).
@@ -254,95 +286,40 @@ impl TrayController {
         let _ = self.tray.set_visible(true);
     }
 
-    /// `_refresh_actions`: labels/enabled state from the current window,
-    /// connection and elevation state.
+    /// `_refresh_actions`.
     pub fn refresh_actions(&mut self, window_visible: bool, connected: bool, elevated: bool) {
-        let show_label = if window_visible {
+        let mut model = self.model.lock();
+        model.show = if window_visible {
             tr("\u{0421}\u{043A}\u{0440}\u{044B}\u{0442}\u{044C}", &[])
         } else {
-            tr(
-                "\u{041F}\u{043E}\u{043A}\u{0430}\u{0437}\u{0430}\u{0442}\u{044C}",
-                &[],
-            )
+            tr("\u{041F}\u{043E}\u{043A}\u{0430}\u{0437}\u{0430}\u{0442}\u{044C}", &[])
         };
-        let _ = self.menu_items.show.set_text(show_label);
-
-        let connect_label = if connected {
-            tr(
-                "\u{041E}\u{0442}\u{043A}\u{043B}\u{044E}\u{0447}\u{0438}\u{0442}\u{044C}",
-                &[],
-            )
+        model.connect = if connected {
+            tr("\u{041E}\u{0442}\u{043A}\u{043B}\u{044E}\u{0447}\u{0438}\u{0442}\u{044C}", &[])
         } else {
-            tr(
-                "\u{041F}\u{043E}\u{0434}\u{043A}\u{043B}\u{044E}\u{0447}\u{0438}\u{0442}\u{044C}",
-                &[],
-            )
+            tr("\u{041F}\u{043E}\u{0434}\u{043A}\u{043B}\u{044E}\u{0447}\u{0438}\u{0442}\u{044C}", &[])
         };
-        let _ = self.menu_items.connect.set_text(connect_label);
-        let _ = self.menu_items.next.set_text(tr("\u{0421}\u{043B}\u{0435}\u{0434}\u{0443}\u{044E}\u{0449}\u{0438}\u{0439} \u{0441}\u{0435}\u{0440}\u{0432}\u{0435}\u{0440}", &[]));
-
+        model.next = tr("\u{0421}\u{043B}\u{0435}\u{0434}\u{0443}\u{044E}\u{0449}\u{0438}\u{0439} \u{0441}\u{0435}\u{0440}\u{0432}\u{0435}\u{0440}", &[]);
         if elevated {
-            let _ = self.menu_items.admin.set_text(tr("\u{0417}\u{0430}\u{043F}\u{0443}\u{0449}\u{0435}\u{043D}\u{043E} \u{043E}\u{0442} \u{0430}\u{0434}\u{043C}\u{0438}\u{043D}\u{0438}\u{0441}\u{0442}\u{0440}\u{0430}\u{0442}\u{043E}\u{0440}\u{0430}", &[]));
-            let _ = self.menu_items.admin.set_enabled(false);
+            model.admin = tr("\u{0417}\u{0430}\u{043F}\u{0443}\u{0449}\u{0435}\u{043D}\u{043E} \u{043E}\u{0442} \u{0430}\u{0434}\u{043C}\u{0438}\u{043D}\u{0438}\u{0441}\u{0442}\u{0440}\u{0430}\u{0442}\u{043E}\u{0440}\u{0430}", &[]);
+            model.admin_enabled = false;
         } else {
-            let _ = self.menu_items.admin.set_text(tr("\u{041F}\u{0435}\u{0440}\u{0435}\u{0437}\u{0430}\u{043F}\u{0443}\u{0441}\u{0442}\u{0438}\u{0442}\u{044C} \u{043E}\u{0442} \u{0430}\u{0434}\u{043C}\u{0438}\u{043D}\u{0438}\u{0441}\u{0442}\u{0440}\u{0430}\u{0442}\u{043E}\u{0440}\u{0430}", &[]));
-            let _ = self.menu_items.admin.set_enabled(true);
+            model.admin = tr("\u{041F}\u{0435}\u{0440}\u{0435}\u{0437}\u{0430}\u{043F}\u{0443}\u{0441}\u{0442}\u{0438}\u{0442}\u{044C} \u{043E}\u{0442} \u{0430}\u{0434}\u{043C}\u{0438}\u{043D}\u{0438}\u{0441}\u{0442}\u{0440}\u{0430}\u{0442}\u{043E}\u{0440}\u{0430}", &[]);
+            model.admin_enabled = true;
         }
-
-        let _ = self
-            .menu_items
-            .quit
-            .set_text(tr("\u{0412}\u{044B}\u{0445}\u{043E}\u{0434}", &[]));
-        let _ = self
-            .menu_items
-            .routing
-            .set_text(format!("{}  \u{203A}", tr("\u{041C}\u{0430}\u{0440}\u{0448}\u{0440}\u{0443}\u{0442}\u{0438}\u{0437}\u{0430}\u{0446}\u{0438}\u{044F}", &[])));
+        model.quit = tr("\u{0412}\u{044B}\u{0445}\u{043E}\u{0434}", &[]);
+        model.routing = format!(
+            "{}  \u{203A}",
+            tr("\u{041C}\u{0430}\u{0440}\u{0448}\u{0440}\u{0443}\u{0442}\u{0438}\u{0437}\u{0430}\u{0446}\u{0438}\u{044F}", &[])
+        );
     }
 
-    /// `_refresh_routing_actions`: rebuild the routing submenu from the
-    /// regional and custom preset lists.
-    pub fn refresh_routing(
-        &mut self,
-        regional: &[RoutingPresetItem],
-        custom: &[RoutingPresetItem],
-    ) {
-        if regional == &self.regional && custom == &self.custom {
-            return;
-        }
-        self.regional = regional.to_vec();
-        self.custom = custom.to_vec();
-        while self.menu_items.routing.remove_at(0).is_some() {}
-
-        for item in regional {
-            if item.id.is_empty() {
-                continue;
-            }
-            let action = MenuItem::with_id(
-                format!("tray-routing-default:{}", item.id),
-                item.label(),
-                true,
-                None,
-            );
-            let _ = self.menu_items.routing.append(&action);
-        }
-        if !custom.is_empty() {
-            let _ = self
-                .menu_items
-                .routing
-                .append(&PredefinedMenuItem::separator());
-        }
-        for item in custom {
-            if item.id.is_empty() {
-                continue;
-            }
-            let action = MenuItem::with_id(
-                format!("tray-routing-custom:{}", item.id),
-                item.label(),
-                true,
-                None,
-            );
-            let _ = self.menu_items.routing.append(&action);
-        }
+    /// `_refresh_routing_actions`: the regional and custom preset lists the
+    /// routing submenu is built from.
+    pub fn refresh_routing(&mut self, regional: &[RoutingPresetItem], custom: &[RoutingPresetItem]) {
+        let mut model = self.model.lock();
+        model.regional = regional.to_vec();
+        model.custom = custom.to_vec();
     }
 
     /// `notify_hidden()`: the "app hidden to tray" balloon, once per cycle.
@@ -367,44 +344,9 @@ impl TrayController {
         self.notified = false;
     }
 
-    /// Poll the tray-icon + menu event receivers and translate them into
-    /// commands (the Qt activated/signal slots).
+    /// Commands collected by the event handler since the last poll.
     pub fn poll_commands(&self) -> Vec<TrayCommand> {
-        let mut commands = Vec::new();
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            let id = event.id().0.clone();
-            match id.as_str() {
-                "tray-show" => commands.push(TrayCommand::ToggleWindow),
-                "tray-connect" => commands.push(TrayCommand::ToggleConnection),
-                "tray-next" => commands.push(TrayCommand::SwitchNext),
-                "tray-admin" => commands.push(TrayCommand::RestartAdmin),
-                "tray-quit" => commands.push(TrayCommand::Quit),
-                _ => {
-                    if let Some(preset_id) = id.strip_prefix("tray-routing-default:") {
-                        commands.push(TrayCommand::ApplyRoutingPreset {
-                            preset_id: preset_id.to_string(),
-                            custom: false,
-                        });
-                    } else if let Some(preset_id) = id.strip_prefix("tray-routing-custom:") {
-                        commands.push(TrayCommand::ApplyRoutingPreset {
-                            preset_id: preset_id.to_string(),
-                            custom: true,
-                        });
-                    }
-                }
-            }
-        }
-        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            match event {
-                TrayIconEvent::Click {
-                    button: tray_icon::MouseButton::Left,
-                    ..
-                }
-                | TrayIconEvent::DoubleClick { .. } => commands.push(TrayCommand::ToggleWindow),
-                _ => {}
-            }
-        }
-        commands
+        std::mem::take(&mut self.model.lock().commands)
     }
 
     /// Hide and remove the icon (`_quit` hides the tray before exiting).
@@ -416,11 +358,11 @@ impl TrayController {
     pub fn set_tooltip(&mut self, text: &str) {
         let _ = self.tray.set_tooltip(Some(text));
     }
+}
 
-    /// The menu styling helper of Python cannot map to muda; kept as the
-    /// single recorded deviation marker for parity reviewers.
-    pub fn native_menu_styling() -> &'static str {
-        "muda renders the OS-native menu; the QSS dark/light palette is not applicable"
+impl Drop for TrayController {
+    fn drop(&mut self) {
+        TrayIconEvent::set_event_handler(None::<fn(TrayIconEvent)>);
     }
 }
 
@@ -435,27 +377,12 @@ mod tests {
         }
     }
 
-    /// tray.py `_refresh_actions` label matrix.
-    #[test]
-    fn refresh_action_labels_follow_window_and_connection_state() {
-        let show_label = tr(
-            "\u{041F}\u{043E}\u{043A}\u{0430}\u{0437}\u{0430}\u{0442}\u{044C}",
-            &[],
-        );
-        let hide_label = tr("\u{0421}\u{043A}\u{0440}\u{044B}\u{0442}\u{044C}", &[]);
-        let connect_label = tr(
-            "\u{041F}\u{043E}\u{0434}\u{043A}\u{043B}\u{044E}\u{0447}\u{0438}\u{0442}\u{044C}",
-            &[],
-        );
-        let disconnect_label = tr(
-            "\u{041E}\u{0442}\u{043A}\u{043B}\u{044E}\u{0447}\u{0438}\u{0442}\u{044C}",
-            &[],
-        );
-
-        // window hidden -> «Показать»; window visible -> «Скрыть»
-        assert_ne!(show_label, hide_label);
-        // connected -> «Отключить»; disconnected -> «Подключить»
-        assert_ne!(connect_label, disconnect_label);
+    fn model() -> MenuModel {
+        MenuModel {
+            regional: vec![preset("", "Broken"), preset("global", "Global")],
+            custom: vec![preset("c9", "")],
+            ..MenuModel::default()
+        }
     }
 
     #[test]
@@ -468,50 +395,35 @@ mod tests {
     }
 
     #[test]
-    fn empty_preset_ids_are_skipped_like_the_python_loop() {
-        let regional = vec![preset("", "Broken"), preset("ok", "Good")];
-        let kept: Vec<&RoutingPresetItem> =
-            regional.iter().filter(|item| !item.id.is_empty()).collect();
-        assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].id, "ok");
+    fn menu_follows_the_python_layout() {
+        let entries = model().entries();
+        let ids: Vec<u32> = entries.iter().map(|entry| entry.id).collect();
+        assert_eq!(ids, [ID_SHOW, ID_CONNECT, ID_NEXT, 0, 0, ID_ADMIN, 0, ID_QUIT]);
+        // Empty preset ids are skipped; custom presets follow a separator.
+        let routing: Vec<u32> = entries[3].submenu.iter().map(|entry| entry.id).collect();
+        assert_eq!(routing, [ID_REGIONAL + 1, 0, ID_CUSTOM]);
     }
 
     #[test]
-    fn menu_item_ids_match_the_command_table() {
-        // The mapping in poll_commands is exercised without a real tray:
-        // id -> command table must stay in sync with the builder above.
-        let table: &[(&str, TrayCommand)] = &[
-            ("tray-show", TrayCommand::ToggleWindow),
-            ("tray-connect", TrayCommand::ToggleConnection),
-            ("tray-next", TrayCommand::SwitchNext),
-            ("tray-admin", TrayCommand::RestartAdmin),
-            ("tray-quit", TrayCommand::Quit),
-        ];
-        for (id, command) in table {
-            assert!(id.starts_with("tray-"), "{id}");
-            let _ = command;
-        }
+    fn menu_ids_map_back_to_commands() {
+        let model = model();
+        assert_eq!(model.command_for(ID_SHOW), Some(TrayCommand::ToggleWindow));
+        assert_eq!(model.command_for(ID_QUIT), Some(TrayCommand::Quit));
         assert_eq!(
-            "tray-routing-default:p1"
-                .strip_prefix("tray-routing-default:")
-                .map(str::to_string),
-            Some("p1".to_string())
+            model.command_for(ID_REGIONAL + 1),
+            Some(TrayCommand::ApplyRoutingPreset { preset_id: "global".into(), custom: false })
         );
         assert_eq!(
-            "tray-routing-custom:c9"
-                .strip_prefix("tray-routing-custom:")
-                .map(str::to_string),
-            Some("c9".to_string())
+            model.command_for(ID_CUSTOM),
+            Some(TrayCommand::ApplyRoutingPreset { preset_id: "c9".into(), custom: true })
         );
+        assert_eq!(model.command_for(ID_CUSTOM + 5), None);
     }
 
     #[test]
-    fn taskbar_wait_caps_at_three_hundred_ticks() {
-        // tray.py: `elif self._taskbar_wait_ticks >= 300: timer.stop()`
-        let mut ticks = 0u32;
-        while ticks < 300 {
-            ticks += 1;
-        }
-        assert_eq!(ticks, 300);
+    fn refresh_action_labels_follow_window_and_connection_state() {
+        let show = tr("\u{041F}\u{043E}\u{043A}\u{0430}\u{0437}\u{0430}\u{0442}\u{044C}", &[]);
+        let hide = tr("\u{0421}\u{043A}\u{0440}\u{044B}\u{0442}\u{044C}", &[]);
+        assert_ne!(show, hide);
     }
 }

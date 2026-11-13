@@ -27,7 +27,7 @@ fn paint(ui: &Ui, rect: Rect, country: &str) {
         (rect.width() * ppp).round().max(1.0) as u32,
         (rect.height() * ppp).round().max(1.0) as u32,
     ];
-    let id = Id::new(("country-flag", &country, px));
+    let id = Id::unique(("country-flag", &country, px));
     let texture = match ctx.data_mut(|data| data.get_temp::<Option<TextureHandle>>(id)) {
         Some(texture) => texture,
         None => {
