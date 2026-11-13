@@ -20,6 +20,7 @@ pub(crate) mod widgets;
 mod wheel;
 pub mod navigation;
 pub mod pages;
+mod backdrop_blur;
 mod onboarding;
 pub mod reveal;
 mod startup_diagnostics;
@@ -57,6 +58,8 @@ const DEFAULT_WINDOW_WIDTH: i64 = 1280;
 const DEFAULT_WINDOW_HEIGHT: i64 = 720;
 /// TitleBar.qml caption height (+2 while maximized/fullscreen).
 const TITLE_BAR_HEIGHT: f32 = 34.0;
+/// Start time of the running `chromeSettleAnim`.
+const CHROME_SETTLE: &str = "lumen-chrome-settle";
 /// Geometry-save debounce (`saveGeometryTimer` interval).
 const GEOMETRY_SAVE_DELAY: Duration = Duration::from_millis(500);
 /// Legacy file cleanup delay (`QTimer.singleShot(800, ...)`).
@@ -776,18 +779,22 @@ impl ShellApp {
 
                 // Rail metrics (Main.qml railVisualWidth).
                 let rail_width = self.rail_visual_width(ctx, theme);
-                let rail_rect = Rect::from_min_size(
+                // The panels belong to `appChrome` and settle with it.
+                let (settle_opacity, settle_scale) = Self::chrome_settle(ctx, theme);
+                let settle = self.chrome_transform(ctx, settle_scale);
+                let rail_rect = settle.mul_rect(Rect::from_min_size(
                     egui::pos2(full.left(), full.top() + title_height),
                     Vec2::new(rail_width, full.height() - title_height),
-                );
-                ui.painter().rect_filled(rail_rect, 0.0, theme.chrome_panel);
+                ));
+                ui.painter()
+                    .rect_filled(rail_rect, 0.0, theme.chrome_panel.gamma_multiply(settle_opacity));
 
                 // Content host: solid rounded window panel inset into the
                 // frame; flush right/bottom, only the top-left corner rounded.
-                let content_rect = Rect::from_min_size(
+                let content_rect = settle.mul_rect(Rect::from_min_size(
                     egui::pos2(full.left() + rail_width, full.top() + title_height),
                     Vec2::new(full.width() - rail_width, full.height() - title_height),
-                );
+                ));
                 let painter = ui.painter();
                 let corner = CornerRadius {
                     nw: theme.radius as u8,
@@ -795,7 +802,7 @@ impl ShellApp {
                     sw: 0,
                     se: 0,
                 };
-                painter.rect_filled(content_rect, 0.0, theme.chrome_panel);
+                painter.rect_filled(content_rect, 0.0, theme.chrome_panel.gamma_multiply(settle_opacity));
                 let panel_color = if !self.bridge.ui_wallpaper().is_empty() {
                     if theme.backdrop == "acrylic" {
                         if theme.dark {
@@ -811,11 +818,11 @@ impl ShellApp {
                 } else {
                     theme.content_panel
                 };
-                painter.rect_filled(content_rect, corner, panel_color);
+                painter.rect_filled(content_rect, corner, panel_color.gamma_multiply(settle_opacity));
                 painter.rect_stroke(
                     content_rect,
                     corner,
-                    egui::Stroke::new(1.0, theme.divider),
+                    egui::Stroke::new(1.0, theme.divider.gamma_multiply(settle_opacity)),
                     egui::StrokeKind::Inside,
                 );
 
@@ -848,10 +855,30 @@ impl ShellApp {
         )
     }
 
-    /// Main.qml `appChrome` start-up fade (0.35 -> 1 over 900 ms).
-    fn chrome_opacity(ctx: &egui::Context, theme: &theme::Theme) -> f32 {
-        let elapsed = motion::elapsed_since_change(ctx, egui::Id::unique("lumen-chrome-start"), ());
-        0.35 + 0.65 * motion::progress(ctx, theme, elapsed, 900.0, motion::ease_out_quint)
+    /// Main.qml `chromeSettleAnim`: `appChrome` goes from 0.35 opacity and a
+    /// 0.975 scale to 1 over 900 ms (OutQuint) when the onboarding card
+    /// starts closing. Returns `(opacity, scale)`.
+    fn chrome_settle(ctx: &egui::Context, theme: &theme::Theme) -> (f32, f32) {
+        let id = egui::Id::unique(CHROME_SETTLE);
+        let Some(start) = ctx.data(|data| data.get_temp::<f64>(id)) else {
+            return (1.0, 1.0);
+        };
+        let elapsed = (ctx.input(|input| input.time) - start) as f32;
+        if theme.anim_fast == 0 || elapsed >= 0.9 {
+            ctx.data_mut(|data| data.remove::<f64>(id));
+            return (1.0, 1.0);
+        }
+        ctx.request_repaint();
+        let level = motion::ease_out_quint(elapsed / 0.9);
+        (0.35 + 0.65 * level, 0.975 + 0.025 * level)
+    }
+
+    /// `appChrome.scale` around its centre (the window below the title bar).
+    fn chrome_transform(&self, ctx: &egui::Context, scale: f32) -> egui::emath::TSTransform {
+        let screen = ctx.viewport_rect();
+        let top = screen.top() + self.title_bar_height(ctx);
+        let center = Vec2::new(screen.center().x, (top + screen.bottom()) / 2.0);
+        egui::emath::TSTransform::new(center * (1.0 - scale), scale)
     }
 
     /// Title bar interactions: drag region + window buttons (TitleBar.qml).
@@ -866,12 +893,6 @@ impl ShellApp {
             .default_size(size)
             .show(ctx, |ui| {
                 let (bar, _) = ui.allocate_exact_size(size, Sense::hover());
-                // The onboarding backdrop covers the whole window, title strip
-                // included; only the caption text and buttons stay above it.
-                let backdrop = self.onboarding.backdrop_level();
-                if backdrop > 0.0 {
-                    ui.painter().rect_filled(bar, 0.0, theme.bg.gamma_multiply(backdrop));
-                }
 
                 // Drag region under everything (later widgets take priority).
                 let drag = ui.interact(
@@ -957,6 +978,11 @@ impl ShellApp {
         let title_height = self.title_bar_height(ctx);
         let rail_height = ctx.viewport_rect().height() - title_height;
 
+        let (settle_opacity, settle_scale) = Self::chrome_settle(ctx, theme);
+        ctx.set_transform_layer(
+            egui::LayerId::new(egui::Order::Middle, egui::Id::unique("lumen-rail")),
+            self.chrome_transform(ctx, settle_scale),
+        );
         egui::Area::new(egui::Id::unique("lumen-rail"))
             .order(egui::Order::Middle)
             .movable(false)
@@ -969,7 +995,7 @@ impl ShellApp {
                     egui::pos2(0.0, title_height),
                     Vec2::new(rail_width, rail_height),
                 ));
-                ui.multiply_opacity(Self::chrome_opacity(ctx, theme));
+                ui.multiply_opacity(settle_opacity);
 
                 egui::ScrollArea::vertical()
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
@@ -1111,7 +1137,8 @@ impl ShellApp {
         // page change therefore cross-fades the old page out under the new
         // one, and both Behaviors retarget from their current value.
         let current = self.navigation.current;
-        let chrome_opacity = Self::chrome_opacity(ctx, theme);
+        let (chrome_opacity, settle_scale) = Self::chrome_settle(ctx, theme);
+        let settle = self.chrome_transform(ctx, settle_scale);
         let stack_id = egui::Id::unique("lumen-page-stack");
         for page in Page::ALL {
             let is_current = page == current;
@@ -1134,6 +1161,10 @@ impl ShellApp {
             if !is_current && opacity <= 0.0 {
                 continue;
             }
+            ctx.set_transform_layer(
+                egui::LayerId::new(egui::Order::Middle, stack_id.with(page.index())),
+                settle,
+            );
             egui::Area::new(stack_id.with(page.index()))
                 .order(egui::Order::Middle)
                 .movable(false)
@@ -1531,11 +1562,14 @@ impl eframe::App for ShellApp {
         self.bridge.clear_changes();
         self.page_events.clear();
         self.paint_drop_overlay(ctx, &theme);
-        if self.onboarding.render(ctx, &theme, &mut self.bridge) {
+        let title_layer =
+            egui::LayerId::new(egui::Order::Middle, egui::Id::unique("lumen-titlebar"));
+        if self.onboarding.render(ctx, &theme, &mut self.bridge, title_layer) {
             // Main.qml `onClosingStarted`: show the dashboard and restart
             // `chromeSettleAnim` so it arrives while the card dissolves.
             self.navigation.current = Page::Dashboard;
-            ctx.data_mut(|data| data.remove::<((), f64)>(egui::Id::unique("lumen-chrome-start")));
+            let now = ctx.input(|input| input.time);
+            ctx.data_mut(|data| data.insert_temp(egui::Id::unique(CHROME_SETTLE), now));
         }
         self.paint_conflict_dialog(ctx, &theme);
         self.paint_lock_overlay(ctx, &theme);

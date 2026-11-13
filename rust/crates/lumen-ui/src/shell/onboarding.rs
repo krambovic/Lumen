@@ -15,6 +15,7 @@ use egui::{
 };
 use lumen_core::{constants::APP_VERSION, i18n::tr};
 
+use super::backdrop_blur::BackdropBlur;
 use super::motion;
 use super::pages::about::{DONATION_URL, USDT_ADDRESS, open_url};
 use super::pages::flag;
@@ -135,29 +136,35 @@ pub(super) struct Onboarding {
     finished: bool,
     /// `closing`: when `exitAnim` started.
     closing_at: Option<f64>,
-    /// `backdrop.opacity`, read by the title bar.
-    backdrop: f32,
+    blur: BackdropBlur,
 }
 
 impl Onboarding {
-    pub(super) fn render(&mut self, ctx: &Context, theme: &Theme, bridge: &mut AppBridge) -> bool {
+    /// `title_layer` is the title bar's layer: its caption and buttons are
+    /// repainted above the backdrop, which covers the whole window.
+    pub(super) fn render(
+        &mut self,
+        ctx: &Context,
+        theme: &Theme,
+        bridge: &mut AppBridge,
+        title_layer: egui::LayerId,
+    ) -> bool {
         let now = ctx.input(|input| input.time);
         let animated = theme.anim_fast > 0;
         // `exitAnim` runs for 600 ms after `completeOnboarding()`.
         let closing = self.closing_at.map(|start| (now - start) as f32);
         if let Some(elapsed) = closing {
             if !animated || elapsed >= 0.6 {
-                *self = Self { finished: true, ..Self::default() };
+                *self = Self { finished: true, blur: self.blur.clone(), ..Self::default() };
                 return false;
             }
             ctx.request_repaint();
         } else {
             if !bridge.onboarding_required() {
-                *self = Self::default();
+                *self = Self { blur: self.blur.clone(), ..Self::default() };
                 return false;
             }
             if bridge.locked() || self.finished {
-                self.backdrop = 0.0;
                 return false;
             }
         }
@@ -220,7 +227,6 @@ impl Onboarding {
             card_offset = 28.0 * out;
             backdrop_level = 1.0 - motion::ease_in_out_cubic((elapsed - 0.14) / 0.46);
         }
-        self.backdrop = backdrop_level;
         // StepPage `revealAnim`: 0 -> 1 linearly over 1100 ms.
         let reveal = if animated {
             ((now - self.step_changed_at) as f32 / 1.1).clamp(0.0, 1.0)
@@ -242,8 +248,30 @@ impl Onboarding {
                 ui.set_clip_rect(region.intersect(ui.clip_rect()));
                 ui.allocate_rect(region, Sense::click_and_drag());
                 let layer_id = ui.layer_id();
-                ui.painter()
-                    .rect_filled(region, 0.0, theme.bg.gamma_multiply(backdrop_level));
+                // The backdrop fills the window, title strip included; the
+                // overlay's own clip rect starts below the title bar.
+                let backdrop = ctx.layer_painter(layer_id);
+                if self.blur.unsupported() {
+                    backdrop.rect_filled(screen, 0.0, theme.bg.gamma_multiply(backdrop_level));
+                } else {
+                    let tint = if theme.dark { 0.62 } else { 0.56 };
+                    backdrop.add(self.blur.shape(screen, theme.bg, tint, backdrop_level));
+                }
+                // TitleBar.qml (z 50) lies above the overlay (z 40): its caption
+                // and buttons go back on top of the backdrop. The strip itself
+                // measures the same as the backdrop in the QML client.
+                let caption: Vec<_> = ctx.graphics(|graphics| {
+                    graphics
+                        .get(title_layer)
+                        .map(|list| list.all_entries().cloned().collect())
+                        .unwrap_or_default()
+                });
+                ctx.graphics_mut(|graphics| {
+                    let list = graphics.entry(layer_id);
+                    for clipped in caption {
+                        list.add(clipped.clip_rect, clipped.shape);
+                    }
+                });
 
                 let mut layer = ui.new_child(
                     egui::UiBuilder::new()
@@ -507,11 +535,6 @@ impl Onboarding {
             ctx.request_repaint();
         }
         finish
-    }
-
-    /// `backdrop.opacity` of the overlay; zero while it is not shown.
-    pub(super) fn backdrop_level(&self) -> f32 {
-        self.backdrop
     }
 
     /// Brand + stepper + bottom hint (QML `side` panel).

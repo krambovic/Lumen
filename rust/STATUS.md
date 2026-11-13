@@ -369,7 +369,11 @@ client, core/resource updaters, zapret and discord proxy managers.
     (`follow`, `follow_color`, `toggle`, `progress`) and honours
     `Theme.animations`. Wired so far: rail width and burger, nav button
     fill/pill/ink, the `LazyPageLoader` fade + 6 px slide on page change and
-    the 900 ms start-up fade of the chrome (the 0.975 scale is not ported).
+    `chromeSettleAnim` (`ShellApp::chrome_settle`): when the onboarding card
+    starts closing, the rail, the pages and their panels go from 0.35
+    opacity and a 0.975 scale to 1 over 900 ms. The scale is a layer
+    transform (`Context::set_transform_layer`). It does not run at start-up,
+    as in the QML client.
   - `shell/widgets.rs` holds the hand-painted Fluent controls:
     `FluentButton` (`AccentButton.qml` with the colour and press-scale
     animations), `combo` (`FluentCombo.qml` field and flyout), `card_frame`,
@@ -488,10 +492,15 @@ client, core/resource updaters, zapret and discord proxy managers.
     from the top down over 1100 ms (`stagger_reveal`, which derives the
     QML `rv(order)` from each shape's position); the backdrop also covers
     the title strip. The card scale and the stagger are applied to the
-    painted shapes of the layer after the frame is built. Not ported: the
-    blurred snapshot of the dashboard behind the card (a flat `Theme.bg`
-    instead, about 8 levels darker) and the 0.975 scale of the dashboard
-    settle animation.
+    painted shapes of the layer after the frame is built. The backdrop is
+    the blurred live UI (`shell/backdrop_blur.rs`): a paint callback copies
+    the framebuffer below the overlay, builds mipmaps and draws a Gaussian
+    over mip level 6 with the QML desaturation and `Theme.bg` tint; it
+    matches the QML backdrop within one level at eight sample points.
+    Without OpenGL 3.3 it falls back to a flat `Theme.bg`. The backdrop
+    covers the whole window, and the title bar's caption and
+    buttons are copied from its layer back on top (TitleBar.qml has z 50,
+    the overlay z 40).
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated
@@ -637,10 +646,16 @@ are handled inside their porting commits.
   first). `hb_tray.py close|left|right|pick n` drives the preview's tray
   icon with synthetic clicks (keyboard picks do not reach an elevated
   preview), `hb_burst.py` records the status ring during a connect, and
-  `hb_zoom.py` uploads enlarged crops. `hb_shot.py` drives the preview with
-  real mouse clicks and captures single frames or bursts (posted clicks
-  from `cmp.py --click` do not reach every egui widget), and `hb_qmenu.py`
-  renders the original tray `QMenu` for comparison. `hb_navcycle.py` clicks through the
+  `hb_zoom.py` uploads enlarged crops. The preview build reads
+  `LUMEN_PREVIEW_CLICKS="seconds,x,y;..."` (`preview_clicks.rs`) and
+  injects those clicks into egui, and `hb_shot.py` captures single frames
+  or bursts with `PrintWindow`; together they test interactions without
+  touching the real mouse. `hb_shot.py click:` / `key:` steps and
+  `hb_tray.py right|hover|clickrow` use real input: they move the cursor
+  and land on whatever window is in front, so do not use them while
+  someone is working on the machine. `hb_tray.py menukeys` posts key
+  presses to the tray popup, and `hb_qmenu.py` renders the original tray
+  `QMenu` for comparison. `hb_navcycle.py` clicks through the
   rail pages and lists late and slow frames per switch (the preview logs
   `LATE gap` and `SLOW cpu` lines), `hb_zapdiag.py` times the Zapret page
   sections, `hb_textcmp.py` and `hb_inkcmp.py` compare text rendering
