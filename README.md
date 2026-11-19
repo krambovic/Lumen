@@ -277,6 +277,16 @@ Expand your platform for the available controls. Some advanced options appear on
 
 **Profiles & privacy.** Use trusted providers, keep exported credentials private and enable authentication for LAN proxy sharing. Other VPN clients may conflict with Lumen.
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=krambovic%2Flumen&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=krambovic/lumen&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=krambovic/lumen&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=krambovic/lumen&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## Development
 
 <details>
