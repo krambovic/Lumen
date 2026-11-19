@@ -17,6 +17,7 @@ use crate::shell::{
     onboarding::{import_clipboard, import_config_file},
     theme::{Theme, semibold},
     win_native,
+    widgets::{ButtonKind, FluentButton},
 };
 use crate::view_models::{AppBridge, app_bridge::UiEvent, node_list_model::NodeListModel};
 
@@ -56,6 +57,7 @@ pub(super) struct NodesPage {
     anchor: Option<String>,
     drag_start: Option<usize>,
     dialog: Option<Dialog>,
+    subscription_url_focus_pending: bool,
     input: String,
     second: String,
     info_id: String,
@@ -78,7 +80,12 @@ impl NodesPage {
         }
     }
 
-    pub(super) fn render(&mut self, ui: &mut Ui, page: &mut PageContext<'_>) {
+    pub(super) fn render(
+        &mut self,
+        ui: &mut Ui,
+        page: &mut PageContext<'_>,
+        qr_dialog_open: bool,
+    ) {
         let theme = page.theme;
         let bridge = &mut *page.bridge;
         let subscriptions = bridge.subscriptions();
@@ -103,7 +110,7 @@ impl NodesPage {
             if let Some(error) = &self.file_error {
                 ui.colored_label(theme.danger, error);
             }
-            self.shortcuts(ui, bridge);
+            self.shortcuts(ui, bridge, qr_dialog_open);
             let height = ui.available_height();
             if show_inspector {
                 let left = ui.available_width() - INSPECTOR_WIDTH - spacing;
@@ -178,6 +185,7 @@ impl NodesPage {
     fn open(&mut self, dialog: Dialog) {
         self.input.clear();
         self.second.clear();
+        self.subscription_url_focus_pending = matches!(dialog, Dialog::Subscription);
         self.dialog = Some(dialog);
     }
 
@@ -488,8 +496,9 @@ impl NodesPage {
         });
     }
 
-    fn shortcuts(&mut self, ui: &mut Ui, bridge: &mut AppBridge) {
-        if ui.ctx().egui_wants_keyboard_input()
+    fn shortcuts(&mut self, ui: &mut Ui, bridge: &mut AppBridge, qr_dialog_open: bool) {
+        if qr_dialog_open
+            || ui.ctx().egui_wants_keyboard_input()
             || egui::Popup::is_any_open(ui.ctx())
             || self.editor.is_open()
             || self.dialog.is_some()
@@ -1049,8 +1058,35 @@ impl NodesPage {
         subs: &[Value],
         dialog: Dialog,
     ) {
-        let modal = Modal::new(Id::unique("nodes-dialog")).show(ctx, |ui| {
-            ui.set_width(520.0_f32.min((ctx.content_rect().width() - 48.0).max(0.0)));
+        let modal = Modal::new(Id::unique("nodes-dialog"));
+        let modal = if matches!(dialog, Dialog::Subscription) {
+            modal
+                .backdrop_color(egui::Color32::from_black_alpha(115))
+                .frame(
+                    Frame::new()
+                        .fill(theme.flyout)
+                        .stroke(Stroke::new(1.0, theme.flyout_border))
+                        .corner_radius(10.0)
+                        .inner_margin(18.0),
+                )
+        } else {
+            modal
+        };
+        let modal = modal.show(ctx, |ui| {
+            if matches!(dialog, Dialog::Subscription) {
+                ui.spacing_mut().item_spacing.y = 12.0;
+            }
+            let width: f32 = if matches!(dialog, Dialog::Subscription) {
+                480.0
+            } else {
+                520.0
+            };
+            let content_width = if matches!(dialog, Dialog::Subscription) {
+                width - 36.0
+            } else {
+                width
+            };
+            ui.set_width(content_width.min((ctx.content_rect().width() - 48.0).max(0.0)));
             let title = match &dialog {
                 Dialog::Group => "Новая группа",
                 Dialog::Subscription => "Импорт подписки",
@@ -1066,8 +1102,46 @@ impl NodesPage {
             match &dialog {
                 Dialog::Group => edit(ui, &mut self.input, "Имя группы"),
                 Dialog::Subscription => {
-                    edit(ui, &mut self.input, "Ссылка на подписку");
-                    edit(ui, &mut self.second, "Название (необязательно)");
+                    let reset_import_fields = self.subscription_url_focus_pending;
+                    ui.label(
+                        RichText::new(tr(
+                            "Вставьте ссылку на подписку. Серверы автоматически попадут в новую группу.",
+                            &[],
+                        ))
+                        .color(theme.text_muted),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(tr("URL подписки", &[])).color(theme.text_muted),
+                    );
+                    let url = super::text_edit_menu::show(
+                        ui,
+                        TextEdit::singleline(&mut self.input)
+                            .desired_width(f32::INFINITY)
+                            .min_size(egui::vec2(0.0, theme.control_height as f32))
+                            .hint_text("https://…"),
+                        "subscription-url-field",
+                        true,
+                        reset_import_fields,
+                    );
+                    if self.subscription_url_focus_pending {
+                        url.request_focus();
+                        self.subscription_url_focus_pending = false;
+                    }
+                    ui.label(
+                        RichText::new(tr("Имя группы (необязательно)", &[]))
+                            .color(theme.text_muted),
+                    );
+                    super::text_edit_menu::show(
+                        ui,
+                        TextEdit::singleline(&mut self.second)
+                            .desired_width(f32::INFINITY)
+                            .min_size(egui::vec2(0.0, theme.control_height as f32))
+                            .hint_text(tr("Пусто — имя будет создано автоматически", &[])),
+                        "subscription-name-field",
+                        true,
+                        reset_import_fields,
+                    );
                 }
                 Dialog::Info => {
                     let selected = subs
@@ -1093,7 +1167,7 @@ impl NodesPage {
                 }
                 Dialog::DeleteGroup(group) => {
                     ui.label(tr(
-                        "Удалить группу «{name}» и все её серверы?",
+                        "Группа «{name}», все её серверы и связанная подписка будут удалены.",
                         &[("name", group)],
                     ));
                 }
@@ -1122,19 +1196,39 @@ impl NodesPage {
                 Dialog::Move(_) => !self.input.trim().is_empty() || !self.second.trim().is_empty(),
                 _ => !self.input.trim().is_empty(),
             };
-            ui.horizontal_wrapped(|ui| {
-                let cancel = !matches!(dialog, Dialog::Info) && button(ui, "Отмена");
-                let label = match dialog {
-                    Dialog::Info => "Закрыть",
-                    Dialog::DeleteGroup(_) => "Удалить",
-                    Dialog::Move(_) => "Переместить",
-                    Dialog::Subscription => "Импорт",
-                    Dialog::Group => "Создать",
-                };
-                let apply = ui.add_enabled(valid, Button::new(tr(label, &[]))).clicked();
+            if matches!(dialog, Dialog::Subscription) {
+                ui.add_space(6.0);
+                let mut cancel = false;
+                let mut apply = false;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), theme.control_height as f32),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        apply = FluentButton::new(ButtonKind::Accent, "", &tr("Импортировать", &[]))
+                            .enabled(valid)
+                            .show(ui, theme)
+                            .clicked();
+                        cancel = FluentButton::new(ButtonKind::Ghost, "", &tr("Отмена", &[]))
+                            .show(ui, theme)
+                            .clicked();
+                    },
+                );
                 (cancel, apply)
-            })
-            .inner
+            } else {
+                ui.horizontal_wrapped(|ui| {
+                    let cancel = !matches!(dialog, Dialog::Info) && button(ui, "Отмена");
+                    let label = match dialog {
+                        Dialog::Info => "Закрыть",
+                        Dialog::DeleteGroup(_) => "Удалить",
+                        Dialog::Move(_) => "Переместить",
+                        Dialog::Subscription => "Импорт",
+                        Dialog::Group => "Создать",
+                    };
+                    let apply = ui.add_enabled(valid, Button::new(tr(label, &[]))).clicked();
+                    (cancel, apply)
+                })
+                .inner
+            }
         });
         let (cancel, apply) = modal.inner;
         if apply {
@@ -1148,8 +1242,8 @@ impl NodesPage {
                 }
                 Dialog::Subscription => bridge.import_subscription(&text, self.second.trim()),
                 Dialog::DeleteGroup(group) => {
-                    if bridge.delete_group(&group) && bridge.node_filter_group() == group {
-                        self.choose_source(bridge, "", "");
+                    if bridge.delete_group(&group) {
+                        self.choose_source(bridge, "Default", "");
                     }
                 }
                 Dialog::Move(ids) => {

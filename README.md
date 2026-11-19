@@ -289,7 +289,7 @@ cd windows
 python build.py
 ```
 
-The installer and portable archive are written to `windows/dist`. To keep a staged app for local testing, use `python build.py --no-zip --no-installer --stage-dir <empty-directory>`. The Python/QML reference client can still be run with `python run_qml.py` after installing `windows/requirements.txt`.
+The installer and portable archive are written to `rust/dist`. To keep a staged app for local testing, use `python build.py --no-zip --no-installer --stage-dir <empty-directory>`. The Python/QML reference client can still be run with `python run_qml.py` after installing `windows/requirements.txt`.
 
 **Android** uses Kotlin and Jetpack Compose. Configure JDK 17 and the Android SDK.
 

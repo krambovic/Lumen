@@ -14,6 +14,10 @@ pub(super) struct NodeQr {
 }
 
 impl NodeQr {
+    pub(super) fn is_open(&self) -> bool {
+        self.payload.is_some()
+    }
+
     pub(super) fn on_event(&mut self, event: &UiEvent) {
         if let UiEvent::NodeQrReady { link, name } = event {
             self.payload = Some((link.clone(), name.clone()));

@@ -11,6 +11,9 @@ from pathlib import Path
 
 import build_qml as packaging
 
+RUST_DIR = packaging.REPO_ROOT / "rust"
+DIST_DIR = RUST_DIR / "dist"
+
 
 def _resource_compiler() -> Path:
     if path := shutil.which("rc.exe"):
@@ -62,17 +65,16 @@ END
 
 
 def build_executable(work: Path, version: str) -> Path:
-    rust = packaging.REPO_ROOT / "rust"
     resources = _compile_resources(work, version)
     env = {**os.environ, "LUMEN_BUILD_VERSION": version}
     packaging._run(
         ["cargo", "rustc", "--locked", "--release", "-p", "lumen-ui", "--bin", "Lumen",
-         "--target-dir", str(rust / "target"), "--", "-C", f"link-arg={resources}",
+         "--target-dir", str(RUST_DIR / "target"), "--", "-C", f"link-arg={resources}",
          "-C", "link-arg=/MANIFEST:NO"],
-        cwd=str(rust),
+        cwd=str(RUST_DIR),
         env=env,
     )
-    return rust / "target" / "release" / "Lumen.exe"
+    return RUST_DIR / "target" / "release" / "Lumen.exe"
 
 
 def stage_release(executable: Path, app_dir: Path) -> None:
@@ -124,19 +126,19 @@ def main() -> int:
             parser.error(f"missing bundled core file: {packaging.CORE_DIR / relative}")
 
     version = packaging._read_app_version()
-    packaging.DIST_DIR.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="lumen-rust-", dir=packaging.DIST_DIR) as temporary:
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="lumen-rust-", dir=DIST_DIR) as temporary:
         work = Path(temporary)
         app_dir = args.stage_dir.resolve() if args.stage_dir else work / "Lumen"
         if args.stage_dir is None and args.no_zip and args.no_installer:
-            app_dir = Path(tempfile.mkdtemp(prefix="Lumen-", dir=packaging.DIST_DIR))
+            app_dir = Path(tempfile.mkdtemp(prefix="Lumen-", dir=DIST_DIR))
         executable = build_executable(work, version)
         stage_release(executable, app_dir)
         verify_executable(app_dir, work, version)
         if not args.no_zip:
-            packaging.pack_portable_zip(app_dir)
+            packaging.pack_portable_zip(app_dir, dist_dir=DIST_DIR)
         if not args.no_installer:
-            packaging.build_installer(app_dir, version)
+            packaging.build_installer(app_dir, version, dist_dir=DIST_DIR)
         if args.stage_dir or (args.no_zip and args.no_installer):
             print(f"Staged Windows application: {app_dir}")
     return 0

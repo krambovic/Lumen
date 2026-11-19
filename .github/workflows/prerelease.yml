@@ -189,13 +189,13 @@ jobs:
 
       - name: List release assets
         shell: pwsh
-        run: Get-ChildItem windows/dist/Lumen-Setup-windows-x64.exe, windows/dist/Lumen-portable-windows-x64.zip | Format-Table Name, Length
+        run: Get-ChildItem rust/dist/Lumen-Setup-windows-x64.exe, rust/dist/Lumen-portable-windows-x64.zip | Format-Table Name, Length
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
           name: Lumen-portable
-          path: windows/dist/Lumen-portable-windows-x64.zip
+          path: rust/dist/Lumen-portable-windows-x64.zip
 
       - name: Generate changelog
         shell: pwsh
@@ -240,5 +240,5 @@ jobs:
           make_latest: false
           overwrite_files: true
           files: |
-            windows/dist/Lumen-Setup-windows-x64.exe
-            windows/dist/Lumen-portable-windows-x64.zip
+            rust/dist/Lumen-Setup-windows-x64.exe
+            rust/dist/Lumen-portable-windows-x64.zip

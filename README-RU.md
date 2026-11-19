@@ -289,7 +289,7 @@ cd windows
 python build.py
 ```
 
-Установщик и portable-архив появятся в `windows/dist`. Для локальной проверки распакованного приложения используйте `python build.py --no-zip --no-installer --stage-dir <пустой-каталог>`. Эталонный клиент Python/QML по-прежнему запускается командой `python run_qml.py` после установки зависимостей из `windows/requirements.txt`.
+Установщик и portable-архив появятся в `rust/dist`. Для локальной проверки распакованного приложения используйте `python build.py --no-zip --no-installer --stage-dir <пустой-каталог>`. Эталонный клиент Python/QML по-прежнему запускается командой `python run_qml.py` после установки зависимостей из `windows/requirements.txt`.
 
 **Android** использует Kotlin и Jetpack Compose. Настройте JDK 17 и Android SDK.
 

@@ -400,34 +400,38 @@ def _pack_zip(path: Path, app_dir: Path | None = None) -> None:
             zf.write(item, item.relative_to(app_dir))
 
 
-def pack_portable_zip(app_dir: Path | None = None) -> None:
+def pack_portable_zip(app_dir: Path | None = None, *, dist_dir: Path = DIST_DIR) -> None:
     app_dir = APP_DIR if app_dir is None else app_dir
+    zip_path = dist_dir / PORTABLE_ZIP_PATH.name
     marker = app_dir / "portable"
     created_marker = not marker.exists()
     if created_marker:
         marker.write_text("", encoding="utf-8")
     try:
-        _pack_zip(PORTABLE_ZIP_PATH, app_dir)
+        _pack_zip(zip_path, app_dir)
     finally:
         if created_marker and marker.exists():
             marker.unlink()
-    _print(f"Portable archive ready: {PORTABLE_ZIP_PATH}")
+    _print(f"Portable archive ready: {zip_path}")
 
 
-def build_installer(app_dir: Path | None = None, version: str | None = None) -> None:
+def build_installer(
+    app_dir: Path | None = None, version: str | None = None, *, dist_dir: Path = DIST_DIR
+) -> None:
     app_dir = APP_DIR if app_dir is None else app_dir
+    installer_path = dist_dir / INSTALLER_PATH.name
     _validate_release_data_tree(app_dir)
     iscc = _find_iscc()
     if iscc is None:
         raise SystemExit(
             "Inno Setup compiler not found. Install Inno Setup 6 or pass --no-installer."
         )
-    if INSTALLER_PATH.exists():
-        INSTALLER_PATH.unlink()
+    if installer_path.exists():
+        installer_path.unlink()
     version = _read_app_version() if version is None else version
     version_info = _numeric_version(version)
     source_dir = _windows_path(app_dir)
-    output_dir = _windows_path(DIST_DIR)
+    output_dir = _windows_path(dist_dir)
     _run(
         [
             str(iscc),
@@ -442,7 +446,7 @@ def build_installer(app_dir: Path | None = None, version: str | None = None) -> 
         ],
         cwd=str(ROOT),
     )
-    _print(f"Installer ready: {INSTALLER_PATH}")
+    _print(f"Installer ready: {installer_path}")
 
 
 # ------------------------------------------------------------------

@@ -13,7 +13,7 @@ use egui::{
 use lumen_core::i18n::tr;
 use serde_json::Value;
 
-use super::{PageContext, fluent_button};
+use super::{PageContext, fluent_button, text_edit_menu};
 use crate::shell::{theme::Theme, win_native};
 use crate::view_models::AppBridge;
 
@@ -97,6 +97,7 @@ impl Dialog {
 
 pub(super) struct RoutingPage {
     dialog: Option<Dialog>,
+    reset_dialog_editor: bool,
     input: String,
     running: Vec<String>,
     actions: [String; 3],
@@ -106,6 +107,7 @@ impl Default for RoutingPage {
     fn default() -> Self {
         Self {
             dialog: None,
+            reset_dialog_editor: false,
             input: String::new(),
             running: Vec::new(),
             actions: std::array::from_fn(|_| "proxy".into()),
@@ -252,6 +254,7 @@ impl RoutingPage {
     fn open(&mut self, dialog: Dialog) {
         self.dialog = Some(dialog);
         self.input.clear();
+        self.reset_dialog_editor = true;
     }
 
     fn behavior(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
@@ -460,6 +463,7 @@ impl RoutingPage {
         bridge: &mut AppBridge,
         dialog: Dialog,
     ) {
+        let reset_editor = std::mem::take(&mut self.reset_dialog_editor);
         let modal = Modal::new(Id::unique("routing-dialog")).show(ctx, |ui| {
             ui.set_width(dialog.width().min((ctx.content_rect().width() - 52.0).max(0.0)));
             ui.label(
@@ -474,7 +478,8 @@ impl RoutingPage {
                 Dialog::Help => {}
                 Dialog::Import => {
                     ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                        ui.add(
+                        text_edit_menu::show(
+                            ui,
                             TextEdit::multiline(&mut self.input)
                                 .code_editor()
                                 .desired_width(f32::INFINITY)
@@ -482,6 +487,9 @@ impl RoutingPage {
                                 .hint_text(
                                     "example.com|proxy\nads.example.net|block\n10.0.0.0/8|direct",
                                 ),
+                            "import-domain-rules",
+                            true,
+                            reset_editor,
                         )
                     });
                 }
@@ -505,10 +513,14 @@ impl RoutingPage {
                         Dialog::Folder => "C:\\Games\\".into(),
                         _ => "example.com".into(),
                     };
-                    ui.add(
+                    text_edit_menu::show(
+                        ui,
                         TextEdit::singleline(&mut self.input)
                             .desired_width(f32::INFINITY)
                             .hint_text(hint),
+                        dialog.title(),
+                        true,
+                        reset_editor,
                     );
                 }
             }

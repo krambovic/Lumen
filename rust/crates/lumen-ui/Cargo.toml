@@ -32,3 +32,6 @@ tray-icon = { workspace = true }
 muda = { workspace = true }
 arboard = { version = "3.7", default-features = false }
 qrcode = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+egui-winit = { version = "0.37", default-features = false, features = ["arboard"] }

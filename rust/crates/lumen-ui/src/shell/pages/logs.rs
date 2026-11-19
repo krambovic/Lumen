@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use egui::{
-    Align, Button, Color32, FontId, Frame, Label, Layout, Margin, RichText, ScrollArea, Sense,
+    Align, Button, Color32, FontId, Frame, Layout, Margin, RichText, ScrollArea, Sense,
     Stroke, TextEdit, TextFormat, Ui, text::LayoutJob, vec2,
 };
 use lumen_core::{i18n::tr, log_utils::LogEntry};
@@ -12,6 +12,7 @@ use regex::Regex;
 
 use super::PageContext;
 use super::diagnostics_export::{DiagnosticsExport, ExportResponse};
+use super::text_edit_menu;
 use crate::shell::theme::{Theme, bold, semibold};
 
 const LEVELS: [(&str, &str); 5] = [
@@ -83,11 +84,19 @@ impl LogsPage {
                     .rect_filled(rect, theme.radius_small as u8, theme.card);
                 let edit = ui.place(
                     rect.shrink2(vec2(12.0, 0.0)),
-                    TextEdit::singleline(&mut self.search)
-                        .frame(Frame::NONE)
-                        .margin(Margin::ZERO)
-                        .align(egui::Align2::LEFT_CENTER)
-                        .hint_text(RichText::new(tr("Фильтр логов", &[])).color(theme.text_faint)),
+                    |ui: &mut Ui| {
+                        text_edit_menu::show(
+                            ui,
+                            TextEdit::singleline(&mut self.search)
+                                .frame(Frame::NONE)
+                                .margin(Margin::ZERO)
+                                .align(egui::Align2::LEFT_CENTER)
+                                .hint_text(RichText::new(tr("Фильтр логов", &[])).color(theme.text_faint)),
+                            "log-filter",
+                            true,
+                            false,
+                        )
+                    },
                 );
                 let border = if edit.has_focus() {
                     theme.accent
@@ -345,7 +354,24 @@ fn render_entry(ui: &mut Ui, theme: &Theme, index: usize, entry: &LogEntry) -> O
                         vec2(ui.available_width(), text_height),
                         Layout::top_down(Align::Min),
                         |ui| {
-                            ui.add(Label::new(text).wrap().selectable(true));
+                            let mut body = text.text.as_str();
+                            let mut layout = |ui: &Ui, _: &dyn egui::TextBuffer, width| {
+                                let mut job = text.clone();
+                                job.wrap.max_width = width;
+                                ui.fonts_mut(|fonts| fonts.layout_job(job))
+                            };
+                            text_edit_menu::show(
+                                ui,
+                                TextEdit::multiline(&mut body)
+                                    .frame(Frame::NONE)
+                                    .margin(Margin::ZERO)
+                                    .desired_rows(1)
+                                    .desired_width(f32::INFINITY)
+                                    .layouter(&mut layout),
+                                ("log-entry", index, &entry.timestamp, &entry.message),
+                                false,
+                                false,
+                            );
                         },
                     );
                     action.then(|| entry.action_id.clone())

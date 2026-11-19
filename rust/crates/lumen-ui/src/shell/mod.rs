@@ -15,6 +15,7 @@
 //! - [`win_native`] — the ctypes integration blocks of main_qml.py
 
 pub mod geometry;
+pub(crate) mod clipboard;
 pub(crate) mod motion;
 pub(crate) mod widgets;
 mod wheel;

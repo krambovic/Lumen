@@ -22,6 +22,7 @@ mod nodes;
 mod routing;
 mod search_field;
 mod settings;
+mod text_edit_menu;
 mod updates;
 mod zapret;
 
@@ -73,6 +74,7 @@ pub(super) fn render_page(
     page_ctx: &mut PageContext,
     state: &mut PageState,
 ) {
+    let qr_dialog_open = state.node_qr.is_open();
     if page != Page::Logs {
         state.logs.on_hidden();
     }
@@ -82,7 +84,7 @@ pub(super) fn render_page(
     state
         .dashboard
         .observe(page_ctx.bridge, page == Page::Dashboard);
-    render_page_body(page, ui, page_ctx, state);
+    render_page_body(page, ui, page_ctx, state, qr_dialog_open);
     state.node_qr.render(page_ctx.ctx, page_ctx.theme);
 }
 
@@ -95,13 +97,20 @@ pub(super) fn render_leaving_page(
     page_ctx: &mut PageContext,
     state: &mut PageState,
 ) {
-    render_page_body(page, ui, page_ctx, state);
+    let qr_dialog_open = state.node_qr.is_open();
+    render_page_body(page, ui, page_ctx, state, qr_dialog_open);
 }
 
-fn render_page_body(page: Page, ui: &mut Ui, page_ctx: &mut PageContext, state: &mut PageState) {
+fn render_page_body(
+    page: Page,
+    ui: &mut Ui,
+    page_ctx: &mut PageContext,
+    state: &mut PageState,
+    qr_dialog_open: bool,
+) {
     match page {
         Page::Dashboard => state.dashboard.render(ui, page_ctx),
-        Page::Nodes => state.nodes.render(ui, page_ctx),
+        Page::Nodes => state.nodes.render(ui, page_ctx, qr_dialog_open),
         Page::Routing => state.routing.render(ui, page_ctx),
         Page::Configs => state.configs.render(ui, page_ctx),
         Page::Zapret => state.zapret.render(ui, page_ctx),
