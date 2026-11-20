@@ -228,7 +228,7 @@ def test_singbox_nested_auto_supports_endpoint_and_proxy_checks_without_direct_f
     assert config["outbounds"][0]["outbounds"] == ["fast", "direct"]
 
 
-def test_icmp_falls_back_to_tcp_handshake_like_android(monkeypatch) -> None:
+def test_icmp_never_substitutes_tcp_latency(monkeypatch) -> None:
     tcp_calls: list[tuple[str, int]] = []
     monkeypatch.setattr(ping_worker, "icmp_ping", lambda host, timeout_ms: None)
     monkeypatch.setattr(ping_worker, "tcp_ping", lambda host, port, timeout: tcp_calls.append((host, port)) or 42)
@@ -237,9 +237,9 @@ def test_icmp_falls_back_to_tcp_handshake_like_android(monkeypatch) -> None:
     udp_node = _native_node("hy2", "hysteria2")
     worker = ping_worker.PingWorker([tcp_node, udp_node], timeout=1.0, method="icmp")
 
-    assert worker._measure(tcp_node) == 42
+    assert worker._measure(tcp_node) is None
     assert worker._measure(udp_node) is None  # a UDP-only endpoint has no TCP listener
-    assert tcp_calls == [("tcp.example", 443)]
+    assert tcp_calls == []
 
 
 def test_icmp_reply_is_parsed_without_localized_ping_output() -> None:

@@ -2563,10 +2563,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             next = next.copy(subscriptionUserAgent = it)
             applied += "change-user-agent"
         }
-        premium["ping-type"]?.trim()?.takeIf { it.isNotBlank() }?.let {
-            next = next.copy(pingType = normalizedPingType(it))
-            applied += "ping-type"
-        }
+        // The ping method belongs to the user. Periodic subscription refreshes
+        // must not reset it, even when other provider overrides are enabled.
         if (next != _settings.value) updateSettings(next)
 
         premium["per-app-proxy-mode"]?.trim()?.lowercase(Locale.US)?.let { mode ->
@@ -4105,7 +4103,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             "clash", "_singbox_dependencies"
                         )
                     }
-                    parsed = if (isNormalizedWrapper) {
+                    parsed = if (json.optString("protocol").equals("xray_config", ignoreCase = true)) {
+                        // Older Android builds stored the desktop envelope as
+                        // an outbound. Recover its real protocol before routing.
+                        LinkParser.parseJsonObjectOutbound(json).let {
+                            it.copy(name = entity.name.ifBlank { it.name })
+                        }
+                    } else if (isNormalizedWrapper) {
                         ParsedNode(
                             name = entity.name.ifBlank { entity.server },
                             scheme = entity.protocol,
@@ -4652,6 +4656,10 @@ internal fun validateSubscriptionEdit(
     val cleanUrl = url.trim()
     if (cleanName.isEmpty() || cleanUrl.isEmpty() || cleanUrl.length > 8_192) return null
     if ('\r' in cleanUrl || '\n' in cleanUrl) return null
+    if (SubscriptionClient.isEncryptedSource(cleanUrl)) {
+        val classified = ImportClassifier.classify(cleanUrl) as? ImportClassification.Ready ?: return null
+        return if (classified.kind == ImportKind.SUBSCRIPTION) SubscriptionEdit(cleanName, classified.normalized) else null
+    }
     val parsed = runCatching { URL(cleanUrl) }.getOrNull() ?: return null
     if (parsed.host.isBlank()) return null
     val scheme = parsed.protocol.lowercase(Locale.US)

@@ -24,7 +24,7 @@ internal object ImportClassifier {
     )
 
     fun classify(raw: String?): ImportClassification {
-        val text = raw?.trim().orEmpty()
+        val text = raw?.trim()?.removePrefix("\uFEFF")?.trim().orEmpty()
         if (text.isEmpty()) return ImportClassification.Rejected("Clipboard is empty")
         // An encrypted file includes Base64 overhead and can legitimately exceed
         // the clipboard limit. Keep it within the same bound as file import.

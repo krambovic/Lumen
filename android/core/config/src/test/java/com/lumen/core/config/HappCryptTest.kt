@@ -11,6 +11,16 @@ import org.junit.Test
 class HappCryptTest {
 
     @Test
+    fun allLegacyModesDecryptIndependentMultiBlockVectors() {
+        val resource = javaClass.getResource("/happ_rsa_vectors.json")!!
+        val vectors = org.json.JSONArray(resource.readText())
+        for (index in 0 until vectors.length()) {
+            val vector = vectors.getJSONObject(index)
+            assertEquals(vector.getString("url"), HappCrypt.decryptHappLink(vector.getString("link")))
+        }
+    }
+
+    @Test
     fun testDecryptsCrypt51SubscriptionVector() {
         val link =
             "happ://crypt5/fzvd4oXqWHPd9ZJzbmZcpU3I20FsDc8WfLpIJg8yO6G9p/GbNqkmpD1avm2fTYWsJmVeKxs/zdzR8yugTK73iS" +

@@ -1,17 +1,19 @@
 import base64
+import pytest
 
 from xray_fluent import http_latency
 from xray_fluent.active_profile_health import probe_active_profile
 
 
-def test_warm_latency_reuses_connection_and_excludes_connect_and_first_get(monkeypatch):
+@pytest.mark.parametrize("close_after_response", [False, True])
+def test_warm_latency_reuses_connection_and_excludes_connect_and_first_get(monkeypatch, close_after_response):
     clock = [0.0]
     connections = []
-    delays = iter([.9, .06, .04, .05, .03])
+    delays = iter([.9, .06, .04, .8, .05, .03] if close_after_response else [.9, .06, .04, .05, .03])
 
     class Response:
         status = 204
-        will_close = False
+        will_close = close_after_response
 
         def read(self, _limit):
             return b""
@@ -45,6 +47,8 @@ def test_warm_latency_reuses_connection_and_excludes_connect_and_first_get(monke
             clock[0] += next(delays)
 
         def getresponse(self):
+            if close_after_response:
+                self.sock = None
             return Response()
 
         def close(self):
@@ -57,9 +61,10 @@ def test_warm_latency_reuses_connection_and_excludes_connect_and_first_get(monke
     arguments = ("http://user%20name:pass%3Aword@127.0.0.1:18080", "https://health.example/generate_204", 3)
     assert probe.measure(*arguments) == 40
     assert probe.measure(*arguments) == 30
-    assert len(connections) == 1 and connections[0].requests == 5
+    assert len(connections) == (2 if close_after_response else 1)
+    assert sum(connection.requests for connection in connections) == (6 if close_after_response else 5)
     probe.close()
-    assert connections[0].closed
+    assert all(connection.closed for connection in connections)
 
 
 def test_dashboard_uses_warm_http_probe_instead_of_cold_clash_delay():

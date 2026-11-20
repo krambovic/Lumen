@@ -46,7 +46,8 @@ class WarmHTTPProbe:
             samples = []
             for _ in range(2):
                 if connection.sock is None:
-                    raise OSError("proxy tunnel closed before measurement")
+                    # Re-establish a server-closed tunnel before timing the GET.
+                    connection.connect()
                 started = time.perf_counter()
                 self._request(connection, path)
                 samples.append((time.perf_counter() - started) * 1000)
@@ -63,7 +64,7 @@ class WarmHTTPProbe:
         response = connection.getresponse()
         try:
             response.read(64 * 1024)
-            if not 200 <= response.status < 300 or response.will_close or not response.isclosed():
-                raise OSError("health target did not preserve the verified HTTP tunnel")
+            if not 200 <= response.status < 300 or not response.isclosed():
+                raise OSError("health target did not return a complete successful response")
         finally:
             response.close()

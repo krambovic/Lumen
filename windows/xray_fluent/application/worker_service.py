@@ -346,6 +346,8 @@ def ping_nodes(
             warm_ping=resolved_method == "http",
             concurrency=controller.state.settings.speed_test_concurrency,
             bypass_tun=real_bypass_tun,
+            active_node_id=str(real_active_session.node_id or "") if controller.connected and real_active_session else "",
+            active_proxy_url=str(getattr(real_active_session, "health_proxy_url", "") or "") if controller.connected else "",
         )
         controller._ping_worker = worker
         bind_thread_reference(controller, "_ping_worker", worker)

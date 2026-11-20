@@ -2869,7 +2869,7 @@ object SingboxConfigBuilder {
                 val realitySettings = stream["realitySettings"] as? Map<*, *> ?: emptyMap<Any, Any>()
                 val serverName = realitySettings["serverName"]?.toString() ?: server
                 tls["server_name"] = serverName
-                realitySettings["publicKey"]?.let {
+                (realitySettings["password"] ?: realitySettings["publicKey"])?.let {
                     tls["reality"] = mapOf("enabled" to true, "public_key" to it.toString(), "short_id" to (realitySettings["shortId"]?.toString() ?: ""))
                 }
                 // fp= is optional in vless share links, but the core aborts with

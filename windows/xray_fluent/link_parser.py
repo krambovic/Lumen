@@ -3844,6 +3844,13 @@ def _amnezia_from_params(params: dict[str, str]) -> dict[str, Any]:
     )
     if header_key:
         result["header_protection_key"] = _validate_awg3_header_key(header_key)
+    for key, conf_name in (("random_trailers", "RandomTrailers"), ("disable_cookies", "DisableCookies")):
+        value = _get_param(params, key, key.replace("_", "-"), key.replace("_", ""), conf_name)
+        if value:
+            lowered = value.strip().lower()
+            if lowered not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
+                raise LinkParseError(f"некорректное логическое значение в поле {conf_name}")
+            result[key] = lowered in {"true", "1", "yes", "on"}
     for source_key, json_key in _AMNEZIA_AWG3_RANGE_KEYS.items():
         value = _get_param(
             params,

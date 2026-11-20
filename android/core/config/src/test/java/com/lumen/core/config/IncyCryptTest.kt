@@ -21,6 +21,12 @@ class IncyCryptTest {
     }
 
     @Test
+    fun acceptsStandardBase64AsWellAsUrlSafeAlphabet() {
+        val standard = link.replace('-', '+').replace('_', '/')
+        assertEquals("https://example.com/sub?id=incy-test", IncyCrypt.decryptIncyLink(standard))
+    }
+
+    @Test
     fun decryptsOfficialDocumentationExample() {
         assertEquals(
             "https://incsub.myincteam.org/vTyt0xVE-aAjHv8T",

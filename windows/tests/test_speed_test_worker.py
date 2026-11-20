@@ -56,7 +56,7 @@ def test_xray_auto_speed_config_preserves_balancer_and_observatory() -> None:
     assert config["inbounds"][0]["port"] == 19080
 
 
-@pytest.mark.parametrize("closed,status,expected", [(False, 204, 40), (True, 204, -1), (False, 302, -1)])
+@pytest.mark.parametrize("closed,status,expected", [(False, 204, 40), (True, 204, 40), (False, 302, -1)])
 def test_http_get_excludes_handshakes_and_warmup(monkeypatch, closed, status, expected):
     from xray_fluent import speed_test_worker as module
 
@@ -101,6 +101,8 @@ def test_http_get_excludes_handshakes_and_warmup(monkeypatch, closed, status, ex
             self.requests += 1
 
         def getresponse(self):
+            if closed:
+                self.sock = None
             return Response()
 
         def close(self):
@@ -110,10 +112,75 @@ def test_http_get_excludes_handshakes_and_warmup(monkeypatch, closed, status, ex
     monkeypatch.setattr(module.time, "perf_counter", lambda: clock[0])
     node = Node(id="one", server="node.example", port=443)
     worker = SpeedTestWorker([node], xray_path="xray.exe", mode="ping", warm_ping=True)
-    assert worker._real_ping(_SpeedTestTarget(node, 19080)) == expected
+    assert worker._http_get_ping(_SpeedTestTarget(node, 19080), module.SPEED_TEST_PING_URL) == expected
     assert len(connections) == 1 and connections[0].closed
     assert not worker._responses
     assert connections[0].requests == (3 if expected > 0 else 1)
+
+
+def test_http_get_uses_independent_target_when_primary_is_blocked(monkeypatch):
+    from xray_fluent import speed_test_worker as module
+
+    node = Node(id="one", server="node.example", port=443)
+    worker = SpeedTestWorker([node], xray_path="xray.exe", mode="ping", warm_ping=True)
+    attempts = []
+
+    def measure(target, url):
+        attempts.append(url)
+        return 58 if "cloudflare" in url else -1
+
+    monkeypatch.setattr(worker, "_http_get_ping", measure)
+    assert worker._real_ping(_SpeedTestTarget(node, 19080)) == 58
+    assert attempts == [module.SPEED_TEST_PING_URL, "https://cp.cloudflare.com/generate_204"]
+
+
+def test_successful_cold_http_probe_never_reports_zero(monkeypatch):
+    from xray_fluent import speed_test_worker as module
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, limit):
+            return b""
+
+    class Opener:
+        def open(self, *args, **kwargs):
+            return Response()
+
+    node = Node(id="one", server="node.example", port=443)
+    worker = SpeedTestWorker([node], xray_path="xray.exe", mode="ping")
+    monkeypatch.setattr(worker, "_build_proxy_opener", lambda port: Opener())
+    monkeypatch.setattr(module.time, "perf_counter", lambda: 1.0)
+    assert worker._cold_http_ping(_SpeedTestTarget(node, 19080)) == 1
+
+
+@pytest.mark.parametrize("measured", [73, None])
+def test_active_awg_probe_never_starts_a_second_wireguard_session(monkeypatch, measured):
+    from xray_fluent import speed_test_worker as module
+
+    node = Node(id="active", scheme="awg", outbound={"protocol": "awg"})
+    worker = SpeedTestWorker([node], xray_path="", mode="ping", warm_ping=True,
+                             active_node_id=node.id, active_proxy_url="http://user:pass@127.0.0.1:19080")
+
+    class Probe:
+        def measure(self, proxy, url, timeout):
+            assert proxy == "http://user:pass@127.0.0.1:19080"
+            if measured is None:
+                raise OSError("unreachable")
+            return measured
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(module, "WarmHTTPProbe", Probe)
+    monkeypatch.setattr(worker, "_reserve_port", lambda: pytest.fail("duplicate AWG session"))
+    result = worker._test_node(node)
+    assert result[1:] == ((float(measured), True) if measured else (None, False))
+    assert not worker._responses
 
 
 def test_auto_probe_uses_main_balancer_and_preserves_loopback_rescue():
@@ -146,10 +213,11 @@ def test_auto_probe_uses_main_balancer_and_preserves_loopback_rescue():
         worker._build_config(_SpeedTestTarget(node, 19080))
 
 
-def test_auto_ping_retries_observer_startup_outside_measurement(monkeypatch):
+@pytest.mark.parametrize("protocol", ["xray_config", "awg", "hysteria2", "openvpn"])
+def test_core_ping_retries_transport_startup_outside_measurement(monkeypatch, protocol):
     from xray_fluent import speed_test_worker as module
 
-    node = Node(scheme="auto", outbound={"protocol": "xray_config"})
+    node = Node(scheme=protocol, outbound={"protocol": protocol})
     worker = SpeedTestWorker([node], xray_path="xray.exe", mode="ping", warm_ping=True)
     clock = [0.0]
     monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])

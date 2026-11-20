@@ -6,6 +6,19 @@ import org.junit.Test
 
 class SubscriptionEditValidationTest {
     @Test
+    fun encryptedSubscriptionSourcesCanBeAddedAndRenamed() {
+        val links = listOf(
+            "happ://crypt/MYuWn7D9+SuUMnwuAO4aDNJtyglzW+mcEwGG19GeoxdaQijb+/U1JnlLMT0mRoKVWQB/ZtzfANf8koLv7Iq62LuhsGRASD4Gf+6JDAx/Ubk8LYBZifSulN7JHV5HXsqW1HeBRT/DLQ997XTfiDXxYTU+Ed0shUcucvOdXq4Vx1I=",
+            "incy://crypt1/AAECAwQFBgcICQoLNyIQL3rDwRZqnyoD8pGKSKPC6cwYYSGTRieILcbBXDI2_rVLW0ACi9IVK63oUXhNjJAgucw3__4DCG5s9js"
+        )
+        links.forEach { link ->
+            assertEquals(SubscriptionEdit("Group", link), validateSubscriptionEdit("", "Group", link, false))
+            assertEquals(SubscriptionEdit("Renamed", link), validateSubscriptionEdit(link, "Renamed", link, false))
+        }
+        assertNull(validateSubscriptionEdit("", "Group", "happ://crypt/broken", false))
+        assertNull(validateSubscriptionEdit("", "Group", "incy://crypt1/broken", false))
+    }
+    @Test
     fun acceptsHttpsAndNormalizesTheName() {
         assertEquals(
             SubscriptionEdit("My group", "https://example.com/sub?token=1"),

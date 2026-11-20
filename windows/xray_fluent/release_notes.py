@@ -20,6 +20,11 @@ _VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+){0,3})(?:[-+].*)?$")
 RELEASE_NOTES: dict[str, tuple[dict[str, str], ...]] = {
     "2.1.4": (
         {
+            "glyph": "\uE9D9",
+            "title": "Пинг и AWG",
+            "text": "Исправлены HTTP GET, ICMP и подключения AWG 3.0/3.1.",
+        },
+        {
             "glyph": "\uEC05",
             "title": "Кодировка подписок",
             "text": "Исправлена кириллица в заголовках и баннерах подписок.",

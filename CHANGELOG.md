@@ -1,8 +1,21 @@
+## Android v1.5.2
+
+* fix: preserve the selected ping method when subscriptions refresh instead of resetting it to TCPing
+* fix: restore Happ crypt2/crypt3 decryption keys and support both Base64 alphabets for Incy subscriptions
+* fix: accept encrypted subscription URLs when adding or editing subscriptions and ignore Unicode clipboard markers
+* fix: import Desktop `xray_config` profiles with their real protocol, address, credentials and description, and recover previously stored wrappers
+* fix: use Xray in Hybrid mode for REALITY/XHTTP and REALITY/Firefox profiles, preserving stream-up, Vision and authentication settings
+* fix: accept the current Xray REALITY public-key alias when converting configurations to sing-box
+
+Full Changelog: https://github.com/krambovic/Lumen/compare/android-v1.5.1...android-v1.5.2
+
 ## Desktop v2.1.4
 
 * Fixed garbled Cyrillic text in subscription titles and information banners caused by UTF-8 HTTP headers being read as Latin-1 ([#19](https://github.com/krambovic/Lumen/issues/19)). Previously saved banner text is repaired when displayed.
 * Restored useful redacted settings and routing details in diagnostic archives; added system and engine versions and optional network checks.
 * Restored installation IDs in heartbeats, error reports and diagnostic archives, and added a configured proxy fallback for connection failures.
+* Fixed HTTP GET and ICMP latency checks, including server-closed HTTP connections, independent test targets and transport startup retries.
+* Fixed AWG 3.0/3.1 HTTP probes, preserved RandomTrailers and DisableCookies during import, and avoided duplicate WireGuard sessions when testing the active connection.
 
 Full Changelog: https://github.com/krambovic/Lumen/compare/v2.1.3...v2.1.4
 

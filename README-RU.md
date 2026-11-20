@@ -277,6 +277,17 @@ TLS, REALITY, отпечатки uTLS, Vision, поддерживаемые ре
 
 **Профили и конфиденциальность.** Используйте проверенных провайдеров, не публикуйте экспортированные учётные данные и включайте авторизацию при доступе к прокси из локальной сети. Другие VPN-клиенты могут конфликтовать с Lumen.
 
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=krambovic%2Flumen&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=krambovic/lumen&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=krambovic/lumen&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=krambovic/lumen&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## Разработка
 
 <details>
