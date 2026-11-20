@@ -4,6 +4,8 @@ mod dialogs;
 mod source;
 mod subscription;
 
+#[allow(unused_imports)]
+use crate::shell::widgets::FluentTip;
 use std::collections::HashSet;
 
 use egui::{
@@ -316,7 +318,7 @@ impl NodesPage {
                     [32.0, 32.0],
                     Button::new(if ascending { "\u{e74a}" } else { "\u{e74b}" }),
                 )
-                .on_hover_text(tr(
+                .fluent_tip(tr(
                     if ascending {
                         "По возрастанию"
                     } else {
@@ -872,7 +874,7 @@ impl NodesPage {
                                 }
                                 if ui
                                     .add_sized([32.0, 32.0], Button::new(RichText::new("").color(theme.accent_text)).fill(theme.danger_fill))
-                                    .on_hover_text(tr("Удалить подписку (с серверами)", &[]))
+                                    .fluent_tip(tr("Удалить подписку (с серверами)", &[]))
                                     .clicked()
                                 {
                                     bridge.remove_subscription(url, true);
@@ -1087,7 +1089,7 @@ fn toolbar_row(ui: &mut Ui, spacing: f32, content: impl FnOnce(&mut Ui)) {
 
 fn icon_button(ui: &mut Ui, glyph: &str, label: &str) -> bool {
     ui.add_sized([32.0, 32.0], Button::new(glyph))
-        .on_hover_text(tr(label, &[]))
+        .fluent_tip(tr(label, &[]))
         .clicked()
 }
 
@@ -1107,12 +1109,12 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
                 // The QML Column is centred on the row; with no description
                 // the name sits in the middle.
                 ui.add(egui::Label::new(RichText::new(&name).size(13.0).color(theme.text)).truncate())
-                    .on_hover_text(name);
+                    .fluent_tip(name);
                 return;
             }
             ui.vertical(|ui| {
                 ui.add(egui::Label::new(RichText::new(&name).size(13.0).color(theme.text)).truncate())
-                    .on_hover_text(name);
+                    .fluent_tip(name);
                 ui.add(
                     egui::Label::new(RichText::new(description).size(10.0).color(theme.text_muted))
                         .truncate(),
@@ -1185,7 +1187,7 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
     };
     let label = RichText::new(&text).size(13.0).color(color);
     ui.add(egui::Label::new(if column == 8 { label.family(egui::FontFamily::Name("Segoe UI Bold".into())) } else { label }).truncate())
-        .on_hover_text(text);
+        .fluent_tip(text);
 }
 
 fn row_rule(ui: &Ui, theme: &Theme) {

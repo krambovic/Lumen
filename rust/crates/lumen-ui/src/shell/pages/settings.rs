@@ -4,6 +4,8 @@
 //! cards of `SettingRow`s — glyph + title/subtitle on the left, controls
 //! pinned to the right.
 
+#[allow(unused_imports)]
+use crate::shell::widgets::FluentTip;
 use std::path::Path;
 
 use egui::{
@@ -2519,7 +2521,7 @@ fn info_icon(ui: &mut Ui, theme: &Theme, tip: &str) {
         FontId::proportional(14.0),
         if response.hovered() { theme.text } else { theme.text_muted },
     );
-    response.on_hover_text(tr(tip, &[]));
+    response.fluent_tip(tr(tip, &[]));
 }
 
 /// Proxy-chain hop pill (`Rectangle radius 10, height 22`).

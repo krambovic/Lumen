@@ -1,5 +1,7 @@
 //! Preset management and server-scoped Zapret bindings.
 
+#[allow(unused_imports)]
+use crate::shell::widgets::FluentTip;
 use std::path::Path;
 
 use egui::{
@@ -401,7 +403,7 @@ impl ZapretPage {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("\u{e71b}").size(16.0).color(theme.text_muted));
                 ui.label(RichText::new(tr("Запуск вместе с сервером", &[])).font(semibold(theme.font_strong as f32)));
-                ui.label(RichText::new("\u{e946}").color(theme.text_faint)).on_hover_text(tr("Стратегия или пресет работают только для IP и порта сервера, пока вы к нему подключены. Смена во время подключения переподключает сервер.", &[]));
+                ui.label(RichText::new("\u{e946}").color(theme.text_faint)).fluent_tip(tr("Стратегия или пресет работают только для IP и порта сервера, пока вы к нему подключены. Смена во время подключения переподключает сервер.", &[]));
             });
             if !bindings.is_empty() {
                 ScrollArea::vertical()
@@ -647,7 +649,7 @@ impl ZapretPage {
                             error.is_none(),
                             fluent_button::button(theme, "\u{e74e}", &tr("Сохранить", &[]), true),
                         )
-                        .on_hover_text("Ctrl+S")
+                        .fluent_tip("Ctrl+S")
                         .clicked();
                     let cancel = ui
                         .add(fluent_button::button(theme, "", &tr("Отмена", &[]), false))

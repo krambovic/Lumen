@@ -1,9 +1,11 @@
 //! Raw sing-box and Xray configuration editors from `ConfigsPage.qml`.
 
+#[allow(unused_imports)]
+use crate::shell::widgets::FluentTip;
 use std::sync::LazyLock;
 
 use egui::{
-    Align, Align2, Button, Color32, ComboBox, FontId, Frame, Id, Key, Layout, Modal, Modifiers,
+    Align, Align2, Color32, ComboBox, FontId, Frame, Key, Layout, Modifiers,
     RichText, Sense, Stroke, Ui, vec2,
 };
 use lumen_core::i18n::tr;
@@ -162,31 +164,47 @@ impl ConfigsPage {
         });
 
         if self.pending.is_some() {
-            let dialog = Modal::new(Id::unique("configs-discard")).show(page.ctx, |ui| {
-                ui.set_width(380.0_f32.min((page.ctx.content_rect().width() - 48.0).max(0.0)));
-                ui.spacing_mut().item_spacing.y = 16.0;
-                fluent_button::style(ui);
-                ui.label(
-                    RichText::new(tr("Несохранённые изменения", &[]))
-                        .font(semibold(theme.font_strong as f32)),
-                );
-                ui.label(tr(
-                    "В текущем редакторе есть несохранённые изменения. Отменить их и продолжить?",
-                    &[],
-                ));
-                ui.horizontal_wrapped(|ui| {
-                    let cancel = ui.button(tr("Отмена", &[])).clicked();
-                    let discard = ui
-                        .add(Button::new(tr("Отменить изменения", &[])).fill(theme.danger_fill))
+            // confirmOverlay: min(420, w - 80) card, 20 px margins, spacing 16,
+            // a 50% black backdrop that swallows clicks; only the buttons close it.
+            let width = 420.0_f32.min(page.ctx.content_rect().width() - 80.0);
+            let ((cancel, discard), _) = crate::shell::fluent_dialog::custom(
+                page.ctx,
+                theme,
+                "configs-discard",
+                width,
+                20.0,
+                128,
+                false,
+                |ui, _| {
+                    use crate::shell::fluent_dialog::body_text;
+                    use crate::shell::widgets::{ButtonKind, FluentButton};
+                    body_text(ui, &tr("Несохранённые изменения", &[]), semibold(theme.font_strong as f32), theme.text);
+                    ui.add_space(16.0);
+                    body_text(
+                        ui,
+                        &tr("В текущем редакторе есть несохранённые изменения. Отменить их и продолжить?", &[]),
+                        egui::FontId::proportional(theme.font_normal as f32),
+                        theme.text_muted,
+                    );
+                    ui.add_space(16.0);
+                    let (row, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), theme.control_height as f32),
+                        egui::Sense::hover(),
+                    );
+                    let mut bar = ui.new_child(
+                        egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    );
+                    bar.spacing_mut().item_spacing.x = 8.0;
+                    let discard = FluentButton::new(ButtonKind::Danger, "", &tr("Отменить изменения", &[]))
+                        .show(&mut bar, theme)
                         .clicked();
+                    let cancel = FluentButton::new(ButtonKind::Ghost, "", &tr("Отмена", &[])).show(&mut bar, theme).clicked();
                     (cancel, discard)
-                })
-                .inner
-            });
-            let (cancel, discard) = dialog.inner;
+                },
+            );
             if discard && let Some(action) = self.pending.take() {
                 replace(editor, action, core, name, bridge);
-            } else if cancel || dialog.should_close() {
+            } else if cancel {
                 self.pending = None;
             }
         }
@@ -301,7 +319,7 @@ fn sources(
                     &tr("Папка", &[]),
                     false,
                 ))
-                .on_hover_text(tr("Открыть папку конфигов", &[]))
+                .fluent_tip(tr("Открыть папку конфигов", &[]))
                 .clicked()
                 && let Some(path) = bridge.config_directory(core)
             {
@@ -323,7 +341,7 @@ fn sources(
             }
             if ui
                 .add(fluent_button::button(theme, "\u{e8b5}", &import, false))
-                .on_hover_text(tr("Импорт шаблона", &[]))
+                .fluent_tip(tr("Импорт шаблона", &[]))
                 .clicked()
             {
                 action = Some(Replace::Import);
@@ -459,7 +477,7 @@ fn editor_toolbar(
                         &tr("Применить", &[]),
                         true,
                     ))
-                    .on_hover_text(tr("Сохранить и перезапустить ядро с этим конфигом", &[]))
+                    .fluent_tip(tr("Сохранить и перезапустить ядро с этим конфигом", &[]))
                     .clicked();
                 let save = ui
                     .add(fluent_button::button(
@@ -468,7 +486,7 @@ fn editor_toolbar(
                         &tr("Сохранить", &[]),
                         false,
                     ))
-                    .on_hover_text("Ctrl+S")
+                    .fluent_tip("Ctrl+S")
                     .clicked();
                 let validate = ui
                     .add(fluent_button::button(
@@ -522,7 +540,7 @@ fn editor_toolbar(
                     };
                     let caption = elide_path(file, remaining, measure);
                     ui.add(egui::Label::new(RichText::new(caption).font(file_font)).truncate())
-                        .on_hover_text(file);
+                        .fluent_tip(file);
                     if show_badge {
                         let (rect, _) =
                             ui.allocate_exact_size(vec2(badge_width, 18.0), Sense::hover());

@@ -357,7 +357,7 @@ impl<'a> FluentButton<'a> {
             }
         }
         if !self.tip.is_empty() && (self.icon_only || self.text.is_empty()) {
-            response.on_hover_text(self.tip)
+            response.fluent_tip(self.tip)
         } else {
             response
         }
@@ -879,3 +879,69 @@ mod progress_tests {
 }
 
 
+
+// ── FluentToolTip ───────────────────────────────────────────────────────────
+
+/// `FluentToolTip.qml` as an extension of `Response`: after 450 ms of hover a
+/// flyout (radius 8, 1 px `flyoutBorder`, 12 / 8 px padding, `fontNormal`
+/// text, at most 4 lines) fades in over 100 ms, centred 4 px above the
+/// widget and kept 8 px inside the window; it hides after 6 s.
+pub(crate) trait FluentTip {
+    fn fluent_tip(self, text: impl Into<String>) -> Self;
+}
+
+impl FluentTip for Response {
+    fn fluent_tip(self, text: impl Into<String>) -> Self {
+        show_fluent_tip(&self, text.into());
+        self
+    }
+}
+
+fn show_fluent_tip(response: &Response, text: String) {
+    let ctx = response.ctx.clone();
+    let id = response.id.with("lumen-fluent-tip");
+    let now = ctx.input(|input| input.time);
+    if !response.hovered() || text.is_empty() || ctx.dragged_id().is_some() {
+        ctx.data_mut(|data| data.remove::<f64>(id));
+        return;
+    }
+    let start = ctx.data_mut(|data| *data.get_temp_mut_or_insert_with(id, || now));
+    let elapsed = now - start;
+    if elapsed < 0.45 {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(0.45 - elapsed));
+        return;
+    }
+    if elapsed > 6.45 {
+        return;
+    }
+    let Some(theme) = super::fluent_menu::published_theme(&ctx) else {
+        return;
+    };
+    let animated = theme.anim_fast > 0;
+    let opacity = if animated { (((elapsed - 0.45) / 0.1) as f32).clamp(0.0, 1.0) } else { 1.0 };
+    if opacity < 1.0 {
+        ctx.request_repaint();
+    } else {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64((6.45 - elapsed).max(0.0)));
+    }
+    let screen = ctx.content_rect();
+    let font = FontId::proportional(theme.font_normal as f32);
+    let max_text = (screen.width() - 16.0 - 24.0).max(40.0);
+    let mut job = egui::text::LayoutJob::simple(text, font, theme.text, max_text);
+    job.wrap.max_rows = 4;
+    let galley = ctx.fonts_mut(|fonts| fonts.layout_job(job));
+    let size = galley.size() + vec2(24.0, 16.0);
+    let anchor = response.rect;
+    let mut x = (anchor.center().x - size.x / 2.0).round();
+    let mut y = anchor.top() - size.y - 4.0;
+    if y < screen.top() + 8.0 {
+        // The popup engine flips it below when there is no room above.
+        y = anchor.bottom() + 4.0;
+    }
+    x = x.clamp(screen.left() + 8.0, (screen.right() - 8.0 - size.x).max(screen.left() + 8.0));
+    let rect = Rect::from_min_size(pos2(x, y), size);
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, id));
+    let fade = |color: Color32| color.gamma_multiply(opacity);
+    painter.rect(rect, 8.0, fade(theme.flyout), Stroke::new(1.0, fade(theme.flyout_border)), StrokeKind::Inside);
+    painter.galley_with_override_text_color(rect.min + vec2(12.0, 8.0), galley, fade(theme.text));
+}

@@ -5,6 +5,8 @@
 //! compact progress pills (narrow), and the per-step pages above a 76pt
 //! action bar. Every grid and flow is laid out with explicit rectangles.
 
+#[allow(unused_imports)]
+use crate::shell::widgets::FluentTip;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -921,7 +923,7 @@ impl Onboarding {
                 Item::Custom => {
                     let tint = hex_color(&current).unwrap_or(theme.accent);
                     let response = accent_dot(ui, theme, rect, id, tint, custom_selected, true)
-                        .on_hover_text(tr("Свой цвет", &[]));
+                        .fluent_tip(tr("Свой цвет", &[]));
                     if response.clicked() {
                         self.color_draft = Some(ColorDraft {
                             color: tint,

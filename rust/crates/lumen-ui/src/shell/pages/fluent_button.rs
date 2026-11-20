@@ -1,5 +1,7 @@
 use egui::{Button, FontId, Stroke, TextFormat, Ui, text::LayoutJob, vec2};
 
+#[allow(unused_imports)]
+use crate::shell::widgets::FluentTip;
 use crate::shell::theme::{Theme, semibold};
 
 pub(crate) fn button(theme: &Theme, icon: &str, label: &str, accent: bool) -> Button<'static> {
@@ -47,7 +49,7 @@ pub(crate) fn icon(
     ui.scope(|ui| {
         ui.spacing_mut().button_padding = egui::Vec2::ZERO;
         ui.add_enabled(enabled, button(theme, glyph, "", false))
-            .on_hover_text(tip)
+            .fluent_tip(tip)
     })
     .inner
 }

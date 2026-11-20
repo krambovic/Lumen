@@ -1,6 +1,8 @@
 //! The servers page source picker: `sourceButton` and `sourcePopup` in
 //! `NodesPage.qml` (one control for "all servers", subscriptions and groups).
 
+#[allow(unused_imports)]
+use crate::shell::widgets::FluentTip;
 use egui::{
     Align2, Color32, FontId, Id, Popup, PopupCloseBehavior, Rect, RectAlign, ScrollArea, Sense,
     Stroke, Ui, pos2, text::LayoutJob, vec2,
@@ -312,7 +314,7 @@ fn entry_row(ui: &mut Ui, theme: &Theme, entry: &Entry, index: usize) -> Option<
             FontId::proportional(theme.font_normal as f32),
             theme.text,
         );
-        let delete = delete.on_hover_text(tr("Удалить выбранную группу", &[]));
+        let delete = delete.fluent_tip(tr("Удалить выбранную группу", &[]));
         if delete.clicked() {
             choice = Some(Choice::DeleteGroup(name.clone()));
         }

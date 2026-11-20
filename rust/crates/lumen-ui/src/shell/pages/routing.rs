@@ -4,6 +4,8 @@
 //! default TUN outbound, Discord Voice), applications table, services card,
 //! domain/IP rules and the Fluent dialogs behind them.
 
+#[allow(unused_imports)]
+use crate::shell::widgets::FluentTip;
 use std::path::Path;
 
 use egui::{
@@ -705,7 +707,7 @@ fn rules(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, processes: bool) {
                     Layout::left_to_right(Align::Center),
                     |ui| {
                         ui.add(egui::Label::new(text(&value, theme)).truncate())
-                            .on_hover_text(&value);
+                            .fluent_tip(&value);
                     },
                 );
             });
