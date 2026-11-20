@@ -136,6 +136,8 @@ const DWMSBT_MAINWINDOW: u32 = 2;
 const DWMWA_BORDER_COLOR: u32 = 34;
 const DWMWA_CAPTION_COLOR: u32 = 35;
 const DWMWA_TEXT_COLOR: u32 = 36;
+const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+const DWMWCP_ROUND: u32 = 2;
 const DWMWA_COLOR_NONE: u32 = 0xFFFFFFFE;
 // RegOpenKeyExW access masks for the transparency probe below.
 #[cfg(windows)]
@@ -566,6 +568,10 @@ pub enum MicaOp {
     SetWindowTheme(&'static str),
     DwmExtendFrameZeroMargins,
     DwmBorderColorNone,
+    /// `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND`. Qt's frameless window
+    /// gets the Windows 11 corners by default; the winit window, created
+    /// transparent through blur-behind, keeps square corners without it.
+    DwmCornerRound,
     DwmCaptionColor(u32),
     DwmTextColor(u32),
     DwmSystemBackdrop(u32),
@@ -629,6 +635,7 @@ pub fn mica_ops(build: u32, dark: bool, backdrop: &str) -> Vec<MicaOp> {
         // Prevent Windows from drawing the user's accent colour as a 1px
         // active-window line above the custom title bar.
         ops.push(MicaOp::DwmBorderColorNone);
+        ops.push(MicaOp::DwmCornerRound);
         ops.push(MicaOp::DwmCaptionColor(if dark {
             CAPTION_DARK
         } else {
@@ -761,6 +768,10 @@ pub fn apply_mica_ops(hwnd: windows::Win32::Foundation::HWND, ops: &[MicaOp]) {
                 MicaOp::DwmBorderColorNone => {
                     let color = DWMWA_COLOR_NONE;
                     dwm_set(DWMWA_BORDER_COLOR, &color as *const u32 as _, 4);
+                }
+                MicaOp::DwmCornerRound => {
+                    let preference = DWMWCP_ROUND;
+                    dwm_set(DWMWA_WINDOW_CORNER_PREFERENCE, &preference as *const u32 as _, 4);
                 }
                 MicaOp::DwmCaptionColor(color) => {
                     dwm_set(DWMWA_CAPTION_COLOR, color as *const u32 as _, 4);
@@ -1243,6 +1254,7 @@ mod tests {
                 },
                 MicaOp::DwmExtendFrameZeroMargins,
                 MicaOp::DwmBorderColorNone,
+                MicaOp::DwmCornerRound,
                 MicaOp::DwmCaptionColor(CAPTION_DARK),
                 MicaOp::DwmTextColor(TEXT_DARK),
                 MicaOp::DwmSystemBackdrop(DWMSBT_MAINWINDOW),
