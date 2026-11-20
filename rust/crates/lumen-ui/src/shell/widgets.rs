@@ -888,16 +888,23 @@ mod progress_tests {
 /// widget and kept 8 px inside the window; it hides after 6 s.
 pub(crate) trait FluentTip {
     fn fluent_tip(self, text: impl Into<String>) -> Self;
+    /// With a custom delay in seconds (SettingsPage `InfoIcon` waits 250 ms).
+    fn fluent_tip_after(self, text: impl Into<String>, delay: f64) -> Self;
 }
 
 impl FluentTip for Response {
     fn fluent_tip(self, text: impl Into<String>) -> Self {
-        show_fluent_tip(&self, text.into());
+        show_fluent_tip(&self, text.into(), 0.45);
+        self
+    }
+
+    fn fluent_tip_after(self, text: impl Into<String>, delay: f64) -> Self {
+        show_fluent_tip(&self, text.into(), delay);
         self
     }
 }
 
-fn show_fluent_tip(response: &Response, text: String) {
+fn show_fluent_tip(response: &Response, text: String, delay: f64) {
     let ctx = response.ctx.clone();
     let id = response.id.with("lumen-fluent-tip");
     let now = ctx.input(|input| input.time);
@@ -907,22 +914,23 @@ fn show_fluent_tip(response: &Response, text: String) {
     }
     let start = ctx.data_mut(|data| *data.get_temp_mut_or_insert_with(id, || now));
     let elapsed = now - start;
-    if elapsed < 0.45 {
-        ctx.request_repaint_after(std::time::Duration::from_secs_f64(0.45 - elapsed));
+    if elapsed < delay {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(delay - elapsed));
         return;
     }
-    if elapsed > 6.45 {
+    // `timeout: 6000` after the tip appears.
+    if elapsed > delay + 6.0 {
         return;
     }
     let Some(theme) = super::fluent_menu::published_theme(&ctx) else {
         return;
     };
     let animated = theme.anim_fast > 0;
-    let opacity = if animated { (((elapsed - 0.45) / 0.1) as f32).clamp(0.0, 1.0) } else { 1.0 };
+    let opacity = if animated { (((elapsed - delay) / 0.1) as f32).clamp(0.0, 1.0) } else { 1.0 };
     if opacity < 1.0 {
         ctx.request_repaint();
     } else {
-        ctx.request_repaint_after(std::time::Duration::from_secs_f64((6.45 - elapsed).max(0.0)));
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64((delay + 6.0 - elapsed).max(0.0)));
     }
     let screen = ctx.content_rect();
     let font = FontId::proportional(theme.font_normal as f32);

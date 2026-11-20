@@ -3163,54 +3163,7 @@ fn option_group(ui: &mut Ui, theme: &Theme, salt: &str, rows: &[Toggle<'_>]) -> 
 
 /// QML `Switch` as a 44×20 Fluent pill.
 fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
-    // The Universal `Switch` keeps 8 px of padding after its 44x20 track.
-    let (slot, mut response) = ui.allocate_exact_size(vec2(52.0, 20.0), Sense::click());
-    let rect = Rect::from_min_size(slot.min, vec2(44.0, 20.0));
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, checked, ""));
-    let mut value = None;
-    if enabled && response.clicked() {
-        value = Some(!checked);
-        response.mark_changed();
-    }
-    if enabled {
-        pointer_on_hover(ui, &response);
-    }
-    let alpha = if enabled { 255 } else { 115 };
-    let fade =
-        |color: Color32| Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
-    let ink = |opacity: f32| {
-        let text = theme.text;
-        let alpha = (f32::from(alpha) * opacity) as u8;
-        Color32::from_rgba_unmultiplied(text.r(), text.g(), text.b(), alpha)
-    };
-    // Universal draws a disabled checked track in neutral ink, not accent.
-    let (fill, stroke) = if checked && !enabled {
-        (ink(0.5), Stroke::NONE)
-    } else if checked {
-        (fade(theme.accent), Stroke::NONE)
-    } else {
-        (Color32::TRANSPARENT, Stroke::new(2.0, ink(0.6)))
-    };
-    ui.painter().rect(rect, 10.0, fill, stroke, StrokeKind::Inside);
-    let knob_x = rect.left()
-        + motion::follow(
-            ui.ctx(),
-            theme,
-            response.id.with("knob"),
-            if checked { rect.width() - 10.0 } else { 10.0 },
-            120.0,
-            motion::ease_out_cubic,
-        );
-    let knob = if checked && !enabled {
-        fade(theme.bg)
-    } else if checked {
-        fade(theme.accent_text)
-    } else {
-        ink(0.8)
-    };
-    ui.painter()
-        .circle_filled(pos2(knob_x, rect.center().y), 5.0, knob);
-    value
+    crate::shell::pages::settings::switch_widget(ui, theme, checked, enabled)
 }
 
 #[cfg(test)]

@@ -3041,7 +3041,12 @@ impl AppBridge {
         if value.is_empty() {
             return default_display;
         }
-        if Path::new(&value) == default_path {
+        // Python compares `Path(value).resolve()`, so a relative path such as
+        // `core/sing-box-extended/sing-box.exe` (resolved against the app
+        // folder) still counts as the default.
+        let absolute = lumen_core::constants::base_dir().join(&value);
+        let key = |path: &Path| path.to_string_lossy().replace('/', "\\").to_lowercase();
+        if key(&absolute) == key(default_path) {
             return default_display;
         }
         let normalized = value.replace('/', "\\");
@@ -7402,4 +7407,21 @@ impl GroupOrDefault for Node {
 
 fn text_or_empty(value: Option<&Value>) -> String {
     value.and_then(Value::as_str).unwrap_or("").to_string()
+}
+
+#[cfg(test)]
+mod core_path_tests {
+    use super::AppBridge;
+    use lumen_core::constants::base_dir;
+
+    #[test]
+    fn relative_default_core_path_displays_short_name() {
+        let default = base_dir().join("core").join("sing-box-extended").join("sing-box.exe");
+        for stored in ["", "core/sing-box-extended/sing-box.exe", r"core\sing-box-extended\sing-box.exe"] {
+            assert_eq!(AppBridge::display_core_path(stored, &default), r"core\sing-box.exe", "{stored:?}");
+        }
+        let absolute = default.to_string_lossy().into_owned();
+        assert_eq!(AppBridge::display_core_path(&absolute, &default), r"core\sing-box.exe");
+        assert_eq!(AppBridge::display_core_path(r"D:\tools\sb.exe", &default), r"D:\tools\sb.exe");
+    }
 }

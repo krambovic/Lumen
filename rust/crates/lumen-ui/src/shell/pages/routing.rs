@@ -540,13 +540,18 @@ impl RoutingPage {
                                 _ => "example.com".into(),
                             };
                             let width = ui.available_width();
+                            // DnsField: a TextField whose background has no
+                            // implicit height, so Universal sizes it to the
+                            // text plus topPadding 5 + bottomPadding 7.
+                            let font = egui::FontId::proportional(theme.font_normal as f32);
+                            let height = (ui.fonts_mut(|fonts| fonts.row_height(&font)) + 12.0).round();
                             text_edit_menu::show(
                                 ui,
                                 TextEdit::singleline(&mut self.input)
-                                    .font(egui::FontId::proportional(theme.font_normal as f32))
+                                    .font(font)
                                     .background_color(theme.card)
                                     .desired_width(width - 20.0)
-                                    .min_size(vec2(width, theme.control_height as f32))
+                                    .min_size(vec2(width, height))
                                     .margin(egui::Margin::symmetric(10, 0))
                                     .vertical_align(Align::Center)
                                     .hint_text(hint),
@@ -565,7 +570,9 @@ impl RoutingPage {
                     }
                     if let Some(index) = dialog.action_index() {
                         ui.add_space(10.0);
-                        ui.horizontal(|ui| {
+                        // RowLayout centres the label on the combo's height.
+                        let row = vec2(ui.available_width(), theme.control_height as f32);
+                        ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 10.0;
                             caption(ui, theme, "Действие");
                             if let Some(action) =
@@ -865,49 +872,7 @@ fn combo<'a>(
 
 /// QML `Switch` as a 44×20 Fluent pill (same drawing as the logs autoscroll).
 fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
-    // The Universal `Switch` keeps 8 px of padding after its 44x20 track.
-    let (slot, mut response) = ui.allocate_exact_size(vec2(52.0, 20.0), Sense::click());
-    let rect = egui::Rect::from_min_size(slot.min, vec2(44.0, 20.0));
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, checked, "")
-    });
-    let mut value = None;
-    if enabled && response.clicked() {
-        value = Some(!checked);
-        response.mark_changed();
-    }
-    // Universal disabled opacity ≈ 0.45.
-    let alpha = if enabled { 255 } else { 115 };
-    let fade = |color: Color32| {
-        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
-    };
-    // Universal off state: transparent track, 2 px outline at 60% of the
-    // text colour and a knob at 80%.
-    let ink = |opacity: f32| {
-        let text = theme.text;
-        let alpha = (f32::from(alpha) * opacity) as u8;
-        Color32::from_rgba_unmultiplied(text.r(), text.g(), text.b(), alpha)
-    };
-    let (fill, stroke) = if checked {
-        (fade(theme.accent), Stroke::NONE)
-    } else {
-        (Color32::TRANSPARENT, Stroke::new(2.0, ink(0.6)))
-    };
-    ui.painter()
-        .rect(rect, 10.0, fill, stroke, egui::StrokeKind::Inside);
-    let knob_x = rect.left()
-        + crate::shell::motion::follow(
-            ui.ctx(),
-            theme,
-            response.id.with("knob"),
-            if checked { rect.width() - 10.0 } else { 10.0 },
-            120.0,
-            crate::shell::motion::ease_out_cubic,
-        );
-    let knob = if checked { fade(theme.accent_text) } else { ink(0.8) };
-    ui.painter()
-        .circle_filled(egui::pos2(knob_x, rect.center().y), 5.0, knob);
-    value
+    crate::shell::pages::settings::switch_widget(ui, theme, checked, enabled)
 }
 
 /// Full-width warning rectangle with the 12% warning tint (RoutingPage.qml).

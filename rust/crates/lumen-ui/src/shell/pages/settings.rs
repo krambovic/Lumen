@@ -428,7 +428,7 @@ impl SettingsPage {
                         "theme",
                         &s.theme,
                         &[
-                            ("system", "Системная"),
+                            ("system", "Авто"),
                             ("light", "Светлая"),
                             ("dark", "Тёмная"),
                         ],
@@ -790,23 +790,25 @@ impl SettingsPage {
                     .size(theme.font_small as f32)
                     .color(theme.text_faint),
             );
-            if ui.available_width() >= 900.0 {
-                ui.columns(2, |columns| {
-                    columns[0].vertical(|ui| {
-                        caption(ui, theme, "Включать");
-                        styled_area(ui, &mut draft.include, "NL|DE|Reality", 86.0);
-                    });
-                    columns[1].vertical(|ui| {
-                        caption(ui, theme, "Исключать");
-                        styled_area(ui, &mut draft.exclude, "expired|traffic limit", 86.0);
-                    });
-                });
-            } else {
-                caption(ui, theme, "Включать");
-                styled_area(ui, &mut draft.include, "NL|DE|Reality", 86.0);
-                caption(ui, theme, "Исключать");
-                styled_area(ui, &mut draft.exclude, "expired|traffic limit", 86.0);
-            }
+            let small = egui::FontId::proportional(theme.font_small as f32);
+            let normal = egui::FontId::proportional(theme.font_normal as f32);
+            let preferred = [
+                column_preferred_width(ui, &[(&tr("Включать", &[]), &small)], &[(&draft.include, "NL|DE|Reality")], &normal),
+                column_preferred_width(ui, &[(&tr("Исключать", &[]), &small)], &[(&draft.exclude, "expired|traffic limit")], &normal),
+            ];
+            layout_columns(
+                ui,
+                ui.available_width() >= 900.0,
+                preferred,
+                |ui| {
+                    caption(ui, theme, "Включать");
+                    styled_area(ui, theme, &mut draft.include, "NL|DE|Reality", 86.0);
+                },
+                |ui| {
+                    caption(ui, theme, "Исключать");
+                    styled_area(ui, theme, &mut draft.exclude, "expired|traffic limit", 86.0);
+                },
+            );
         });
         card(ui, theme, |ui| {
             ui.spacing_mut().item_spacing.y = 14.0;
@@ -822,7 +824,7 @@ impl SettingsPage {
                 "User-Agent",
                 "Пустое поле использует полный профиль запросов Happ для Windows",
                 |ui| {
-                    plain_field(ui, &mut draft.agent, "Happ/2.18.3/Windows/2606241603601", 360.0);
+                    plain_field(ui, theme, &mut draft.agent, "Happ/2.18.3/Windows/2606241603601", 360.0);
                 },
             );
             setting_row(
@@ -847,6 +849,7 @@ impl SettingsPage {
                     |ui| {
                         plain_field(
                             ui,
+                            theme,
                             &mut draft.hwid,
                             "00000000-0000-4000-8000-000000000000",
                             360.0,
@@ -869,6 +872,7 @@ impl SettingsPage {
             ui.add_enabled_ui(draft.converter, |ui| {
                 plain_field(
                     ui,
+                    theme,
                     &mut draft.converter_url,
                     "https://converter.example/sub?url={url}",
                     ui.available_width().max(120.0),
@@ -933,32 +937,50 @@ impl SettingsPage {
                         .family(crate::shell::theme::semibold_family()),
                 );
                 let wide = ui.available_width() >= 900.0;
-                if wide {
-                    ui.columns(2, |columns| {
-                        columns[0].vertical(|ui| {
-                            ui.label(text("Прямые DNS-серверы", theme));
-                            caption(ui, theme, "Необязательно; пусто — DNS только через прокси");
-                            styled_area(ui, &mut draft.direct, "1.1.1.1", 86.0);
-                        });
-                        columns[1].vertical(|ui| {
-                            ui.label(text("DNS через прокси", theme));
-                            caption(ui, theme, "По одному адресу в строке");
-                            styled_area(ui, &mut draft.proxy, "cloudflare-dns.com", 86.0);
-                        });
-                    });
-                } else {
-                    ui.label(text("Прямые DNS-серверы", theme));
-                    caption(ui, theme, "Необязательно; пусто — DNS только через прокси");
-                    styled_area(ui, &mut draft.direct, "1.1.1.1", 86.0);
-                    ui.label(text("DNS через прокси", theme));
-                    caption(ui, theme, "По одному адресу в строке");
-                    styled_area(ui, &mut draft.proxy, "cloudflare-dns.com", 86.0);
-                }
+                let small = egui::FontId::proportional(theme.font_small as f32);
+                let normal = egui::FontId::proportional(theme.font_normal as f32);
+                let preferred = [
+                    column_preferred_width(
+                        ui,
+                        &[
+                            (&tr("Прямые DNS-серверы", &[]), &normal),
+                            (&tr("Необязательно; пусто — DNS только через прокси", &[]), &small),
+                        ],
+                        &[(&draft.direct, "1.1.1.1")],
+                        &normal,
+                    ),
+                    column_preferred_width(
+                        ui,
+                        &[
+                            (&tr("DNS через прокси", &[]), &normal),
+                            (&tr("По одному адресу в строке", &[]), &small),
+                        ],
+                        &[(&draft.proxy, "cloudflare-dns.com")],
+                        &normal,
+                    ),
+                ];
+                layout_columns(
+                    ui,
+                    wide,
+                    preferred,
+                    |ui| {
+                        ui.label(text("Прямые DNS-серверы", theme));
+                        caption(ui, theme, "Необязательно; пусто — DNS только через прокси");
+                        styled_area(ui, theme, &mut draft.direct, "1.1.1.1", 86.0);
+                    },
+                    |ui| {
+                        ui.label(text("DNS через прокси", theme));
+                        caption(ui, theme, "По одному адресу в строке");
+                        styled_area(ui, theme, &mut draft.proxy, "cloudflare-dns.com", 86.0);
+                    },
+                );
                 let bootstrap_type = bridge.dns_bootstrap_type();
                 let proxy_type = bridge.dns_proxy_type();
                 let bootstrap_strategy = bridge.dns_bootstrap_strategy();
                 let proxy_strategy = bridge.dns_proxy_strategy();
                 if wide {
+                    // GridLayout `columnSpacing: 12`.
+                    ui.spacing_mut().item_spacing.x = 12.0;
                     ui.columns(2, |columns| {
                         setting_row(&mut columns[0], theme, "\u{e8a5}", "Тип прямого DNS", "", |ui| {
                             styled_combo(
@@ -1103,7 +1125,7 @@ impl SettingsPage {
                         .size(theme.font_small as f32)
                         .color(theme.text_faint),
                 );
-                styled_area(ui, &mut draft.hosts, "example.com=1.1.1.1\nlocal.test=127.0.0.1,::1", 110.0);
+                styled_area(ui, theme, &mut draft.hosts, "example.com=1.1.1.1\nlocal.test=127.0.0.1,::1", 110.0);
                 right_row(ui, theme.control_height as f32, |ui| {
                     if accent_button_glyph(ui, theme, "\u{e74e}", "Применить DNS") {
                         bridge.apply_dns_settings(&draft.direct, &draft.proxy, &draft.hosts);
@@ -1134,18 +1156,21 @@ impl SettingsPage {
                     "Профиль не открыт. Введите пароль; изменения и подключение заблокированы."
                 },
                 |ui| {
-                    let edit = ui.add(
-                        TextEdit::singleline(&mut self.password)
-                            .desired_width(200.0)
-                            .password(true)
-                            .hint_text(tr("Пароль", &[])),
-                    );
-                    if accent_button(
+                    // Right-to-left row: the button is added first so it
+                    // ends up after the field, as in QML.
+                    let clicked = accent_button(
                         ui,
                         theme,
                         if loaded { "Задать пароль" } else { "Открыть профиль" },
-                    ) || (edit.lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+                    );
+                    let edit = ui.add(styled_field(
+                        theme,
+                        TextEdit::singleline(&mut self.password).password(true),
+                        &tr("Пароль", &[]),
+                        200.0,
+                    ));
+                    if clicked
+                        || (edit.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
                     {
                         bridge.set_encryption_password(&self.password);
                         self.password.clear();
@@ -1159,15 +1184,7 @@ impl SettingsPage {
                 "Резервная копия",
                 "Экспорт и импорт настроек и серверов",
                 |ui| {
-                    if ghost_glyph(ui, theme, "\u{e74e}", "Экспорт") {
-                        self.file_error = file_result(
-                            win_native::save_json_file(
-                                &tr("Сохранить резервную копию", &[]),
-                                "lumen-backup.json",
-                            ),
-                            |path| bridge.export_backup(&path, ""),
-                        );
-                    }
+                    // Right-to-left row: QML order is Экспорт, Импорт.
                     if ghost_glyph(ui, theme, "\u{e8b7}", "Импорт") {
                         let filter = format!(
                             "{}\0*.json\0{}\0*.*\0",
@@ -1181,6 +1198,15 @@ impl SettingsPage {
                         );
                         self.subscription = None;
                         self.dns = None;
+                    }
+                    if ghost_glyph(ui, theme, "\u{e74e}", "Экспорт") {
+                        self.file_error = file_result(
+                            win_native::save_json_file(
+                                &tr("Сохранить резервную копию", &[]),
+                                "lumen-backup.json",
+                            ),
+                            |path| bridge.export_backup(&path, ""),
+                        );
                     }
                 },
             );
@@ -1221,35 +1247,24 @@ impl SettingsPage {
                 );
                 let xray = bridge.xray_path_display();
                 let singbox = bridge.singbox_path_display();
-                for (key, title, value, hint) in [
+                for (key, title, subtitle, value, hint) in [
                     (
                         "xray",
                         "Ядро Xray",
+                        "Путь к исполняемому файлу xray",
                         xray,
                         "core\\xray.exe",
                     ),
                     (
                         "singbox",
                         "Ядро sing-box-extended",
+                        "Путь к исполняемому файлу sing-box-extended",
                         singbox,
                         "core\\sing-box-extended\\sing-box.exe",
                     ),
                 ] {
-                    setting_row(ui, theme, "\u{e756}", title, "", |ui| {
-                        if let Some(path) = committed_field(
-                            ui,
-                            ("settings-path", key),
-                            &value,
-                            hint,
-                            240.0,
-                            false,
-                        ) {
-                            if key == "xray" {
-                                bridge.set_xray_path(&path);
-                            } else {
-                                bridge.set_singbox_path(&path);
-                            }
-                        }
+                    setting_row(ui, theme, "\u{e756}", title, subtitle, |ui| {
+                        // Right-to-left row: QML order is the field, then Обзор.
                         if ghost_glyph(ui, theme, "\u{e8b7}", "Обзор") {
                             self.file_error = pick(
                                 &tr("Обзор", &[]),
@@ -1262,6 +1277,21 @@ impl SettingsPage {
                                     }
                                 },
                             );
+                        }
+                        if let Some(path) = committed_field(
+                            ui,
+                            theme,
+                            ("settings-path", key),
+                            &value,
+                            hint,
+                            240.0,
+                            false,
+                        ) {
+                            if key == "xray" {
+                                bridge.set_xray_path(&path);
+                            } else {
+                                bridge.set_singbox_path(&path);
+                            }
                         }
                     });
                 }
@@ -1456,12 +1486,14 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     "Fragment Settings",
                     |ui| {
                         let mut packets = bridge.fragment_packets();
-                        info_icon(ui, theme, "Packets выбирает часть трафика, Length размер фрагментов, Delay задержку между ними.");
                         let mut length = bridge.fragment_length();
                         let mut delay = bridge.fragment_delay();
-                        let a = committed_field(ui, "frag-packets", &packets, "tlshello", 100.0, false);
-                        let b = committed_field(ui, "frag-length", &length, "50-100", 100.0, false);
-                        let c = committed_field(ui, "frag-delay", &delay, "10-20", 100.0, false);
+                        // Right-to-left row: QML order is the info icon,
+                        // packets, length, delay.
+                        let c = committed_field(ui, theme, "frag-delay", &delay, "10-20", 100.0, false);
+                        let b = committed_field(ui, theme, "frag-length", &length, "50-100", 100.0, false);
+                        let a = committed_field(ui, theme, "frag-packets", &packets, "tlshello", 100.0, false);
+                        info_icon(ui, theme, "Packets выбирает часть трафика, Length размер фрагментов, Delay задержку между ними.");
                         if a.is_some() || b.is_some() || c.is_some() {
                             if let Some(value) = a {
                                 packets = value;
@@ -1716,6 +1748,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 |ui| {
                     next_user = committed_field(
                         ui,
+                        theme,
                         "proxy-auth-user",
                         &s.proxy_auth_username,
                         "Логин",
@@ -1733,6 +1766,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 |ui| {
                     next_password = committed_field(
                         ui,
+                        theme,
                         "proxy-auth-pass",
                         &s.proxy_auth_password,
                         "Пароль",
@@ -1885,22 +1919,28 @@ fn startup(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 });
             },
         );
-        setting_row(
-            ui,
-            theme,
-            "\u{e7e8}",
-            "Запускать автозапуск в трей",
-            "При входе в Windows не показывать окно, только иконку в трее",
-            |ui| {
-                switch_setting(
-                    ui,
-                    theme,
-                    s.launch_in_tray_on_startup,
-                    s.launch_on_startup,
-                    |value| bridge.set_launch_in_tray_on_startup(value),
-                );
-            },
-        );
+        // `enabled: App.launchOnStartup; opacity: enabled ? 1.0 : 0.55`.
+        ui.scope(|ui| {
+            if !s.launch_on_startup {
+                ui.multiply_opacity(0.55);
+            }
+            setting_row(
+                ui,
+                theme,
+                "\u{e7e8}",
+                "Запускать автозапуск в трей",
+                "При входе в Windows не показывать окно, только иконку в трее",
+                |ui| {
+                    switch_setting(
+                        ui,
+                        theme,
+                        s.launch_in_tray_on_startup,
+                        s.launch_on_startup,
+                        |value| bridge.set_launch_in_tray_on_startup(value),
+                    );
+                },
+            );
+        });
         setting_row(
             ui,
             theme,
@@ -2013,16 +2053,7 @@ fn startup(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "URL теста скорости",
                 "Пусто — стандартный (cachefly 50MB)",
                 |ui| {
-                    if let Some(url) = committed_field(
-                        ui,
-                        "speed-url",
-                        &s.speed_test_url,
-                        "https://cachefly.cachefly.net/50mb.test",
-                        300.0,
-                        false,
-                    ) {
-                        bridge.set_speed_test_url(&url);
-                    }
+                    // Right-to-left row: QML order is the field, then the presets.
                     ui.menu_button(
                         RichText::new("\u{e70d}")
                             .size(12.0)
@@ -2036,6 +2067,17 @@ fn startup(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                             }
                         },
                     );
+                    if let Some(url) = committed_field(
+                        ui,
+                        theme,
+                        "speed-url",
+                        &s.speed_test_url,
+                        "https://cachefly.cachefly.net/50mb.test",
+                        300.0,
+                        false,
+                    ) {
+                        bridge.set_speed_test_url(&url);
+                    }
                 },
             );
             setting_row(
@@ -2215,6 +2257,13 @@ fn setting_row<R>(
             }
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
+                if subtitle.is_empty() {
+                    // The RowLayout centres a lone title on the row; egui
+                    // starts a vertical block at the top.
+                    let font = egui::FontId::proportional(theme.font_normal as f32);
+                    let title_height = ui.fonts_mut(|fonts| fonts.row_height(&font));
+                    ui.add_space(((height - title_height) / 2.0).max(0.0).round());
+                }
                 ui.label(RichText::new(tr(title, &[])).size(theme.font_normal as f32));
                 if !subtitle.is_empty() {
                     ui.label(
@@ -2381,7 +2430,10 @@ fn percent_slider(
 }
 
 /// QML `Switch` as a 44×20 Fluent pill.
-pub(super) fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
+/// Universal `Switch` (impl/SwitchIndicator.qml): 44x20 track, 10 px knob.
+/// Colours are Universal base colours, i.e. the text colour at 20 % (baseLow),
+/// 60 % (baseMedium), 80 % (baseMediumHigh) and 100 % (baseHigh).
+pub(crate) fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: bool) -> Option<bool> {
     // The Universal `Switch` keeps 8 px of padding after its 44x20 track.
     let (slot, mut response) = ui.allocate_exact_size(vec2(52.0, 20.0), Sense::click());
     let rect = egui::Rect::from_min_size(slot.min, vec2(44.0, 20.0));
@@ -2393,24 +2445,31 @@ pub(super) fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: 
         value = Some(!checked);
         response.mark_changed();
     }
-    // Universal disabled opacity ≈ 0.45.
-    let alpha = if enabled { 255 } else { 115 };
-    let fade =
-        |color: Color32| Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
-    // Universal off state: transparent track, 2 px outline at 60% of the
-    // text colour and a knob at 80%.
-    let ink = |opacity: f32| {
-        let text = theme.text;
-        let alpha = (f32::from(alpha) * opacity) as u8;
-        Color32::from_rgba_unmultiplied(text.r(), text.g(), text.b(), alpha)
-    };
-    let (fill, stroke) = if checked {
-        (fade(theme.accent), Stroke::NONE)
+    let base = |opacity: f32| theme.text.gamma_multiply(opacity);
+    let pressed = enabled && response.is_pointer_button_down_on();
+    let hovered = enabled && response.hovered();
+    let fill = if !enabled {
+        Color32::TRANSPARENT
+    } else if pressed {
+        base(0.6)
+    } else if checked {
+        // Hovered and checked: the track drops to 0.9 opacity (dark theme)
+        // or 0.7 (light).
+        let level = if hovered { if theme.dark { 0.9 } else { 0.7 } } else { 1.0 };
+        theme.accent.gamma_multiply(level)
     } else {
-        (Color32::TRANSPARENT, Stroke::new(2.0, ink(0.6)))
+        Color32::TRANSPARENT
     };
-    ui.painter()
-        .rect(rect, 10.0, fill, stroke, egui::StrokeKind::Inside);
+    let border = if !enabled {
+        base(0.2)
+    } else if checked && !pressed {
+        Color32::TRANSPARENT
+    } else if hovered && !checked && !pressed {
+        base(1.0)
+    } else {
+        base(0.6)
+    };
+    ui.painter().rect(rect, 10.0, fill, Stroke::new(2.0, border), egui::StrokeKind::Inside);
     let knob_x = rect.left()
         + motion::follow(
             ui.ctx(),
@@ -2420,7 +2479,16 @@ pub(super) fn switch_widget(ui: &mut Ui, theme: &Theme, checked: bool, enabled: 
             120.0,
             motion::ease_out_cubic,
         );
-    let knob = if checked { fade(theme.accent_text) } else { ink(0.8) };
+    let knob = if !enabled {
+        base(0.2)
+    } else if pressed || checked {
+        // chromeWhiteColor.
+        Color32::WHITE
+    } else if hovered {
+        base(1.0)
+    } else {
+        base(0.8)
+    };
     ui.painter()
         .circle_filled(egui::pos2(knob_x, rect.center().y), 5.0, knob);
     value
@@ -2513,7 +2581,12 @@ fn danger_button(theme: &Theme, label: &str) -> Button<'static> {
 
 /// `InfoIcon`: muted ⓘ with the QML tooltip text.
 fn info_icon(ui: &mut Ui, theme: &Theme, tip: &str) {
+    // `InfoIcon`: a 28 px ToolButton that gets the `controlFillHover`
+    // background and the full text colour on hover; its tip waits 250 ms.
     let (rect, response) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, theme.radius_small as f32, theme.control_fill_hover);
+    }
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -2521,7 +2594,7 @@ fn info_icon(ui: &mut Ui, theme: &Theme, tip: &str) {
         FontId::proportional(14.0),
         if response.hovered() { theme.text } else { theme.text_muted },
     );
-    response.fluent_tip(tr(tip, &[]));
+    response.fluent_tip_after(tr(tip, &[]), 0.25);
 }
 
 /// Proxy-chain hop pill (`Rectangle radius 10, height 22`).
@@ -2550,36 +2623,106 @@ fn chip(ui: &mut Ui, theme: &Theme, label: &str, fill: Color32) {
     );
 }
 
-/// `StyledArea`: fill-width multiline field with the QML fixed height.
-fn styled_area(ui: &mut Ui, value: &mut String, hint: &str, height: f32) {
-    ui.allocate_ui_with_layout(
-        vec2(ui.available_width().max(120.0), height),
-        Layout::left_to_right(Align::TOP),
-        |ui| {
-            ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
-                ui.add(
-                    TextEdit::multiline(value)
-                        .desired_width(ui.available_width().max(120.0))
-                        .desired_rows((height / 20.0) as usize)
-                        .hint_text(hint),
-                );
+/// Implicit width of a `ColumnLayout` of labels and `StyledArea`s: the widest
+/// label, or the widest text line (or placeholder) plus the 10 + 10 padding.
+fn column_preferred_width(
+    ui: &Ui,
+    labels: &[(&str, &egui::FontId)],
+    areas: &[(&str, &str)],
+    area_font: &egui::FontId,
+) -> f32 {
+    let width = |text: &str, font: &egui::FontId| {
+        text.lines()
+            .map(|line| ui.fonts_mut(|fonts| fonts.layout_no_wrap(line.to_owned(), font.clone(), Color32::WHITE).size().x))
+            .fold(0.0_f32, f32::max)
+    };
+    let labels = labels.iter().map(|(text, font)| width(text, font)).fold(0.0_f32, f32::max);
+    let areas = areas
+        .iter()
+        .map(|(text, hint)| width(text, area_font).max(width(hint, area_font)) + 20.0)
+        .fold(0.0_f32, f32::max);
+    labels.max(areas)
+}
+
+/// Two `fillWidth` ColumnLayouts in a GridLayout (`columnSpacing: 12`,
+/// `rowSpacing: 12`; each column keeps the default `spacing: 5`). Qt shares
+/// the width in proportion to the columns' implicit widths, so the column
+/// with the longer text is wider. Narrow pages stack them in one column.
+fn layout_columns(
+    ui: &mut Ui,
+    wide: bool,
+    preferred: [f32; 2],
+    left: impl FnOnce(&mut Ui),
+    right: impl FnOnce(&mut Ui),
+) {
+    if !wide {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 5.0;
+            left(ui);
+            ui.add_space(12.0 - 5.0);
+            right(ui);
+        });
+        return;
+    }
+    let width = ui.available_width();
+    let free = (width - 12.0).max(0.0);
+    let total = (preferred[0] + preferred[1]).max(1.0);
+    let left_width = (free * preferred[0] / total).round();
+    let right_width = free - left_width;
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        let column = |ui: &mut Ui, column_width: f32, content: &mut dyn FnMut(&mut Ui)| {
+            ui.allocate_ui_with_layout(vec2(column_width, 0.0), Layout::top_down(Align::LEFT), |ui| {
+                ui.set_width(column_width);
+                ui.spacing_mut().item_spacing.y = 5.0;
+                content(ui);
             });
-        },
-    );
+        };
+        let mut left = Some(left);
+        let mut right = Some(right);
+        column(ui, left_width, &mut |ui| (left.take().unwrap())(ui));
+        column(ui, right_width, &mut |ui| (right.take().unwrap())(ui));
+    });
+}
+
+/// `StyledField`: `Theme.controlHeight` tall, 10 px side padding,
+/// `Theme.card` fill (egui's default is the much darker extreme background).
+fn styled_field<'t>(theme: &Theme, edit: TextEdit<'t>, hint: &str, width: f32) -> TextEdit<'t> {
+    edit.font(egui::FontId::proportional(theme.font_normal as f32))
+        .hint_text(hint)
+        .background_color(theme.card)
+        .desired_width(width - 20.0)
+        .min_size(vec2(width, theme.control_height as f32))
+        .margin(egui::Margin::symmetric(10, 0))
+        .vertical_align(Align::Center)
+}
+
+/// `StyledArea`: fill-width multiline field with the QML fixed height,
+/// 10 / 8 px padding and the `Theme.card` fill.
+fn styled_area(ui: &mut Ui, theme: &Theme, value: &mut String, hint: &str, height: f32) {
+    let width = ui.available_width().max(120.0);
+    ui.allocate_ui_with_layout(vec2(width, height), Layout::top_down(Align::LEFT), |ui| {
+        ui.add(
+            TextEdit::multiline(value)
+                .font(egui::FontId::proportional(theme.font_normal as f32))
+                .hint_text(hint)
+                .background_color(theme.card)
+                .desired_width(width - 20.0)
+                .min_size(vec2(width, height))
+                .margin(egui::Margin::symmetric(10, 8)),
+        );
+    });
 }
 
 /// `StyledField` bound to a draft saved by an explicit button.
-fn plain_field(ui: &mut Ui, value: &mut String, hint: &str, width: f32) {
-    ui.add(
-        TextEdit::singleline(value)
-            .desired_width(width)
-            .hint_text(hint),
-    );
+fn plain_field(ui: &mut Ui, theme: &Theme, value: &mut String, hint: &str, width: f32) {
+    ui.add(styled_field(theme, TextEdit::singleline(value), hint, width));
 }
 
 /// `StyledField` with Qt `editingFinished` semantics (Enter or focus loss).
 fn committed_field(
     ui: &mut Ui,
+    theme: &Theme,
     id_salt: impl core::hash::Hash + core::fmt::Debug,
     current: &str,
     hint: &str,
@@ -2590,13 +2733,12 @@ fn committed_field(
     let mut value = ui
         .data_mut(|data| data.get_temp::<String>(id))
         .unwrap_or_else(|| current.into());
-    let response = ui.add(
-        TextEdit::singleline(&mut value)
-            .id(id)
-            .desired_width(width)
-            .password(password)
-            .hint_text(hint),
-    );
+    let response = ui.add(styled_field(
+        theme,
+        TextEdit::singleline(&mut value).id(id).password(password),
+        hint,
+        width,
+    ));
     let committed = response.lost_focus()
         || (response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
     if committed {

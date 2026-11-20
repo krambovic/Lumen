@@ -21,7 +21,7 @@ mod node_qr;
 mod nodes;
 mod routing;
 mod search_field;
-mod settings;
+pub(crate) mod settings;
 mod text_edit_menu;
 mod updates;
 mod zapret;
