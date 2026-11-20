@@ -693,7 +693,11 @@ isolated profile and captures it:
   is never touched. Shots land in `rust/target/uicmp/shots/`. `stage` links
   `core`, `zapret`, `assets` and `data/templates` into `target/debug`.
 - The QML client starts with `--side-by-side` (no single-instance mutex or
-  pipe). On an empty profile it copies `windows/data` (state path
+  pipe) under a Python whose PyQt6 matches the Qt minor pinned in
+  `windows/requirements.txt` (`qml_python()`); the vendored QWindowKit DLLs
+  need it. With another Qt (PyQt6 6.12 on this machine's Python 3.11) QWKCore
+  fails with "entry point not found" and the QML window loses its custom
+  frame: captures made that way show a 7 px border and cannot be dragged. On an empty profile it copies `windows/data` (state path
   migration); `--clone` a profile made by the Rust client to give both the
   same state. `--arg` passes extra client arguments (for example a
   `lumen://add?url=...` deep link).

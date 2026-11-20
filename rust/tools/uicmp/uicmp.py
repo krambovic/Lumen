@@ -164,6 +164,31 @@ def post(hwnd: int, args: list[str]) -> None:
         user32.PostMessageW(hwnd, WM_KEYUP, vk, 0xC0000001)
 
 
+def qml_python() -> str:
+    """An interpreter whose PyQt6 matches the Qt minor pinned in
+    windows/requirements.txt. The vendored QWindowKit DLLs need it; with
+    another Qt the QML window runs without its custom frame."""
+    import re
+    pin = re.search(r"PyQt6>=(\d+\.\d+)", (WINDOWS / "requirements.txt").read_text(encoding="utf-8"))
+    minor = pin.group(1) if pin else ""
+    candidates = [sys.executable]
+    try:
+        listing = subprocess.run(["py", "-0p"], capture_output=True, text=True, timeout=10).stdout
+        candidates += re.findall(r"([A-Za-z]:\\.*python\.exe)\s*$", listing, re.M)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    probe = "from PyQt6.QtCore import QT_VERSION_STR; print(QT_VERSION_STR)"
+    for exe in dict.fromkeys(candidates):
+        try:
+            version = subprocess.run([exe, "-c", probe], capture_output=True, text=True, timeout=20).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if version.strip().startswith(minor + "."):
+            return exe
+    print(f"warning: no Python with PyQt6 {minor}.x; QWindowKit will not load")
+    return sys.executable
+
+
 def run(args) -> int:
     profile = WORK / "profiles" / args.profile
     if (args.fresh or args.clone) and profile.exists():
@@ -187,7 +212,7 @@ def run(args) -> int:
         command = [str(exe), *args.extra]
         cwd = DEBUG_DIR
     else:
-        command = [sys.executable, str(WINDOWS / "run_qml.py"), "--side-by-side", *args.extra]
+        command = [qml_python(), str(WINDOWS / "run_qml.py"), "--side-by-side", *args.extra]
         cwd = WINDOWS
     log = open(WORK / f"{args.client}.log", "w", encoding="utf-8", errors="replace")
     process = subprocess.Popen(command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT)
