@@ -1864,6 +1864,7 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
             // Keep egui's shipped fonts when nothing loads from the system.
             proportional.push("Ubuntu-Light".into());
         }
+        let fallback_at = proportional.len();
         // Keep the shipped emoji fonts as later fallbacks when present.
         for family_name in ["NotoEmoji-Regular", "emoji-icon-font"] {
             if definitions.font_data.contains_key(family_name) {
@@ -1891,6 +1892,18 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
                 .font_data
                 .insert("Microsoft YaHei".into(), FontData::from_owned(font).into());
             proportional.push("Microsoft YaHei".into());
+        }
+        // Qt falls back to Segoe UI Emoji for emoji and the regional
+        // indicators of flag sequences in server names (drawn as small "DE"
+        // letters); egui's Noto Emoji has no regional indicators and left a
+        // missing-glyph box. Its outlines are used without the colour layers.
+        if let Some(font) = std::env::var_os("WINDIR")
+            .and_then(|root| read_font_file(&PathBuf::from(root).join("Fonts").join("seguiemj.ttf")))
+        {
+            definitions
+                .font_data
+                .insert("Segoe UI Emoji".into(), FontData::from_owned(font).into());
+            proportional.insert(fallback_at.min(proportional.len()), "Segoe UI Emoji".into());
         }
         for (family, stem) in [("Segoe UI Semibold", "seguisb"), ("Segoe UI Bold", "segoeuib")] {
             let mut fonts = proportional.clone();
