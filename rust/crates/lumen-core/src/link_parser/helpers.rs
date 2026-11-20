@@ -68,28 +68,40 @@ fn hex_val(b: u8) -> Option<u8> {
 }
 
 /// Python `urllib.parse.unquote` (UTF-8, errors="replace").
+///
+/// Consecutive `%XX` escapes form one byte run that is decoded together, so
+/// a multi-byte character such as a flag emoji (`%F0%9F%87%A9...`) survives;
+/// literal text between runs is copied unchanged.
 pub fn unquote(s: &str) -> String {
     let bytes = s.as_bytes();
-    let mut pending: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut run: Vec<u8> = Vec::new();
     let mut out = String::with_capacity(s.len());
+    let mut literal_start = 0;
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                if !pending.is_empty() {
-                    out.push_str(&String::from_utf8_lossy(&pending));
-                    pending.clear();
-                }
-                pending.push(h * 16 + l);
-                i += 3;
-                continue;
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2]))
+        {
+            if literal_start < i {
+                out.push_str(&s[literal_start..i]);
             }
+            run.push(h * 16 + l);
+            i += 3;
+            literal_start = i;
+            continue;
         }
-        pending.push(bytes[i]);
+        if !run.is_empty() {
+            out.push_str(&String::from_utf8_lossy(&run));
+            run.clear();
+        }
         i += 1;
     }
-    if !pending.is_empty() {
-        out.push_str(&String::from_utf8_lossy(&pending));
+    if !run.is_empty() {
+        out.push_str(&String::from_utf8_lossy(&run));
+    }
+    if literal_start < bytes.len() {
+        out.push_str(&s[literal_start..]);
     }
     out
 }
@@ -723,4 +735,25 @@ pub fn url2pathname(path: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod unquote_tests {
+    use super::{unquote, unquote_plus};
+
+    #[test]
+    fn multi_byte_escapes_decode_as_one_character() {
+        assert_eq!(unquote("%F0%9F%87%A9%F0%9F%87%AA%20test"), "\u{1F1E9}\u{1F1EA} test");
+        assert_eq!(unquote("%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0"), "Москва");
+    }
+
+    #[test]
+    fn literals_and_invalid_runs_match_python() {
+        assert_eq!(unquote("a%20b%zzc"), "a b%zzc");
+        assert_eq!(unquote("Мир%21"), "Мир!");
+        assert_eq!(unquote("%FFx"), "\u{FFFD}x");
+        assert_eq!(unquote("%E2%82"), "\u{FFFD}");
+        assert_eq!(unquote("50%"), "50%");
+        assert_eq!(unquote_plus("a+b%2B"), "a b+");
+    }
 }

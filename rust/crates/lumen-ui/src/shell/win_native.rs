@@ -77,25 +77,53 @@ fn file_dialog(_directory: &std::path::Path, _title: &str, _filter: &str, _sugge
 }
 
 pub(super) fn open_directory(path: &std::path::Path) {
+    shell_open(path.as_os_str().to_owned());
+}
+
+/// Opens a web or `tg:` link in the default handler, like
+/// `Qt.openUrlExternally`. eframe is built without egui-winit's `links`
+/// feature, so `Context::open_url` does nothing in this client.
+pub(super) fn open_url(url: &str) {
+    let url = url.trim();
+    let lower = url.to_ascii_lowercase();
+    if !["https://", "http://", "tg://", "mailto:"].iter().any(|scheme| lower.starts_with(scheme)) {
+        return;
+    }
+    shell_open(url.into());
+}
+
+/// `ShellExecuteW("open")` on a worker thread: resolving a browser or
+/// Explorer through the shell can take hundreds of milliseconds, and the
+/// shell expects COM to be initialized on the calling thread.
+fn shell_open(target: std::ffi::OsString) {
     #[cfg(windows)]
     {
-        use windows::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
-        use windows::core::{HSTRING, PCWSTR, w};
+        let _ = std::thread::Builder::new().name("lumen-shell-open".into()).spawn(move || {
+            use windows::Win32::System::Com::{
+                COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
+            };
+            use windows::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+            use windows::core::{HSTRING, PCWSTR, w};
 
-        let path = HSTRING::from(path.as_os_str());
-        unsafe {
-            ShellExecuteW(
-                None,
-                w!("open"),
-                PCWSTR(path.as_ptr()),
-                PCWSTR::null(),
-                PCWSTR::null(),
-                SW_SHOWNORMAL,
-            );
-        }
+            let target = HSTRING::from(target.as_os_str());
+            unsafe {
+                let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+                ShellExecuteW(
+                    None,
+                    w!("open"),
+                    PCWSTR(target.as_ptr()),
+                    PCWSTR::null(),
+                    PCWSTR::null(),
+                    SW_SHOWNORMAL,
+                );
+                if com.is_ok() {
+                    CoUninitialize();
+                }
+            }
+        });
     }
     #[cfg(not(windows))]
-    let _ = path;
+    let _ = target;
 }
 
 // DWM attribute values from `_apply_mica`.

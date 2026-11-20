@@ -1,7 +1,7 @@
 //! Project information and support dialogs from `AboutPage.qml`.
 
 use egui::{
-    Align, Color32, Frame, Id, Layout, Modal, OpenUrl, RichText, ScrollArea, Stroke, TextureHandle,
+    Align, Color32, Frame, Id, Layout, Modal, RichText, ScrollArea, Stroke, TextureHandle,
     Ui, Vec2, vec2,
 };
 use lumen_core::i18n::tr;
@@ -160,8 +160,8 @@ fn divider(ui: &mut Ui, theme: &Theme) {
     ui.painter().rect_filled(rect, 0.0, theme.divider);
 }
 
-pub(in crate::shell) fn open_url(ui: &Ui, url: &str) {
-    ui.ctx().open_url(OpenUrl::new_tab(url));
+pub(in crate::shell) fn open_url(_ui: &Ui, url: &str) {
+    crate::shell::win_native::open_url(url);
 }
 
 fn load_qr(ctx: &egui::Context) -> Option<TextureHandle> {
