@@ -16,8 +16,6 @@ use crate::view_models::AppBridge;
 
 const GAP: f32 = 16.0;
 const SERVER_WIDTH: f32 = 420.0;
-/// Hero card content: status column (66) + spacing (12) + button row (32).
-const HERO_CONTENT_HEIGHT: f32 = 110.0;
 /// Latency / session cards: 12 px padding around title, value and chart.
 const STAT_CARD_HEIGHT: f32 = 96.0;
 const ROUTING_CARD_HEIGHT: f32 = 60.0;
@@ -148,10 +146,19 @@ impl DashboardPage {
             let metrics = bridge.metrics();
             let small_font = FontId::proportional(theme.font_small as f32);
 
-            // RowLayout { status column (65) + 12 + buttons (32) | rates }.
+            // RowLayout { ColumnLayout { RowLayout { ring 52 | text block } +
+            // 12 + buttons (32) } | rates }. The top row is as tall as the
+            // ring or the text block, whichever is taller: 52 px while the
+            // caption line is hidden, more once a server adds it.
+            let row_height = |font: FontId| ui.fonts_mut(|fonts| fonts.row_height(&font));
+            let status_height = row_height(small_font.clone());
+            let title_height = row_height(semibold(theme.font_title as f32 + 2.0)).max(24.0);
+            let caption_height = if caption.is_empty() { 0.0 } else { 2.0 + status_height };
+            let text_block = status_height + 2.0 + title_height + caption_height;
+            let top_height = text_block.max(52.0).ceil();
             let width = ui.available_width();
             ui.set_min_width(width);
-            let (rect, _) = ui.allocate_exact_size(vec2(width, HERO_CONTENT_HEIGHT), Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(vec2(width, top_height + 12.0 + 32.0), Sense::hover());
             let painter = ui.painter().clone();
 
             let mut left_width = width;
@@ -198,7 +205,7 @@ impl DashboardPage {
             self.ring.show(
                 ui,
                 theme,
-                Rect::from_min_size(rect.min + vec2(0.0, 7.0), vec2(52.0, 52.0)),
+                Rect::from_min_size(rect.min + vec2(0.0, ((top_height - 52.0) / 2.0).round()), vec2(52.0, 52.0)),
                 connected,
                 busy,
                 bridge.transition_target_connected(),
@@ -233,7 +240,7 @@ impl DashboardPage {
                 + 2.0
                 + title_height
                 + caption.as_ref().map_or(0.0, |galley| 2.0 + galley.size().y);
-            let mut y = rect.top() + (66.0 - block) / 2.0;
+            let mut y = rect.top() + (top_height - block) / 2.0;
             painter.galley(pos2(text_left, y), status.clone(), theme.text_muted);
             y += status.size().y + 2.0;
             if flag_width > 0.0 {
@@ -256,7 +263,7 @@ impl DashboardPage {
             }
 
             let row = Rect::from_min_size(
-                pos2(rect.left(), rect.top() + 78.0),
+                pos2(rect.left(), rect.top() + top_height + 12.0),
                 vec2(left_width.max(280.0).min(width), 32.0),
             );
             ui.scope_builder(
