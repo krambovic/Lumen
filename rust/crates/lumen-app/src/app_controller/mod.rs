@@ -2161,11 +2161,23 @@ impl AppController {
             let _ = confirm.send(false);
         }
         self.reconnect_after_resource_updates = false;
+        // Phase timings go to the log so a slow exit can be traced to its step.
+        let started = Instant::now();
+        let mut phases: Vec<(&str, Duration)> = Vec::new();
+        let mut mark = Instant::now();
+        let mut lap = |name: &'static str, phases: &mut Vec<(&str, Duration)>| {
+            let now = Instant::now();
+            phases.push((name, now - mark));
+            mark = now;
+        };
         if !self.system_shutdown {
             self.background_tasks.join_until(deadline);
+            lap("background", &mut phases);
             self.join_transition_worker(deadline);
+            lap("transition", &mut phases);
         }
         crate::runtime_services::shutdown(self, Some(deadline)).await;
+        lap("runtime", &mut phases);
         let remaining = deadline.saturating_duration_since(Instant::now());
         if !self.traffic_history.close(remaining) {
             self.log(&format!(
@@ -2173,10 +2185,21 @@ impl AppController {
                 self.traffic_history.last_save_error()
             ));
         }
+        lap("history", &mut phases);
         self.flush_state_saves(remaining);
         self.save_queue.shutdown();
+        lap("state", &mut phases);
         self.zapret_dns.sender.take();
         lumen_core::diagnostics_uploader::configure_diagnostics_upload("", lumen_core::constants::APP_VERSION);
+        let summary = phases
+            .iter()
+            .map(|(name, took)| format!("{name}={}ms", took.as_millis()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.log(&format!(
+            "[app] AppController shutdown finished in {} ms ({summary})",
+            started.elapsed().as_millis()
+        ));
     }
 
     /// Python `finalize_shutdown`.

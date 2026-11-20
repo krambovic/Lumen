@@ -1581,6 +1581,12 @@ impl eframe::App for ShellApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // The tray's Exit hides its icon before `app.quit` (tray.py `_quit`).
+        // The window goes too: disconnecting and restoring the proxy below
+        // can take a moment, and the frozen window would be shown as
+        // "Not responding" until the process ends.
+        win_native::hide_main_window(APP_NAME);
+        self.tray = None;
         // app.aboutToQuit handlers: power filter close, activation listener
         // release, bridge shutdown.
         self.bridge.close_power_filter();

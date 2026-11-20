@@ -5,8 +5,7 @@
 //! the change detection are ported unchanged.
 
 use std::net::UdpSocket;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -16,7 +15,9 @@ pub struct NetworkMonitor {
     interval: Duration,
     on_change: Option<ChangeCallback>,
     last_fingerprint: String,
-    stop_flag: Arc<AtomicBool>,
+    /// Dropping the sender wakes the worker from its interval wait, so
+    /// `stop` returns at once instead of after up to one interval.
+    stop_sender: Option<Sender<()>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -29,7 +30,7 @@ impl NetworkMonitor {
             interval: Duration::from_millis(interval_ms.max(1)),
             on_change: Some(on_change),
             last_fingerprint: String::new(),
-            stop_flag: Arc::new(AtomicBool::new(false)),
+            stop_sender: None,
             worker: None,
         }
     }
@@ -39,20 +40,17 @@ impl NetworkMonitor {
         let mut last_fingerprint = self.last_fingerprint.clone();
         let mut on_change = self.on_change.take().expect("network monitor started twice");
         let interval = self.interval;
-        let stop_flag = Arc::clone(&self.stop_flag);
+        let (stop_sender, stop_receiver): (Sender<()>, Receiver<()>) = channel();
+        self.stop_sender = Some(stop_sender);
         self.worker = Some(std::thread::spawn(move || {
-            while !stop_flag.load(Ordering::SeqCst) {
-                std::thread::sleep(interval);
-                if stop_flag.load(Ordering::SeqCst) {
-                    break;
-                }
+            while let Err(RecvTimeoutError::Timeout) = stop_receiver.recv_timeout(interval) {
                 advance(&mut last_fingerprint, &mut on_change);
             }
         }));
     }
 
     pub fn stop(&mut self) {
-        self.stop_flag.store(true, Ordering::SeqCst);
+        self.stop_sender.take();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -105,6 +103,16 @@ mod tests {
         let fingerprint = NetworkMonitor::fingerprint();
         assert!(!fingerprint.is_empty());
         assert!(fingerprint.parse::<std::net::IpAddr>().is_ok());
+    }
+
+    #[test]
+    fn stop_does_not_wait_for_the_polling_interval() {
+        let mut monitor = NetworkMonitor::new(60_000, Box::new(|_: &str, _: &str| {}));
+        monitor.start();
+        let started = std::time::Instant::now();
+        monitor.stop();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(monitor.worker.is_none());
     }
 
     #[test]

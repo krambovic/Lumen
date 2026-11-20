@@ -810,6 +810,21 @@ pub fn apply_mica(hwnd: windows::Win32::Foundation::HWND, dark: bool, backdrop: 
 
 /// Locate the shell's own top-level window by process id + title (eframe owns
 /// the HWND; winit names the window after the viewport title).
+/// Hides the main window at once. Exit work runs after the event loop has
+/// stopped painting; a window left on screen meanwhile is reported as
+/// "Not responding".
+pub fn hide_main_window(title: &str) {
+    #[cfg(windows)]
+    if let Some(hwnd) = find_main_window(title) {
+        use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = title;
+}
+
 pub fn find_main_window(title: &str) -> Option<windows::Win32::Foundation::HWND> {
     #[cfg(windows)]
     unsafe {
