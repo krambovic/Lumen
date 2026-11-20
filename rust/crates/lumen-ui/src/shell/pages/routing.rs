@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use egui::{
-    Align, Color32, ComboBox, Frame, Id, Layout, Modal, RichText, ScrollArea, Sense, Stroke,
+    Align, Color32, ComboBox, Frame, Layout, RichText, ScrollArea, Sense, Stroke,
     TextEdit, Ui, vec2,
 };
 use lumen_core::i18n::tr;
@@ -463,111 +463,121 @@ impl RoutingPage {
         bridge: &mut AppBridge,
         dialog: Dialog,
     ) {
+        use crate::shell::fluent_dialog::{DialogAction, FluentDialog, body_text, body_text_spaced};
         let reset_editor = std::mem::take(&mut self.reset_dialog_editor);
-        let modal = Modal::new(Id::unique("routing-dialog")).show(ctx, |ui| {
-            ui.set_width(dialog.width().min((ctx.content_rect().width() - 52.0).max(0.0)));
-            ui.label(
-                RichText::new(tr(dialog.title(), &[]))
-                    .size(theme.font_strong as f32)
-                    .family(crate::shell::theme::semibold_family()),
-            );
-            ui.add_space(2.0);
-            caption(ui, theme, dialog.description());
-            ui.add_space(4.0);
-            match dialog {
-                Dialog::Help => {}
-                Dialog::Import => {
-                    ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                        text_edit_menu::show(
-                            ui,
-                            TextEdit::multiline(&mut self.input)
-                                .code_editor()
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(7)
-                                .hint_text(
-                                    "example.com|proxy\nads.example.net|block\n10.0.0.0/8|direct",
-                                ),
-                            "import-domain-rules",
-                            true,
-                            reset_editor,
-                        )
-                    });
-                }
-                Dialog::Running => {
-                    if let Some(process) = combo(
+        let small = egui::FontId::proportional(theme.font_small as f32);
+        let action = if dialog == Dialog::Help {
+            // helpDialog: 460 px, header bottom 6, `padding: 0` (the style's
+            // verticalPadding 18 stays), muted text at 1.25 line height with
+            // 6 px below it, a single accent "Понятно".
+            FluentDialog::new("routing-help", tr(dialog.title(), &[]), dialog.width())
+                .ok(tr("Понятно", &[]))
+                .no_cancel()
+                .padding(egui::Margin { left: 20, right: 20, top: 22, bottom: 18 })
+                .show(ctx, theme, |ui| {
+                    body_text_spaced(
                         ui,
-                        "running-process",
-                        &self.input,
-                        self.running
-                            .iter()
-                            .map(|name| (name.as_str(), name.clone())),
-                        ui.available_width(),
-                    ) {
-                        self.input = process;
-                    }
-                }
-                _ => {
-                    let hint = match dialog {
-                        Dialog::Save => tr("Название пресета", &[]),
-                        Dialog::Process => "chrome.exe".into(),
-                        Dialog::Folder => "C:\\Games\\".into(),
-                        _ => "example.com".into(),
-                    };
-                    text_edit_menu::show(
-                        ui,
-                        TextEdit::singleline(&mut self.input)
-                            .desired_width(f32::INFINITY)
-                            .hint_text(hint),
-                        dialog.title(),
-                        true,
-                        reset_editor,
+                        &tr(HELP, &[]),
+                        egui::FontId::proportional(theme.font_normal as f32),
+                        theme.text_muted,
+                        1.25,
                     );
-                }
-            }
-            if dialog == Dialog::Domain && !self.input.trim().is_empty() {
-                let preview = bridge.normalize_domain_rule_input(&self.input);
-                if let Some((text, valid)) = domain_preview(&preview) {
-                    ui.label(RichText::new(text).color(if valid {
-                        theme.text_muted
-                    } else {
-                        theme.danger
-                    }));
-                }
-            }
-            if let Some(index) = dialog.action_index() {
-                ui.horizontal(|ui| {
-                    caption(ui, theme, "Действие");
-                    if let Some(action) =
-                        action_combo(ui, "dialog-action", &self.actions[index], ACTIONS, 160.0)
-                    {
-                        self.actions[index] = action;
+                    ui.add_space(6.0);
+                })
+        } else {
+            let ok_label = match dialog {
+                Dialog::Save => "Сохранить",
+                Dialog::Import => "Импорт",
+                _ => "Добавить",
+            };
+            let ok_enabled = match dialog {
+                Dialog::Save => !self.input.trim().is_empty(),
+                Dialog::Running => !self.running.is_empty(),
+                _ => true,
+            };
+            FluentDialog::new(("routing", dialog.title()), tr(dialog.title(), &[]), dialog.width())
+                .ok(tr(ok_label, &[]))
+                .ok_enabled(ok_enabled)
+                .show(ctx, theme, |ui| {
+                    // ColumnLayout spacing 10: description, editor, preview, action.
+                    body_text(ui, &tr(dialog.description(), &[]), small.clone(), theme.text_muted);
+                    ui.add_space(10.0);
+                    match dialog {
+                        Dialog::Import => {
+                            ScrollArea::vertical().max_height(180.0).min_scrolled_height(180.0).show(ui, |ui| {
+                                text_edit_menu::show(
+                                    ui,
+                                    TextEdit::multiline(&mut self.input)
+                                        .font(egui::FontId::monospace(theme.font_small as f32))
+                                        .background_color(theme.card)
+                                        .desired_width(f32::INFINITY)
+                                        .desired_rows(9)
+                                        .hint_text("example.com|proxy\nads.example.net|block\n10.0.0.0/8|direct"),
+                                    "import-domain-rules",
+                                    true,
+                                    reset_editor,
+                                )
+                            });
+                        }
+                        Dialog::Running => {
+                            if let Some(process) = combo(
+                                ui,
+                                "running-process",
+                                &self.input,
+                                self.running.iter().map(|name| (name.as_str(), name.clone())),
+                                ui.available_width(),
+                            ) {
+                                self.input = process;
+                            }
+                        }
+                        _ => {
+                            let hint = match dialog {
+                                Dialog::Save => tr("Название пресета", &[]),
+                                Dialog::Process => "chrome.exe".into(),
+                                Dialog::Folder => "C:\\Games\\".into(),
+                                _ => "example.com".into(),
+                            };
+                            let width = ui.available_width();
+                            text_edit_menu::show(
+                                ui,
+                                TextEdit::singleline(&mut self.input)
+                                    .font(egui::FontId::proportional(theme.font_normal as f32))
+                                    .background_color(theme.card)
+                                    .desired_width(width - 20.0)
+                                    .min_size(vec2(width, theme.control_height as f32))
+                                    .margin(egui::Margin::symmetric(10, 0))
+                                    .vertical_align(Align::Center)
+                                    .hint_text(hint),
+                                dialog.title(),
+                                true,
+                                reset_editor,
+                            );
+                        }
                     }
-                });
-            }
-            right_row(ui, theme.control_height as f32, |ui| {
-                let cancel = dialog != Dialog::Help
-                    && ui
-                        .add(fluent_button::button(theme, "", &tr("Отмена", &[]), false))
-                        .clicked();
-                let confirm_label = match dialog {
-                    Dialog::Help => "Понятно",
-                    Dialog::Save => "Сохранить",
-                    Dialog::Import => "Импорт",
-                    _ => "Добавить",
-                };
-                let confirm = ui
-                    .add_enabled(
-                        dialog == Dialog::Help || !self.input.trim().is_empty(),
-                        fluent_button::button(theme, "", &tr(confirm_label, &[]), true),
-                    )
-                    .clicked();
-                (confirm, cancel)
-            })
-        });
-        let (confirm, cancel) = modal.inner;
-        if confirm {
+                    if dialog == Dialog::Domain && !self.input.trim().is_empty() {
+                        let preview = bridge.normalize_domain_rule_input(&self.input);
+                        if let Some((text, valid)) = domain_preview(&preview) {
+                            ui.add_space(10.0);
+                            body_text(ui, &text, small.clone(), if valid { theme.text_muted } else { theme.danger });
+                        }
+                    }
+                    if let Some(index) = dialog.action_index() {
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            caption(ui, theme, "Действие");
+                            if let Some(action) =
+                                action_combo(ui, "dialog-action", &self.actions[index], ACTIONS, 160.0)
+                            {
+                                self.actions[index] = action;
+                            }
+                        });
+                    }
+                })
+        };
+        if action == DialogAction::Accept {
             let input = self.input.trim();
-            let action = dialog
+            let rule_action = dialog
                 .action_index()
                 .map(|index| self.actions[index].as_str())
                 .unwrap_or("proxy");
@@ -575,13 +585,23 @@ impl RoutingPage {
                 Dialog::Help => {}
                 Dialog::Save => bridge.save_routing_preset(input),
                 Dialog::Process | Dialog::Folder | Dialog::Running => {
-                    bridge.add_process_rule(input, action)
+                    if !input.is_empty() {
+                        bridge.add_process_rule(input, rule_action)
+                    }
                 }
-                Dialog::Domain => bridge.add_domain_rule(input, action),
-                Dialog::Import => bridge.import_domain_rules(&self.input),
+                Dialog::Domain => {
+                    if !input.is_empty() {
+                        bridge.add_domain_rule(input, rule_action)
+                    }
+                }
+                Dialog::Import => {
+                    if !input.is_empty() {
+                        bridge.import_domain_rules(&self.input)
+                    }
+                }
             }
         }
-        if confirm || cancel || modal.should_close() {
+        if action != DialogAction::None {
             self.dialog = None;
         }
     }

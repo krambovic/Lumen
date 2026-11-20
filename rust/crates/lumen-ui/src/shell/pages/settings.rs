@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use egui::{
-    Align, Button, Color32, ComboBox, Context, FontId, Frame, Id, Layout, Modal, RichText,
+    Align, Button, Color32, ComboBox, Context, FontId, Id, Layout, Modal, RichText,
     ScrollArea, Sense, Stroke, TextEdit, TextFormat, Ui, text::LayoutJob, vec2,
 };
 use lumen_core::{constants::APP_VERSION, i18n::tr, models::AppSettings};
@@ -1293,27 +1293,24 @@ impl SettingsPage {
     }
 
     fn reset_dialog(&mut self, ctx: &Context, theme: &Theme, bridge: &mut AppBridge) {
-        let modal = Modal::new(Id::unique("settings-reset")).show(ctx, |ui| {
-            ui.set_width(480.0_f32.min((ctx.content_rect().width() - 48.0).max(0.0)));
-            ui.label(
-                RichText::new(tr("Сбросить настройки?", &[]))
-                    .size(theme.font_strong as f32)
-                    .family(crate::shell::theme::semibold_family()),
-            );
-            ui.label(tr("Настройки приложения и маршрутизации вернутся к значениям по умолчанию. Серверы и подписки не будут удалены.", &[]));
-            right_row(ui, theme.control_height as f32, |ui| {
-                let cancel = ghost(ui, theme, "Отмена");
-                let confirm = accent_button(ui, theme, "Сбросить");
-                (cancel, confirm)
-            })
-        });
-        let (cancel, confirm) = modal.inner;
-        if confirm {
+        use crate::shell::fluent_dialog::{DialogAction, FluentDialog, body_text};
+        // resetSettingsDialog: FluentDialog, 480 px.
+        let action = FluentDialog::new("settings-reset", tr("Сбросить настройки?", &[]), 480.0)
+            .ok(tr("Сбросить", &[]))
+            .show(ctx, theme, |ui| {
+                body_text(
+                    ui,
+                    &tr("Настройки приложения и маршрутизации вернутся к значениям по умолчанию. Серверы и подписки не будут удалены.", &[]),
+                    FontId::proportional(theme.font_normal as f32),
+                    theme.text_muted,
+                );
+            });
+        if action == DialogAction::Accept {
             bridge.reset_settings_to_defaults();
             self.subscription = None;
             self.dns = None;
         }
-        if cancel || confirm || modal.should_close() {
+        if action != DialogAction::None {
             self.reset = false;
         }
     }

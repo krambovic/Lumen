@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use egui::{
-    Align, ComboBox, Frame, Id, Key, Layout, Modal, Modifiers, RichText, ScrollArea, Sense, Stroke,
+    Align, ComboBox, Frame, Key, Layout, Modifiers, RichText, ScrollArea, Sense, Stroke,
     TextEdit, Ui, vec2,
 };
 use lumen_core::i18n::tr;
@@ -808,15 +808,14 @@ impl ZapretPage {
                 "Отменить изменения",
             ),
         };
-        let modal = Modal::new(Id::unique("zapret-confirm")).show(ctx, |ui| {
-            ui.set_width(420.0_f32.min((ctx.content_rect().width() - 52.0).max(0.0)));
-            title(ui, theme, heading);
-            ui.label(message);
-            ui.horizontal_wrapped(|ui| (button(ui, "Отмена"), button(ui, accept)))
-                .inner
-        });
-        let (cancel, accept) = modal.inner;
-        if accept {
+        use crate::shell::fluent_dialog::{DialogAction, FluentDialog, body_text};
+        // deleteDialog / discardDialog: FluentDialog, 440 px.
+        let action = FluentDialog::new(("zapret-confirm", heading), tr(heading, &[]), 440.0)
+            .ok(tr(accept, &[]))
+            .show(ctx, theme, |ui| {
+                body_text(ui, &message, egui::FontId::proportional(theme.font_normal as f32), theme.text_muted);
+            });
+        if action == DialogAction::Accept {
             match confirm {
                 Confirm::Delete => {
                     bridge.delete_preset(&self.selected);
@@ -825,7 +824,7 @@ impl ZapretPage {
                 Confirm::Discard => self.draft = None,
             }
         }
-        if cancel || accept || modal.should_close() {
+        if action != DialogAction::None {
             self.confirm = None;
         }
     }

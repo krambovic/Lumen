@@ -1383,62 +1383,38 @@ impl ShellApp {
         let Some(dialog) = self.conflict_dialog.clone() else {
             return;
         };
-        let width = 560.0_f32.min(ctx.viewport_rect().width() - 40.0);
-        egui::Area::new(egui::Id::unique("lumen-conflict-dialog"))
-            .order(egui::Order::Tooltip)
-            .fixed_pos(ctx.viewport_rect().min).default_size(ctx.viewport_rect().size())
-            .show(ctx, |ui| {
-                let full = ui.max_rect();
-                ui.painter().rect_filled(full, 0.0, Color32::from_black_alpha(96));
-                let card = Rect::from_center_size(full.center(), Vec2::new(width, 250.0));
-                ui.painter().rect_filled(card, theme.radius as f32, theme.flyout);
-                ui.painter().rect_stroke(
-                    card,
-                    theme.radius as f32,
-                    egui::Stroke::new(1.0, theme.flyout_border),
-                    egui::StrokeKind::Inside,
-                );
-                ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
-                    ui.vertical(|ui| {
-                        ui.add_space(16.0);
-                        ui.label(
-                            egui::RichText::new(tr(
-                                "\u{041E}\u{0431}\u{043D}\u{0430}\u{0440}\u{0443}\u{0436}\u{0435}\u{043D} \u{0434}\u{0440}\u{0443}\u{0433}\u{043E}\u{0439} VPN/\u{043F}\u{0440}\u{043E}\u{043A}\u{0441}\u{0438}",
-                                &[],
-                            ))
-                            .size(theme.font_title as f32)
-                            .color(theme.text),
-                        );
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new(tr(&dialog.message, &[]))
-                                .size(theme.font_normal as f32)
-                                .color(theme.text_muted),
-                        );
-                        ui.add_space(16.0);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(tr("\u{0417}\u{0430}\u{043A}\u{0440}\u{044B}\u{0442}\u{044C}", &[]))
-                                .clicked()
-                            {
-                                self.bridge.cancel_network_conflict();
-                                self.conflict_dialog = None;
-                            }
-                            if dialog.can_terminate
-                                && ui
-                                    .button(tr(
-                                        "\u{0417}\u{0430}\u{043A}\u{0440}\u{044B}\u{0442}\u{044C} \u{043F}\u{0440}\u{043E}\u{0446}\u{0435}\u{0441}\u{0441}\u{044B} \u{0438} \u{043F}\u{0440}\u{043E}\u{0434}\u{043E}\u{043B}\u{0436}\u{0438}\u{0442}\u{044C}",
-                                        &[],
-                                    ))
-                                    .clicked()
-                                && self.bridge.close_network_conflicts_and_continue()
-                            {
-                                self.conflict_dialog = None;
-                            }
-                        });
-                    });
-                });
-            });
+        use fluent_dialog::{DialogAction, FluentDialog, body_text_spaced};
+        // networkConflictDialog: FluentDialog, min(560, window - 40), only
+        // Close and, when the processes can be stopped, the danger button.
+        let action = FluentDialog::new(
+            "network-conflict",
+            tr("Обнаружен другой VPN/прокси", &[]),
+            560.0_f32.min(ctx.viewport_rect().width() - 40.0),
+        )
+        .no_ok()
+        .cancel(tr("Закрыть", &[]))
+        .danger(if dialog.can_terminate { tr("Закрыть процессы и продолжить", &[]) } else { String::new() })
+        .show(ctx, theme, |ui| {
+            body_text_spaced(
+                ui,
+                &tr(&dialog.message, &[]),
+                egui::FontId::proportional(theme.font_normal as f32),
+                theme.text_muted,
+                1.2,
+            );
+        });
+        match action {
+            DialogAction::Reject => {
+                self.bridge.cancel_network_conflict();
+                self.conflict_dialog = None;
+            }
+            DialogAction::Danger => {
+                if self.bridge.close_network_conflicts_and_continue() {
+                    self.conflict_dialog = None;
+                }
+            }
+            _ => {}
+        }
     }
 }
 

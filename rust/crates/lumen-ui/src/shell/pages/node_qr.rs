@@ -1,6 +1,6 @@
 //! QR export dialog shared by server views.
 
-use egui::{Color32, ColorImage, Context, Id, Modal, TextureHandle, TextureOptions};
+use egui::{Color32, ColorImage, Context, TextureHandle, TextureOptions};
 use lumen_core::i18n::tr;
 use qrcode::{Color, EcLevel, QrCode};
 
@@ -34,36 +34,49 @@ impl NodeQr {
                 .map(|image| ctx.load_texture("server-qr", image, TextureOptions::NEAREST))
                 .map_err(|error| error.to_string())
         });
-        let modal = Modal::new(Id::unique("server-qr-modal")).show(ctx, |ui| {
-            ui.set_width(320.0_f32.min((ctx.content_rect().width() - 48.0).max(0.0)));
-            let title = if name.is_empty() {
-                tr("QR-код сервера", &[])
-            } else {
-                format!("{}{}", tr("QR-код: ", &[]), name)
-            };
-            ui.heading(title);
-            match image {
-                Ok(texture) => ui.vertical_centered(|ui| {
-                    let size = ui.available_width().min(280.0);
-                    ui.image((texture.id(), egui::Vec2::splat(size)));
-                    ui.label(tr(
-                        "Отсканируйте код в клиенте, чтобы импортировать сервер.",
-                        &[],
-                    ));
-                }),
-                Err(error) => ui.vertical(|ui| {
-                    ui.colored_label(
+        // qrDialog: FluentDialog, 360 px, a centred 280 px image and the
+        // muted, centred hint 12 px below; only a "Закрыть" OK button.
+        let title = if name.is_empty() {
+            tr("QR-код сервера", &[])
+        } else {
+            format!("{}{}", tr("QR-код: ", &[]), name)
+        };
+        let action = crate::shell::fluent_dialog::FluentDialog::new("server-qr", title, 360.0)
+            .ok(tr("Закрыть", &[]))
+            .no_cancel()
+            .show(ctx, theme, |ui| {
+                let width = ui.available_width();
+                match image {
+                    Ok(texture) => {
+                        let side = width.min(280.0);
+                        let (row, _) = ui.allocate_exact_size(egui::vec2(width, side), egui::Sense::hover());
+                        ui.painter().image(
+                            texture.id(),
+                            egui::Rect::from_center_size(row.center(), egui::Vec2::splat(side)),
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+                        ui.add_space(12.0);
+                        let mut job = egui::text::LayoutJob::simple(
+                            tr("Отсканируйте код в клиенте, чтобы импортировать сервер.", &[]),
+                            egui::FontId::proportional(theme.font_small as f32),
+                            theme.text_muted,
+                            width,
+                        );
+                        job.halign = egui::Align::Center;
+                        let galley = ui.painter().layout_job(job);
+                        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, galley.size().y), egui::Sense::hover());
+                        ui.painter().galley(egui::pos2(rect.center().x, rect.top()), galley, theme.text_muted);
+                    }
+                    Err(error) => crate::shell::fluent_dialog::body_text(
+                        ui,
+                        &tr("Не удалось создать QR-код (слишком длинный конфиг?): {err}", &[("err", error)]),
+                        egui::FontId::proportional(theme.font_normal as f32),
                         theme.danger,
-                        tr(
-                            "Не удалось создать QR-код (слишком длинный конфиг?): {err}",
-                            &[("err", error)],
-                        ),
-                    );
-                }),
-            };
-            ui.button(tr("Закрыть", &[])).clicked()
-        });
-        if modal.inner || modal.should_close() {
+                    ),
+                }
+            });
+        if action != crate::shell::fluent_dialog::DialogAction::None {
             *self = Self::default();
         }
     }
