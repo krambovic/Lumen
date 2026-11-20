@@ -158,6 +158,10 @@ def post(hwnd: int, args: list[str]) -> None:
             delta = int(args[3]) & 0xFFFF
             screen = ((top + y) << 16) | ((left + x) & 0xFFFF)
             user32.PostMessageW(hwnd, WM_MOUSEWHEEL, delta << 16, screen)
+    elif action == "text":
+        WM_CHAR = 0x102
+        for char in args[1]:
+            user32.PostMessageW(hwnd, WM_CHAR, ord(char), 1)
     elif action == "key":
         vk = {"Escape": 0x1B, "Enter": 0x0D, "Tab": 0x09, "Down": 0x28, "Up": 0x26}[args[1]]
         user32.PostMessageW(hwnd, WM_KEYDOWN, vk, 1)

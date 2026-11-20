@@ -589,6 +589,37 @@ client, core/resource updaters, zapret and discord proxy managers.
     the session several times per frame).
   - egui only draws the focused text-field border and caret while the OS
     window has focus; uicmp captures never show them.
+- Visual check of the second pass (2026-11-20), side by side with QML:
+  - Verified: onboarding step reveal and timing, the action bar (no flash),
+    routing dialogs, Zapret delete, server QR (by source: the QML side
+    cannot render QR without the `qrcode` module), info tooltips.
+  - Settings rows lay out right to left, so multi-control rows listed their
+    controls in reverse (password, backup, core paths, fragment fields,
+    speed URL). Code order is now the reverse of the QML order, with a
+    comment at each row. Core paths have their subtitles.
+  - `StyledField` / `StyledArea` (settings): `Theme.card` fill, control
+    height, 10 px padding (they used egui's near-black extreme background).
+  - Two-column GridLayouts of `fillWidth` columns (DNS servers, regex
+    filters) share the width in proportion to the columns' implicit widths;
+    `layout_columns` reproduces that, and ColumnLayout's default 5 px
+    spacing. Lone-title `SettingRow`s centre the title on the row.
+  - One Universal `Switch` (`settings::switch_widget`) for settings, routing
+    and onboarding: disabled is a transparent track with baseLow (20 %)
+    border and knob, plus the hover / pressed colours. The tray row dims to
+    0.55 while launch at login is off. The theme option reads «Авто».
+  - `InfoIcon`: hover background and a 250 ms tip delay
+    (`FluentTip::fluent_tip_after`).
+  - `display_core_path` resolves relative paths against the app folder like
+    Python's `resolve()`, so `core/sing-box-extended/sing-box.exe` shows as
+    `core\sing-box.exe`.
+  - Routing dialogs: `DnsField` is text height + 12 (not the 32 px control
+    height) and the «Действие» label centres on the combo.
+  - Zapret preset card: `padding: 0`, 14 px header margins, full-width
+    divider, 10 px editor margins (the header was 16 px taller).
+  - Dashboard hero: the top row is max(ring 52, text block), so it is 52 px
+    until a server caption appears (it was fixed at 66, 14 px too tall).
+  - Not checkable in captures: dialogs behind typed input (configs discard)
+    and the network conflict dialog, since the test windows never have focus.
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated
