@@ -699,3 +699,88 @@ mod busy_indicator_tests {
         assert!((cubic_bezier([0.0, 0.19, 0.07, 0.72], 1.0) - 1.0).abs() < 1e-4);
     }
 }
+
+// ── ProgressBar, indeterminate (Qt Quick Controls Universal) ────────────────
+
+const BAR_TOTAL: f32 = 3917.0;
+const BAR_INTERVAL: f32 = 167.0;
+const BAR_VISIBLE: f32 = 3000.0;
+const BAR_DOTS: usize = 5;
+const BAR_DOT: f32 = 4.0;
+/// `(duration ms, from, to)`: border phases are absolute pixels (linear),
+/// ellipse phases are fractions of the width (eased).
+const BAR_BORDER: [(f32, f32, f32); 4] =
+    [(500.0, -50.0, 0.0), (1500.0, 0.0, 0.0), (1000.0, 0.0, 100.0), (917.0, 100.0, 100.0)];
+const BAR_ELLIPSE: [(f32, f32, f32); 4] = [
+    (1000.0, 0.0, 1.0 / 3.0),
+    (1000.0, 1.0 / 3.0, 1.0 / 3.0),
+    (1000.0, 1.0 / 3.0, 2.0 / 3.0),
+    (1000.0, 1.0 / 3.0, 2.0 / 3.0),
+];
+
+fn bar_phase(phases: &[(f32, f32, f32); 4], time: f32, begin: f32) -> ((f32, f32, f32), f32) {
+    let (mut index, mut remain, mut elapsed) = (0, time, 0.0);
+    while index < phases.len() - 1 {
+        if remain <= phases[index].0 + begin {
+            break;
+        }
+        remain -= phases[index].0;
+        elapsed += phases[index].0;
+        index += 1;
+    }
+    let phase = phases[index];
+    (phase, ((time - elapsed - begin) / phase.0).clamp(0.0, 1.0))
+}
+
+/// The x offsets of the visible dots at `time_ms` into the 3917 ms loop
+/// (`QQuickUniversalProgressBarNode::updateCurrentTime`).
+fn progress_dot_offsets(time_ms: f32, width: f32) -> Vec<f32> {
+    let container = -34.0 + 0.435_222 * width * time_ms / BAR_TOTAL;
+    (0..BAR_DOTS)
+        .filter_map(|index| {
+            let begin = index as f32 * BAR_INTERVAL;
+            if time_ms < begin || time_ms > BAR_VISIBLE + begin {
+                return None;
+            }
+            let ((_, from, to), progress) = bar_phase(&BAR_BORDER, time_ms, begin);
+            let border = from + (to - from) * progress;
+            let ((_, from, to), progress) = bar_phase(&BAR_ELLIPSE, time_ms, begin);
+            let eased = cubic_bezier([0.4, 0.0, 0.6, 1.0], progress);
+            let ellipse = (from + (to - from) * eased) * width;
+            let base = (BAR_DOTS - index - 1) as f32 * (BAR_DOT + 4.0);
+            Some(container + border + ellipse + base)
+        })
+        .collect()
+}
+
+/// `ProgressBar { indeterminate: true }` in the Universal style: five 4 px
+/// accent dots that sweep across the bar, clipped to it.
+pub(crate) fn indeterminate_progress(ui: &Ui, rect: Rect, color: Color32) {
+    let time_ms = ((ui.input(|input| input.time) * 1000.0) % BAR_TOTAL as f64) as f32;
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    for x in progress_dot_offsets(time_ms, rect.width()) {
+        painter.circle_filled(
+            egui::pos2(rect.left() + x + BAR_DOT / 2.0, rect.center().y),
+            BAR_DOT / 2.0,
+            color,
+        );
+    }
+    ui.ctx().request_repaint();
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn dots_enter_from_the_left_and_rest_in_the_well() {
+        // At the start only the first dot is visible, left of the bar.
+        let start = progress_dot_offsets(0.0, 280.0);
+        assert_eq!(start.len(), 1);
+        assert!(start[0] < 0.0);
+        // Mid-loop all five dots sit near a third of the width.
+        let well = progress_dot_offsets(1800.0, 280.0);
+        assert_eq!(well.len(), 5);
+        assert!(well.iter().all(|x| (60.0..160.0).contains(x)));
+    }
+}

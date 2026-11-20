@@ -143,15 +143,7 @@ impl NodesPage {
             self.render_dialog(page.ctx, theme, bridge, &subscriptions, dialog);
         }
         if bridge.subscription_importing() {
-            Modal::new(Id::unique("node-sub-import-progress")).show(page.ctx, |ui| {
-                ui.set_width(360.0_f32.min((page.ctx.content_rect().width() - 48.0).max(0.0)));
-                ui.heading(tr("Импорт подписки", &[]));
-                ui.spinner();
-                ui.label(bridge.subscription_import_status());
-                if button(ui, "Отмена") {
-                    bridge.cancel_subscription_import();
-                }
-            });
+            import_progress_dialog(page.ctx, theme, bridge);
         }
     }
 
@@ -1768,4 +1760,62 @@ mod tests {
             original_width + 50.0
         );
     }
+}
+
+/// `importProgressDialog` in `NodesPage.qml`: a 320 px flyout (20 px padding,
+/// 16 px spacing) over a 45% black backdrop with a centred bold title, an
+/// indeterminate Universal progress bar, the status line and a ghost cancel
+/// button. It cannot be dismissed with Escape or an outside click.
+fn import_progress_dialog(ctx: &egui::Context, theme: &Theme, bridge: &mut AppBridge) {
+    use crate::shell::widgets::{ButtonKind, FluentButton};
+    let screen = ctx.content_rect();
+    Modal::new(Id::unique("node-sub-import-progress"))
+        .backdrop_color(egui::Color32::from_black_alpha(115))
+        .frame(
+            egui::Frame::new()
+                .fill(theme.flyout)
+                .stroke(egui::Stroke::new(1.0, theme.flyout_border))
+                .corner_radius(10)
+                .inner_margin(20),
+        )
+        .show(ctx, |ui| {
+            let width = (320.0_f32 - 40.0).min((screen.width() - 88.0).max(0.0));
+            ui.set_width(width);
+            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+            let centred = |ui: &mut Ui, text: String, font: egui::FontId, color: egui::Color32| {
+                let mut job = egui::text::LayoutJob::simple(text, font, color, width);
+                job.halign = egui::Align::Center;
+                let galley = ui.painter().layout_job(job);
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(width, galley.size().y), egui::Sense::hover());
+                ui.painter().galley(egui::pos2(rect.center().x, rect.top()), galley, color);
+            };
+            centred(
+                ui,
+                tr("Импорт подписки", &[]),
+                crate::shell::theme::bold(theme.font_strong as f32),
+                theme.text,
+            );
+            ui.add_space(16.0);
+            let (bar, _) = ui.allocate_exact_size(egui::vec2(width, 10.0), egui::Sense::hover());
+            crate::shell::widgets::indeterminate_progress(ui, bar, theme.accent);
+            ui.add_space(16.0);
+            let status = bridge.subscription_import_status();
+            let status = if status.is_empty() { tr("Загрузка подписки...", &[]) } else { status.to_string() };
+            centred(ui, status, egui::FontId::proportional(theme.font_normal as f32), theme.text_muted);
+            ui.add_space(16.0);
+            let cancel = tr("Отмена", &[]);
+            // AccentButton: label width plus 14 px padding on each side.
+            let button_width = ui
+                .painter()
+                .layout_no_wrap(cancel.clone(), egui::FontId::proportional(theme.font_normal as f32), theme.text)
+                .size()
+                .x
+                + 28.0;
+            ui.horizontal(|ui| {
+                ui.add_space(((width - button_width) / 2.0).max(0.0));
+                if FluentButton::new(ButtonKind::Ghost, "", &cancel).show(ui, theme).clicked() {
+                    bridge.cancel_subscription_import();
+                }
+            });
+        });
 }

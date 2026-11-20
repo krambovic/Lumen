@@ -260,7 +260,7 @@ def main() -> int:
     runner.add_argument("--input", default="", help="Rust scripted input")
     runner.add_argument("--post", default="", help="QML posted window messages")
     runner.add_argument("--keep", action="store_true", help="leave the client running")
-    runner.add_argument("extra", nargs="*")
+    runner.add_argument("--arg", dest="extra", action="append", default=[], help="extra client argument")
     args = parser.parse_args()
     WORK.mkdir(parents=True, exist_ok=True)
     if args.command == "stage":
