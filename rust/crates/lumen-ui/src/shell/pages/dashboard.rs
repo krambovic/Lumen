@@ -3,8 +3,8 @@
 use std::collections::{HashSet, VecDeque};
 
 use egui::{
-    Align, Button, Color32, FontId, Id, Key, Layout, Modal, Modifiers, Rect, ScrollArea, Sense,
-    Stroke, Ui, pos2, vec2,
+    Align, Color32, FontId, Id, Key, Layout, Modal, Modifiers, Rect, ScrollArea, Sense,
+    Ui, pos2, vec2,
 };
 use lumen_core::i18n::tr;
 
@@ -615,71 +615,64 @@ impl DashboardPage {
                 bridge.select_node(id);
             }
         }
-        row.context_menu(|ui| self.server_menu(ui, bridge, id));
+        crate::shell::fluent_menu::context_menu(&row, theme, 270.0, |ui| {
+            self.server_menu(ui, theme, bridge, id);
+        });
     }
 
-    fn server_menu(&mut self, ui: &mut Ui, bridge: &mut AppBridge, id: &str) {
+    /// `ctxMenu` in `DashboardPage.qml` (270 px, no icons).
+    fn server_menu(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, id: &str) {
+        use crate::shell::fluent_menu::{Item, separator};
         let multi = self.selection.len() > 1 && self.selection.contains(id);
         let targets = if multi {
             self.selection.clone()
         } else {
             HashSet::from([id.into()])
         };
-        for (label, action) in [
-            ("Установить как активный", 0),
-            ("Редактировать", 1),
-            ("Копировать ссылку", 2),
-            ("Экспорт в QR-код", 3),
-        ] {
-            if ui
-                .add_enabled(!multi, Button::new(tr(label, &[])))
-                .clicked()
-            {
-                match action {
-                    0 => bridge.select_node(id),
-                    1 => self.editor.edit(bridge, id),
-                    2 => {
-                        if let Some(link) = bridge.copy_node_link(id) {
-                            ui.ctx().copy_text(link);
-                        }
-                    }
-                    _ => bridge.show_node_qr(id),
-                }
-                ui.close();
-            }
+        let item = |ui: &mut Ui, label: &str, enabled: bool| {
+            Item::new("", label).enabled(enabled).show(ui, theme, false)
+        };
+        if item(ui, &tr("Установить как активный", &[]), !multi) {
+            bridge.select_node(id);
         }
-        ui.separator();
+        separator(ui, theme);
+        if item(ui, &tr("Редактировать", &[]), !multi) {
+            self.editor.edit(bridge, id);
+        }
+        if item(ui, &tr("Копировать ссылку", &[]), !multi)
+            && let Some(link) = bridge.copy_node_link(id)
+        {
+            ui.ctx().copy_text(link);
+        }
+        if item(ui, &tr("Экспорт в QR-код", &[]), !multi) {
+            bridge.show_node_qr(id);
+        }
+        separator(ui, theme);
         for (label, action) in [
             ("Пинг — способ из настроек", 0),
             ("Тест TCP ping", 1),
             ("Тест HTTP GET", 2),
             ("Тест реальной задержки", 3),
         ] {
-            if ui.button(count_label(label, targets.len())).clicked() {
+            if item(ui, &count_label(label, targets.len()), true) {
                 match action {
                     0 => bridge.ping_nodes(Some(&targets)),
                     1 => bridge.tcping_nodes(Some(&targets)),
                     2 => bridge.http_get_nodes(Some(&targets)),
                     _ => bridge.real_delay_nodes(Some(&targets)),
                 }
-                ui.close();
             }
         }
-        ui.separator();
-        for (label, direction) in [("В начало списка", "top"), ("В конец списка", "bottom")]
-        {
-            if ui
-                .add_enabled(!multi, Button::new(tr(label, &[])))
-                .clicked()
-            {
+        separator(ui, theme);
+        for (label, direction) in [("В начало списка", "top"), ("В конец списка", "bottom")] {
+            if item(ui, &tr(label, &[]), !multi) {
                 bridge.reorder_node(id, direction);
-                ui.close();
             }
         }
-        if ui.button(count_label("Удалить", targets.len())).clicked() {
+        separator(ui, theme);
+        if item(ui, &count_label("Удалить", targets.len()), true) {
             bridge.delete_nodes(&targets.into_iter().collect::<Vec<_>>());
             self.selection.clear();
-            ui.close();
         }
     }
 

@@ -25,9 +25,10 @@ pub(super) fn show(
     let selection = state.cursor.char_range();
     let has_selection = selection.is_some_and(|range| !range.is_empty());
     let has_text = !text.is_empty();
-    let mut action = None;
-
-    response.context_menu(|ui| {
+    // TextEditContextMenu.qml: a 190 px FluentMenu without icons. Unit
+    // tests have no published theme and fall back to egui's own menu.
+    let theme = crate::shell::fluent_menu::published_theme(ui.ctx());
+    let menu = |ui: &mut Ui| {
         let (has_undo, has_redo) = if editable {
             let current = (selection.unwrap_or_default(), text.to_owned());
             let undoer = state.undoer();
@@ -35,59 +36,60 @@ pub(super) fn show(
         } else {
             (false, false)
         };
-        ui.set_min_width(170.0);
-        if ui
-            .add_enabled(editable && has_undo, Button::new(tr("Отменить", &[])))
-            .clicked()
-        {
-            action = Some("undo");
-            ui.close();
+        let entry = |ui: &mut Ui, label: &str, enabled: bool| match theme.as_deref() {
+            Some(theme) => crate::shell::fluent_menu::Item::new("", &tr(label, &[]))
+                .enabled(enabled)
+                .show(ui, theme, false),
+            None => {
+                let clicked = ui.add_enabled(enabled, Button::new(tr(label, &[]))).clicked();
+                if clicked {
+                    ui.close();
+                }
+                clicked
+            }
+        };
+        let separator = |ui: &mut Ui| match theme.as_deref() {
+            Some(theme) => crate::shell::fluent_menu::separator(ui, theme),
+            None => {
+                ui.separator();
+            }
+        };
+        let mut chosen = None;
+        if entry(ui, "Отменить", editable && has_undo) {
+            chosen = Some("undo");
         }
-        if ui
-            .add_enabled(editable && has_redo, Button::new(tr("Повторить", &[])))
-            .clicked()
-        {
-            action = Some("redo");
-            ui.close();
+        if entry(ui, "Повторить", editable && has_redo) {
+            chosen = Some("redo");
         }
-        ui.separator();
-        if ui
-            .add_enabled(editable && has_selection, Button::new(tr("Вырезать", &[])))
-            .clicked()
-        {
-            action = Some("cut");
-            ui.close();
+        separator(ui);
+        if entry(ui, "Вырезать", editable && has_selection) {
+            chosen = Some("cut");
         }
-        if ui
-            .add_enabled(has_selection, Button::new(tr("Копировать", &[])))
-            .clicked()
-        {
-            action = Some("copy");
-            ui.close();
+        if entry(ui, "Копировать", has_selection) {
+            chosen = Some("copy");
         }
-        if ui
-            .add_enabled(editable, Button::new(tr("Вставить", &[])))
-            .clicked()
-        {
-            action = Some("paste");
-            ui.close();
+        if entry(ui, "Вставить", editable) {
+            chosen = Some("paste");
         }
-        if ui
-            .add_enabled(editable && has_selection, Button::new(tr("Удалить", &[])))
-            .clicked()
-        {
-            action = Some("delete");
-            ui.close();
+        if entry(ui, "Удалить", editable && has_selection) {
+            chosen = Some("delete");
         }
-        ui.separator();
-        if ui
-            .add_enabled(has_text, Button::new(tr("Выделить всё", &[])))
-            .clicked()
-        {
-            action = Some("select_all");
-            ui.close();
+        separator(ui);
+        if entry(ui, "Выделить всё", has_text) {
+            chosen = Some("select_all");
         }
-    });
+        chosen
+    };
+    let chosen = match theme.as_deref() {
+        Some(theme) => crate::shell::fluent_menu::context_menu(&response, theme, 190.0, menu),
+        None => egui::Popup::context_menu(&response)
+            .show(|ui| {
+                ui.set_min_width(170.0);
+                menu(ui)
+            })
+            .map(|inner| inner.inner),
+    };
+    let action = chosen.flatten();
 
     if let Some(action) = action {
         match action {

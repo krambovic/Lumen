@@ -18,6 +18,7 @@ pub mod geometry;
 pub(crate) mod clipboard;
 pub(crate) mod motion;
 pub(crate) mod widgets;
+pub(crate) mod fluent_menu;
 mod wheel;
 #[cfg(debug_assertions)]
 mod preview_input;
@@ -1576,6 +1577,7 @@ impl eframe::App for ShellApp {
             self.installed_font_family = Some(theme::font_key(&theme));
         }
         theme::apply_visuals(ctx, &theme);
+        fluent_menu::publish_theme(ctx, &theme);
 
         self.paint_chrome(ctx, root, &theme);
         self.paint_title_bar(ctx, &theme);

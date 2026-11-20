@@ -195,39 +195,36 @@ impl NodesPage {
             .clamp(240.0, 340.0)
             .min((available - 238.0).max(100.0));
         toolbar_row(ui, 10.0, |ui| {
-            menu(
-                ui,
+            // addMenu (280 px, icons) below the button.
+            let add = ui.add_sized(
+                [112.0, 32.0],
                 Button::new(
                     RichText::new(format!("\u{e710}  {}", tr("Добавить", &[])))
                         .color(theme.accent_text),
                 )
                 .fill(theme.accent),
-                112.0,
-                |ui| {
-                    if button(ui, "Импорт подписки") {
-                        self.open(Dialog::Subscription);
-                        ui.close();
-                    }
-                    if button(ui, "Импорт из буфера") {
-                        import_clipboard(bridge);
-                        ui.close();
-                    }
-                    if button(ui, "Импорт файла конфигурации") {
-                        self.file_error = import_config_file(bridge)
-                            .err()
-                            .map(|error| error.to_string());
-                        ui.close();
-                    }
-                    if button(ui, "Добавить сервер вручную") {
-                        self.editor.create(bridge, &group);
-                        ui.close();
-                    }
-                    if button(ui, "Создать группу") {
-                        self.open(Dialog::Group);
-                        ui.close();
-                    }
-                },
             );
+            crate::shell::fluent_menu::dropdown(&add, theme, 280.0, |ui| {
+                use crate::shell::fluent_menu::{Item, separator};
+                if Item::new("\u{e71b}", &tr("Импорт подписки", &[])).show(ui, theme, true) {
+                    self.open(Dialog::Subscription);
+                }
+                if Item::new("\u{e77f}", &tr("Импорт из буфера", &[])).hint("Ctrl+V").show(ui, theme, true) {
+                    import_clipboard(bridge);
+                }
+                if Item::new("\u{e8e5}", &tr("Импорт файла конфигурации", &[])).show(ui, theme, true) {
+                    self.file_error = import_config_file(bridge)
+                        .err()
+                        .map(|error| error.to_string());
+                }
+                if Item::new("\u{e70f}", &tr("Добавить сервер вручную", &[])).show(ui, theme, true) {
+                    self.editor.create(bridge, &group);
+                }
+                separator(ui, theme);
+                if Item::new("\u{e8f4}", &tr("Создать группу", &[])).show(ui, theme, true) {
+                    self.open(Dialog::Group);
+                }
+            });
             let name = if let Some(sub) = selected_sub {
                 subscription::name(sub).to_string()
             } else if group.is_empty() {
@@ -357,51 +354,57 @@ impl NodesPage {
         });
         let sort_width = (available - 345.0).clamp(100.0, 190.0);
         toolbar_row(ui, 8.0, |ui| {
-            menu(ui, Button::new("\u{e712}"), 32.0, |ui| {
-                if button(ui, "Выбрать все") {
+            // moreMenu (290 px, icons) below the button.
+            let more = ui.add_sized([32.0, 32.0], Button::new("\u{e712}"));
+            crate::shell::fluent_menu::dropdown(&more, theme, 290.0, |ui| {
+                use crate::shell::fluent_menu::{Item, separator};
+                let has_rows = bridge.node_model.row_count() > 0;
+                if Item::new("\u{e8b3}", &tr("Выбрать все", &[]))
+                    .hint("Ctrl+A")
+                    .enabled(has_rows)
+                    .show(ui, theme, true)
+                {
                     self.select_all(bridge);
-                    ui.close();
                 }
-                if button(ui, "Тест скорости всех в списке") {
+                if Item::new("\u{ec4a}", &tr("Тест скорости всех в списке", &[]))
+                    .enabled(has_rows)
+                    .show(ui, theme, true)
+                {
                     let targets = visible_ids(bridge).into_iter().collect::<HashSet<_>>();
                     if !targets.is_empty() {
                         bridge.speed_test_nodes(Some(&targets));
                     }
-                    ui.close();
                 }
-                if ui
-                    .add_enabled(
-                        bridge.tests_running(),
-                        Button::new(tr("Остановить тест", &[])),
-                    )
-                    .clicked()
+                if Item::new("\u{e71a}", &tr("Остановить тест", &[]))
+                    .enabled(bridge.tests_running())
+                    .show(ui, theme, true)
                 {
                     bridge.cancel_tests();
-                    ui.close();
                 }
-                if button(ui, "Экспорт всех (ссылки)") {
+                if Item::new("\u{ede1}", &tr("Экспорт всех (ссылки)", &[])).show(ui, theme, true) {
                     copy(ui, bridge.export_node_links(&[]));
-                    ui.close();
                 }
-                if let Some(sub) = selected_sub {
-                    if button(ui, "Свойства подписки") {
-                        self.open_info(sub);
-                        ui.close();
-                    }
-                    if button(ui, "Удалить подписку (с серверами)") {
-                        bridge.remove_subscription(field(sub, "url"), true);
-                        ui.close();
-                    }
+                separator(ui, theme);
+                if Item::new("\u{e946}", &tr("Свойства подписки", &[]))
+                    .enabled(selected_sub.is_some())
+                    .show(ui, theme, true)
+                    && let Some(sub) = selected_sub
+                {
+                    self.open_info(sub);
                 }
-                if ui
-                    .add_enabled(
-                        !subscriptions.is_empty(),
-                        Button::new(tr("Обновить все подписки", &[])),
-                    )
-                    .clicked()
+                if Item::new("\u{e895}", &tr("Обновить все подписки", &[]))
+                    .enabled(!subscriptions.is_empty())
+                    .show(ui, theme, true)
                 {
                     bridge.update_all_subscriptions();
-                    ui.close();
+                }
+                if Item::new("\u{e74d}", &tr("Удалить подписку (с серверами)", &[]))
+                    .danger()
+                    .enabled(selected_sub.is_some())
+                    .show(ui, theme, true)
+                    && let Some(sub) = selected_sub
+                {
+                    bridge.remove_subscription(field(sub, "url"), true);
                 }
             });
             if ui
@@ -689,11 +692,11 @@ impl NodesPage {
                                         self.picked =
                                             range(&ids, start, index).iter().cloned().collect();
                                     }
-                                    response.context_menu(|ui| {
+                                    crate::shell::fluent_menu::context_menu(&response, theme, 290.0, |ui| {
                                         if !self.picked.contains(id) {
                                             self.pick_row(&ids, index, Modifiers::NONE);
                                         }
-                                        self.context_menu(ui, bridge, id);
+                                        self.context_menu(ui, theme, bridge, id);
                                     });
                                 });
                             });
@@ -783,121 +786,105 @@ impl NodesPage {
         }
     }
 
-    fn context_menu(&mut self, ui: &mut Ui, bridge: &mut AppBridge, id: &str) {
+    /// `ctxMenu` in `NodesPage.qml` (290 px, icons): every server action.
+    fn context_menu(&mut self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, id: &str) {
+        use crate::shell::fluent_menu::{Item, separator, submenu};
         let single = self.picked.len() == 1;
-        if ui
-            .add_enabled(single, Button::new(tr("Установить как активный", &[])))
-            .clicked()
-        {
+        let count = self.picked.len().to_string();
+        let counted = |text: &str| tr(text, &[("count", &count)]);
+        if Item::new("\u{e768}", &tr("Установить как активный", &[])).enabled(single).show(ui, theme, true) {
             bridge.select_node(id);
-            ui.close();
         }
-        ui.menu_button(tr("Пинг", &[]), |ui| {
-            for (label, action) in [
-                ("Способ из настроек", 0),
-                ("Тест TCP ping", 1),
-                ("Тест HTTP GET", 2),
-                ("Тест ICMP", 3),
+        separator(ui, theme);
+        let ping_title = if self.picked.len() > 1 {
+            counted("Пинг — способ из настроек ({count})")
+        } else {
+            tr("Пинг", &[])
+        };
+        let picked = self.picked.clone();
+        // Click = ping with the method from settings; hover opens the others.
+        if submenu(ui, theme, true, "\u{e724}", &ping_title, 260.0, true, |ui| {
+            if Item::new("\u{e713}", &tr("Способ из настроек", &[])).show(ui, theme, true) {
+                bridge.ping_nodes(Some(&picked));
+            }
+            separator(ui, theme);
+            if Item::new("\u{e968}", &tr("Тест TCP ping", &[])).show(ui, theme, true) {
+                bridge.tcping_nodes(Some(&picked));
+            }
+            if Item::new("\u{e774}", &tr("Тест HTTP GET", &[])).show(ui, theme, true) {
+                bridge.http_get_nodes(Some(&picked));
+            }
+            if Item::new("\u{e968}", &tr("Тест ICMP", &[])).show(ui, theme, true) {
+                bridge.icmp_nodes(Some(&picked));
+            }
+        }) {
+            bridge.ping_nodes(Some(&self.picked));
+        }
+        if Item::new("\u{ec4a}", &counted("Тест скорости загрузки ({count})")).show(ui, theme, true) {
+            bridge.speed_test_nodes(Some(&self.picked));
+        }
+        if Item::new("\u{e71a}", &tr("Остановить тест", &[]))
+            .enabled(bridge.tests_running())
+            .show(ui, theme, true)
+        {
+            bridge.cancel_tests();
+        }
+        separator(ui, theme);
+        if Item::new("\u{e70f}", &tr("Редактировать", &[])).enabled(single).show(ui, theme, true) {
+            self.editor.edit(bridge, id);
+        }
+        let move_label = if self.picked.len() > 1 {
+            counted("Переместить ({count})")
+        } else {
+            tr("Переместить", &[])
+        };
+        if Item::new("\u{e762}", &move_label).enabled(!self.picked.is_empty()).show(ui, theme, true) {
+            self.open(Dialog::Move(self.picked.iter().cloned().collect()));
+        }
+        if Item::new("\u{e8c8}", &tr("Копировать ссылку", &[]))
+            .hint("Ctrl+C")
+            .enabled(single)
+            .show(ui, theme, true)
+        {
+            copy(ui, bridge.copy_node_link(id));
+        }
+        submenu(ui, theme, true, "\u{ede1}", &tr("Экспорт", &[]), 270.0, false, |ui| {
+            if Item::new("\u{e71b}", &counted("Экспорт выбранных — ссылки ({count})")).show(ui, theme, true) {
+                copy(ui, bridge.export_node_links(&picked.iter().cloned().collect::<Vec<_>>()));
+            }
+            if Item::new("\u{ed14}", &tr("Экспорт в QR-код", &[])).enabled(single).show(ui, theme, true) {
+                bridge.show_node_qr(id);
+            }
+            separator(ui, theme);
+            for (glyph, label, runtime) in [
+                ("\u{e943}", "Экспорт outbound JSON", false),
+                ("\u{e792}", "Экспорт runtime JSON", true),
             ] {
-                if button(ui, label) {
-                    match action {
-                        0 => bridge.ping_nodes(Some(&self.picked)),
-                        1 => bridge.tcping_nodes(Some(&self.picked)),
-                        2 => bridge.http_get_nodes(Some(&self.picked)),
-                        _ => bridge.icmp_nodes(Some(&self.picked)),
-                    }
-                    ui.close();
+                if Item::new(glyph, &tr(label, &[])).enabled(single).show(ui, theme, true) {
+                    export_json(ui, bridge, id, runtime);
                 }
             }
         });
-        if button(ui, "Тест скорости загрузки") {
-            bridge.speed_test_nodes(Some(&self.picked));
-            ui.close();
-        }
-        if ui
-            .add_enabled(
-                bridge.tests_running(),
-                Button::new(tr("Остановить тест", &[])),
-            )
-            .clicked()
-        {
-            bridge.cancel_tests();
-            ui.close();
-        }
-        ui.separator();
-        if ui
-            .add_enabled(single, Button::new(tr("Редактировать", &[])))
-            .clicked()
-        {
-            self.editor.edit(bridge, id);
-            ui.close();
-        }
-        if button(ui, "Переместить") {
-            self.open(Dialog::Move(self.picked.iter().cloned().collect()));
-            ui.close();
-        }
-        if ui
-            .add_enabled(single, Button::new(tr("Копировать ссылку", &[])))
-            .clicked()
-        {
-            copy(ui, bridge.copy_node_link(id));
-            ui.close();
-        }
-        if ui
-            .button(tr(
-                "Экспорт выбранных — ссылки ({count})",
-                &[("count", &self.picked.len().to_string())],
-            ))
-            .clicked()
-        {
-            copy(
-                ui,
-                bridge.export_node_links(&self.picked.iter().cloned().collect::<Vec<_>>()),
-            );
-            ui.close();
-        }
-        if ui
-            .add_enabled(single, Button::new(tr("Экспорт в QR-код", &[])))
-            .clicked()
-        {
-            bridge.show_node_qr(id);
-            ui.close();
-        }
-        for (label, runtime) in [
-            ("Экспорт outbound JSON", false),
-            ("Экспорт runtime JSON", true),
+        separator(ui, theme);
+        for (glyph, label, direction) in [
+            ("\u{e70e}", "В начало списка", "top"),
+            ("\u{e70d}", "В конец списка", "bottom"),
         ] {
-            if ui
-                .add_enabled(single, Button::new(tr(label, &[])))
-                .clicked()
-            {
-                export_json(ui, bridge, id, runtime);
-                ui.close();
-            }
-        }
-        for (label, direction) in [("В начало списка", "top"), ("В конец списка", "bottom")]
-        {
-            if ui
-                .add_enabled(single, Button::new(tr(label, &[])))
-                .clicked()
-            {
+            if Item::new(glyph, &tr(label, &[])).enabled(single).show(ui, theme, true) {
                 bridge.reorder_node(id, direction);
-                ui.close();
             }
         }
-        if button(ui, "Выбрать все") {
+        if Item::new("\u{e8b3}", &tr("Выбрать все", &[])).hint("Ctrl+A").show(ui, theme, true) {
             self.select_all(bridge);
-            ui.close();
         }
-        if ui
-            .button(tr(
-                "Удалить ({count})",
-                &[("count", &self.picked.len().to_string())],
-            ))
-            .clicked()
+        separator(ui, theme);
+        if Item::new("\u{e74d}", &counted("Удалить ({count})"))
+            .hint("Del")
+            .danger()
+            .enabled(!self.picked.is_empty())
+            .show(ui, theme, true)
         {
             self.delete(bridge);
-            ui.close();
         }
     }
 
@@ -1342,21 +1329,22 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
         0 => {
             flag::show(ui, &model.country_at(row), egui::vec2(24.0, 18.0));
             ui.add_space(8.0);
-            ui.vertical(|ui| {
-                let name = model.name_at(row);
-                ui.add(egui::Label::new(RichText::new(&name).size(13.0)).truncate())
+            let name = model.name_at(row);
+            let description = model.description_at(row);
+            if description.is_empty() {
+                // The QML Column is centred on the row; with no description
+                // the name sits in the middle.
+                ui.add(egui::Label::new(RichText::new(&name).size(13.0).color(theme.text)).truncate())
                     .on_hover_text(name);
-                let description = model.description_at(row);
-                if !description.is_empty() {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(description)
-                                .size(10.0)
-                                .color(theme.text_muted),
-                        )
+                return;
+            }
+            ui.vertical(|ui| {
+                ui.add(egui::Label::new(RichText::new(&name).size(13.0).color(theme.text)).truncate())
+                    .on_hover_text(name);
+                ui.add(
+                    egui::Label::new(RichText::new(description).size(10.0).color(theme.text_muted))
                         .truncate(),
-                    );
-                }
+                );
             });
             return;
         }
@@ -1372,9 +1360,25 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
             let ping = model.ping_at(row);
             color = theme.ping_color((ping >= 0).then_some(ping));
             if model.pinging_at(row) {
-                ui.spinner();
+                // A 15 px U+E895 (sync) glyph in the accent colour, turning
+                // once every 850 ms (`RotationAnimator`).
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                let turn = (ui.input(|input| input.time) % 0.85 / 0.85) as f32;
+                let galley = ui.painter().layout_no_wrap(
+                    "\u{e895}".into(),
+                    egui::FontId::proportional(15.0),
+                    theme.accent,
+                );
+                let center = egui::pos2(rect.left() + 5.0 + galley.size().x / 2.0, rect.center().y);
+                let origin = center - galley.size() / 2.0;
+                ui.painter().add(
+                    egui::epaint::TextShape::new(origin, galley, theme.accent)
+                        .with_angle_and_anchor(turn * std::f32::consts::TAU, egui::Align2::CENTER_CENTER),
+                );
+                ui.ctx().request_repaint();
                 return;
             } else if ping < 0 {
+                color = theme.text_faint;
                 "—".into()
             } else {
                 format!("{ping} ms")
@@ -1389,6 +1393,7 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
             } else if speed >= 0.0 {
                 format!("{speed:.1} MB/s")
             } else {
+                color = theme.text_faint;
                 "—".into()
             }
         }
@@ -1407,7 +1412,7 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
         _ => subscription::time_label(&json!(model.last_used_at(row))),
     };
     let label = RichText::new(&text).size(13.0).color(color);
-    ui.add(egui::Label::new(if column == 8 { label.family(crate::shell::theme::semibold_family()) } else { label }).truncate())
+    ui.add(egui::Label::new(if column == 8 { label.family(egui::FontFamily::Name("Segoe UI Bold".into())) } else { label }).truncate())
         .on_hover_text(text);
 }
 

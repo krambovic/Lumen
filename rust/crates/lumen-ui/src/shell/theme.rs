@@ -1065,6 +1065,7 @@ impl Default for ThemeInputs {
 
 /// The resolved Theme singleton. Every QML `readonly property` token has a
 /// field here (same names, snake_case).
+#[derive(Clone)]
 pub struct Theme {
     // Driven inputs
     pub dark: bool,
