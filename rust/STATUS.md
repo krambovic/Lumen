@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 264 tests, lumen-platform 68, lumen-engines 196, lumen-app 138, lumen-ui 143
+Last verified: lumen-core 264 tests, lumen-platform 68, lumen-engines 196, lumen-app 138, lumen-ui 144
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -557,6 +557,38 @@ client, core/resource updaters, zapret and discord proxy managers.
     group footer. `set_selected_subscription_id` now also updates the cached
     settings it is read from; the selection used to show only after an
     unrelated settings refresh.
+- Second parity pass (2026-11-20):
+  - `widgets::card_frame` returns a `Card` that ports the Card.qml hover:
+    border `borderSolid` -> `divider`, a 1.7% overlay and a 3 px shadow at
+    60% of `shadowOpacity` scaled by the card's alpha, over `animFast`.
+    Dashboard cards are hoverable too (QML disables it there; requested).
+  - Text placement (vendored epaint, see `rust/vendor/README.md`): glyphs
+    align to the unrounded row height, half-pixel galley positions round up
+    the screen, and rows made only of icon-font glyphs use that face's
+    height. Labels and icons now sit at Qt's offsets in buttons.
+  - `shell/fluent_dialog.rs` ports FluentDialog.qml (`FluentDialog::new`,
+    `custom` for dialogs with their own layout, `text_field`). Note the
+    Universal style's `verticalPadding: 18` wins over `padding`, so content
+    bottom padding is 18. Ported onto it: dashboard modeHelp, About support
+    and USDT, server QR, nodes group / info / delete group / move
+    (`pages/nodes/dialogs.rs`), settings reset, Zapret delete / discard,
+    network conflict, the routing dialogs and the configs discard overlay.
+    Still on their own code: the colour pickers (ColorPickerDialog.qml).
+  - `widgets::FluentTip::fluent_tip` replaces `on_hover_text`
+    (FluentToolTip.qml: 450 ms delay, 100 ms fade, centred 4 px above).
+  - Onboarding pages record explicit reveal blocks (`rv(ui, order, dy, ..)`)
+    with the QML `rv(order)` values and slide distances instead of deriving
+    the order from shape positions. The action bar has a fixed id scope:
+    shifting auto ids restarted the button colour animations at every step
+    change (the buttons flashed). Widgets whose animation state is keyed by
+    their response id must not sit after content whose widget count varies.
+  - `shell/frame_clock.rs` stamps frames with the next vblank from
+    `DwmGetCompositionTimingInfo` so animation and wheel-glide steps are
+    evenly spaced like Qt's vsync-driven animations.
+  - `find_main_window` caches the shell HWND (it enumerated every window of
+    the session several times per frame).
+  - egui only draws the focused text-field border and caret while the OS
+    window has focus; uicmp captures never show them.
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated
