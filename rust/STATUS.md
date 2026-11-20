@@ -4,7 +4,7 @@ Read `PORTING.md` first (conventions). This file tracks *what is done* and
 *what is left*, in dependency order. Update it in every porting commit.
 
 Verification: `cd rust; cargo test -p lumen-core -p lumen-platform -p lumen-engines -p lumen-app -p lumen-ui --lib --locked`.
-Last verified: lumen-core 262 tests, lumen-platform 67, lumen-engines 196, lumen-app 138, lumen-ui 139
+Last verified: lumen-core 264 tests, lumen-platform 68, lumen-engines 196, lumen-app 138, lumen-ui 143
 (cargo 1.99.1, Windows). Note: lumen-app tests that toggle or observe the
 diagnostics consent epoch hold `lumen_app::test_support::CONSENT_LOCK`
 (shutdown() revokes consent globally; the globals are process-wide).
@@ -356,7 +356,7 @@ client, core/resource updaters, zapret and discord proxy managers.
   page events. Country flags and the window/tray icon are available in the
   standalone binary.
 - Visual parity with the QML client is checked with
-  `target/uicmp/cmp.py` (see "Visual comparison" below). Shared pieces:
+  `rust/tools/uicmp/uicmp.py` (see "Visual comparison" below). Shared pieces:
   - The window is created transparent with a zero clear colour, so the DWM
     Mica/acrylic backdrop shows through the translucent `windowBase` veil as
     in `Main.qml`. Before this the veils were blended over eframe's dark
@@ -501,6 +501,56 @@ client, core/resource updaters, zapret and discord proxy managers.
     covers the whole window, and the title bar's caption and
     buttons are copied from its layer back on top (TitleBar.qml has z 50,
     the overlay z 40).
+- Parity pass of 2026-11-20 (user report, checked against the QML client with
+  `rust/tools/uicmp/uicmp.py`):
+  - Links: eframe is built without egui-winit's `links` feature, so
+    `Context::open_url` did nothing. `pages::about::open_url` goes through
+    `win_native::open_url` (ShellExecuteW on a worker thread, http(s), tg and
+    mailto only).
+  - `link_parser::unquote` decoded every `%XX` byte on its own, so a name
+    like `%F0%9F%87%A9%F0%9F%87%AA%20test` became eight replacement
+    characters. Escaped runs are decoded together, as in Python.
+  - Exit from the tray: `NetworkMonitor` slept a whole 5 s interval before
+    looking at its stop flag and shutdown joined it on the UI thread. It now
+    waits on a channel. `on_exit` hides the window and drops the tray icon
+    before the shutdown work, and the controller logs
+    `AppController shutdown finished in N ms (phase=ms ...)`.
+  - Window corners: `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND` is part
+    of the backdrop ops (`MicaOp::DwmCornerRound`).
+  - Subpixel text: the LCD shader lifts coverage by the luminance of the
+    premultiplied colour, so muted (translucent) text no longer comes out
+    7-9% heavier than in Qt (see `rust/vendor/README.md`).
+  - egui 0.37 strokes circles outside the radius. Radio rings, step dots,
+    swatches, the nav badge, the status ring track and the subscription
+    traffic ring were drawn for a centred stroke and were too large.
+    Pass `radius - stroke_width` for a border inside a QML circle and
+    `radius - stroke_width / 2` for a track centred on an arc.
+  - `widgets::busy_indicator` and `widgets::indeterminate_progress` port the
+    Universal `BusyIndicator` and indeterminate `ProgressBar` from
+    `qquickuniversalbusyindicator.cpp` / `qquickuniversalprogressbar.cpp`
+    (phase tables and Bezier easings). Do not use `egui::Spinner`.
+  - Onboarding: the flow opens once the window is visible (the dashboard
+    shows first, as in Qt) and runs on its own clock that advances at most
+    50 ms per frame; the first page takes about 0.3 s to build in a debug
+    build and the entrance used to appear mostly finished.
+  - `shell/fluent_menu.rs` ports FluentMenu / FluentMenuItem /
+    FluentMenuSeparator (icons, hints, danger items, submenus that can act
+    on a click, 90 ms fade). Used by the servers context menu, the Add and
+    More toolbar menus, the dashboard server menu and the text-field menu.
+    `fluent_menu::publish_theme` makes the frame's `Theme` (now `Clone`)
+    available to widgets that are not given one.
+  - The subscription import dialog and the node editor follow
+    `importProgressDialog` and `NodeEditDialog.qml`.
+  - Segoe UI Emoji is a font fallback after the UI fonts (Qt draws the
+    regional indicators of flag sequences as small letters; egui showed a
+    missing-glyph box).
+  - The Updates tab probed `xray -version` and `sing-box version` on the UI
+    thread on its first visit. `AppBridge::prefetch_component_versions` runs
+    them on a worker thread from `start_deferred`.
+  - Settings rows lay out right to left: the info icon goes after the
+    control in code so that it appears before it, as in QML.
+  - Known gap: the servers page source picker (`sourceButton` /
+    `sourcePopup` in `NodesPage.qml`) is still a stock egui button and menu.
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated
@@ -629,38 +679,41 @@ fetcher fix (2026-11-10). lumen-platform/lumen-engines/lumen-app warnings
 are handled inside their porting commits.
 
 ## Visual comparison
-`target/uicmp/` (untracked) holds the comparison tools:
-- `build-preview.ps1` builds `LumenPreview.exe`: the debug client with the
-  single-instance guard bypassed and the start page read from
-  `LUMEN_PREVIEW_PAGE`. The `shell/mod.rs` patch is temporary and restored.
-- `cmp.py <page 0-9> [width height]` starts the preview and the QML client
-  (`qml_ref.py`) on the same isolated demo profile and captures both windows
-  with `PrintWindow`. `--screen` grabs from the screen instead, which is the
-  only way to see the DWM backdrop; run it with `--only rust|qml`.
-- The fixture sets `auto_connect_last: false`. Without it the QML client
-  connects on start, launches sing-box and enables the system proxy; a
-  killed run then leaves both behind.
-- `kill.ps1` stops only the comparison windows.
-- `hb_perf.ps1 [-Connect] [-Scroll] [-Page n]` samples the release preview's
-  CPU and prints its frame-gap lines (`PREVIEW_RELEASE=1 build-preview.ps1`
-  first). `hb_tray.py close|left|right|pick n` drives the preview's tray
-  icon with synthetic clicks (keyboard picks do not reach an elevated
-  preview), `hb_burst.py` records the status ring during a connect, and
-  `hb_zoom.py` uploads enlarged crops. The preview build reads
-  `LUMEN_PREVIEW_CLICKS="seconds,x,y;..."` (`preview_clicks.rs`) and
-  injects those clicks into egui, and `hb_shot.py` captures single frames
-  or bursts with `PrintWindow`; together they test interactions without
-  touching the real mouse. `hb_shot.py click:` / `key:` steps and
-  `hb_tray.py right|hover|clickrow` use real input: they move the cursor
-  and land on whatever window is in front, so do not use them while
-  someone is working on the machine. `hb_tray.py menukeys` posts key
-  presses to the tray popup, and `hb_qmenu.py` renders the original tray
-  `QMenu` for comparison. `hb_navcycle.py` clicks through the
-  rail pages and lists late and slow frames per switch (the preview logs
-  `LATE gap` and `SLOW cpu` lines), `hb_zapdiag.py` times the Zapret page
-  sections, `hb_textcmp.py` and `hb_inkcmp.py` compare text rendering
-  against the QML client. `upload-url.txt` must point at a
-  reachable PUT endpoint for the uploads.
+`rust/tools/uicmp/uicmp.py` (tracked) runs either client against an
+isolated profile and captures it:
+- `python rust/tools/uicmp/uicmp.py run rust|qml --profile NAME [--fresh |
+  --clone OTHER] --size 1280x760 --shots 1.5,2 --out name`. LOCALAPPDATA and
+  APPDATA point into `rust/target/uicmp/profiles/NAME`, so the real profile
+  is never touched. Shots land in `rust/target/uicmp/shots/`. `stage` links
+  `core`, `zapret`, `assets` and `data/templates` into `target/debug`.
+- The QML client starts with `--side-by-side` (no single-instance mutex or
+  pipe). On an empty profile it copies `windows/data` (state path
+  migration); `--clone` a profile made by the Rust client to give both the
+  same state. `--arg` passes extra client arguments (for example a
+  `lumen://add?url=...` deep link).
+- Rust input (debug builds): `--input "0.3,click,25,152;0.9,move,300,222;
+  1.0,rclick,300,222"` is handed over through `LUMEN_PREVIEW_INPUT_FILE`
+  when the window appears (`shell/preview_input.rs`), so input and captures
+  share one clock. Coordinates are egui points; send a `move` before a
+  right click so egui sees the hover first. QML input: `--post` posts
+  window messages in client pixels; Qt places context menus at the real
+  cursor position.
+- `--mode print` (default) uses PrintWindow and works while the window is
+  covered, but shows no DWM backdrop, corners or shadow, and it waits for
+  the UI thread (a stalled frame delays the capture). The QML window is
+  layered, and its first PrintWindow frames read lighter than on screen.
+  `--mode top` makes the window topmost without activation for the grab;
+  `--mode screen` brings it to the front. Both capture whatever else is on
+  screen in `--margin`, so keep the margin at 0 on a machine in use.
+- The `hb_*` helpers mentioned above (`hb_inkcmp.py`, `hb_lockdiag.py`,
+  `hb_perf.ps1`, ...) lived in the untracked `target/uicmp` and were lost
+  when `target` was cleaned; only `uicmp.py` is kept in the repository.
+- Never stop clients by process name: the user's own Lumen may be running.
+  The tool terminates only the process it started.
+- `windows/scripts/create_side_by_side_shortcut.ps1` puts an elevated
+  "Lumen (Python, admin)" shortcut on the desktop for manual comparison next
+  to the Rust client. Both clients share `%LOCALAPPDATA%\Lumen\data`; the
+  last one to save wins.
 
 ## Tooling notes for agents
 - Never put double curly braces in tool arguments (they get mangled);
