@@ -18,8 +18,11 @@ low-DPI Windows screens. egui itself only renders grayscale text.
   blending), so each channel uses its own coverage. `u_lcd` is set only for
   meshes that use the font atlas; shapes sample its opaque white texel, where
   the result equals ordinary premultiplied blending. Light text gets a
-  coverage exponent down to `LCD_LIGHT_EXPONENT` (0.8), which matched the
-  QML client's stroke weight on the settings page within 3%. If the program
+  coverage exponent down to `LCD_LIGHT_EXPONENT` (0.8). The lift follows the
+  luminance of the premultiplied vertex colour, so translucent (muted) text
+  is lifted less; with the straight colour it came out 7-9% heavier than in
+  the QML client. Stroke weight now matches the QML client within about 2%
+  on the onboarding and settings pages. If the program
   fails to compile, the painter keeps the stock shader and the switch stays
   off.
 

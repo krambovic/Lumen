@@ -28,8 +28,10 @@ void main() {
         // Light text on dark backgrounds reads thinner than DirectWrite's,
         // which raises contrast; lift partial coverage with the text's
         // brightness. Full coverage (shapes, glyph cores) is unchanged.
-        vec3 straight = color.a > 0.0 ? color.rgb / color.a : vec3(0.0);
-        float luminance = dot(straight, vec3(0.299, 0.587, 0.114));
+        // The vertex colour is premultiplied, so translucent (muted) text
+        // gets a smaller lift than opaque text of the same hue, as with
+        // DirectWrite's contrast for the blended colour.
+        float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));
         coverage = pow(coverage, vec3(mix(1.0, LCD_LIGHT_EXPONENT, luminance)));
         f_color = vec4(color.rgb * coverage, color.a * tex.a);
         f_blend = vec4(color.a * coverage, color.a * tex.a);
