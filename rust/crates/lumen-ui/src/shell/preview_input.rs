@@ -10,6 +10,10 @@
 //!
 //! Coordinates are egui points. The input never reaches other windows, so
 //! the scripts can run while someone else uses the machine.
+//!
+//! `LUMEN_PREVIEW_INPUT_FILE` names a file to read the script from instead.
+//! The clock starts when the file appears, so `uicmp.py` can write it once
+//! the window is on screen and time its captures from the same moment.
 
 use std::collections::VecDeque;
 
@@ -24,6 +28,8 @@ enum Step {
 }
 
 pub(super) struct PreviewInput {
+    /// The script file still to be read (`LUMEN_PREVIEW_INPUT_FILE`).
+    pending_file: Option<std::path::PathBuf>,
     steps: VecDeque<(f64, Step)>,
     /// Events held back to the next frame (button releases), so egui sees
     /// a press and a release in separate passes like a real click.
@@ -32,7 +38,22 @@ pub(super) struct PreviewInput {
 
 impl PreviewInput {
     pub(super) fn from_env() -> Option<Self> {
+        if let Some(path) = std::env::var_os("LUMEN_PREVIEW_INPUT_FILE") {
+            return Some(Self {
+                pending_file: Some(path.into()),
+                steps: VecDeque::new(),
+                next_frame: Vec::new(),
+            });
+        }
         let script = std::env::var("LUMEN_PREVIEW_INPUT").ok()?;
+        Some(Self {
+            pending_file: None,
+            steps: Self::parse(&script),
+            next_frame: Vec::new(),
+        })
+    }
+
+    fn parse(script: &str) -> VecDeque<(f64, Step)> {
         let mut steps = VecDeque::new();
         for item in script.split(';').map(str::trim).filter(|item| !item.is_empty()) {
             let parts: Vec<&str> = item.split(',').map(str::trim).collect();
@@ -55,10 +76,20 @@ impl PreviewInput {
                 steps.push_back((at, step));
             }
         }
-        Some(Self {
-            steps,
-            next_frame: Vec::new(),
-        })
+        steps
+    }
+
+    /// Reads the script file once it exists. Returns false while waiting.
+    pub(super) fn ready(&mut self) -> bool {
+        let Some(path) = &self.pending_file else {
+            return true;
+        };
+        let Ok(script) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        self.steps = Self::parse(&script);
+        self.pending_file = None;
+        true
     }
 
     /// Adds the due steps to this frame's input. Returns true while steps

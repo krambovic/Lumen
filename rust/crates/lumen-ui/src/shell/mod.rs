@@ -259,6 +259,8 @@ pub struct ShellApp {
     page_events: std::collections::VecDeque<UiEvent>,
     page_state: pages::PageState,
     onboarding: onboarding::Onboarding,
+    /// The window has been on screen; the onboarding waits for it.
+    window_shown_once: bool,
     /// Scripted comparison input (`LUMEN_PREVIEW_INPUT`) and its start time.
     #[cfg(debug_assertions)]
     preview_input: Option<(Option<f64>, preview_input::PreviewInput)>,
@@ -320,6 +322,7 @@ impl ShellApp {
             page_events: std::collections::VecDeque::new(),
             page_state: pages::PageState::default(),
             onboarding: onboarding::Onboarding::default(),
+            window_shown_once: false,
             #[cfg(debug_assertions)]
             preview_input: preview_input::PreviewInput::from_env().map(|input| (None, input)),
         }
@@ -1480,9 +1483,13 @@ impl eframe::App for ShellApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         #[cfg(debug_assertions)]
         if let Some((started, input)) = self.preview_input.as_mut() {
-            let started = *started.get_or_insert(raw_input.time.unwrap_or(0.0));
-            if input.apply(started, raw_input) {
+            if !input.ready() {
                 ctx.request_repaint_after(Duration::from_millis(16));
+            } else {
+                let started = *started.get_or_insert(raw_input.time.unwrap_or(0.0));
+                if input.apply(started, raw_input) {
+                    ctx.request_repaint_after(Duration::from_millis(16));
+                }
             }
         }
         let animated = self.bridge.settings().ui_animations;
@@ -1579,7 +1586,10 @@ impl eframe::App for ShellApp {
         self.paint_drop_overlay(ctx, &theme);
         let title_layer =
             egui::LayerId::new(egui::Order::Middle, egui::Id::unique("lumen-titlebar"));
-        if self.onboarding.render(ctx, &theme, &mut self.bridge, title_layer) {
+        if !self.window_shown_once {
+            self.window_shown_once = self.window_visible(ctx);
+        }
+        if self.onboarding.render(ctx, &theme, &mut self.bridge, title_layer, self.window_shown_once) {
             // Main.qml `onClosingStarted`: show the dashboard and restart
             // `chromeSettleAnim` so it arrives while the card dissolves.
             self.navigation.current = Page::Dashboard;

@@ -10,8 +10,9 @@ touched. The QML client starts with --side-by-side (no single-instance mutex).
     python rust/tools/uicmp/uicmp.py run qml --profile fresh --shots 6
 
 Input:
-- Rust (debug build): --input "1.5,click,640,400;2,key,Escape" goes through
-  LUMEN_PREVIEW_INPUT (see crates/lumen-ui/src/shell/preview_input.rs).
+- Rust (debug build): --input "1.5,click,640,400;2,key,Escape" is handed over
+  through LUMEN_PREVIEW_INPUT_FILE when the window appears (see
+  crates/lumen-ui/src/shell/preview_input.rs); times count from then.
   Coordinates are egui points inside the window.
 - QML: --post "1.5,click,640,400;2,rclick,10,10;3,wheel,640,400,-120" posts
   window messages to the Qt window (client pixels). Neither moves the real
@@ -177,8 +178,12 @@ def run(args) -> int:
     if args.client == "rust":
         stage()
         exe = DEBUG_DIR / "Lumen.exe"
+        script_file = WORK / "preview-input.txt"
+        script_file.unlink(missing_ok=True)
         if args.input:
-            env["LUMEN_PREVIEW_INPUT"] = args.input
+            # Written once the window is shown, so input and captures share
+            # one clock (see preview_input.rs).
+            env["LUMEN_PREVIEW_INPUT_FILE"] = str(script_file)
         command = [str(exe), *args.extra]
         cwd = DEBUG_DIR
     else:
@@ -202,6 +207,8 @@ def run(args) -> int:
             print("no window")
             return 1
         shown = time.monotonic()
+        if args.client == "rust" and args.input:
+            (WORK / "preview-input.txt").write_text(args.input, encoding="utf-8")
         print(f"hwnd {hwnd:#x} style {user32.GetWindowLongW(hwnd, -16) & 0xFFFFFFFF:#010x} "
               f"exstyle {user32.GetWindowLongW(hwnd, -20) & 0xFFFFFFFF:#010x}")
         if args.size:

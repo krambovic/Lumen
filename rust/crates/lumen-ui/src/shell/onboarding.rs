@@ -125,6 +125,9 @@ pub(super) struct Onboarding {
     step_dir: f32,
     step_changed_at: f64,
     opened_at: Option<f64>,
+    /// Animation clock (seconds) and the wall time it last advanced at.
+    clock: f64,
+    clock_wall: Option<f64>,
     view_height: f32,
     config_choice: Option<bool>,
     subscription: String,
@@ -148,8 +151,17 @@ impl Onboarding {
         theme: &Theme,
         bridge: &mut AppBridge,
         title_layer: egui::LayerId,
+        window_shown: bool,
     ) -> bool {
-        let now = ctx.input(|input| input.time);
+        // The flow's own clock advances at most 50 ms per frame. Opening
+        // the flow or a step builds and rasterizes a whole page in one
+        // frame (about 0.3 s in a debug build); on the wall clock the card
+        // would appear already 80% faded in.
+        let wall = ctx.input(|input| input.time);
+        let step = self.clock_wall.map_or(0.0, |last| (wall - last).clamp(0.0, 0.05));
+        self.clock_wall = Some(wall);
+        self.clock += step;
+        let now = self.clock;
         let animated = theme.anim_fast > 0;
         // `exitAnim` runs for 600 ms after `completeOnboarding()`.
         let closing = self.closing_at.map(|start| (now - start) as f32);
@@ -169,6 +181,14 @@ impl Onboarding {
             }
         }
         if self.flow.is_empty() {
+            // `open()` runs from Component.onCompleted, but Qt only advances
+            // the enter animation once the window is exposed: the dashboard
+            // shows first and the backdrop and card animate in on screen.
+            // The window here is revealed after its first painted frame, so
+            // the flow opens once it is actually visible.
+            if !window_shown {
+                return false;
+            }
             self.flow = steps(
                 bridge.onboarding_setup_required(),
                 bridge.onboarding_show_whats_new(),
