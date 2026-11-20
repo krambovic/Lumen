@@ -397,15 +397,12 @@ impl Onboarding {
                         pages_ui.visuals_mut().disabled_alpha = 1.0;
                         pages_ui.disable();
                     }
-                    let first_shape = pages_ui.painter().add(egui::Shape::Noop);
-                    let mut content_top = pages_rect.top();
                     let step = self.flow[index];
                     ScrollArea::vertical()
                         .id_salt(("onboarding-step", index))
                         .auto_shrink([false, false])
                         .show(&mut pages_ui, |ui| {
                             ui.spacing_mut().item_spacing = Vec2::ZERO;
-                            content_top = ui.cursor().top();
                             match step {
                                 Step::News => self.news(ui, theme, bridge),
                                 Step::Welcome => welcome(ui, theme, bridge),
@@ -416,13 +413,21 @@ impl Onboarding {
                                 Step::Done => self.done(ui, theme, bridge),
                             }
                         });
-                    if is_current && reveal < 1.0 {
-                        stagger_reveal(ctx, layer_id, first_shape, content_top, reveal);
-                    }
+                    apply_reveal(ctx, layer_id, is_current.then_some(reveal));
                 }
 
                 // ── action bar ──
                 let bar = Rect::from_min_max(pos2(main_left, card.bottom() - BAR_HEIGHT), card.max);
+                // A fixed id scope: one or two pages render above this, and
+                // auto ids that shifted with them restarted the buttons' colour
+                // animations, so they flashed at every step change.
+                let mut bar_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt("onboarding-action-bar")
+                        .max_rect(bar)
+                        .layout(Layout::top_down(Align::Min)),
+                );
+                let ui = &mut bar_ui;
                 ui.painter().rect_filled(
                     Rect::from_min_size(bar.min, vec2(bar.width(), 1.0)),
                     0.0,
@@ -526,7 +531,8 @@ impl Onboarding {
                     }
                 }
 
-                ui.painter().rect_stroke(
+                // The card border sits above everything (`cardBorder`).
+                ctx.layer_painter(layer_id).with_clip_rect(region).rect_stroke(
                     card,
                     radius,
                     Stroke::new(1.0, theme.flyout_border),
@@ -784,11 +790,15 @@ impl Onboarding {
             &tr(key, &[("version", &previous)]),
             28.0,
             8.0,
+            0.0,
+            16.0,
         );
-        for group in bridge.onboarding_whats_new() {
-            let version = group["version"].as_str().unwrap_or_default();
-            section_label(ui, theme, &tr("Что нового в {version}", &[("version", version)]));
-            group_card(ui, theme, &group);
+        for (index, group) in bridge.onboarding_whats_new().into_iter().enumerate() {
+            let version = group["version"].as_str().unwrap_or_default().to_owned();
+            rv(ui, 3.0 + index as f32, 16.0, |ui| {
+                section_label(ui, theme, &tr("Что нового в {version}", &[("version", &version)]));
+                group_card(ui, theme, &group);
+            });
         }
         ui.add_space(8.0);
     }
@@ -802,21 +812,24 @@ impl Onboarding {
         );
         // Upgraded profiles pick the language here; fresh installs did on welcome.
         if self.flow[0] != Step::Welcome {
-            language_picker(ui, theme, bridge);
+            rv(ui, 1.0, 16.0, |ui| language_picker(ui, theme, bridge));
         }
 
-        section_label(ui, theme, &tr("Тема", &[]));
-        let rects = grid(ui, 3, 10.0, 3, 112.0);
-        let active_theme = bridge.theme_name().to_owned();
-        for (index, key) in ["system", "light", "dark"].into_iter().enumerate() {
-            let label = tr(theme_label(key), &[]);
-            let id = Id::unique(("onboarding-theme", index));
-            if theme_card(ui, theme, rects[index], id, key, &label, active_theme == key) {
-                bridge.set_theme(key);
+        rv(ui, 2.0, 0.0, |ui| section_label(ui, theme, &tr("Тема", &[])));
+        rv(ui, 2.0, 16.0, |ui| {
+            let rects = grid(ui, 3, 10.0, 3, 112.0);
+            let active_theme = bridge.theme_name().to_owned();
+            for (index, key) in ["system", "light", "dark"].into_iter().enumerate() {
+                let label = tr(theme_label(key), &[]);
+                let id = Id::unique(("onboarding-theme", index));
+                if theme_card(ui, theme, rects[index], id, key, &label, active_theme == key) {
+                    bridge.set_theme(key);
+                }
             }
-        }
+        });
 
-        section_label(ui, theme, &tr("Палитра", &[]));
+        rv(ui, 3.0, 0.0, |ui| section_label(ui, theme, &tr("Палитра", &[])));
+        let palette_start = ui.painter().add(egui::Shape::Noop).0;
         let dark_map = dark_preset_map();
         let light_map = light_preset_map();
         let preset = bridge.settings().ui_theme_preset.clone();
@@ -861,9 +874,11 @@ impl Onboarding {
                 bridge.set_ui_theme_preset(key);
             }
         }
+        let palette_end = ui.painter().add(egui::Shape::Noop).0;
+        REVEAL_BLOCKS.with(|blocks| blocks.borrow_mut().push((palette_start, palette_end, 3.0, 16.0)));
 
-        section_label(ui, theme, &tr("Цвет акцента", &[]));
-        self.accent_flow(ui, theme, bridge);
+        rv(ui, 4.0, 0.0, |ui| section_label(ui, theme, &tr("Цвет акцента", &[])));
+        rv(ui, 4.0, 16.0, |ui| self.accent_flow(ui, theme, bridge));
         ui.add_space(8.0);
     }
 
@@ -996,6 +1011,7 @@ impl Onboarding {
         );
 
         ui.add_space(18.0);
+        let answers_start = ui.painter().add(egui::Shape::Noop).0;
         let width = ui.available_width();
         let cols = if width >= 520.0 { 2 } else { 1 };
         let cell = grid_cell_width(width, cols, 10.0);
@@ -1033,6 +1049,8 @@ impl Onboarding {
                 self.config_choice = Some(index == 0);
             }
         }
+        let answers_end = ui.painter().add(egui::Shape::Noop).0;
+        REVEAL_BLOCKS.with(|blocks| blocks.borrow_mut().push((answers_start, answers_end, 1.0, 16.0)));
 
         let importing = bridge.subscription_importing();
         reveal(
@@ -1281,6 +1299,8 @@ impl Onboarding {
             ),
             30.0,
             8.0,
+            1.0,
+            16.0,
         );
         ui.add_space(22.0);
         let languages = bridge.available_languages();
@@ -1354,15 +1374,17 @@ impl Onboarding {
         let cols = if ui.available_width() >= 560.0 { 2 } else { 1 };
         let rects = grid(ui, cols, 10.0, rows.len(), 58.0);
         for (index, (glyph, key, value, target)) in rows.iter().enumerate() {
-            if summary_row(
-                ui,
-                theme,
-                rects[index],
-                Id::unique(("onboarding-summary", index)),
-                glyph,
-                key,
-                value,
-            ) && let Some(target) = target
+            if rv(ui, 3.0 + index as f32 * 0.5, 16.0, |ui| {
+                summary_row(
+                    ui,
+                    theme,
+                    rects[index],
+                    Id::unique(("onboarding-summary", index)),
+                    glyph,
+                    key,
+                    value,
+                )
+            }) && let Some(target) = target
             {
                 self.step = *target;
             }
@@ -1372,7 +1394,7 @@ impl Onboarding {
         let support = support_height(ui, theme, self.show_support);
         let filler = (self.view_height - used - support - 12.0).max(32.0);
         ui.add_space(filler);
-        support_card(ui, theme, bridge, &mut self.show_support);
+        rv(ui, 5.5, 16.0, |ui| support_card(ui, theme, bridge, &mut self.show_support));
         ui.add_space(12.0);
     }
 }
@@ -1395,9 +1417,9 @@ fn welcome(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
             &[],
         )
     };
-    hero_header(ui, theme, &tr(title, &[]), &intro, 30.0, 10.0);
-    language_picker(ui, theme, bridge);
-    section_label(ui, theme, &tr("Возможности", &[]));
+    hero_header(ui, theme, &tr(title, &[]), &intro, 30.0, 10.0, 1.0, 18.0);
+    rv(ui, 3.0, 16.0, |ui| language_picker(ui, theme, bridge));
+    rv(ui, 4.0, 0.0, |ui| section_label(ui, theme, &tr("Возможности", &[])));
     let tiles = [
         (
             "\u{ec05}",
@@ -1429,15 +1451,17 @@ fn welcome(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
         .fold(0.0, f32::max);
     let rects = grid(ui, cols, 12.0, tiles.len(), cell_height);
     for (index, (glyph, title, subtitle)) in tiles.iter().enumerate() {
-        feature_tile(
-            ui,
-            theme,
-            rects[index],
-            Id::unique(("onboarding-tile", index)),
-            glyph,
-            title,
-            subtitle,
-        );
+        rv(ui, 4.0 + index as f32 * 0.6, 22.0, |ui| {
+            feature_tile(
+                ui,
+                theme,
+                rects[index],
+                Id::unique(("onboarding-tile", index)),
+                glyph,
+                title,
+                subtitle,
+            )
+        });
     }
     ui.add_space(8.0);
 }
@@ -1489,6 +1513,7 @@ fn route(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
     );
     let busy = bridge.regional_preset_busy();
     let label_top = ui.cursor().min;
+    let label_start = ui.painter().add(egui::Shape::Noop).0;
     let label_width = section_label(ui, theme, &tr("Региональный профиль", &[]));
     if busy {
         // RowLayout { SectionLabel; BusyIndicator { topMargin: 14 } }: the
@@ -1502,6 +1527,9 @@ fn route(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
             theme.accent,
         );
     }
+    let label_end = ui.painter().add(egui::Shape::Noop).0;
+    REVEAL_BLOCKS.with(|blocks| blocks.borrow_mut().push((label_start, label_end, 1.0, 0.0)));
+    let grid_start = ui.painter().add(egui::Shape::Noop).0;
     let current = bridge.regional_preset();
     let regions = [("russia", "RU"), ("china", "CN"), ("iran", "IR")];
     let width = ui.available_width();
@@ -1537,8 +1565,11 @@ fn route(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
             bridge.set_regional_preset(key);
         }
     }
+    let grid_end = ui.painter().add(egui::Shape::Noop).0;
+    REVEAL_BLOCKS.with(|blocks| blocks.borrow_mut().push((grid_start, grid_end, 1.0, 16.0)));
 
-    section_label(ui, theme, &tr("Что пускать через VPN", &[]));
+    rv(ui, 2.0, 0.0, |ui| section_label(ui, theme, &tr("Что пускать через VPN", &[])));
+    let presets_start = ui.painter().add(egui::Shape::Noop).0;
     let active = bridge.active_routing_preset_id();
     let presets: Vec<(String, String, String, &'static str, bool)> = bridge
         .regional_routing_presets()
@@ -1593,6 +1624,8 @@ fn route(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
             bridge.apply_routing_preset_option(&presets[index].0);
         }
     }
+    let presets_end = ui.painter().add(egui::Shape::Noop).0;
+    REVEAL_BLOCKS.with(|blocks| blocks.borrow_mut().push((presets_start, presets_end, 2.0, 16.0)));
     ui.add_space(8.0);
 }
 
@@ -1603,10 +1636,10 @@ fn system(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
         &tr("Обновления, запуск и диагностика", &[]),
         &tr("Выберите, как Lumen будет обновляться и запускаться.", &[]),
     );
-    section_label(ui, theme, &tr("Обновления", &[]));
+    rv(ui, 1.0, 0.0, |ui| section_label(ui, theme, &tr("Обновления", &[])));
     let check = bridge.check_updates();
     let auto = bridge.app_auto_update();
-    if let Some((index, value)) = option_group(
+    if let Some((index, value)) = rv(ui, 1.5, 16.0, |ui| option_group(
         ui,
         theme,
         "onboarding-updates",
@@ -1626,17 +1659,17 @@ fn system(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
                 enabled: true,
             },
         ],
-    ) {
+    )) {
         if index == 0 {
             bridge.set_check_updates(value);
         } else {
             bridge.set_app_auto_update(value);
         }
     }
-    section_label(ui, theme, &tr("Запуск", &[]));
+    rv(ui, 2.0, 0.0, |ui| section_label(ui, theme, &tr("Запуск", &[])));
     let startup = bridge.launch_on_startup();
     let tray = bridge.launch_in_tray_on_startup();
-    if let Some((index, value)) = option_group(
+    if let Some((index, value)) = rv(ui, 2.5, 16.0, |ui| option_group(
         ui,
         theme,
         "onboarding-startup",
@@ -1656,16 +1689,16 @@ fn system(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
                 enabled: startup,
             },
         ],
-    ) {
+    )) {
         if index == 0 {
             bridge.set_launch_on_startup(value);
         } else {
             bridge.set_launch_in_tray_on_startup(value);
         }
     }
-    section_label(ui, theme, &tr("Диагностика", &[]));
+    rv(ui, 3.0, 0.0, |ui| section_label(ui, theme, &tr("Диагностика", &[])));
     let diagnostics = bridge.diagnostics_upload_enabled();
-    if let Some((_, value)) = option_group(
+    if let Some((_, value)) = rv(ui, 3.5, 16.0, |ui| option_group(
         ui,
         theme,
         "onboarding-diagnostics",
@@ -1676,7 +1709,7 @@ fn system(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
             checked: diagnostics,
             enabled: true,
         }],
-    ) {
+    )) {
         bridge.set_diagnostics_upload(value);
     }
     ui.add_space(8.0);
@@ -1732,6 +1765,54 @@ fn color_hex(color: Color32) -> String {
 /// StepPage `rv(order)`: page content fades in from the top down. The QML
 /// pages number their blocks by hand (about one per 56 px); here the order
 /// follows from where a shape sits in the page.
+thread_local! {
+    /// Reveal blocks recorded while a page renders: shape range, order, slide.
+    static REVEAL_BLOCKS: std::cell::RefCell<Vec<(usize, usize, f32, f32)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A QML block with `opacity: page.rv(order)` and
+/// `transform: Translate { y: (1 - page.rv(order)) * dy }` (`dy` 0 for the
+/// section labels, which only fade).
+fn rv<R>(ui: &mut Ui, order: f32, dy: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let start = ui.painter().add(egui::Shape::Noop).0;
+    let result = add(ui);
+    let end = ui.painter().add(egui::Shape::Noop).0;
+    REVEAL_BLOCKS.with(|blocks| blocks.borrow_mut().push((start, end, order, dy)));
+    result
+}
+
+/// Applies the recorded blocks of the page just rendered (`revealAnim`:
+/// `reveal` runs 0 -> 1 linearly over 1100 ms). Blocks are always drained;
+/// a leaving page keeps `reveal` at 1 as in QML.
+fn apply_reveal(ctx: &Context, layer_id: egui::LayerId, reveal: Option<f32>) {
+    let blocks = REVEAL_BLOCKS.with(|blocks| std::mem::take(&mut *blocks.borrow_mut()));
+    let Some(reveal) = reveal.filter(|reveal| *reveal < 1.0) else {
+        return;
+    };
+    ctx.graphics_mut(|graphics| {
+        let list = graphics.entry(layer_id);
+        for (start, end, order, dy) in blocks {
+            let level = reveal_level(reveal, order);
+            if level >= 1.0 {
+                continue;
+            }
+            let offset = egui::emath::TSTransform::from_translation(vec2(0.0, (1.0 - level) * dy));
+            for index in start..end {
+                list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                    if dy != 0.0 {
+                        clipped.shape.transform(offset);
+                    }
+                    egui::epaint::shape_transform::adjust_colors(&mut clipped.shape, move |color| {
+                        *color = color.gamma_multiply(level);
+                    });
+                });
+            }
+        }
+    });
+}
+
+#[allow(dead_code)]
 fn stagger_reveal(
     ctx: &Context,
     layer_id: egui::LayerId,
@@ -1811,7 +1892,12 @@ fn paragraph(ui: &mut Ui, text: &str, font: FontId, color: Color32, line: f32) {
 }
 
 /// `PageHeader`: 24pt semibold title and a normal muted subtitle.
+/// `PageHeader`: one block, `rv(0)`, 16 px.
 fn header(ui: &mut Ui, theme: &Theme, title: &str, subtitle: &str) {
+    rv(ui, 0.0, 16.0, |ui| page_header(ui, theme, title, subtitle));
+}
+
+fn page_header(ui: &mut Ui, theme: &Theme, title: &str, subtitle: &str) {
     paragraph(ui, title, semibold(px(theme, 24.0)), theme.text, 1.0);
     if !subtitle.is_empty() {
         ui.add_space(6.0);
@@ -1826,16 +1912,21 @@ fn header(ui: &mut Ui, theme: &Theme, title: &str, subtitle: &str) {
 }
 
 /// Large welcome/news/done title with a 15pt muted intro.
-fn hero_header(ui: &mut Ui, theme: &Theme, title: &str, intro: &str, size: f32, gap: f32) {
-    paragraph(ui, title, semibold(px(theme, size)), theme.text, 1.0);
+/// The title and intro are separate blocks: `rv(first)` and `rv(first + 1)`,
+/// each sliding `dy` px.
+#[allow(clippy::too_many_arguments)]
+fn hero_header(ui: &mut Ui, theme: &Theme, title: &str, intro: &str, size: f32, gap: f32, first: f32, dy: f32) {
+    rv(ui, first, dy, |ui| paragraph(ui, title, semibold(px(theme, size)), theme.text, 1.0));
     ui.add_space(gap);
-    paragraph(
-        ui,
-        intro,
-        FontId::proportional(px(theme, 15.0)),
-        theme.text_muted,
-        1.2,
-    );
+    rv(ui, first + 1.0, dy, |ui| {
+        paragraph(
+            ui,
+            intro,
+            FontId::proportional(px(theme, 15.0)),
+            theme.text_muted,
+            1.2,
+        )
+    });
 }
 
 /// `SectionLabel`: uppercase muted small semibold, 22/10 margins.
