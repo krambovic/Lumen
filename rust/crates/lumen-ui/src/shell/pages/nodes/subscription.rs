@@ -257,9 +257,10 @@ fn traffic_ring(ui: &mut Ui, theme: &Theme, state: &Status) {
     let center = rect.center();
     let radius = 46.0;
     let painter = ui.painter();
+    // The Canvas arc is centred on `radius`; egui strokes circles outside.
     painter.circle_stroke(
         center,
-        radius,
+        radius - 4.0,
         egui::Stroke::new(
             8.0,
             Color32::from_black_alpha(if theme.dark { 71 } else { 20 }),

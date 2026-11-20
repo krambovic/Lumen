@@ -324,7 +324,9 @@ pub fn draw_nav_button(
         ui.painter()
             .circle_filled(center, 4.0, Color32::from_rgb(0xE8, 0x11, 0x23));
         ui.painter()
-            .circle_stroke(center, 4.5, egui::Stroke::new(1.0, theme.flyout));
+            // egui strokes circles outside the radius: a 3 px radius gives
+            // the QML border inside the 8 px circle.
+            .circle_stroke(center, 3.0, egui::Stroke::new(1.0, theme.flyout));
     }
 
     if !compact {

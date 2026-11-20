@@ -551,7 +551,8 @@ impl StatusRing {
         let painter = ui.painter();
         let center = rect.center();
         let radius = (rect.width().min(rect.height()) - 8.0) / 2.0;
-        painter.circle_stroke(center, radius, Stroke::new(4.0, idle_track));
+        // Centred on the arc's radius (egui strokes circles outside).
+        painter.circle_stroke(center, radius - 2.0, Stroke::new(4.0, idle_track));
         if arc_alpha > 0.0 {
             let color = arc_color.gamma_multiply(arc_alpha);
             let sweep = sweep.max(0.01);
@@ -594,5 +595,107 @@ mod tests {
         assert!(midway > 90.0 && midway < 360.0);
         assert_eq!(ring.rotation(2.0, false), 0.0);
         assert!(ring.settle.is_none());
+    }
+}
+
+// ── BusyIndicator (Qt Quick Controls Universal) ─────────────────────────────
+
+/// One phase of `QQuickUniversalBusyIndicatorNode`: duration (ms), rotation
+/// range (degrees) and an optional cubic Bezier easing (`None` = linear).
+const BUSY_PHASES: [(f32, f32, f32, Option<[f32; 4]>); 6] = [
+    (433.0, -110.0, 10.0, Some([0.02, 0.33, 0.38, 0.77])),
+    (767.0, 10.0, 93.0, None),
+    (417.0, 93.0, 205.0, Some([0.57, 0.17, 0.95, 0.75])),
+    (400.0, 205.0, 357.0, Some([0.00, 0.19, 0.07, 0.72])),
+    (766.0, 357.0, 439.0, None),
+    (434.0, 439.0, 585.0, Some([0.00, 0.00, 0.95, 0.37])),
+];
+const BUSY_INTERVAL: f32 = 167.0;
+const BUSY_TOTAL: f32 = 4052.0;
+
+/// `QEasingCurve::BezierSpline` with one segment from (0,0) to (1,1).
+fn cubic_bezier(points: [f32; 4], progress: f32) -> f32 {
+    let [x1, y1, x2, y2] = points;
+    let axis = |t: f32, a: f32, b: f32| {
+        let u = 1.0 - t;
+        3.0 * u * u * t * a + 3.0 * u * t * t * b + t * t * t
+    };
+    // x(t) is monotonic for these control points: bisect for t.
+    let (mut low, mut high) = (0.0_f32, 1.0_f32);
+    for _ in 0..24 {
+        let mid = (low + high) / 2.0;
+        if axis(mid, x1, x2) < progress {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    axis((low + high) / 2.0, y1, y2)
+}
+
+/// Rotation (degrees) of each dot at `time_ms` into the 4052 ms loop, or
+/// `None` while the dot is hidden (`updateCurrentTime`).
+fn busy_dot_rotations(time_ms: f32, count: usize) -> Vec<Option<f32>> {
+    (0..count)
+        .map(|index| {
+            let begin = index as f32 * BUSY_INTERVAL;
+            let end = BUSY_TOTAL - (BUSY_PHASES.len() - index - 1) as f32 * BUSY_INTERVAL;
+            if time_ms < begin || time_ms > end {
+                return None;
+            }
+            let (mut phase, mut remain, mut elapsed) = (0, time_ms, 0.0);
+            while phase < BUSY_PHASES.len() - 1 {
+                if remain <= BUSY_PHASES[phase].0 + begin {
+                    break;
+                }
+                remain -= BUSY_PHASES[phase].0;
+                elapsed += BUSY_PHASES[phase].0;
+                phase += 1;
+            }
+            let (duration, from, to, curve) = BUSY_PHASES[phase];
+            let shift = (index * count) as f32;
+            let progress = ((time_ms - elapsed - begin) / duration).clamp(0.0, 1.0);
+            let value = curve.map_or(progress, |points| cubic_bezier(points, progress));
+            Some((from - shift) + ((to - shift) - (from - shift)) * value)
+        })
+        .collect()
+}
+
+/// The Universal-style `BusyIndicator` (Windows 8 progress ring): five
+/// accent dots, or six from 60 px, that chase each other around a ring.
+/// Port of `QQuickUniversalBusyIndicatorNode::sync` / `updateCurrentTime`.
+pub(crate) fn busy_indicator(ui: &Ui, rect: Rect, color: Color32) {
+    let size = rect.width().min(rect.height());
+    let count = if size < 60.0 { 5 } else { 6 };
+    let diameter = size / 10.0;
+    let offset = (size - diameter * 2.0) / std::f32::consts::PI;
+    // The dot's centre in the node space before rotation (45° down-right).
+    let base = egui::vec2(offset + diameter / 2.0, offset + diameter / 2.0);
+    let time_ms = ((ui.input(|input| input.time) * 1000.0) % BUSY_TOTAL as f64) as f32;
+    let painter = ui.painter();
+    for rotation in busy_dot_rotations(time_ms, count).into_iter().flatten() {
+        let (sin, cos) = rotation.to_radians().sin_cos();
+        let point = rect.center() + egui::vec2(base.x * cos - base.y * sin, base.x * sin + base.y * cos);
+        painter.circle_filled(point, diameter / 2.0, color);
+    }
+    ui.ctx().request_repaint();
+}
+
+#[cfg(test)]
+mod busy_indicator_tests {
+    use super::*;
+
+    #[test]
+    fn dots_start_one_interval_apart_and_follow_the_qt_phases() {
+        let at_start = busy_dot_rotations(0.0, 5);
+        assert_eq!(at_start[0], Some(-110.0));
+        assert!(at_start[1..].iter().all(Option::is_none));
+        // The first dot reaches the end of phase 0 (10°) after 433 ms.
+        let rotation = busy_dot_rotations(433.0, 5)[0].unwrap();
+        assert!((rotation - 10.0).abs() < 0.01);
+        // Dot 1 starts 167 ms later, shifted back by count degrees.
+        let rotation = busy_dot_rotations(167.0, 5)[1].unwrap();
+        assert!((rotation - (-115.0)).abs() < 0.01);
+        assert!((cubic_bezier([0.0, 0.19, 0.07, 0.72], 1.0) - 1.0).abs() < 1e-4);
     }
 }

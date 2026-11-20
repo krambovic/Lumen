@@ -632,7 +632,7 @@ impl Onboarding {
             if !lit {
                 painter.circle_stroke(
                     center,
-                    radius - 0.5,
+                    radius - 1.0,
                     Stroke::new(1.0, theme.flyout_border),
                 );
             }
@@ -1221,12 +1221,13 @@ impl Onboarding {
                     }
                     let mut text_x = button_rect.right() + 10.0;
                     if warp_busy {
-                        ui.place(
+                        crate::shell::widgets::busy_indicator(
+                            ui,
                             Rect::from_min_size(
                                 pos2(text_x, row.center().y - 9.0),
                                 vec2(18.0, 18.0),
                             ),
-                            egui::Spinner::new().size(18.0),
+                            theme.accent,
                         );
                         text_x += 18.0 + 10.0;
                     }
@@ -1468,12 +1469,15 @@ fn route(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {
     let label_top = ui.cursor().min;
     let label_width = section_label(ui, theme, &tr("Региональный профиль", &[]));
     if busy {
-        ui.place(
+        // RowLayout { SectionLabel; BusyIndicator { topMargin: 14 } }: the
+        // 18 px ring starts at the label's text top, 5 px after it.
+        crate::shell::widgets::busy_indicator(
+            ui,
             Rect::from_min_size(
-                pos2(label_top.x + label_width + 5.0, label_top.y + 22.0 + 4.0),
+                pos2(label_top.x + label_width + 5.0, label_top.y + 22.0),
                 vec2(18.0, 18.0),
             ),
-            egui::Spinner::new().size(18.0),
+            theme.accent,
         );
     }
     let current = bridge.regional_preset();
@@ -2162,6 +2166,10 @@ impl Choice<'_> {
                     .max_rect(Rect::from_center_size(center, vec2(30.0, 22.0)))
                     .layout(Layout::top_down(Align::Min)),
             );
+            if !self.enabled {
+                // `opacity: enabled ? 1 : 0.55` covers the whole card.
+                flag_ui.multiply_opacity(0.55);
+            }
             flag::show(&mut flag_ui, code, vec2(30.0, 22.0));
             painter.rect_stroke(
                 Rect::from_center_size(center, vec2(32.0, 24.0)),
@@ -2242,7 +2250,9 @@ impl Choice<'_> {
         .max(0.5);
         painter.circle_stroke(
             pos2(body.right() - 16.0 - 10.0, center_y),
-            10.0 - ring / 2.0,
+            // egui strokes circles outside the radius; the QML border is
+            // inside the 20 px circle.
+            10.0 - ring,
             Stroke::new(
                 ring,
                 if self.selected { theme.accent } else { theme.text_faint },
@@ -2393,7 +2403,7 @@ fn theme_card(
     .max(0.5);
     ui.painter().circle_stroke(
         pos2(body.right() - 12.0 - 9.0, body.bottom() - 11.0 - 9.0),
-        9.0 - ring / 2.0,
+        9.0 - ring,
         Stroke::new(
             ring,
             if selected { theme.accent } else { theme.text_faint },
@@ -2556,7 +2566,8 @@ fn accent_dot(
     );
     let center = rect.center();
     ui.painter()
-        .circle_stroke(center, 16.0, Stroke::new(2.0, ring));
+        // 34 px circle with a 2 px border inside (egui strokes outside).
+        .circle_stroke(center, 15.0, Stroke::new(2.0, ring));
     let radius = diameter / 2.0 * scale;
     if custom {
         ui.painter().circle_filled(
@@ -2566,7 +2577,7 @@ fn accent_dot(
         );
         if !selected {
             ui.painter()
-                .circle_stroke(center, radius - 0.5, Stroke::new(1.0, theme.divider));
+                .circle_stroke(center, radius - 1.0, Stroke::new(1.0, theme.divider));
         }
         let ink = if selected { theme.accent_text } else { theme.text_muted };
         let glyph = lay(
@@ -2896,9 +2907,10 @@ fn status_row(
     let (row, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let mut x = row.left();
     if spinner {
-        ui.place(
+        crate::shell::widgets::busy_indicator(
+            ui,
             Rect::from_min_size(pos2(x, row.center().y - 9.0), vec2(18.0, 18.0)),
-            egui::Spinner::new().size(18.0),
+            theme.accent,
         );
         x += 18.0 + 8.0;
     }
