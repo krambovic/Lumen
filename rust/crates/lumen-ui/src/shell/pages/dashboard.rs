@@ -3,7 +3,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use egui::{
-    Align, Color32, FontId, Id, Key, Layout, Modal, Modifiers, Rect, ScrollArea, Sense,
+    Align, Color32, FontId, Id, Key, Layout, Modifiers, Rect, ScrollArea, Sense,
     Ui, pos2, vec2,
 };
 use lumen_core::i18n::tr;
@@ -104,18 +104,7 @@ impl DashboardPage {
                 }
             });
         if self.mode_help {
-            let modal = Modal::new(Id::unique("dashboard-mode-help")).show(page.ctx, |ui| {
-                ui.set_width(475.0_f32.min((page.ctx.content_rect().width() - 48.0).max(0.0)));
-                widgets::section_title(ui, theme, &tr("VPN (TUN) или системный прокси", &[]));
-                widgets::section_title(ui, theme, &tr("Системный прокси", &[]));
-                ui.label(tr("Работает с браузерами, мессенджерами и приложениями, которые используют настройки прокси Windows. Обычно запускается быстрее, но чаще не действует в играх и программах без поддержки прокси.", &[]));
-                widgets::section_title(ui, theme, &tr("VPN (TUN)", &[]));
-                ui.label(tr("Перехватывает трафик почти всех приложений, включая игры, и применяет правила маршрутизации на уровне системы. Требует прав администратора и запускается немного дольше.", &[]));
-                ui.button(tr("Понятно", &[])).clicked()
-            });
-            if modal.inner || modal.should_close() {
-                self.mode_help = false;
-            }
+            self.mode_help = mode_help(page.ctx, theme);
         }
         self.editor.render(page.ctx, theme, bridge);
     }
@@ -1019,4 +1008,33 @@ mod tests {
         assert_eq!(bytes(1024.0), "1.0 KB");
         assert_eq!(bytes(1024.0_f64.powi(3)), "1.00 GB");
     }
+}
+
+/// `modeHelp` in `DashboardPage.qml`: a 460 px dialog with no content
+/// padding; titles and texts carry their own 20 px insets, 10 px apart, the
+/// texts muted at 1.25 line height, a divider between the two modes and a
+/// single accent "Понятно" button. Returns whether it stays open.
+fn mode_help(ctx: &egui::Context, theme: &Theme) -> bool {
+    use crate::shell::fluent_dialog::{DialogAction, FluentDialog, body_text_spaced};
+    let action = FluentDialog::new("dashboard-mode-help", tr("VPN (TUN) или системный прокси", &[]), 460.0)
+        .ok(tr("Понятно", &[]))
+        .no_cancel()
+        // header bottomPadding 6 (the shared header has 2); `padding: 0`
+        // leaves the style's `verticalPadding: 18` on top and bottom.
+        .padding(egui::Margin { left: 20, right: 20, top: 22, bottom: 18 })
+        .show(ctx, theme, |ui| {
+            let strong = crate::shell::theme::semibold(theme.font_strong as f32);
+            let body = FontId::proportional(theme.font_normal as f32);
+            crate::shell::fluent_dialog::body_text(ui, &tr("Системный прокси", &[]), strong.clone(), theme.text);
+            ui.add_space(10.0);
+            body_text_spaced(ui, &tr("Работает с браузерами, мессенджерами и приложениями, которые используют настройки прокси Windows. Обычно запускается быстрее, но чаще не действует в играх и программах без поддержки прокси.", &[]), body.clone(), theme.text_muted, 1.25);
+            ui.add_space(10.0);
+            let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(line, 0.0, theme.divider);
+            ui.add_space(10.0);
+            crate::shell::fluent_dialog::body_text(ui, "VPN (TUN)", strong, theme.text);
+            ui.add_space(10.0);
+            body_text_spaced(ui, &tr("Перехватывает трафик почти всех приложений, включая игры, и применяет правила маршрутизации на уровне системы. Требует прав администратора и запускается немного дольше.", &[]), body, theme.text_muted, 1.25);
+        });
+    action == DialogAction::None
 }

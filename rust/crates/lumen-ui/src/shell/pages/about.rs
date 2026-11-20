@@ -1,7 +1,7 @@
 //! Project information and support dialogs from `AboutPage.qml`.
 
 use egui::{
-    Align, Color32, Frame, Id, Layout, Modal, RichText, ScrollArea, Stroke, TextureHandle,
+    Align, Color32, RichText, ScrollArea, TextureHandle,
     Ui, Vec2, vec2,
 };
 use lumen_core::i18n::tr;
@@ -56,102 +56,94 @@ impl AboutPage {
         let Some(dialog) = self.dialog else {
             return;
         };
-        let width: f32 = match dialog {
-            Dialog::Support => 430.0,
-            Dialog::Usdt => 420.0,
-        };
-        let modal = Modal::new(Id::unique("lumen-about-dialog"))
-            .backdrop_color(Color32::from_black_alpha(115))
-            .frame(
-                Frame::new()
-                    .fill(theme.flyout)
-                    .stroke(Stroke::new(1.0, theme.flyout_border))
-                    .corner_radius(10.0)
-                    .inner_margin(19.0),
-            )
-            .show(page.ctx, |ui| {
-                ui.set_width((width - 40.0).min((page.ctx.content_rect().width() - 64.0).max(0.0)));
-                ui.spacing_mut().item_spacing.y = 12.0;
-                fluent_button::style(ui);
-                let title = match dialog {
-                    Dialog::Support => tr("Поддержать проект", &[]),
-                    Dialog::Usdt => "USDT (TRC20)".into(),
-                };
-                ui.label(RichText::new(title).font(semibold(theme.font_strong as f32)));
-                match dialog {
-                    Dialog::Support => {
-                        ui.label(
-                            RichText::new(tr("Выберите удобный способ поддержки:", &[]))
-                                .color(theme.text_muted),
+        use crate::shell::fluent_dialog::{DialogAction, FluentDialog, body_text};
+        use crate::shell::widgets::{ButtonKind, FluentButton};
+        let mut next = Some(dialog);
+        let action = match dialog {
+            // supportDialog: 430 px, column spacing 12, full-width buttons.
+            Dialog::Support => FluentDialog::new("about-support", tr("Поддержать проект", &[]), 430.0)
+                .no_ok()
+                .cancel(tr("Закрыть", &[]))
+                .show(page.ctx, theme, |ui| {
+                    body_text(
+                        ui,
+                        &tr("Выберите удобный способ поддержки:", &[]),
+                        egui::FontId::proportional(theme.font_normal as f32),
+                        theme.text_muted,
+                    );
+                    ui.add_space(12.0);
+                    let width = ui.available_width();
+                    if FluentButton::new(ButtonKind::Accent, "\u{e8f1}", "DonationAlerts")
+                        .width(width)
+                        .show(ui, theme)
+                        .clicked()
+                    {
+                        next = None;
+                        open_url(ui, DONATION_URL);
+                    }
+                    ui.add_space(12.0);
+                    if FluentButton::new(ButtonKind::Ghost, "\u{e8c7}", "USDT (TRC20)")
+                        .width(width)
+                        .show(ui, theme)
+                        .clicked()
+                    {
+                        next = Some(Dialog::Usdt);
+                    }
+                }),
+            // usdtDialog: 420 px, a centred 250 px QR, the read-only address
+            // and a centred accent copy button, 12 px apart.
+            Dialog::Usdt => FluentDialog::new("about-usdt", "USDT (TRC20)", 420.0)
+                .no_ok()
+                .cancel(tr("Закрыть", &[]))
+                .show(page.ctx, theme, |ui| {
+                    if self.qr.is_none() {
+                        self.qr = load_qr(page.ctx);
+                    }
+                    let width = ui.available_width();
+                    if let Some(texture) = &self.qr {
+                        let side = (page.ctx.content_rect().height() - 260.0).clamp(64.0, 250.0).min(width);
+                        let (row, _) = ui.allocate_exact_size(vec2(width, side), egui::Sense::hover());
+                        let rect = egui::Rect::from_center_size(row.center(), Vec2::splat(side));
+                        ui.painter().image(
+                            texture.id(),
+                            rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            Color32::WHITE,
                         );
-                        let size = vec2(ui.available_width(), theme.control_height as f32);
-                        if ui
-                            .add_sized(
-                                size,
-                                fluent_button::button(theme, "\u{e8f1}", "DonationAlerts", true),
-                            )
-                            .clicked()
-                        {
-                            self.dialog = None;
-                            open_url(ui, DONATION_URL);
-                        }
-                        if ui
-                            .add_sized(
-                                size,
-                                fluent_button::button(theme, "\u{e8c7}", "USDT (TRC20)", false),
-                            )
-                            .clicked()
-                        {
-                            self.dialog = Some(Dialog::Usdt);
-                        }
                     }
-                    Dialog::Usdt => {
-                        if self.qr.is_none() {
-                            self.qr = load_qr(page.ctx);
+                    ui.add_space(12.0);
+                    let mut address = USDT_ADDRESS;
+                    ui.add_sized(
+                        vec2(width, theme.control_height as f32),
+                        egui::TextEdit::singleline(&mut address)
+                            .background_color(theme.control_fill)
+                            .horizontal_align(Align::Center)
+                            .vertical_align(Align::Center),
+                    );
+                    ui.add_space(12.0);
+                    let label = tr("Копировать адрес", &[]);
+                    let button_width = ui
+                        .painter()
+                        .layout_no_wrap(label.clone(), crate::shell::theme::semibold(theme.font_normal as f32), theme.text)
+                        .size()
+                        .x
+                        + ui.painter().layout_no_wrap("\u{e8c8}".into(), egui::FontId::proportional(theme.font_normal as f32), theme.text).size().x
+                        + 8.0
+                        + 28.0;
+                    ui.horizontal(|ui| {
+                        ui.add_space(((width - button_width) / 2.0).max(0.0));
+                        if FluentButton::new(ButtonKind::Accent, "\u{e8c8}", &label).show(ui, theme).clicked()
+                            && let Some(text) = bridge.copy_text(USDT_ADDRESS)
+                        {
+                            ui.ctx().copy_text(text);
                         }
-                        ui.vertical_centered(|ui| {
-                            if let Some(texture) = &self.qr {
-                                let size =
-                                (page.ctx.content_rect().height() - 228.0).clamp(64.0, 250.0);
-                                ui.image((
-                                    texture.id(),
-                                    Vec2::splat(ui.available_width().min(size)),
-                                ));
-                            }
-                            let mut address = USDT_ADDRESS;
-                            ui.add_sized(
-                                vec2(ui.available_width(), theme.control_height as f32),
-                                egui::TextEdit::singleline(&mut address)
-                                    .align(egui::Align2::CENTER_CENTER),
-                            );
-                            if ui
-                                .add(fluent_button::button(
-                                    theme,
-                                    "\u{e8c8}",
-                                    &tr("Копировать адрес", &[]),
-                                    true,
-                                ))
-                                .clicked()
-                                && let Some(text) = bridge.copy_text(USDT_ADDRESS)
-                            {
-                                ui.ctx().copy_text(text);
-                            }
-                        });
-                    }
-                }
-                ui.allocate_ui_with_layout(
-                    vec2(ui.available_width(), theme.control_height as f32),
-                    Layout::right_to_left(Align::Center),
-                    |ui| {
-                        ui.add(fluent_button::button(theme, "", &tr("Закрыть", &[]), false))
-                            .clicked()
-                    },
-                )
-                .inner
-            });
-        if modal.inner || modal.should_close() {
-            self.dialog = None;
+                    });
+                }),
+        };
+        if action != DialogAction::None {
+            next = None;
         }
+        self.dialog = next;
     }
 }
 
