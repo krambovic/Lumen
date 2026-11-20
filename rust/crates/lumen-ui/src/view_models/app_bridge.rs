@@ -5136,11 +5136,17 @@ impl AppBridge {
         let value = subscription_id.trim().to_string();
         let mut controller = self.controller.lock();
         if controller.state.settings.selected_subscription_id == value {
+            drop(controller);
+            self.settings_cached.selected_subscription_id = value;
             return;
         }
-        controller.state.settings.selected_subscription_id = value;
+        controller.state.settings.selected_subscription_id = value.clone();
         controller.schedule_save();
         drop(controller);
+        // `selected_subscription_id()` reads the cached settings; without
+        // this the source picker and inspector kept the old selection until
+        // an unrelated settings refresh.
+        self.settings_cached.selected_subscription_id = value;
         self.changes.selected_subscription = true;
     }
 

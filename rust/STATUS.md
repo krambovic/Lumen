@@ -549,8 +549,14 @@ client, core/resource updaters, zapret and discord proxy managers.
     them on a worker thread from `start_deferred`.
   - Settings rows lay out right to left: the info icon goes after the
     control in code so that it appears before it, as in QML.
-  - Known gap: the servers page source picker (`sourceButton` /
-    `sourcePopup` in `NodesPage.qml`) is still a stock egui button and menu.
+  - Servers page source picker (`pages/nodes/source.rs`) follows
+    `sourceButton` / `sourcePopup`: title with the coloured subscription line
+    (`Status::segments`, the QML `lineHtml`) or "Серверов: N", a 360 px popup
+    aligned to the button's right edge with headers, active marker, usage
+    bars, counts, the hover delete button for groups and the import / new
+    group footer. `set_selected_subscription_id` now also updates the cached
+    settings it is read from; the selection used to show only after an
+    unrelated settings refresh.
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated

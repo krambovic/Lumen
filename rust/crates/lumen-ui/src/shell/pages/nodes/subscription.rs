@@ -90,29 +90,48 @@ impl Status {
         }
     }
 
-    pub(super) fn summary(&self) -> Option<String> {
-        let mut parts = Vec::new();
-        if let Some(used) = self.used.filter(|_| self.days.is_none_or(|days| days > 0)) {
-            parts.push(
-                if let Some(limit) = self.limit.filter(|limit| *limit > 0.0) {
-                    format!(
-                        "{} {}",
-                        bytes(used),
-                        tr("из {total}", &[("total", &bytes(limit))])
-                    )
-                } else {
-                    tr("Безлимитный трафик", &[])
-                },
-            );
+    /// `computeSubState().lineHtml`: the traffic part in the traffic colour
+    /// (green, yellow from 75%, red from 90%), the days left in red when
+    /// expired, yellow within 3 days and muted otherwise, joined by a faint
+    /// " · ".
+    pub(super) fn segments(&self, theme: &Theme) -> Vec<(String, Color32)> {
+        let mut segments = Vec::new();
+        let expired = self.days.is_some_and(|days| days <= 0);
+        if let Some(used) = self.used.filter(|_| !expired) {
+            if let Some(limit) = self.limit.filter(|limit| *limit > 0.0) {
+                let text = format!("{} {}", bytes(used), tr("из {total}", &[("total", &bytes(limit))]));
+                segments.push((text, self.traffic_color(theme)));
+            } else {
+                segments.push((tr("Безлимитный трафик", &[]), theme.success));
+            }
         }
         if let Some(days) = self.days {
-            parts.push(if days <= 0 {
-                tr("Подписка истекла", &[])
+            let (text, color) = if days <= 0 {
+                (tr("Подписка истекла", &[]), theme.danger)
             } else {
-                tr("осталось {days} дн.", &[("days", &days.to_string())])
-            });
+                let text = tr("осталось {days} дн.", &[("days", &days.to_string())]);
+                (text, if days <= 3 { theme.warning } else { theme.text_muted })
+            };
+            if !segments.is_empty() {
+                segments.push((" · ".into(), theme.text_faint));
+            }
+            segments.push((text, color));
         }
-        (!parts.is_empty()).then(|| parts.join(" · "))
+        segments
+    }
+
+    /// `trafficColor`: what is left of a limited plan.
+    pub(super) fn traffic_color(&self, theme: &Theme) -> Color32 {
+        match self.fraction() {
+            Some(fraction) if fraction >= 0.9 => theme.danger,
+            Some(fraction) if fraction >= 0.75 => theme.warning,
+            _ => theme.success,
+        }
+    }
+
+    /// The usage bar of a limited, unexpired plan (`hasBar` / `fraction`).
+    pub(super) fn bar(&self) -> Option<f32> {
+        self.fraction()
     }
 }
 

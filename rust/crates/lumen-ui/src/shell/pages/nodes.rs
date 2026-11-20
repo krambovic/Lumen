@@ -1,5 +1,6 @@
 //! Server table, inspector, bulk actions and subscription sources.
 
+mod source;
 mod subscription;
 
 use std::collections::HashSet;
@@ -225,119 +226,7 @@ impl NodesPage {
                     self.open(Dialog::Group);
                 }
             });
-            let name = if let Some(sub) = selected_sub {
-                subscription::name(sub).to_string()
-            } else if group.is_empty() {
-                tr("Все серверы", &[])
-            } else {
-                group.clone()
-            };
-            let mut label = egui::text::LayoutJob::default();
-            label.append(
-                &name,
-                0.0,
-                egui::TextFormat {
-                    font_id: semibold(theme.font_normal as f32),
-                    color: theme.text,
-                    ..Default::default()
-                },
-            );
-            if let Some(status) = selected_sub.map(subscription::Status::new)
-                && let Some(summary) = status.summary()
-            {
-                let (usage, time) = summary.split_once(" · ").unwrap_or((&summary, ""));
-                label.append(
-                    usage,
-                    10.0,
-                    egui::TextFormat {
-                        font_id: egui::FontId::proportional(11.0),
-                        color: status.color(theme),
-                        ..Default::default()
-                    },
-                );
-                if !time.is_empty() {
-                    label.append(
-                        &format!(" · {time}"),
-                        0.0,
-                        egui::TextFormat {
-                            font_id: egui::FontId::proportional(11.0),
-                            color: theme.text_muted,
-                            ..Default::default()
-                        },
-                    );
-                }
-            }
-            let picker = menu(ui, Button::new(label).truncate(), source_width, |ui| {
-                if button(ui, "Все серверы") {
-                    self.choose_source(bridge, "", "");
-                    ui.close();
-                }
-                if !subscriptions.is_empty() {
-                    ui.separator();
-                    ui.label(tr("Подписки", &[]));
-                }
-                for sub in subscriptions {
-                    let state = subscription::Status::new(sub);
-                    let label = format!(
-                        "{} · {}",
-                        subscription::name(sub),
-                        field_value(&sub["node_count"])
-                    );
-                    if ui
-                        .selectable_label(
-                            selected_sub
-                                .is_some_and(|active| field(active, "id") == field(sub, "id")),
-                            label,
-                        )
-                        .clicked()
-                    {
-                        self.choose_source(bridge, subscription::group(sub), field(sub, "id"));
-                        ui.close();
-                    }
-                    if let Some(summary) = state.summary() {
-                        ui.label(
-                            RichText::new(summary)
-                                .size(theme.font_small as f32)
-                                .color(state.color(theme)),
-                        );
-                    }
-                }
-                ui.separator();
-                ui.label(tr("Группы", &[]));
-                for manual in bridge.group_options() {
-                    if subscriptions
-                        .iter()
-                        .any(|sub| subscription::group(sub) == manual)
-                    {
-                        continue;
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.selectable_label(group == manual, &manual).clicked() {
-                            self.choose_source(bridge, &manual, "");
-                            ui.close();
-                        }
-                        if !manual.eq_ignore_ascii_case("default") && button(ui, "Удалить") {
-                            self.open(Dialog::DeleteGroup(manual.clone()));
-                            ui.close();
-                        }
-                    });
-                }
-                if button(ui, "Импорт подписки") {
-                    self.open(Dialog::Subscription);
-                    ui.close();
-                }
-                if button(ui, "Новая группа") {
-                    self.open(Dialog::Group);
-                    ui.close();
-                }
-            });
-            ui.painter().text(
-                egui::pos2(picker.rect.right() - 12.0, picker.rect.center().y),
-                egui::Align2::CENTER_CENTER,
-                "\u{e70d}",
-                egui::FontId::proportional(9.0),
-                theme.text_muted,
-            );
+            self.source_picker(ui, theme, bridge, subscriptions, selected_sub, &group, source_width);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.label(RichText::new(tr("Серверы", &[])).font(semibold(theme.font_title as f32)));
                 if !self.picked.is_empty() && ui.available_width() > 76.0 {
@@ -1300,17 +1189,6 @@ fn toolbar_row(ui: &mut Ui, spacing: f32, content: impl FnOnce(&mut Ui)) {
             content(ui);
         },
     );
-}
-
-fn menu(
-    ui: &mut Ui,
-    button: Button<'_>,
-    width: f32,
-    content: impl FnOnce(&mut Ui),
-) -> egui::Response {
-    let response = ui.add_sized([width, 32.0], button);
-    egui::Popup::menu(&response).show(content);
-    response
 }
 
 fn icon_button(ui: &mut Ui, glyph: &str, label: &str) -> bool {
