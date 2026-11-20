@@ -142,7 +142,7 @@ impl ZapretPage {
                 let gap = theme.spacing as f32;
                 if let Some(sidebar) = sidebar_width(width) {
                     let remaining_height = viewport_height - (ui.next_widget_position().y - top);
-                    let preview_height = (remaining_height - 202.0 - bindings.len().min(4) as f32 * 40.0).max(180.0);
+                    let preview_height = (remaining_height - 184.0 - bindings.len().min(4) as f32 * 40.0).max(180.0);
                     ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::right_to_left(Align::Min), |ui| {
                         ui.spacing_mut().item_spacing.x = gap;
                         let details = ui.allocate_ui_with_layout(vec2(width - sidebar - gap, 0.0), Layout::top_down(Align::Min), |ui| {
@@ -278,8 +278,10 @@ impl ZapretPage {
         running: bool,
         preview_height: f32,
     ) {
-        card(ui, theme, |ui| {
-            ui.spacing_mut().item_spacing.y = 10.0;
+        // `Card { padding: 0 }`: the header RowLayout has 14 px margins, the
+        // divider spans the card and the CodeEditor keeps 10 px margins.
+        card_with_margin(ui, theme, 0.0, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
             let Some(preset) = self
                 .presets
                 .iter()
@@ -305,8 +307,16 @@ impl ZapretPage {
                     field(preset, "modified")
                 ));
             }
+            // RowLayout height: the text column (title, 2 px, optional
+            // description, info) or the 32 px buttons, whichever is taller.
+            let row = |font: egui::FontId| ui.fonts_mut(|fonts| fonts.row_height(&font));
+            let strong = row(semibold(theme.font_strong as f32));
+            let small = row(egui::FontId::proportional(theme.font_small as f32));
+            let column = strong + 2.0 + if description.is_empty() { 0.0 } else { small + 2.0 } + small;
+            let header_height = column.max(theme.control_height as f32).ceil();
+            egui::Frame::new().inner_margin(egui::Margin::same(13)).show(ui, |ui| {
             ui.allocate_ui_with_layout(
-                vec2(ui.available_width(), 58.0),
+                vec2(ui.available_width(), header_height),
                 Layout::right_to_left(Align::Center),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
@@ -344,7 +354,7 @@ impl ZapretPage {
                         self.confirm = Some(Confirm::Delete);
                     }
                     ui.allocate_ui_with_layout(
-                        vec2(ui.available_width(), 52.0),
+                        vec2(ui.available_width(), column),
                         Layout::top_down(Align::Min),
                         |ui| {
                             ui.set_width(ui.available_width());
@@ -377,17 +387,21 @@ impl ZapretPage {
                     );
                 },
             );
-            ui.add(egui::Separator::default().spacing(1.0));
-            let mut preview = self.preview.as_str();
-            code_editor::show(
-                ui,
-                theme,
-                ("zapret-preview", &self.selected),
-                "",
-                &mut preview,
-                preview_height,
-                None,
-            );
+            });
+            let (divider, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(divider, 0.0, theme.divider);
+            egui::Frame::new().inner_margin(egui::Margin::same(9)).show(ui, |ui| {
+                let mut preview = self.preview.as_str();
+                code_editor::show(
+                    ui,
+                    theme,
+                    ("zapret-preview", &self.selected),
+                    "",
+                    &mut preview,
+                    preview_height,
+                    None,
+                );
+            });
         });
     }
 
