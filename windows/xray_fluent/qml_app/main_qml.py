@@ -601,6 +601,9 @@ def _show_single_instance_unavailable() -> None:
         pass
 
 
+SIDE_BY_SIDE_FLAG = "--side-by-side"
+
+
 def _create_windows_single_instance_mutex() -> tuple[object | None, bool]:
     if sys.platform != "win32":
         return None, True
@@ -989,7 +992,13 @@ def main(argv: list[str] | None = None) -> int:
     native_context_menu_filter = QmlNativeContextMenuFilter(app)
     app.installEventFilter(native_context_menu_filter)
     _load_bundled_fonts()
-    single_server, is_primary = _create_single_instance(app, launch_arguments)
+    if SIDE_BY_SIDE_FLAG in launch_arguments[1:]:
+        # Development only: run next to another Lumen (the Rust port) without
+        # taking or probing the single-instance mutex and pipe. Deep links
+        # and second launches are not forwarded to this process.
+        single_server, is_primary = None, True
+    else:
+        single_server, is_primary = _create_single_instance(app, launch_arguments)
     if not is_primary:
         return 0
 
