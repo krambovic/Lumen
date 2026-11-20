@@ -263,14 +263,18 @@ impl UpdatesPage {
         let theme = page.theme;
         let bridge = &mut *page.bridge;
         if !self.initialized {
-            let initial = bridge.updates_initial_state();
-            for (component, update) in COMPONENTS.iter().zip(&mut self.components) {
-                if update.version.is_empty() {
-                    update.version =
-                        component_version(component.key, text(&initial, component.version_key));
+            // Probed on a worker thread; the cards fill in when it is done.
+            if let Some(initial) = bridge.updates_initial_state() {
+                for (component, update) in COMPONENTS.iter().zip(&mut self.components) {
+                    if update.version.is_empty() {
+                        update.version =
+                            component_version(component.key, text(&initial, component.version_key));
+                    }
                 }
+                self.initialized = true;
+            } else {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
             }
-            self.initialized = true;
         }
         ScrollArea::vertical()
             .id_salt("updates-page")

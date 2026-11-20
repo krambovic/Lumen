@@ -295,6 +295,10 @@ pub struct AppBridge {
     app_update: Option<lumen_app::app_update_check::AppUpdate>,
     update_check: Option<tokio::task::JoinHandle<()>>,
     update_check_silent: bool,
+    /// Core versions for the Updates tab, probed off the UI thread
+    /// (`xray -version` and `sing-box version` take hundreds of ms).
+    component_versions: Arc<parking_lot::Mutex<Option<Value>>>,
+    component_versions_started: bool,
     update_download: Option<lumen_app::app_updater::AppUpdateDownloader>,
     warp_cancel: Option<tokio::sync::oneshot::Sender<()>>,
 }
@@ -766,6 +770,8 @@ impl AppBridge {
             app_update: None,
             update_check: None,
             update_check_silent: false,
+            component_versions: Arc::default(),
+            component_versions_started: false,
             update_download: None,
             warp_cancel: None,
         }
@@ -1006,6 +1012,7 @@ impl AppBridge {
             let mut controller = self.controller.lock();
             controller.start_deferred_services();
         }
+        self.prefetch_component_versions();
         if self.settings_cached.check_updates || self.settings_cached.app_auto_update {
             self.start_app_update_check(true);
         }
@@ -3508,19 +3515,43 @@ impl AppBridge {
     }
 
     /// Python `updatesInitialState`.
-    pub fn updates_initial_state(&self) -> Value {
-        let settings = &self.settings_cached;
-        let version =
-            lumen_engines::xray::manager::get_xray_version(&settings.xray_path).unwrap_or_default();
-        let singbox_version =
-            lumen_engines::singbox::manager::get_singbox_version(&settings.singbox_path)
-                .unwrap_or_default();
-        json!({
-            "appVersion": APP_VERSION,
-            "xrayVersion": version,
-            "singboxVersion": singbox_version,
-            "drouteVersion": lumen_engines::discord_proxy_manager::get_droute_bundle_version(),
-        })
+    /// Python `updatesInitialState`, without blocking: the first call starts
+    /// the version probes on a worker thread and returns `None` until they
+    /// finish. Python ran them on the GUI thread, which froze the first
+    /// visit of the Updates tab for about half a second.
+    pub fn updates_initial_state(&mut self) -> Option<Value> {
+        self.prefetch_component_versions();
+        self.component_versions.lock().clone()
+    }
+
+    /// Starts the Updates tab version probes once (also from `start_deferred`,
+    /// so the tab usually opens with them ready).
+    pub fn prefetch_component_versions(&mut self) {
+        if self.component_versions_started {
+            return;
+        }
+        self.component_versions_started = true;
+        let xray_path = self.settings_cached.xray_path.clone();
+        let singbox_path = self.settings_cached.singbox_path.clone();
+        let slot = self.component_versions.clone();
+        let spawned = std::thread::Builder::new()
+            .name("lumen-component-versions".into())
+            .spawn(move || {
+                let version =
+                    lumen_engines::xray::manager::get_xray_version(&xray_path).unwrap_or_default();
+                let singbox_version =
+                    lumen_engines::singbox::manager::get_singbox_version(&singbox_path)
+                        .unwrap_or_default();
+                *slot.lock() = Some(json!({
+                    "appVersion": APP_VERSION,
+                    "xrayVersion": version,
+                    "singboxVersion": singbox_version,
+                    "drouteVersion": lumen_engines::discord_proxy_manager::get_droute_bundle_version(),
+                }));
+            });
+        if spawned.is_err() {
+            self.component_versions_started = false;
+        }
     }
 
     // ── updates tab ────────────────────────────────────────────────────────
