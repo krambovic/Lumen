@@ -2257,7 +2257,13 @@ impl Tessellator {
         // The contents of the galley are already snapped to pixel coordinates,
         // but we need to make sure the galley ends up on the start of a physical pixel:
         let galley_pos = if self.options.round_text_to_pixels {
-            galley_pos.round_to_pixels(self.pixels_per_point)
+            // Lumen: a text box centred in an odd height difference starts at
+            // y + n.5. Qt's integer centring puts it at n; rounding half up put
+            // egui labels a pixel lower in every button and row.
+            let ppp = self.pixels_per_point;
+            let mut pos = galley_pos.round_to_pixels(ppp);
+            pos.y = (galley_pos.y * ppp - 0.5).ceil() / ppp;
+            pos
         } else {
             *galley_pos
         };

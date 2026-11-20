@@ -1087,21 +1087,42 @@ fn galley_from_rows(
         let mut max_row_height = first_row_min_height.at_least(placed_row.height());
         let row = Arc::make_mut(&mut placed_row.row);
 
+        // Lumen: a row made only of glyphs from one fallback face (an icon
+        // glyph drawn with the UI font family) is laid out with that face's
+        // own height, like a QML Text whose font is the icon font. Centring
+        // the icon inside a taller Segoe UI row put it half a pixel off.
+        let icon_face_height = row.glyphs.first().map(|first| first.font_face_height).filter(|height| {
+            !row.glyphs.is_empty()
+                && row.glyphs.iter().all(|glyph| {
+                    glyph.font_face_height == *height
+                        && glyph.font_face_height < glyph.font_height
+                        && glyph.line_height == glyph.font_height
+                })
+        });
         first_row_min_height = 0.0;
         for glyph in &row.glyphs {
-            max_row_height = max_row_height.at_least(glyph.line_height);
+            max_row_height = max_row_height.at_least(icon_face_height.unwrap_or(glyph.line_height));
         }
+        // Lumen: glyphs are aligned against the unrounded row height. The
+        // rounded height (18.6 -> 19 px for 14 px Segoe UI) used to push every
+        // bottom-aligned glyph down before its baseline was rounded, putting
+        // text about a pixel lower than Qt does.
+        let unrounded_row_height = max_row_height;
         max_row_height = point_scale.round_to_pixel(max_row_height);
 
         // Now position each glyph vertically:
         for glyph in &mut row.glyphs {
             let format = &job.sections[glyph.section_index as usize].format;
 
+            if icon_face_height.is_some() {
+                glyph.pos.y = point_scale.round_to_pixel(glyph.font_face_ascent);
+                continue;
+            }
             glyph.pos.y = glyph.font_face_ascent
 
                 // Apply valign to the difference in height of the entire row,
                 // and the line height of this glyph (which is the font height, unless explicitly set):
-                + format.valign.to_factor() * (max_row_height - glyph.line_height)
+                + format.valign.to_factor() * (unrounded_row_height - glyph.line_height)
 
                 // If the line height was set explicitly (e.g. taller than the font),
                 // we always center the text within that line height, like CSS does.
