@@ -19,6 +19,8 @@ pub(crate) mod clipboard;
 pub(crate) mod motion;
 pub(crate) mod widgets;
 mod wheel;
+#[cfg(debug_assertions)]
+mod preview_input;
 pub mod navigation;
 pub mod pages;
 mod backdrop_blur;
@@ -257,6 +259,9 @@ pub struct ShellApp {
     page_events: std::collections::VecDeque<UiEvent>,
     page_state: pages::PageState,
     onboarding: onboarding::Onboarding,
+    /// Scripted comparison input (`LUMEN_PREVIEW_INPUT`) and its start time.
+    #[cfg(debug_assertions)]
+    preview_input: Option<(Option<f64>, preview_input::PreviewInput)>,
 }
 
 /// The network conflict FluentDialog state (Main.qml `networkConflictDialog`).
@@ -315,6 +320,8 @@ impl ShellApp {
             page_events: std::collections::VecDeque::new(),
             page_state: pages::PageState::default(),
             onboarding: onboarding::Onboarding::default(),
+            #[cfg(debug_assertions)]
+            preview_input: preview_input::PreviewInput::from_env().map(|input| (None, input)),
         }
     }
 
@@ -1471,6 +1478,13 @@ impl eframe::App for ShellApp {
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        #[cfg(debug_assertions)]
+        if let Some((started, input)) = self.preview_input.as_mut() {
+            let started = *started.get_or_insert(raw_input.time.unwrap_or(0.0));
+            if input.apply(started, raw_input) {
+                ctx.request_repaint_after(Duration::from_millis(16));
+            }
+        }
         let animated = self.bridge.settings().ui_animations;
         if self.wheel.apply(raw_input, animated, egui::Modifiers::CTRL) {
             ctx.request_repaint();
