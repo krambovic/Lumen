@@ -185,3 +185,62 @@ pub(crate) fn body_text_spaced(ui: &mut Ui, text: &str, font: FontId, color: Col
     let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
     ui.painter().galley(rect.min, galley, color);
 }
+
+/// A QML `Dialog`/`Popup` with its own content layout: `width` px (border
+/// included) on the flyout surface, `padding` on every side, the given
+/// backdrop alpha. Returns the content's value and whether Escape or (with
+/// `close_outside`) a press outside asked it to close.
+pub(crate) fn custom<R>(
+    ctx: &Context,
+    theme: &Theme,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    width: f32,
+    padding: f32,
+    backdrop_alpha: u8,
+    close_outside: bool,
+    content: impl FnOnce(&mut Ui, f32) -> R,
+) -> (R, bool) {
+    let screen = ctx.content_rect();
+    let width = width.min((screen.width() - 40.0).max(120.0));
+    let modal = Modal::new(Id::unique(("lumen-custom-dialog", id)))
+        .backdrop_color(Color32::from_black_alpha(backdrop_alpha))
+        .frame(
+            Frame::new()
+                .fill(theme.flyout)
+                .stroke(Stroke::new(1.0, theme.flyout_border))
+                .corner_radius(10)
+                .inner_margin(padding),
+        )
+        .show(ctx, |ui| {
+            let inner = width - 2.0 * padding;
+            ui.set_width(inner);
+            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+            content(ui, inner)
+        });
+    let escape = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+    let close = modal.should_close() && (close_outside || escape);
+    (modal.inner, close)
+}
+
+/// `FluentTextField` at control height with 10 px side padding.
+pub(crate) fn text_field(
+    ui: &mut Ui,
+    theme: &Theme,
+    id_salt: impl egui::AsIdSalt,
+    value: &mut String,
+    hint: &str,
+    background: Color32,
+) -> egui::Response {
+    let width = ui.available_width();
+    ui.add(
+        egui::TextEdit::singleline(value)
+            .id_salt(id_salt)
+            .hint_text(hint)
+            .font(FontId::proportional(theme.font_normal as f32))
+            .desired_width(width - 20.0)
+            .min_size(vec2(width, theme.control_height as f32))
+            .margin(Margin::symmetric(10, 0))
+            .vertical_align(Align::Center)
+            .background_color(background),
+    )
+}

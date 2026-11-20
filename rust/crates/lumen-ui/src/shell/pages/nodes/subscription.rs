@@ -5,9 +5,8 @@ use egui::{Color32, RichText, Ui};
 use lumen_core::i18n::tr;
 use serde_json::Value;
 
-use super::{copy, field, field_value, property};
+use super::{field, field_value};
 use crate::shell::{pages::about::open_url, theme::Theme};
-use crate::view_models::AppBridge;
 
 pub(super) fn name(sub: &Value) -> &str {
     let name = field(sub, "name");
@@ -340,74 +339,6 @@ fn traffic_ring(ui: &mut Ui, theme: &Theme, state: &Status) {
     );
 }
 
-pub(super) fn details(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, sub: &Value) {
-    let info = &sub["userinfo"];
-    inspector(ui, theme, sub);
-    property(ui, "Обновлено", &time_label(&sub["updated_at"]));
-    property(ui, "Серверов", &field_value(&sub["node_count"]));
-    let url = field(sub, "url");
-    if !url.is_empty() {
-        if sub["presentation"]["hideUrl"].as_bool() == Some(true) {
-            property(ui, "Ссылка подписки", &tr("Скрыта провайдером", &[]));
-        } else {
-            property(ui, "URL", url);
-            if ui.button(tr("Копировать ссылку", &[])).clicked() {
-                copy(ui, bridge.copy_text(url));
-            }
-        }
-    }
-    property(ui, "Группа", group(sub));
-    for (label, key) in [
-        ("Пользователь", "username"),
-        ("Осталось дней", "daysLeft"),
-        ("Сброс трафика", "trafficLimitStrategy"),
-        ("Название профиля", "profileTitle"),
-        ("Provider ID", "providerId"),
-        ("Объявление", "announcement"),
-        ("Интервал обновления", "profileUpdateInterval"),
-        ("Описание", "profileDescription"),
-        ("Баннер", "bannerText"),
-        ("Кнопка баннера", "bannerButtonText"),
-        ("Ссылка баннера", "bannerButtonUrl"),
-        ("Цвет баннера", "bannerBgColor"),
-        ("Premium", "premiumUrl"),
-        ("Email", "supportEmail"),
-        ("Поддержка", "supportUrl"),
-        ("Сайт", "profileUrl"),
-    ] {
-        property(ui, label, &field_value(&info[key]));
-    }
-    if info.get("trafficUsed").is_some() || info.get("trafficLimit").is_some() {
-        let used = field_value(&info["trafficUsed"]);
-        let limit = field_value(&info["trafficLimit"]);
-        property(
-            ui,
-            "Трафик",
-            &format!(
-                "{} / {}",
-                if used.is_empty() { "?" } else { &used },
-                if limit.is_empty() { "∞" } else { &limit }
-            ),
-        );
-    }
-    for feature in sub["presentation"]["featureRows"]
-        .as_array()
-        .into_iter()
-        .flatten()
-    {
-        let key = field(feature, "key");
-        property(
-            ui,
-            feature_name(key),
-            &format!(
-                "{} · {}",
-                field_value(&feature["value"]),
-                tr(field(feature, "status"), &[])
-            ),
-        );
-    }
-}
-
 fn feature_name(key: &str) -> &str {
     match key {
         "new-url" => "Новый URL подписки",
@@ -511,4 +442,95 @@ mod tests {
         let status = Status::new(&json!({"userinfo":{"upload":8,"download":42,"total":100}}));
         assert_eq!(status.fraction(), Some(0.5));
     }
+}
+
+/// `infoRows()` in `NodesPage.qml`: label / value pairs for the subscription
+/// properties dialog.
+pub(super) fn info_rows(sub: &Value) -> Vec<(String, String)> {
+    let mut rows = Vec::new();
+    let mut push = |label: &str, value: String| rows.push((tr(label, &[]), value));
+    let name = field(sub, "name");
+    push("Группа", if name.is_empty() { "—".into() } else { name.into() });
+    let url = field(sub, "url");
+    if !url.is_empty() {
+        if sub["presentation"]["hideUrl"].as_bool() == Some(true) {
+            push("Ссылка подписки", tr("Скрыта провайдером", &[]));
+        } else {
+            rows.push(("URL".into(), url.into()));
+        }
+    }
+    let mut push = |label: &str, value: String| rows.push((tr(label, &[]), value));
+    if !field_value(&sub["updated_at"]).is_empty() {
+        push("Обновлено", time_label(&sub["updated_at"]));
+    }
+    push("Серверов", sub["node_count"].as_u64().unwrap_or(0).to_string());
+    let info = &sub["userinfo"];
+    if info.is_object() {
+        let text = |key: &str| field_value(&info[key]);
+        let present = |key: &str| info.get(key).is_some_and(|value| !value.is_null());
+        if !text("username").is_empty() {
+            push("Пользователь", text("username"));
+        }
+        if !text("userStatus").is_empty() {
+            push("Статус", text("userStatus"));
+        } else if present("isActive") {
+            push("Статус", tr(if info["isActive"].as_bool().unwrap_or(false) { "Активна" } else { "Неактивна" }, &[]));
+        }
+        if present("daysLeft") {
+            push("Осталось дней", text("daysLeft"));
+        }
+        let used = number(&info["trafficUsedBytes"]).or_else(|| {
+            present("total").then(|| number(&info["upload"]).unwrap_or(0.0) + number(&info["download"]).unwrap_or(0.0))
+        });
+        let limit = number(&info["trafficLimitBytes"]).or_else(|| number(&info["total"]));
+        if used.is_some() || limit.is_some() {
+            if limit.is_some_and(|limit| limit <= 0.0) {
+                push("Трафик", tr("Безлимитный трафик", &[]));
+            } else {
+                let used = used.map(bytes).unwrap_or_else(|| {
+                    if present("trafficUsed") { text("trafficUsed") } else { "?".into() }
+                });
+                let limit = limit.map(bytes).unwrap_or_else(|| {
+                    if present("trafficLimit") { text("trafficLimit") } else { "∞".into() }
+                });
+                push("Трафик", format!("{used} / {limit}"));
+            }
+        } else if present("trafficUsed") || present("trafficLimit") {
+            let used = if present("trafficUsed") { text("trafficUsed") } else { "?".into() };
+            let limit = if present("trafficLimit") { text("trafficLimit") } else { "∞".into() };
+            push("Трафик", format!("{used} / {limit}"));
+        }
+        if !text("expiresAt").is_empty() {
+            push("Истекает", time_label(&info["expiresAt"]));
+        } else if !text("expire").is_empty() && info["expire"].as_f64() != Some(0.0) {
+            push("Истекает", time_label(&info["expire"]));
+        }
+        for (label, key) in [
+            ("Сброс трафика", "trafficLimitStrategy"),
+            ("Название профиля", "profileTitle"),
+            ("Provider ID", "providerId"),
+            ("Объявление", "announcement"),
+            ("Интервал обновления", "profileUpdateInterval"),
+            ("Описание", "profileDescription"),
+            ("Баннер", "bannerText"),
+            ("Кнопка баннера", "bannerButtonText"),
+            ("Ссылка баннера", "bannerButtonUrl"),
+            ("Цвет баннера", "bannerBgColor"),
+            ("Premium", "premiumUrl"),
+            ("Email", "supportEmail"),
+            ("Поддержка", "supportUrl"),
+            ("Сайт", "profileUrl"),
+        ] {
+            if !text(key).is_empty() {
+                push(label, text(key));
+            }
+        }
+    }
+    for feature in sub["presentation"]["featureRows"].as_array().into_iter().flatten() {
+        push(
+            feature_name(field(feature, "key")),
+            format!("{} · {}", field_value(&feature["value"]), tr(field(feature, "status"), &[])),
+        );
+    }
+    rows
 }

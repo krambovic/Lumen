@@ -1,5 +1,6 @@
 //! Server table, inspector, bulk actions and subscription sources.
 
+mod dialogs;
 mod source;
 mod subscription;
 
@@ -178,7 +179,7 @@ impl NodesPage {
     fn open(&mut self, dialog: Dialog) {
         self.input.clear();
         self.second.clear();
-        self.subscription_url_focus_pending = matches!(dialog, Dialog::Subscription);
+        self.subscription_url_focus_pending = matches!(dialog, Dialog::Subscription | Dialog::Group);
         self.dialog = Some(dialog);
     }
 
@@ -926,145 +927,76 @@ impl NodesPage {
         subs: &[Value],
         dialog: Dialog,
     ) {
-        let modal = Modal::new(Id::unique("nodes-dialog"));
-        let modal = if matches!(dialog, Dialog::Subscription) {
-            modal
-                .backdrop_color(egui::Color32::from_black_alpha(115))
-                .frame(
-                    Frame::new()
-                        .fill(theme.flyout)
-                        .stroke(Stroke::new(1.0, theme.flyout_border))
-                        .corner_radius(10.0)
-                        .inner_margin(18.0),
-                )
-        } else {
-            modal
+        let open = match &dialog {
+            Dialog::Group => self.group_dialog(ctx, theme, bridge),
+            Dialog::Info => self.info_dialog(ctx, theme, bridge, subs),
+            Dialog::DeleteGroup(group) => self.delete_group_dialog(ctx, theme, bridge, &group.clone()),
+            Dialog::Move(ids) => self.move_dialog(ctx, theme, bridge, subs, &ids.clone()),
+            Dialog::Subscription => {
+                self.subscription_dialog(ctx, theme, bridge);
+                return;
+            }
         };
-        let modal = modal.show(ctx, |ui| {
-            if matches!(dialog, Dialog::Subscription) {
+        if !open {
+            self.dialog = None;
+        }
+    }
+
+    /// `subDialog`: the subscription import dialog (480 px, padding 18).
+    fn subscription_dialog(&mut self, ctx: &egui::Context, theme: &Theme, bridge: &mut AppBridge) {
+        let modal = Modal::new(Id::unique("nodes-dialog"))
+            .backdrop_color(egui::Color32::from_black_alpha(115))
+            .frame(
+                Frame::new()
+                    .fill(theme.flyout)
+                    .stroke(Stroke::new(1.0, theme.flyout_border))
+                    .corner_radius(10.0)
+                    .inner_margin(18.0),
+            )
+            .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 12.0;
-            }
-            let width: f32 = if matches!(dialog, Dialog::Subscription) {
-                480.0
-            } else {
-                520.0
-            };
-            let content_width = if matches!(dialog, Dialog::Subscription) {
-                width - 36.0
-            } else {
-                width
-            };
-            ui.set_width(content_width.min((ctx.content_rect().width() - 48.0).max(0.0)));
-            let title = match &dialog {
-                Dialog::Group => "Новая группа",
-                Dialog::Subscription => "Импорт подписки",
-                Dialog::Info => "Свойства подписки",
-                Dialog::DeleteGroup(_) => "Удалить группу",
-                Dialog::Move(_) => "Переместить",
-            };
-            ui.label(
-                RichText::new(tr(title, &[]))
-                    .size(theme.font_title as f32)
-                    .family(crate::shell::theme::semibold_family()),
-            );
-            match &dialog {
-                Dialog::Group => edit(ui, &mut self.input, "Имя группы"),
-                Dialog::Subscription => {
-                    let reset_import_fields = self.subscription_url_focus_pending;
-                    ui.label(
-                        RichText::new(tr(
-                            "Вставьте ссылку на подписку. Серверы автоматически попадут в новую группу.",
-                            &[],
-                        ))
-                        .color(theme.text_muted),
-                    );
-                    ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(tr("URL подписки", &[])).color(theme.text_muted),
-                    );
-                    let url = super::text_edit_menu::show(
-                        ui,
-                        TextEdit::singleline(&mut self.input)
-                            .desired_width(f32::INFINITY)
-                            .min_size(egui::vec2(0.0, theme.control_height as f32))
-                            .hint_text("https://…"),
-                        "subscription-url-field",
-                        true,
-                        reset_import_fields,
-                    );
-                    if self.subscription_url_focus_pending {
-                        url.request_focus();
-                        self.subscription_url_focus_pending = false;
-                    }
-                    ui.label(
-                        RichText::new(tr("Имя группы (необязательно)", &[]))
-                            .color(theme.text_muted),
-                    );
-                    super::text_edit_menu::show(
-                        ui,
-                        TextEdit::singleline(&mut self.second)
-                            .desired_width(f32::INFINITY)
-                            .min_size(egui::vec2(0.0, theme.control_height as f32))
-                            .hint_text(tr("Пусто — имя будет создано автоматически", &[])),
-                        "subscription-name-field",
-                        true,
-                        reset_import_fields,
-                    );
+                ui.set_width((480.0_f32 - 36.0).min((ctx.content_rect().width() - 48.0).max(0.0)));
+                ui.label(
+                    RichText::new(tr("Импорт подписки", &[]))
+                        .size(theme.font_title as f32)
+                        .family(crate::shell::theme::semibold_family()),
+                );
+                let reset_import_fields = self.subscription_url_focus_pending;
+                ui.label(
+                    RichText::new(tr(
+                        "Вставьте ссылку на подписку. Серверы автоматически попадут в новую группу.",
+                        &[],
+                    ))
+                    .color(theme.text_muted),
+                );
+                ui.add_space(2.0);
+                ui.label(RichText::new(tr("URL подписки", &[])).color(theme.text_muted));
+                let url = super::text_edit_menu::show(
+                    ui,
+                    TextEdit::singleline(&mut self.input)
+                        .desired_width(f32::INFINITY)
+                        .min_size(egui::vec2(0.0, theme.control_height as f32))
+                        .hint_text("https://…"),
+                    "subscription-url-field",
+                    true,
+                    reset_import_fields,
+                );
+                if self.subscription_url_focus_pending {
+                    url.request_focus();
+                    self.subscription_url_focus_pending = false;
                 }
-                Dialog::Info => {
-                    let selected = subs
-                        .iter()
-                        .find(|sub| field(sub, "id") == self.info_id)
-                        .or_else(|| subs.first());
-                    ComboBox::from_id_salt("nodes-subscription-info").icon(crate::shell::widgets::combo_chevron)
-                        .selected_text(selected.map(subscription::name).unwrap_or_default())
-                        .show_ui(ui, |ui| {
-                            for sub in subs {
-                                ui.selectable_value(
-                                    &mut self.info_id,
-                                    field(sub, "id").to_string(),
-                                    subscription::name(sub),
-                                );
-                            }
-                        });
-                    if let Some(sub) = selected {
-                        ScrollArea::vertical()
-                            .max_height((ctx.content_rect().height() - 160.0).max(110.0))
-                            .show(ui, |ui| subscription::details(ui, theme, bridge, sub));
-                    }
-                }
-                Dialog::DeleteGroup(group) => {
-                    ui.label(tr(
-                        "Группа «{name}», все её серверы и связанная подписка будут удалены.",
-                        &[("name", group)],
-                    ));
-                }
-                Dialog::Move(ids) => {
-                    ui.label(tr("Выбрано: {count}", &[("count", &ids.len().to_string())]));
-                    ComboBox::from_id_salt("nodes-move-group").icon(crate::shell::widgets::combo_chevron)
-                        .selected_text(if self.second.is_empty() {
-                            tr("Выберите группу", &[])
-                        } else {
-                            self.second.clone()
-                        })
-                        .show_ui(ui, |ui| {
-                            for group in bridge.group_options() {
-                                ui.selectable_value(&mut self.second, group.clone(), group);
-                            }
-                            for sub in subs {
-                                let group = subscription::group(sub);
-                                ui.selectable_value(&mut self.second, group.to_string(), group);
-                            }
-                        });
-                    edit(ui, &mut self.input, "Новая группа");
-                }
-            }
-            let valid = match dialog {
-                Dialog::Info | Dialog::DeleteGroup(_) => true,
-                Dialog::Move(_) => !self.input.trim().is_empty() || !self.second.trim().is_empty(),
-                _ => !self.input.trim().is_empty(),
-            };
-            if matches!(dialog, Dialog::Subscription) {
+                ui.label(RichText::new(tr("Имя группы (необязательно)", &[])).color(theme.text_muted));
+                super::text_edit_menu::show(
+                    ui,
+                    TextEdit::singleline(&mut self.second)
+                        .desired_width(f32::INFINITY)
+                        .min_size(egui::vec2(0.0, theme.control_height as f32))
+                        .hint_text(tr("Пусто — имя будет создано автоматически", &[])),
+                    "subscription-name-field",
+                    true,
+                    reset_import_fields,
+                );
+                let valid = !self.input.trim().is_empty();
                 ui.add_space(6.0);
                 let mut cancel = false;
                 let mut apply = false;
@@ -1082,48 +1014,10 @@ impl NodesPage {
                     },
                 );
                 (cancel, apply)
-            } else {
-                ui.horizontal_wrapped(|ui| {
-                    let cancel = !matches!(dialog, Dialog::Info) && button(ui, "Отмена");
-                    let label = match dialog {
-                        Dialog::Info => "Закрыть",
-                        Dialog::DeleteGroup(_) => "Удалить",
-                        Dialog::Move(_) => "Переместить",
-                        Dialog::Subscription => "Импорт",
-                        Dialog::Group => "Создать",
-                    };
-                    let apply = ui.add_enabled(valid, Button::new(tr(label, &[]))).clicked();
-                    (cancel, apply)
-                })
-                .inner
-            }
-        });
+            });
         let (cancel, apply) = modal.inner;
         if apply {
-            let text = self.input.trim().to_string();
-            match dialog {
-                Dialog::Group => {
-                    if !bridge.create_manual_group(&text) {
-                        return;
-                    }
-                    self.choose_source(bridge, &text, "");
-                }
-                Dialog::Subscription => bridge.import_subscription(&text, self.second.trim()),
-                Dialog::DeleteGroup(group) => {
-                    if bridge.delete_group(&group) {
-                        self.choose_source(bridge, "Default", "");
-                    }
-                }
-                Dialog::Move(ids) => {
-                    let group = if text.is_empty() {
-                        self.second.trim()
-                    } else {
-                        &text
-                    };
-                    bridge.bulk_edit_nodes(&ids, &json!({"group":group}));
-                }
-                Dialog::Info => {}
-            }
+            bridge.import_subscription(self.input.trim(), self.second.trim());
         }
         if cancel || apply || modal.should_close() {
             self.dialog = None;
@@ -1333,20 +1227,10 @@ fn field_value(value: &Value) -> String {
         other => other.to_string(),
     }
 }
-fn button(ui: &mut Ui, label: &str) -> bool {
-    ui.button(tr(label, &[])).clicked()
-}
 fn copy(ui: &Ui, payload: Option<String>) {
     if let Some(text) = payload {
         ui.ctx().copy_text(text);
     }
-}
-fn edit(ui: &mut Ui, text: &mut String, hint: &str) {
-    ui.add(
-        TextEdit::singleline(text)
-            .desired_width(f32::INFINITY)
-            .hint_text(tr(hint, &[])),
-    );
 }
 /// NodesPage.qml inspector tab: text + 20 px wide, 36 px tall, DemiBold
 /// and a 3 px accent bar under the active one.
@@ -1541,15 +1425,6 @@ fn server_inspector(ui: &mut Ui, theme: &Theme, details: &Value, has_node: bool)
     }
 }
 
-fn property(ui: &mut Ui, label: &str, value: &str) {
-    if !value.is_empty() {
-        ui.add(
-            egui::Label::new(format!("{} · {value}", tr(label, &[])))
-                .selectable(true)
-                .wrap(),
-        );
-    }
-}
 fn export_json(ui: &Ui, bridge: &mut AppBridge, id: &str, runtime: bool) {
     if let Some((payload, name)) = bridge.node_json_for_export(id, runtime) {
         if bridge.finish_json_export(
