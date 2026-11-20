@@ -508,3 +508,34 @@ fn json_label_suffix_and_link_container() {
     assert_eq!(nodes2[0].outbound["mux"]["enabled"], false);
     assert_eq!(nodes2[0].outbound["mux"]["concurrency"], -1);
 }
+
+/// Python `test_awg31_link_and_conf_preserve_boolean_options`.
+#[test]
+fn awg31_link_and_conf_preserve_boolean_options() {
+    let key = base64::engine::general_purpose::STANDARD.encode((0u8..32).collect::<Vec<_>>());
+    for enabled in [true, false] {
+        let node = parse_single(&format!(
+            "awg://{key}@192.0.2.1:51820?public_key={key}&address=10.0.0.2/32&random_trailers={enabled}&disable_cookies={enabled}"
+        ))
+        .expect("parse awg link");
+        let amnezia = node.outbound["singbox"]["amnezia"].clone();
+        assert_eq!(amnezia["random_trailers"], json!(enabled));
+        assert_eq!(amnezia["disable_cookies"], json!(enabled));
+        let conf = format!(
+            "[Interface]\nPrivateKey = {key}\nAddress = 10.0.0.2/32\nRandomTrailers = {enabled}\nDisableCookies = {enabled}\n[Peer]\nPublicKey = {key}\nEndpoint = 192.0.2.1:51820\nAllowedIPs = 0.0.0.0/0\n"
+        );
+        let (nodes, errors) = parse_links_text(&conf, false).expect("parse conf");
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(nodes[0].outbound["singbox"]["amnezia"], amnezia);
+    }
+}
+
+#[test]
+fn awg31_rejects_non_boolean_flags() {
+    let key = base64::engine::general_purpose::STANDARD.encode((0u8..32).collect::<Vec<_>>());
+    let error = parse_single(&format!(
+        "awg://{key}@192.0.2.1:51820?public_key={key}&address=10.0.0.2/32&random_trailers=maybe"
+    ))
+    .expect_err("non-boolean flag");
+    assert!(error.to_string().contains("RandomTrailers"), "{error}");
+}

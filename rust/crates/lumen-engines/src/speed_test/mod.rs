@@ -30,6 +30,7 @@ use lumen_core::constants::{
     singbox_path_default,
 };
 use lumen_core::models::{Node, RoutingSettings};
+use lumen_core::http_utils::WarmHttpProbe;
 use lumen_core::ping::{CancelCheck, WindowsPingBypass};
 use lumen_core::probe_capabilities::{node_protocol, probe_backend};
 use lumen_core::pyjson;
@@ -105,6 +106,10 @@ struct WorkerState {
 }
 
 type ResponseSlot = Arc<Mutex<Option<StrictResponse>>>;
+
+/// An unavailable connectivity site does not mean the proxy is down: HTTP
+/// GET pings fall back to this independent target.
+const SPEED_TEST_FALLBACK_PING_URL: &str = "https://cp.cloudflare.com/generate_204";
 type TunnelSlot = Arc<Mutex<Option<Box<dyn WarmTunnel + Send>>>>;
 
 /// Tests nodes like v2rayN Mixedtest: ping first, then one speed download.
@@ -118,6 +123,10 @@ pub struct SpeedTestWorker {
     test_url: String,
     concurrency: i64,
     bypass_tun: bool,
+    /// Python `active_node_id` / `active_proxy_url`: the connected node and
+    /// its pinned health listener.
+    active_node_id: String,
+    active_proxy_url: String,
     cancelled: Arc<AtomicBool>,
     completed_nodes: AtomicUsize,
     bypass: Mutex<Option<Arc<WindowsPingBypass>>>,
@@ -193,6 +202,8 @@ impl SpeedTestWorker {
             },
             concurrency,
             bypass_tun,
+            active_node_id: String::new(),
+            active_proxy_url: String::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
             completed_nodes: AtomicUsize::new(0),
             bypass: Mutex::new(None),
@@ -203,6 +214,13 @@ impl SpeedTestWorker {
             responses: Mutex::new(Vec::new()),
             tunnels: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Python `active_node_id` / `active_proxy_url` keyword arguments.
+    pub fn with_active_profile(mut self, node_id: &str, proxy_url: &str) -> Self {
+        self.active_node_id = node_id.to_string();
+        self.active_proxy_url = proxy_url.to_string();
+        self
     }
 
     /// Python `setObjectName("lumen-speed-test" | "lumen-real-ping")`.
@@ -468,6 +486,13 @@ impl SpeedTestWorker {
     fn test_node(&self, node: &Node, emit: &EmitFn) -> (Node, Option<f64>, bool) {
         if self.is_cancelled() {
             return (node.clone(), None, false);
+        }
+        if self.mode == "ping"
+            && !self.active_proxy_url.is_empty()
+            && node.id == self.active_node_id
+            && matches!(node_protocol(node).as_str(), "awg" | "wireguard" | "warp")
+        {
+            return self.active_profile_ping(node);
         }
         let backend = probe_backend(node);
         let executable = if backend == "singbox" {
@@ -956,9 +981,43 @@ impl SpeedTestWorker {
         Ok(config)
     }
 
+    /// A second WireGuard client with the same key makes the peer roam away
+    /// from the live connection. Its pinned health listener already verifies
+    /// this exact active profile without a duplicate handshake.
+    fn active_profile_ping(&self, node: &Node) -> (Node, Option<f64>, bool) {
+        let measured = self.active_profile_ping_with(&mut |url, timeout| {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
+            let mut probe = WarmHttpProbe::new();
+            let result = runtime.block_on(probe.measure(&self.active_proxy_url, url, timeout)).ok();
+            probe.close();
+            result
+        });
+        match measured {
+            Some(delay) => (node.clone(), Some(delay as f64), true),
+            None => (node.clone(), None, false),
+        }
+    }
+
+    fn active_profile_ping_with(&self, measure: &mut dyn FnMut(&str, f64) -> Option<u64>) -> Option<u64> {
+        let timeout = self.timeout.min(SPEED_TEST_PING_TIMEOUT);
+        for url in [SPEED_TEST_PING_URL, SPEED_TEST_FALLBACK_PING_URL] {
+            if self.is_cancelled() {
+                break;
+            }
+            if let Some(delay) = measure(url, timeout)
+                && !self.is_cancelled()
+            {
+                return Some(delay);
+            }
+        }
+        None
+    }
+
     fn real_ping(&self, target: &SpeedTestTarget, emit: &EmitFn) -> i64 {
-        // AUTO observers need their first samples before leastPing/leastLoad
-        // can choose a server. Retry startup failures outside the measurement.
+        // Listening locally does not mean the remote tunnel is ready. AWG can
+        // need its first handshake retransmission; AUTO needs observer
+        // samples. Keep this setup budget separate from the measured round
+        // trip.
         let started = Instant::now();
         let clock = move || started.elapsed().as_secs_f64();
         let mut measure = |target: &SpeedTestTarget| -> i64 {
@@ -979,8 +1038,9 @@ impl SpeedTestWorker {
         sleep: &mut dyn FnMut(f64),
         measure: &mut dyn FnMut(&SpeedTestTarget) -> i64,
     ) -> i64 {
-        let full_auto = node_protocol(&target.node) == "xray_config";
-        let deadline = clock() + if full_auto { 12.0 } else { 0.0 };
+        let needs_setup =
+            node_protocol(&target.node) == "xray_config" || probe_backend(&target.node) == "singbox";
+        let deadline = clock() + if needs_setup { 12.0 } else { 0.0 };
         while !self.is_cancelled() {
             let measured = measure(target);
             if measured >= 0 || clock() >= deadline {
@@ -1025,7 +1085,7 @@ impl SpeedTestWorker {
                         }
                     }
                 }
-                let elapsed_ms = ((Instant::now() - started).as_secs_f64() * 1000.0) as i64;
+                let elapsed_ms = py_round((Instant::now() - started).as_secs_f64() * 1000.0).max(1);
                 if elapsed_ms > i64::from(SPEED_TEST_MAX_PING_MS) {
                     return Err(());
                 }
@@ -1041,7 +1101,8 @@ impl SpeedTestWorker {
         outcome.unwrap_or(-1)
     }
 
-    /// Measure GET round trips on one established, verified TLS tunnel.
+    /// Measure GET round trips on one TLS tunnel per target, trying the
+    /// independent fallback target when the primary site is unavailable.
     fn warm_http_ping(&self, target: &SpeedTestTarget, emit: &EmitFn) -> i64 {
         let started = Instant::now();
         let clock = move || started.elapsed().as_secs_f64();
@@ -1053,17 +1114,33 @@ impl SpeedTestWorker {
               -> Box<dyn WarmTunnel + Send> {
             Box::new(TlsTunnel::new(proxy_host, proxy_port, host, port, timeout))
         };
-        self.warm_http_ping_with(target, emit, &clock, &mut connector)
+        let mut measure = |url: &str| self.http_get_ping_with(target, emit, url, &clock, &mut connector);
+        self.warm_http_ping_over(&mut measure)
     }
 
-    fn warm_http_ping_with(
+    fn warm_http_ping_over(&self, measure: &mut dyn FnMut(&str) -> i64) -> i64 {
+        for url in [SPEED_TEST_PING_URL, SPEED_TEST_FALLBACK_PING_URL] {
+            if self.is_cancelled() {
+                break;
+            }
+            let measured = measure(url);
+            if measured > 0 {
+                return measured;
+            }
+        }
+        -1
+    }
+
+    /// Time GET responses; establish any new TLS tunnel before timing.
+    fn http_get_ping_with(
         &self,
         target: &SpeedTestTarget,
         emit: &EmitFn,
+        target_url: &str,
         clock: &dyn Fn() -> f64,
         connector: &mut dyn FnMut(&str, u16, &str, u16, f64) -> Box<dyn WarmTunnel + Send>,
     ) -> i64 {
-        let url = match Url::parse(SPEED_TEST_PING_URL) {
+        let url = match Url::parse(target_url) {
             Ok(url) => url,
             Err(_) => return -1,
         };
@@ -1111,13 +1188,13 @@ impl SpeedTestWorker {
                     return Err(());
                 }
                 {
-                    let guard = tunnel_slot.lock().unwrap();
-                    if guard
-                        .as_ref()
-                        .map(|tunnel| tunnel.sock_closed())
-                        .unwrap_or(true)
-                    {
-                        return Err(()); // Never silently reconnect inside a timed sample.
+                    let mut guard = tunnel_slot.lock().unwrap();
+                    let tunnel = guard.as_mut().ok_or(())?;
+                    if tunnel.sock_closed() {
+                        // Connection: close is a valid HTTP response.
+                        // Reconnect outside the timer instead of reporting
+                        // the node dead.
+                        tunnel.connect().map_err(|_| ())?;
                     }
                 }
                 let started = clock();
@@ -1126,10 +1203,7 @@ impl SpeedTestWorker {
                     let tunnel = guard.as_mut().ok_or(())?;
                     tunnel.get(&path).map_err(|_| ())?
                 };
-                if !(200..300).contains(&response.status)
-                    || !response.fully_consumed
-                    || response.will_close
-                {
+                if !(200..300).contains(&response.status) || !response.fully_consumed {
                     return Err(());
                 }
                 if attempt > 0 {

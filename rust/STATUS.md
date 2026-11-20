@@ -637,6 +637,22 @@ client, core/resource updaters, zapret and discord proxy managers.
     commits while dragging) without egui's value box.
   - The SearchCombo list shows its scroll bar only on hover (egui), QML
     keeps it visible.
+- Synced with `main` (2026-11-20): merged `origin/main` (desktop 2.1.4,
+  `fix(windows): repair HTTP latency checks and AWG 3.x probes`) and ported
+  the Python changes:
+  - HTTP GET ping: a `Connection: close` response reconnects outside the
+    timer instead of failing; `cp.cloudflare.com/generate_204` is tried when
+    the primary target fails; cold samples are at least 1 ms; sing-box
+    probes get the 12 s setup budget AUTO profiles had.
+  - The connected AWG / WireGuard / WARP node is pinged through its health
+    listener (`SpeedTestWorker::with_active_profile`), never with a second
+    handshake on the same key.
+  - `WarmHttpProbe` accepts `Connection: close` (an untimed GET reopens the
+    tunnel, since reqwest cannot reconnect without a request).
+  - ICMP no longer falls back to a TCP handshake.
+  - Native test configs apply the AWG 3.x Windows bind workaround.
+  - AWG links and .conf files keep `random_trailers` / `disable_cookies`.
+  - Release notes and locales: «Пинг и AWG».
 
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log

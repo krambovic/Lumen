@@ -205,7 +205,7 @@ impl WorkerService {
         let targets = target_kinds(&nodes, method);
         let bypass = connection.bypass_tun();
         let worker = if matches!(method, "http" | "real") {
-            let Some(worker) = proxy_worker(state, nodes, method, bypass, &mut emit) else {
+            let Some(worker) = proxy_worker(state, nodes, method, bypass, connection, &mut emit) else {
                 return false;
             };
             emit(TestEvent::Log(
@@ -258,7 +258,7 @@ impl WorkerService {
         }
         let targets = target_kinds(&nodes, "speed");
         let bypass = connection.bypass_tun();
-        let Some(worker) = proxy_worker(state, nodes, "speed", bypass, &mut emit) else {
+        let Some(worker) = proxy_worker(state, nodes, "speed", bypass, connection, &mut emit) else {
             return false;
         };
         if bypass {
@@ -619,6 +619,7 @@ fn proxy_worker(
     nodes: Vec<Node>,
     method: &str,
     bypass: bool,
+    connection: TestConnection<'_>,
     emit: &mut impl FnMut(TestEvent),
 ) -> Option<ProbeWorker> {
     let xray = if nodes.iter().any(|node| probe_backend(node) == "xray") {
@@ -649,6 +650,21 @@ fn proxy_worker(
         bypass,
         &singbox.to_string_lossy(),
         method == "http",
+    )
+    // The connected node and its pinned health listener: an active
+    // AWG / WireGuard profile is measured through it, never with a second
+    // handshake on the same key.
+    .with_active_profile(
+        &connection
+            .active_session
+            .filter(|_| connection.connected)
+            .and_then(|session| session.node_id.clone())
+            .unwrap_or_default(),
+        &connection
+            .active_session
+            .filter(|_| connection.connected)
+            .map(|session| session.health_proxy_url.clone())
+            .unwrap_or_default(),
     ))))
 }
 

@@ -156,7 +156,8 @@ fn auto_probe_uses_main_balancer_and_preserves_loopback_rescue() {
 /// run against a fake `WarmTunnel` with an injectable clock.
 #[test]
 fn http_get_excludes_handshakes_and_warmup() {
-    let cases: [(bool, u16, i64); 3] = [(false, 204, 40), (true, 204, -1), (false, 302, -1)];
+    // `Connection: close` responses reconnect outside the timer (2.1.4).
+    let cases: [(bool, u16, i64); 3] = [(false, 204, 40), (true, 204, 40), (false, 302, -1)];
     for (will_close, status, expected) in cases {
         let clock = Arc::new(Mutex::new(0.0f64));
         let node = Node {
@@ -214,12 +215,8 @@ fn http_get_excludes_handshakes_and_warmup() {
             move || *clock.lock().unwrap()
         };
 
-        let mut measure = |target: &SpeedTestTarget| -> i64 {
-            worker.warm_http_ping_with(target, &emit, &clock_fn, &mut connector)
-        };
-        let mut sleep = |_delay: f64| {};
         assert_eq!(
-            worker.real_ping_with(&target, &clock_fn, &mut sleep, &mut measure),
+            worker.http_get_ping_with(&target, &emit, SPEED_TEST_PING_URL, &clock_fn, &mut connector),
             expected,
             "case status={status} will_close={will_close}"
         );
@@ -266,6 +263,9 @@ impl WarmTunnel for FakeTunnel {
         let durations = [0.9, 0.06, 0.04];
         let index = self.requests.fetch_add(1, Ordering::SeqCst);
         *self.clock.lock().unwrap() += durations.get(index).copied().unwrap_or(0.04);
+        if self.will_close {
+            self.sock_open = false;
+        }
         Ok(TunnelGetResult {
             status: self.status,
             will_close: self.will_close,
@@ -278,10 +278,70 @@ impl WarmTunnel for FakeTunnel {
     }
 }
 
-/// Python `test_auto_ping_retries_observer_startup_outside_measurement`.
+/// Python `test_http_get_uses_independent_target_when_primary_is_blocked`.
 #[test]
-fn auto_ping_retries_observer_startup_outside_measurement() {
-    let node = test_node("auto", "auto", json!({"protocol": "xray_config"}));
+fn http_get_uses_independent_target_when_primary_is_blocked() {
+    let node = test_node("one", "vless", json!({"protocol": "vless"}));
+    let worker = SpeedTestWorker::with_options(
+        vec![node],
+        "xray.exe",
+        None,
+        SPEED_TEST_TIMEOUT,
+        "ping",
+        "",
+        0,
+        false,
+        "",
+        true,
+    );
+    let mut attempts = Vec::new();
+    let mut measure = |url: &str| -> i64 {
+        attempts.push(url.to_string());
+        if url.contains("cloudflare") { 58 } else { -1 }
+    };
+    assert_eq!(worker.warm_http_ping_over(&mut measure), 58);
+    assert_eq!(attempts, [SPEED_TEST_PING_URL, "https://cp.cloudflare.com/generate_204"]);
+}
+
+/// Python `test_active_awg_probe_never_starts_a_second_wireguard_session`.
+#[test]
+fn active_awg_probe_never_starts_a_second_wireguard_session() {
+    for measured in [Some(73u64), None] {
+        let node = test_node("active", "awg", json!({"protocol": "awg"}));
+        let worker = SpeedTestWorker::with_options(
+            vec![node.clone()],
+            "",
+            None,
+            SPEED_TEST_TIMEOUT,
+            "ping",
+            "",
+            0,
+            false,
+            "",
+            true,
+        )
+        .with_active_profile("active", "http://user:pass@127.0.0.1:19080");
+        let mut calls = 0;
+        let result = worker.active_profile_ping_with(&mut |_url, _timeout| {
+            calls += 1;
+            measured
+        });
+        assert_eq!(result, measured);
+        // Both targets are tried before the active profile counts as down.
+        assert_eq!(calls, if measured.is_some() { 1 } else { 2 });
+        assert!(worker.registry_is_empty());
+    }
+}
+
+/// Python `test_core_ping_retries_transport_startup_outside_measurement`.
+#[test]
+fn core_ping_retries_transport_startup_outside_measurement() {
+    for protocol in ["xray_config", "awg", "hysteria2", "openvpn"] {
+        core_ping_retries(test_node(protocol, protocol, json!({"protocol": protocol})));
+    }
+}
+
+fn core_ping_retries(node: Node) {
     let worker = SpeedTestWorker::with_options(
         vec![node.clone()],
         "xray.exe",

@@ -38,6 +38,11 @@ pub static RELEASE_NOTES: &[VersionNotes] = &[
                 title: "Отправка отчётов",
                 text: "Восстановлен ID установки и добавлена отправка через прокси при недоступности сервера напрямую.",
             },
+            Note {
+                glyph: "\u{E9D9}",
+                title: "Пинг и AWG",
+                text: "Исправлены HTTP GET, ICMP и подключения AWG 3.0/3.1.",
+            },
         ],
     },
     VersionNotes {

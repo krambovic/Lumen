@@ -604,13 +604,17 @@ impl WarmHttpProbe {
         }
         let client = self.client.as_ref().map(|(_, _, c)| c.clone()).unwrap();
         let result: anyhow::Result<u64> = async {
-            if fresh {
-                Self::request(&client, url).await?;
-            }
+            let mut closed = if fresh { Self::request(&client, url).await? } else { false };
             let mut best = f64::MAX;
             for _ in 0..2 {
+                if closed {
+                    // Re-establish a server-closed tunnel before timing the
+                    // GET (Python reconnects; the client can only reconnect
+                    // through a request, which stays outside the sample).
+                    Self::request(&client, url).await?;
+                }
                 let started = Instant::now();
-                Self::request(&client, url).await?;
+                closed = Self::request(&client, url).await?;
                 best = best.min(started.elapsed().as_secs_f64() * 1000.0);
             }
             Ok((best.round() as u64).max(1))
@@ -622,7 +626,9 @@ impl WarmHttpProbe {
         result
     }
 
-    async fn request(client: &reqwest::Client, url: &str) -> anyhow::Result<()> {
+    /// One verified GET; returns whether the server closes the connection
+    /// after it (`Connection: close` is a valid complete response).
+    async fn request(client: &reqwest::Client, url: &str) -> anyhow::Result<bool> {
         let response = client
             .get(url)
             .header("Connection", "keep-alive")
@@ -635,11 +641,11 @@ impl WarmHttpProbe {
             .get("connection")
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.eq_ignore_ascii_case("close"));
-        let _ = read_body_limited(response, 64 * 1024).await;
-        if !(200..300).contains(&status) || closing {
-            anyhow::bail!("health target did not preserve the verified HTTP tunnel");
+        let complete = read_body_limited(response, 64 * 1024).await.is_ok();
+        if !(200..300).contains(&status) || !complete {
+            anyhow::bail!("health target did not return a complete successful response");
         }
-        Ok(())
+        Ok(closing)
     }
 }
 

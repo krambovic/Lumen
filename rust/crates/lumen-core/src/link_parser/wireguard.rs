@@ -283,6 +283,24 @@ pub(super) fn amnezia_from_params(
         let validated = validate_awg3_header_key(&header_key)?;
         result.insert("header_protection_key".to_string(), Value::String(validated));
     }
+    // AWG 3.x boolean flags (Python `_amnezia_from_params`).
+    for (key, conf_name) in [("random_trailers", "RandomTrailers"), ("disable_cookies", "DisableCookies")] {
+        let dashed = key.replace('_', "-");
+        let joined = key.replace('_', "");
+        let value = get_param(params, &[key, dashed.as_str(), joined.as_str(), conf_name], "");
+        if !value.is_empty() {
+            let lowered = value.trim().to_lowercase();
+            if !["true", "false", "1", "0", "yes", "no", "on", "off"].contains(&lowered.as_str()) {
+                return Err(LinkParseError::new(format!(
+                    "некорректное логическое значение в поле {conf_name}"
+                )));
+            }
+            result.insert(
+                key.to_string(),
+                Value::Bool(["true", "1", "yes", "on"].contains(&lowered.as_str())),
+            );
+        }
+    }
     for (source_key, conf_name, dash_name, json_key) in AMNEZIA_AWG3_KEYS {
         let no_underscore = source_key.replace('_', "");
         let value = get_param(

@@ -588,13 +588,9 @@ impl PingWorker {
             return None;
         }
         if endpoint_method(node, &self.method) == "icmp" {
-            let mut measured = icmp_ping(&target, (self.timeout * 1000.0) as i64);
-            if measured.is_none() && self.method == "icmp" && endpoint_method(node, "tcping") == "tcping" {
-                // Like Android's InetAddress.isReachable: a host that drops
-                // ICMP is still reachable when it completes a TCP handshake.
-                measured = tcp_ping(&target, node.port, self.timeout);
-            }
-            return measured;
+            // ICMP reports ICMP only: a host that drops echo requests is shown
+            // as unreachable rather than measured with a TCP handshake.
+            return icmp_ping(&target, (self.timeout * 1000.0) as i64);
         }
         tcp_ping(&target, node.port, self.timeout)
     }

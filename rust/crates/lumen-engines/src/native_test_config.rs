@@ -11,7 +11,7 @@ use lumen_core::models::Node;
 use lumen_core::probe_capabilities::{GROUP_TYPES, NON_PROXY_TYPES, node_protocol};
 
 use crate::singbox::config_builder::build_singbox_outbound;
-use crate::singbox::runtime_planner::normalize_openvpn_outbounds;
+use crate::singbox::runtime_planner::{ensure_awg3_windows_bind_workaround, normalize_openvpn_outbounds};
 
 /// Python `str(value)`: converts a JSON scalar the way Python renders it.
 /// Only scalar shapes occur in the fields this module stringifies (tags and
@@ -122,15 +122,26 @@ pub fn build_native_test_config(node: &Node, port: i64) -> Result<Value> {
         object.insert("log".into(), json!({"disabled": true}));
         object.remove("experimental");
         object.remove("services");
-        if let Some(endpoints) = object.get_mut("endpoints").and_then(Value::as_array_mut) {
-            for item in endpoints.iter_mut() {
-                if item.is_object() {
-                    if let Some(item) = item.as_object_mut() {
-                        item.insert("system".into(), Value::Bool(false));
-                    }
-                }
+    }
+    // Header-protected AWG must use ClientBind for probes too; the default
+    // Windows bind corrupts the protected handshake. The workaround may add a
+    // direct outbound to the document, so the endpoints are taken out first.
+    let mut endpoints = config
+        .get_mut("endpoints")
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take);
+    if let Some(endpoints) = endpoints.as_mut() {
+        for item in endpoints.iter_mut() {
+            if let Some(object) = item.as_object_mut() {
+                object.insert("system".into(), Value::Bool(false));
+                ensure_awg3_windows_bind_workaround(&mut config, item);
             }
         }
+    }
+    if let (Some(endpoints), Some(object)) = (endpoints, config.as_object_mut()) {
+        object.insert("endpoints".into(), Value::Array(endpoints));
+    }
+    if let Some(object) = config.as_object_mut() {
         // `config.setdefault("route", {})`: an existing non-object route makes
         // the Python item assignment raise, so fail closed the same way.
         if let Some(other) = object.get("route") {
@@ -439,5 +450,63 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert_eq!(error, "Full sing-box profile is missing");
+    }
+
+    fn awg_key() -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode((0u8..32).collect::<Vec<_>>())
+    }
+
+    /// Python `test_awg3_probe_uses_the_same_windows_bind_as_normal_connections`.
+    #[test]
+    fn awg3_probe_uses_the_same_windows_bind_as_normal_connections() {
+        let key = awg_key();
+        for version31 in [false, true] {
+            for full_profile in [false, true] {
+                let mut amnezia = json!({"header_protection_key": key, "h1": "100-200", "content_padding_addition": "0-64"});
+                if version31 {
+                    amnezia["random_trailers"] = json!(true);
+                    amnezia["disable_cookies"] = json!(true);
+                }
+                let endpoint = json!({
+                    "type": "wireguard", "tag": "vpn", "system": false,
+                    "address": ["10.0.0.2/32"], "private_key": key, "amnezia": amnezia,
+                    "peers": [{"address": "192.0.2.1", "port": 51820, "public_key": key,
+                               "allowed_ips": ["0.0.0.0/0"]}],
+                });
+                let outbound = if full_profile {
+                    json!({"protocol": "singbox_config", "singbox_config": {
+                        "endpoints": [endpoint], "outbounds": [], "route": {"final": "vpn"},
+                    }})
+                } else {
+                    json!({"protocol": "awg", "singbox": endpoint})
+                };
+                let original = outbound.clone();
+                let mut node = node_with(outbound);
+                node.scheme = "awg".into();
+                let config = build_native_test_config(&node, 19080).unwrap();
+                let tested = &config["endpoints"][0];
+                let detour = tested["detour"].as_str().unwrap_or_default();
+                assert!(!detour.is_empty(), "v31={version31} full={full_profile}");
+                assert!(config["outbounds"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!({"type": "direct", "tag": detour})));
+                assert_eq!(tested["amnezia"], amnezia);
+                assert_eq!(tested["system"], json!(false));
+                assert_eq!(node.outbound, original);
+            }
+        }
+    }
+
+    /// Python `test_explicit_awg_detour_is_preserved`.
+    #[test]
+    fn explicit_awg_detour_is_preserved() {
+        let key = awg_key();
+        let config = json!({"endpoints": [{"type": "wireguard", "tag": "vpn", "detour": "custom",
+                                           "amnezia": {"header_protection_key": key}}],
+                            "outbounds": [{"type": "direct", "tag": "custom"}], "route": {"final": "vpn"}});
+        let node = node_with(json!({"protocol": "singbox_config", "singbox_config": config}));
+        assert_eq!(build_native_test_config(&node, 19080).unwrap()["endpoints"][0]["detour"], "custom");
     }
 }
