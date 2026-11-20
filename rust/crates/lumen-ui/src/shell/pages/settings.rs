@@ -1352,11 +1352,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
         setting_row(
             ui,
             theme,
-            "",
+            "\u{e950}",
             "Основное ядро",
             "Auto — подходящее ядро для каждого сервера",
             |ui| {
-                info_icon(ui, theme, "Auto сам выбирает ядро для каждого сервера и может работать гибридом sing-box + Xray. Xray — всё, включая TUN, только через Xray; серверы sing-box (Hysteria2, TUIC, AWG, WARP) недоступны. sing-box extended — всё только через sing-box; серверы, которым нужен Xray, недоступны.");
                 styled_combo(
                     ui,
                     "core-preference",
@@ -1369,6 +1368,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     220.0,
                     |value| bridge.set_core_preference(value),
                 );
+                info_icon(ui, theme, "Auto сам выбирает ядро для каждого сервера и может работать гибридом sing-box + Xray. Xray — всё, включая TUN, только через Xray; серверы sing-box (Hysteria2, TUIC, AWG, WARP) недоступны. sing-box extended — всё только через sing-box; серверы, которым нужен Xray, недоступны.");
             },
         );
         setting_row(
@@ -1390,10 +1390,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
             "Настраивать прокси Firefox",
             "Принудительно записывать прокси в профили браузеров Firefox",
             |ui| {
-                info_icon(ui, theme, "Обычно Firefox использует системный прокси автоматически. Включайте эту настройку только если Firefox его игнорирует.");
                 switch_setting(ui, theme, s.firefox_proxy_integration, true, |value| {
                     bridge.set_firefox_proxy_integration(value)
                 });
+                info_icon(ui, theme, "Обычно Firefox использует системный прокси автоматически. Включайте эту настройку только если Firefox его игнорирует.");
             },
         );
         setting_row(
@@ -1442,10 +1442,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Фрагментирование",
                 "Разделять TLS ClientHello на части для обхода DPI; иногда снижает стабильность",
                 |ui| {
-                    info_icon(ui, theme, "Фрагментирование делит TLS-рукопожатие на части. Может помочь обходу DPI, но иногда снижает стабильность.");
                     switch_setting(ui, theme, bridge.fragmentation_enabled(), true, |value| {
                         bridge.set_fragmentation(value)
                     });
+                    info_icon(ui, theme, "Фрагментирование делит TLS-рукопожатие на части. Может помочь обходу DPI, но иногда снижает стабильность.");
                 },
             );
             if bridge.fragmentation_enabled() {
@@ -1456,8 +1456,8 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     "Настройки фрагментирования",
                     "Fragment Settings",
                     |ui| {
-                        info_icon(ui, theme, "Packets выбирает часть трафика, Length размер фрагментов, Delay задержку между ними.");
                         let mut packets = bridge.fragment_packets();
+                        info_icon(ui, theme, "Packets выбирает часть трафика, Length размер фрагментов, Delay задержку между ними.");
                         let mut length = bridge.fragment_length();
                         let mut delay = bridge.fragment_delay();
                         let a = committed_field(ui, "frag-packets", &packets, "tlshello", 100.0, false);
@@ -1485,10 +1485,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Мультиплексирование",
                 "Объединять несколько соединений в один канал; зависит от поддержки сервера",
                 |ui| {
-                    info_icon(ui, theme, "Мультиплексирование объединяет несколько запросов в один канал. Может ускорить много мелких соединений, но зависит от поддержки сервера.");
                     switch_setting(ui, theme, s.multiplex_enabled, true, |value| {
                         bridge.set_multiplexing(value)
                     });
+                    info_icon(ui, theme, "Мультиплексирование объединяет несколько запросов в один канал. Может ускорить много мелких соединений, но зависит от поддержки сервера.");
                 },
             );
             if s.multiplex_enabled {
@@ -1499,10 +1499,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     "Настройки мультиплексирования",
                     "Multiplex Settings",
                     |ui| {
-                        info_icon(ui, theme, "Потоки задают, сколько запросов можно вести внутри одного мультиплексированного соединения.");
                         spin(ui, s.multiplex_concurrency, 1..=32, 1.0, |value| {
                             bridge.set_multiplex_concurrency(value)
                         });
+                        info_icon(ui, theme, "Потоки задают, сколько запросов можно вести внутри одного мультиплексированного соединения.");
                     },
                 );
             }
@@ -1674,10 +1674,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "SOCKS-порт",
                 "Локальный порт SOCKS/mixed прокси (рекомендуется 10808)",
                 |ui| {
-                    info_icon(ui, theme, "Локальный порт для SOCKS и mixed прокси. Порт 10818 зарезервирован под Discord Voice и будет сброшен на рекомендованный. Применяется с переподключением.");
                     spin(ui, s.local_socks_port, 1025..=65535, 1.0, |value| {
                         bridge.set_local_socks_port(value)
                     });
+                    info_icon(ui, theme, "Локальный порт для SOCKS и mixed прокси. Порт 10818 зарезервирован под Discord Voice и будет сброшен на рекомендованный. Применяется с переподключением.");
                 },
             );
             setting_row(
@@ -1687,10 +1687,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "HTTP-порт",
                 "Локальный порт HTTP прокси (рекомендуется 10809)",
                 |ui| {
-                    info_icon(ui, theme, "Локальный порт для HTTP прокси. Должен отличаться от SOCKS-порта; порт 10818 зарезервирован под Discord Voice. Применяется с переподключением.");
                     spin(ui, s.local_http_port, 1025..=65535, 1.0, |value| {
                         bridge.set_local_http_port(value)
                     });
+                    info_icon(ui, theme, "Локальный порт для HTTP прокси. Должен отличаться от SOCKS-порта; порт 10818 зарезервирован под Discord Voice. Применяется с переподключением.");
                 },
             );
             setting_row(
@@ -1700,10 +1700,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Авторизация прокси",
                 "Требовать логин и пароль для SOCKS/mixed и HTTP прокси",
                 |ui| {
-                    info_icon(ui, theme, "По умолчанию выключено. После изменения активное подключение переподключится. Клиенты системного прокси должны поддерживать HTTP-аутентификацию.");
                     switch_setting(ui, theme, s.proxy_auth_enabled, true, |value| {
                         bridge.set_proxy_auth_enabled(value);
                     });
+                    info_icon(ui, theme, "По умолчанию выключено. После изменения активное подключение переподключится. Клиенты системного прокси должны поддерживать HTTP-аутентификацию.");
                 },
             );
             let mut next_user = None;
@@ -1755,10 +1755,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Разрешить подключения из локальной сети",
                 "Открыть SOCKS/HTTP порты для других устройств вашей сети",
                 |ui| {
-                    info_icon(ui, theme, "Другие устройства вашей сети смогут использовать этот ПК как прокси (адрес — IP этого ПК и указанные выше порты). Работает в режиме прокси. Windows может запросить разрешение брандмауэра.");
                     switch_setting(ui, theme, s.proxy_allow_lan, true, |value| {
                         bridge.set_proxy_allow_lan(value)
                     });
+                    info_icon(ui, theme, "Другие устройства вашей сети смогут использовать этот ПК как прокси (адрес — IP этого ПК и указанные выше порты). Работает в режиме прокси. Windows может запросить разрешение брандмауэра.");
                 },
             );
             setting_row(
@@ -1768,10 +1768,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Sniffing только для маршрутизации",
                 "Не подменять адрес назначения доменом из sniffing (рекомендуется: выключено)",
                 |ui| {
-                    info_icon(ui, theme, "Домен из sniffing используется только для правил маршрутизации, а соединение идёт на исходный IP. Может помочь, если отдельные приложения некорректно работают с подменой адреса.");
                     switch_setting(ui, theme, s.sniff_route_only, true, |value| {
                         bridge.set_sniff_route_only(value)
                     });
+                    info_icon(ui, theme, "Домен из sniffing используется только для правил маршрутизации, а соединение идёт на исходный IP. Может помочь, если отдельные приложения некорректно работают с подменой адреса.");
                 },
             );
         });
@@ -1791,10 +1791,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     "Strict Route",
                     "Ограничивать обход TUN для защиты от утечек (рекомендуется: включено)",
                     |ui| {
-                        info_icon(ui, theme, "Защищает от DNS-утечек Windows при нескольких сетевых адаптерах, но также может ограничить трафик в обход TUN. Может нарушить Discord Voice (ICE fallback), работу WinDivert, VirtualBox и других приложений с нестандартной маршрутизацией. Применяется при следующем включении TUN.");
                         switch_setting(ui, theme, s.tun_strict_route, true, |value| {
                             bridge.set_tun_strict_route(value)
                         });
+                        info_icon(ui, theme, "Защищает от DNS-утечек Windows при нескольких сетевых адаптерах, но также может ограничить трафик в обход TUN. Может нарушить Discord Voice (ICE fallback), работу WinDivert, VirtualBox и других приложений с нестандартной маршрутизацией. Применяется при следующем включении TUN.");
                     },
                 );
                 setting_row(
@@ -1804,7 +1804,6 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     "Сетевой стек TUN",
                     "mixed — рекомендуется",
                     |ui| {
-                        info_icon(ui, theme, "system — быстрее, gvisor — совместимее, mixed — system для TCP и gVisor для UDP.");
                         styled_combo(
                             ui,
                             "tun-stack",
@@ -1817,6 +1816,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                             210.0,
                             |value| bridge.set_tun_stack(value),
                         );
+                        info_icon(ui, theme, "system — быстрее, gvisor — совместимее, mixed — system для TCP и gVisor для UDP.");
                     },
                 );
                 setting_row(
@@ -1838,10 +1838,10 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     "Блокировать QUIC/HTTP3 в TUN",
                     "Браузеры переходят на HTTP/2 через прокси (рекомендуется: включено)",
                     |ui| {
-                        info_icon(ui, theme, "QUIC/HTTP3 из TUN отклоняется, чтобы браузеры использовали TCP HTTP/2 — так стабильнее через прокси. Отключайте, только если нужен HTTP/3. Применяется при следующем включении TUN.");
                         switch_setting(ui, theme, s.tun_block_quic, true, |value| {
                             bridge.set_tun_block_quic(value)
                         });
+                        info_icon(ui, theme, "QUIC/HTTP3 из TUN отклоняется, чтобы браузеры использовали TCP HTTP/2 — так стабильнее через прокси. Отключайте, только если нужен HTTP/3. Применяется при следующем включении TUN.");
                     },
                 );
                 setting_row(
@@ -1851,7 +1851,6 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     "Endpoint-Independent NAT",
                     "Full-cone NAT для игр и P2P (рекомендуется: выключено)",
                     |ui| {
-                        info_icon(ui, theme, "Улучшает совместимость с играми и P2P-приложениями, но потребляет больше памяти. Работает со стеками gvisor и mixed. Применяется при следующем включении TUN.");
                         switch_setting(
                             ui,
                             theme,
@@ -1859,6 +1858,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                             true,
                             |value| bridge.set_tun_endpoint_independent_nat(value),
                         );
+                        info_icon(ui, theme, "Улучшает совместимость с играми и P2P-приложениями, но потребляет больше памяти. Работает со стеками gvisor и mixed. Применяется при следующем включении TUN.");
                     },
                 );
             });
