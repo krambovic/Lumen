@@ -1018,11 +1018,7 @@ fn card(ui: &mut Ui, theme: &Theme, content: impl FnOnce(&mut Ui)) {
 }
 
 fn card_with_margin(ui: &mut Ui, theme: &Theme, margin: f32, content: impl FnOnce(&mut Ui)) {
-    Frame::new()
-        .fill(theme.card)
-        .stroke(Stroke::new(1.0, theme.border_solid))
-        .corner_radius(theme.radius as u8)
-        .inner_margin(margin)
+    crate::shell::widgets::card_frame(theme, margin + 1.0)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             content(ui);

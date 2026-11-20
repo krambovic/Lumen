@@ -1040,7 +1040,7 @@ impl Onboarding {
             self.config_choice == Some(true),
             16.0,
             |ui| {
-                card_frame(theme, 18.0).show(ui, |ui| {
+                card_frame(theme, 18.0).hoverable(false).show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     let paste = tr("Вставить из буфера", &[]);
@@ -1160,7 +1160,7 @@ impl Onboarding {
             self.config_choice == Some(false),
             16.0,
             |ui| {
-                card_frame(theme, 18.0).show(ui, |ui| {
+                card_frame(theme, 18.0).hoverable(false).show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     paragraph(

@@ -42,13 +42,106 @@ pub(crate) fn bordered_rect(
     painter.rect_stroke(rect, radius, Stroke::new(1.0, border), StrokeKind::Inside);
 }
 
-/// `Card.qml` background. `padding` is the QML padding, border included.
-pub(crate) fn card_frame(theme: &Theme, padding: f32) -> Frame {
-    Frame::new()
-        .fill(theme.card)
-        .stroke(Stroke::new(1.0, theme.border_solid))
-        .corner_radius(theme.radius as u8)
-        .inner_margin(padding - 1.0)
+/// `Card.qml`. `padding` is the QML padding, border included.
+///
+/// A hoverable card (the QML default) answers the pointer like Card.qml:
+/// over `animFast` its border turns from `borderSolid` to `divider`, a
+/// 1.7% white (1.5% black in light themes) overlay fades in and a shadow
+/// appears 3 px below it at 60% of `Theme.shadowOpacity`. The hover test
+/// does not take input from the content.
+pub(crate) fn card_frame(theme: &Theme, padding: f32) -> Card {
+    Card {
+        padding,
+        hoverable: true,
+        radius: theme.radius as f32,
+        fill: theme.card,
+        border: theme.border_solid,
+        hot_border: theme.divider,
+        overlay: if theme.dark {
+            Color32::from_rgba_unmultiplied(255, 255, 255, 4)
+        } else {
+            Color32::from_rgba_unmultiplied(0, 0, 0, 4)
+        },
+        shadow_alpha: theme.shadow_opacity as f32 * 0.6,
+        fast_ms: theme.anim_fast as f32,
+    }
+}
+
+pub(crate) struct Card {
+    padding: f32,
+    hoverable: bool,
+    radius: f32,
+    fill: Color32,
+    border: Color32,
+    hot_border: Color32,
+    overlay: Color32,
+    shadow_alpha: f32,
+    fast_ms: f32,
+}
+
+impl Card {
+    /// `hoverable: false`.
+    pub(crate) fn hoverable(mut self, hoverable: bool) -> Self {
+        self.hoverable = hoverable;
+        self
+    }
+
+    pub(crate) fn show<R>(
+        self,
+        ui: &mut Ui,
+        content: impl FnOnce(&mut Ui) -> R,
+    ) -> egui::InnerResponse<R> {
+        let id = ui.next_auto_id().with("lumen-card-hover");
+        let background = ui.painter().add(egui::Shape::Noop);
+        let inner = Frame::new().inner_margin(self.padding).show(ui, content);
+        let rect = inner.response.rect;
+        let hot = self.hoverable && ui.rect_contains_pointer(rect);
+        let level = if self.hoverable {
+            let ctx = ui.ctx().clone();
+            let target = if hot { 1.0 } else { 0.0 };
+            if self.fast_ms <= 0.0 {
+                target
+            } else {
+                ctx.animate_value_with_time(id, target, self.fast_ms / 1000.0)
+            }
+        } else {
+            0.0
+        };
+        let mut shapes: Vec<egui::Shape> = Vec::new();
+        if level > 0.0 {
+            // MultiEffect blurs the card's own alpha: a translucent card
+            // casts a proportionally lighter shadow (and it shows through).
+            let coverage = f32::from(self.fill.a()) / 255.0;
+            let alpha = (self.shadow_alpha * coverage * level * 255.0).round().clamp(0.0, 255.0) as u8;
+            shapes.push(
+                egui::epaint::Shadow {
+                    offset: [0, (3.0 * level).round() as i8],
+                    blur: 24,
+                    spread: 0,
+                    color: Color32::from_black_alpha(alpha),
+                }
+                .as_shape(rect, self.radius)
+                .into(),
+            );
+        }
+        shapes.push(egui::Shape::rect_filled(rect, self.radius, self.fill));
+        if level > 0.0 {
+            shapes.push(egui::Shape::rect_filled(
+                rect.shrink(1.0),
+                (self.radius - 1.0).max(0.0),
+                self.overlay.gamma_multiply(level),
+            ));
+        }
+        let border = motion::mix(self.border, self.hot_border, level);
+        shapes.push(egui::Shape::rect_stroke(
+            rect,
+            self.radius,
+            Stroke::new(1.0, border),
+            StrokeKind::Inside,
+        ));
+        ui.painter().set(background, egui::Shape::Vec(shapes));
+        inner
+    }
 }
 
 /// `SectionTitle`: `fontStrong`, DemiBold.

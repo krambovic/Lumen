@@ -5,7 +5,7 @@ mod release_notes;
 use std::sync::LazyLock;
 
 use egui::{
-    Align, Align2, Button, Color32, FontId, Frame, Layout, RichText, ScrollArea, Sense, Stroke, Ui,
+    Align, Align2, Button, Color32, FontId, Layout, RichText, ScrollArea, Sense, Stroke, Ui,
     vec2,
 };
 use lumen_core::i18n::tr;
@@ -425,11 +425,7 @@ fn render_component(
 }
 
 fn card(ui: &mut Ui, theme: &Theme, title: &str, content: impl FnOnce(&mut Ui)) {
-    Frame::new()
-        .fill(theme.card)
-        .stroke(Stroke::new(1.0, theme.border_solid))
-        .corner_radius(theme.radius as u8)
-        .inner_margin(17.0)
+    crate::shell::widgets::card_frame(theme, 18.0)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 10.0;
