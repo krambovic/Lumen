@@ -5,11 +5,12 @@
 //! pinned to the right.
 
 #[allow(unused_imports)]
+use crate::shell::color_picker::{ColorPicker, PickerResult};
 use crate::shell::widgets::FluentTip;
 use std::path::Path;
 
 use egui::{
-    Align, Button, Color32, ComboBox, Context, FontId, Id, Layout, Modal, RichText,
+    Align, Button, Color32, ComboBox, Context, FontId, Id, Layout, RichText,
     ScrollArea, Sense, Stroke, TextEdit, TextFormat, Ui, text::LayoutJob, vec2,
 };
 use lumen_core::{constants::APP_VERSION, i18n::tr, models::AppSettings};
@@ -103,7 +104,8 @@ pub(super) struct SettingsPage {
     subscription: Option<SubscriptionDraft>,
     dns: Option<DnsDraft>,
     reset: bool,
-    color: Option<ColorDraft>,
+    /// `ColorPickerDialog` and whether it edits the base tint (else the accent).
+    color: Option<(ColorPicker, bool)>,
     password: String,
     file_error: Option<String>,
 }
@@ -233,12 +235,6 @@ struct DnsDraft {
     proxy: String,
     hosts: String,
 }
-struct ColorDraft {
-    base: Color32,
-    hex: String,
-    mute: f32,
-    tint: bool,
-}
 
 impl SettingsPage {
     pub(super) fn render(&mut self, ui: &mut Ui, page: &mut PageContext<'_>) {
@@ -292,10 +288,20 @@ impl SettingsPage {
         if self.reset {
             self.reset_dialog(page.ctx, theme, bridge);
         }
-        if let Some(color) = self.color.as_mut()
-            && color_dialog(page.ctx, theme, bridge, color)
-        {
-            self.color = None;
+        if let Some((picker, tint)) = self.color.as_mut() {
+            match picker.show(page.ctx, theme, || bridge.system_accent()) {
+                PickerResult::Open => {}
+                PickerResult::Closed => self.color = None,
+                PickerResult::Accepted { hex, base_hex, mute } => {
+                    if *tint {
+                        bridge.set_ui_base_tint(&hex);
+                        bridge.set_ui_base_tint_src(&format!("{base_hex}|{mute}"));
+                    } else {
+                        bridge.set_accent(&hex);
+                    }
+                    self.color = None;
+                }
+            }
         }
     }
 
@@ -476,7 +482,10 @@ impl SettingsPage {
                 "Цвет акцента для элементов интерфейса",
                 |ui| {
                     if accent_picker(ui, theme, theme.accent).clicked() {
-                        self.color = Some(ColorDraft::new(&s.accent_color, 0.0, false));
+                        self.color = Some((
+                            ColorPicker::open("settings-accent", tr("Цвет акцента", &[]), &s.accent_color, 0.0, true, true),
+                            false,
+                        ));
                     }
                 },
             );
@@ -505,7 +514,10 @@ impl SettingsPage {
                                         (s.ui_base_tint.as_str(), 0.0)
                                     }
                                 });
-                            self.color = Some(ColorDraft::new(base, mute, true));
+                            self.color = Some((
+                                ColorPicker::open("settings-tint", tr("Свой базовый тон", &[]), base, mute, true, false),
+                                true,
+                            ));
                         }
                     },
                 );
@@ -624,7 +636,7 @@ impl SettingsPage {
                 "Масштаб интерфейса",
                 "Размер шрифта и всего интерфейса, % (80–140)",
                 |ui| {
-                    spin(ui, s.ui_font_scale, 80..=140, 5.0, |value| {
+                    spin(ui, theme, s.ui_font_scale, 80..=140, 5.0, |value| {
                         bridge.set_ui_font_scale(value)
                     });
                 },
@@ -637,7 +649,7 @@ impl SettingsPage {
                     "Скругление углов",
                     "Радиус скругления карточек и кнопок, px",
                     |ui| {
-                        spin(ui, s.ui_corner_radius, 0..=20, 1.0, |value| {
+                        spin(ui, theme, s.ui_corner_radius, 0..=20, 1.0, |value| {
                             bridge.set_ui_corner_radius(value)
                         });
                     },
@@ -1530,7 +1542,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     "Настройки мультиплексирования",
                     "Multiplex Settings",
                     |ui| {
-                        spin(ui, s.multiplex_concurrency, 1..=32, 1.0, |value| {
+                        spin(ui, theme, s.multiplex_concurrency, 1..=32, 1.0, |value| {
                             bridge.set_multiplex_concurrency(value)
                         });
                         info_icon(ui, theme, "Потоки задают, сколько запросов можно вести внутри одного мультиплексированного соединения.");
@@ -1571,14 +1583,9 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Предыдущий прокси",
                 "Через него идёт подключение к выбранному серверу",
                 |ui| {
-                    styled_combo(
-                        ui,
-                        "chain-front",
-                        &s.proxy_chain_front_node_id,
-                        &options,
-                        260.0,
-                        |value| bridge.set_proxy_chain_front(value),
-                    );
+                    if let Some(value) = chain_combo(ui, theme, "chain-front", &s.proxy_chain_front_node_id, &options) {
+                        bridge.set_proxy_chain_front(value);
+                    }
                 },
             );
             setting_row(
@@ -1588,14 +1595,9 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Выходной прокси",
                 "Сайты видят IP этого сервера",
                 |ui| {
-                    styled_combo(
-                        ui,
-                        "chain-exit",
-                        &s.proxy_chain_exit_node_id,
-                        &options,
-                        260.0,
-                        |value| bridge.set_proxy_chain_exit(value),
-                    );
+                    if let Some(value) = chain_combo(ui, theme, "chain-exit", &s.proxy_chain_exit_node_id, &options) {
+                        bridge.set_proxy_chain_exit(value);
+                    }
                 },
             );
         });
@@ -1661,7 +1663,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Порог скорости",
                 "КБ/с, ниже которого срабатывает переключение",
                 |ui| {
-                    spin(ui, s.auto_switch_threshold_kbps, 1..=10000, 1.0, |value| {
+                    spin(ui, theme, s.auto_switch_threshold_kbps, 1..=10000, 1.0, |value| {
                         bridge.set_auto_switch_threshold(value)
                     });
                 },
@@ -1673,7 +1675,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Задержка",
                 "Секунд низкой скорости перед переключением",
                 |ui| {
-                    spin(ui, s.auto_switch_delay_sec, 5..=300, 1.0, |value| {
+                    spin(ui, theme, s.auto_switch_delay_sec, 5..=300, 1.0, |value| {
                         bridge.set_auto_switch_delay(value)
                     });
                 },
@@ -1685,7 +1687,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Пауза",
                 "Секунд между переключениями",
                 |ui| {
-                    spin(ui, s.auto_switch_cooldown_sec, 10..=600, 1.0, |value| {
+                    spin(ui, theme, s.auto_switch_cooldown_sec, 10..=600, 1.0, |value| {
                         bridge.set_auto_switch_cooldown(value)
                     });
                 },
@@ -1705,7 +1707,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "SOCKS-порт",
                 "Локальный порт SOCKS/mixed прокси (рекомендуется 10808)",
                 |ui| {
-                    spin(ui, s.local_socks_port, 1025..=65535, 1.0, |value| {
+                    spin(ui, theme, s.local_socks_port, 1025..=65535, 1.0, |value| {
                         bridge.set_local_socks_port(value)
                     });
                     info_icon(ui, theme, "Локальный порт для SOCKS и mixed прокси. Порт 10818 зарезервирован под Discord Voice и будет сброшен на рекомендованный. Применяется с переподключением.");
@@ -1718,7 +1720,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "HTTP-порт",
                 "Локальный порт HTTP прокси (рекомендуется 10809)",
                 |ui| {
-                    spin(ui, s.local_http_port, 1025..=65535, 1.0, |value| {
+                    spin(ui, theme, s.local_http_port, 1025..=65535, 1.0, |value| {
                         bridge.set_local_http_port(value)
                     });
                     info_icon(ui, theme, "Локальный порт для HTTP прокси. Должен отличаться от SOCKS-порта; порт 10818 зарезервирован под Discord Voice. Применяется с переподключением.");
@@ -1859,7 +1861,7 @@ fn network(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                     "MTU",
                     "Размер пакета TUN-адаптера (рекомендуется 9000)",
                     |ui| {
-                        spin(ui, s.tun_mtu, 1280..=65535, 1.0, |value| {
+                        spin(ui, theme, s.tun_mtu, 1280..=65535, 1.0, |value| {
                             bridge.set_tun_mtu(value)
                         });
                     },
@@ -2054,19 +2056,11 @@ fn startup(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Пусто — стандартный (cachefly 50MB)",
                 |ui| {
                     // Right-to-left row: QML order is the field, then the presets.
-                    ui.menu_button(
-                        RichText::new("\u{e70d}")
-                            .size(12.0)
-                            .color(theme.text_muted),
-                        |ui| {
-                            for (url, label) in SPEED_URLS {
-                                if ui.button(*label).clicked() {
-                                    bridge.set_speed_test_url(url);
-                                    ui.close();
-                                }
-                            }
-                        },
-                    );
+                    let labels = SPEED_URLS.iter().map(|(_, label)| *label).collect::<Vec<_>>();
+                    let selected = SPEED_URLS.iter().position(|(url, _)| *url == s.speed_test_url);
+                    if let Some(index) = super::search_combo::preset_menu(ui, theme, "speed-url", &labels, selected) {
+                        bridge.set_speed_test_url(SPEED_URLS[index].0);
+                    }
                     if let Some(url) = committed_field(
                         ui,
                         theme,
@@ -2087,7 +2081,7 @@ fn startup(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings, 
                 "Параллельных проверок",
                 "Сколько серверов тестировать одновременно (0 — авто)",
                 |ui| {
-                    spin(ui, s.speed_test_concurrency, 0..=32, 1.0, |value| {
+                    spin(ui, theme, s.speed_test_concurrency, 0..=32, 1.0, |value| {
                         bridge.set_speed_test_concurrency(value)
                     });
                 },
@@ -2132,84 +2126,6 @@ fn updates(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, s: &AppSettings) 
             });
         }
     });
-}
-
-impl ColorDraft {
-    fn new(hex: &str, mute: f32, tint: bool) -> Self {
-        let base = hex_color(hex).unwrap_or(Color32::from_rgb(0, 120, 212));
-        Self {
-            base,
-            hex: color_hex(base),
-            mute: mute.clamp(0.0, 1.0),
-            tint,
-        }
-    }
-}
-
-fn color_dialog(
-    ctx: &Context,
-    theme: &Theme,
-    bridge: &mut AppBridge,
-    draft: &mut ColorDraft,
-) -> bool {
-    let modal = Modal::new(Id::unique("settings-color")).show(ctx, |ui| {
-        ui.set_width(350.0_f32.min((ctx.content_rect().width() - 48.0).max(0.0)));
-        ui.heading(tr(
-            if draft.tint {
-                "Свой базовый тон"
-            } else {
-                "Цвет акцента"
-            },
-            &[],
-        ));
-        ui.horizontal_wrapped(|ui| {
-            if ui.color_edit_button_srgba(&mut draft.base).changed() {
-                draft.hex = color_hex(draft.base);
-            }
-            if ui.text_edit_singleline(&mut draft.hex).changed()
-                && let Some(color) = hex_color(&draft.hex)
-            {
-                draft.base = color;
-            }
-            if !draft.tint && ghost(ui, theme, "Системный цвет") {
-                let system = bridge.system_accent();
-                if let Some(color) = hex_color(&system) {
-                    draft.base = color;
-                    draft.hex = color_hex(color);
-                    draft.mute = 0.0;
-                }
-            }
-        });
-        ui.add(egui::Slider::new(&mut draft.mute, 0.0..=1.0).text(tr("Затемнение", &[])));
-        let result = muted_color(draft.base, draft.mute);
-        ui.colored_label(result, color_hex(result));
-        right_row(ui, theme.control_height as f32, |ui| {
-            let cancel = ghost(ui, theme, "Отмена");
-            let accept = accent_button(ui, theme, "Применить");
-            (cancel, accept, result)
-        })
-    });
-    let (cancel, accept, result) = modal.inner;
-    if accept {
-        if draft.tint {
-            bridge.set_ui_base_tint(&color_hex(result));
-            bridge.set_ui_base_tint_src(&format!("{}|{}", color_hex(draft.base), draft.mute));
-        } else {
-            bridge.set_accent(&color_hex(result));
-        }
-    }
-    cancel || accept || modal.should_close()
-}
-
-fn muted_color(color: Color32, mute: f32) -> Color32 {
-    let mut hsv = egui::ecolor::HsvaGamma::from(color);
-    hsv.s *= 1.0 - 0.80 * mute;
-    hsv.v *= 1.0 - 0.55 * mute;
-    Color32::from(hsv)
-}
-
-fn color_hex(color: Color32) -> String {
-    format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b())
 }
 
 /// Height-constrained right-aligned row (`QML RowLayout`); egui rows must pin
@@ -2331,6 +2247,22 @@ fn tab_job(
 
 /// `FluentCombo` bound to a key list; QML combos with an out-of-list value
 /// still display their first item, so the fallback mirrors that.
+/// Proxy chain `SearchCombo` (260 px); returns the picked node id.
+fn chain_combo<'a>(
+    ui: &mut Ui,
+    theme: &Theme,
+    id: &str,
+    current: &str,
+    options: &[(&'a str, &'a str)],
+) -> Option<&'a str> {
+    let labels = options.iter().map(|(_, label)| *label).collect::<Vec<_>>();
+    let index = options.iter().position(|(key, _)| *key == current);
+    super::search_combo::SearchCombo::new(ui, id, labels, index)
+        .width(260.0)
+        .show(ui, theme)
+        .map(|index| options[index].0)
+}
+
 fn styled_combo(
     ui: &mut Ui,
     id: impl egui::AsIdSalt,
@@ -2368,18 +2300,110 @@ fn styled_combo(
     }
 }
 
+/// `FluentSpin`: a 130 x controlHeight editable SpinBox with ‹ / › steppers
+/// (26 px wide, 4 px in from each side) and the value centred between them.
+/// The field fill follows hover (not while editing) and the border turns
+/// accent while editing, both over 110 ms. Steppers, Up / Down while editing
+/// and Enter / focus loss commit (`valueModified`).
 fn spin(
     ui: &mut Ui,
-    mut value: i64,
+    theme: &Theme,
+    value: i64,
     range: std::ops::RangeInclusive<i64>,
     step: f64,
     set: impl FnOnce(i64),
 ) {
-    if ui
-        .add(egui::DragValue::new(&mut value).range(range).speed(step))
-        .changed()
+    let step = (step as i64).max(1);
+    let height = theme.control_height as f32;
+    let (rect, response) = ui.allocate_exact_size(vec2(130.0, height), Sense::hover());
+    let id = response.id;
+    let enabled = ui.is_enabled();
+    let edit_id = id.with("edit");
+    let focused = ui.memory(|memory| memory.has_focus(edit_id));
+    let ctx = ui.ctx().clone();
+    let hover = ctx.animate_bool_with_time(id.with("hover"), enabled && response.hovered() && !focused, 0.11);
+    let focus = ctx.animate_bool_with_time(id.with("focus"), focused, 0.11);
+    let radius = theme.radius_small as f32;
+    let background = ui.painter().add(egui::Shape::Noop);
+
+    let indicator = |ui: &mut Ui, left: f32, glyph: &str, salt: &str| {
+        let button = egui::Rect::from_min_size(egui::pos2(left, rect.center().y - (height - 8.0) / 2.0), vec2(26.0, height - 8.0));
+        let response = ui.interact(button, id.with(salt), Sense::click());
+        let fill = if !enabled {
+            Color32::TRANSPARENT
+        } else if response.is_pointer_button_down_on() {
+            theme.control_fill_pressed
+        } else if response.hovered() {
+            theme.control_fill_hover
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(button, radius, fill);
+        ui.painter().text(
+            button.center(),
+            egui::Align2::CENTER_CENTER,
+            glyph,
+            FontId::proportional(11.0),
+            if enabled { theme.text_muted } else { theme.text_faint },
+        );
+        enabled && response.clicked()
+    };
+    let down = indicator(ui, rect.left() + 4.0, "\u{e76b}", "down");
+    let up = indicator(ui, rect.right() - 30.0, "\u{e76c}", "up");
+
+    let mut text = ui
+        .data_mut(|data| data.get_temp::<String>(edit_id))
+        .filter(|_| focused)
+        .unwrap_or_else(|| value.to_string());
+    let edit = ui.place(
+        egui::Rect::from_min_max(egui::pos2(rect.left() + 34.0, rect.top()), egui::pos2(rect.right() - 34.0, rect.bottom())),
+        TextEdit::singleline(&mut text)
+            .id(edit_id)
+            .font(FontId::proportional(theme.font_normal as f32))
+            .text_color(theme.text)
+            .frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .align(egui::Align2::CENTER_CENTER),
+    );
+    let mut next = None;
+    if edit.has_focus() {
+        let (key_up, key_down) = ui.input_mut(|input| {
+            (
+                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+            )
+        });
+        let typed = text.trim().parse::<i64>().unwrap_or(value);
+        if key_up {
+            next = Some(typed + step);
+        } else if key_down {
+            next = Some(typed - step);
+        }
+        if let Some(stepped) = next {
+            text = stepped.clamp(*range.start(), *range.end()).to_string();
+        }
+        ui.data_mut(|data| data.insert_temp(edit_id, text.clone()));
+    }
+    let committed = edit.lost_focus() || (edit.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
+    if committed {
+        next = Some(text.trim().parse::<i64>().unwrap_or(value));
+        ui.data_mut(|data| data.remove::<String>(edit_id));
+    }
+    if down {
+        next = Some(value - step);
+    } else if up {
+        next = Some(value + step);
+    }
+
+    let fill = theme.control_fill.lerp_to_gamma(theme.control_fill_hover, hover);
+    let border = theme.border_solid.lerp_to_gamma(theme.accent, focus);
+    ui.painter().set(background, egui::Shape::rect_filled(rect, radius, fill));
+    ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, border), egui::StrokeKind::Inside);
+
+    if let Some(next) = next.map(|next| next.clamp(*range.start(), *range.end()))
+        && next != value
     {
-        set(value);
+        set(next);
     }
 }
 
@@ -2392,40 +2416,65 @@ fn percent_slider(
     value: i64,
     set: impl FnOnce(i64),
 ) {
+    // RowLayout spacing 8: Slider (170) | "N%" (42, right aligned).
     let id = ui.make_persistent_id(("setting-slider", id_salt));
-    let mut edited = ui
-        .data_mut(|data| data.get_temp::<i64>(id))
-        .unwrap_or(value);
-    let mut changed = false;
-    let mut dragging = false;
-    let mut stopped = false;
-    ui.allocate_ui_with_layout(
-        vec2(212.0, 20.0),
-        Layout::right_to_left(Align::Center),
-        |ui| {
-            ui.allocate_ui_with_layout(vec2(42.0, 18.0), Layout::right_to_left(Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!("{edited}%"))
-                        .size(theme.font_small as f32)
-                        .color(theme.text_muted),
-                );
-            });
-            ui.allocate_ui_with_layout(vec2(170.0, 20.0), Layout::left_to_right(Align::Center), |ui| {
-                let response =
-                    ui.add(egui::Slider::new(&mut edited, 0..=100).step_by(5.0));
-                changed |= response.changed();
-                dragging |= response.dragged();
-                stopped |= response.drag_stopped();
-            });
-        },
+    let (row, _) = ui.allocate_exact_size(vec2(220.0, 36.0), Sense::hover());
+    let slider = egui::Rect::from_min_size(row.min, vec2(170.0, 36.0));
+    let response = ui.interact(slider, id, Sense::click_and_drag());
+    let enabled = ui.is_enabled();
+    // Universal Slider: padding 6, a 2 px track and an 8 x 24 handle that
+    // travels over (availableWidth - 8).
+    let inner = slider.shrink(6.0);
+    let travel = inner.width() - 8.0;
+    let mut current = value.clamp(0, 100);
+    let pressed = enabled && (response.is_pointer_button_down_on() || response.dragged());
+    if pressed && let Some(pointer) = response.interact_pointer_pos() {
+        let position = ((pointer.x - inner.left() - 4.0) / travel).clamp(0.0, 1.0);
+        // stepSize 5; `onMoved` reports every change.
+        current = ((position * 100.0 / 5.0).round() * 5.0) as i64;
+    }
+    let position = current as f32 / 100.0;
+    let hovered = enabled && response.hovered();
+    let universal = |dark: u8, light: u8| {
+        if theme.dark { Color32::from_gray(dark) } else { Color32::from_gray(light) }
+    };
+    let track_y = inner.center().y;
+    let track = egui::Rect::from_min_max(egui::pos2(inner.left(), track_y - 1.0), egui::pos2(inner.right(), track_y + 1.0));
+    let rest = if !enabled {
+        universal(0x33, 0xCC)
+    } else if hovered && !pressed {
+        theme.text.gamma_multiply(0.6)
+    } else {
+        theme.text.gamma_multiply(0.4)
+    };
+    ui.painter().rect_filled(track, 0.0, rest);
+    let filled = egui::Rect::from_min_size(track.min, vec2(position * inner.width(), 2.0));
+    ui.painter().rect_filled(filled, 0.0, if enabled { theme.accent } else { universal(0x33, 0xCC) });
+    let handle = egui::Rect::from_min_size(
+        egui::pos2(inner.left() + position * travel, inner.center().y - 12.0),
+        vec2(8.0, 24.0),
     );
-    if dragging {
-        ui.data_mut(|data| data.insert_temp(id, edited));
-    } else if changed || stopped {
-        ui.data_mut(|data| data.remove::<i64>(id));
-        if edited != value {
-            set(edited);
-        }
+    let handle_fill = if !enabled {
+        universal(0x33, 0xCC)
+    } else if pressed {
+        // chromeHighColor.
+        universal(0x76, 0xCC)
+    } else if hovered {
+        // chromeAltLowColor.
+        universal(0xF2, 0x17)
+    } else {
+        theme.accent
+    };
+    ui.painter().rect_filled(handle, 4.0, handle_fill);
+    ui.painter().text(
+        egui::pos2(row.right(), row.center().y),
+        egui::Align2::RIGHT_CENTER,
+        format!("{current}%"),
+        FontId::proportional(theme.font_small as f32),
+        theme.text_muted,
+    );
+    if current != value {
+        set(current);
     }
 }
 
@@ -2827,14 +2876,6 @@ mod tests {
         let result = frames(&mut transition, &mut displayed, 0, 0.045, 0.045);
         assert_eq!((displayed, result), (0, (1.0, 0.0)));
         assert!(!transition.running());
-    }
-
-    #[test]
-    fn base_tint_darkening_keeps_source_color_and_reduces_value() {
-        let draft = ColorDraft::new("#90A0BF", 0.6, true);
-        assert_eq!(draft.hex, "#90A0BF");
-        assert!(muted_color(draft.base, draft.mute).b() < draft.base.b());
-        assert_eq!(muted_color(draft.base, 0.0), draft.base);
     }
 }
 

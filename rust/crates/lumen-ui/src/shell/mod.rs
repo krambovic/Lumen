@@ -20,6 +20,7 @@ pub(crate) mod motion;
 pub(crate) mod widgets;
 pub(crate) mod fluent_menu;
 pub(crate) mod fluent_dialog;
+pub(crate) mod color_picker;
 mod wheel;
 mod frame_clock;
 #[cfg(debug_assertions)]

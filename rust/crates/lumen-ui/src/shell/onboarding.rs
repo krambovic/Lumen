@@ -114,10 +114,6 @@ fn steps(setup: bool, news: bool) -> Vec<Step> {
     flow
 }
 
-struct ColorDraft {
-    color: Color32,
-    hex: String,
-}
 
 #[derive(Default)]
 pub(super) struct Onboarding {
@@ -136,7 +132,8 @@ pub(super) struct Onboarding {
     import_error: Option<String>,
     windows_accent: String,
     show_support: bool,
-    color_draft: Option<ColorDraft>,
+    /// `onboardingAccentDlg` (ColorPickerDialog, `showDarkness: true`).
+    color_draft: Option<super::color_picker::ColorPicker>,
     typing: bool,
     finished: bool,
     /// `closing`: when `exitAnim` started.
@@ -940,10 +937,14 @@ impl Onboarding {
                     let response = accent_dot(ui, theme, rect, id, tint, custom_selected, true)
                         .fluent_tip(tr("Свой цвет", &[]));
                     if response.clicked() {
-                        self.color_draft = Some(ColorDraft {
-                            color: tint,
-                            hex: color_hex(tint),
-                        });
+                        self.color_draft = Some(super::color_picker::ColorPicker::open(
+                            "onboarding-accent",
+                            tr("Цвет акцента", &[]),
+                            &current,
+                            0.0,
+                            true,
+                            false,
+                        ));
                     }
                 }
             }
@@ -951,42 +952,17 @@ impl Onboarding {
     }
 
     fn color_dialog(&mut self, ctx: &Context, theme: &Theme, bridge: &mut AppBridge) {
-        let Some(draft) = self.color_draft.as_mut() else {
+        use super::color_picker::PickerResult;
+        let Some(picker) = self.color_draft.as_mut() else {
             return;
         };
-        let mut accept = false;
-        let mut cancel = false;
-        let modal = egui::Modal::new(Id::unique("onboarding-accent-dialog")).show(ctx, |ui| {
-            ui.set_width(350.0_f32.min((ctx.content_rect().width() - 48.0).max(0.0)));
-            ui.heading(tr("Цвет акцента", &[]));
-            ui.horizontal_wrapped(|ui| {
-                if ui.color_edit_button_srgba(&mut draft.color).changed() {
-                    draft.hex = color_hex(draft.color);
-                }
-                if ui.text_edit_singleline(&mut draft.hex).changed()
-                    && let Some(color) = hex_color(&draft.hex)
-                {
-                    draft.color = color;
-                }
-            });
-            ui.allocate_ui_with_layout(
-                vec2(ui.available_width(), theme.control_height as f32),
-                Layout::right_to_left(Align::Center),
-                |ui| {
-                    accept = FluentButton::new(ButtonKind::Accent, "", &tr("Применить", &[]))
-                        .show(ui, theme)
-                        .clicked();
-                    cancel = FluentButton::new(ButtonKind::Ghost, "", &tr("Отмена", &[]))
-                        .show(ui, theme)
-                        .clicked();
-                },
-            );
-        });
-        if accept {
-            bridge.set_accent(&color_hex(draft.color));
-        }
-        if accept || cancel || modal.should_close() {
-            self.color_draft = None;
+        match picker.show(ctx, theme, || bridge.system_accent()) {
+            PickerResult::Open => {}
+            PickerResult::Closed => self.color_draft = None,
+            PickerResult::Accepted { hex, .. } => {
+                bridge.set_accent(&hex);
+                self.color_draft = None;
+            }
         }
     }
 
@@ -1753,10 +1729,6 @@ fn region_label(region: &str) -> &'static str {
         "iran" => "Иран",
         _ => "Россия",
     }
-}
-
-fn color_hex(color: Color32) -> String {
-    format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b())
 }
 
 // ── layout primitives ───────────────────────────────────────────────────

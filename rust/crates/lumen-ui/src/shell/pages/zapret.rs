@@ -456,22 +456,17 @@ impl ZapretPage {
                                     ui.label(&row.kind_title);
                                 }
                                 if !row.missing_node {
-                                    let current = row
-                                        .choices
-                                        .get(row.choice_index as usize)
-                                        .map_or("", |choice| choice.1.as_str());
-                                    let label = if current.is_empty() {
-                                        &row.placeholder
-                                    } else {
-                                        current
-                                    };
+                                    let current = usize::try_from(row.choice_index).ok();
                                     if let Some(value) = searchable(
                                         ui,
+                                        theme,
                                         ("zapret-binding", row.node_id.as_str()),
-                                        label,
+                                        current,
+                                        &row.placeholder,
                                         &row.choices,
                                         "Поиск стратегий…",
                                         260.0,
+                                        360.0,
                                     ) {
                                         bridge.set_zapret_server_binding(&row.node_id, &value);
                                     }
@@ -519,12 +514,19 @@ impl ZapretPage {
                     + theme.font_normal as f32
                     + 36.0;
                 let server_width = (width - choice_width - bind_width - 16.0).max(100.0);
-                let label = selected_label(&servers, &self.server)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| tr("Все серверы уже привязаны", &[]));
-                if let Some(server) =
-                    searchable(ui, "zapret-server", &label, &servers, "Поиск", server_width)
-                {
+                let placeholder = tr("Все серверы уже привязаны", &[]);
+                let current = servers.iter().position(|item| item.0 == self.server);
+                if let Some(server) = searchable(
+                    ui,
+                    theme,
+                    "zapret-server",
+                    current,
+                    &placeholder,
+                    &servers,
+                    "Поиск серверов…",
+                    server_width,
+                    280.0,
+                ) {
                     self.server = server;
                     self.choice.clear();
                 }
@@ -536,11 +538,14 @@ impl ZapretPage {
                 }
                 if let Some(choice) = searchable(
                     ui,
+                    theme,
                     "zapret-strategy",
-                    selected_label(&choices, &self.choice).unwrap_or(""),
+                    choices.iter().position(|item| item.0 == self.choice),
+                    "",
                     &choices,
                     "Поиск стратегий…",
                     choice_width,
+                    360.0,
                 ) {
                     self.choice = choice;
                 }
@@ -846,40 +851,28 @@ impl ZapretPage {
     }
 }
 
+/// `SearchCombo` over (value, label) pairs; returns the picked value.
+#[allow(clippy::too_many_arguments)]
 fn searchable(
     ui: &mut Ui,
-    key: impl egui::AsIdSalt,
-    label: &str,
+    theme: &Theme,
+    key: impl std::hash::Hash + std::fmt::Debug,
+    current: Option<usize>,
+    placeholder: &str,
     items: &[(String, String)],
-    hint: &str,
+    search_hint: &str,
     width: f32,
+    popup_min_width: f32,
 ) -> Option<String> {
-    let id = ui.make_persistent_id(key);
-    ui.add_enabled_ui(!items.is_empty(), |ui| {
-        ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
-            .width(width)
-            .truncate()
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                let mut query = ui.data_mut(|data| data.get_temp::<String>(id).unwrap_or_default());
-                ui.add(TextEdit::singleline(&mut query).hint_text(tr(hint, &[])));
-                ui.data_mut(|data| data.insert_temp(id, query.clone()));
-                let query = query.trim().to_lowercase();
-                for (key, item) in items {
-                    if item.to_lowercase().contains(&query)
-                        && ui.selectable_label(item == label, item).clicked()
-                    {
-                        ui.data_mut(|data| data.remove::<String>(id));
-                        ui.close();
-                        return Some(key.clone());
-                    }
-                }
-                None
-            })
-            .inner
-            .flatten()
-    })
-    .inner
+    let labels = items.iter().map(|item| item.1.as_str()).collect::<Vec<_>>();
+    super::search_combo::SearchCombo::new(ui, key, labels, current)
+        .placeholder(placeholder)
+        .search_placeholder(tr(search_hint, &[]))
+        .width(width)
+        .popup_min_width(popup_min_width)
+        .enabled(!items.is_empty())
+        .show(ui, theme)
+        .map(|index| items[index].0.clone())
 }
 
 fn selected_label<'a>(items: &'a [(String, String)], key: &str) -> Option<&'a str> {

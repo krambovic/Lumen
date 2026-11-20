@@ -573,7 +573,7 @@ client, core/resource updaters, zapret and discord proxy managers.
     and USDT, server QR, nodes group / info / delete group / move
     (`pages/nodes/dialogs.rs`), settings reset, Zapret delete / discard,
     network conflict, the routing dialogs and the configs discard overlay.
-    Still on their own code: the colour pickers (ColorPickerDialog.qml).
+    The colour pickers moved to `shell/color_picker.rs` (see below).
   - `widgets::FluentTip::fluent_tip` replaces `on_hover_text`
     (FluentToolTip.qml: 450 ms delay, 100 ms fade, centred 4 px above).
   - Onboarding pages record explicit reveal blocks (`rv(ui, order, dy, ..)`)
@@ -620,6 +620,24 @@ client, core/resource updaters, zapret and discord proxy managers.
     until a server caption appears (it was fixed at 66, 14 px too tall).
   - Not checkable in captures: dialogs behind typed input (configs discard)
     and the network conflict dialog, since the test windows never have focus.
+- Remaining popups and controls (2026-11-20), compared with QML:
+  - `shell/color_picker.rs` ports ColorPickerDialog.qml for the settings
+    accent (with «Системный»), the base tint (heading, darkness, `base|mute`
+    source) and the onboarding custom accent. The SV square, hue and
+    darkness bars are per-pixel textures with anti-aliased corners, so they
+    blend like Qt's stacked gradients. Backdrop: Universal `baseLowColor`.
+  - `pages/search_combo.rs`: `SearchCombo` (search field, keyboard
+    navigation, opens upwards without room below, 90 ms fade) for the Zapret
+    bindings and the proxy chain rows, and the speed-test preset flyout.
+    Their areas are not constrained to the window, like Qt popups with
+    `margins: -1`.
+  - `FluentSpin` (130 px, ‹ / › steppers, centred editable value) replaces
+    `DragValue` in all ten settings spin boxes; `PercentSlider` draws the
+    Universal slider (2 px track, accent fill, 8 x 24 handle, step 5,
+    commits while dragging) without egui's value box.
+  - The SearchCombo list shows its scroll bar only on hover (egui), QML
+    keeps it visible.
+
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
   actions. Export offers the original archive sections and consent-gated

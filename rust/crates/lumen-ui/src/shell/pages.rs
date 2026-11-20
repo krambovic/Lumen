@@ -20,6 +20,7 @@ mod node_editor;
 mod node_qr;
 mod nodes;
 mod routing;
+mod search_combo;
 mod search_field;
 pub(crate) mod settings;
 mod text_edit_menu;
