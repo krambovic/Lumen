@@ -21,6 +21,7 @@ pub(crate) mod widgets;
 pub(crate) mod fluent_menu;
 pub(crate) mod fluent_dialog;
 mod wheel;
+mod frame_clock;
 #[cfg(debug_assertions)]
 mod preview_input;
 pub mod navigation;
@@ -263,6 +264,8 @@ pub struct ShellApp {
     onboarding: onboarding::Onboarding,
     /// The window has been on screen; the onboarding waits for it.
     window_shown_once: bool,
+    /// Frame timestamps on the vblank grid (see `frame_clock.rs`).
+    frame_clock: frame_clock::FrameClock,
     /// Scripted comparison input (`LUMEN_PREVIEW_INPUT`) and its start time.
     #[cfg(debug_assertions)]
     preview_input: Option<(Option<f64>, preview_input::PreviewInput)>,
@@ -325,6 +328,7 @@ impl ShellApp {
             page_state: pages::PageState::default(),
             onboarding: onboarding::Onboarding::default(),
             window_shown_once: false,
+            frame_clock: frame_clock::FrameClock::default(),
             #[cfg(debug_assertions)]
             preview_input: preview_input::PreviewInput::from_env().map(|input| (None, input)),
         }
@@ -1459,6 +1463,7 @@ impl eframe::App for ShellApp {
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.frame_clock.apply(raw_input);
         #[cfg(debug_assertions)]
         if let Some((started, input)) = self.preview_input.as_mut() {
             if !input.ready() {

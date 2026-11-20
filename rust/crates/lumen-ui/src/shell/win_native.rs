@@ -844,6 +844,21 @@ pub fn find_main_window(title: &str) -> Option<windows::Win32::Foundation::HWND>
             EnumWindows, GetWindowTextW, GetWindowThreadProcessId,
         };
 
+        // The shell window lives as long as the process, and this runs several
+        // times per frame: enumerating every top-level window of the session
+        // each time cost a noticeable share of the frame. The handle is cached
+        // while it still names a window with this title.
+        static CACHE: std::sync::Mutex<Option<(String, isize)>> = std::sync::Mutex::new(None);
+        if let Ok(cache) = CACHE.lock()
+            && let Some((cached_title, raw)) = cache.as_ref()
+            && cached_title == title
+        {
+            let hwnd = HWND(*raw as _);
+            if windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)).as_bool() {
+                return Some(hwnd);
+            }
+        }
+
         struct Query<'a> {
             title: &'a str,
             found: Option<HWND>,
@@ -851,6 +866,11 @@ pub fn find_main_window(title: &str) -> Option<windows::Win32::Foundation::HWND>
         let mut query = Query { title, found: None };
         unsafe {
             let _ = EnumWindows(Some(enum_proc), LPARAM(&mut query as *mut _ as isize));
+        }
+        if let Some(hwnd) = query.found
+            && let Ok(mut cache) = CACHE.lock()
+        {
+            *cache = Some((title.to_owned(), hwnd.0 as isize));
         }
         return query.found;
 
@@ -1328,4 +1348,38 @@ mod tests {
             assert!(command.starts_with('"'));
         }
     }
+}
+
+/// The display's next vertical blank as `(seconds, period)` on the QPC clock,
+/// with the current QPC time in seconds, from `DwmGetCompositionTimingInfo`.
+/// `None` when composition timing is unavailable.
+pub fn vblank_timing() -> Option<(f64, f64, f64)> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Graphics::Dwm::{DWM_TIMING_INFO, DwmGetCompositionTimingInfo};
+        use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
+        let mut info = DWM_TIMING_INFO {
+            cbSize: std::mem::size_of::<DWM_TIMING_INFO>() as u32,
+            ..Default::default()
+        };
+        DwmGetCompositionTimingInfo(windows::Win32::Foundation::HWND::default(), &mut info).ok()?;
+        let mut frequency = 0i64;
+        let mut counter = 0i64;
+        QueryPerformanceFrequency(&mut frequency).ok()?;
+        QueryPerformanceCounter(&mut counter).ok()?;
+        let frequency = frequency as f64;
+        let period = info.qpcRefreshPeriod as f64;
+        if frequency <= 0.0 || period <= 0.0 || info.qpcVBlank == 0 {
+            return None;
+        }
+        let mut vblank = info.qpcVBlank as f64;
+        let now = counter as f64;
+        // The next vblank after now (the reported one may be in the past).
+        if vblank <= now {
+            vblank += ((now - vblank) / period).floor() * period + period;
+        }
+        Some((vblank / frequency, period / frequency, now / frequency))
+    }
+    #[cfg(not(windows))]
+    None
 }
