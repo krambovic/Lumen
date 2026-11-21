@@ -683,6 +683,23 @@ client, core/resource updaters, zapret and discord proxy managers.
   painter, which ignores the card opacity, so a bright outline stayed visible
   while the card flew in and out. It now uses the card UI's painter;
   fly-out captures show the border fading with the card.
+- Python test audit and differential corpora (2026-11-21): every Python test
+  is mapped in `rust/TEST_PARITY.md` (753 matched, 58 ported, 86 existing, 57
+  corpus, 78 n/a, 70 not ported with reasons). `rust/tools/parity` records
+  every input the Python suite feeds the parser, the server editor and pure
+  helpers, adds generated configs for every scheme/transport/security/format,
+  and the Rust tests replay Python's results: parser 2115 cases, runtime
+  configs 15891 (Xray, sing-box outbound and plan across presets, DNS, TUN,
+  fragments, multiplex, hot switch), editor 6385, helpers 9609. Fixes found:
+  JSON key order (serde_json `preserve_order`, `shift_remove` like `dict.pop`),
+  sing-box group order, CPython base64/JSON errors, China-preset rules treated
+  as user rules, IP-list form, VLESS/socks/http/naive/XHTTP/AWG share links,
+  editor saves, scrubber JSON spacing, two-letter country codes, and a corrupt
+  traffic history being overwritten. `rust/tools/env_matrix.py` starts the
+  packaged build installed and portable, from Cyrillic/space and 212-char
+  folders, with proxy environment variables, and in light Persian (RTL), dark
+  Chinese and compact English profiles: all start in under 1 s (7 s on the
+  first seeded run), stay up and write their data folder without panics.
 - Version 3.0.0 (2026-11-21): the native client has its own version in
   `rust/Cargo.toml` (`[workspace.package]`) and the `APP_VERSION` fallback
   in `lumen-core/src/constants.rs`. `windows/build_rust.py` reads it from
