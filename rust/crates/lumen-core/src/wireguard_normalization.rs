@@ -68,7 +68,7 @@ fn positive_int(value: &Value, fallback: i64) -> i64 {
 }
 
 fn take_key(map: &mut Map<String, Value>, key: &str) -> Value {
-    map.remove(key).unwrap_or(Value::Null)
+    map.shift_remove(key).unwrap_or(Value::Null)
 }
 
 // ── IP prefix normalization ──
@@ -138,7 +138,7 @@ pub fn normalize_wireguard_endpoint(endpoint: &Value) -> Result<Value> {
         // endpoints (`endpoints[0].reserved: json: unknown field "reserved"`);
         // the WARP profile derives the reserved bytes itself.
         if let Some(obj) = result.as_object_mut() {
-            obj.remove("reserved");
+            obj.shift_remove("reserved");
         }
         return Ok(result);
     }

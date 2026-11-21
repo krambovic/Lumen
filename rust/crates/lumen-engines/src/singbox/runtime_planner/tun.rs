@@ -560,7 +560,7 @@ pub fn ensure_singbox_tun_runtime_contract(
             inbound["mtu"] = json!(mtu_value);
             inbound["auto_route"] = json!(true);
             if let Some(map) = inbound.as_object_mut() {
-                map.remove("route_address");
+                map.shift_remove("route_address");
             }
             // On Windows, strict_route installs the WFP protection needed to
             // stop multihomed DNS from leaving through a physical interface.
@@ -571,7 +571,7 @@ pub fn ensure_singbox_tun_runtime_contract(
                 // full-cone NAT, needs gvisor/mixed UDP stack
                 inbound["endpoint_independent_nat"] = json!(true);
             } else if let Some(map) = inbound.as_object_mut() {
-                map.remove("endpoint_independent_nat");
+                map.shift_remove("endpoint_independent_nat");
             }
             let excludes = normalize_route_exclude_addresses(
                 routing.map(|routing| routing.tun_route_exclude_address.as_slice()).unwrap_or(&[]),
@@ -579,10 +579,10 @@ pub fn ensure_singbox_tun_runtime_contract(
             if !excludes.is_empty() {
                 inbound["route_exclude_address"] = json!(excludes);
             } else if let Some(map) = inbound.as_object_mut() {
-                map.remove("route_exclude_address");
+                map.shift_remove("route_exclude_address");
             }
             if let Some(map) = inbound.as_object_mut() {
-                map.remove("sniff");
+                map.shift_remove("sniff");
             }
         }
     }

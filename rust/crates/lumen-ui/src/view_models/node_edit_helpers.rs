@@ -39,7 +39,7 @@ pub const FLOWS: [&str; 3] = ["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"]
 pub const RAW_HEADERS: [&str; 2] = ["none", "http"];
 
 pub const XRAY_ADVANCED_PROTOCOLS: [&str; 2] = ["vless", "vmess"];
-pub const ENDPOINT_EDITABLE_PROTOCOLS: [&str; 18] = [
+pub const ENDPOINT_EDITABLE_PROTOCOLS: [&str; 19] = [
     "vless",
     "vmess",
     "trojan",
@@ -58,6 +58,7 @@ pub const ENDPOINT_EDITABLE_PROTOCOLS: [&str; 18] = [
     "openvpn",
     "naive",
     "anytls",
+    "snell",
 ];
 pub const NATIVE_PROTOCOLS: [&str; 13] = [
     "wireguard",
@@ -195,7 +196,7 @@ fn ensure_dict<'a>(parent: &'a mut Map<String, Value>, key: &str) -> &'a mut Map
 /// Python `_set_or_remove`.
 fn set_or_remove(parent: &mut Map<String, Value>, key: &str, value: &str) {
     if value.is_empty() {
-        parent.remove(key);
+        parent.shift_remove(key);
     } else {
         parent.insert(key.to_string(), json!(value));
     }
@@ -212,10 +213,20 @@ fn safe_port(value: &Value, fallback: i64) -> i64 {
 }
 
 /// Python `_set_param(params, key, value)`.
+/// Python `_set_param`: `params[key] = value` for a non-empty value. The query
+/// is a dict there, so a repeated key replaces the value in place.
 fn set_param(params: &mut Vec<(String, String)>, key: &str, value: impl AsRef<str>) {
     let value = value.as_ref().to_string();
     if !value.is_empty() {
-        params.push((key.to_string(), value));
+        update_param(params, key, value);
+    }
+}
+
+/// Python `params[key] = value` / `params.update(...)` on the query dict.
+fn update_param(params: &mut Vec<(String, String)>, key: &str, value: String) {
+    match params.iter_mut().find(|(existing, _)| existing == key) {
+        Some(entry) => entry.1 = value,
+        None => params.push((key.to_string(), value)),
     }
 }
 
@@ -233,12 +244,20 @@ pub fn quote(value: &str) -> String {
 }
 
 /// Python `str(value or "")`.
+/// Python `str(value or "")`: falsy values (`None`, `False`, `0`, `0.0`,
+/// `""`) become empty, `True` is `"True"` and floats use `repr`.
 fn value_to_text(value: &Value) -> String {
     match value {
-        Value::Null => String::new(),
+        Value::Null | Value::Bool(false) => String::new(),
+        Value::Bool(true) => "True".into(),
         Value::String(text) => text.clone(),
-        Value::Bool(flag) => flag.to_string(),
-        Value::Number(number) => number.to_string(),
+        Value::Number(number) => match (number.as_i64(), number.as_f64()) {
+            (Some(0), _) => String::new(),
+            (Some(integer), _) => integer.to_string(),
+            (None, Some(float)) if float == 0.0 => String::new(),
+            (None, Some(float)) if number.is_f64() => pyjson::float_repr(float),
+            _ => number.to_string(),
+        },
         _ => String::new(),
     }
 }
@@ -504,9 +523,10 @@ fn stream_share_params(stream: &Map<String, Value>) -> Vec<(String, String)> {
             set_param(&mut params, "host", text_of(xhttp.get("host")));
             set_param(&mut params, "mode", text_of(xhttp.get("mode")));
             let extra = xhttp.get("extra");
+            // Python: `extra not in (None, "")`; a JSON object is kept.
             if let Some(extra) = extra
                 && !extra.is_null()
-                && !value_to_text(extra).is_empty()
+                && extra != ""
             {
                 set_param(
                     &mut params,
@@ -725,23 +745,19 @@ fn native_payload(outbound: &Map<String, Value>) -> Map<String, Value> {
     obj_or_empty(outbound.get("singbox"))
 }
 
+/// `query: None` for the Python builders without a query part (socks,
+/// http); the others always write `?`, even before an empty query. Likewise
+/// `userinfo: Some` always writes the `@` (Python `f"{auth}@..."`), `None`
+/// writes none (credentials that are only present with a username).
 fn build_link(
     scheme: &str,
-    userinfo: &str,
+    userinfo: Option<&str>,
     authority: &str,
-    query: &str,
+    query: Option<&str>,
     fragment: &str,
 ) -> String {
-    let query = if query.is_empty() {
-        String::new()
-    } else {
-        format!("?{query}")
-    };
-    let userinfo = if userinfo.is_empty() {
-        String::new()
-    } else {
-        format!("{userinfo}@")
-    };
+    let query = query.map(|query| format!("?{query}")).unwrap_or_default();
+    let userinfo = userinfo.map(|userinfo| format!("{userinfo}@")).unwrap_or_default();
     format!("{scheme}://{userinfo}{authority}{query}#{fragment}")
 }
 
@@ -780,9 +796,9 @@ fn build_vless_link(name: &str, server: &str, port: i64, outbound: &Map<String, 
         let server_port = py_int_or(native.get("server_port"), port);
         return build_link(
             "vless",
-            &quote(&user_id),
+            Some(&quote(&user_id)),
             &host_authority(&host, server_port),
-            &share_query(&params),
+            Some(&share_query(&params)),
             &fragment,
         );
     }
@@ -805,13 +821,13 @@ fn build_vless_link(name: &str, server: &str, port: i64, outbound: &Map<String, 
     set_param(&mut params, "type", share_network(&stream));
     set_param(&mut params, "flow", text_of(user.get("flow")));
     for (key, value) in stream_share_params(&stream) {
-        params.push((key, value));
+        update_param(&mut params, &key, value);
     }
     build_link(
         "vless",
-        &quote(&user_id),
+        Some(&quote(&user_id)),
         &host_authority(&share_host(&json!(server)), port),
-        &share_query(&params),
+        Some(&share_query(&params)),
         &fragment,
     )
 }
@@ -964,9 +980,9 @@ fn build_trojan_link(name: &str, server: &str, port: i64, outbound: &Map<String,
         let server_port = py_int_or(native.get("server_port"), port);
         return build_link(
             "trojan",
-            &password,
+            Some(&password),
             &host_authority(&host, server_port),
-            &share_query(&params),
+            Some(&share_query(&params)),
             &fragment,
         );
     }
@@ -983,9 +999,9 @@ fn build_trojan_link(name: &str, server: &str, port: i64, outbound: &Map<String,
     ));
     build_link(
         "trojan",
-        &password,
+        Some(&password),
         &host_authority(&share_host(&json!(server)), port),
-        &share_query(&params),
+        Some(&share_query(&params)),
         &fragment,
     )
 }
@@ -1082,7 +1098,7 @@ fn build_socks_link(name: &str, server: &str, port: i64, outbound: &Map<String, 
         let credentials = if username.is_empty() {
             String::new()
         } else {
-            format!("{}:{}@", quote(&username), quote(&password))
+            format!("{}:{}", quote(&username), quote(&password))
         };
         let host = native
             .get("server")
@@ -1092,9 +1108,9 @@ fn build_socks_link(name: &str, server: &str, port: i64, outbound: &Map<String, 
         let server_port = py_int_or(native.get("server_port"), port);
         return build_link(
             "socks",
-            &credentials,
+            Some(&credentials).map(|userinfo| userinfo.as_ref()).filter(|userinfo: &&str| !userinfo.is_empty()),
             &host_authority(&host, server_port),
-            "",
+            None,
             &fragment,
         );
     }
@@ -1113,9 +1129,9 @@ fn build_socks_link(name: &str, server: &str, port: i64, outbound: &Map<String, 
     };
     build_link(
         "socks",
-        credentials.trim_end_matches('@'),
+        Some(credentials.trim_end_matches('@')).map(|userinfo| userinfo.as_ref()).filter(|userinfo: &&str| !userinfo.is_empty()),
         &host_authority(&share_host(&json!(server)), port),
-        "",
+        None,
         &fragment,
     )
 }
@@ -1129,7 +1145,7 @@ fn build_http_link(name: &str, server: &str, port: i64, outbound: &Map<String, V
         if username.is_empty() {
             String::new()
         } else {
-            format!("{}:{}@", quote(&username), quote(&value_to_text(pass)))
+            format!("{}:{}", quote(&username), quote(&value_to_text(pass)))
         }
     };
     if !native.is_empty() {
@@ -1141,12 +1157,12 @@ fn build_http_link(name: &str, server: &str, port: i64, outbound: &Map<String, V
         let server_port = py_int_or(native.get("server_port"), port);
         return build_link(
             "http",
-            &credentials(
+            Some(&credentials(
                 native.get("username").unwrap_or(&Value::Null),
                 native.get("password").unwrap_or(&Value::Null),
-            ),
+            )).map(|userinfo| userinfo.as_ref()).filter(|userinfo: &&str| !userinfo.is_empty()),
             &host_authority(&host, server_port),
-            "",
+            None,
             &fragment,
         );
     }
@@ -1155,12 +1171,12 @@ fn build_http_link(name: &str, server: &str, port: i64, outbound: &Map<String, V
     let user = first_dict(server_item.get("users").unwrap_or(&Value::Null));
     build_link(
         "http",
-        &credentials(
+        Some(&credentials(
             user.get("user").unwrap_or(&Value::Null),
             user.get("pass").unwrap_or(&Value::Null),
-        ),
+        )).map(|userinfo| userinfo.as_ref()).filter(|userinfo: &&str| !userinfo.is_empty()),
         &host_authority(&share_host(&json!(server)), port),
-        "",
+        None,
         &fragment,
     )
 }
@@ -1231,9 +1247,9 @@ fn build_hysteria_link(
     let server_port = py_int_or(native.get("server_port"), port);
     build_link(
         "hysteria",
-        &auth,
+        Some(&auth),
         &host_authority(&host, server_port),
-        &share_query(&params),
+        Some(&share_query(&params)),
         &fragment,
     )
 }
@@ -1295,9 +1311,9 @@ fn build_hysteria2_link(
     let server_port = py_int_or(native.get("server_port"), port);
     build_link(
         "hysteria2",
-        &password,
+        Some(&password),
         &host_authority(&host, server_port),
-        &share_query(&params),
+        Some(&share_query(&params)),
         &fragment,
     )
 }
@@ -1334,9 +1350,9 @@ fn build_tuic_link(name: &str, server: &str, port: i64, outbound: &Map<String, V
     let server_port = py_int_or(native.get("server_port"), port);
     build_link(
         "tuic",
-        &credentials,
+        Some(&credentials),
         &host_authority(&host, server_port),
-        &share_query(&params),
+        Some(&share_query(&params)),
         &fragment,
     )
 }
@@ -1396,12 +1412,8 @@ fn build_mieru_link(name: &str, server: &str, port: i64, outbound: &Map<String, 
     if authority_port != 0 {
         authority = format!("{authority}:{authority_port}");
     }
-    let query = share_query(&params);
-    let query = if query.is_empty() {
-        String::new()
-    } else {
-        format!("?{query}")
-    };
+    // Python always writes `?`, even before an empty query.
+    let query = format!("?{}", share_query(&params));
     format!("mieru://{username}:{password}@{authority}{query}#{fragment}")
 }
 
@@ -1419,10 +1431,11 @@ fn build_naive_link(name: &str, server: &str, port: i64, outbound: &Map<String, 
     let password = quote(&value_to_text(
         native.get("password").unwrap_or(&Value::Null),
     ));
+    // `build_link` adds the `@` after the credentials.
     let credentials = if username.is_empty() && password.is_empty() {
         String::new()
     } else {
-        format!("{username}:{password}@")
+        format!("{username}:{password}")
     };
     let mut params: Vec<(String, String)> = Vec::new();
     let tls = obj_or_empty(native.get("tls"));
@@ -1471,9 +1484,9 @@ fn build_naive_link(name: &str, server: &str, port: i64, outbound: &Map<String, 
     );
     build_link(
         scheme,
-        &credentials,
+        Some(&credentials).map(|userinfo| userinfo.as_ref()).filter(|userinfo: &&str| !userinfo.is_empty()),
         &host_authority(&host, server_port),
-        &share_query(&params),
+        Some(&share_query(&params)),
         &fragment,
     )
 }
@@ -1535,9 +1548,9 @@ fn build_anytls_link(name: &str, server: &str, port: i64, outbound: &Map<String,
     );
     build_link(
         "anytls",
-        &password,
+        Some(&password),
         &host_authority(&host, server_port),
-        &share_query(&params),
+        Some(&share_query(&params)),
         &fragment,
     )
 }
@@ -1615,9 +1628,9 @@ fn build_wireguard_link(
         set_param(&mut params, "dns", join_list(dns));
         return build_link(
             scheme,
-            "",
+            None,
             "engage.cloudflareclient.com:2408",
-            &share_query(&params),
+            Some(&share_query(&params)),
             &fragment,
         );
     }
@@ -1720,9 +1733,9 @@ fn build_wireguard_link(
     };
     build_link(
         scheme,
-        &private_key,
+        Some(&private_key),
         &host_authority(&share_host(&json!(endpoint_server)), endpoint_port),
-        &share_query(&params),
+        Some(&share_query(&params)),
         &fragment,
     )
 }
@@ -1836,12 +1849,8 @@ fn build_masque_link(
     } else {
         format!("{token}@")
     };
-    let query = share_query(&params);
-    let query = if query.is_empty() {
-        String::new()
-    } else {
-        format!("?{query}")
-    };
+    // Python always writes `?`, even before an empty query.
+    let query = format!("?{}", share_query(&params));
     format!(
         "masque://{userinfo}{}{query}#{fragment}",
         quote(&profile_id)
@@ -1886,7 +1895,14 @@ fn build_node_link(
     port: i64,
     outbound: &Map<String, Value>,
 ) -> String {
-    match build_share_link(protocol, name, server, port, outbound) {
+    // Python `_SHARE_LINK_BUILDERS`: an editor save keeps a URI only for
+    // these; the wider `_EXPORT_LINK_BUILDERS` set is for export.
+    const SAVED_AS_URI: [&str; 7] = ["vless", "vmess", "trojan", "shadowsocks", "socks", "hysteria2", "tuic"];
+    match SAVED_AS_URI
+        .contains(&protocol)
+        .then(|| build_share_link(protocol, name, server, port, outbound))
+        .flatten()
+    {
         Some(link) => link,
         None => compact_json(&Value::Object(outbound.clone())),
     }
@@ -4843,7 +4859,7 @@ fn set_optional(parent: &mut Map<String, Value>, key: &str, value: Value) {
         || (value.is_array() && value.as_array().unwrap().is_empty())
         || (value.is_object() && value.as_object().unwrap().is_empty());
     if empty {
-        parent.remove(key);
+        parent.shift_remove(key);
     } else {
         parent.insert(key.to_string(), value);
     }
@@ -4891,7 +4907,7 @@ fn update_stream_transport(
     };
     for key in settings_keys {
         if key != active_key {
-            stream.remove(key);
+            stream.shift_remove(key);
         }
     }
 
@@ -4905,11 +4921,11 @@ fn update_stream_transport(
             if !host.is_empty() {
                 headers.insert("Host".into(), json!(host));
             } else {
-                headers.remove("Host");
-                headers.remove("host");
+                headers.shift_remove("Host");
+                headers.shift_remove("host");
             }
             if headers.is_empty() {
-                settings.remove("headers");
+                settings.shift_remove("headers");
             }
         }
         "http" | "h2" => {
@@ -4943,7 +4959,7 @@ fn update_stream_transport(
                 }
                 settings.insert("extra".into(), extra);
             } else {
-                settings.remove("extra");
+                settings.shift_remove("extra");
             }
         }
         "httpupgrade" => {
@@ -5002,7 +5018,7 @@ fn update_stream_security(
     stream.insert("security".into(), json!(security));
     match security.as_str() {
         "reality" => {
-            stream.remove("tlsSettings");
+            stream.shift_remove("tlsSettings");
             let reality = ensure_dict(stream, "realitySettings");
             set_optional_text(reality, "serverName", &value("sni"));
             set_optional_text(reality, "fingerprint", &value("fingerprint"));
@@ -5012,7 +5028,7 @@ fn update_stream_security(
             set_optional_text(reality, "mldsa65Verify", &value("pqv"));
         }
         "tls" => {
-            stream.remove("realitySettings");
+            stream.shift_remove("realitySettings");
             let tls = ensure_dict(stream, "tlsSettings");
             set_optional_text(tls, "serverName", &value("sni"));
             set_optional_text(tls, "fingerprint", &value("fingerprint"));
@@ -5028,8 +5044,8 @@ fn update_stream_security(
             set_optional(tls, "alpn", json!(split_editor_list(&json!(value("alpn")))));
         }
         _ => {
-            stream.remove("tlsSettings");
-            stream.remove("realitySettings");
+            stream.shift_remove("tlsSettings");
+            stream.shift_remove("realitySettings");
         }
     }
 
@@ -5044,7 +5060,7 @@ fn update_stream_security(
             }
         }
     } else {
-        stream.remove("finalmask");
+        stream.shift_remove("finalmask");
     }
     Ok(())
 }
@@ -5235,7 +5251,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                         json!([{"user": username, "pass": g("password")}]),
                     );
                 } else {
-                    server_item.remove("users");
+                    server_item.shift_remove("users");
                 }
             }
         }
@@ -5327,7 +5343,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     set_optional_text(&mut obfs, "password", &obfs_password);
                     native.insert("obfs".into(), Value::Object(obfs));
                 } else {
-                    native.remove("obfs");
+                    native.shift_remove("obfs");
                 }
                 update_native_tls(native, &g)?;
             }
@@ -5413,7 +5429,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     }
                     native.insert("extra_headers".into(), headers);
                 } else {
-                    native.remove("extra_headers");
+                    native.shift_remove("extra_headers");
                 }
                 let udp_options_text = g("udpOverTcpOptions");
                 if !udp_options_text.is_empty() {
@@ -5460,7 +5476,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     if sni.is_empty() { &server } else { &sni },
                 );
                 for unsupported_key in ["alpn", "insecure", "utls"] {
-                    tls.remove(unsupported_key);
+                    tls.shift_remove(unsupported_key);
                 }
             }
             "wireguard" | "awg" => {
@@ -5508,8 +5524,8 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                 let peer = ensure_first_dict(native, "peers");
                 peer.insert("address".into(), json!(server));
                 peer.insert("port".into(), json!(port));
-                peer.remove("server");
-                peer.remove("server_port");
+                peer.shift_remove("server");
+                peer.shift_remove("server_port");
                 peer.insert("public_key".into(), json!(g("wgPublicKey")));
                 set_optional_text(peer, "pre_shared_key", &g("preSharedKey"));
                 peer.insert(
@@ -5607,12 +5623,12 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                         .map(|value| value.as_object().unwrap().is_empty())
                         .unwrap_or(false)
                     {
-                        native.remove("amnezia");
+                        native.shift_remove("amnezia");
                     }
                     outbound.insert("protocol".into(), json!("awg"));
                     updates.insert("scheme".into(), json!("awg"));
                 } else {
-                    native.remove("amnezia");
+                    native.shift_remove("amnezia");
                     outbound.insert("protocol".into(), json!("wireguard"));
                     updates.insert("scheme".into(), json!("wireguard"));
                 }
@@ -5639,7 +5655,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     }
                     native.insert("reserved".into(), json!(reserved_bytes));
                 } else {
-                    native.remove("reserved");
+                    native.shift_remove("reserved");
                 }
                 let listen_port =
                     editor_int(&raw_with_default(&raw, "listenPort", &Value::Null), None)?;
@@ -5688,7 +5704,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     .map(|value| value.as_object().unwrap().is_empty())
                     .unwrap_or(false)
                 {
-                    native.remove("amnezia");
+                    native.shift_remove("amnezia");
                 }
             }
             "openvpn" => {
@@ -5758,7 +5774,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     set_optional_text(&mut openvpn_proxy, "password", &g("openvpnProxyPassword"));
                     native.insert("lumen_proxy".into(), Value::Object(openvpn_proxy));
                 } else {
-                    native.remove("lumen_proxy");
+                    native.shift_remove("lumen_proxy");
                 }
                 set_optional(
                     native,
@@ -5786,10 +5802,10 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                 }
                 if !tls_auth.is_empty() {
                     native.insert("tls_auth".into(), json!(tls_auth));
-                    native.remove("tls_auth_path");
-                    native.remove("tls_crypt");
-                    native.remove("tls_crypt_path");
-                    native.remove("tls_crypt_v2");
+                    native.shift_remove("tls_auth_path");
+                    native.shift_remove("tls_crypt");
+                    native.shift_remove("tls_crypt_path");
+                    native.shift_remove("tls_crypt_v2");
                     // Python: int(_editor_int(raw("keyDirection", -1), -1) or 0).
                     let key_direction = editor_int(
                         &raw_with_default(&raw, "keyDirection", &json!(-1)),
@@ -5797,17 +5813,17 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     )?;
                     native.insert("key_direction".into(), json!(key_direction.unwrap_or(0)));
                 } else {
-                    native.remove("tls_auth");
+                    native.shift_remove("tls_auth");
                     if !native
                         .get("tls_auth_path")
                         .map(|v| !value_to_text(v).is_empty())
                         .unwrap_or(false)
                     {
-                        native.remove("key_direction");
+                        native.shift_remove("key_direction");
                     }
                     if !tls_crypt.is_empty() {
                         native.insert("tls_crypt".into(), json!(tls_crypt));
-                        native.remove("tls_crypt_path");
+                        native.shift_remove("tls_crypt_path");
                         native.insert(
                             "tls_crypt_v2".into(),
                             json!(editor_bool(&raw_with_default(
@@ -5817,13 +5833,13 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                             ))),
                         );
                     } else {
-                        native.remove("tls_crypt");
+                        native.shift_remove("tls_crypt");
                         if !native
                             .get("tls_crypt_path")
                             .map(|v| !value_to_text(v).is_empty())
                             .unwrap_or(false)
                         {
-                            native.remove("tls_crypt_v2");
+                            native.shift_remove("tls_crypt_v2");
                         }
                     }
                 }
@@ -5837,9 +5853,9 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     let content = value_to_text(&raw(field_key)).trim().to_string();
                     if !content.is_empty() {
                         tls.insert(config_key.into(), json!(content));
-                        tls.remove(path_key);
+                        tls.shift_remove(path_key);
                     } else {
-                        tls.remove(config_key);
+                        tls.shift_remove(config_key);
                     }
                 }
                 set_optional(
@@ -5867,7 +5883,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                         }),
                     );
                 } else {
-                    tls.remove("verify_x509_name_mode");
+                    tls.shift_remove("verify_x509_name_mode");
                 }
                 tls.insert(
                     "kernel_tx".into(),
@@ -5893,7 +5909,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                         || (value.is_object() && value.as_object().unwrap().is_empty()))
                 });
                 if !tls_any {
-                    native.remove("tls");
+                    native.shift_remove("tls");
                 }
             }
             "masque" => {
@@ -5986,7 +6002,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
                 if !has_tls {
-                    native.remove("tls");
+                    native.shift_remove("tls");
                 }
             }
             _ => {}

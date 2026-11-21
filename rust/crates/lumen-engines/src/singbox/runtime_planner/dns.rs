@@ -149,7 +149,7 @@ pub fn set_dns_server_dial_contract(server: &mut Value, detour: &str, resolver: 
     if is_domain_name(&address) {
         server["domain_resolver"] = json!(if resolver.is_empty() { "system-dns" } else { resolver });
     } else if let Some(map) = server.as_object_mut() {
-        map.remove("domain_resolver");
+        map.shift_remove("domain_resolver");
     }
 }
 

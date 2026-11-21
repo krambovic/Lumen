@@ -1353,7 +1353,7 @@ pub(super) fn clash_to_singbox_outbound(payload: &Value, kind: &str) -> Result<V
                     native.insert("obfs".to_string(), Value::String(py_str(obfs)));
                 }
             }
-            native.remove("password");
+            native.shift_remove("password");
         } else {
             let has_password = native
                 .get("password")
@@ -1366,7 +1366,7 @@ pub(super) fn clash_to_singbox_outbound(payload: &Value, kind: &str) -> Result<V
                     }
                 }
             }
-            native.remove("auth_str");
+            native.shift_remove("auth_str");
             let obfs_type = py_str_or(payload.get("obfs"), "").trim().to_string();
             let obfs_password = py_str_or(get_or(payload, "obfs-password", "obfs_password"), "");
             if !obfs_type.is_empty() {

@@ -170,7 +170,7 @@ pub(crate) fn mark_fetch(
         if let Some(value) = response_header(response, header).filter(|value| !value.is_empty()) {
             record[field] = json!(value);
         } else if applied && let Some(record) = record.as_object_mut() {
-            record.remove(field);
+            record.shift_remove(field);
         }
     }
     if applied {

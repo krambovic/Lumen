@@ -140,7 +140,7 @@ pub fn apply_singbox_proxy_chain(
             if !inherited.is_empty() {
                 front_payload["detour"] = json!(inherited);
             } else if let Some(map) = front_payload.as_object_mut() {
-                map.remove("detour");
+                map.shift_remove("detour");
             }
             main["detour"] = json!(CHAIN_FRONT_TAG);
         }

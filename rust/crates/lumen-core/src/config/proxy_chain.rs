@@ -259,7 +259,7 @@ fn xray_hop_outbound(chain: &mut ProxyChain, node: &Node, role: &str) -> Option<
     }
     let mut outbound = node.outbound.clone();
     if let Some(obj) = outbound.as_object_mut() {
-        obj.remove("singbox");
+        obj.shift_remove("singbox");
     }
     Some(outbound)
 }
@@ -310,7 +310,7 @@ pub fn apply_xray_proxy_chain(
         }
         if inherited.is_empty() {
             if let Some(sockopt) = xray_sockopt(&mut front).as_object_mut() {
-                sockopt.remove("dialerProxy");
+                sockopt.shift_remove("dialerProxy");
             }
         } else {
             xray_sockopt(&mut front)["dialerProxy"] = json!(inherited);

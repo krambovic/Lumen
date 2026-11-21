@@ -128,7 +128,7 @@ fn set_key(value: &mut Value, key: &str, item: Value) {
 
 fn remove_key(value: &mut Value, key: &str) {
     if let Some(map) = value.as_object_mut() {
-        map.remove(key);
+        map.shift_remove(key);
     }
 }
 
@@ -655,15 +655,15 @@ pub fn normalize_shadowsocks_outbound(value: &mut Map<String, Value>) -> Result<
         if !options.is_empty() {
             value.insert("plugin_opts".into(), json!(options));
         } else {
-            value.remove("plugin_opts");
+            value.shift_remove("plugin_opts");
         }
     } else {
-        value.remove("plugin");
-        value.remove("plugin_opts");
+        value.shift_remove("plugin");
+        value.shift_remove("plugin_opts");
     }
 
     if udp_over_tcp_enabled(value.get("udp_over_tcp")) {
-        value.remove("multiplex");
+        value.shift_remove("multiplex");
     }
     value.insert("method".into(), json!(method));
     Ok(())
@@ -764,7 +764,7 @@ fn normalize_vless_vision_object(value: &mut Value) {
     // transport hook, so XHTTP/gRPC/WS are valid when TLS/Reality or VLESS
     // Encryption is actually present.
     if !tls_enabled && !encryption_enabled {
-        map.remove("flow");
+        map.shift_remove("flow");
     }
 }
 
@@ -1327,7 +1327,7 @@ fn preserve_or_reject_object(value: &mut Value) -> Result<()> {
                     tls.insert("server_name".into(), json!(authority.clone()));
                 }
                 if let Some(transport) = map.get_mut("transport").and_then(Value::as_object_mut) {
-                    transport.remove("authority");
+                    transport.shift_remove("authority");
                 }
             }
         } else if transport_type == "httpupgrade" {
@@ -1452,7 +1452,7 @@ pub fn move_alias(
     target_key: &str,
     caster: Option<AliasCaster>,
 ) {
-    let Some(value) = target.remove(source_key) else {
+    let Some(value) = target.shift_remove(source_key) else {
         return;
     };
     if target.contains_key(target_key) || matches!(value, Value::Null) || value == json!("") {
@@ -1477,14 +1477,14 @@ pub fn normalize_native_transport(transport: &mut Value) -> Result<()> {
         return Ok(());
     };
     let transport_type = lower_trim(&json_str_or(map.get("type"), ""));
-    map.remove("authority");
+    map.shift_remove("authority");
     if transport_type == "grpc" {
         move_alias(map, "serviceName", "service_name", None);
         move_alias(map, "idleTimeout", "idle_timeout", None);
         move_alias(map, "pingTimeout", "ping_timeout", None);
         move_alias(map, "permitWithoutStream", "permit_without_stream", Some(AliasCaster::Bool));
-        map.remove("multiMode");
-        map.remove("multi_mode");
+        map.shift_remove("multiMode");
+        map.shift_remove("multi_mode");
         return Ok(());
     }
     if transport_type == "ws" {
@@ -1513,9 +1513,9 @@ pub fn normalize_native_transport(transport: &mut Value) -> Result<()> {
         return Ok(());
     }
     if transport_type == "httpupgrade" {
-        map.remove("ed");
-        map.remove("max_early_data");
-        map.remove("early_data_header_name");
+        map.shift_remove("ed");
+        map.shift_remove("max_early_data");
+        map.shift_remove("early_data_header_name");
         let path = json_str_or(map.get("path"), "");
         if path.to_lowercase().contains("?ed=") {
             let trimmed = path.splitn(2, '?').next().unwrap_or("").to_string();
@@ -1530,7 +1530,7 @@ pub fn normalize_native_transport(transport: &mut Value) -> Result<()> {
             .cloned()
             .collect();
         for key in keys {
-            map.remove(&key);
+            map.shift_remove(&key);
         }
         return Ok(());
     }
@@ -1538,10 +1538,10 @@ pub fn normalize_native_transport(transport: &mut Value) -> Result<()> {
         return Ok(());
     }
 
-    let mut legacy_download = map.remove("download_settings");
+    let mut legacy_download = map.shift_remove("download_settings");
     // Python: `pop(...) is None` covers both an absent key and a stored null.
     if legacy_download.as_ref().map(Value::is_null).unwrap_or(true) {
-        legacy_download = map.remove("downloadSettings");
+        legacy_download = map.shift_remove("downloadSettings");
     }
     if !map.contains_key("download") {
         if let Some(legacy) = legacy_download.filter(|value| value.is_object()) {
@@ -1549,13 +1549,13 @@ pub fn normalize_native_transport(transport: &mut Value) -> Result<()> {
             map.insert("download".into(), built);
         }
     }
-    map.remove("download_detour");
+    map.shift_remove("download_detour");
     let mut normalized = Map::new();
     copy_xhttp_base_options(map, &mut normalized, true);
     for (target_key, aliases) in XHTTP_BASE_ALIASES {
         for alias in *aliases {
             if *alias != *target_key {
-                map.remove(*alias);
+                map.shift_remove(*alias);
             }
         }
     }
@@ -1577,7 +1577,7 @@ fn strip_removed_transport_object(value: &mut Value) -> Result<()> {
             .map(|v| lower_trim(&json_str_or(Some(v), "")))
             .unwrap_or_default();
         if transport_type == "tcp" || transport_type == "raw" {
-            map.remove("transport");
+            map.shift_remove("transport");
         } else if let Some(transport) = map.get_mut("transport") {
             normalize_native_transport(transport)?;
         }
@@ -1595,9 +1595,9 @@ fn strip_removed_transport_object(value: &mut Value) -> Result<()> {
 
         let existing_pins = tls.get("certificate_public_key_sha256").cloned();
         let alias_pins = [
-            tls.remove("certificatePublicKeySha256"),
-            tls.remove("pinnedPeerCertSha256"),
-            tls.remove("pinSHA256"),
+            tls.shift_remove("certificatePublicKeySha256"),
+            tls.shift_remove("pinnedPeerCertSha256"),
+            tls.shift_remove("pinSHA256"),
         ];
         let pins = match existing_pins {
             Some(value) if !is_falsy_json(&value) => Some(value),
@@ -1629,8 +1629,8 @@ fn strip_removed_transport_object(value: &mut Value) -> Result<()> {
         if let Some(reality) = tls.get_mut("reality").and_then(Value::as_object_mut) {
             move_alias(reality, "publicKey", "public_key", None);
             move_alias(reality, "shortId", "short_id", None);
-            reality.remove("spiderX");
-            reality.remove("mldsa65Verify");
+            reality.shift_remove("spiderX");
+            reality.shift_remove("mldsa65Verify");
         }
     }
     Ok(())
@@ -1978,7 +1978,7 @@ pub fn copy_xhttp_base_options(
                 // host option. Preserve the value by moving it there.
                 for key in headers.keys().cloned().collect::<Vec<_>>() {
                     if key.to_lowercase() == "host" {
-                        if let Some(host_value) = headers.remove(&key) {
+                        if let Some(host_value) = headers.shift_remove(&key) {
                             setdefault_key(target, "host", host_value);
                         }
                     }

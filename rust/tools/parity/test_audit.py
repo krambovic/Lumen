@@ -57,6 +57,7 @@ def main() -> int:
     parser.add_argument("--summary", action="store_true")
     args = parser.parse_args()
     corpus = rust_test_text()
+    rust_names = set(re.findall(r"fn ([a-z0-9_]+)\s*\(", corpus))
     rows = []
     for path in sorted(PY_TESTS.glob("test_*.py")):
         if args.file and path.name != args.file:
@@ -67,6 +68,9 @@ def main() -> int:
                 values = literals(node)
                 hits = [value for value in values if value in corpus]
                 share = len(hits) / len(values) if values else None
+                name = node.name.removeprefix("test_")
+                if name in rust_names or node.name in rust_names:
+                    share = 1.0  # same-named Rust test
                 rows.append((path.name, node.name, share, len(values), sorted(set(values) - set(hits))[:4]))
     if args.summary:
         per_file: dict[str, list] = {}

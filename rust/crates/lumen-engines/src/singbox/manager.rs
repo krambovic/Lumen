@@ -1531,7 +1531,7 @@ impl SingBoxManager {
                 {
                     continue;
                 }
-                map.remove("inet6_address");
+                map.shift_remove("inet6_address");
                 let Some(addresses) = map.get("address").and_then(Value::as_array).cloned() else {
                     continue;
                 };

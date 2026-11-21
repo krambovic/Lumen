@@ -461,7 +461,8 @@ def main() -> int:
     if args.recorded:
         for line in args.recorded.read_text(encoding="utf-8").splitlines():
             entry = json.loads(line)
-            items.append(("recorded", entry["fn"], entry["text"]))
+            if entry["fn"] in ("parse_links_text", "parse_single"):
+                items.append(("recorded", entry["fn"], entry["text"]))
     items += [("synthetic", fn, text) for fn, text in synthetic_inputs()]
     seen: set[tuple[str, str]] = set()
     cases = []

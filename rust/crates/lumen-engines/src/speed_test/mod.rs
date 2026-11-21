@@ -819,9 +819,9 @@ impl SpeedTestWorker {
                     },
                 }]),
             );
-            object.remove("api");
-            object.remove("stats");
-            object.remove("policy");
+            object.shift_remove("api");
+            object.shift_remove("stats");
+            object.shift_remove("policy");
         }
 
         if !config.get("routing").map(Value::is_object).unwrap_or(false) {

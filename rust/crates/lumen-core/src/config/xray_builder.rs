@@ -51,7 +51,7 @@ fn normalize_tls_certificate_pins(outbound: &mut Value) {
     };
     let value = pins.trim().to_lowercase();
     if value.is_empty() {
-        tls.remove("pinnedPeerCertSha256");
+        tls.shift_remove("pinnedPeerCertSha256");
     } else {
         tls.insert("pinnedPeerCertSha256".into(), Value::String(value));
     }

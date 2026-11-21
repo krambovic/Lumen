@@ -710,7 +710,7 @@ fn strip_legacy_awg15_fields_from_dial(endpoint: &mut Value) -> bool {
     let mut changed = false;
     for key in ["j1", "j2", "j3", "itime"] {
         if amnezia.get(key).is_some() {
-            amnezia.as_object_mut().unwrap().remove(key);
+            amnezia.as_object_mut().unwrap().shift_remove(key);
             changed = true;
         }
     }

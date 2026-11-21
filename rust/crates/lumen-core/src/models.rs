@@ -1395,3 +1395,89 @@ pub fn parse_subscription_record(value: &Value) -> Option<SubscriptionRecord> {
         node_count: int_field(value, "node_count", 0),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    //! Settings defaults and round trips from the Python tests
+    //! (test_app_auto_update, test_connection_conflict_guard, test_ping_defaults,
+    //! test_subscription_dns_settings, test_proxy_chain, test_proxy_manager_firefox,
+    //! test_onboarding).
+
+    use super::*;
+    use crate::constants::ONBOARDING_REVISION;
+
+    fn from(value: Value) -> AppSettings {
+        AppSettings::from_dict(&value)
+    }
+
+    fn round_trip(settings: AppSettings) -> AppSettings {
+        AppSettings::from_dict(&settings.to_dict())
+    }
+
+    #[test]
+    fn empty_settings_use_the_documented_defaults() {
+        let settings = from(json!({}));
+        assert!(!settings.app_auto_update);
+        assert!(settings.diagnostics_upload_enabled);
+        assert!(!settings.enable_xray_fragment);
+        assert!(!settings.enable_final_fragment);
+        assert_eq!((settings.window_width, settings.window_height), (1280, 720));
+        assert!(settings.block_vpn_conflicts);
+        assert_eq!(settings.ping_method, "http");
+        assert!(settings.subscription_use_real_hwid);
+        assert!(!settings.subscription_use_proxy_tun);
+        assert!(!settings.firefox_proxy_integration);
+        assert_eq!(settings.zapret_server_presets, json!({}));
+        assert_eq!(settings.onboarding_revision, 0);
+        assert_eq!(AppSettings::default().ping_method, "http");
+        assert!(!AppSettings::default().firefox_proxy_integration);
+        assert_eq!(AppSettings::default().to_dict()["firefox_proxy_integration"], json!(false));
+        assert_eq!(AppSettings::default().onboarding_revision, 0);
+        assert!(!RoutingSettings::default().dns_fake_enabled);
+        assert!(!RoutingSettings::from_dict(&json!({})).dns_fake_enabled);
+    }
+
+    #[test]
+    fn toggles_survive_a_round_trip() {
+        assert!(round_trip(AppSettings { app_auto_update: true, ..AppSettings::default() }).app_auto_update);
+        assert!(!round_trip(AppSettings { diagnostics_upload_enabled: false, ..AppSettings::default() })
+            .diagnostics_upload_enabled);
+        assert!(!round_trip(AppSettings { block_vpn_conflicts: false, ..AppSettings::default() })
+            .block_vpn_conflicts);
+        let revision = round_trip(AppSettings { onboarding_revision: ONBOARDING_REVISION, ..AppSettings::default() });
+        assert_eq!(revision.onboarding_revision, ONBOARDING_REVISION);
+        let chain = round_trip(AppSettings {
+            proxy_chain_enabled: true,
+            proxy_chain_front_node_id: "a".into(),
+            proxy_chain_exit_node_id: "b".into(),
+            zapret_server_presets: json!({"node-1": "general", "node-2": ""}),
+            ..AppSettings::default()
+        });
+        assert!(chain.proxy_chain_enabled);
+        assert_eq!((chain.proxy_chain_front_node_id.as_str(), chain.proxy_chain_exit_node_id.as_str()), ("a", "b"));
+        assert_eq!(chain.zapret_server_presets, json!({"node-1": "general", "node-2": ""}));
+    }
+
+    #[test]
+    fn legacy_and_invalid_values_are_normalized() {
+        // The old 1024x768 default becomes the widescreen default; a saved
+        // size and a left-monitor position are kept.
+        let legacy = from(json!({"window_width": 1024, "window_height": 768}));
+        assert_eq!((legacy.window_width, legacy.window_height), (1280, 720));
+        let saved = from(json!({"window_width": 1440, "window_height": 900}));
+        assert_eq!((saved.window_width, saved.window_height), (1440, 900));
+        let left = from(json!({"window_x": -1920, "window_y": 80}));
+        assert_eq!((left.window_x, left.window_y), (-1920, 80));
+        assert_eq!(from(json!({"ping_method": ""})).ping_method, "http");
+        assert_eq!(from(json!({"onboarding_revision": "bad"})).onboarding_revision, 0);
+        assert_eq!(from(json!({"onboarding_revision": -3})).onboarding_revision, 0);
+    }
+
+    #[test]
+    fn applied_migrations_round_trip() {
+        let mut state = AppState::default();
+        state.applied_migrations.insert("enable_fake_dns_by_default".into(), true);
+        let restored = AppState::from_dict(&state.to_dict());
+        assert_eq!(restored.applied_migrations.get("enable_fake_dns_by_default"), Some(&true));
+    }
+}

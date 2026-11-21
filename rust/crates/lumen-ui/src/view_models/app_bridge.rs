@@ -3314,7 +3314,7 @@ impl AppBridge {
     pub fn create_manual_node(&mut self, fields: &Value) -> String {
         let mut payload = fields.as_object().cloned().unwrap_or_default();
         let protocol = payload
-            .remove("protocol")
+            .shift_remove("protocol")
             .map(|value| value.as_str().unwrap_or("vless").trim().to_lowercase())
             .unwrap_or_else(|| "vless".to_string());
         if !node_edit_helpers::MANUAL_NODE_PROTOCOLS.contains(&protocol.as_str()) {
@@ -4333,7 +4333,7 @@ impl AppBridge {
             .as_object()
             .cloned()
             .unwrap_or_default();
-        if presets.remove(node_id).is_none() {
+        if presets.shift_remove(node_id).is_none() {
             return;
         }
         self.store_zapret_bindings(Value::Object(presets));

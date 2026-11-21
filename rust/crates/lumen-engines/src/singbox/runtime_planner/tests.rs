@@ -406,7 +406,7 @@ fn full_singbox_config_repairs_null_vmess_security() {
 fn tun_runtime_uses_singbox_tun_when_interface_name_is_missing() {
     let _guard = TEST_GLOBAL_LOCK.lock();
     let mut payload = base_config();
-    payload["inbounds"][0].as_object_mut().unwrap().remove("interface_name");
+    payload["inbounds"][0].as_object_mut().unwrap().shift_remove("interface_name");
     let document = parse_singbox_document(Path::new("test.json"), &payload.to_string()).unwrap();
 
     let config = plan_singbox_runtime(

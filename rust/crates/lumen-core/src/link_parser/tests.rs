@@ -51,7 +51,7 @@ fn vless_full_reality_link() {
         .and_then(|s| s.get_mut("realitySettings"))
         .and_then(Value::as_object_mut)
     {
-        obj.remove("publicKey");
+        obj.shift_remove("publicKey");
     }
     let message = validate_node_outbound(&broken).expect("reality validation error");
     assert!(message.contains("publicKey"), "{message}");

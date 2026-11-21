@@ -37,3 +37,6 @@ qrcode = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 egui-winit = { version = "0.37", default-features = false, features = ["arboard"] }
+
+[dev-dependencies]
+sha2 = { workspace = true }

@@ -877,7 +877,7 @@ pub(super) fn native_singbox_config(payload: &Value) -> Result<Value, LinkParseE
             "__lumen_server",
             "__lumen_port",
         ] {
-            obj.remove(metadata_key);
+            obj.shift_remove(metadata_key);
         }
     }
     normalize_singbox_wireguard_endpoints(&mut config)

@@ -154,7 +154,7 @@ impl NodeService<'_> {
                     "_lumen_response_meta",
                     "_lumen_not_modified",
                 ] {
-                    response.userinfo.remove(key);
+                    response.userinfo.shift_remove(key);
                 }
                 merge_subscription_info(&mut info, std::mem::take(&mut response.userinfo));
                 record["userinfo"] = Value::Object(info);

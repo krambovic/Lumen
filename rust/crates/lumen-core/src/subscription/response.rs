@@ -343,7 +343,7 @@ fn json_metadata(text: &str) -> Map<String, Value> {
             info.insert((*field).into(), value.clone());
         }
         if (field.ends_with("Url") && *field != "hideUrl") || field.ends_with("Color") {
-            if let Some(raw) = info.remove(*field)
+            if let Some(raw) = info.shift_remove(*field)
                 && let Some(value) = normalize_field(field, &py_str(&raw))
             {
                 info.insert((*field).into(), value);
@@ -463,8 +463,8 @@ fn normalize_field(field: &str, raw: &str) -> Option<Value> {
 }
 
 pub fn merge_subscription_info(target: &mut Map<String, Value>, mut extra: Map<String, Value>) {
-    if let Some(Value::Object(premium)) = extra.remove("premiumFeatures") {
-        let mut combined = match target.remove("premiumFeatures") {
+    if let Some(Value::Object(premium)) = extra.shift_remove("premiumFeatures") {
+        let mut combined = match target.shift_remove("premiumFeatures") {
             Some(Value::Object(existing)) => existing,
             _ => Map::new(),
         };

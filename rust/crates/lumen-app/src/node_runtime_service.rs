@@ -262,6 +262,47 @@ mod tests {
         assert!(node_supported_by_core(Some(&exclusive), "auto"));
     }
 
+    /// Python test_core_preference / test_proxy_core_selection matrices.
+    #[test]
+    fn core_preference_matrix_matches_python() {
+        const PBK: &str = "Z84J2IelR9ch3k8VtlVhhs5ycBUlXA7wHBWcBrjqnAw";
+        let both = lumen_core::link_parser::parse_single(&format!(
+            "vless://11111111-2222-3333-4444-555555555555@nl.example.net:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk={PBK}&sid=a1&type=tcp#nl"
+        ))
+        .unwrap();
+        let singbox_only = lumen_core::link_parser::parse_single(
+            "hysteria2://11111111-2222-3333-4444-555555555555@pl.example.net:8443?sni=pl.example.net#pl",
+        )
+        .unwrap();
+        let mut xray_only = both.clone();
+        xray_only.outbound["streamSettings"]["finalmask"] = json!({"type": "x"});
+        let nodes = [&both, &singbox_only, &xray_only];
+        let cores = |preference: &str| nodes.map(|node| proxy_core_for_node(Some(node), preference));
+        assert_eq!(cores("auto"), ["singbox", "singbox", "xray"]);
+        assert_eq!(cores("xray"), ["xray", "xray", "xray"]);
+        assert_eq!(cores("singbox"), ["singbox", "singbox", "singbox"]);
+        assert_eq!(proxy_core_for_node(None, "auto"), "xray");
+        assert_eq!(proxy_core_for_node(None, "singbox"), "singbox");
+        let supported = |preference: &str| nodes.map(|node| node_supported_by_core(Some(node), preference));
+        assert_eq!(supported("auto"), [true, true, true]);
+        assert_eq!(supported("xray"), [true, false, true]);
+        assert_eq!(supported("singbox"), [true, true, false]);
+
+        let bare = |protocol: &str| Node {
+            scheme: protocol.into(),
+            server: "example.com".into(),
+            port: 443,
+            outbound: json!({"protocol": protocol}),
+            ..Node::default()
+        };
+        for protocol in ["hysteria", "hysteria2", "tuic", "awg", "warp", "wireguard", "mieru", "masque", "singbox_config"] {
+            assert_eq!(proxy_core_for_node(Some(&bare(protocol)), "auto"), "singbox", "{protocol}");
+        }
+        for protocol in ["vless", "vmess", "trojan", "shadowsocks", "socks", "http"] {
+            assert_eq!(proxy_core_for_node(Some(&bare(protocol)), "auto"), "singbox", "{protocol}");
+        }
+    }
+
     #[test]
     fn fastest_node_prefers_alive_then_speed_then_ping_and_keeps_first_tie() {
         let first = Node {

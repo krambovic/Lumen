@@ -120,8 +120,8 @@ pub fn build_native_test_config(node: &Node, port: i64) -> Result<Value> {
             json!([{"type": "mixed", "tag": "speed-http", "listen": "127.0.0.1", "listen_port": port}]),
         );
         object.insert("log".into(), json!({"disabled": true}));
-        object.remove("experimental");
-        object.remove("services");
+        object.shift_remove("experimental");
+        object.shift_remove("services");
     }
     // Header-protected AWG must use ClientBind for probes too; the default
     // Windows bind corrupts the protected handshake. The workaround may add a
@@ -159,7 +159,7 @@ pub fn build_native_test_config(node: &Node, port: i64) -> Result<Value> {
             json!([{"inbound": ["speed-http"], "action": "route", "outbound": final_tag}]),
         );
         route.insert("final".into(), Value::String(final_tag.clone()));
-        route.remove("auto_detect_interface");
+        route.shift_remove("auto_detect_interface");
     }
     Ok(config)
 }

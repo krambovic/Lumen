@@ -714,7 +714,7 @@ pub fn repair_legacy_direct_masque_shape(node: &mut Node) -> bool {
     if address_missing && legacy_address.as_ref().map(|v| v.is_array()).unwrap_or(false) {
         address = legacy_address.clone();
         native.insert("tunnel_address".to_string(), address.clone().unwrap_or(Value::Null));
-        native.remove("address");
+        native.shift_remove("address");
         changed = true;
     }
     let server = {
@@ -761,7 +761,7 @@ pub fn repair_legacy_direct_masque_shape(node: &mut Node) -> bool {
     }
 
     let mut normalized_profile = profile_obj.clone();
-    if normalized_profile.remove("private_key").is_some() {
+    if normalized_profile.shift_remove("private_key").is_some() {
         changed = true;
     }
     let detour = py_str_or(normalized_profile.get("detour"), "");

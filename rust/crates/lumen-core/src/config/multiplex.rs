@@ -48,14 +48,14 @@ pub fn apply_singbox_multiplex(outbound: &mut Value, enabled: bool, concurrency:
         || (outbound_type == "shadowsocks" && udp_over_tcp_enabled(outbound.get("udp_over_tcp")))
     {
         if let Some(obj) = outbound.as_object_mut() {
-            obj.remove("multiplex");
+            obj.shift_remove("multiplex");
         }
         return false;
     }
 
     if !enabled {
         if let Some(obj) = outbound.as_object_mut() {
-            obj.remove("multiplex");
+            obj.shift_remove("multiplex");
         }
         return false;
     }

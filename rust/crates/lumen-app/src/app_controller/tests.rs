@@ -308,3 +308,27 @@ fn lock_state_machine_follows_the_python_semantics() {
 impl AppController {
     // Placeholder for future event assertions shared by these tests.
 }
+
+/// Python test_proxy_core_selection: a sing-box-only server never takes the
+/// Xray proxy hot-swap path (and the Xray config is not inspected for it).
+#[test]
+fn xray_proxy_hot_swap_is_rejected_when_selected_node_requires_singbox() {
+    let (mut controller, _root) = test_controller();
+    let node = lumen_core::models::Node {
+        id: "hy2".into(),
+        scheme: "hysteria2".into(),
+        server: "example.com".into(),
+        port: 443,
+        outbound: serde_json::json!({"protocol": "hysteria2"}),
+        ..Default::default()
+    };
+    controller.state.nodes.push(node);
+    controller.state.selected_node_id = Some("hy2".into());
+    controller.state.settings.tun_mode = false;
+    controller.active_session = Some(crate::session_state::ActiveSessionSnapshot {
+        active_core: "xray".into(),
+        ..Default::default()
+    });
+    assert!(!controller.can_proxy_hot_swap());
+}
+

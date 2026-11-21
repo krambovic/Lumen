@@ -95,7 +95,7 @@ fn py_str_or_empty(value: &Value) -> String {
 }
 
 fn take_key(map: &mut Map<String, Value>, key: &str) -> Value {
-    map.remove(key).unwrap_or(Value::Null)
+    map.shift_remove(key).unwrap_or(Value::Null)
 }
 
 // ── Cipher/digest normalization ──

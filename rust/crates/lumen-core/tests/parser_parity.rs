@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 fn node_payload(node: &Node) -> Value {
     let mut data = node.to_dict();
     let object = data.as_object_mut().expect("node dict");
-    object.remove("id");
-    object.remove("created_at");
+    object.shift_remove("id");
+    object.shift_remove("created_at");
     object.insert(
         "_validate".into(),
         validate_node_outbound(node).map_or(Value::Null, Value::String),

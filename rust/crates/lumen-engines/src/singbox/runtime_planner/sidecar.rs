@@ -252,7 +252,7 @@ pub fn normalize_openvpn_outbounds(payload: &mut Value) -> Result<()> {
         used_names.insert(name_candidate);
         let proxy = outbound
             .as_object_mut()
-            .and_then(|map| map.remove("lumen_proxy"));
+            .and_then(|map| map.shift_remove("lumen_proxy"));
         if let Some(proxy) = proxy.filter(|value| value.is_object()) {
             let proxy_type = lower_trim(&json_str_field(&proxy, "type"));
             if !matches!(proxy_type.as_str(), "http" | "socks") {
