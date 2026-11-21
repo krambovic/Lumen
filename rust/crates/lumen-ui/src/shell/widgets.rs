@@ -45,10 +45,11 @@ pub(crate) fn bordered_rect(
 /// `Card.qml`. `padding` is the QML padding, border included.
 ///
 /// A hoverable card (the QML default) answers the pointer like Card.qml:
-/// over `animFast` its border turns from `borderSolid` to `divider`, a
-/// 1.7% white (1.5% black in light themes) overlay fades in and a shadow
-/// appears 3 px below it at 60% of `Theme.shadowOpacity`. The hover test
-/// does not take input from the content.
+/// over `animFast` its border turns from `borderSolid` to `divider` and a
+/// 1.7% white (1.5% black in light themes) overlay fades in. Card.qml's
+/// MultiEffect shadow needs `elevation > 0`, which no page sets, so a
+/// hovered card casts no shadow. The hover test does not take input from
+/// the content.
 pub(crate) fn card_frame(theme: &Theme, padding: f32) -> Card {
     Card {
         padding,
@@ -62,7 +63,6 @@ pub(crate) fn card_frame(theme: &Theme, padding: f32) -> Card {
         } else {
             Color32::from_rgba_unmultiplied(0, 0, 0, 4)
         },
-        shadow_alpha: theme.shadow_opacity as f32 * 0.6,
         fast_ms: theme.anim_fast as f32,
     }
 }
@@ -75,7 +75,6 @@ pub(crate) struct Card {
     border: Color32,
     hot_border: Color32,
     overlay: Color32,
-    shadow_alpha: f32,
     fast_ms: f32,
 }
 
@@ -108,22 +107,6 @@ impl Card {
             0.0
         };
         let mut shapes: Vec<egui::Shape> = Vec::new();
-        if level > 0.0 {
-            // MultiEffect blurs the card's own alpha: a translucent card
-            // casts a proportionally lighter shadow (and it shows through).
-            let coverage = f32::from(self.fill.a()) / 255.0;
-            let alpha = (self.shadow_alpha * coverage * level * 255.0).round().clamp(0.0, 255.0) as u8;
-            shapes.push(
-                egui::epaint::Shadow {
-                    offset: [0, (3.0 * level).round() as i8],
-                    blur: 24,
-                    spread: 0,
-                    color: Color32::from_black_alpha(alpha),
-                }
-                .as_shape(rect, self.radius)
-                .into(),
-            );
-        }
         shapes.push(egui::Shape::rect_filled(rect, self.radius, self.fill));
         if level > 0.0 {
             shapes.push(egui::Shape::rect_filled(

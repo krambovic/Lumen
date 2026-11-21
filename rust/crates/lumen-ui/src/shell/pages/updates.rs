@@ -90,23 +90,18 @@ impl UpdateState {
         if !ui.is_rect_visible(track) {
             return;
         }
-        ui.painter()
-            .rect_filled(track, 0.0, theme.text_faint.gamma_multiply(0.45));
-        let (x, width) = if indeterminate {
-            let phase = ui.input(|input| (input.time / 1.2).fract() as f32);
-            let width = track.width() * 0.25;
-            ui.request_repaint();
-            (
-                track.left() - width + phase * (track.width() + width),
-                width,
-            )
-        } else {
-            (track.left(), track.width() * self.percent as f32 / 100.0)
-        };
-        let segment =
-            egui::Rect::from_min_size(egui::pos2(x, track.top()), vec2(width, track.height()));
-        ui.painter()
-            .rect_filled(segment.intersect(track), 0.0, theme.accent);
+        // Universal `ProgressBar`: an indeterminate bar hides its track and
+        // sweeps five dots; a determinate one fills a `baseLow` track.
+        if indeterminate {
+            crate::shell::widgets::indeterminate_progress(ui, track, theme.accent);
+            return;
+        }
+        ui.painter().rect_filled(track, 0.0, theme.text.gamma_multiply(0.2));
+        let fill = egui::Rect::from_min_size(
+            track.min,
+            vec2(track.width() * self.percent as f32 / 100.0, track.height()),
+        );
+        ui.painter().rect_filled(fill, 0.0, theme.accent);
     }
 }
 
@@ -547,10 +542,24 @@ fn channel_buttons(
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Button, !busy, active, &label)
         });
-        if active {
-            painter.rect_filled(rect, 13.0, fade(theme.accent));
+        // `Behavior on color { ColorAnimation { duration: 120 } }`.
+        let target = if active {
+            fade(theme.accent)
         } else if response.hovered() && !busy {
-            painter.rect_filled(rect, 13.0, theme.control_fill_hover);
+            theme.control_fill_hover
+        } else {
+            Color32::TRANSPARENT
+        };
+        let fill = crate::shell::motion::follow_color(
+            ui.ctx(),
+            theme,
+            response.id.with("fill"),
+            target,
+            120.0,
+            crate::shell::motion::linear,
+        );
+        if fill.a() > 0 {
+            painter.rect_filled(rect, 13.0, fill);
         }
         let text_color = if active {
             theme.accent_text

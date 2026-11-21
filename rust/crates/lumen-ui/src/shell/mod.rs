@@ -261,6 +261,8 @@ pub struct ShellApp {
     /// backdrop refresh, and the pending `_schedule_backdrop_refresh` passes.
     mica_window_state: Option<(bool, bool, bool, bool)>,
     mica_refresh_at: Vec<Instant>,
+    /// Frames left before a switch to the solid backdrop reaches DWM.
+    solid_backdrop_delay: u8,
     last_tray_refresh: Option<(bool, bool, bool)>,
     last_tray_routing: Option<(Vec<RoutingPresetItem>, Vec<RoutingPresetItem>)>,
     taskbar_tick_deadline: Instant,
@@ -328,6 +330,7 @@ impl ShellApp {
             applied_mica: None,
             mica_window_state: None,
             mica_refresh_at: Vec::new(),
+            solid_backdrop_delay: 0,
             last_tray_refresh: None,
             last_tray_routing: None,
             taskbar_tick_deadline: Instant::now() + Duration::from_secs(1),
@@ -622,8 +625,28 @@ impl ShellApp {
         let theme = self.theme();
         let key = (theme.dark, theme.backdrop.clone());
         if !force && self.applied_mica == Some(key.clone()) {
+            self.solid_backdrop_delay = 0;
             return;
         }
+        // Turning Mica off: the frame on screen is still translucent, so
+        // removing the backdrop first shows the desktop through the window
+        // for a frame. Let two opaque frames reach the screen first.
+        let to_solid = win_native::normalize_backdrop(&theme.backdrop) == "solid"
+            && self
+                .applied_mica
+                .as_ref()
+                .is_some_and(|(_, applied)| win_native::normalize_backdrop(applied) != "solid");
+        if to_solid && !force {
+            if self.solid_backdrop_delay == 0 {
+                self.solid_backdrop_delay = 3;
+            }
+            self.solid_backdrop_delay -= 1;
+            if self.solid_backdrop_delay > 0 {
+                _ctx.request_repaint();
+                return;
+            }
+        }
+        self.solid_backdrop_delay = 0;
         if let Some(hwnd) = win_native::find_main_window(APP_NAME) {
             win_native::apply_mica(hwnd, theme.dark, &theme.backdrop);
             self.applied_mica = Some(key);

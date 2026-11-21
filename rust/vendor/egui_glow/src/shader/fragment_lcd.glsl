@@ -14,6 +14,9 @@ uniform int u_lcd;
 #ifndef LCD_LIGHT_EXPONENT
 #define LCD_LIGHT_EXPONENT 0.8
 #endif
+#ifndef LCD_DARK_EXPONENT
+#define LCD_DARK_EXPONENT 0.85
+#endif
 
 in vec4 v_rgba_in_gamma;
 in vec2 v_tc;
@@ -25,14 +28,16 @@ void main() {
     vec4 color = v_rgba_in_gamma;
     if (u_lcd == 1) {
         vec3 coverage = tex.rgb;
-        // Light text on dark backgrounds reads thinner than DirectWrite's,
-        // which raises contrast; lift partial coverage with the text's
-        // brightness. Full coverage (shapes, glyph cores) is unchanged.
+        // DirectWrite raises text contrast, so linear coverage reads thinner
+        // than the QML client: lift partial coverage, by LCD_DARK_EXPONENT
+        // for dark text (4-6% less ink than QML on the light settings page
+        // without it) up to LCD_LIGHT_EXPONENT for white text. Full
+        // coverage (shapes, glyph cores) is unchanged.
         // The vertex colour is premultiplied, so translucent (muted) text
         // gets a smaller lift than opaque text of the same hue, as with
         // DirectWrite's contrast for the blended colour.
         float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-        coverage = pow(coverage, vec3(mix(1.0, LCD_LIGHT_EXPONENT, luminance)));
+        coverage = pow(coverage, vec3(mix(LCD_DARK_EXPONENT, LCD_LIGHT_EXPONENT, luminance)));
         f_color = vec4(color.rgb * coverage, color.a * tex.a);
         f_blend = vec4(color.a * coverage, color.a * tex.a);
     } else {

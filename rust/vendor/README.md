@@ -17,8 +17,10 @@ low-DPI Windows screens. egui itself only renders grayscale text.
   fragment output and blends with `ONE, ONE_MINUS_SRC1_COLOR` (dual-source
   blending), so each channel uses its own coverage. `u_lcd` is set only for
   meshes that use the font atlas; shapes sample its opaque white texel, where
-  the result equals ordinary premultiplied blending. Light text gets a
-  coverage exponent down to `LCD_LIGHT_EXPONENT` (0.8). The lift follows the
+  the result equals ordinary premultiplied blending. Partial coverage is
+  raised to `LCD_DARK_EXPONENT` (0.85) for black text and down to
+  `LCD_LIGHT_EXPONENT` (0.8) for white text; with linear coverage, dark text
+  on the light settings page had 4-6% less ink than in QML. The lift follows the
   luminance of the premultiplied vertex colour, so translucent (muted) text
   is lifted less; with the straight colour it came out 7-9% heavier than in
   the QML client. Stroke weight now matches the QML client within about 2%

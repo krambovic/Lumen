@@ -690,6 +690,25 @@ client, core/resource updaters, zapret and discord proxy managers.
   DWM could drop it and the light theme's translucent veil was left over
   black. The shell now reapplies it on the same window state changes. The
   user confirmed the light theme with Mica after a tray exit.
+- Card hover (2026-11-21): Card.qml enables its MultiEffect shadow only for
+  `elevation > 0`, which no page sets. Rust also drew a shadow under the
+  translucent card on hover, so a light card went from 250 to 240 instead of
+  QML's 246. The shadow is gone; a hovered card now measures 246.
+- Updates page (2026-11-21): the progress bar is the Universal
+  `ProgressBar`: five sweeping dots and no track while checking, an accent
+  fill on a `baseLow` (text at 20%) track while downloading. Rust drew a
+  sliding segment on a grey track. The release channel switch fades its
+  fill over 120 ms like `UpdatesPage.qml`.
+- Turning Mica off (2026-11-21): the solid backdrop reaches DWM two frames
+  after the opaque frame is painted. Removing the backdrop first let the
+  desktop show through the still translucent window for a frame. Not
+  checked on screen.
+- Dark text weight (2026-11-21): DirectWrite raises contrast for dark text
+  too. With linear coverage the light settings page had 4-6% less ink than
+  QML, which read as blurry. The subpixel shader now raises partial
+  coverage to 0.85 for dark text (`LCD_DARK_EXPONENT`); titles, subtitles,
+  combo text and section headers measure 99-103% of QML's ink, and the dark
+  theme is unchanged (99-102%).
 - Python test audit and differential corpora (2026-11-21): every Python test
   is mapped in `rust/TEST_PARITY.md` (753 matched, 58 ported, 86 existing, 57
   corpus, 78 n/a, 70 not ported with reasons). `rust/tools/parity` records
