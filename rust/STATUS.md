@@ -683,6 +683,13 @@ client, core/resource updaters, zapret and discord proxy managers.
   painter, which ignores the card opacity, so a bright outline stayed visible
   while the card flew in and out. It now uses the card UI's painter;
   fly-out captures show the border fading with the card.
+- Mica after a restart (2026-11-21): `main_qml.py` connects
+  `_schedule_backdrop_refresh` (reapply now and after 150 ms) to
+  `visibilityChanged`, `activeChanged` and `windowStateChanged`. Rust applied
+  the backdrop once on the first frame, while the window was still hidden, so
+  DWM could drop it and the light theme's translucent veil was left over
+  black. The shell now reapplies it on the same window state changes. The
+  user confirmed the light theme with Mica after a tray exit.
 - Python test audit and differential corpora (2026-11-21): every Python test
   is mapped in `rust/TEST_PARITY.md` (753 matched, 58 ported, 86 existing, 57
   corpus, 78 n/a, 70 not ported with reasons). `rust/tools/parity` records

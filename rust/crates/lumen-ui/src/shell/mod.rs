@@ -69,6 +69,7 @@ const TITLE_BAR_HEIGHT: f32 = 34.0;
 const CHROME_SETTLE: &str = "lumen-chrome-settle";
 /// Geometry-save debounce (`saveGeometryTimer` interval).
 const GEOMETRY_SAVE_DELAY: Duration = Duration::from_millis(500);
+const BACKDROP_REFRESH_DELAY: Duration = Duration::from_millis(150);
 /// Legacy file cleanup delay (`QTimer.singleShot(800, ...)`).
 const LEGACY_CLEANUP_DELAY: Duration = Duration::from_millis(800);
 /// `bridge.startDeferred` fallback timer.
@@ -256,6 +257,10 @@ pub struct ShellApp {
     wallpaper_texture: Option<egui::TextureHandle>,
     /// Applied (dark, backdrop) for the DWM refresh dedup.
     applied_mica: Option<(bool, String)>,
+    /// Window (visible, active, maximized, minimized) last seen by the
+    /// backdrop refresh, and the pending `_schedule_backdrop_refresh` passes.
+    mica_window_state: Option<(bool, bool, bool, bool)>,
+    mica_refresh_at: Vec<Instant>,
     last_tray_refresh: Option<(bool, bool, bool)>,
     last_tray_routing: Option<(Vec<RoutingPresetItem>, Vec<RoutingPresetItem>)>,
     taskbar_tick_deadline: Instant,
@@ -321,6 +326,8 @@ impl ShellApp {
             wallpaper_blur: 0,
             wallpaper_texture: None,
             applied_mica: None,
+            mica_window_state: None,
+            mica_refresh_at: Vec::new(),
             last_tray_refresh: None,
             last_tray_routing: None,
             taskbar_tick_deadline: Instant::now() + Duration::from_secs(1),
@@ -620,6 +627,40 @@ impl ShellApp {
         if let Some(hwnd) = win_native::find_main_window(APP_NAME) {
             win_native::apply_mica(hwnd, theme.dark, &theme.backdrop);
             self.applied_mica = Some(key);
+        }
+    }
+
+    /// `_schedule_backdrop_refresh` on visibilityChanged / activeChanged /
+    /// windowStateChanged: reapply the backdrop right away and 150 ms later.
+    /// The first pass runs while the window is still hidden; DWM can drop a
+    /// backdrop set then, and the translucent veil is left over black.
+    fn schedule_backdrop_refresh(&mut self, ctx: &egui::Context) {
+        let visible = self.window_visible(ctx);
+        let (active, maximized, minimized) = ctx.input(|input| {
+            let viewport = input.viewport();
+            (
+                viewport.focused.unwrap_or(false),
+                viewport.maximized.unwrap_or(false),
+                viewport.minimized.unwrap_or(false),
+            )
+        });
+        let state = (visible, active, maximized, minimized);
+        if self.mica_window_state != Some(state) {
+            let first = self.mica_window_state.is_none();
+            self.mica_window_state = Some(state);
+            if !first {
+                let now = Instant::now();
+                self.mica_refresh_at.push(now);
+                self.mica_refresh_at.push(now + BACKDROP_REFRESH_DELAY);
+            }
+        }
+        let now = Instant::now();
+        if self.mica_refresh_at.iter().any(|at| *at <= now) {
+            self.mica_refresh_at.retain(|at| *at > now);
+            self.apply_mica(ctx, true);
+        }
+        if let Some(next) = self.mica_refresh_at.iter().min() {
+            ctx.request_repaint_after(next.saturating_duration_since(now));
         }
     }
 
@@ -1537,6 +1578,7 @@ impl eframe::App for ShellApp {
 
         // 8. Geometry persistence + backdrop refresh triggers.
         self.track_window_geometry(ctx);
+        self.schedule_backdrop_refresh(ctx);
         self.apply_mica(ctx, false);
 
         // 9. Config drop handling.
