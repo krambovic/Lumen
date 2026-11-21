@@ -850,18 +850,25 @@ fn action_combo(
 
 fn combo<'a>(
     ui: &mut Ui,
-    id: impl std::hash::Hash + std::fmt::Debug,
+    id: impl egui::AsIdSalt,
     label: &str,
     items: impl Iterator<Item = (&'a str, String)>,
     width: f32,
 ) -> Option<String> {
-    // `FluentCombo`, whose fill fades on hover.
-    let theme = crate::shell::fluent_menu::published_theme(ui.ctx())?;
-    let (keys, labels): (Vec<&str>, Vec<String>) = items.unzip();
-    let current = labels.iter().position(|item| item == label);
-    let enabled = ui.is_enabled();
-    crate::shell::widgets::combo(ui, &theme, id, width, &labels, current, enabled)
-        .map(|index| keys[index].to_owned())
+    let mut picked = None;
+    crate::shell::widgets::fading_combo(ui, |ui| egui::ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
+        .width(width)
+        .truncate()
+        .selected_text(label)
+        .show_ui(ui, |ui| {
+            for (key, item) in items {
+                if ui.selectable_label(item == label, item).clicked() {
+                    picked = Some(key.into());
+                    ui.close();
+                }
+            }
+        }));
+    picked
 }
 
 /// QML `Switch` as a 44×20 Fluent pill (same drawing as the logs autoscroll).

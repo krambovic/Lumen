@@ -60,9 +60,11 @@ pub(crate) trait GlideRoom {
 impl<R> GlideRoom for ScrollAreaOutput<R> {
     fn glide_room(self, ui: &Ui) -> Self {
         let ctx = ui.ctx();
-        let inside = ctx
-            .pointer_hover_pos()
-            .is_some_and(|pos| self.inner_rect.contains(pos));
+        // Only when the pointer is over this area's layer: a popup list
+        // over the page must not take the page's room.
+        let inside = ctx.pointer_hover_pos().is_some_and(|pos| {
+            self.inner_rect.contains(pos) && ctx.layer_id_at(pos) == Some(ui.layer_id())
+        });
         let max = (self.content_size.y - self.inner_rect.height()).max(0.0);
         // An area that cannot scroll leaves the wheel to its parent.
         if inside && max > 0.5 {

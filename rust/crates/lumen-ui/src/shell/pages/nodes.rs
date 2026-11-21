@@ -348,20 +348,23 @@ impl NodesPage {
                     }),
             );
             let options = sorts.collect::<Vec<_>>();
-            // `FluentCombo`, whose fill fades on hover.
-            let labels: Vec<String> = options.iter().map(|option| tr(option.1, &[])).collect();
-            let current = Some(options.iter().position(|option| option.0 == key).unwrap_or(0));
-            if let Some(index) = crate::shell::widgets::combo(
-                ui,
-                theme,
-                "node-sort-order",
-                sort_width,
-                &labels,
-                current,
-                true,
-            ) {
-                next = Some(options[index].0);
-            }
+            crate::shell::widgets::fading_combo(ui, |ui| egui::ComboBox::from_id_salt("node-sort-order").icon(crate::shell::widgets::combo_chevron)
+                .width(sort_width)
+                .height(350.0)
+                .selected_text(tr(
+                    options
+                        .iter()
+                        .find(|option| option.0 == key)
+                        .map_or("Вручную", |option| option.1),
+                    &[],
+                ))
+                .show_ui(ui, |ui| {
+                    for (value, label) in options {
+                        if ui.selectable_label(key == value, tr(label, &[])).clicked() {
+                            next = Some(value);
+                        }
+                    }
+                }));
             if let Some(key) = next {
                 bridge.set_node_sort(key, true);
             }

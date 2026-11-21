@@ -731,10 +731,16 @@ client, core/resource updaters, zapret and discord proxy managers.
   frame for frame.
 - Page buttons and combo boxes (2026-11-21): the About, Settings, Routing,
   Configs and zapret buttons were plain `egui::Button`s (instant hover;
-  accent ones ignored hover) and the Settings, Routing, Configs, History
-  and server sort combos were `egui::ComboBox`es. They now use the
-  `AccentButton` / `FluentCombo` ports, whose fills follow hover over
-  110 ms (captured 253, 251, 250, 248 on About).
+  accent ones ignored hover). They now use the `AccentButton` port, whose
+  fill follows hover over 110 ms (captured 253, 251, 250, 248 on About).
+  The Settings, Routing, Configs, History and server sort combos stay
+  `egui::ComboBox`es (the user prefers them to the `FluentCombo` port);
+  `widgets::fading_combo` fades their field fill over 110 ms (captured
+  254, 253, 250, 248, 247).
+- Wheel over a popup list (2026-11-21): the page's scroll area under an
+  open combo list reported its room to the glide, so the list could not
+  scroll up at the top of the page. Only an area on the layer under the
+  pointer reports now; a combo list scrolls down and back up.
 - Python test audit and differential corpora (2026-11-21): every Python test
   is mapped in `rust/TEST_PARITY.md` (753 matched, 58 ported, 86 existing, 57
   corpus, 78 n/a, 70 not ported with reasons). `rust/tools/parity` records

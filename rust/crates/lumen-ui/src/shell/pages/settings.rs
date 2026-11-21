@@ -2266,22 +2266,35 @@ fn chain_combo<'a>(
 
 fn styled_combo(
     ui: &mut Ui,
-    id: impl std::hash::Hash + std::fmt::Debug,
+    id: impl egui::AsIdSalt,
     active: &str,
     options: &[(&str, &str)],
     width: f32,
     set: impl FnOnce(&str),
 ) {
-    // `StyledCombo: FluentCombo`, whose fill fades on hover.
-    let Some(theme) = crate::shell::fluent_menu::published_theme(ui.ctx()) else {
-        return;
-    };
-    let labels: Vec<String> = options.iter().map(|(_, caption)| tr(caption, &[])).collect();
-    // `boundIndex: Math.max(0, model.indexOf(...))`.
-    let current = Some(options.iter().position(|(key, _)| *key == active).unwrap_or(0));
-    let enabled = ui.is_enabled();
-    if let Some(index) = crate::shell::widgets::combo(ui, &theme, id, width, &labels, current, enabled)
-        && let Some(&(key, _)) = options.get(index)
+    let label = options
+        .iter()
+        .find(|(key, _)| *key == active)
+        .or_else(|| options.first())
+        .map(|(_, label)| *label)
+        .unwrap_or("");
+    let mut picked = None;
+    crate::shell::widgets::fading_combo(ui, |ui| egui::ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
+        .width(width)
+        .truncate()
+        .selected_text(tr(label, &[]))
+        .show_ui(ui, |ui| {
+            for &(key, caption) in options {
+                if ui
+                    .selectable_label(key == active, tr(caption, &[]))
+                    .clicked()
+                {
+                    picked = Some(key);
+                    ui.close();
+                }
+            }
+        }));
+    if let Some(key) = picked
         && key != active
     {
         set(key);

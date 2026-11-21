@@ -492,6 +492,45 @@ pub(crate) fn combo_chevron(ui: &Ui, rect: Rect, _visuals: &egui::style::WidgetV
     );
 }
 
+/// Shows a stock `egui::ComboBox` (added by `show`) whose field fill fades
+/// between idle and hover over 110 ms, like `FluentCombo.qml`'s
+/// `Behavior on color`. egui switches widget colours at once; here the idle
+/// and hovered fills of this one widget are both set to the animated colour.
+/// The popup list uses the context style, so its rows are unaffected.
+pub(crate) fn fading_combo<R>(ui: &mut Ui, show: impl FnOnce(&mut Ui) -> R) -> R {
+    let id = ui.next_auto_id().with("lumen-combo-fade");
+    let Some(theme) = crate::shell::fluent_menu::published_theme(ui.ctx()) else {
+        return show(ui);
+    };
+    let hovered = ui.ctx().data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    let widgets = &ui.visuals().widgets;
+    let target = if hovered && ui.is_enabled() {
+        widgets.hovered.weak_bg_fill
+    } else {
+        widgets.inactive.weak_bg_fill
+    };
+    let fill = motion::follow_color(ui.ctx(), &theme, id, target, 110.0, motion::linear);
+    let inner = ui.scope(|ui| {
+        let widgets = &mut ui.visuals_mut().widgets;
+        for visuals in [&mut widgets.inactive, &mut widgets.hovered] {
+            visuals.weak_bg_fill = fill;
+            visuals.bg_fill = fill;
+        }
+        show(ui)
+    });
+    let rect = inner.response.rect;
+    let ctx = ui.ctx().clone();
+    let layer = ui.layer_id();
+    let now_hovered = ctx
+        .pointer_hover_pos()
+        .is_some_and(|pos| rect.contains(pos) && ctx.layer_id_at(pos) == Some(layer));
+    if now_hovered != hovered {
+        ctx.data_mut(|data| data.insert_temp(id, now_hovered));
+        ctx.request_repaint();
+    }
+    inner.inner
+}
+
 /// A pointing-hand hit area for hand-painted rows and tabs.
 pub(crate) fn hit(ui: &Ui, rect: Rect, id: Id) -> Response {
     ui.interact(rect, id, Sense::click())
