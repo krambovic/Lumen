@@ -105,6 +105,25 @@ pub fn sys_platform() -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    /// Python test_node_selection: the provider HWID is derived from the
+    /// MachineGuid and the install id, never the raw GUID itself.
+    #[cfg(windows)]
+    #[test]
+    fn subscription_hwid_never_leaks_the_raw_machine_guid() {
+        let Some(first) = super::subscription_hwid("install-a") else { return };
+        eprintln!("hwid(install-a) = {first}");
+        assert_eq!(first.len(), 36);
+        assert_eq!(super::subscription_hwid("install-a").as_deref(), Some(first.as_str()));
+        let second = super::subscription_hwid("install-b").unwrap();
+        eprintln!("hwid(install-b) = {second}");
+        assert_ne!(first, second);
+        let raw = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+            .open_subkey(r"SOFTWARE\Microsoft\Cryptography")
+            .and_then(|key| key.get_value::<String, _>("MachineGuid"))
+            .unwrap_or_default();
+        assert!(!first.eq_ignore_ascii_case(raw.trim_matches(['{', '}'])));
+    }
+
     #[test]
     fn machine_is_known() {
         assert!(!super::machine().is_empty());

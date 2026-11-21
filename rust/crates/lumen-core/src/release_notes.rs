@@ -284,6 +284,19 @@ mod tests {
     use super::*;
     use crate::constants::APP_VERSION;
 
+    /// Python test_release_notes::test_version_comparison_rules.
+    #[test]
+    fn version_comparison_rules() {
+        assert_eq!(version_key("v2.0.0-pre.3"), vec![2, 0, 0]);
+        assert!(version_key("bad").is_empty());
+        assert!(!is_upgrade("", "2.0.0")); // fresh install
+        assert!(is_upgrade("0", "2.0.0")); // pre-2.0 profile
+        assert!(is_upgrade("1.9.18", "2.0.0"));
+        assert!(!is_upgrade("2.0.0", "2.0.0"));
+        assert!(!is_upgrade("2.1.0", "2.0.0")); // downgrade
+        assert!(is_upgrade("2.1.4", "3.0.0"));
+    }
+
     #[test]
     fn current_release_has_curated_translated_notes() {
         let current = RELEASE_NOTES

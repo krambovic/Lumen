@@ -607,3 +607,24 @@ fn state_path_values(settings: &AppSettings) -> [String; 6] {
         settings.singbox_template_file.clone(),
     ]
 }
+
+#[cfg(test)]
+mod quarantine_tests {
+    use super::*;
+
+    /// Python test_state_storage_safety: a broken profile is moved aside,
+    /// never silently replaced by a fresh one.
+    #[test]
+    fn invalid_state_is_quarantined_instead_of_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_file = dir.path().join("state.json");
+        fs::write(&state_file, r#"{"nodes": ["#).unwrap();
+        assert!(StateStorage::new(state_file.clone()).load().is_err());
+        assert!(!state_file.exists());
+        let quarantined = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .any(|entry| entry.file_name().to_string_lossy().starts_with("state.json.corrupt-"));
+        assert!(quarantined);
+    }
+}

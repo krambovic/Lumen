@@ -360,17 +360,30 @@ struct HistoryInner {
 
 impl TrafficHistoryStorage {
     pub fn new() -> Self {
-        let path = crate::constants::data_dir().join("traffic_history.json");
+        Self::with_path(crate::constants::data_dir().join("traffic_history.json"))
+    }
+
+    /// Python `_load`: an unreadable or non-object history file is moved
+    /// aside (`<name>.corrupt-<UTC stamp>-<id>`) instead of being overwritten
+    /// by the next save.
+    pub fn with_path(path: PathBuf) -> Self {
         let mut sessions: Vec<TrafficSession> = Vec::new();
-        if let Ok(data) = fs::read_to_string(&path) {
-            if let Ok(parsed) = serde_json::from_str::<Value>(&data) {
-                if let Some(list) = parsed.get("sessions").and_then(|v| v.as_array()) {
-                    for item in list {
-                        if let Ok(session) = TrafficSession::from_dict(item) {
-                            sessions.push(session);
+        if path.exists() {
+            let parsed = fs::read_to_string(&path)
+                .ok()
+                .and_then(|data| serde_json::from_str::<Value>(&data).ok())
+                .filter(Value::is_object);
+            match parsed {
+                Some(parsed) => {
+                    if let Some(list) = parsed.get("sessions").and_then(|v| v.as_array()) {
+                        for item in list {
+                            if let Ok(session) = TrafficSession::from_dict(item) {
+                                sessions.push(session);
+                            }
                         }
                     }
                 }
+                None => Self::quarantine_corrupt_file(&path),
             }
         }
         let storage = Self {
@@ -392,6 +405,13 @@ impl TrafficHistoryStorage {
         drop(inner);
         storage.save_locked();
         storage
+    }
+
+    fn quarantine_corrupt_file(path: &std::path::Path) {
+        let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let _ = fs::rename(path, path.with_file_name(format!("{name}.corrupt-{stamp}-{}", &id[..8])));
     }
 
     fn build_daily_totals(
@@ -699,3 +719,29 @@ impl Default for TrafficHistoryStorage {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod quarantine_tests {
+    use super::*;
+
+    /// Python test_audit_traffic_history / test_persistence_and_startup.
+    #[test]
+    fn corrupt_history_is_kept_aside_and_new_history_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("corrupt.json");
+        fs::write(&target, r#"{"sessions": [{"#).unwrap();
+        let storage = TrafficHistoryStorage::with_path(target.clone());
+        storage.start_session("new", "proxy");
+        assert!(storage.flush(Duration::from_secs(3)));
+        let backups: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("corrupt.json.corrupt-"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(fs::read_to_string(backups[0].path()).unwrap(), r#"{"sessions": [{"#);
+        let saved: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(saved["sessions"][0]["node_name"], "new");
+    }
+}
+

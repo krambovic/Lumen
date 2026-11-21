@@ -534,6 +534,48 @@ mod tests {
         );
     }
 
+    /// Python test_node_selection: manual add, import into a chosen group,
+    /// and the always-present Default group.
+    #[test]
+    fn manual_add_and_group_targeted_import_match_python() {
+        let mut state = AppState::default();
+        state.settings.auto_connect_on_import = false;
+        assert_eq!(all_groups(&state), ["Default"]);
+        let mut desired_connected = false;
+        let mut service = NodeService {
+            state: &mut state,
+            connected: false,
+            desired_connected: &mut desired_connected,
+            can_connect_without_selected_node: false,
+            emit: &mut |_, _| {},
+        };
+        let manual = Node {
+            name: "Manual VLESS".into(),
+            scheme: "vless".into(),
+            server: "manual.example".into(),
+            port: 443,
+            group: "Manual".into(),
+            outbound: serde_json::json!({
+                "protocol": "vless",
+                "settings": {"vnext": [{"address": "manual.example", "port": 443,
+                    "users": [{"id": "00000000-0000-0000-0000-000000000001"}]}]},
+                "streamSettings": {"network": "tcp", "security": "none"},
+            }),
+            ..Node::default()
+        };
+        let id = service.add_manual(manual.clone()).unwrap();
+        assert_eq!(id, manual.id);
+        assert_eq!(service.state.nodes[0].sort_order, 1);
+
+        let (added, errors) = service.import_from_text(
+            "vless://bbbbbbbb-0000-4000-8000-000000000000@fresh.example:443#fresh",
+            ImportOptions { group: Some("Manual"), ..ImportOptions::default() },
+        );
+        assert_eq!((added, errors), (1, vec![]));
+        assert_eq!(service.state.nodes[1].group, "Manual");
+        assert_eq!(service.state.selected_node_id, None);
+    }
+
     #[test]
     fn import_deduplicates_links_within_case_folded_groups() {
         let mut original = node("old", "Straße", 4);

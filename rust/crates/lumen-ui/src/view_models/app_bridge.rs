@@ -7426,3 +7426,102 @@ mod core_path_tests {
         assert_eq!(AppBridge::display_core_path(r"D:\tools\sb.exe", &default), r"D:\tools\sb.exe");
     }
 }
+
+#[cfg(test)]
+mod onboarding_tests {
+    //! Python test_onboarding: who gets the setup wizard and who gets
+    //! "What's new" after an update.
+    use super::*;
+    use lumen_app::app_controller::AppController;
+    use lumen_core::models::AppSettings;
+    use lumen_core::release_notes::RELEASE_NOTES;
+
+    fn bridge(settings: AppSettings) -> (AppBridge, tempfile::TempDir) {
+        let root = tempfile::tempdir().unwrap();
+        let mut controller =
+            AppController::with_storage(lumen_core::storage::StateStorage::new(root.path().join("state.json")));
+        assert!(controller.load());
+        controller.state.settings = settings.clone();
+        let mut bridge = AppBridge::with_controller(controller);
+        bridge.settings_cached = settings;
+        (bridge, root)
+    }
+
+    /// `complete_onboarding` writes through the controller; mirror it the way
+    /// the settings event would.
+    fn sync(bridge: &mut AppBridge) {
+        bridge.settings_cached = bridge.controller.lock().state.settings.clone();
+    }
+
+    #[test]
+    fn fresh_install_gets_setup_without_whats_new() {
+        let (bridge, _root) = bridge(AppSettings::default());
+        assert!(bridge.onboarding_setup_required());
+        assert!(!bridge.onboarding_show_whats_new());
+        assert_eq!(bridge.onboarding_previous_version(), "");
+    }
+
+    #[test]
+    fn later_update_shows_only_whats_new() {
+        let settings = AppSettings {
+            onboarding_revision: ONBOARDING_REVISION,
+            onboarding_version: "1.0.0".into(),
+            ..AppSettings::default()
+        };
+        let (bridge, _root) = bridge(settings);
+        assert!(!bridge.onboarding_setup_required());
+        assert!(bridge.onboarding_show_whats_new());
+        assert!(bridge.onboarding_required());
+        assert_eq!(bridge.onboarding_previous_version(), "1.0.0");
+    }
+
+    #[test]
+    fn first_2_0_0_build_profiles_get_the_setup_again() {
+        let settings = AppSettings { onboarding_revision: 1, onboarding_version: "2.0.0".into(), ..AppSettings::default() };
+        let (mut bridge, _root) = bridge(settings);
+        assert!(bridge.onboarding_setup_required());
+        assert!(bridge.onboarding_required());
+        assert!(bridge.onboarding_returning_user());
+        bridge.complete_onboarding();
+        sync(&mut bridge);
+        assert_eq!(bridge.settings_cached.onboarding_revision, ONBOARDING_REVISION);
+        assert!(!bridge.onboarding_required());
+    }
+
+    #[test]
+    fn completing_records_the_version_and_show_again_resets() {
+        let (mut bridge, _root) = bridge(AppSettings::default());
+        bridge.complete_onboarding();
+        sync(&mut bridge);
+        assert_eq!(bridge.settings_cached.onboarding_version, APP_VERSION);
+        assert!(!bridge.onboarding_show_whats_new());
+        assert!(!bridge.onboarding_required());
+        let restored = AppSettings::from_dict(&bridge.settings_cached.to_dict());
+        assert_eq!(restored.onboarding_version, APP_VERSION);
+        bridge.show_onboarding_again();
+        sync(&mut bridge);
+        assert!(bridge.onboarding_required());
+    }
+
+    #[test]
+    fn current_upgrade_shows_curated_news_once() {
+        let current = RELEASE_NOTES.iter().find(|notes| notes.version == APP_VERSION).unwrap();
+        for previous in ["0", "1.9.18", "2.0.0", "2.1.0", "2.1.3-pre.01", "2.1.3", "2.1.4"] {
+            let settings = AppSettings {
+                onboarding_revision: ONBOARDING_REVISION,
+                onboarding_version: previous.into(),
+                ..AppSettings::default()
+            };
+            let (mut bridge, _root) = bridge(settings);
+            assert!(!bridge.onboarding_setup_required(), "{previous}");
+            assert!(bridge.onboarding_required(), "{previous}");
+            let groups = bridge.onboarding_whats_new();
+            assert_eq!(groups[0]["version"], APP_VERSION);
+            assert_eq!(groups[0]["items"].as_array().unwrap().len(), current.items.len());
+            bridge.complete_onboarding();
+            sync(&mut bridge);
+            let (restored, _root) = self::bridge(AppSettings::from_dict(&bridge.settings_cached.to_dict()));
+            assert!(!restored.onboarding_required(), "{previous}");
+        }
+    }
+}
