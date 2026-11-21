@@ -2345,6 +2345,15 @@ impl Tessellator {
                         if is_color_glyph_vertex(i) {
                             // Don't tint: keep the glyph's own color, but respect the text alpha.
                             color = Color32::from_white_alpha(color.a());
+                            // Lumen: mark the vertex for the subpixel text
+                            // shader with alpha one below the (premultiplied)
+                            // white, which no tinted glyph produces. It then
+                            // blends the glyph's own colour instead of using
+                            // it as per-channel coverage.
+                            if crate::text::subpixel_text() && color.a() > 1 {
+                                let [r, g, b, a] = color.to_array();
+                                color = Color32::from_rgba_premultiplied(r, g, b, a - 1);
+                            }
                         }
 
                         if *opacity_factor < 1.0 {

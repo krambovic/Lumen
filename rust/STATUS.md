@@ -709,6 +709,32 @@ client, core/resource updaters, zapret and discord proxy managers.
   coverage to 0.85 for dark text (`LCD_DARK_EXPONENT`); titles, subtitles,
   combo text and section headers measure 99-103% of QML's ink, and the dark
   theme is unchanged (99-102%).
+- Colour emoji with subpixel text (2026-11-21): the LCD shader treated a
+  colour glyph's RGB as per-channel coverage, so the grey outline of the
+  white flag 🏳 turned half transparent and the flag almost vanished on
+  light themes. Colour glyph vertices are now marked (premultiplied white
+  with alpha one lower, which tinted text never produces) and blend their
+  own colour. Captured before and after on the dashboard server list.
+- Text in translucent (Mica) windows (2026-11-21): per-channel coverage
+  cannot blend with the backdrop DWM adds under the window's single alpha,
+  so dark text came out heavier and fringed in the light theme. While the
+  theme is translucent, the shader averages the three coverages and writes
+  a matching alpha (grayscale text); ink measures 101% of QML's. Not
+  checked on screen, since only a composited capture would show it.
+- Wheel scrolling at the end of the content (2026-11-21): `FluentScroll`
+  clamps the glide target to `0..maxY`, so a glide eases onto the end.
+  Rust glided towards the unclamped target and stopped dead at the end
+  (391, 429, stop vs QML 378, 421, 447, 458 over 0.4 s). Vertical scroll
+  areas now report their remaining travel (`GlideRoom`), and the innermost
+  scrollable one under the pointer clamps the target; the settings page
+  now settles 386, 400, 410 ... 429. A single notch already matched QML
+  frame for frame.
+- Page buttons and combo boxes (2026-11-21): the About, Settings, Routing,
+  Configs and zapret buttons were plain `egui::Button`s (instant hover;
+  accent ones ignored hover) and the Settings, Routing, Configs, History
+  and server sort combos were `egui::ComboBox`es. They now use the
+  `AccentButton` / `FluentCombo` ports, whose fills follow hover over
+  110 ms (captured 253, 251, 250, 248 on About).
 - Python test audit and differential corpora (2026-11-21): every Python test
   is mapped in `rust/TEST_PARITY.md` (753 matched, 58 ported, 86 existing, 57
   corpus, 78 n/a, 70 not ported with reasons). `rust/tools/parity` records

@@ -1,5 +1,6 @@
 //! Archive options from `DiagnosticsExportDialog.qml`.
 
+use crate::shell::wheel::GlideRoom;
 use egui::{
     Align, Color32, Context, FontId, Frame, Id, Layout, Modal, Rect, ScrollArea, Sense, Stroke, Ui, Vec2,
     pos2, vec2,
@@ -176,7 +177,7 @@ impl DiagnosticsExport {
                                 },
                             );
                         });
-                    });
+                    }).glide_room(ui);
                 response
             });
         if modal.should_close() {

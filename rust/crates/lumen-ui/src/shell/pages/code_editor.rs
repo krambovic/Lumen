@@ -1,5 +1,6 @@
 //! The plain text editor and fixed line-number gutter from `CodeEditor.qml`.
 
+use crate::shell::wheel::GlideRoom;
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use egui::{
     Align, Align2, FontId, Id, Pos2, Rect, ScrollArea, Sense, Stroke, TextEdit, Ui, pos2, vec2,
@@ -97,7 +98,7 @@ pub(super) fn show(
                     ui.scroll_to_rect(rect, Some(Align::Center));
                 }
                 editor
-            });
+            }).glide_room(ui);
 
         let clip = gutter.intersect(ui.clip_rect());
         let painter = ui.painter().with_clip_rect(clip);

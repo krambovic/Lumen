@@ -1,38 +1,68 @@
-use egui::{Button, FontId, Stroke, TextFormat, Ui, text::LayoutJob, vec2};
+//! Page buttons. They used to be styled `egui::Button`s, which switch
+//! colour at once (an accent fill set on the button even ignored hover);
+//! they now draw `AccentButton.qml` through [`FluentButton`], whose fill
+//! follows hover and press over 110 ms like the QML `ColorAnimation`.
+
+use egui::{Response, Ui, Widget, vec2};
 
 #[allow(unused_imports)]
 use crate::shell::widgets::FluentTip;
-use crate::shell::theme::{Theme, semibold};
+use crate::shell::theme::Theme;
+use crate::shell::widgets::{ButtonKind, FluentButton};
 
-pub(crate) fn button(theme: &Theme, icon: &str, label: &str, accent: bool) -> Button<'static> {
-    let height = theme.control_height as f32;
-    let color = if accent {
-        theme.accent_text
-    } else {
-        theme.text
-    };
-    let size = theme.font_normal as f32;
-    let mut text = LayoutJob::default();
-    if !icon.is_empty() {
-        text.append(
-            icon,
-            0.0,
-            TextFormat::simple(FontId::proportional(size), color),
-        );
+pub(crate) struct PageButton<'t> {
+    theme: &'t Theme,
+    glyph: String,
+    label: String,
+    accent: bool,
+    danger: bool,
+    min_width: f32,
+}
+
+impl PageButton<'_> {
+    /// `kind: "danger"` (the old `.fill(theme.danger_fill)`).
+    pub(crate) fn danger(mut self) -> Self {
+        self.danger = true;
+        self
     }
-    let font = if accent {
-        semibold(size)
-    } else {
-        FontId::proportional(size)
-    };
-    let gap = if icon.is_empty() { 0.0 } else { 8.0 };
-    text.append(label, gap, TextFormat::simple(font, color));
-    let width = if label.is_empty() { height } else { 0.0 };
-    let mut button = Button::new(text).min_size(vec2(width, height)).truncate();
-    if accent {
-        button = button.fill(theme.accent).stroke(Stroke::NONE);
+
+    /// At least this wide (the old `.min_size`).
+    pub(crate) fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width;
+        self
     }
-    button
+}
+
+pub(crate) fn button<'t>(theme: &'t Theme, icon: &str, label: &str, accent: bool) -> PageButton<'t> {
+    PageButton {
+        theme,
+        glyph: icon.to_owned(),
+        label: label.to_owned(),
+        accent,
+        danger: false,
+        min_width: 0.0,
+    }
+}
+
+impl Widget for PageButton<'_> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let mut button = if self.label.is_empty() {
+            FluentButton::icon(&self.glyph, "")
+        } else {
+            let kind = if self.danger {
+                ButtonKind::Danger
+            } else if self.accent {
+                ButtonKind::Accent
+            } else {
+                ButtonKind::Ghost
+            };
+            FluentButton::new(kind, &self.glyph, &self.label)
+        };
+        if self.min_width > self.theme.control_height as f32 && self.label.is_empty() {
+            button = button.width(self.min_width);
+        }
+        button.enabled(ui.is_enabled()).show(ui, self.theme)
+    }
 }
 
 pub(crate) fn style(ui: &mut Ui) {
@@ -46,10 +76,6 @@ pub(crate) fn icon(
     tip: &str,
     enabled: bool,
 ) -> egui::Response {
-    ui.scope(|ui| {
-        ui.spacing_mut().button_padding = egui::Vec2::ZERO;
-        ui.add_enabled(enabled, button(theme, glyph, "", false))
-            .fluent_tip(tip)
-    })
-    .inner
+    ui.add_enabled(enabled, button(theme, glyph, "", false))
+        .fluent_tip(tip)
 }

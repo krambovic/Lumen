@@ -5,12 +5,13 @@
 //! pinned to the right.
 
 #[allow(unused_imports)]
+use crate::shell::wheel::GlideRoom;
 use crate::shell::color_picker::{ColorPicker, PickerResult};
 use crate::shell::widgets::FluentTip;
 use std::path::Path;
 
 use egui::{
-    Align, Button, Color32, ComboBox, Context, FontId, Id, Layout, RichText,
+    Align, Color32, Context, FontId, Id, Layout, RichText,
     ScrollArea, Sense, Stroke, TextEdit, TextFormat, Ui, text::LayoutJob, vec2,
 };
 use lumen_core::{constants::APP_VERSION, i18n::tr, models::AppSettings};
@@ -284,7 +285,7 @@ impl SettingsPage {
                     5 => updates(ui, theme, bridge, &settings),
                     _ => page.shell.open_configs_requested = self.data(ui, theme, bridge, compact),
                 }
-            });
+            }).glide_room(ui);
         if self.reset {
             self.reset_dialog(page.ctx, theme, bridge);
         }
@@ -2265,35 +2266,22 @@ fn chain_combo<'a>(
 
 fn styled_combo(
     ui: &mut Ui,
-    id: impl egui::AsIdSalt,
+    id: impl std::hash::Hash + std::fmt::Debug,
     active: &str,
     options: &[(&str, &str)],
     width: f32,
     set: impl FnOnce(&str),
 ) {
-    let label = options
-        .iter()
-        .find(|(key, _)| *key == active)
-        .or_else(|| options.first())
-        .map(|(_, label)| *label)
-        .unwrap_or("");
-    let mut picked = None;
-    ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
-        .width(width)
-        .truncate()
-        .selected_text(tr(label, &[]))
-        .show_ui(ui, |ui| {
-            for &(key, caption) in options {
-                if ui
-                    .selectable_label(key == active, tr(caption, &[]))
-                    .clicked()
-                {
-                    picked = Some(key);
-                    ui.close();
-                }
-            }
-        });
-    if let Some(key) = picked
+    // `StyledCombo: FluentCombo`, whose fill fades on hover.
+    let Some(theme) = crate::shell::fluent_menu::published_theme(ui.ctx()) else {
+        return;
+    };
+    let labels: Vec<String> = options.iter().map(|(_, caption)| tr(caption, &[])).collect();
+    // `boundIndex: Math.max(0, model.indexOf(...))`.
+    let current = Some(options.iter().position(|(key, _)| *key == active).unwrap_or(0));
+    let enabled = ui.is_enabled();
+    if let Some(index) = crate::shell::widgets::combo(ui, &theme, id, width, &labels, current, enabled)
+        && let Some(&(key, _)) = options.get(index)
         && key != active
     {
         set(key);
@@ -2623,9 +2611,8 @@ fn accent_button_glyph(ui: &mut Ui, theme: &Theme, glyph: &str, label: &str) -> 
         .clicked()
 }
 
-fn danger_button(theme: &Theme, label: &str) -> Button<'static> {
-    fluent_button::button(theme, "\u{e777}", &tr(label, &[]), true)
-        .fill(theme.danger_fill)
+fn danger_button<'t>(theme: &'t Theme, label: &str) -> fluent_button::PageButton<'t> {
+    fluent_button::button(theme, "\u{e777}", &tr(label, &[]), true).danger()
 }
 
 /// `InfoIcon`: muted ⓘ with the QML tooltip text.

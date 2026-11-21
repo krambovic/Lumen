@@ -1,9 +1,10 @@
 //! Traffic summary and tables from `HistoryPage.qml`.
 
+use crate::shell::wheel::GlideRoom;
 use std::cmp::Ordering;
 
 use egui::{
-    Align, ComboBox, FontId, Frame, Label, Layout, Margin, RichText, ScrollArea, Sense, Stroke, Ui,
+    Align, FontId, Frame, Label, Layout, Margin, RichText, ScrollArea, Sense, Stroke, Ui,
     vec2,
 };
 use egui_extras::{Column, TableBuilder};
@@ -239,32 +240,21 @@ impl HistoryPage {
                 for (spec, state) in TABLES.iter().zip(&mut self.tables) {
                     render_table(ui, theme, spec, rows(data, spec), state);
                 }
-            });
+            }).glide_room(ui);
     }
 
     fn toolbar(&mut self, ui: &mut Ui, theme: &Theme) -> (bool, bool) {
         let title = RichText::new(tr("История", &[])).font(semibold(theme.font_title as f32));
-        let period = ComboBox::from_id_salt("history-period").icon(crate::shell::widgets::combo_chevron)
-            .selected_text(
-                RichText::new(tr(PERIODS[self.period].1, &[])).size(theme.font_normal as f32),
-            )
-            .width(180.0)
-            .icon(|ui, rect, visuals, _| {
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "\u{e70d}",
-                    FontId::proportional(12.0),
-                    visuals.text_color(),
-                );
-            });
         let height = theme.control_height as f32;
-        let select_period = |ui: &mut Ui| {
-            period.show_ui(ui, |ui| {
-                for (index, (_, label)) in PERIODS.iter().enumerate() {
-                    ui.selectable_value(&mut self.period, index, tr(label, &[]));
-                }
-            });
+        // `FluentCombo`, whose fill fades on hover.
+        let labels: Vec<String> = PERIODS.iter().map(|(_, label)| tr(label, &[])).collect();
+        let period = &mut self.period;
+        let mut select_period = |ui: &mut Ui| {
+            if let Some(index) =
+                crate::shell::widgets::combo(ui, theme, "history-period", 180.0, &labels, Some(*period), true)
+            {
+                *period = index;
+            }
         };
         if ui.available_width() < 500.0 {
             ui.label(title);

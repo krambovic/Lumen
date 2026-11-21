@@ -21,7 +21,7 @@ pub(crate) mod widgets;
 pub(crate) mod fluent_menu;
 pub(crate) mod fluent_dialog;
 pub(crate) mod color_picker;
-mod wheel;
+pub(crate) mod wheel;
 mod frame_clock;
 #[cfg(debug_assertions)]
 mod preview_input;
@@ -37,6 +37,7 @@ pub mod tray;
 pub mod tray_menu;
 pub mod win_native;
 
+use crate::shell::wheel::GlideRoom;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -1195,7 +1196,7 @@ impl ShellApp {
                                 }
                             }
                         }
-                    });
+                    }).glide_room(ui);
             });
     }
 
@@ -1541,6 +1542,7 @@ impl eframe::App for ShellApp {
             }
         }
         let animated = self.bridge.settings().ui_animations;
+        self.wheel.read_room(ctx);
         if self.wheel.apply(raw_input, animated, egui::Modifiers::CTRL) {
             ctx.request_repaint();
         }

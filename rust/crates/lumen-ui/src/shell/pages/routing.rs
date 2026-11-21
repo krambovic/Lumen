@@ -5,11 +5,12 @@
 //! domain/IP rules and the Fluent dialogs behind them.
 
 #[allow(unused_imports)]
+use crate::shell::wheel::GlideRoom;
 use crate::shell::widgets::FluentTip;
 use std::path::Path;
 
 use egui::{
-    Align, Color32, ComboBox, Frame, Layout, RichText, ScrollArea, Sense, Stroke,
+    Align, Color32, Frame, Layout, RichText, ScrollArea, Sense, Stroke,
     TextEdit, Ui, vec2,
 };
 use lumen_core::i18n::tr;
@@ -247,7 +248,7 @@ impl RoutingPage {
                     }
                 });
                 rules(ui, theme, bridge, false);
-            });
+            }).glide_room(ui);
         if let Some(dialog) = self.dialog {
             self.render_dialog(page.ctx, theme, bridge, dialog);
         }
@@ -519,7 +520,7 @@ impl RoutingPage {
                                     true,
                                     reset_editor,
                                 )
-                            });
+                            }).glide_room(ui);
                         }
                         Dialog::Running => {
                             if let Some(process) = combo(
@@ -692,7 +693,7 @@ fn rules(ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge, processes: bool) {
                 if ui
                     .add(
                         fluent_button::button(theme, "\u{e74d}", "", false)
-                            .min_size(vec2(40.0, theme.control_height as f32)),
+                            .min_width(40.0),
                     )
                     .clicked()
                 {
@@ -849,25 +850,18 @@ fn action_combo(
 
 fn combo<'a>(
     ui: &mut Ui,
-    id: impl egui::AsIdSalt,
+    id: impl std::hash::Hash + std::fmt::Debug,
     label: &str,
     items: impl Iterator<Item = (&'a str, String)>,
     width: f32,
 ) -> Option<String> {
-    let mut picked = None;
-    ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
-        .width(width)
-        .truncate()
-        .selected_text(label)
-        .show_ui(ui, |ui| {
-            for (key, item) in items {
-                if ui.selectable_label(item == label, item).clicked() {
-                    picked = Some(key.into());
-                    ui.close();
-                }
-            }
-        });
-    picked
+    // `FluentCombo`, whose fill fades on hover.
+    let theme = crate::shell::fluent_menu::published_theme(ui.ctx())?;
+    let (keys, labels): (Vec<&str>, Vec<String>) = items.unzip();
+    let current = labels.iter().position(|item| item == label);
+    let enabled = ui.is_enabled();
+    crate::shell::widgets::combo(ui, &theme, id, width, &labels, current, enabled)
+        .map(|index| keys[index].to_owned())
 }
 
 /// QML `Switch` as a 44×20 Fluent pill (same drawing as the logs autoscroll).

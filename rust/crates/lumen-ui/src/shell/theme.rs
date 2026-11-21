@@ -1998,6 +1998,9 @@ pub fn apply_visuals(ctx: &Context, theme: &Theme) {
         egui::epaint::FontColorTransferFunction::Off;
     style.visuals.text_options.subpixel_binning = true;
     style.visuals.text_options.font_hinting = true;
+    // A translucent (Mica) window cannot blend per-channel coverage with
+    // the backdrop DWM adds later: text gets grayscale antialiasing there.
+    egui::epaint::text::set_subpixel_grayscale(theme.is_translucent);
     // QML `Text` is not selectable.
     style.interaction.selectable_labels = false;
     style.visuals.override_text_color = Some(theme.text);

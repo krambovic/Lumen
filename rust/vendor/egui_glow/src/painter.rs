@@ -551,7 +551,14 @@ impl Painter {
                 self.gl.bind_texture(glow::TEXTURE_2D, Some(texture));
                 // Lumen: only the font atlas holds per-channel coverage.
                 if let Some(u_lcd) = &self.u_lcd {
-                    let lcd = (mesh.texture_id == egui::TextureId::default()) as i32;
+                    // 1: per-channel coverage, 2: averaged (translucent window).
+                    let lcd = if mesh.texture_id != egui::TextureId::default() {
+                        0
+                    } else if egui::epaint::text::subpixel_grayscale() {
+                        2
+                    } else {
+                        1
+                    };
                     if lcd != self.lcd_current {
                         self.gl.uniform_1_i32(Some(u_lcd), lcd);
                         self.lcd_current = lcd;

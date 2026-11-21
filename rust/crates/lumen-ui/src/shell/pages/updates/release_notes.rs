@@ -1,5 +1,6 @@
 //! Render the inline formatting and links supported by `UpdatesPage.qml`.
 
+use crate::shell::wheel::GlideRoom;
 use std::sync::LazyLock;
 
 use egui::{Frame, RichText, ScrollArea, Stroke, Ui};
@@ -51,7 +52,7 @@ pub(super) fn render(ui: &mut Ui, theme: &Theme, notes: &str) {
                             inline(ui, theme, text, size, heading);
                         });
                     }
-                });
+                }).glide_room(ui);
         });
 }
 

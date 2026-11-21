@@ -5,11 +5,12 @@ mod source;
 mod subscription;
 
 #[allow(unused_imports)]
+use crate::shell::wheel::GlideRoom;
 use crate::shell::widgets::FluentTip;
 use std::collections::HashSet;
 
 use egui::{
-    Button, ComboBox, Frame, Id, Key, Modal, Modifiers, RichText, ScrollArea, Sense, Stroke,
+    Button, Frame, Id, Key, Modal, Modifiers, RichText, ScrollArea, Sense, Stroke,
     TextEdit, Ui,
 };
 use egui_extras::{Column, TableBuilder};
@@ -347,23 +348,20 @@ impl NodesPage {
                     }),
             );
             let options = sorts.collect::<Vec<_>>();
-            ComboBox::from_id_salt("node-sort-order").icon(crate::shell::widgets::combo_chevron)
-                .width(sort_width)
-                .height(350.0)
-                .selected_text(tr(
-                    options
-                        .iter()
-                        .find(|option| option.0 == key)
-                        .map_or("Вручную", |option| option.1),
-                    &[],
-                ))
-                .show_ui(ui, |ui| {
-                    for (value, label) in options {
-                        if ui.selectable_label(key == value, tr(label, &[])).clicked() {
-                            next = Some(value);
-                        }
-                    }
-                });
+            // `FluentCombo`, whose fill fades on hover.
+            let labels: Vec<String> = options.iter().map(|option| tr(option.1, &[])).collect();
+            let current = Some(options.iter().position(|option| option.0 == key).unwrap_or(0));
+            if let Some(index) = crate::shell::widgets::combo(
+                ui,
+                theme,
+                "node-sort-order",
+                sort_width,
+                &labels,
+                current,
+                true,
+            ) {
+                next = Some(options[index].0);
+            }
             if let Some(key) = next {
                 bridge.set_node_sort(key, true);
             }
@@ -842,7 +840,7 @@ impl NodesPage {
                                 server_inspector(ui, theme, &details, has_node);
                             }
                         });
-                    });
+                    }).glide_room(ui);
                 if footer_height > 0.0 {
                     inspector_rule(ui, theme);
                     Frame::new().inner_margin(11).show(ui, |ui| {

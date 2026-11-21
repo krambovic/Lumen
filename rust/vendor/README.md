@@ -43,9 +43,15 @@ so labels sit where Qt Quick puts them:
   centring puts at n. Measured on the dashboard Connect button: label and
   icon now sit at the same offsets from the button centre as in Qt.
 
+- `epaint/src/tessellator.rs`: colour glyph (emoji) vertices are marked with
+  premultiplied white and alpha one lower, which tinted text never produces;
+  the LCD shader blends those glyphs with their own colour.
+- `epaint/src/text/mod.rs` `set_subpixel_grayscale` and `u_lcd == 2`: in a
+  translucent window the shader averages the three coverages and writes a
+  matching alpha, because the compositor adds the backdrop under one alpha.
+
 Limitations: the stripe order is assumed to be RGB, which is the common case
-and the ClearType default. Colour glyphs (emoji) in the font atlas are blended
-with their colour as weights, which adds a faint halo.
+and the ClearType default.
 
 To upgrade egui, copy the new crate versions here and reapply the changes
 marked `Lumen:`.

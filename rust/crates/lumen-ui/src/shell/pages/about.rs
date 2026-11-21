@@ -1,5 +1,6 @@
 //! Project information and support dialogs from `AboutPage.qml`.
 
+use crate::shell::wheel::GlideRoom;
 use egui::{
     Align, Color32, RichText, ScrollArea, TextureHandle,
     Ui, Vec2, vec2,
@@ -52,7 +53,7 @@ impl AboutPage {
                 if ui.add(fluent_button::button(theme, "\u{e8f1}", &tr("Поддержать проект", &[]), false)).clicked() { self.dialog = Some(Dialog::Support); }
                 if ui.add(fluent_button::button(theme, "\u{e80f}", &tr("Показать приветствие", &[]), false)).clicked() { bridge.show_onboarding_again(); }
             });
-        });
+        }).glide_room(ui);
         let Some(dialog) = self.dialog else {
             return;
         };

@@ -5,7 +5,7 @@ use crate::shell::widgets::FluentTip;
 use std::sync::LazyLock;
 
 use egui::{
-    Align, Align2, Color32, ComboBox, FontId, Frame, Key, Layout, Modifiers,
+    Align, Align2, Color32, FontId, Frame, Key, Layout, Modifiers,
     RichText, Sense, Stroke, Ui, vec2,
 };
 use lumen_core::i18n::tr;
@@ -390,42 +390,18 @@ fn profile_picker(
     empty: &str,
     width: f32,
 ) -> Option<String> {
-    let selected = items
-        .iter()
-        .find(|item| field(item, "value") == active)
-        .or_else(|| items.first());
-    let label = selected
-        .map(|item| field(item, "label").to_string())
-        .unwrap_or_else(|| tr(empty, &[]));
-    let mut selection = None;
-    ui.add_enabled_ui(!items.is_empty(), |ui| {
-        ComboBox::from_id_salt(id).icon(crate::shell::widgets::combo_chevron)
-            .selected_text(label)
-            .width(width)
-            .truncate()
-            .icon(|ui, rect, visuals, _| {
-                ui.painter().text(
-                    rect.center(),
-                    Align2::CENTER_CENTER,
-                    "\u{e70d}",
-                    FontId::proportional(12.0),
-                    visuals.text_color(),
-                );
-            })
-            .show_ui(ui, |ui| {
-                for item in items {
-                    let path = field(item, "value");
-                    if ui
-                        .selectable_label(path == active, field(item, "label"))
-                        .clicked()
-                    {
-                        selection = Some(path.into());
-                        ui.close();
-                    }
-                }
-            });
-    });
-    selection
+    // `FluentCombo`, whose fill fades on hover; disabled with the
+    // placeholder while there is nothing to pick.
+    let theme = crate::shell::fluent_menu::published_theme(ui.ctx())?;
+    if items.is_empty() {
+        crate::shell::widgets::combo(ui, &theme, id, width, &[tr(empty, &[])], Some(0), false);
+        return None;
+    }
+    let labels: Vec<&str> = items.iter().map(|item| field(item, "label")).collect();
+    let current = Some(items.iter().position(|item| field(item, "value") == active).unwrap_or(0));
+    let enabled = ui.is_enabled();
+    crate::shell::widgets::combo(ui, &theme, id, width, &labels, current, enabled)
+        .map(|index| field(&items[index], "value").to_owned())
 }
 
 fn replace(editor: &mut Editor, action: Replace, core: &str, name: &str, bridge: &mut AppBridge) {

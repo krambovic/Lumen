@@ -5,8 +5,17 @@
 //!
 //! The glide rewrites line-unit wheel events in the raw input into small
 //! point-unit deltas, so every scroll area follows it without changes.
+//!
+//! QML clamps the animation target to `0..maxY`, so a glide that runs into
+//! the end of the content decelerates onto it. Scroll areas report how far
+//! they can still move ([`GlideRoom::glide_room`]); the innermost one under
+//! the pointer bounds the next target. Unreported areas keep the unclamped
+//! glide, which stops abruptly at the end.
 
-use egui::{Event, Modifiers, MouseWheelSource, MouseWheelUnit, RawInput, TouchPhase, Vec2};
+use egui::{
+    Context, Event, Id, Modifiers, MouseWheelSource, MouseWheelUnit, RawInput, Rect, TouchPhase, Ui,
+    Vec2, scroll_area::ScrollAreaOutput,
+};
 
 use super::motion::ease_out_quint;
 
@@ -25,9 +34,68 @@ pub(crate) struct WheelGlide {
     running: bool,
     modifiers: Modifiers,
     source: Option<MouseWheelSource>,
+    /// Points the hovered scroll area could still move up and down after the
+    /// last frame, in wheel-delta direction (positive = towards the top).
+    room: Option<(f32, f32)>,
+}
+
+/// Room of the innermost scroll area under the pointer, per pass.
+#[derive(Clone, Copy)]
+struct Room {
+    pass: u64,
+    rect: Rect,
+    up: f32,
+    down: f32,
+}
+
+fn room_id() -> Id {
+    Id::new("lumen-wheel-glide-room")
+}
+
+/// Reports a scroll area's remaining travel to the wheel glide.
+pub(crate) trait GlideRoom {
+    fn glide_room(self, ui: &Ui) -> Self;
+}
+
+impl<R> GlideRoom for ScrollAreaOutput<R> {
+    fn glide_room(self, ui: &Ui) -> Self {
+        let ctx = ui.ctx();
+        let inside = ctx
+            .pointer_hover_pos()
+            .is_some_and(|pos| self.inner_rect.contains(pos));
+        let max = (self.content_size.y - self.inner_rect.height()).max(0.0);
+        // An area that cannot scroll leaves the wheel to its parent.
+        if inside && max > 0.5 {
+            let pass = ctx.cumulative_pass_nr();
+            let room = Room {
+                pass,
+                rect: self.inner_rect,
+                up: self.state.offset().y.clamp(0.0, max),
+                down: (max - self.state.offset().y).max(0.0),
+            };
+            ctx.data_mut(|data| {
+                let keep = data.get_temp::<Room>(room_id()).is_some_and(|old| {
+                    old.pass == pass && old.rect.area() <= room.rect.area()
+                });
+                if !keep {
+                    data.insert_temp(room_id(), room);
+                }
+            });
+        }
+        self
+    }
 }
 
 impl WheelGlide {
+    /// Take the room the scroll areas reported during the last pass.
+    pub(crate) fn read_room(&mut self, ctx: &Context) {
+        let last = ctx.cumulative_pass_nr().saturating_sub(1);
+        self.room = ctx
+            .data(|data| data.get_temp::<Room>(room_id()))
+            .filter(|room| room.pass >= last)
+            .map(|room| (room.up, room.down));
+    }
+
     fn position(&self, now: f64) -> Vec2 {
         let progress = ((now - self.start) / GLIDE_SECONDS).clamp(0.0, 1.0) as f32;
         self.from + (self.to - self.from) * ease_out_quint(progress)
@@ -59,6 +127,11 @@ impl WheelGlide {
             let base = if self.running { self.to } else { current };
             self.from = current;
             self.to = base + notches * WHEEL_STEP;
+            if let Some((up, down)) = self.room {
+                // `Math.max(0, Math.min(maxY, ...))`: the area has consumed
+                // everything emitted so far.
+                self.to.y = self.to.y.clamp(self.emitted.y - down, self.emitted.y + up);
+            }
             self.start = if animated { now } else { now - GLIDE_SECONDS };
             self.running = true;
         }
@@ -140,6 +213,30 @@ mod tests {
         assert!((total + WHEEL_STEP).abs() < 0.1, "travelled {total}");
         // 540 ms at 60 Hz.
         assert!((32..=34).contains(&frame), "frames {frame}");
+    }
+
+    #[test]
+    fn the_target_stops_at_the_end_of_the_content() {
+        // FluentScroll: `Math.max(0, Math.min(maxY, base - notches * step))`.
+        let mut glide = WheelGlide::default();
+        glide.room = Some((0.0, 30.0));
+        let mut total = 0.0;
+        let mut first_frame = 0.0;
+        for frame in 0..60 {
+            let mut raw = RawInput { time: Some(frame as f64 / 60.0), ..Default::default() };
+            if frame == 0 {
+                raw.events.push(notch(-1.0));
+            }
+            glide.apply(&mut raw, true, Modifiers::CTRL);
+            let step = travelled(&raw);
+            if frame == 0 {
+                first_frame = step;
+            }
+            total += step;
+        }
+        assert!((total + 30.0).abs() < 0.1, "travelled {total}");
+        // It eases onto the end instead of running at full speed into it.
+        assert!(first_frame.abs() < 6.0, "first frame {first_frame}");
     }
 
     #[test]

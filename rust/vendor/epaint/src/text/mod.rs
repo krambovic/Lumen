@@ -50,6 +50,22 @@ pub fn subpixel_text() -> bool {
     SUBPIXEL_TEXT.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+static SUBPIXEL_GRAYSCALE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Lumen: blend subpixel glyphs with one (averaged) coverage instead of one
+/// per channel. Per-channel coverage cannot blend correctly into a
+/// translucent window, whose backdrop the compositor adds later; Windows
+/// draws grayscale text in such windows. Can change at any time.
+pub fn set_subpixel_grayscale(enabled: bool) {
+    SUBPIXEL_GRAYSCALE.store(enabled, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// See [`set_subpixel_grayscale`].
+pub fn subpixel_grayscale() -> bool {
+    SUBPIXEL_GRAYSCALE.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// Suggested character to use to replace those in password text fields.
 pub const PASSWORD_REPLACEMENT_CHAR: char = '•';
 
