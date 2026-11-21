@@ -275,3 +275,313 @@ mod tests {
         assert_eq!(float_repr(123456.789), "123456.789");
     }
 }
+
+// ── `json.loads` error messages ─────────────────────────────────────────────
+//
+// Lumen shows `str(JSONDecodeError)` to users when an import fails, e.g.
+// "Expecting ',' delimiter: line 1 column 294 (char 293)". serde_json words
+// and positions its errors differently, so after a failed serde parse the text
+// is re-scanned the way CPython 3.13's C scanner (`_json.c`) does.
+
+/// `serde_json::from_str`, with Python's `JSONDecodeError` text on failure.
+pub fn loads(text: &str) -> Result<Value, String> {
+    serde_json::from_str(text).map_err(|error| decode_error(text).unwrap_or_else(|| error.to_string()))
+}
+
+/// The `str(JSONDecodeError)` Python raises for `json.loads(text)`, or `None`
+/// when Python accepts the text.
+pub fn decode_error(text: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.first() == Some(&'\u{feff}') {
+        return Some(format_error(&chars, "Unexpected UTF-8 BOM (decode using utf-8-sig)", 0));
+    }
+    let scanner = Scanner { s: &chars, depth: 0 };
+    let start = scanner.skip_ws(0);
+    let error = match scanner.scan_once(start) {
+        Ok(end) => {
+            let end = scanner.skip_ws(end);
+            if end == chars.len() {
+                return None;
+            }
+            ScanError::Message("Extra data", end)
+        }
+        Err(error) => error,
+    };
+    Some(match error {
+        ScanError::Stop(pos) => format_error(&chars, "Expecting value", pos),
+        ScanError::Message(message, pos) => format_error(&chars, message, pos),
+    })
+}
+
+/// `JSONDecodeError.__str__`: "%s: line %d column %d (char %d)".
+fn format_error(chars: &[char], message: &str, pos: usize) -> String {
+    let before = &chars[..pos.min(chars.len())];
+    let line = before.iter().filter(|c| **c == '\n').count() + 1;
+    let column = match before.iter().rposition(|c| *c == '\n') {
+        Some(newline) => pos - newline,
+        None => pos + 1,
+    };
+    format!("{message}: line {line} column {column} (char {pos})")
+}
+
+enum ScanError {
+    /// `StopIteration(idx)`: no JSON value starts here ("Expecting value").
+    Stop(usize),
+    Message(&'static str, usize),
+}
+
+struct Scanner<'a> {
+    s: &'a [char],
+    depth: usize,
+}
+
+const MAX_DEPTH: usize = 900;
+
+impl Scanner<'_> {
+    fn at(&self, index: usize) -> Option<char> {
+        self.s.get(index).copied()
+    }
+
+    fn skip_ws(&self, mut index: usize) -> usize {
+        while matches!(self.at(index), Some(' ' | '\t' | '\n' | '\r')) {
+            index += 1;
+        }
+        index
+    }
+
+    fn matches(&self, index: usize, word: &str) -> bool {
+        let word: Vec<char> = word.chars().collect();
+        self.s.get(index..index + word.len()) == Some(&word[..])
+    }
+
+    /// `scan_once_unicode`: the index after the value at `index`.
+    fn scan_once(&self, index: usize) -> Result<usize, ScanError> {
+        let length = self.s.len();
+        let Some(c) = self.at(index) else {
+            return Err(ScanError::Stop(index));
+        };
+        match c {
+            '"' => return self.scan_string(index + 1),
+            '{' | '[' => {
+                if self.depth >= MAX_DEPTH {
+                    // RecursionError; not a JSONDecodeError, keep serde's text.
+                    return Err(ScanError::Message("maximum recursion depth exceeded", index));
+                }
+                let nested = Scanner { s: self.s, depth: self.depth + 1 };
+                return if c == '{' { nested.parse_object(index + 1) } else { nested.parse_array(index + 1) };
+            }
+            'n' if index + 3 < length && self.matches(index, "null") => return Ok(index + 4),
+            't' if index + 3 < length && self.matches(index, "true") => return Ok(index + 4),
+            'f' if index + 4 < length && self.matches(index, "false") => return Ok(index + 5),
+            'N' if index + 2 < length && self.matches(index, "NaN") => return Ok(index + 3),
+            'I' if index + 7 < length && self.matches(index, "Infinity") => return Ok(index + 8),
+            '-' if index + 8 < length && self.matches(index, "-Infinity") => return Ok(index + 9),
+            _ => {}
+        }
+        self.match_number(index)
+    }
+
+    /// `_match_number_unicode`.
+    fn match_number(&self, start: usize) -> Result<usize, ScanError> {
+        let end_index = self.s.len() as isize - 1;
+        let mut index = start;
+        let digit = |i: usize| self.at(i).is_some_and(|c| c.is_ascii_digit());
+        if self.at(index) == Some('-') {
+            index += 1;
+            if index as isize > end_index {
+                return Err(ScanError::Stop(start));
+            }
+        }
+        match self.at(index) {
+            Some('1'..='9') => {
+                index += 1;
+                while digit(index) {
+                    index += 1;
+                }
+            }
+            Some('0') => index += 1,
+            _ => return Err(ScanError::Stop(start)),
+        }
+        if (index as isize) < end_index && self.at(index) == Some('.') && digit(index + 1) {
+            index += 2;
+            while digit(index) {
+                index += 1;
+            }
+        }
+        if (index as isize) < end_index && matches!(self.at(index), Some('e' | 'E')) {
+            let e_start = index;
+            index += 1;
+            if (index as isize) < end_index && matches!(self.at(index), Some('-' | '+')) {
+                index += 1;
+            }
+            while digit(index) {
+                index += 1;
+            }
+            if !digit(index - 1) {
+                index = e_start;
+            }
+        }
+        Ok(index)
+    }
+
+    /// `scanstring_unicode` (strict): `end` is just after the opening quote.
+    fn scan_string(&self, mut end: usize) -> Result<usize, ScanError> {
+        let length = self.s.len();
+        let begin = end - 1;
+        loop {
+            let mut c = '\0';
+            let mut next = end;
+            while next < length {
+                c = self.s[next];
+                if c == '"' || c == '\\' {
+                    break;
+                }
+                if (c as u32) <= 0x1f {
+                    return Err(ScanError::Message("Invalid control character at", next));
+                }
+                next += 1;
+            }
+            if !(c == '"' || c == '\\') || next >= length {
+                return Err(ScanError::Message("Unterminated string starting at", begin));
+            }
+            next += 1;
+            if c == '"' {
+                return Ok(next);
+            }
+            if next == length {
+                return Err(ScanError::Message("Unterminated string starting at", begin));
+            }
+            let escape = self.s[next];
+            if escape != 'u' {
+                end = next + 1;
+                if !matches!(escape, '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't') {
+                    return Err(ScanError::Message("Invalid \\escape", end - 2));
+                }
+                continue;
+            }
+            next += 1;
+            end = next + 4;
+            if end >= length {
+                return Err(ScanError::Message("Invalid \\uXXXX escape", next - 1));
+            }
+            let mut value = 0u32;
+            while next < end {
+                let Some(digit) = self.s[next].to_digit(16) else {
+                    return Err(ScanError::Message("Invalid \\uXXXX escape", end - 5));
+                };
+                value = (value << 4) | digit;
+                next += 1;
+            }
+            if (0xd800..=0xdbff).contains(&value)
+                && end + 6 < length
+                && self.s[next] == '\\'
+                && self.s[next + 1] == 'u'
+            {
+                next += 2;
+                end += 6;
+                while next < end {
+                    if self.s[next].to_digit(16).is_none() {
+                        return Err(ScanError::Message("Invalid \\uXXXX escape", end - 5));
+                    }
+                    next += 1;
+                }
+            }
+        }
+    }
+
+    /// `_parse_object_unicode`: `index` is just after `{`.
+    fn parse_object(&self, index: usize) -> Result<usize, ScanError> {
+        let mut index = self.skip_ws(index);
+        if self.at(index) != Some('}') {
+            loop {
+                if self.at(index) != Some('"') {
+                    return Err(ScanError::Message("Expecting property name enclosed in double quotes", index));
+                }
+                index = self.skip_ws(self.scan_string(index + 1)?);
+                if self.at(index) != Some(':') {
+                    return Err(ScanError::Message("Expecting ':' delimiter", index));
+                }
+                index = self.skip_ws(index + 1);
+                index = self.skip_ws(self.scan_once(index)?);
+                if self.at(index) == Some('}') {
+                    break;
+                }
+                if self.at(index) != Some(',') {
+                    return Err(ScanError::Message("Expecting ',' delimiter", index));
+                }
+                let comma = index;
+                index = self.skip_ws(index + 1);
+                if self.at(index) == Some('}') {
+                    return Err(ScanError::Message("Illegal trailing comma before end of object", comma));
+                }
+            }
+        }
+        Ok(index + 1)
+    }
+
+    /// `_parse_array_unicode`: `index` is just after `[`.
+    fn parse_array(&self, index: usize) -> Result<usize, ScanError> {
+        let mut index = self.skip_ws(index);
+        if self.at(index) != Some(']') {
+            loop {
+                index = self.skip_ws(self.scan_once(index)?);
+                if self.at(index) == Some(']') {
+                    break;
+                }
+                if self.at(index) != Some(',') {
+                    return Err(ScanError::Message("Expecting ',' delimiter", index));
+                }
+                let comma = index;
+                index = self.skip_ws(index + 1);
+                if self.at(index) == Some(']') {
+                    return Err(ScanError::Message("Illegal trailing comma before end of array", comma));
+                }
+            }
+        }
+        Ok(index + 1)
+    }
+}
+
+#[cfg(test)]
+mod decode_error_tests {
+    use super::*;
+
+    #[test]
+    fn messages_match_cpython() {
+        // Expected strings were produced by CPython 3.13 `json.loads`.
+        let cases = [
+            ("", "Expecting value: line 1 column 1 (char 0)"),
+            ("{not json", "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"),
+            ("[1, 2", "Expecting ',' delimiter: line 1 column 6 (char 5)"),
+            ("[1, 2,]", "Illegal trailing comma before end of array: line 1 column 6 (char 5)"),
+            ("{\"a\": 1,}", "Illegal trailing comma before end of object: line 1 column 8 (char 7)"),
+            ("{\"a\" 1}", "Expecting ':' delimiter: line 1 column 6 (char 5)"),
+            ("{\"a\": }", "Expecting value: line 1 column 7 (char 6)"),
+            ("\"abc", "Unterminated string starting at: line 1 column 1 (char 0)"),
+            ("\"a\tb\"", "Invalid control character at: line 1 column 3 (char 2)"),
+            ("\"\\x\"", "Invalid \\escape: line 1 column 2 (char 1)"),
+            ("\"\\u12g4\"", "Invalid \\uXXXX escape: line 1 column 3 (char 2)"),
+            ("{}\n x", "Extra data: line 2 column 2 (char 4)"),
+            ("\u{feff}{}", "Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)"),
+            ("[-]", "Expecting value: line 1 column 2 (char 1)"),
+            ("nul", "Expecting value: line 1 column 1 (char 0)"),
+            ("1E", "Extra data: line 1 column 2 (char 1)"),
+            ("{\"ключ\": [1,\n 2 3]}", "Expecting ',' delimiter: line 2 column 4 (char 16)"),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(decode_error(text).as_deref(), Some(expected), "{text:?}");
+        }
+        for valid in ["{}", "[]", " 1 ", "1e5", "-0.5", "\"\\ud83d\\ude00\"", "NaN", "[Infinity, -Infinity]"] {
+            assert_eq!(decode_error(valid), None, "{valid:?}");
+        }
+    }
+}
+
+/// `JSONDecodeError.msg` for `json.loads(text)`: the message without the
+/// position suffix, or `None` when Python accepts the text.
+pub fn decode_error_msg(text: &str) -> Option<String> {
+    decode_error(text).map(|message| match message.rfind(": line ") {
+        Some(index) => message[..index].to_string(),
+        None => message,
+    })
+}

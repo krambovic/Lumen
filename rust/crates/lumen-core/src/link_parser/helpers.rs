@@ -249,7 +249,7 @@ impl PyUrlSplit {
                 Ok(Some(value))
             }
             Err(()) => Err(LinkParseError::new(format!(
-                "Port could not be cast to integer value as {port_text:?}"
+                "Port could not be cast to integer value as {}", py_repr(port_text)
             ))),
         }
     }
@@ -330,7 +330,7 @@ pub fn py_int_value(value: &Value) -> Result<i64, LinkParseError> {
             }
         }
         Value::String(s) => py_parse_int(s).map_err(|_| {
-            LinkParseError::new(format!("invalid literal for int() with base 10: {s:?}"))
+            LinkParseError::new(format!("invalid literal for int() with base 10: {}", py_repr(s)))
         }),
         other => Err(LinkParseError::new(format!(
             "int() argument must be a string, a bytes-like object or a real number, not '{}'",
@@ -447,15 +447,79 @@ fn is_b64_char(c: char) -> bool {
 /// Python `base64.urlsafe_b64decode(data)` with default `validate=False`:
 /// non-alphabet characters are silently discarded, then padding is applied.
 pub fn decode_b64(data: &str) -> Result<String, LinkParseError> {
-    let data = data.trim();
-    let cleaned: String = data.chars().filter(|c| is_b64_char(*c)).collect();
-    let mut padded = cleaned;
-    while padded.len() % 4 != 0 {
-        padded.push('=');
-    }
-    let raw = b64_decode_translated(&padded)
-        .map_err(|_| LinkParseError::new("invalid base64 data"))?;
+    // `data += "=" * ((4 - len(data) % 4) % 4)` counts every character,
+    // including the ones the decoder later discards.
+    let mut padded = data.trim().to_string();
+    let length = padded.chars().count();
+    padded.push_str(&"=".repeat((4 - length % 4) % 4));
+    let raw = py_a2b_base64(padded.as_bytes(), true)
+        .or_else(|_| py_a2b_base64(padded.as_bytes(), false))
+        .map_err(LinkParseError::new)?;
     Ok(decode_text_encodings(&raw))
+}
+
+/// CPython `binascii.a2b_base64(data, strict_mode=False)`, behind
+/// `base64.b64decode` (and `urlsafe_b64decode` when `urlsafe`, which maps
+/// `-`/`_` to `+`/`/` first). Characters outside the alphabet are skipped;
+/// a complete `==`/`=` pad ends the data. The error texts are CPython's.
+pub fn py_a2b_base64(data: &[u8], urlsafe: bool) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(data.len() / 4 * 3);
+    let mut quad_pos = 0usize;
+    let mut pads = 0usize;
+    let mut left = 0u32;
+    let mut data_chars = 0usize;
+    for &byte in data {
+        let byte = match (urlsafe, byte) {
+            (true, b'-') => b'+',
+            (true, b'_') => b'/',
+            _ => byte,
+        };
+        if byte == b'=' {
+            pads += 1;
+            if quad_pos >= 2 && quad_pos + pads >= 4 {
+                return Ok(out);
+            }
+            continue;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => continue,
+        };
+        pads = 0;
+        data_chars += 1;
+        match quad_pos {
+            0 => {
+                quad_pos = 1;
+                left = u32::from(value);
+            }
+            1 => {
+                quad_pos = 2;
+                out.push(((left << 2) | (u32::from(value) >> 4)) as u8);
+                left = u32::from(value) & 0x0f;
+            }
+            2 => {
+                quad_pos = 3;
+                out.push(((left << 4) | (u32::from(value) >> 2)) as u8);
+                left = u32::from(value) & 0x03;
+            }
+            _ => {
+                quad_pos = 0;
+                out.push(((left << 6) | u32::from(value)) as u8);
+                left = 0;
+            }
+        }
+    }
+    match quad_pos {
+        0 => Ok(out),
+        1 => Err(format!(
+            "Invalid base64-encoded string: number of data characters ({data_chars}) cannot be 1 more than a multiple of 4"
+        )),
+        _ => Err("Incorrect padding".to_string()),
+    }
 }
 
 /// Python `base64.b64decode(..., validate=True)` with caller-provided padding:
@@ -756,4 +820,29 @@ mod unquote_tests {
         assert_eq!(unquote("50%"), "50%");
         assert_eq!(unquote_plus("a+b%2B"), "a b+");
     }
+}
+
+/// Python `repr(str)`: single quotes unless the text holds a single quote
+/// and no double quote; backslash, the chosen quote and control characters
+/// are escaped as Python does.
+pub fn py_repr(text: &str) -> String {
+    let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push(quote);
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
 }

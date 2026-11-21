@@ -5403,7 +5403,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     let headers: Value = serde_json::from_str(&headers_text).map_err(|error| {
                         format!(
                             "Дополнительные заголовки должны быть JSON-объектом: {}",
-                            py_json_error_message(&error)
+                            py_json_error_message(&headers_text, &error)
                         )
                     })?;
                     if !headers.is_object() {
@@ -5421,7 +5421,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                         serde_json::from_str(&udp_options_text).map_err(|error| {
                             format!(
                                 "UDP over TCP должен быть JSON-объектом: {}",
-                                py_json_error_message(&error)
+                                py_json_error_message(&udp_options_text, &error)
                             )
                         })?;
                     if !udp_options.is_object() {
@@ -5471,7 +5471,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                         serde_json::from_str(&peers_json).map_err(|error| {
                             format!(
                                 "Peers должен быть корректным JSON-массивом: {}",
-                                py_json_error_message(&error)
+                                py_json_error_message(&peers_json, &error)
                             )
                         })?;
                     if !parsed_peers.is_array()
@@ -5697,7 +5697,7 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
                     let servers: Value = serde_json::from_str(&servers_json).map_err(|error| {
                         format!(
                             "OpenVPN servers must be a valid JSON array: {}",
-                            py_json_error_message(&error)
+                            py_json_error_message(&servers_json, &error)
                         )
                     })?;
                     if !servers.is_array()
@@ -6007,12 +6007,14 @@ pub fn build_node_updates(node: &Node, fields: &Map<String, Value>) -> Result<Va
 }
 
 /// Python `json.JSONDecodeError.msg` (the human-readable part of the message).
-fn py_json_error_message(error: &serde_json::Error) -> String {
-    let text = error.to_string();
-    match text.find(" at line") {
-        Some(index) => text[..index].to_string(),
-        None => text,
-    }
+fn py_json_error_message(source: &str, error: &serde_json::Error) -> String {
+    lumen_core::pyjson::decode_error_msg(source).unwrap_or_else(|| {
+        let text = error.to_string();
+        match text.find(" at line") {
+            Some(index) => text[..index].to_string(),
+            None => text,
+        }
+    })
 }
 
 /// Python `_node_export_family` (bridge helper, kept beside the link builders).

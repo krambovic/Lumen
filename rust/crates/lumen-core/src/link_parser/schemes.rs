@@ -117,8 +117,7 @@ pub(super) fn normalize_vmess_security_value_pub(value: Option<&Value>) -> Strin
 pub(super) fn parse_vmess(link: &str) -> Result<Node, LinkParseError> {
     let encoded = &link["vmess://".len()..];
     let decoded = decode_b64(encoded)?;
-    let payload: Value = serde_json::from_str(&decoded)
-        .map_err(|e| LinkParseError::new(e.to_string()))?;
+    let payload: Value = crate::pyjson::loads(&decoded).map_err(LinkParseError::new)?;
     let payload = payload.as_object().ok_or_else(|| LinkParseError::new("invalid vmess link"))?;
 
     let server = py_str_or(payload.get("add"), "");
@@ -709,7 +708,8 @@ pub(super) fn parse_naive_link(link: &str, source_scheme: &str) -> Result<Node, 
     if !concurrency.is_empty() {
         let value = py_parse_int(&concurrency).map_err(|_| {
             LinkParseError::new(format!(
-                "invalid literal for int() with base 10: {concurrency:?}"
+                "invalid literal for int() with base 10: {}",
+                super::helpers::py_repr(&concurrency)
             ))
         })?;
         native.insert("insecure_concurrency".to_string(), json!(value));

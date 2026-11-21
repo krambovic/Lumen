@@ -46,7 +46,7 @@ fn is_sip008_server(payload: &Value) -> bool {
 /// Python `_parse_json_nodes_text(text)`.
 pub(super) fn parse_json_nodes_text(text: &str) -> Result<(Vec<Node>, Vec<String>), LinkParseError> {
     let payload: Value =
-        serde_json::from_str(text).map_err(|e| LinkParseError::new(e.to_string()))?;
+        crate::pyjson::loads(text).map_err(LinkParseError::new)?;
     parse_json_nodes_payload(&payload, 0)
 }
 
@@ -182,7 +182,7 @@ pub(super) fn parse_json_nodes_payload(
                         .all(|key| map.contains_key(*key))
                     {
                         let compact = base64::engine::general_purpose::STANDARD
-                            .encode(serde_json::to_string(payload).unwrap_or_default());
+                            .encode(crate::pyjson::dumps(payload, false, None));
                         return parse_single(&format!("vmess://{compact}")).map(|node| (vec![node], Vec::new()));
                     } else {
                         return Err(LinkParseError::new(
@@ -248,7 +248,8 @@ fn json_proxy_outbounds(outbounds: &[Value]) -> Vec<Value> {
     let ignored = ["freedom", "blackhole", "dns", "direct", "block", "selector", "urltest", "url-test"];
     let mut result: Vec<Value> = Vec::new();
     let candidates: Vec<Value> = outbounds.iter().filter(|item| item.is_object()).cloned().collect();
-    let mut tag_map: BTreeMap<String, Value> = BTreeMap::new();
+    // Python dict: insertion order, a repeated tag keeps its first position.
+    let mut tag_map: Map<String, Value> = Map::new();
     for item in &candidates {
         let tag = py_str_or(item.get("tag"), "").trim().to_string();
         if !tag.is_empty() {
@@ -290,7 +291,7 @@ fn json_proxy_outbounds(outbounds: &[Value]) -> Vec<Value> {
 /// Python `_resolve_auto_selector_payload(selector, tag_map)`.
 fn resolve_auto_selector_payload(
     selector: &Value,
-    tag_map: &BTreeMap<String, Value>,
+    tag_map: &Map<String, Value>,
 ) -> Option<Value> {
     let refs = selector.get("outbounds").and_then(Value::as_array)?;
     for reference in refs {
@@ -406,7 +407,7 @@ fn parse_naiveproxy_config_payload(
 /// Python `_parse_json_outbound(text)`.
 pub(super) fn parse_json_outbound_text(text: &str) -> Result<Node, LinkParseError> {
     let payload: Value =
-        serde_json::from_str(text).map_err(|e| LinkParseError::new(e.to_string()))?;
+        crate::pyjson::loads(text).map_err(LinkParseError::new)?;
     if !payload.is_object() {
         return Err(LinkParseError::new("JSON node must be an object"));
     }
