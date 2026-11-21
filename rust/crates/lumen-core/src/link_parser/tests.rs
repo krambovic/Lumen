@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::{
     is_happ_auto_placeholder, normalize_outbound_for_runtime, parse_links_text, parse_single,
-    validate_node_outbound, LinkParseError,
+    validate_node_outbound, LinkParseError, MAX_IMPORT_BYTES, read_import_file_reference,
 };
 
 fn outbound_of(node: &super::Node) -> Value {
@@ -539,3 +539,41 @@ fn awg31_rejects_non_boolean_flags() {
     .expect_err("non-boolean flag");
     assert!(error.to_string().contains("RandomTrailers"), "{error}");
 }
+
+#[test]
+fn import_file_size_limit_is_checked_before_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.txt");
+    let file = std::fs::File::create(&path).unwrap();
+    // Sparse: the size check must not need the content.
+    file.set_len(MAX_IMPORT_BYTES as u64 + 1).unwrap();
+    let (nodes, errors) = parse_links_text(path.to_str().unwrap(), true).unwrap();
+    assert!(nodes.is_empty());
+    assert!(errors.first().is_some_and(|error| error.contains("exceeds")), "{errors:?}");
+}
+
+#[test]
+fn file_reference_is_ignored_for_downloaded_subscription_bodies() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("secret.txt");
+    std::fs::write(&path, "vless://00000000-0000-0000-0000-000000000001@one.example:443#one").unwrap();
+    let (nodes, errors) = parse_links_text(path.to_str().unwrap(), false).unwrap();
+    assert!(nodes.is_empty());
+    assert!(errors.first().is_some_and(|error| error.contains("unsupported scheme")), "{errors:?}");
+}
+
+#[test]
+fn unc_file_reference_is_never_followed() {
+    // Opening `\\host\share` makes Windows authenticate to `host` over SMB.
+    for body in [
+        "file://attacker.example.com/share/a.txt",
+        r"\\attacker.example.com\share\a.txt",
+        "//attacker.example.com/share/a.txt",
+    ] {
+        assert!(read_import_file_reference(body).unwrap().is_none(), "{body}");
+        let (nodes, errors) = parse_links_text(body, true).unwrap();
+        assert!(nodes.is_empty());
+        assert!(!errors.is_empty(), "{body}");
+    }
+}
+

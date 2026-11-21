@@ -384,6 +384,28 @@ async fn download_with_client(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn declared_oversized_body_is_rejected_before_reading() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/sub", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 4096];
+            let _ = socket.read(&mut buffer).await.unwrap();
+            // Declares more than the limit and sends only a few bytes.
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000001\r\n\r\nshort")
+                .await;
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        });
+        let error = fetch_subscription_http(&url, &BTreeMap::new(), 10.0, 1_000_000, true, "", false, None)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("слишком большая"), "{error}");
+        server.abort();
+    }
+
     #[test]
     fn unsafe_redirects_are_blocked() {
         let source = Url::parse("https://panel.example.com/sub").unwrap();

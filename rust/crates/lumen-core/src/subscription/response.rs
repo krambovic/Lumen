@@ -525,6 +525,60 @@ mod tests {
     }
 
     #[test]
+    fn metadata_accepts_common_button_headers() {
+        let response = SubscriptionResponse::from_http(
+            SubscriptionHttpPayload {
+                body: b"vless://00000000-0000-0000-0000-000000000001@one.example:443#one".to_vec(),
+                headers: BTreeMap::from([
+                    ("profile-title".into(), "VPN".into()),
+                    ("support-link".into(), "https://support.example".into()),
+                    ("panel-url".into(), "https://panel.example".into()),
+                    ("telegram-link".into(), "https://t.me/example".into()),
+                ]),
+                status: 200,
+                ..SubscriptionHttpPayload::default()
+            },
+            "Happ Windows",
+        );
+        assert_eq!(response.userinfo["profileTitle"], "VPN");
+        assert_eq!(response.userinfo["supportUrl"], "https://support.example");
+        assert_eq!(response.userinfo["profileUrl"], "https://panel.example");
+        assert_eq!(response.userinfo["telegramUrl"], "https://t.me/example");
+    }
+
+    #[test]
+    fn happ_premium_headers_and_body_directives_are_preserved() {
+        let body = "#subscription-autoconnect: 1\n#ping-type proxy\nvless://00000000-0000-0000-0000-000000000001@one.example:443?encryption=none&type=tcp&security=none#one";
+        let response = SubscriptionResponse::from_http(
+            SubscriptionHttpPayload {
+                body: body.as_bytes().into(),
+                headers: BTreeMap::from([
+                    ("profile-title".into(), "Lumen Premium".into()),
+                    ("providerid".into(), "ABCD1234".into()),
+                    ("support-url".into(), "https://support.example".into()),
+                    ("fragmentation-enable".into(), "1".into()),
+                    ("mux-enable".into(), "true".into()),
+                ]),
+                status: 200,
+                ..SubscriptionHttpPayload::default()
+            },
+            "Happ Windows",
+        );
+        assert_eq!(response.userinfo["profileTitle"], "Lumen Premium");
+        assert_eq!(response.userinfo["providerId"], "ABCD1234");
+        assert_eq!(
+            response.userinfo["premiumFeatures"],
+            json!({
+                "fragmentation-enable": "1",
+                "mux-enable": "true",
+                "subscription-autoconnect": "1",
+                "ping-type": "proxy",
+            })
+        );
+        assert!(response.text.starts_with("vless://"));
+    }
+
+    #[test]
     fn json_metadata_preserves_structured_nodes_and_sibling_containers() {
         let body = r#"{"user":{"expire":"1700000000000000"},"links":["ss://example"],"outbounds":[{"type":"socks"}],"subscriptionName":"Panel","telegramUrl":"@panel","premiumConfig":{"isPremium":true,"theme":{"color":"blue"}}}"#;
         let response = SubscriptionResponse::from_http(

@@ -1,6 +1,8 @@
 //! Negotiate a usable subscription representation before preparing its nodes.
 
 use std::collections::BTreeSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{LazyLock, OnceLock};
 
 use caseless::default_case_fold_str;
@@ -159,8 +161,44 @@ impl Candidate {
     }
 }
 
+type RequestFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<SubscriptionHttpPayload, SubscriptionFetcherError>> + Send + 'a>>;
+
+/// One HTTP request for a client profile (Python
+/// `_fetch_subscription_with_headers`); tests substitute scripted responses.
+pub(super) trait Requester: Sync {
+    fn request<'a>(
+        &'a self,
+        job: &'a SubscriptionJob,
+        url: &'a str,
+        profile: &'a ClientProfile,
+    ) -> RequestFuture<'a>;
+}
+
+struct HttpRequester;
+
+impl Requester for HttpRequester {
+    fn request<'a>(
+        &'a self,
+        job: &'a SubscriptionJob,
+        url: &'a str,
+        profile: &'a ClientProfile,
+    ) -> RequestFuture<'a> {
+        Box::pin(request(job, url, profile))
+    }
+}
+
 pub(super) async fn fetch(
     job: &SubscriptionJob,
+) -> Result<(SubscriptionResponse, Vec<String>), String> {
+    fetch_with(job, &HttpRequester).await
+}
+
+/// Python `fetch_subscription_payload`: try each client profile until one
+/// returns a usable subscription.
+pub(super) async fn fetch_with(
+    job: &SubscriptionJob,
+    requester: &impl Requester,
 ) -> Result<(SubscriptionResponse, Vec<String>), String> {
     let url = job.url.clone();
     let converter = job.converter_url.clone();
@@ -209,12 +247,12 @@ pub(super) async fn fetch(
         "direct"
     };
     for profile in &profiles {
-        let mut fetched = request(job, url.as_str(), profile).await;
+        let mut fetched = requester.request(job, url.as_str(), profile).await;
         let retried = fetched
             .as_ref()
             .is_err_and(|error| tls_eof(&error.to_string().to_lowercase()));
         if retried {
-            fetched = request(job, url.as_str(), profile).await;
+            fetched = requester.request(job, url.as_str(), profile).await;
         }
         let payload = match fetched {
             Ok(payload) => payload,
@@ -263,7 +301,7 @@ pub(super) async fn fetch(
             first_info = Some(candidate.response.userinfo.clone());
         }
         if !candidate.auto_placeholders().is_empty() {
-            match fetch_happ(job, url.as_str(), &hwid).await {
+            match fetch_happ(requester, job, url.as_str(), &hwid).await {
                 Ok(happ) => return Ok(resolve_auto(candidate, happ)),
                 Err(error) => {
                     push_unique(
@@ -282,7 +320,7 @@ pub(super) async fn fetch(
         }
         if candidate.accepted() {
             if magvpn {
-                let merged = match fetch_happ(job, url.as_str(), &hwid).await {
+                let merged = match fetch_happ(requester, job, url.as_str(), &hwid).await {
                     Ok(happ) => merge_magvpn(&candidate.response.text, happ),
                     Err(error) => Err(error.to_string()),
                 };
@@ -362,12 +400,13 @@ async fn request(
 }
 
 async fn fetch_happ(
+    requester: &impl Requester,
     job: &SubscriptionJob,
     url: &str,
     hwid: &str,
 ) -> Result<Candidate, SubscriptionFetcherError> {
     let profile = happ_windows_profile(hwid);
-    let payload = request(job, url, &profile).await?;
+    let payload = requester.request(job, url, &profile).await?;
     parse_candidate(payload, &profile.name)
         .await
         .map_err(SubscriptionFetcherError::Runtime)
@@ -689,5 +728,235 @@ mod tests {
             ["vless", "auto"]
         );
         assert!(merge_magvpn(PHYSICAL, candidate("[]", "Happ Windows")).is_err());
+    }
+
+    // ── fetch flow with scripted responses (Python tests monkeypatch
+    // `_fetch_subscription_with_headers`) ───────────────────────────────────
+
+    const REAL: &str =
+        "vless://00000000-0000-0000-0000-000000000001@one.example:443?encryption=none&type=tcp&security=none#one";
+
+    type Reply = Result<String, SubscriptionFetcherError>;
+
+    /// Records `(url, profile, headers)` per request and answers with
+    /// `reply(profile, call_index)`.
+    struct Scripted<F> {
+        calls: std::sync::Mutex<Vec<(String, String, std::collections::BTreeMap<String, String>)>>,
+        reply: F,
+    }
+
+    impl<F: Fn(&str, usize) -> Reply + Sync> Requester for Scripted<F> {
+        fn request<'a>(
+            &'a self,
+            _job: &'a SubscriptionJob,
+            url: &'a str,
+            profile: &'a ClientProfile,
+        ) -> RequestFuture<'a> {
+            let index = {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push((url.to_owned(), profile.name.clone(), profile.headers.clone()));
+                calls.len() - 1
+            };
+            let reply = (self.reply)(&profile.name, index);
+            Box::pin(async move {
+                reply.map(|body| SubscriptionHttpPayload {
+                    body: body.into_bytes(),
+                    status: 200,
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    fn scripted<F: Fn(&str, usize) -> Reply + Sync>(reply: F) -> Scripted<F> {
+        Scripted { calls: Default::default(), reply }
+    }
+
+    fn profiles_called<F>(requester: &Scripted<F>) -> Vec<String> {
+        requester.calls.lock().unwrap().iter().map(|call| call.1.clone()).collect()
+    }
+
+    fn job(url: &str) -> SubscriptionJob {
+        let mut job = SubscriptionJob::new(url.into(), super::super::SubscriptionJobKind::Update);
+        job.use_real_hwid = false;
+        job
+    }
+
+    fn unavailable(message: &str) -> Reply {
+        Err(SubscriptionFetcherError::Unavailable(message.into()))
+    }
+
+    #[tokio::test]
+    async fn other_providers_do_not_receive_a_second_request() {
+        let requester = scripted(|_, _| Ok(PHYSICAL.into()));
+        let (response, errors) = fetch_with(&job("https://other.example/tsub/29332"), &requester).await.unwrap();
+        assert!(!response.text.is_empty() && errors.is_empty());
+        assert_eq!(profiles_called(&requester), ["Lumen"]);
+    }
+
+    #[tokio::test]
+    async fn magvpn_secondary_failure_does_not_reconcile_partial_profile() {
+        let requester = scripted(|profile, _| {
+            if profile == "Happ Windows" { unavailable("HTTP 500") } else { Ok(PHYSICAL.into()) }
+        });
+        let (response, errors) = fetch_with(&job("https://www.magvpn.ru/tsub/29332"), &requester).await.unwrap();
+        assert_eq!(response.text, "");
+        assert!(errors[0].contains("MagVPN AUTO"), "{errors:?}");
+    }
+
+    #[tokio::test]
+    async fn empty_body_advances_to_the_next_client_profile() {
+        let requester = scripted(|profile, _| Ok(if profile == "Lumen" { String::new() } else { REAL.into() }));
+        let (response, errors) = fetch_with(&job("https://sub.example/path"), &requester).await.unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(profiles_called(&requester), ["Lumen", "Happ Windows"]);
+        assert_eq!(response.userinfo["clientProfile"], "Happ Windows");
+    }
+
+    #[tokio::test]
+    async fn tls_eof_retries_the_same_profile() {
+        let requester = scripted(|_, index| {
+            if index == 0 {
+                unavailable("<urlopen error TLS/SSL connection has been closed (EOF) (_ssl.c:1010)>")
+            } else {
+                Ok(REAL.into())
+            }
+        });
+        let (response, errors) = fetch_with(&job("https://sub.example/path"), &requester).await.unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(response.text.contains("one.example"));
+        assert_eq!(response.userinfo["clientProfile"], "Lumen");
+        assert_eq!(response.userinfo["networkPath"], "direct");
+        let calls = requester.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        for (_, profile, headers) in calls.iter() {
+            assert_eq!(profile, "Lumen");
+            assert_eq!(headers["user-agent"], format!("Lumen-Subscription/Windows-{}", lumen_core::constants::APP_VERSION));
+            assert_eq!(headers["x-hwid"], lumen_core::models::DEFAULT_SUBSCRIPTION_HWID);
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_user_agent_and_converter_come_first() {
+        let requester = scripted(|_, _| Ok(REAL.into()));
+        let mut job = job("https://sub.example/path?id=1");
+        job.user_agent = "CustomClient/2.0".into();
+        job.hwid = "custom-device-id".into();
+        job.converter_url = "https://converter.example/sub?url={url}".into();
+        let (response, errors) = fetch_with(&job, &requester).await.unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(response.text.contains("one.example"));
+        assert_eq!(response.userinfo["clientProfile"], "Custom");
+        let calls = requester.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "https://converter.example/sub?url=https%3A%2F%2Fsub.example%2Fpath%3Fid%3D1");
+        assert_eq!(calls[0].1, "Custom");
+        assert_eq!(calls[0].2["user-agent"], "CustomClient/2.0");
+        assert_eq!(calls[0].2["x-hwid"], "custom-device-id");
+    }
+
+    #[tokio::test]
+    async fn proxy_tun_mode_is_reported_as_the_network_path() {
+        let requester = scripted(|_, _| Ok(REAL.into()));
+        let mut job = job("https://sub.example/path");
+        job.use_proxy_tun = true;
+        job.proxy_url = "http://127.0.0.1:10809".into();
+        let (response, errors) = fetch_with(&job, &requester).await.unwrap();
+        assert!(errors.is_empty());
+        assert_eq!(response.userinfo["networkPath"], "proxy-tun");
+        assert_eq!(profiles_called(&requester), ["Lumen"]);
+    }
+
+    #[tokio::test]
+    async fn dns_failure_is_explained_and_suggests_proxy_tun() {
+        let requester = scripted(|_, _| unavailable("<urlopen error [Errno 11001] getaddrinfo failed>"));
+        let (response, errors) = fetch_with(&job("https://blocked.example/sub"), &requester).await.unwrap();
+        assert_eq!(response.text, "");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("ошибка DNS"));
+        assert!(!errors[0].contains("getaddrinfo"));
+        assert!(errors[0].contains("Загружать подписки через прокси/TUN"));
+        assert!(errors[0].contains("Настройки → Подписки"));
+    }
+
+    #[tokio::test]
+    async fn error_does_not_suggest_enabling_proxy_tun_twice() {
+        let requester = scripted(|_, _| Err(SubscriptionFetcherError::Timeout("timed out".into())));
+        let mut job = job("https://blocked.example/sub");
+        job.use_proxy_tun = true;
+        let (_, errors) = fetch_with(&job, &requester).await.unwrap();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("уже включена"));
+        assert!(!errors[0].contains("Попробуйте включить"));
+    }
+
+    #[tokio::test]
+    async fn hwid_with_newline_is_rejected_before_any_request() {
+        let requester = scripted(|_, _| panic!("request must not start"));
+        let mut job = job("https://sub.example/path");
+        job.hwid = "device-id\r\nX-Injected: true".into();
+        let Err(error) = fetch_with(&job, &requester).await else { panic!("expected an error") };
+        assert_eq!(error, "HWID не должен содержать переносы строк");
+    }
+
+    #[tokio::test]
+    async fn happ_crypt5_1_link_without_a_key_reports_a_friendly_error() {
+        let requester = scripted(|_, _| panic!("a happ:// link is decrypted locally"));
+        let link = "happ://crypt5/AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRRSSTTUUVVWWXXYYZZ0011223344";
+        let outcome = fetch_with(&job(link), &requester).await;
+        let message = match outcome {
+            Ok((response, errors)) => {
+                assert_eq!(response.text, "");
+                errors.first().cloned().unwrap_or_default()
+            }
+            Err(error) => error,
+        };
+        assert!(message.starts_with("Happ:"), "{message}");
+        assert!(message.contains("crypt5.1"), "{message}");
+    }
+
+    #[test]
+    fn network_errors_are_decoded_consistently() {
+        let cases = [
+            ("<urlopen error timed out>", "превышено время ожидания"),
+            ("<urlopen error [WinError 10054] forcibly closed by remote host>", "принудительно разорвано"),
+            ("<urlopen error [WinError 10061] connection refused>", "отклонил соединение"),
+            ("<urlopen error [WinError 10051] network is unreachable>", "прямой маршрут"),
+            ("<urlopen error TLS/SSL connection has been closed (EOF) (_ssl.c:1010)>", "TLS-обмена"),
+        ];
+        for (raw, expected) in cases {
+            let message = friendly_error(&SubscriptionFetcherError::Unavailable(raw.into()), false).unwrap();
+            assert!(message.contains(expected), "{raw}: {message}");
+        }
+        let not_found = SubscriptionFetcherError::Http {
+            status: 404,
+            reason: "Not Found".into(),
+            headers: Default::default(),
+        };
+        assert!(friendly_error(&not_found, false).unwrap().contains("Подписка не найдена"));
+    }
+
+    #[test]
+    fn client_stub_is_detected_in_english_and_russian() {
+        let stub_names = [
+            "Your%20client%20is%20not%20supported",
+            "Please%20update%20your%20app",
+            "%D0%92%D0%B0%D1%88%20%D0%BA%D0%BB%D0%B8%D0%B5%D0%BD%D1%82%20%D0%BD%D0%B5%20%D0%BF%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B8%D0%B2%D0%B0%D0%B5%D1%82%D1%81%D1%8F",
+            "%D0%9E%D0%B1%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D0%B5%20%D0%BF%D1%80%D0%B8%D0%BB%D0%BE%D0%B6%D0%B5%D0%BD%D0%B8%D0%B5",
+        ];
+        for name in stub_names {
+            let body = format!(
+                "vless://00000000-0000-0000-0000-000000000002@stub.example:443?encryption=none&type=tcp&security=none#{name}"
+            );
+            let stub = candidate(&body, "Lumen");
+            assert!(stub.errors.is_empty());
+            // The stub itself looks like a valid server; only its text gives it away.
+            assert!(stub.usable);
+            assert!(stub.is_client_stub(), "{name}");
+            assert!(!stub.accepted());
+        }
+        let real = candidate(REAL, "Lumen");
+        assert!(!real.is_client_stub());
+        assert!(real.accepted());
     }
 }

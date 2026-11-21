@@ -1028,6 +1028,23 @@ mod tests {
         }
     }
 
+    /// payload[18..20] == "21" and 21 % 4 == 1 used to index past the URL
+    /// region and drop every trailer-length candidate (Python regression).
+    #[test]
+    fn test_c51_candidates_survive_a_skip_index_at_the_region_end() {
+        let payload = format!("{}21{}{}{}", "A".repeat(18), "B".repeat(21), "C".repeat(684), "D".repeat(10));
+        let chars: Vec<char> = payload.chars().collect();
+        assert!(!c51_candidates(&chars).is_empty());
+        let err = decrypt_happ_link(&format!("happ://crypt5/{payload}")).unwrap_err();
+        assert!(err.is_key_unavailable(), "{}", err.message);
+    }
+
+    #[test]
+    fn test_crypt51_short_payload_is_a_decrypt_error() {
+        let err = decrypt_happ_link("happ://crypt5/abcdefgh").unwrap_err();
+        assert!(!err.message.contains("index out of range"), "{}", err.message);
+    }
+
     /// Реальный crypt5.1-маркер без подходящего ключа даёт key-unavailable.
     #[test]
     fn test_crypt51_key_unavailable_error() {
