@@ -2255,7 +2255,7 @@ impl Choice<'_> {
                 // `opacity: enabled ? 1 : 0.55` covers the whole card.
                 flag_ui.multiply_opacity(0.55);
             }
-            flag::show(&mut flag_ui, code, vec2(30.0, 22.0));
+            flag::show(&mut flag_ui, code, vec2(30.0, 22.0), flag::FlagBorder::None);
             painter.rect_stroke(
                 Rect::from_center_size(center, vec2(32.0, 24.0)),
                 3.0,

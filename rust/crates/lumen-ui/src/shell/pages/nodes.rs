@@ -1101,7 +1101,7 @@ fn render_cell(ui: &mut Ui, theme: &Theme, model: &NodeListModel, row: usize, co
     };
     let text = match column {
         0 => {
-            flag::show(ui, &model.country_at(row), egui::vec2(24.0, 18.0));
+            flag::show(ui, &model.country_at(row), egui::vec2(24.0, 18.0), flag::FlagBorder::UnderSprite { radius: 3 });
             ui.add_space(8.0);
             let name = model.name_at(row);
             let description = model.description_at(row);

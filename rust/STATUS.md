@@ -653,6 +653,21 @@ client, core/resource updaters, zapret and discord proxy managers.
   - Native test configs apply the AWG 3.x Windows bind workaround.
   - AWG links and .conf files keep `random_trailers` / `disable_cookies`.
   - Release notes and locales: «Пинг и AWG».
+- Emoji and flags (2026-11-21):
+  - Colour emoji: `epaint`'s `color_fonts` feature is on (lumen-ui
+    Cargo.toml), so COLR glyphs from Segoe UI Emoji are painted in colour
+    and ZWJ sequences are shaped, as Qt / DirectWrite draw them. Before, the
+    monochrome outline was used, and Segoe UI Emoji's outline of a colour
+    glyph is often a placeholder box: 🏳️ in server names showed as an empty
+    rectangle. Regional indicators still render as small letters (verified).
+  - Flag sprites are rasterized at 4x and box-averaged
+    (`flag::SVG_SUPERSAMPLE`): resvg under-covered the US stars (canton
+    brightness 0.27 vs Qt 0.33, now 0.325). Qt still draws them with a bit
+    more contrast; its rasterizer cannot be reproduced exactly.
+  - `flag::FlagBorder`: the 20% black border sits under the sprite where QML
+    declares the image with `z: 1` (servers table, dashboard hero), over it
+    in the dashboard server list, and is absent on onboarding cards. Rust
+    drew it over every sprite, darkening the edge pixels by 20%.
 
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log

@@ -249,7 +249,7 @@ impl DashboardPage {
                     vec2(32.0, 24.0),
                 );
                 ui.scope_builder(egui::UiBuilder::new().max_rect(flag_rect), |ui| {
-                    flag::show(ui, &country, vec2(32.0, 24.0));
+                    flag::show(ui, &country, vec2(32.0, 24.0), flag::FlagBorder::UnderSprite { radius: 3 });
                 });
             }
             painter.galley(
@@ -571,7 +571,7 @@ impl DashboardPage {
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(flag_rect), |ui| {
             ui.multiply_opacity(dim);
-            flag::show(ui, &country, vec2(22.0, 16.0));
+            flag::show(ui, &country, vec2(22.0, 16.0), flag::FlagBorder::Over { radius: 2 });
         });
         let latency = if ping < 0 {
             "—".to_string()

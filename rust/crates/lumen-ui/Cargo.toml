@@ -14,6 +14,8 @@ lumen-engines = { workspace = true }
 lumen-app = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+# Colour (COLR) glyphs, e.g. emoji in server names, as Qt draws them.
+epaint = { version = "0.37", features = ["color_fonts"] }
 egui_extras = { workspace = true, features = ["svg"] }
 image = { workspace = true }
 serde = { workspace = true }
