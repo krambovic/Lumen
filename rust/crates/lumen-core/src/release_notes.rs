@@ -21,6 +21,26 @@ pub struct VersionNotes {
 
 pub static RELEASE_NOTES: &[VersionNotes] = &[
     VersionNotes {
+        version: "3.0.0",
+        items: &[
+            Note {
+                glyph: "\u{EC4A}",
+                title: "Новая основа",
+                text: "Клиент переписан на Rust и работает без Python.",
+            },
+            Note {
+                glyph: "\u{E77B}",
+                title: "Профиль на месте",
+                text: "Серверы, подписки и настройки прежней версии открываются автоматически.",
+            },
+            Note {
+                glyph: "\u{E790}",
+                title: "Привычный интерфейс",
+                text: "Все экраны и функции перенесены без изменений.",
+            },
+        ],
+    },
+    VersionNotes {
         version: "2.1.4",
         items: &[
             Note {
@@ -257,4 +277,39 @@ pub fn notes_between(seen_version: &str, app_version: &str, limit: usize) -> Vec
 
 pub fn legacy_profile_version() -> String {
     LEGACY_PROFILE_VERSION.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::APP_VERSION;
+
+    #[test]
+    fn current_release_has_curated_translated_notes() {
+        let current = RELEASE_NOTES
+            .iter()
+            .find(|notes| notes.version == APP_VERSION)
+            .expect("notes for APP_VERSION");
+        assert!((3..=4).contains(&current.items.len()));
+        let groups = notes_between(LEGACY_PROFILE_VERSION, APP_VERSION, 3);
+        assert_eq!(groups[0]["version"], APP_VERSION);
+        for raw in [
+            include_str!("../locales/en.json"),
+            include_str!("../locales/fa.json"),
+            include_str!("../locales/zh.json"),
+        ] {
+            let catalog: Value = serde_json::from_str(raw).unwrap();
+            for notes in RELEASE_NOTES {
+                for note in notes.items {
+                    for key in [note.title, note.text] {
+                        assert!(
+                            catalog[key].as_str().is_some_and(|text| !text.is_empty()),
+                            "{}: missing {key}",
+                            notes.version
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

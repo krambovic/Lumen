@@ -7,12 +7,22 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path
 
 import build_qml as packaging
 
 RUST_DIR = packaging.REPO_ROOT / "rust"
 DIST_DIR = RUST_DIR / "dist"
+
+
+def read_rust_version() -> str:
+    """The native client's own version: `[workspace.package] version`."""
+    manifest = tomllib.loads((RUST_DIR / "Cargo.toml").read_text(encoding="utf-8"))
+    version = manifest.get("workspace", {}).get("package", {}).get("version")
+    if not version:
+        raise RuntimeError("workspace.package.version not found in rust/Cargo.toml")
+    return str(version)
 
 
 def _resource_compiler() -> Path:
@@ -125,7 +135,7 @@ def main() -> int:
         if not (packaging.CORE_DIR / relative).is_file():
             parser.error(f"missing bundled core file: {packaging.CORE_DIR / relative}")
 
-    version = packaging._read_app_version()
+    version = read_rust_version()
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="lumen-rust-", dir=DIST_DIR) as temporary:
         work = Path(temporary)

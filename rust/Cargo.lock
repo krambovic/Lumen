@@ -2338,7 +2338,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "lumen-app"
-version = "2.1.4"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2371,7 +2371,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-core"
-version = "2.1.4"
+version = "3.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2408,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-engines"
-version = "2.1.4"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2442,7 +2442,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-platform"
-version = "2.1.4"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2465,7 +2465,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-ui"
-version = "2.1.4"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "arboard",

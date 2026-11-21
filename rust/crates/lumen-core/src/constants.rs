@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 pub const APP_NAME: &str = "Lumen";
 pub const APP_VERSION: &str = match option_env!("LUMEN_BUILD_VERSION") {
     Some(version) => version,
-    None => "2.1.4",
+    None => "3.0.0",
 };
 pub const STATE_SCHEMA_VERSION: i64 = 1;
 /// Bump when parsing/reconciliation semantics change; cached validators remain

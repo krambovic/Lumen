@@ -1736,5 +1736,11 @@
   "Отправка отчётов": "Report uploads",
   "Восстановлен ID установки и добавлена отправка через прокси при недоступности сервера напрямую.": "Restored the installation ID and added proxy uploads when direct connections fail.",
   "Пинг и AWG": "Ping and AWG",
-  "Исправлены HTTP GET, ICMP и подключения AWG 3.0/3.1.": "Fixed HTTP GET, ICMP and AWG 3.0/3.1 connections."
+  "Исправлены HTTP GET, ICMP и подключения AWG 3.0/3.1.": "Fixed HTTP GET, ICMP and AWG 3.0/3.1 connections.",
+  "Новая основа": "New foundation",
+  "Клиент переписан на Rust и работает без Python.": "The client is rewritten in Rust and no longer needs Python.",
+  "Профиль на месте": "Your profile carries over",
+  "Серверы, подписки и настройки прежней версии открываются автоматически.": "Servers, subscriptions and settings from the previous version open automatically.",
+  "Привычный интерфейс": "Familiar interface",
+  "Все экраны и функции перенесены без изменений.": "Every screen and feature carries over unchanged."
 }

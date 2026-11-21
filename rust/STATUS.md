@@ -683,6 +683,12 @@ client, core/resource updaters, zapret and discord proxy managers.
   painter, which ignores the card opacity, so a bright outline stayed visible
   while the card flew in and out. It now uses the card UI's painter;
   fly-out captures show the border fading with the card.
+- Version 3.0.0 (2026-11-21): the native client has its own version in
+  `rust/Cargo.toml` (`[workspace.package]`) and the `APP_VERSION` fallback
+  in `lumen-core/src/constants.rs`. `windows/build_rust.py` reads it from
+  `Cargo.toml` instead of the Python `constants.py`, which stays at 2.1.4.
+  The 3.0.0 "What's new" notes and their en/fa/zh translations live in
+  `lumen-core`; a test checks the current version has 3-4 translated notes.
 
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
