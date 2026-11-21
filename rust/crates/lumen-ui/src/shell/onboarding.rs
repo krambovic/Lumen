@@ -528,8 +528,11 @@ impl Onboarding {
                     }
                 }
 
-                // The card border sits above everything (`cardBorder`).
-                ctx.layer_painter(layer_id).with_clip_rect(region).rect_stroke(
+                // The card border sits above everything (`cardBorder`). It is
+                // a child of `cardLayer`, so it fades with the card: the
+                // layer painter would ignore `card_opacity` and leave a bright
+                // outline while the card flies in and out.
+                ui.painter().with_clip_rect(region).rect_stroke(
                     card,
                     radius,
                     Stroke::new(1.0, theme.flyout_border),

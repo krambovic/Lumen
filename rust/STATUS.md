@@ -678,6 +678,11 @@ client, core/resource updaters, zapret and discord proxy managers.
   `SubscriptionDispatcher::refresh_automatically`, which skips locked
   profiles and subscriptions in backoff. Verified on the same profile: the
   Rust list order now matches QML.
+- Onboarding card border (2026-11-21): `cardBorder` is a child of
+  `cardLayer` in QML and fades with it. Rust painted it through the layer
+  painter, which ignores the card opacity, so a bright outline stayed visible
+  while the card flew in and out. It now uses the card UI's painter;
+  fly-out captures show the border fading with the card.
 
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
