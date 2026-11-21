@@ -332,3 +332,13 @@ fn xray_proxy_hot_swap_is_rejected_when_selected_node_requires_singbox() {
     assert!(!controller.can_proxy_hot_swap());
 }
 
+
+/// Python test_resource_updater: updates never go through the local proxy
+/// while TUN carries the traffic.
+#[test]
+fn update_downloads_do_not_force_the_local_proxy_in_tun_mode() {
+    let (mut controller, _root) = test_controller();
+    controller.connected = true;
+    controller.state.settings.tun_mode = true;
+    assert_eq!(controller.get_effective_http_proxy_url(), None);
+}

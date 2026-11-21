@@ -113,7 +113,11 @@ const KEY_EXACT: [&str; 12] = [
 ];
 
 /// Never include an exception or repr fallback when string conversion fails.
+/// Python `safe_text`: `None` is empty, everything else is `str(value)`.
 pub fn safe_text(value: &Value) -> String {
+    if value.is_null() {
+        return String::new();
+    }
     py_str(value)
 }
 
@@ -323,8 +327,8 @@ pub fn scrub_text_depth(value: &str, depth: usize) -> String {
         && stripped.chars().count() <= 4 * 1024 * 1024
     {
         if let Ok(parsed) = serde_json::from_str::<Value>(stripped) {
-            return serde_json::to_string(&scrub_value_depth(&parsed, depth + 1))
-                .unwrap_or_else(|_| "[REDACTED OBJECT]".into());
+            // `json.dumps(..., ensure_ascii=False)`: Python's default separators.
+            return crate::pyjson::dumps(&scrub_value_depth(&parsed, depth + 1), false, None);
         }
     }
     let text = decode_unicode_escapes(&text);

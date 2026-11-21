@@ -2423,3 +2423,65 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod atomic_replace_tests {
+    //! Python test_resource_updater: `_atomic_replace_files` and
+    //! `_safe_asset_name`.
+    use super::*;
+
+    #[test]
+    fn rolls_every_file_back_when_validation_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = |name: &str| dir.path().join(name);
+        fs::write(path("first.dat"), b"old-first").unwrap();
+        fs::write(path("second.dat"), b"old-second").unwrap();
+        fs::write(path("new-first.dat"), b"new-first").unwrap();
+        fs::write(path("new-second.dat"), b"new-second").unwrap();
+        let mut reject = || -> Result<()> { Err(anyhow!("invalid install")) };
+        let error = atomic_replace_files(
+            &[
+                (path("new-first.dat"), path("first.dat")),
+                (path("new-second.dat"), path("second.dat")),
+            ],
+            &[],
+            Some(&mut reject),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("invalid install"));
+        assert_eq!(fs::read(path("first.dat")).unwrap(), b"old-first");
+        assert_eq!(fs::read(path("second.dat")).unwrap(), b"old-second");
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .filter(|name| name.ends_with(".rollback") || name.ends_with(".new"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn writes_the_backup_only_after_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("sing-box.exe");
+        let source = dir.path().join("downloaded.exe");
+        fs::write(&target, b"old").unwrap();
+        fs::write(&source, b"new").unwrap();
+        atomic_replace_files(&[(source, target.clone())], &[target.clone()], None).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert_eq!(fs::read(dir.path().join("sing-box.exe.bak")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn release_asset_name_cannot_escape_the_download_directory() {
+        use crate::xray::core_updater::safe_asset_name;
+        let dir = std::path::Path::new(r"C:\downloads");
+        for candidate in [r"..\..\evil.exe", "../../evil.exe", r"C:\Windows\System32\evil.exe", "", "..", "a b.zip"] {
+            let name = safe_asset_name(candidate, "default.zip");
+            assert_eq!(dir.join(name).parent(), Some(dir), "{candidate}");
+        }
+        assert_eq!(
+            safe_asset_name("sing-box-1.13.14-windows-amd64.zip", "default.zip"),
+            "sing-box-1.13.14-windows-amd64.zip"
+        );
+    }
+}

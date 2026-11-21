@@ -188,14 +188,29 @@ async fn request_metadata<T>(
     attempts: u64,
     decode: impl Fn(&[u8]) -> Result<T>,
 ) -> Result<T> {
+    retry_metadata(proxy_url, attempts, decode, |active_proxy| async move {
+        let (response, _route) = get_update_response(url, 12.0, active_proxy).await?;
+        Ok(response.bytes().await?.to_vec())
+    })
+    .await
+}
+
+/// Python `_request_json` retry policy: `attempts` tries through the proxy
+/// (when set), then the same number direct, with a short back-off.
+async fn retry_metadata<'p, T, F, Fut>(
+    proxy_url: Option<&'p str>,
+    attempts: u64,
+    decode: impl Fn(&[u8]) -> Result<T>,
+    fetch: F,
+) -> Result<T>
+where
+    F: Fn(Option<&'p str>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<u8>>>,
+{
     let mut transports = transports(proxy_url).peekable();
     while let Some(active_proxy) = transports.next() {
         for attempt in 1..=attempts {
-            let result = async {
-                let (response, _route) = get_update_response(url, 12.0, active_proxy).await?;
-                decode(&response.bytes().await?)
-            }
-            .await;
+            let result = async { decode(&fetch(active_proxy).await?) }.await;
             match result {
                 Ok(data) => return Ok(data),
                 Err(error) if attempt == attempts && transports.peek().is_none() => {
@@ -291,3 +306,55 @@ pub(super) async fn resolve(
         notes: str_or(release, "body", ""),
     }))
 }
+
+#[cfg(test)]
+mod retry_tests {
+    //! Python test_resource_updater: `_request_json` retries.
+    use super::*;
+    use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn transient_connection_reset_is_retried() {
+        let calls = Mutex::new(0);
+        let value: Value = retry_metadata(None, 3, |data| Ok(serde_json::from_slice(data)?), |_| {
+            let call = {
+                let mut calls = calls.lock().unwrap();
+                *calls += 1;
+                *calls
+            };
+            async move {
+                if call == 1 {
+                    Err(anyhow::anyhow!("connection reset (os error 10054)"))
+                } else {
+                    Ok(br#"{"tag_name":"v1.2.3"}"#.to_vec())
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(value, serde_json::json!({"tag_name": "v1.2.3"}));
+        assert_eq!(*calls.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn every_attempt_uses_the_proxy_then_direct() {
+        let proxies = Mutex::new(Vec::new());
+        let error = retry_metadata(
+            Some("http://127.0.0.1:2080"),
+            3,
+            |data| Ok(serde_json::from_slice::<Value>(data)?),
+            |proxy| {
+                proxies.lock().unwrap().push(proxy.map(str::to_owned));
+                async { Err::<Vec<u8>, _>(anyhow::anyhow!("connection refused (os error 10061)")) }
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("10061"));
+        let proxies = proxies.into_inner().unwrap();
+        assert_eq!(proxies.len(), 6);
+        assert!(proxies[..3].iter().all(|proxy| proxy.as_deref() == Some("http://127.0.0.1:2080")));
+        assert!(proxies[3..].iter().all(Option::is_none));
+    }
+}
+

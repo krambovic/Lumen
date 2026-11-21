@@ -1637,3 +1637,64 @@ mod tests {
         assert_eq!(representative_clash_port(&["0".into()]), None);
     }
 }
+
+#[cfg(test)]
+mod network_tests {
+    //! Python test_warp_generator network cases, through a local proxy that
+    //! records every HTTPS CONNECT and then drops the connection.
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    async fn recording_proxy() -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let mut line = String::new();
+                let _ = BufReader::new(stream).read_line(&mut line).await;
+                if let Some(target) = line.split_whitespace().nth(1) {
+                    record.lock().unwrap().push(target.to_owned());
+                }
+            }
+        });
+        (address, seen)
+    }
+
+    fn client(proxy: &str) -> reqwest::Client {
+        reqwest::Client::builder().proxy(reqwest::Proxy::all(proxy).unwrap()).build().unwrap()
+    }
+
+    fn host_port(url: &str) -> String {
+        let url = reqwest::Url::parse(url).unwrap();
+        format!("{}:{}", url.host_str().unwrap(), url.port_or_known_default().unwrap())
+    }
+
+    #[tokio::test]
+    async fn every_awg_then_masque_endpoint_is_tried_before_failing() {
+        let (proxy, seen) = recording_proxy().await;
+        let error = generate_warp_nodes(&client(&proxy), None, None).await.unwrap_err();
+        assert!(!error.0.is_empty());
+        let expected: Vec<String> = AWG_DATA_ENDPOINTS
+            .iter()
+            .chain(&MASQUE_DATA_ENDPOINTS)
+            .map(|url| host_port(url))
+            .collect();
+        let seen = seen.lock().unwrap().clone();
+        // reqwest may retry a dropped connection; the order is what matters.
+        let mut deduped = seen.clone();
+        deduped.dedup();
+        assert_eq!(deduped, expected, "{seen:?}");
+    }
+
+    #[tokio::test]
+    async fn cancelled_generation_stops_requests() {
+        let (proxy, seen) = recording_proxy().await;
+        let cancelled = || true;
+        assert!(generate_warp_nodes(&client(&proxy), None, Some(&cancelled)).await.is_err());
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(seen.lock().unwrap().is_empty());
+    }
+}

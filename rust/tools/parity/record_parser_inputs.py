@@ -91,3 +91,53 @@ def pytest_configure(config) -> None:  # noqa: ARG001 - pytest hook signature
 
     node_edit_helpers.load_node_edit_fields = load_node_edit_fields
     node_edit_helpers.build_node_updates = build_node_updates
+
+
+# ── pure helper functions (``{"fn": "call", "name": ..., "args": [...]}``) ──
+
+RECORDED_FUNCTIONS = {
+    "xray_fluent.log_utils": ("clean_log_text", "classify_log_level", "parse_log_line"),
+    "xray_fluent.secret_scrubber": ("scrub_text",),
+    "xray_fluent.country_flags": ("get_flag_emoji", "detect_country"),
+    "xray_fluent.node_transport": ("node_transport",),
+    "xray_fluent.routing_rule_import": ("parse_routing_rules", "normalize_routing_address", "split_routing_addresses"),
+    "xray_fluent.happ_crypt": ("is_happ_link", "is_happ_crypt_link", "decrypt_happ_link"),
+    "xray_fluent.incy_crypt": ("is_incy_link", "is_incy_crypt_link", "decrypt_incy_link"),
+    "xray_fluent.zapret_server_scope": ("node_transports",),
+}
+
+
+def _plain(value):
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return {"__node__": to_dict()}
+    return value
+
+
+def _wrap(module_name: str, name: str, original):
+    @functools.wraps(original)
+    def wrapper(*args, **kwargs):
+        _write({"fn": "call", "name": f"{module_name}.{name}",
+                "args": [_plain(arg) for arg in args], "kwargs": {k: _plain(v) for k, v in kwargs.items()}})
+        return original(*args, **kwargs)
+
+    wrapper.__lumen_original__ = original
+    return wrapper
+
+
+def pytest_sessionstart(session) -> None:  # noqa: ARG001 - pytest hook signature
+    import importlib
+    import sys
+
+    for module_name, names in RECORDED_FUNCTIONS.items():
+        module = importlib.import_module(module_name)
+        for name in names:
+            original = getattr(module, name)
+            if hasattr(original, "__lumen_original__"):
+                continue
+            wrapped = _wrap(module_name, name, original)
+            setattr(module, name, wrapped)
+            # Rebind copies imported with `from module import name`.
+            for other in list(sys.modules.values()):
+                if getattr(other, "__name__", "").startswith("xray_fluent") and getattr(other, name, None) is original:
+                    setattr(other, name, wrapped)

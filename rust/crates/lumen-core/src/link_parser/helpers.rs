@@ -440,10 +440,6 @@ fn b64_decode_translated(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
     b64_engine().decode(translated.as_bytes())
 }
 
-fn is_b64_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '-' | '_')
-}
-
 /// Python `base64.urlsafe_b64decode(data)` with default `validate=False`:
 /// non-alphabet characters are silently discarded, then padding is applied.
 pub fn decode_b64(data: &str) -> Result<String, LinkParseError> {

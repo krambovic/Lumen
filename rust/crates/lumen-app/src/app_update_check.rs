@@ -57,36 +57,19 @@ pub async fn check_app_update(
     let target = if !preview && latest.is_some() {
         latest
     } else {
-        let mut stable = latest;
-        let search_stable = stable.is_none();
-        let mut prerelease = None;
+        let mut listed = Vec::new();
         for page in 1.. {
             let url = format!("{RELEASES}?per_page=100&page={page}");
             let response = fetch_json(&url, proxy_url).await?;
             let releases = response
                 .as_array()
                 .ok_or_else(|| anyhow!("Invalid GitHub releases response"))?;
-            for release in releases
-                .iter()
-                .filter(|release| desktop_release(release, portable))
-            {
-                if bool_field(release, "prerelease", false) {
-                    if preview {
-                        consider(&mut prerelease, release);
-                    }
-                } else if search_stable {
-                    consider(&mut stable, release);
-                }
-            }
+            listed.extend(releases.iter().cloned());
             if releases.len() < 100 {
                 break;
             }
         }
-        match (stable, prerelease) {
-            (Some(stable), Some(pre)) if !is_newer(&tag(&stable), &tag(&pre)) => Some(pre),
-            (Some(stable), _) => Some(stable),
-            (_, pre) => pre,
-        }
+        choose_release(latest, &listed, preview, portable)
     };
     let Some(release) = target else {
         return Ok(None);
@@ -200,6 +183,29 @@ fn compatible(asset: &Value, portable: bool) -> bool {
         }
 }
 
+/// Python `_pick_target` once the release list is known: the stable
+/// channel takes the newest stable desktop release, preview channels the
+/// newer of that and the newest pre-release. Android releases never match.
+fn choose_release(latest: Option<Value>, listed: &[Value], preview: bool, portable: bool) -> Option<Value> {
+    let mut stable = latest;
+    let search_stable = stable.is_none();
+    let mut prerelease = None;
+    for release in listed.iter().filter(|release| desktop_release(release, portable)) {
+        if bool_field(release, "prerelease", false) {
+            if preview {
+                consider(&mut prerelease, release);
+            }
+        } else if search_stable {
+            consider(&mut stable, release);
+        }
+    }
+    match (stable, prerelease) {
+        (Some(stable), Some(pre)) if !is_newer(&tag(&stable), &tag(&pre)) => Some(pre),
+        (Some(stable), _) => Some(stable),
+        (_, pre) => pre,
+    }
+}
+
 fn desktop_release(release: &Value, portable: bool) -> bool {
     let tag = tag(release);
     !tag.is_empty()
@@ -269,6 +275,31 @@ fn extract_digest(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Python test_app_release_selection.
+    #[test]
+    fn android_releases_are_ignored_and_preview_compares_semver() {
+        let release = |tag: &str, prerelease: bool| {
+            serde_json::json!({
+                "tag_name": tag,
+                "prerelease": prerelease,
+                "assets": [{"name": "Lumen-Setup-windows-x64.exe"}],
+            })
+        };
+        let listed = [
+            release("android-v99.0.0", false),
+            release("v9.0.0-android", true),
+            release("v2.0.0-pre.9", true),
+            release("v2.0.0-pre.10", true),
+            release("v1.0.0", false),
+        ];
+        let picked = choose_release(None, &listed, true, false).unwrap();
+        assert_eq!(picked["tag_name"], "v2.0.0-pre.10");
+        assert_eq!(choose_release(None, &listed, false, false).unwrap()["tag_name"], "v1.0.0");
+        // Only Android releases: no update and no error.
+        assert!(choose_release(None, &[release("android-v99.0.0", false)], false, false).is_none());
+        assert!(!desktop_release(&release("android-v99.0.0", false), false));
+    }
+
     use super::*;
     use serde_json::json;
 

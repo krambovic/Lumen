@@ -397,24 +397,10 @@ fn detect_code(name: &str) -> Option<String> {
     match chars.next() {
         None => None,
         Some(d) if d.is_ascii_digit() => known(),
-        Some(d) => {
-            // optional whitespace run, then one of -_.|# (or whitespace)
-            let mut sep = d;
-            if sep.is_whitespace() {
-                for next in chars.by_ref() {
-                    if next.is_whitespace() {
-                        continue;
-                    }
-                    sep = next;
-                    break;
-                }
-            }
-            if "-_.|#".contains(sep) || sep.is_whitespace() {
-                known()
-            } else {
-                None
-            }
-        }
+        // `\s*[-_.|#\s]`: the `\s*` may match nothing, so one whitespace
+        // character (or a separator) right after the code is enough.
+        Some(d) if d.is_whitespace() || "-_.|#".contains(d) => known(),
+        Some(_) => None,
     }
 }
 
