@@ -29,6 +29,7 @@ pub mod paths;
 pub mod ping;
 pub mod presets;
 pub mod process_presets;
+pub mod pybase64;
 pub mod pyjson;
 pub mod probe_capabilities;
 pub mod release_notes;

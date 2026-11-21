@@ -41,20 +41,31 @@ pub const CN_BLOCKED_PROXY_RULES: [&str; 9] = [
 /// Rules managed by the built-in quick presets; users' own geosite:/geoip:
 /// rules must survive a preset switch. The two legacy entries remove data left
 /// by older Lumen builds.
-pub const INTERNAL_PRESET_DOMAIN_RULES: [&str; 15] = [
+pub const INTERNAL_PRESET_DOMAIN_RULES: [&str; 22] = [
+    // RU_DIRECT_RULES, CN_DIRECT_RULES, IR_DIRECT_RULES
     "geosite:category-ru",
     "geoip:ru",
     "geosite:cn",
     "geoip:cn",
     "geosite:ir",
     "geoip:ir",
+    // BLOCKED_PROXY_RULES, BLOCKED_DIRECT_RULES
     "geosite:ru-blocked",
     "geoip:ru-blocked",
     "geoip:ru-blocked-community",
     "geosite:lumen-exclude",
     "geoip:lumen-exclude",
+    // CN_BLOCKED_PROXY_RULES
     "geosite:gfw",
     "geosite:greatfire",
+    "geosite:google",
+    "geoip:facebook",
+    "geoip:fastly",
+    "geoip:google",
+    "geoip:netflix",
+    "geoip:telegram",
+    "geoip:twitter",
+    // legacy
     "geosite:ru-available-only-inside",
     "geosite:category-media-ru-blocked",
 ];
@@ -211,5 +222,25 @@ pub fn build_routing_preset(current: &RoutingSettings, preset_id: &str) -> Routi
             }
         }
         _ => current.clone(),
+    }
+}
+
+#[cfg(test)]
+mod internal_rules_tests {
+    use super::*;
+
+    #[test]
+    fn internal_rules_cover_every_preset_constant() {
+        let presets = RU_DIRECT_RULES
+            .iter()
+            .chain(&CN_DIRECT_RULES)
+            .chain(&IR_DIRECT_RULES)
+            .chain(&BLOCKED_PROXY_RULES)
+            .chain(&BLOCKED_DIRECT_RULES)
+            .chain(&CN_BLOCKED_PROXY_RULES);
+        for rule in presets {
+            assert!(is_internal_preset_rule(rule), "{rule} is not treated as a preset rule");
+        }
+        assert!(!is_internal_preset_rule("geosite:youtube"));
     }
 }

@@ -1,7 +1,6 @@
 //! JSON subscription import: node graphs, SIP008, native sing-box/xray
 //! configs and the sing-box outbound wrapper (`_parse_json_*` helpers).
 
-use std::collections::BTreeMap;
 
 use base64::Engine;
 use serde_json::{json, Map, Value};

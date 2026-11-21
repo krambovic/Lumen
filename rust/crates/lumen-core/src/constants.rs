@@ -66,6 +66,15 @@ pub const SS_PROTECT_PORT_END: u16 = 19300;
 static BASE_DIR: OnceLock<PathBuf> = OnceLock::new();
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+/// Use `path` as the install root instead of the executable's directory.
+/// Must run before anything reads `base_dir()`; returns `false` when the
+/// root was already fixed. Test harnesses use it to resolve the bundled
+/// `core`, `zapret` and `data` folders from a source checkout (as the Python
+/// client does when started from `windows/`).
+pub fn set_base_dir(path: PathBuf) -> bool {
+    BASE_DIR.set(path).is_ok()
+}
+
 /// Install root: directory containing the running executable.
 pub fn base_dir() -> &'static PathBuf {
     BASE_DIR.get_or_init(|| {

@@ -233,28 +233,6 @@ fn python_standard_decode_strict(text: &str) -> Result<Vec<u8>> {
         .map_err(|_| anyhow::anyhow!("invalid Base64 payload"))
 }
 
-/// Python `base64.urlsafe_b64decode(padded)` (`validate=False`): `-`/`_` map
-/// to the standard alphabet and foreign characters are discarded.
-fn python_urlsafe_decode_lenient(text: &str) -> Option<Vec<u8>> {
-    let mapped: String = text
-        .chars()
-        .map(|ch| match ch {
-            '-' => '+',
-            '_' => '/',
-            other => other,
-        })
-        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '+' || *ch == '/' || *ch == '=')
-        .collect();
-    GeneralPurpose::new(
-        &alphabet::STANDARD,
-        GeneralPurposeConfig::new()
-            .with_decode_allow_trailing_bits(true)
-            .with_decode_padding_mode(DecodePaddingMode::Indifferent),
-    )
-    .decode(mapped.as_bytes())
-    .ok()
-}
-
 // ── Hysteria speeds ─────────────────────────────────────────────────────────
 
 fn hysteria_speed_missing(sb: &Value, mbps_key: &str, str_key: &str) -> bool {
@@ -2288,13 +2266,14 @@ pub fn normalize_certificate_public_key_pins(value: &Value) -> Result<Vec<String
                 anyhow::anyhow!("Certificate public-key SHA-256 must be Base64 or 64-digit hex")
             })?
         } else {
-            let padding = (4 - compact.len() % 4) % 4;
+            // `-len(compact) % 4` counts characters, not UTF-8 bytes.
+            let padding = (4 - compact.chars().count() % 4) % 4;
             let padded = format!("{compact}{}", "=".repeat(padding));
             match python_standard_decode_strict(&padded) {
                 Ok(decoded) => decoded,
-                Err(_) => match python_urlsafe_decode_lenient(&padded) {
-                    Some(decoded) => decoded,
-                    None => {
+                Err(_) => match lumen_core::pybase64::py_a2b_base64(padded.as_bytes(), true) {
+                    Ok(decoded) => decoded,
+                    Err(_) => {
                         bail!("Certificate public-key SHA-256 must be Base64 or 64-digit hex")
                     }
                 },

@@ -406,7 +406,7 @@ fn read_ip_lists_in(base: &Path, paths: &[&str]) -> Vec<String> {
             if value.is_empty() {
                 continue;
             }
-            if let Some(network) = ip_network_strict_false(&value) {
+            if let Some(network) = canonical_ip_network(&value) {
                 values.insert(network);
             }
         }
