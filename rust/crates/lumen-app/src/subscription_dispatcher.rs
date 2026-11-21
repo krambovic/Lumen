@@ -221,7 +221,21 @@ impl SubscriptionDispatcher {
         now: Instant,
         utc_now: DateTime<Utc>,
     ) -> bool {
-        if !self.timer.take_due(now) || !context.profile_loaded || context.locked {
+        if !self.timer.take_due(now) {
+            return false;
+        }
+        self.refresh_automatically(state, context, utc_now)
+    }
+
+    /// Python `_on_sub_auto_update`: the silent background refresh run by the
+    /// recurring timer and once 3 s after the profile loads.
+    pub fn refresh_automatically(
+        &mut self,
+        state: &AppState,
+        context: SubscriptionDispatchContext<'_>,
+        utc_now: DateTime<Utc>,
+    ) -> bool {
+        if self.closed || !context.profile_loaded || context.locked {
             return false;
         }
         let jobs = refresh_jobs(state, context.effective_proxy_url, true, utc_now);
@@ -719,5 +733,28 @@ mod tests {
         dispatcher.reconfigure_auto_refresh(&state, start);
         assert!(dispatcher.auto_refresh_deadline().is_none());
         assert!(!dispatcher.is_running());
+    }
+
+    #[tokio::test]
+    async fn startup_refresh_runs_without_waiting_for_the_interval() {
+        let mut state = local_state();
+        state.settings.subscription_auto_update_minutes = 240;
+        let wall = Utc::now();
+        state.subscriptions = vec![
+            serde_json::json!({ "url": "http://127.0.0.1:9/a" }),
+            serde_json::json!({
+                "url": "http://127.0.0.1:9/b",
+                "backoff_until": (wall + chrono::TimeDelta::seconds(60)).to_rfc3339(),
+            }),
+        ];
+        let mut dispatcher = SubscriptionDispatcher::default();
+        dispatcher.reconfigure_auto_refresh(&state, Instant::now());
+        let locked = SubscriptionDispatchContext { locked: true, ..LOADED };
+        assert!(!dispatcher.refresh_automatically(&state, locked, wall));
+        assert!(!dispatcher.is_running());
+        assert!(dispatcher.refresh_automatically(&state, LOADED, wall));
+        assert!(dispatcher.is_running());
+        dispatcher.shutdown(|_| {});
+        assert!(!dispatcher.refresh_automatically(&state, LOADED, wall));
     }
 }

@@ -195,6 +195,8 @@ pub(crate) enum DelayedAction {
     /// The bounded Zapret pre-connect lookup expired without a result.
     ZapretPreConnectTimeout { action: &'static str, reason: String, generation: u64 },
     ZapretBindingTimeout { token: u64 },
+    /// Python `QTimer.singleShot(3000, _on_sub_auto_update)` after load.
+    StartupSubscriptionRefresh,
 }
 
 /// Deadline bookkeeping for the Python `QTimer` fields.
@@ -2310,6 +2312,16 @@ impl AppController {
             }
         }
         // Subscription auto refresh.
+        self.refresh_subscriptions_automatically(Some(now));
+        self.background_tasks.reap_finished();
+        for error in self.runtime.reap_metrics() {
+            self.log(&format!("[metrics] worker failed: {error}"));
+        }
+    }
+
+    /// Runs the recurring subscription refresh when it is due (`Some(now)`),
+    /// or the one-shot startup refresh (`None`).
+    fn refresh_subscriptions_automatically(&mut self, due_at: Option<Instant>) {
         let proxy_url = if self.connected {
             self.get_effective_http_proxy_url()
         } else {
@@ -2320,16 +2332,36 @@ impl AppController {
             locked: self.locked,
             effective_proxy_url: proxy_url.as_deref(),
         };
-        self.subscriptions
-            .tick_auto_refresh(&self.state, context, now, chrono::Utc::now());
-        self.background_tasks.reap_finished();
-        for error in self.runtime.reap_metrics() {
-            self.log(&format!("[metrics] worker failed: {error}"));
+        let utc_now = chrono::Utc::now();
+        match due_at {
+            Some(now) => self
+                .subscriptions
+                .tick_auto_refresh(&self.state, context, now, utc_now),
+            None => self
+                .subscriptions
+                .refresh_automatically(&self.state, context, utc_now),
+        };
+    }
+
+    /// Python `load`: with subscriptions and auto update on, refresh them
+    /// once 3 s after the profile opens, besides the recurring timer.
+    pub fn schedule_startup_subscription_refresh(&mut self) {
+        if self.profile_loaded()
+            && !self.state.subscriptions.is_empty()
+            && self.state.settings.subscription_auto_update_minutes > 0
+        {
+            self.schedule_delayed(
+                Duration::from_millis(3000),
+                DelayedAction::StartupSubscriptionRefresh,
+            );
         }
     }
 
     async fn run_delayed_action(&mut self, action: DelayedAction) {
         match action {
+            DelayedAction::StartupSubscriptionRefresh => {
+                self.refresh_subscriptions_automatically(None)
+            }
             DelayedAction::DiscordProxy => self.apply_discord_proxy().await,
             DelayedAction::SyncZapret => self.sync_zapret_server_binding(),
             DelayedAction::CountryDetectBatch => self.process_country_detection_batch(),

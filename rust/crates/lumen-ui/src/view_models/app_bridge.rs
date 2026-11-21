@@ -948,7 +948,8 @@ impl AppBridge {
             return;
         }
         let (settings, state) = {
-            let controller = self.controller.lock();
+            let mut controller = self.controller.lock();
+            controller.schedule_startup_subscription_refresh();
             (controller.state.settings.clone(), controller.state.clone())
         };
         self.settings_cached = settings.clone();
@@ -964,10 +965,10 @@ impl AppBridge {
         self.sort_asc = settings.node_sort_ascending;
         self.dashboard_nodes.set_sort_key(&self.sort_key);
         self.push_initial_snapshot();
-        // The subscription auto-refresh timer and the app/resource update
-        // checks from Python `QTimer.singleShot` are handled by
-        // `start_deferred_services` + `subscription_refresh_timer` in the
-        // ported controller.
+        // The recurring subscription timer and the app/resource update checks
+        // from Python `QTimer.singleShot` are handled by
+        // `start_deferred_services` + `subscription_refresh_timer`; the 3 s
+        // startup subscription refresh is scheduled above.
     }
 
     fn push_initial_snapshot(&mut self) {

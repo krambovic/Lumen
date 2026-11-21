@@ -668,6 +668,16 @@ client, core/resource updaters, zapret and discord proxy managers.
     declares the image with `z: 1` (servers table, dashboard hero), over it
     in the dashboard server list, and is absent on onboarding cards. Rust
     drew it over every sprite, darkening the edge pixels by 20%.
+- Startup subscription refresh (2026-11-21): Python `load` also refreshes
+  every subscription 3 s after the profile opens
+  (`QTimer.singleShot(3000, _on_sub_auto_update)`), not only on the
+  recurring timer. Rust waited the full interval, so the subscription servers
+  were not refreshed and moved to the end of the stored list as in Python.
+  This made «Все серверы» list them in a different order when `sort_order`
+  ties. Ported as `AppController::schedule_startup_subscription_refresh` plus
+  `SubscriptionDispatcher::refresh_automatically`, which skips locked
+  profiles and subscriptions in backoff. Verified on the same profile: the
+  Rust list order now matches QML.
 
 - Logs (`LogsPage.qml`) and `DiagnosticsExportDialog.qml`: searchable and
   selectable live entries, severity filters, autoscroll, clear marker and log
