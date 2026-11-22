@@ -2,7 +2,6 @@
 //! new group (`groupDialog`), subscription properties (`infoDialog`), group
 //! deletion (`deleteGroupDialog`) and moving servers (`BulkEditDialog`).
 
-use crate::shell::wheel::GlideRoom;
 use egui::{Align, Context, FontId, Layout, ScrollArea, Sense, TextEdit, Ui, pos2, vec2};
 use lumen_core::i18n::tr;
 use serde_json::{Value, json};
@@ -117,7 +116,7 @@ impl NodesPage {
                         }
                         info_row(ui, theme, bridge, label, value);
                     }
-                }).glide_room(ui);
+                });
             let no_info = selected.is_some_and(|sub| sub["userinfo"].as_object().is_none_or(|info| info.is_empty()));
             if no_info {
                 ui.add_space(12.0);

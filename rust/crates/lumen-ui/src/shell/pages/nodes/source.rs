@@ -2,7 +2,6 @@
 //! `NodesPage.qml` (one control for "all servers", subscriptions and groups).
 
 #[allow(unused_imports)]
-use crate::shell::wheel::GlideRoom;
 use crate::shell::widgets::FluentTip;
 use egui::{
     Align2, Color32, FontId, Id, Popup, PopupCloseBehavior, Rect, RectAlign, ScrollArea, Sense,
@@ -139,7 +138,7 @@ impl NodesPage {
                                 choice = Some(picked);
                             }
                         }
-                    }).glide_room(ui);
+                    });
                 // ColumnLayout spacing 4, divider with a 2 px top margin.
                 ui.add_space(6.0);
                 let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());

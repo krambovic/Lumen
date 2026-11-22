@@ -21,6 +21,8 @@ use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, pos2, vec2};
 
 enum Step {
     Click(Pos2, PointerButton, u8),
+    /// Primary button pressed (`true`) or released at a point, for drags.
+    Button(Pos2, bool),
     Move(Pos2),
     Wheel(Pos2, f32),
     Key(Key),
@@ -67,6 +69,8 @@ impl PreviewInput {
                 Some("dclick") => point().map(|at| Step::Click(at, PointerButton::Primary, 2)),
                 Some("rclick") => point().map(|at| Step::Click(at, PointerButton::Secondary, 1)),
                 Some("move") => point().map(Step::Move),
+                Some("down") => point().map(|at| Step::Button(at, true)),
+                Some("up") => point().map(|at| Step::Button(at, false)),
                 Some("wheel") => point().zip(number(4)).map(|(at, dy)| Step::Wheel(at, dy)),
                 Some("key") => parts.get(2).and_then(|name| Key::from_name(name)).map(Step::Key),
                 Some("text") => parts.get(2).map(|text| Step::Text((*text).to_string())),
@@ -114,6 +118,15 @@ impl PreviewInput {
                     }
                 }
                 Step::Move(at) => raw.events.push(Event::PointerMoved(at)),
+                Step::Button(at, pressed) => {
+                    raw.events.push(Event::PointerMoved(at));
+                    raw.events.push(Event::PointerButton {
+                        pos: at,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    });
+                }
                 Step::Wheel(at, dy) => {
                     raw.events.push(Event::PointerMoved(at));
                     raw.events.push(Event::MouseWheel {

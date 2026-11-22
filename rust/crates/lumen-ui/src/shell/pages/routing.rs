@@ -5,7 +5,6 @@
 //! domain/IP rules and the Fluent dialogs behind them.
 
 #[allow(unused_imports)]
-use crate::shell::wheel::GlideRoom;
 use crate::shell::widgets::FluentTip;
 use std::path::Path;
 
@@ -248,7 +247,7 @@ impl RoutingPage {
                     }
                 });
                 rules(ui, theme, bridge, false);
-            }).glide_room(ui);
+            });
         if let Some(dialog) = self.dialog {
             self.render_dialog(page.ctx, theme, bridge, dialog);
         }
@@ -520,7 +519,7 @@ impl RoutingPage {
                                     true,
                                     reset_editor,
                                 )
-                            }).glide_room(ui);
+                            });
                         }
                         Dialog::Running => {
                             if let Some(process) = combo(

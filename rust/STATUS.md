@@ -725,10 +725,19 @@ client, core/resource updaters, zapret and discord proxy managers.
   clamps the glide target to `0..maxY`, so a glide eases onto the end.
   Rust glided towards the unclamped target and stopped dead at the end
   (391, 429, stop vs QML 378, 421, 447, 458 over 0.4 s). Vertical scroll
-  areas now report their remaining travel (`GlideRoom`), and the innermost
-  scrollable one under the pointer clamps the target; the settings page
-  now settles 386, 400, 410 ... 429. A single notch already matched QML
-  frame for frame.
+  areas now report their remaining travel, and the innermost scrollable
+  one under the pointer clamps the target; the settings page now settles
+  386, 400, 410 ... 429. A single notch already matched QML frame for
+  frame. The report lives in a patched egui `ScrollArea`
+  (`rust/vendor/egui`), so the server table (`egui_extras` table) and combo
+  popup lists ease onto their end too (captured scroll handle 534, 553,
+  563, 571, 575 ... 583 and 475, 483, 488 ... 496).
+- Drag selection in the server table (2026-11-22): the inspector showed
+  the first id of a `HashSet`, whose order changes as the range is rebuilt
+  each frame, so it jumped between servers while dragging. It now follows
+  QML `firstSelected()`: the earliest single or Ctrl click still picked,
+  else the topmost picked row. A scripted drag over ten rows keeps showing
+  Server 00.
 - Page buttons and combo boxes (2026-11-21): the About, Settings, Routing,
   Configs and zapret buttons were plain `egui::Button`s (instant hover;
   accent ones ignored hover). They now use the `AccentButton` port, whose

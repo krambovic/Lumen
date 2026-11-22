@@ -5,7 +5,6 @@
 //! pinned to the right.
 
 #[allow(unused_imports)]
-use crate::shell::wheel::GlideRoom;
 use crate::shell::color_picker::{ColorPicker, PickerResult};
 use crate::shell::widgets::FluentTip;
 use std::path::Path;
@@ -285,7 +284,7 @@ impl SettingsPage {
                     5 => updates(ui, theme, bridge, &settings),
                     _ => page.shell.open_configs_requested = self.data(ui, theme, bridge, compact),
                 }
-            }).glide_room(ui);
+            });
         if self.reset {
             self.reset_dialog(page.ctx, theme, bridge);
         }

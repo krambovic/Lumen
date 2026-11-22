@@ -5,7 +5,6 @@ mod source;
 mod subscription;
 
 #[allow(unused_imports)]
-use crate::shell::wheel::GlideRoom;
 use crate::shell::widgets::FluentTip;
 use std::collections::HashSet;
 
@@ -59,6 +58,11 @@ pub(super) struct NodesPage {
     editor: NodeEditor,
     query: String,
     picked: HashSet<String>,
+    /// Ids in the order single and Ctrl clicks added them. QML keeps the
+    /// selection in an object, whose first key the inspector shows; a range
+    /// (Shift, drag, Ctrl+A) is inserted top to bottom, so it leaves this
+    /// empty and the topmost picked row comes first.
+    pick_order: Vec<String>,
     anchor: Option<String>,
     drag_start: Option<usize>,
     dialog: Option<Dialog>,
@@ -167,6 +171,7 @@ impl NodesPage {
         let index = bridge.node_model.index_of_id(id);
         self.scroll_row = usize::try_from(index).ok();
         self.picked.insert(id.into());
+        self.pick_order = vec![id.into()];
         self.anchor = Some(id.into());
         self.inspector_node = true;
     }
@@ -417,6 +422,7 @@ impl NodesPage {
 
     fn select_all(&mut self, bridge: &AppBridge) {
         self.picked = visible_ids(bridge).into_iter().collect();
+        self.pick_order.clear();
     }
 
     fn targets(&self, bridge: &AppBridge) -> HashSet<String> {
@@ -576,7 +582,9 @@ impl NodesPage {
                                         self.pick_row(&ids, index, modifiers);
                                     }
                                     if response.drag_started() {
+                                        // onPressed: `selectOnly(row)` sets the anchor.
                                         self.drag_start = Some(index);
+                                        self.anchor = Some(id.clone());
                                         self.inspector_node = true;
                                     }
                                     if let Some(start) = self.drag_start
@@ -584,6 +592,7 @@ impl NodesPage {
                                     {
                                         self.picked =
                                             range(&ids, start, index).iter().cloned().collect();
+                                        self.pick_order.clear();
                                     }
                                     crate::shell::fluent_menu::context_menu(&response, theme, 290.0, |ui| {
                                         if !self.picked.contains(id) {
@@ -657,6 +666,22 @@ impl NodesPage {
         }
     }
 
+    /// QML `firstSelected()`: the earliest clicked id still picked, else the
+    /// topmost picked row. A `HashSet` has no stable order, so taking its
+    /// first item made the inspector jump between servers during a drag.
+    fn first_picked(&self, bridge: &AppBridge) -> Option<String> {
+        if let Some(id) = self.pick_order.iter().find(|id| self.picked.contains(*id)) {
+            return Some(id.clone());
+        }
+        if self.picked.is_empty() {
+            return None;
+        }
+        visible_ids(bridge)
+            .into_iter()
+            .find(|id| self.picked.contains(id))
+            .or_else(|| self.picked.iter().min().cloned())
+    }
+
     fn pick_row(&mut self, ids: &[String], index: usize, modifiers: Modifiers) {
         let id = &ids[index];
         self.inspector_node = true;
@@ -667,13 +692,16 @@ impl NodesPage {
                 .and_then(|id| ids.iter().position(|row| row == id))
                 .unwrap_or(index);
             self.picked = range(ids, anchor, index).iter().cloned().collect();
+            self.pick_order.clear();
         } else {
             if modifiers.ctrl {
                 if !self.picked.remove(id) {
                     self.picked.insert(id.clone());
+                    self.pick_order.push(id.clone());
                 }
             } else {
                 self.picked = HashSet::from([id.clone()]);
+                self.pick_order = vec![id.clone()];
             }
             self.anchor = Some(id.clone());
         }
@@ -790,14 +818,10 @@ impl NodesPage {
         height: f32,
     ) {
         let selected_sub = sub.filter(|_| !self.inspector_node);
+        // `inspectedNodeId`: the first selected server, else the active one.
         let id = self
-            .anchor
-            .as_ref()
-            .filter(|id| self.picked.contains(*id))
-            .or_else(|| self.picked.iter().next())
-            .map(String::as_str)
-            .unwrap_or_else(|| bridge.selected_node_id())
-            .to_owned();
+            .first_picked(bridge)
+            .unwrap_or_else(|| bridge.selected_node_id().to_owned());
         let details = bridge.node_details(&id);
         let has_node = details.get("id").is_some();
         Frame::new()
@@ -843,7 +867,7 @@ impl NodesPage {
                                 server_inspector(ui, theme, &details, has_node);
                             }
                         });
-                    }).glide_room(ui);
+                    });
                 if footer_height > 0.0 {
                     inspector_rule(ui, theme);
                     Frame::new().inner_margin(11).show(ui, |ui| {

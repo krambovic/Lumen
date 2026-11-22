@@ -7,14 +7,12 @@
 //! point-unit deltas, so every scroll area follows it without changes.
 //!
 //! QML clamps the animation target to `0..maxY`, so a glide that runs into
-//! the end of the content decelerates onto it. Scroll areas report how far
-//! they can still move ([`GlideRoom::glide_room`]); the innermost one under
-//! the pointer bounds the next target. Unreported areas keep the unclamped
-//! glide, which stops abruptly at the end.
+//! the end of the content decelerates onto it. Every scroll area reports how
+//! far it can still move (patched egui `ScrollArea`, `rust/vendor/egui`);
+//! the innermost one under the pointer bounds the next target.
 
 use egui::{
-    Context, Event, Id, Modifiers, MouseWheelSource, MouseWheelUnit, RawInput, Rect, TouchPhase, Ui,
-    Vec2, scroll_area::ScrollAreaOutput,
+    Context, Event, Id, Modifiers, MouseWheelSource, MouseWheelUnit, RawInput, Rect, TouchPhase, Vec2,
 };
 
 use super::motion::ease_out_quint;
@@ -39,53 +37,10 @@ pub(crate) struct WheelGlide {
     room: Option<(f32, f32)>,
 }
 
-/// Room of the innermost scroll area under the pointer, per pass.
-#[derive(Clone, Copy)]
-struct Room {
-    pass: u64,
-    rect: Rect,
-    up: f32,
-    down: f32,
-}
-
+/// The patched egui `ScrollArea` stores the innermost vertically scrollable
+/// area under the pointer here as (pass, inner rect, room up, room down).
 fn room_id() -> Id {
     Id::new("lumen-wheel-glide-room")
-}
-
-/// Reports a scroll area's remaining travel to the wheel glide.
-pub(crate) trait GlideRoom {
-    fn glide_room(self, ui: &Ui) -> Self;
-}
-
-impl<R> GlideRoom for ScrollAreaOutput<R> {
-    fn glide_room(self, ui: &Ui) -> Self {
-        let ctx = ui.ctx();
-        // Only when the pointer is over this area's layer: a popup list
-        // over the page must not take the page's room.
-        let inside = ctx.pointer_hover_pos().is_some_and(|pos| {
-            self.inner_rect.contains(pos) && ctx.layer_id_at(pos) == Some(ui.layer_id())
-        });
-        let max = (self.content_size.y - self.inner_rect.height()).max(0.0);
-        // An area that cannot scroll leaves the wheel to its parent.
-        if inside && max > 0.5 {
-            let pass = ctx.cumulative_pass_nr();
-            let room = Room {
-                pass,
-                rect: self.inner_rect,
-                up: self.state.offset().y.clamp(0.0, max),
-                down: (max - self.state.offset().y).max(0.0),
-            };
-            ctx.data_mut(|data| {
-                let keep = data.get_temp::<Room>(room_id()).is_some_and(|old| {
-                    old.pass == pass && old.rect.area() <= room.rect.area()
-                });
-                if !keep {
-                    data.insert_temp(room_id(), room);
-                }
-            });
-        }
-        self
-    }
 }
 
 impl WheelGlide {
@@ -93,9 +48,9 @@ impl WheelGlide {
     pub(crate) fn read_room(&mut self, ctx: &Context) {
         let last = ctx.cumulative_pass_nr().saturating_sub(1);
         self.room = ctx
-            .data(|data| data.get_temp::<Room>(room_id()))
-            .filter(|room| room.pass >= last)
-            .map(|room| (room.up, room.down));
+            .data(|data| data.get_temp::<(u64, Rect, f32, f32)>(room_id()))
+            .filter(|room| room.0 >= last)
+            .map(|room| (room.2, room.3));
     }
 
     fn position(&self, now: f64) -> Vec2 {

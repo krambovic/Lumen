@@ -21,7 +21,7 @@ pub(crate) mod widgets;
 pub(crate) mod fluent_menu;
 pub(crate) mod fluent_dialog;
 pub(crate) mod color_picker;
-pub(crate) mod wheel;
+mod wheel;
 mod frame_clock;
 #[cfg(debug_assertions)]
 mod preview_input;
@@ -37,7 +37,6 @@ pub mod tray;
 pub mod tray_menu;
 pub mod win_native;
 
-use crate::shell::wheel::GlideRoom;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -1196,7 +1195,7 @@ impl ShellApp {
                                 }
                             }
                         }
-                    }).glide_room(ui);
+                    });
             });
     }
 

@@ -1,6 +1,5 @@
 //! Connection controls, server shortcuts and live metrics from `DashboardPage.qml`.
 
-use crate::shell::wheel::GlideRoom;
 use std::collections::{HashSet, VecDeque};
 
 use egui::{
@@ -101,7 +100,7 @@ impl DashboardPage {
                     self.servers(ui, theme, bridge, 420.0);
                     self.stats(ui, theme, bridge, None, page_width >= 720.0);
                 }
-            }).glide_room(ui);
+            });
         if self.mode_help {
             self.mode_help = mode_help(page.ctx, theme);
         }
@@ -506,7 +505,7 @@ impl DashboardPage {
                         );
                         self.server_row(ui, theme, bridge, id, row);
                     }
-                }).glide_room(ui);
+                });
             if ids.is_empty() {
                 ui.painter().text(
                     list.inner_rect.center(),
@@ -811,7 +810,7 @@ impl DashboardPage {
                             theme.accent,
                         );
                     }
-                }).glide_room(ui);
+                });
         });
         widgets::card_frame(theme, 14.0).show(ui, |ui| {
             ui.set_min_width(ui.available_width());

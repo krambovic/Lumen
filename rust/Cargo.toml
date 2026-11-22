@@ -103,3 +103,5 @@ codegen-units = 4
 # Subpixel (ClearType-style) text: see vendor/README.md.
 epaint = { path = "vendor/epaint" }
 egui_glow = { path = "vendor/egui_glow" }
+# Scroll areas report their remaining travel to the wheel glide.
+egui = { path = "vendor/egui" }

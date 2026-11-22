@@ -1,7 +1,6 @@
 //! Preset management and server-scoped Zapret bindings.
 
 #[allow(unused_imports)]
-use crate::shell::wheel::GlideRoom;
 use crate::shell::widgets::FluentTip;
 use std::path::Path;
 
@@ -161,7 +160,7 @@ impl ZapretPage {
                     self.render_details(ui, theme, bridge, running, 210.0);
                     self.render_bindings(ui, theme, bridge, &bindings);
                 }
-            }).glide_room(ui);
+            });
         }
         if let Some(confirm) = self.confirm {
             self.render_confirmation(page.ctx, theme, bridge, confirm);
@@ -253,7 +252,7 @@ impl ZapretPage {
                             },
                         );
                     }
-                }).glide_room(ui);
+                });
             if let Some((name, activate)) = selected {
                 self.select(bridge, &name);
                 ui.request_repaint();
@@ -485,7 +484,7 @@ impl ZapretPage {
                                 }
                             });
                         }
-                    }).glide_room(ui);
+                    });
             }
             let servers = self.bind_options(bridge).servers.clone();
             if !servers.iter().any(|item| item.0 == self.server) {

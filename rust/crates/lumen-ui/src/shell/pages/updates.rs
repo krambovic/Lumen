@@ -2,7 +2,6 @@
 
 mod release_notes;
 
-use crate::shell::wheel::GlideRoom;
 use std::sync::LazyLock;
 
 use egui::{
@@ -284,7 +283,7 @@ impl UpdatesPage {
                 for (component, update) in COMPONENTS.iter().zip(&self.components) {
                     render_component(ui, theme, bridge, component, update);
                 }
-            }).glide_room(ui);
+            });
     }
 
     fn render_app(&self, ui: &mut Ui, theme: &Theme, bridge: &mut AppBridge) {

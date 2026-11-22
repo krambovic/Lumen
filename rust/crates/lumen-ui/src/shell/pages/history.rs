@@ -1,6 +1,5 @@
 //! Traffic summary and tables from `HistoryPage.qml`.
 
-use crate::shell::wheel::GlideRoom;
 use std::cmp::Ordering;
 
 use egui::{
@@ -240,7 +239,7 @@ impl HistoryPage {
                 for (spec, state) in TABLES.iter().zip(&mut self.tables) {
                     render_table(ui, theme, spec, rows(data, spec), state);
                 }
-            }).glide_room(ui);
+            });
     }
 
     fn toolbar(&mut self, ui: &mut Ui, theme: &Theme) -> (bool, bool) {

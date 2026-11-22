@@ -1,6 +1,5 @@
 //! Log controls and selectable entries from `LogsPage.qml`.
 
-use crate::shell::wheel::GlideRoom;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -203,7 +202,7 @@ impl LogsPage {
                             ui.scroll_to_cursor(Some(Align::BOTTOM));
                         }
                         action
-                    }).glide_room(ui)
+                    })
                     .inner
             })
             .inner;

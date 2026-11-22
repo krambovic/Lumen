@@ -1,6 +1,5 @@
 //! Protocol-aware server creation and editing shared by Dashboard and Nodes.
 
-use crate::shell::wheel::GlideRoom;
 use egui::{
     Align, Align2, Color32, Context, FontId, Frame, Id, Layout, Modal, Rect, ScrollArea, Sense,
     Stroke, TextEdit, Ui, Vec2, pos2, vec2,
@@ -143,7 +142,7 @@ impl NodeEditor {
                         // FluentScrollBar sits in the 14 px right margin.
                         ui.set_width(ui.available_width());
                         form(ui, theme, bridge, draft, creating);
-                    }).glide_room(&mut form_ui);
+                    });
 
                 ui.add_space(12.0);
                 let (bar, _) = ui.allocate_exact_size(vec2(width, control), Sense::hover());

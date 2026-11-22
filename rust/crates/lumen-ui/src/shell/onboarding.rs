@@ -6,7 +6,6 @@
 //! action bar. Every grid and flow is laid out with explicit rectangles.
 
 #[allow(unused_imports)]
-use crate::shell::wheel::GlideRoom;
 use crate::shell::widgets::FluentTip;
 use std::path::Path;
 use std::sync::Arc;
@@ -410,7 +409,7 @@ impl Onboarding {
                                 Step::System => system(ui, theme, bridge),
                                 Step::Done => self.done(ui, theme, bridge),
                             }
-                        }).glide_room(&mut pages_ui);
+                        });
                     apply_reveal(ctx, layer_id, is_current.then_some(reveal));
                 }
 

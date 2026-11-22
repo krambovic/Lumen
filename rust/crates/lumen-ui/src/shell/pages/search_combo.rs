@@ -3,7 +3,6 @@
 //! share `popup_rows`: 34 px rows, a `cardHover` highlight inset into the
 //! row and a 3 px accent bar on the current item.
 
-use crate::shell::wheel::GlideRoom;
 use egui::{
     Align2, Area, Color32, CursorIcon, Frame, Id, Key, Modifiers, Order, Rect, ScrollArea, Sense,
     Stroke, StrokeKind, Ui, pos2, vec2,
@@ -291,7 +290,7 @@ impl<'a> SearchCombo<'a> {
                                     state.highlight = Some(hovered);
                                 }
                                 rows.clicked.map(|position| filtered[position])
-                            }).glide_room(ui)
+                            })
                             .inner
                     })
                     .inner

@@ -2,7 +2,6 @@
 //! `FluentCombo.qml`, `Card.qml`, `StatusRing.qml` and the small text
 //! components (`SectionTitle`, `BigValue`).
 
-use crate::shell::wheel::GlideRoom;
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -476,7 +475,7 @@ pub(crate) fn combo<S: AsRef<str>>(
                         picked = Some(index);
                     }
                 }
-            }).glide_room(ui);
+            });
         });
     picked
 }
