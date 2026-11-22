@@ -50,11 +50,14 @@ so labels sit where Qt Quick puts them:
   translucent window the shader averages the three coverages and writes a
   matching alpha, because the compositor adds the backdrop under one alpha.
 
-`egui` 0.37.0 is vendored the same way for one change in
-`src/containers/scroll_area.rs` (marked `Lumen:`): the innermost vertically
-scrollable area under the pointer stores (pass, rect, room up, room down)
-under `Id::new("lumen-wheel-glide-room")`, which the shell's wheel glide
-reads to clamp its target to the content like `FluentScroll.qml`.
+`egui` 0.37.0 is vendored the same way, with changes marked `Lumen:`:
+
+- `src/containers/scroll_area.rs`: the innermost vertically scrollable area
+  under the pointer stores (pass, rect, room up, room down) under
+  `Id::new("lumen-wheel-glide-room")`, which the shell's wheel glide reads
+  to clamp its target to the content like `FluentScroll.qml`.
+- `src/containers/combo_box.rs`: an open popup closes once its button centre
+  scrolls out of the visible clip rect, so it is not carried off screen.
 
 Limitations: the stripe order is assumed to be RGB, which is the common case
 and the ClearType default.

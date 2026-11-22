@@ -443,6 +443,13 @@ fn combo_box_dyn<'c, R>(
 
     let height = height.unwrap_or_else(|| ui.spacing().combo_height);
 
+    // Lumen: the popup follows its button, so scrolling the page under an
+    // open popup carried it past the window edge. Close it once the button
+    // centre leaves the visible part of its scroll area.
+    if is_popup_open && !ui.clip_rect().contains(button_response.rect.center()) {
+        Popup::close_id(ui.ctx(), popup_id);
+    }
+
     let inner = Popup::menu(&button_response)
         .id(popup_id)
         .width(button_response.rect.width())

@@ -732,6 +732,11 @@ client, core/resource updaters, zapret and discord proxy managers.
   (`rust/vendor/egui`), so the server table (`egui_extras` table) and combo
   popup lists ease onto their end too (captured scroll handle 534, 553,
   563, 571, 575 ... 583 and 475, 483, 488 ... 496).
+- Open combo popups while the page scrolls (2026-11-22): the popup follows
+  its button, so wheeling the page under an open combo carried the list
+  past the window edge. The vendored `ComboBox` now closes its popup once
+  the button centre leaves the visible part of its scroll area (captured
+  on Settings: the preset list closes after four notches down).
 - Drag selection in the server table (2026-11-22): the inspector showed
   the first id of a `HashSet`, whose order changes as the range is rebuilt
   each frame, so it jumped between servers while dragging. It now follows
