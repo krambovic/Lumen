@@ -738,6 +738,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn payload_preserves_prerelease_version() {
+        for kind in ["heartbeat", "error-batch"] {
+            let payload = json!({
+                "kind": kind,
+                "app_version": "3.0.0-pre.01",
+                "install_id": "0123456789abcdef0123456789abcdef",
+                "ts": 1,
+                "events": [{"msg": "error"}],
+            });
+            let safe = safe_payload(&payload).unwrap();
+            assert_eq!(safe["app_version"], "3.0.0-pre.01", "{kind}");
+        }
+    }
+
+    #[test]
     fn payload_sanitizing() {
         assert!(safe_payload(&json!({"kind": "other"})).is_err());
         assert!(safe_payload(&json!({"kind": "heartbeat", "install_id": "bad"})).is_err());

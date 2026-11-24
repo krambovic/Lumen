@@ -42,8 +42,9 @@ pub const MAX_BUNDLE_BYTES: usize = 48 * 1024 * 1024;
 pub const MAX_MEMBERS: usize = 32;
 const RECENT_LOG_LINES: usize = 2000;
 
-static VERSION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\d+\.\d+(?:\.\d+)?(?:[-+._](?:alpha|beta|rc|dev)\d*)?$").unwrap());
+static VERSION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\d+\.\d+(?:\.\d+)?(?:[-+._](?:alpha|beta|rc|dev)\d*|-pre\.[0-9]+)?$").unwrap()
+});
 const ENGINE_VERSION_PATTERN: &str = r"\d{1,4}(?:\.\d{1,5}){1,3}(?:[-+][0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?";
 static ENGINE_VERSION_SEARCH: LazyLock<Regex> = LazyLock::new(|| Regex::new(ENGINE_VERSION_PATTERN).unwrap());
 static ENGINE_VERSION_FULL: LazyLock<Regex> =
