@@ -1004,8 +1004,8 @@ impl AppBridge {
     /// Python `startDeferred`.
     pub fn start_deferred(&mut self) {
         self.flush_pending_toasts();
-        let profile_loaded = self.controller.lock().profile_loaded();
-        if !profile_loaded || self.deferred_started {
+        // The fallback timer can fire while auto-connect holds the controller.
+        if self.deferred_started || !self.controller.lock().profile_loaded() {
             return;
         }
         self.deferred_started = true;
@@ -2348,28 +2348,32 @@ impl AppBridge {
 
     /// Python `completeOnboarding`.
     pub fn complete_onboarding(&mut self) {
-        let mut settings = self.controller.lock().state.settings.clone();
-        let mut changed = false;
-        if settings.onboarding_revision < ONBOARDING_REVISION {
-            settings.onboarding_revision = ONBOARDING_REVISION;
-            changed = true;
-        }
-        let seen = settings.onboarding_version.clone();
-        // Never move the marker backwards after a downgrade.
-        if version_key(&seen) < version_key(APP_VERSION) || is_upgrade(&seen, APP_VERSION) {
-            settings.onboarding_version = APP_VERSION.to_string();
-            changed = true;
-        }
-        if changed {
-            self.controller.lock().update_settings(settings);
-        }
+        self.submit(Box::new(|controller| {
+            let mut settings = controller.state.settings.clone();
+            let mut changed = false;
+            if settings.onboarding_revision < ONBOARDING_REVISION {
+                settings.onboarding_revision = ONBOARDING_REVISION;
+                changed = true;
+            }
+            let seen = &settings.onboarding_version;
+            // Never move the marker backwards after a downgrade.
+            if version_key(seen) < version_key(APP_VERSION) || is_upgrade(seen, APP_VERSION) {
+                settings.onboarding_version = APP_VERSION.to_string();
+                changed = true;
+            }
+            if changed {
+                controller.update_settings(settings);
+            }
+        }));
     }
 
     /// Python `showOnboardingAgain`.
     pub fn show_onboarding_again(&mut self) {
-        let mut settings = self.controller.lock().state.settings.clone();
-        settings.onboarding_revision = 0;
-        self.controller.lock().update_settings(settings);
+        self.submit(Box::new(|controller| {
+            let mut settings = controller.state.settings.clone();
+            settings.onboarding_revision = 0;
+            controller.update_settings(settings);
+        }));
     }
 
     // ── WARP profiles in one click ─────────────────────────────────────────
@@ -7447,10 +7451,16 @@ mod onboarding_tests {
         (bridge, root)
     }
 
-    /// `complete_onboarding` writes through the controller; mirror it the way
-    /// the settings event would.
+    /// Run queued controller tasks and deliver their settings events.
     fn sync(bridge: &mut AppBridge) {
-        bridge.settings_cached = bridge.controller.lock().state.settings.clone();
+        {
+            let mut controller = bridge.controller.lock();
+            let mut managers = controller.manager_events();
+            bridge
+                .runtime
+                .block_on(controller.drive_event_loop_once(&mut managers));
+        }
+        bridge.pump();
     }
 
     #[test]
@@ -7501,6 +7511,50 @@ mod onboarding_tests {
         bridge.show_onboarding_again();
         sync(&mut bridge);
         assert!(bridge.onboarding_required());
+    }
+
+    #[test]
+    fn completing_an_upgrade_returns_while_the_controller_is_busy() {
+        let (mut bridge, _root) = bridge(AppSettings {
+            onboarding_revision: ONBOARDING_REVISION,
+            onboarding_version: "2.1.4".into(),
+            ..AppSettings::default()
+        });
+        let controller = bridge.controller();
+        let busy = controller.lock();
+        let (completed, result) = std::sync::mpsc::channel();
+        let ui = std::thread::spawn(move || {
+            bridge.complete_onboarding();
+            let _ = completed.send(bridge);
+        });
+        let result = result.recv_timeout(Duration::from_secs(2));
+        drop(busy);
+        ui.join().unwrap();
+
+        let mut bridge = result.expect("closing What's New waited for the controller");
+        sync(&mut bridge);
+        assert_eq!(bridge.settings_cached.onboarding_version, APP_VERSION);
+        assert!(!bridge.onboarding_required());
+    }
+
+    #[test]
+    fn deferred_start_fallback_returns_while_the_controller_is_busy() {
+        let (mut bridge, _root) = bridge(AppSettings::default());
+        // The first frame has already started the services. The fallback
+        // timer can now fire while the controller is starting the VPN.
+        bridge.deferred_started = true;
+        let controller = bridge.controller();
+        let busy = controller.lock();
+        let (completed, result) = std::sync::mpsc::channel();
+        let ui = std::thread::spawn(move || {
+            bridge.start_deferred();
+            let _ = completed.send(());
+        });
+        let result = result.recv_timeout(Duration::from_secs(2));
+        drop(busy);
+        ui.join().unwrap();
+
+        result.expect("the startup fallback waited for the controller");
     }
 
     #[test]

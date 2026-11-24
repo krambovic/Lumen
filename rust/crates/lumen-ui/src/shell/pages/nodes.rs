@@ -443,7 +443,11 @@ impl NodesPage {
         let ids = visible_ids(bridge);
         let sort = bridge.node_sort_key();
         let ascending = bridge.node_sort_ascending();
-        let released = ui.input(|i| i.pointer.primary_released());
+        let (primary_down, released) =
+            ui.input(|i| (i.pointer.primary_down(), i.pointer.primary_released()));
+        if !primary_down {
+            self.drag_start = None;
+        }
         if self.widths.is_none() {
             let layout = bridge.node_table_layout();
             if layout["manual"].as_bool() == Some(true) {
@@ -581,7 +585,7 @@ impl NodesPage {
                                         let modifiers = response.ctx.input(|i| i.modifiers);
                                         self.pick_row(&ids, index, modifiers);
                                     }
-                                    if response.drag_started() {
+                                    if response.drag_started_by(egui::PointerButton::Primary) {
                                         // onPressed: `selectOnly(row)` sets the anchor.
                                         self.drag_start = Some(index);
                                         self.anchor = Some(id.clone());
@@ -639,9 +643,6 @@ impl NodesPage {
                         }
                     });
             });
-        if released {
-            self.drag_start = None;
-        }
         if let Some(key) = sort_clicked {
             if key == sort && !ascending {
                 bridge.set_node_sort("manual", true);
@@ -1447,7 +1448,7 @@ fn server_inspector(ui: &mut Ui, theme: &Theme, details: &Value, has_node: bool)
             );
             job.wrap.max_rows = 3;
             job.wrap.break_anywhere = true;
-            ui.add(egui::Label::new(job).selectable(true));
+            ui.add(egui::Label::new(job).wrap().selectable(true));
         });
     }
 }
@@ -1466,6 +1467,100 @@ fn export_json(ui: &Ui, bridge: &mut AppBridge, id: &str, runtime: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_primary_drag_selects_rows_until_release() {
+        let storage = lumen_core::storage::StateStorage::new(
+            std::env::temp_dir().join(format!("lumen-table-test-{}.enc", uuid::Uuid::new_v4())),
+        );
+        let controller = lumen_app::app_controller::AppController::with_storage(storage);
+        let mut bridge = AppBridge::with_controller(controller);
+        let nodes = ["one", "two", "three", "four"].map(|id| {
+            let mut node = lumen_core::models::Node::new();
+            node.id = id.into();
+            node.name = id.into();
+            node
+        });
+        bridge.node_model.set_nodes(nodes.to_vec(), None);
+        let ctx = egui::Context::default();
+        let theme = Theme::resolve(&Default::default());
+        crate::shell::theme::apply_visuals(&ctx, &theme);
+        let mut page = NodesPage::default();
+        let first = egui::pos2(100.0, 75.0);
+        let second = first + egui::vec2(0.0, 34.0);
+        let third = second + egui::vec2(0.0, 34.0);
+        let fourth = third + egui::vec2(0.0, 34.0);
+        let mut frame = |events| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 480.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| page.table(ui, &theme, &mut bridge, 340.0))
+                .textures_delta
+                .clear();
+            page.picked.clone()
+        };
+        let button = |pos, button, pressed| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        use egui::PointerButton::{Primary, Secondary};
+
+        frame(vec![]);
+        frame(vec![egui::Event::PointerMoved(first)]);
+        frame(vec![button(first, Secondary, true)]);
+        assert!(frame(vec![egui::Event::PointerMoved(second)]).is_empty());
+        frame(vec![button(second, Secondary, false)]);
+        assert!(frame(vec![egui::Event::PointerMoved(third)]).is_empty());
+
+        frame(vec![egui::Event::PointerMoved(first)]);
+        frame(vec![button(first, Primary, true)]);
+        assert_eq!(
+            frame(vec![egui::Event::PointerMoved(third)]),
+            HashSet::from(["one".into(), "two".into(), "three".into()])
+        );
+        frame(vec![button(third, Primary, false)]);
+        assert_eq!(frame(vec![egui::Event::PointerMoved(fourth)]).len(), 3);
+
+        frame(vec![button(fourth, Secondary, true)]);
+        assert_eq!(
+            frame(vec![button(fourth, Secondary, false)]),
+            HashSet::from(["four".into()])
+        );
+        assert!(egui::Popup::is_any_open(&ctx));
+    }
+
+    #[test]
+    fn long_server_details_fit_the_inspector() {
+        let theme = Theme::resolve(&Default::default());
+        let ctx = egui::Context::default();
+        let available = INSPECTOR_WIDTH - 2.0 - 28.0;
+        let long_value = "long-label.".repeat(32);
+        let details = json!({
+            "name": long_value,
+            "server": long_value,
+            "port": 24694,
+            "sni": long_value,
+            "group": long_value,
+            "subscription": long_value,
+            "description": long_value,
+        });
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let inspector = ui.vertical(|ui| {
+                ui.set_max_width(available);
+                server_inspector(ui, &theme, &details, true);
+            });
+            assert!(inspector.response.rect.width() <= available + 1.0);
+        })
+        .textures_delta
+        .clear();
+    }
 
     #[test]
     fn automatic_widths_match_qml_at_wide_and_narrow_sizes() {
