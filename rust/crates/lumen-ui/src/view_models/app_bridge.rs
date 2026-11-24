@@ -4980,16 +4980,10 @@ impl AppBridge {
 
     /// Python `importNodeFiles`.
     pub fn import_node_files(&mut self, paths: &[PathBuf]) {
-        const SUPPORTED: [&str; 6] = ["conf", "ovpn", "txt", "json", "yaml", "yml"];
         let mut valid: Vec<PathBuf> = Vec::new();
         let mut invalid_count = 0usize;
         for path in paths {
-            let extension = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.to_lowercase())
-                .unwrap_or_default();
-            if !SUPPORTED.contains(&extension.as_str()) || !path.is_file() {
+            if !crate::shell::has_supported_config_drop(path) || !path.is_file() {
                 invalid_count += 1;
                 continue;
             }
@@ -5004,6 +4998,14 @@ impl AppBridge {
             );
             return;
         }
+        let existing_ids: HashSet<String> = self
+            .controller
+            .lock()
+            .state
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect();
         let mut total_added = 0usize;
         let mut errors: Vec<String> = Vec::new();
         for path in &valid {
@@ -5027,19 +5029,11 @@ impl AppBridge {
         if total_added > 0 {
             let imported_id = {
                 let controller = self.controller.lock();
-                let existing: HashSet<String> = controller
-                    .state
-                    .nodes
-                    .iter()
-                    .map(|node| node.id.clone())
-                    .collect();
-                // Existing ids were captured before the import; the first
-                // unseen id is the imported one.
                 controller
                     .state
                     .nodes
                     .iter()
-                    .find(|node| !existing.contains(&node.id))
+                    .find(|node| !existing_ids.contains(&node.id))
                     .map(|node| node.id.clone())
                     .unwrap_or_default()
             };
@@ -7432,6 +7426,43 @@ mod core_path_tests {
         let absolute = default.to_string_lossy().into_owned();
         assert_eq!(AppBridge::display_core_path(&absolute, &default), r"core\sing-box.exe");
         assert_eq!(AppBridge::display_core_path(r"D:\tools\sb.exe", &default), r"D:\tools\sb.exe");
+    }
+}
+
+#[cfg(test)]
+mod file_import_tests {
+    use super::*;
+
+    #[test]
+    fn importing_json_reveals_the_new_server_and_preserves_the_active_server() {
+        let root = tempfile::tempdir().unwrap();
+        let storage = lumen_core::storage::StateStorage::new(root.path().join("state.json"));
+        let mut controller = AppController::with_storage(storage);
+        assert!(controller.load());
+        controller.state.settings.auto_connect_on_import = false;
+        let mut active = Node::new();
+        active.id = "active".into();
+        controller.state.selected_node_id = Some(active.id.clone());
+        controller.state.nodes.push(active);
+
+        let config = root.path().join("сервер #1.JSON");
+        std::fs::write(
+            &config,
+            r#"{"server":"proxy.example.test","server_port":8388,"method":"aes-128-gcm","password":"fixture"}"#,
+        )
+        .unwrap();
+        let mut bridge = AppBridge::with_controller(controller);
+        bridge.import_node_files(&[config]);
+
+        let controller = bridge.controller();
+        let controller = controller.lock();
+        assert_eq!(controller.state.nodes.len(), 2);
+        assert_eq!(controller.state.selected_node_id.as_deref(), Some("active"));
+        let imported = &controller.state.nodes[1];
+        assert_eq!(imported.server, "proxy.example.test");
+        assert!(bridge.take_events().iter().any(
+            |event| matches!(event, UiEvent::NodeImported(id) if id == &imported.id)
+        ));
     }
 }
 

@@ -23,6 +23,8 @@ pub(crate) mod fluent_dialog;
 pub(crate) mod color_picker;
 mod wheel;
 mod frame_clock;
+#[cfg(windows)]
+mod file_drop;
 #[cfg(debug_assertions)]
 mod preview_input;
 pub mod navigation;
@@ -178,6 +180,11 @@ pub fn run() -> i32 {
         .with_active(true)
         .with_inner_size([fitted_width, fitted_height])
         .with_position([fitted_x, fitted_y]);
+    #[cfg(windows)]
+    if is_process_elevated() {
+        // Explorer uses WM_DROPFILES for the elevated window.
+        viewport = viewport.with_drag_and_drop(false);
+    }
     if let Some(icon) = tray::load_window_icon() {
         viewport = viewport.with_icon(icon);
     }
@@ -236,6 +243,8 @@ pub struct ShellApp {
     last_window_rect: Option<(i32, i32, i32, i32)>,
     last_maximized: bool,
     power_rx: Receiver<PowerMessage>,
+    #[cfg(windows)]
+    native_file_drops: Option<Receiver<Vec<PathBuf>>>,
     instance_runtime: tokio::runtime::Runtime,
     activations: Option<ActivationReceiver>,
     pending_activations: Vec<InstanceActivation>,
@@ -308,6 +317,8 @@ impl ShellApp {
             last_window_rect: None,
             last_maximized: false,
             power_rx,
+            #[cfg(windows)]
+            native_file_drops: None,
             instance_runtime,
             activations: Some(activations),
             pending_activations: Vec::new(),
@@ -597,6 +608,14 @@ impl ShellApp {
         self.deferred_fallback_deadline = Some(Instant::now() + START_DEFERRED_FALLBACK);
         if let Some(hwnd) = win_native::find_main_window(APP_NAME) {
             win_native::install_custom_frame(hwnd);
+            #[cfg(windows)]
+            if is_process_elevated() {
+                match file_drop::install(hwnd) {
+                    Ok(receiver) => self.native_file_drops = Some(receiver),
+                    Err(error) => lumen_core::logging::get_logger("app")
+                        .warning(format!("Could not enable file drops for the elevated window: {error}")),
+                }
+            }
         }
         self.apply_mica(ctx, true);
         // QTimer.singleShot(800, _cleanup_legacy_files): the legacy startup
@@ -734,22 +753,14 @@ impl ShellApp {
 
     /// Main.qml `hasSupportedConfigDrop` + `queueConfigDrop`.
     fn handle_config_drops(&mut self, ctx: &egui::Context) {
-        let (hovered, dropped) = ctx.input(|input| {
-            (
-                input.raw.hovered_files.clone(),
-                input.raw.dropped_files.clone(),
-            )
+        let mut paths: Vec<PathBuf> = ctx.input(|input| {
+            input.raw.dropped_files.iter().map(|file| file.path().to_path_buf()).collect()
         });
-        let _ = hovered;
-        if dropped.is_empty() || self.bridge.locked() {
-            return;
+        #[cfg(windows)]
+        if let Some(receiver) = &self.native_file_drops {
+            paths.extend(receiver.try_iter().flatten());
         }
-        let paths: Vec<PathBuf> = dropped
-            .into_iter()
-            .map(|file| file.path().to_path_buf())
-            .filter(|path| has_supported_config_drop(&path))
-            .collect();
-        if paths.is_empty() {
+        if self.bridge.locked() || !paths.iter().any(|path| has_supported_config_drop(path)) {
             return;
         }
         // queueConfigDrop: switch to the nodes page and import (egui pages
@@ -1487,18 +1498,15 @@ impl ShellApp {
     }
 }
 
-/// Main.qml `hasSupportedConfigDrop`: `.conf|.ovpn|.txt|.json|.ya?ml` suffix
-/// after stripping `?query` and `#fragment`.
+/// Supported extensions for the native paths supplied by file drop and clipboard.
 pub fn has_supported_config_drop(path: &std::path::Path) -> bool {
-    let Some(value) = path.to_str() else {
-        return false;
-    };
-    let value = value.to_lowercase();
-    let value = value.split('?').next().unwrap_or(&value);
-    let value = value.split('#').next().unwrap_or(value);
-    [".conf", ".ovpn", ".txt", ".json", ".yaml", ".yml"]
-        .iter()
-        .any(|suffix| value.ends_with(suffix))
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["conf", "ovpn", "txt", "json", "yaml", "yml"]
+                .iter()
+                .any(|supported| extension.eq_ignore_ascii_case(supported))
+        })
 }
 
 /// Decode the wallpaper image file into a texture (Main.qml `wallpaperImg`).
@@ -1731,10 +1739,11 @@ mod tests {
         assert!(has_supported_config_drop(p("C:/configs/profile.ovpn")));
         assert!(has_supported_config_drop(p("C:/configs/notes.txt")));
         assert!(has_supported_config_drop(p("C:/configs/import.json")));
+        assert!(has_supported_config_drop(p("C:/configs/сервер #1.JSON")));
         assert!(has_supported_config_drop(p("C:/configs/import.yaml")));
         assert!(has_supported_config_drop(p("C:/configs/import.yml")));
-        assert!(has_supported_config_drop(p("file:///C:/a.json?query=1")));
-        assert!(has_supported_config_drop(p("file:///C:/a.json#frag")));
+        assert!(has_supported_config_drop(p("C:/configs #1/a.json")));
+        assert!(!has_supported_config_drop(p("C:/configs/a.json#draft")));
         assert!(!has_supported_config_drop(p("C:/configs/image.png")));
         assert!(!has_supported_config_drop(p("C:/configs/")));
     }
