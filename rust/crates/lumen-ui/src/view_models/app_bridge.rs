@@ -37,7 +37,7 @@ use lumen_core::constants::{
 };
 use lumen_core::country_flags::{detect_country, get_flag_emoji};
 use lumen_core::i18n::{
-    active_map, available_languages, language_name, set_language, tr, translate_dynamic,
+    active_catalog, active_map, available_languages, language_name, set_language, tr, translate_dynamic,
 };
 use lumen_core::models::{AppSettings, Node, RoutingSettings, normalize_core_preference};
 use lumen_core::process_presets::PROCESS_PRESETS;
@@ -475,11 +475,11 @@ pub fn localized_backend_message(message: &str, english_ui: bool) -> String {
     if message.is_empty() || !english_ui {
         return message.to_string();
     }
-    let catalog = active_map();
+    let catalog = active_catalog();
     if let Some(localized) = translate_dynamic(message) {
         return localized;
     }
-    let catalog_prefix = longest_catalog_prefix(&catalog, message);
+    let catalog_prefix = longest_catalog_prefix(catalog, message);
     if !catalog_prefix.is_empty() {
         let tail = &message[catalog_prefix.len()..];
         let localized_tail = translate_dynamic(tail);

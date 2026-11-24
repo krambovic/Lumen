@@ -2480,6 +2480,7 @@ dependencies = [
  "lumen-core",
  "lumen-engines",
  "lumen-platform",
+ "memmap2",
  "muda 0.17.2",
  "parking_lot",
  "qrcode",

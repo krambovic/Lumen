@@ -7,7 +7,7 @@
 
 use egui::{Color32, Context, FontData, FontDefinitions, FontFamily, Style, Vec2};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Hex parse used across Theme.qml (`#RRGGBB` / `#RRGGBBAA`); unknown or
 /// shorter values keep the caller's fallback, exactly like Qt's color parser.
@@ -1798,6 +1798,30 @@ fn read_font_file(path: &PathBuf) -> Option<Vec<u8>> {
     std::fs::read(path).ok()
 }
 
+#[cfg(windows)]
+fn map_system_font(path: &Path) -> std::io::Result<FontData> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::sync::Arc;
+    use windows::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    let file = std::fs::File::options()
+        .read(true)
+        .share_mode(FILE_SHARE_READ.0)
+        .open(path)?;
+    // SAFETY: The read-only mapping keeps a duplicate of the file handle on
+    // Windows. Its share mode denies writes and deletion for the map's lifetime.
+    let mapping = unsafe { memmap2::Mmap::map(&file)? };
+    Ok(FontData::from_blob(Arc::new(mapping), 0))
+}
+
+fn read_fallback_font(path: &Path) -> Option<FontData> {
+    #[cfg(windows)]
+    if let Ok(font) = map_system_font(path) {
+        return Some(font);
+    }
+    std::fs::read(path).ok().map(FontData::from_owned)
+}
+
 /// Candidate Segoe Fluent Icons sources, mirroring `_load_bundled_fonts`:
 /// the Windows 11 system icon font first, then the asset bundled next to the
 /// executable (the Python app ships `assets/fonts/SegoeIcons.ttf`).
@@ -1886,11 +1910,11 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
         // Segoe UI has no CJK glyphs; Qt falls back to the system font for
         // the Chinese translation, so do the same.
         if let Some(font) = std::env::var_os("WINDIR")
-            .and_then(|root| read_font_file(&PathBuf::from(root).join("Fonts").join("msyh.ttc")))
+            .and_then(|root| read_fallback_font(&PathBuf::from(root).join("Fonts").join("msyh.ttc")))
         {
             definitions
                 .font_data
-                .insert("Microsoft YaHei".into(), FontData::from_owned(font).into());
+                .insert("Microsoft YaHei".into(), font.into());
             proportional.push("Microsoft YaHei".into());
         }
         // Qt falls back to Segoe UI Emoji for emoji and the regional
@@ -1898,11 +1922,11 @@ fn load_fonts_once(family: &str) -> &'static LoadedFonts {
         // letters); egui's Noto Emoji has no regional indicators and left a
         // missing-glyph box. Its outlines are used without the colour layers.
         if let Some(font) = std::env::var_os("WINDIR")
-            .and_then(|root| read_font_file(&PathBuf::from(root).join("Fonts").join("seguiemj.ttf")))
+            .and_then(|root| read_fallback_font(&PathBuf::from(root).join("Fonts").join("seguiemj.ttf")))
         {
             definitions
                 .font_data
-                .insert("Segoe UI Emoji".into(), FontData::from_owned(font).into());
+                .insert("Segoe UI Emoji".into(), font.into());
             proportional.insert(fallback_at.min(proportional.len()), "Segoe UI Emoji".into());
         }
         for (family, stem) in [("Segoe UI Semibold", "seguisb"), ("Segoe UI Bold", "segoeuib")] {
@@ -2067,6 +2091,22 @@ pub fn apply_visuals(ctx: &Context, theme: &Theme) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn mapped_font_shares_bytes_and_keeps_writes_locked() {
+        use std::io::Write;
+
+        let mut font_file = tempfile::NamedTempFile::new().unwrap();
+        font_file.write_all(b"font fixture").unwrap();
+        let path = font_file.into_temp_path();
+        let font = super::map_system_font(path.as_ref()).unwrap();
+        assert_eq!(font.bytes(), b"font fixture");
+        assert!(std::fs::OpenOptions::new().write(true).open(&path).is_err());
+
+        drop(font);
+        assert!(std::fs::OpenOptions::new().write(true).open(&path).is_ok());
+    }
+
     use super::*;
 
     #[test]

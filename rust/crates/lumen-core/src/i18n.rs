@@ -107,17 +107,30 @@ pub fn get_language() -> String {
         .unwrap_or_else(|| "en".to_string())
 }
 
-pub fn active_map() -> BTreeMap<String, String> {
-    let language = get_language();
+fn catalog_for_language(language: &str) -> &'static BTreeMap<String, String> {
+    static EMPTY: BTreeMap<String, String> = BTreeMap::new();
     if language == SOURCE_LANGUAGE {
-        return BTreeMap::new();
+        return &EMPTY;
     }
-    catalogs().maps.get(&language).cloned().unwrap_or_default()
+    catalogs().maps.get(language).unwrap_or(&EMPTY)
+}
+
+/// Borrow the loaded translations for the current language.
+pub fn active_catalog() -> &'static BTreeMap<String, String> {
+    let language = LANGUAGE.lock().unwrap();
+    catalog_for_language(language.as_deref().unwrap_or("en"))
+}
+
+pub fn active_map() -> BTreeMap<String, String> {
+    active_catalog().clone()
 }
 
 /// Translate a Russian source key with optional `{name}` parameters.
 pub fn translate(key: &str, params: &[(&str, &str)]) -> String {
-    let mut text = active_map().get(key).cloned().unwrap_or_else(|| key.to_string());
+    let mut text = active_catalog()
+        .get(key)
+        .cloned()
+        .unwrap_or_else(|| key.to_string());
     if !params.is_empty() {
         for (name, value) in params {
             let placeholder = format!("{{{name}}}");
@@ -222,11 +235,11 @@ fn compile_templates(map: &BTreeMap<String, String>) -> Vec<Template> {
 
 /// Translate a rendered message by matching catalog keys with placeholders.
 pub fn translate_dynamic(message: &str) -> Option<String> {
-    let map = active_map();
+    let map = active_catalog();
     if message.is_empty() || map.is_empty() {
         return None;
     }
-    translate_dynamic_in(message, &map, 0)
+    translate_dynamic_in(message, map, 0)
 }
 
 fn translate_dynamic_in(message: &str, map: &BTreeMap<String, String>, depth: usize) -> Option<String> {
@@ -308,6 +321,14 @@ fn match_template(template: &Template, message: &str) -> Option<BTreeMap<String,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalogs_reuse_the_loaded_translations() {
+        let english = catalog_for_language("en");
+        assert!(std::ptr::eq(english, &catalogs().maps["en"]));
+        assert!(!english.is_empty());
+        assert!(catalog_for_language(SOURCE_LANGUAGE).is_empty());
+    }
 
     #[test]
     fn placeholder_substitution() {
