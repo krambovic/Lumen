@@ -58,10 +58,8 @@ pub(super) struct NodesPage {
     editor: NodeEditor,
     query: String,
     picked: HashSet<String>,
-    /// Ids in the order single and Ctrl clicks added them. QML keeps the
-    /// selection in an object, whose first key the inspector shows; a range
-    /// (Shift, drag, Ctrl+A) is inserted top to bottom, so it leaves this
-    /// empty and the topmost picked row comes first.
+    /// Inspector priority: click order for single and Ctrl clicks, or the
+    /// row reached by a drag. Shift and Ctrl+A fall back to table order.
     pick_order: Vec<String>,
     anchor: Option<String>,
     drag_start: Option<usize>,
@@ -500,6 +498,7 @@ impl NodesPage {
                             table = table.scroll_to_row(index, Some(egui::Align::Center));
                         }
                         let mut header_cells = [egui::Rect::NOTHING; COLUMNS.len()];
+                        let mut hovered_row = None;
                         table
                             .header(30.0, |mut row| {
                                 for (index, (_, key, label, _, _)) in
@@ -591,12 +590,8 @@ impl NodesPage {
                                         self.anchor = Some(id.clone());
                                         self.inspector_node = true;
                                     }
-                                    if let Some(start) = self.drag_start
-                                        && response.contains_pointer()
-                                    {
-                                        self.picked =
-                                            range(&ids, start, index).iter().cloned().collect();
-                                        self.pick_order.clear();
+                                    if primary_down && response.contains_pointer() {
+                                        hovered_row = Some(index);
                                     }
                                     crate::shell::fluent_menu::context_menu(&response, theme, 290.0, |ui| {
                                         if !self.picked.contains(id) {
@@ -606,6 +601,12 @@ impl NodesPage {
                                     });
                                 });
                             });
+                        // Resolve after both rows have been visited, including upward drags.
+                        if let (Some(start), Some(end)) = (self.drag_start, hovered_row) {
+                            self.picked = range(&ids, start, end).iter().cloned().collect();
+                            self.pick_order.clear();
+                            self.pick_order.push(ids[end].clone());
+                        }
                         // Register handles after the table so its cells cannot claim the drag.
                         for (index, rect) in header_cells.into_iter().enumerate() {
                             let grip = egui::Rect::from_min_max(
@@ -667,9 +668,7 @@ impl NodesPage {
         }
     }
 
-    /// QML `firstSelected()`: the earliest clicked id still picked, else the
-    /// topmost picked row. A `HashSet` has no stable order, so taking its
-    /// first item made the inspector jump between servers during a drag.
+    /// First surviving inspector preference, or the topmost selected row.
     fn first_picked(&self, bridge: &AppBridge) -> Option<String> {
         if let Some(id) = self.pick_order.iter().find(|id| self.picked.contains(*id)) {
             return Some(id.clone());
@@ -1502,7 +1501,7 @@ mod tests {
             ctx.run_ui(input, |ui| page.table(ui, &theme, &mut bridge, 340.0))
                 .textures_delta
                 .clear();
-            page.picked.clone()
+            (page.picked.clone(), page.first_picked(&bridge))
         };
         let button = |pos, button, pressed| egui::Event::PointerButton {
             pos,
@@ -1515,23 +1514,40 @@ mod tests {
         frame(vec![]);
         frame(vec![egui::Event::PointerMoved(first)]);
         frame(vec![button(first, Secondary, true)]);
-        assert!(frame(vec![egui::Event::PointerMoved(second)]).is_empty());
+        assert!(frame(vec![egui::Event::PointerMoved(second)]).0.is_empty());
         frame(vec![button(second, Secondary, false)]);
-        assert!(frame(vec![egui::Event::PointerMoved(third)]).is_empty());
+        assert!(frame(vec![egui::Event::PointerMoved(third)]).0.is_empty());
 
+        let picked = HashSet::from(["one".into(), "two".into(), "three".into()]);
         frame(vec![egui::Event::PointerMoved(first)]);
         frame(vec![button(first, Primary, true)]);
         assert_eq!(
             frame(vec![egui::Event::PointerMoved(third)]),
-            HashSet::from(["one".into(), "two".into(), "three".into()])
+            (picked.clone(), Some("three".into()))
         );
-        frame(vec![button(third, Primary, false)]);
-        assert_eq!(frame(vec![egui::Event::PointerMoved(fourth)]).len(), 3);
+        assert_eq!(
+            frame(vec![button(third, Primary, false)]),
+            (picked.clone(), Some("three".into()))
+        );
+        assert_eq!(
+            frame(vec![egui::Event::PointerMoved(third)]),
+            (picked.clone(), Some("three".into()))
+        );
+        frame(vec![button(third, Primary, true)]);
+        assert_eq!(
+            frame(vec![egui::Event::PointerMoved(first)]),
+            (picked.clone(), Some("one".into()))
+        );
+        frame(vec![button(first, Primary, false)]);
+        assert_eq!(
+            frame(vec![egui::Event::PointerMoved(fourth)]),
+            (picked, Some("one".into()))
+        );
 
         frame(vec![button(fourth, Secondary, true)]);
         assert_eq!(
             frame(vec![button(fourth, Secondary, false)]),
-            HashSet::from(["four".into()])
+            (HashSet::from(["four".into()]), Some("four".into()))
         );
         assert!(egui::Popup::is_any_open(&ctx));
     }
