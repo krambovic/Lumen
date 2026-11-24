@@ -239,12 +239,13 @@ fn target_dir_rules() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
 
     // A portable build inside a legacy-named directory moves next to it while
-    // the renamed target is free.
+    // the renamed target is free. Its parent is canonicalized, so it can
+    // differ from the spelling of TEMP (for example, a Windows 8.3 alias).
     let legacy = root.path().join("Lumen KVN");
     std::fs::create_dir(&legacy)?;
     assert_eq!(
         target_app_dir_in(&legacy, true),
-        root.path().join("Lumen")
+        resolve_noverbatim(root.path()).join("Lumen")
     );
     // Once the renamed directory exists, the portable build stays in place.
     std::fs::create_dir(root.path().join("Lumen"))?;
