@@ -14,6 +14,13 @@ mod sidecar;
 mod tests;
 mod tun;
 
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use bootstrap::set_test_getaddrinfo;
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use tun::set_test_tun_env;
+
 pub use bootstrap::{
     ensure_all_endpoint_server_bootstrap_contract, ensure_all_openvpn_server_bootstrap_contract,
     ensure_all_server_bootstrap_contracts, ensure_awg3_windows_bind_workaround,

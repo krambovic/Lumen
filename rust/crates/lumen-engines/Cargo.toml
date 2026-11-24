@@ -3,6 +3,9 @@ name = "lumen-engines"
 version.workspace = true
 edition.workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 lumen-core = { workspace = true }
 lumen-platform = { workspace = true }
@@ -32,3 +35,7 @@ windows = { workspace = true }
 percent-encoding = { workspace = true }
 winreg = { workspace = true }
 tempfile = "3"
+
+[dev-dependencies]
+# Enable the planner's fixture overrides only when building tests.
+lumen-engines = { path = ".", features = ["test-support"] }

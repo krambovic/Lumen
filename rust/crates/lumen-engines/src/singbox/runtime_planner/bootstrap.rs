@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, ToSocketAddrs};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -106,14 +106,14 @@ impl Drop for SlotGuard {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 type TestGetAddrInfo = dyn Fn(&str) -> std::io::Result<Vec<SocketAddr>> + Send + Sync;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 static TEST_GETADDRINFO: Mutex<Option<Arc<TestGetAddrInfo>>> = Mutex::new(None);
 
-#[cfg(test)]
-pub(crate) fn set_test_getaddrinfo(resolver: Option<Arc<TestGetAddrInfo>>) {
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_test_getaddrinfo(resolver: Option<Arc<TestGetAddrInfo>>) {
     *TEST_GETADDRINFO.lock() = resolver;
 }
 
@@ -133,7 +133,7 @@ fn endpoint_dns_key(host: &str) -> String {
 }
 
 fn lookup_addresses(host: &str) -> Vec<IpAddr> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         // Clone the hook out of the lock so a slow resolver never blocks a
         // test resetting the override.

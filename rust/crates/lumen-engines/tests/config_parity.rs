@@ -8,14 +8,19 @@
 //! Set `LUMEN_PARITY_DUMP=<file>` to write the full Rust output of every
 //! mismatch; `gen_config_corpus.py --case N` prints Python's side.
 
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use lumen_core::config::build_xray_config;
 use lumen_core::models::{AppSettings, Node, RoutingSettings};
 use lumen_core::pyjson::dumps_compact_sorted_ascii;
 use lumen_engines::singbox::config_builder::build_singbox_outbound;
 use lumen_engines::singbox::document::parse_singbox_document;
-use lumen_engines::singbox::runtime_planner::{PlanRuntimeOptions, plan_singbox_runtime};
+use lumen_engines::singbox::runtime_planner::{
+    PlanRuntimeOptions, plan_singbox_runtime, set_test_getaddrinfo, set_test_tun_env,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -197,6 +202,18 @@ fn json_path_prefix(path: &Path) -> String {
 fn rust_runtime_configs_match_python_on_the_whole_corpus() -> anyhow::Result<()> {
     let corpus: Value =
         serde_json::from_str(include_str!("fixtures/config_parity.json")).expect("fixture");
+    let endpoint_dns: HashMap<String, Vec<IpAddr>> =
+        serde_json::from_value(corpus["endpoint_dns"].clone())?;
+    set_test_getaddrinfo(Some(Arc::new(move |host| {
+        Ok(endpoint_dns
+            .get(host)
+            .into_iter()
+            .flatten()
+            .map(|address| SocketAddr::new(*address, 0))
+            .collect())
+    })));
+    set_test_tun_env(Some(Default::default()), Some(false));
+
     let temp = tempfile::tempdir()?;
     let root = plain_path(temp.path().canonicalize()?);
     let core = root.join("core");

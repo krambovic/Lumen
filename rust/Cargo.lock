@@ -2413,6 +2413,7 @@ dependencies = [
  "chrono",
  "hmac",
  "lumen-core",
+ "lumen-engines",
  "lumen-platform",
  "parking_lot",
  "percent-encoding",

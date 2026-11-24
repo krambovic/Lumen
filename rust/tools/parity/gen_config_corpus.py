@@ -27,11 +27,14 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import ipaddress
 import json
 import os
+import socket
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[3]
 _TEMP = tempfile.TemporaryDirectory(prefix="lumen-config-parity-")
@@ -62,6 +65,30 @@ geodata_resources.SINGBOX_RULE_SET_DIR = PARITY_ROOT / "core" / "rule-sets"
 geodata_resources.SINGBOX_RULE_SET_DIR.mkdir(parents=True)
 for filename in BINARY_RULE_SETS:
     (geodata_resources.SINGBOX_RULE_SET_DIR / filename).touch()
+
+# Exercise IPv4, IPv6 and failed lookups with the same answers on both sides.
+# These addresses are reserved for documentation and never contacted.
+ENDPOINT_DNS = {
+    "engage.cloudflareclient.com": ["192.0.2.10", "2001:db8::10"],
+    "example.com": ["198.51.100.10", "203.0.113.10", "2001:db8::20"],
+}
+
+
+def fixture_getaddrinfo(host, port, family=0, type=0):
+    answers = []
+    for value in ENDPOINT_DNS.get(host, ()):
+        ip = ipaddress.ip_address(value)
+        if ip.version == 4:
+            answers.append((socket.AF_INET, type, 0, "", (value, port or 0)))
+        else:
+            answers.append((socket.AF_INET6, type, 0, "", (value, port or 0, 0, 0)))
+    return answers
+
+
+runtime_planner.socket = Mock(wraps=socket)
+runtime_planner.socket.getaddrinfo = fixture_getaddrinfo
+runtime_planner._local_ipv4_addresses = lambda: set()
+runtime_planner._ipv4_gateway_in_use = lambda _gateway: False
 
 RELAY_PORT = 47001
 PROTECT_PORT = 47002
@@ -387,6 +414,7 @@ def main() -> int:
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE.write_text(json.dumps({
         "binary_rule_sets": BINARY_RULE_SETS,
+        "endpoint_dns": ENDPOINT_DNS,
         "relay_port": RELAY_PORT, "protect_port": PROTECT_PORT, "protect_password": PROTECT_PASSWORD,
         "nodes": node_table, "routings": list(routings.values()), "settings": list(settings.values()),
         "cases": output,

@@ -6,6 +6,9 @@ on:
       prerelease:
         required: true
         type: boolean
+      publish:
+        required: true
+        type: boolean
 
 permissions:
   contents: write
@@ -70,7 +73,17 @@ jobs:
 
       - name: Run Rust tests
         working-directory: rust
+        env:
+          LUMEN_PARITY_DUMP: ${{ runner.temp }}\lumen-config-parity.json
         run: cargo test --locked --workspace --lib --tests
+
+      - name: Upload configuration parity failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lumen-config-parity-failures
+          path: ${{ runner.temp }}\lumen-config-parity.json
+          if-no-files-found: ignore
 
       - name: Cache Inno Setup
         id: cache-inno
@@ -233,6 +246,7 @@ jobs:
           (@("## Changes", "") + $log) | Set-Content release-notes.md -Encoding utf8
 
       - name: Publish GitHub release
+        if: inputs.publish
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::net::{IpAddr, ToSocketAddrs, UdpSocket};
 
 use anyhow::Result;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 
@@ -35,21 +35,21 @@ const SINGBOX_TUN_IPV4_CANDIDATES: [&str; 7] = [
     "192.0.2.1/30",
 ];
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 static TEST_LOCAL_ADDRS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 static TEST_GATEWAY_IN_USE: Mutex<Option<bool>> = Mutex::new(None);
 
 /// Test hook mirroring Python `monkeypatch.setattr(planner, "_local_ipv4_addresses", ...)`.
-#[cfg(test)]
-pub(crate) fn set_test_tun_env(local_addrs: Option<HashSet<String>>, gateway_in_use: Option<bool>) {
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_test_tun_env(local_addrs: Option<HashSet<String>>, gateway_in_use: Option<bool>) {
     *TEST_LOCAL_ADDRS.lock() = local_addrs;
     *TEST_GATEWAY_IN_USE.lock() = gateway_in_use;
 }
 
 /// Python `_local_ipv4_addresses`.
 pub fn local_ipv4_addresses() -> HashSet<String> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(override_set) = TEST_LOCAL_ADDRS.lock().clone() {
         return override_set;
     }
@@ -70,7 +70,7 @@ pub fn local_ipv4_addresses() -> HashSet<String> {
 /// adapter can be bound; a free one raises EADDRNOTAVAIL. This detects
 /// Docker/WSL/Hyper-V clashes.
 pub fn ipv4_gateway_in_use(gateway_ip: &str) -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(value) = *TEST_GATEWAY_IN_USE.lock() {
         return value;
     }
