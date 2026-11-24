@@ -1234,12 +1234,7 @@ fn inspector_rule(ui: &mut Ui, theme: &Theme) {
 }
 
 fn visible_ids(bridge: &AppBridge) -> Vec<String> {
-    bridge
-        .node_model
-        .nodes()
-        .iter()
-        .map(|node| node.id.clone())
-        .collect()
+    bridge.node_model.node_ids().map(str::to_owned).collect()
 }
 fn range<T>(values: &[T], a: usize, b: usize) -> &[T] {
     &values[a.min(b)..=a.max(b)]

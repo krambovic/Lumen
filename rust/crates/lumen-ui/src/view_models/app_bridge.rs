@@ -281,7 +281,7 @@ pub struct AppBridge {
     sub_import_status: String,
     pending_regional_preset: String,
     settings_cached: AppSettings,
-    nodes_cached: Vec<Node>,
+    node_groups_cached: Vec<String>,
     manual_groups_cached: Vec<String>,
     subscriptions_cached: Vec<Value>,
     diagnostics_exporting: bool,
@@ -756,7 +756,7 @@ impl AppBridge {
             sub_import_status: String::new(),
             pending_regional_preset: String::new(),
             settings_cached: AppSettings::default(),
-            nodes_cached: Vec::new(),
+            node_groups_cached: Vec::new(),
             manual_groups_cached: Vec::new(),
             subscriptions_cached: Vec::new(),
             diagnostics_exporting: false,
@@ -947,15 +947,19 @@ impl AppBridge {
             self.push_initial_snapshot();
             return;
         }
-        let (settings, state) = {
+        let settings = {
             let mut controller = self.controller.lock();
             controller.schedule_startup_subscription_refresh();
-            (controller.state.settings.clone(), controller.state.clone())
+            self.node_groups_cached = controller
+                .state
+                .nodes
+                .iter()
+                .map(|node| node.group.clone())
+                .collect();
+            self.manual_groups_cached = controller.state.manual_groups.clone();
+            self.subscriptions_cached = controller.state.subscriptions.clone();
+            controller.state.settings.clone()
         };
-        self.settings_cached = settings.clone();
-        self.nodes_cached = state.nodes.clone();
-        self.manual_groups_cached = state.manual_groups.clone();
-        self.subscriptions_cached = state.subscriptions.clone();
         self.filter_group = settings.node_filter_group.trim().to_string();
         self.sort_key = if settings.node_sort_key.is_empty() {
             "manual".to_string()
@@ -972,13 +976,18 @@ impl AppBridge {
     }
 
     fn push_initial_snapshot(&mut self) {
-        let (state, selected, connected, desired, locked) = {
+        let (settings, routing, selected, connected, desired, locked) = {
             let controller = self.controller.lock();
+            let nodes = self.sorted_nodes(self.filtered_nodes(&controller.state.nodes));
+            self.node_model.set_runtime_support(true);
+            self.node_model
+                .set_nodes(nodes, controller.state.selected_node_id.as_deref());
             let selected = controller.selected_node();
             let connected = controller.connected;
             let desired = controller.runtime.desired_connected;
             (
-                controller.state.clone(),
+                controller.state.settings.clone(),
+                controller.state.routing.clone(),
                 selected,
                 connected,
                 desired,
@@ -986,16 +995,11 @@ impl AppBridge {
             )
         };
         self.locked = locked;
-        self.node_model.set_runtime_support(true);
-        self.node_model.set_nodes(
-            self.sorted_nodes(self.filtered_nodes(&state.nodes)),
-            state.selected_node_id.as_deref(),
-        );
         self.on_selection_changed_inner(selected);
-        self.routing_cached = state.routing.clone();
-        self.routing_mode = state.routing.mode.clone();
+        self.routing_mode = routing.mode.clone();
+        self.routing_cached = routing;
         self.changes.routing = true;
-        self.apply_settings_snapshot(&state.settings);
+        self.apply_settings_snapshot(&settings);
         self.transition_target_connected = desired || connected;
         self.transition_connecting = self.transition_target_connected;
         self.on_connection_changed_inner(connected);
@@ -1286,7 +1290,12 @@ impl AppBridge {
     fn on_nodes_changed(&mut self) {
         {
             let controller = self.controller.lock();
-            self.nodes_cached = controller.state.nodes.clone();
+            self.node_groups_cached = controller
+                .state
+                .nodes
+                .iter()
+                .map(|node| node.group.clone())
+                .collect();
             self.manual_groups_cached = controller.state.manual_groups.clone();
             self.node_model.set_runtime_support(true);
             let nodes = self.sorted_nodes(self.filtered_nodes(&controller.state.nodes));
@@ -1298,11 +1307,11 @@ impl AppBridge {
     }
 
     /// Python `_filtered_nodes`.
-    fn filtered_nodes(&self, nodes: &[Node]) -> Vec<Node> {
+    fn filtered_nodes<'a>(&self, nodes: &'a [Node]) -> Vec<&'a Node> {
         let group = &self.filter_group;
         let text = self.filter_text.trim().to_lowercase();
         if group.is_empty() && text.is_empty() {
-            return nodes.to_vec();
+            return nodes.iter().collect();
         }
         nodes
             .iter()
@@ -1322,12 +1331,11 @@ impl AppBridge {
                 }
                 true
             })
-            .cloned()
             .collect()
     }
 
     /// Python `_sorted_nodes`.
-    fn sorted_nodes(&self, mut items: Vec<Node>) -> Vec<Node> {
+    fn sorted_nodes<'a>(&self, mut items: Vec<&'a Node>) -> Vec<&'a Node> {
         match self.sort_key.as_str() {
             "name" => items.sort_by(|a, b| {
                 let key = |node: &Node| {
@@ -5109,16 +5117,12 @@ impl AppBridge {
 
     /// Python `_apply_node_model`.
     fn apply_node_model(&mut self) {
-        let (nodes, selected) = {
-            let controller = self.controller.lock();
-            self.node_model.set_runtime_support(true);
-            (
-                self.sorted_nodes(self.filtered_nodes(&controller.state.nodes)),
-                controller.state.selected_node_id.clone(),
-            )
-        };
-        self.nodes_cached = nodes.clone();
-        self.node_model.set_nodes(nodes, selected.as_deref());
+        let controller = self.controller.lock();
+        let nodes = self.sorted_nodes(self.filtered_nodes(&controller.state.nodes));
+        self.node_groups_cached = nodes.iter().map(|node| node.group.clone()).collect();
+        self.node_model.set_runtime_support(true);
+        self.node_model
+            .set_nodes(nodes, controller.state.selected_node_id.as_deref());
     }
 
     /// Python `nodeSortKey`.
@@ -5310,11 +5314,11 @@ impl AppBridge {
                 seen_keys.insert(key);
             }
         }
-        for node in &self.nodes_cached {
-            let group = if node.group.trim().is_empty() {
+        for group in &self.node_groups_cached {
+            let group = if group.trim().is_empty() {
                 "Default".to_string()
             } else {
-                node.group.trim().to_string()
+                group.trim().to_string()
             };
             let key = group.to_lowercase();
             if !seen_keys.contains(&key) {
@@ -6939,11 +6943,11 @@ impl AppBridge {
         if !self.settings_cached.onboarding_version.is_empty() {
             return true;
         }
-        !self.nodes_cached.is_empty() || !self.subscriptions_cached.is_empty()
+        !self.node_groups_cached.is_empty() || !self.subscriptions_cached.is_empty()
     }
 
     pub fn onboarding_server_count(&self) -> usize {
-        self.nodes_cached.len()
+        self.node_groups_cached.len()
     }
 
     pub fn recommended_vpn_url(&self) -> &'static str {

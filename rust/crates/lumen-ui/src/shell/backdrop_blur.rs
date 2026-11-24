@@ -57,7 +57,7 @@ void main() {
 struct Program {
     program: glow::Program,
     vertex_array: glow::VertexArray,
-    texture: glow::Texture,
+    texture: Option<glow::Texture>,
     size: [i32; 2],
     screen: glow::UniformLocation,
     base: glow::UniformLocation,
@@ -84,6 +84,32 @@ impl Default for BackdropBlur {
 }
 
 impl BackdropBlur {
+    /// Release the framebuffer copy on the render thread after the overlay
+    /// is gone. Keep shaders ready for the next opening.
+    pub(crate) fn release_texture(&self, ctx: &egui::Context) {
+        if !matches!(&*self.state.lock(), State::Ready(program) if program.texture.is_some()) {
+            return;
+        }
+        let state = self.state.clone();
+        let callback = eframe::egui_glow::CallbackFn::new(move |_, painter| {
+            if let State::Ready(program) = &mut *state.lock()
+                && let Some(texture) = program.texture.take()
+            {
+                // The paint callback runs with the texture's GL context current.
+                unsafe { painter.gl().delete_texture(texture) };
+                program.size = [0, 0];
+            }
+        });
+        let layer = egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("release-onboarding-blur"),
+        );
+        ctx.layer_painter(layer).add(egui::PaintCallback {
+            rect: ctx.viewport_rect(),
+            callback: Arc::new(callback),
+        });
+    }
+
     /// Whether the GL program could not be built, so the caller must paint a
     /// flat backdrop. Unknown until the first callback has run.
     pub(crate) fn unsupported(&self) -> bool {
@@ -157,17 +183,7 @@ impl Program {
                 return None;
             };
             let vertex_array = gl.create_vertex_array().ok()?;
-            let texture = gl.create_texture().ok()?;
-            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-            for (parameter, value) in [
-                (glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR),
-                (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
-                (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
-                (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
-            ] {
-                gl.tex_parameter_i32(glow::TEXTURE_2D, parameter, value as i32);
-            }
-            Some(Self { program, vertex_array, texture, size: [0, 0], screen, base, tint, opacity, lod })
+            Some(Self { program, vertex_array, texture: None, size: [0, 0], screen, base, tint, opacity, lod })
         }
     }
 
@@ -179,7 +195,23 @@ impl Program {
             return;
         }
         unsafe {
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
+            if self.texture.is_none() {
+                let Ok(texture) = gl.create_texture() else {
+                    return;
+                };
+                self.texture = Some(texture);
+                gl.bind_texture(glow::TEXTURE_2D, self.texture);
+                for (parameter, value) in [
+                    (glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR),
+                    (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
+                    (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
+                    (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
+                ] {
+                    gl.tex_parameter_i32(glow::TEXTURE_2D, parameter, value as i32);
+                }
+            } else {
+                gl.bind_texture(glow::TEXTURE_2D, self.texture);
+            }
             if self.size != size {
                 gl.tex_image_2d(
                     glow::TEXTURE_2D,

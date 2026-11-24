@@ -166,16 +166,19 @@ impl Onboarding {
         let closing = self.closing_at.map(|start| (now - start) as f32);
         if let Some(elapsed) = closing {
             if !animated || elapsed >= 0.6 {
+                self.blur.release_texture(ctx);
                 *self = Self { finished: true, blur: self.blur.clone(), ..Self::default() };
                 return false;
             }
             ctx.request_repaint();
         } else {
             if !bridge.onboarding_required() {
+                self.blur.release_texture(ctx);
                 *self = Self { blur: self.blur.clone(), ..Self::default() };
                 return false;
             }
             if bridge.locked() || self.finished {
+                self.blur.release_texture(ctx);
                 return false;
             }
         }

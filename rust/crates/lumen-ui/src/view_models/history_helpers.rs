@@ -181,43 +181,46 @@ pub fn build_history_payload(
         });
     };
 
-    let mut sessions = storage.get_sessions(days);
-    sessions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-
-    let total_up: u64 = sessions.iter().map(|session| session.total_upload).sum();
-    let total_down: u64 = sessions.iter().map(|session| session.total_download).sum();
-
-    let session_rows: Vec<serde_json::Value> = sessions
-        .iter()
-        .map(|session| {
-            let proc_keys: Vec<&String> = session.processes.keys().collect();
-            let mut procs = proc_keys
-                .iter()
-                .take(5)
-                .map(|key| key.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            if proc_keys.len() > 5 {
-                procs = format!("{procs} (+{})", proc_keys.len() - 5);
-            }
-            json!({
-                "date": fmt_datetime(&session.started_at),
-                "node": session.node_name,
-                "mode": session.mode,
-                "isTun": is_tun(&session.mode),
-                "duration": fmt_duration(&session.started_at, session.ended_at.as_deref()),
-                "down": fmt_bytes(session.total_download as i64),
-                "hasDown": session.total_download > 0,
-                "up": fmt_bytes(session.total_upload as i64),
-                "procs": procs,
-                // Raw values for client-side column sorting.
-                "ts": session.started_at,
-                "durSec": duration_seconds_of(&session.started_at, session.ended_at.as_deref()),
-                "downB": session.total_download as i64,
-                "upB": session.total_upload as i64,
+    let (total_up, total_down, session_rows) = storage.with_sessions(days, |sessions| {
+        let mut sessions: Vec<_> = sessions.collect();
+        sessions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        let mut total_up = 0;
+        let mut total_down = 0;
+        let session_rows: Vec<_> = sessions
+            .into_iter()
+            .map(|session| {
+                total_up += session.total_upload;
+                total_down += session.total_download;
+                let mut procs = session
+                    .processes
+                    .keys()
+                    .take(5)
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if session.processes.len() > 5 {
+                    procs = format!("{procs} (+{})", session.processes.len() - 5);
+                }
+                json!({
+                    "date": fmt_datetime(&session.started_at),
+                    "node": session.node_name,
+                    "mode": session.mode,
+                    "isTun": is_tun(&session.mode),
+                    "duration": fmt_duration(&session.started_at, session.ended_at.as_deref()),
+                    "down": fmt_bytes(session.total_download as i64),
+                    "hasDown": session.total_download > 0,
+                    "up": fmt_bytes(session.total_upload as i64),
+                    "procs": procs,
+                    // Raw values for client-side column sorting.
+                    "ts": session.started_at,
+                    "durSec": duration_seconds_of(&session.started_at, session.ended_at.as_deref()),
+                    "downB": session.total_download as i64,
+                    "upB": session.total_upload as i64,
+                })
             })
-        })
-        .collect();
+            .collect();
+        (total_up, total_down, session_rows)
+    });
 
     let daily = storage.get_daily_totals(days);
     let mut daily_pairs: Vec<(&String, &(u64, u64))> = daily.iter().collect();
@@ -260,7 +263,7 @@ pub fn build_history_payload(
     json!({
         "summaryDown": fmt_bytes(total_down as i64),
         "summaryUp": fmt_bytes(total_up as i64),
-        "summarySessions": sessions.len(),
+        "summarySessions": session_rows.len(),
         "sessions": session_rows,
         "daily": daily_rows,
         "procs": proc_rows,

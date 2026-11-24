@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -25,7 +26,7 @@ fn counter(value: &Value) -> u64 {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ProcessTrafficEntry {
     pub upload: u64,
     pub download: u64,
@@ -81,7 +82,7 @@ impl ProcessTrafficEntry {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct TrafficSession {
     pub id: String,
     pub started_at: String,
@@ -431,14 +432,26 @@ impl TrafficHistoryStorage {
     }
 
     fn snapshot(&self, inner: &HistoryInner) -> String {
-        let payload = json!({
-            "sessions": inner.sessions.iter().map(|s| s.to_dict()).collect::<Vec<_>>(),
-            "daily_totals": inner
+        #[derive(Serialize)]
+        struct DailyTotal {
+            upload: u64,
+            download: u64,
+        }
+
+        #[derive(Serialize)]
+        struct Snapshot<'a> {
+            sessions: &'a [TrafficSession],
+            daily_totals: BTreeMap<&'a str, DailyTotal>,
+        }
+
+        let payload = Snapshot {
+            sessions: &inner.sessions,
+            daily_totals: inner
                 .daily_totals
                 .iter()
-                .map(|(k, (up, down))| (k.clone(), json!({"upload": up, "download": down})))
-                .collect::<BTreeMap<_, _>>(),
-        });
+                .map(|(date, &(upload, download))| (date.as_str(), DailyTotal { upload, download }))
+                .collect(),
+        };
         serde_json::to_string(&payload).unwrap_or_default()
     }
 
@@ -640,14 +653,19 @@ impl TrafficHistoryStorage {
     }
 
     pub fn get_sessions(&self, days: i64) -> Vec<TrafficSession> {
+        self.with_sessions(days, |sessions| sessions.cloned().collect())
+    }
+
+    /// Read sessions while their storage lock is held. The callback may
+    /// borrow each session but must not re-enter this storage.
+    pub fn with_sessions<T>(
+        &self,
+        days: i64,
+        read: impl FnOnce(&mut dyn Iterator<Item = &TrafficSession>) -> T,
+    ) -> T {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339();
         let inner = self.inner.lock().unwrap();
-        inner
-            .sessions
-            .iter()
-            .filter(|s| s.started_at >= cutoff)
-            .cloned()
-            .collect()
+        read(&mut inner.sessions.iter().filter(|session| session.started_at >= cutoff))
     }
 
     pub fn get_daily_totals(&self, days: i64) -> BTreeMap<String, (u64, u64)> {
@@ -666,46 +684,47 @@ impl TrafficHistoryStorage {
         &self,
         days: i64,
     ) -> BTreeMap<String, BTreeMap<String, Value>> {
-        let mut totals: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
-        for session in self.get_sessions(days) {
-            for (exe, entry) in session.processes {
-                let result = totals.entry(exe).or_insert_with(|| {
-                    BTreeMap::from([
-                        ("upload".into(), json!(0)),
-                        ("download".into(), json!(0)),
-                        ("route".into(), json!(entry.route.clone())),
-                        ("proxy_bytes".into(), json!(0)),
-                        ("direct_bytes".into(), json!(0)),
-                        ("unknown_bytes".into(), json!(0)),
-                    ])
-                });
-                for key in ["upload", "download", "proxy_bytes", "direct_bytes", "unknown_bytes"] {
-                    let current = result.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
-                    let add = match key {
-                        "upload" => entry.upload,
-                        "download" => entry.download,
-                        "proxy_bytes" => entry.proxy_bytes,
-                        "direct_bytes" => entry.direct_bytes,
-                        _ => entry.unknown_bytes,
+        let totals = self.with_sessions(days, |sessions| {
+            let mut totals: BTreeMap<String, ProcessTrafficEntry> = BTreeMap::new();
+            for session in sessions {
+                for (exe, entry) in &session.processes {
+                    let Some(result) = totals.get_mut(exe) else {
+                        totals.insert(exe.clone(), entry.clone());
+                        continue;
                     };
-                    result.insert(key.into(), json!(current + add));
-                }
-                let current_route = result
-                    .get("route")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                if entry.route != current_route {
-                    let route = if entry.route == "unknown" || current_route == "unknown" {
-                        "unknown".to_string()
-                    } else {
-                        "mixed".to_string()
-                    };
-                    result.insert("route".into(), json!(route));
+                    result.upload += entry.upload;
+                    result.download += entry.download;
+                    result.proxy_bytes += entry.proxy_bytes;
+                    result.direct_bytes += entry.direct_bytes;
+                    result.unknown_bytes += entry.unknown_bytes;
+                    if entry.route != result.route {
+                        let route = if entry.route == "unknown" || result.route == "unknown" {
+                            "unknown"
+                        } else {
+                            "mixed"
+                        };
+                        if result.route != route {
+                            result.route = route.into();
+                        }
+                    }
                 }
             }
-        }
+            totals
+        });
         totals
+            .into_iter()
+            .map(|(exe, entry)| {
+                let value = BTreeMap::from([
+                    ("upload".into(), json!(entry.upload)),
+                    ("download".into(), json!(entry.download)),
+                    ("route".into(), json!(entry.route)),
+                    ("proxy_bytes".into(), json!(entry.proxy_bytes)),
+                    ("direct_bytes".into(), json!(entry.direct_bytes)),
+                    ("unknown_bytes".into(), json!(entry.unknown_bytes)),
+                ]);
+                (exe, value)
+            })
+            .collect()
     }
 
     pub fn current_session(&self) -> Option<TrafficSession> {
@@ -723,6 +742,24 @@ impl Default for TrafficHistoryStorage {
 #[cfg(test)]
 mod quarantine_tests {
     use super::*;
+
+    #[test]
+    fn borrowed_sessions_keep_period_filter_and_match_disk_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        let storage = TrafficHistoryStorage::with_path(path.clone());
+        let id = storage.start_session("Example", "proxy");
+        assert!(storage.flush(Duration::from_secs(3)));
+        storage.with_sessions(1, |sessions| {
+            let recent = sessions.collect::<Vec<_>>();
+            let saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(recent.len(), 1);
+            assert_eq!(recent[0].id, id);
+            assert_eq!(saved["sessions"][0], recent[0].to_dict());
+            assert!(saved["daily_totals"].is_object());
+        });
+        storage.with_sessions(0, |sessions| assert_eq!(sessions.count(), 0));
+    }
 
     /// Python test_audit_traffic_history / test_persistence_and_startup.
     #[test]

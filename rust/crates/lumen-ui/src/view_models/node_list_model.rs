@@ -6,6 +6,7 @@
 //! `flush_pending_changes`) is kept so bulk updates keep coalescing into the
 //! same contiguous ranges the QML view consumed.
 
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 
 use parking_lot::Mutex;
@@ -136,10 +137,60 @@ pub struct NodeRow {
     pub ping_kind: String,
 }
 
+/// Display data and live measurements. The controller owns connection
+/// configs, import links and measurement histories.
+struct ServerRow {
+    id: String,
+    name: String,
+    scheme: String,
+    server: String,
+    port: i64,
+    group: String,
+    description: String,
+    auto_description: bool,
+    transport: String,
+    protocol: String,
+    ping_ms: Option<i64>,
+    ping_kind: String,
+    speed_mbps: Option<f64>,
+    is_alive: Option<bool>,
+    country_code: String,
+    last_used_at: Option<String>,
+    singbox_only: bool,
+    singbox_supported: bool,
+}
+
+impl From<&Node> for ServerRow {
+    fn from(node: &Node) -> Self {
+        let protocol = node.outbound["protocol"].as_str().unwrap_or_default().trim();
+        Self {
+            id: node.id.clone(),
+            name: node.name.clone(),
+            scheme: node.scheme.to_uppercase(),
+            server: node.server.clone(),
+            port: node.port,
+            group: node.group.clone(),
+            description: node.description.trim().to_owned(),
+            auto_description: node.scheme.trim().eq_ignore_ascii_case("auto")
+                || protocol.eq_ignore_ascii_case("xray_config"),
+            transport: node_transport(node),
+            protocol: node_protocol_label(node),
+            ping_ms: node.ping_ms,
+            ping_kind: node.ping_kind.clone(),
+            speed_mbps: node.speed_mbps,
+            is_alive: node.is_alive,
+            country_code: node.country_code.clone(),
+            last_used_at: node.last_used_at.clone(),
+            singbox_only: is_native_singbox_only_node(Some(node)),
+            singbox_supported: node_supported_by_core(Some(node), "singbox"),
+        }
+    }
+}
+
 /// Python `NodeListModel` (QAbstractListModel) as a plain struct.
 #[derive(Default)]
 pub struct NodeListModel {
-    nodes: Vec<Node>,
+    nodes: Vec<ServerRow>,
     selected_id: Option<String>,
     index_by_id: HashMap<String, usize>,
     speed_progress: HashMap<String, i64>,
@@ -171,11 +222,11 @@ impl NodeListModel {
         self.nodes.len()
     }
 
-    pub fn nodes(&self) -> &[Node] {
-        &self.nodes
+    pub fn node_ids(&self) -> impl Iterator<Item = &str> {
+        self.nodes.iter().map(|node| node.id.as_str())
     }
 
-    pub fn node_at(&self, row: usize) -> Option<&Node> {
+    fn node_at(&self, row: usize) -> Option<&ServerRow> {
         self.nodes.get(row)
     }
 
@@ -208,7 +259,7 @@ impl NodeListModel {
 
     pub fn scheme_at(&self, row: usize) -> String {
         self.node_at(row)
-            .map(|node| node.scheme.to_uppercase())
+            .map(|node| node.scheme.clone())
             .unwrap_or_default()
     }
 
@@ -216,29 +267,19 @@ impl NodeListModel {
         let Some(node) = self.node_at(row) else {
             return String::new();
         };
-        let description = node.description.trim();
-        if !description.is_empty() {
-            return description.to_string();
+        if !node.description.is_empty() {
+            return node.description.clone();
         }
-        let outbound = if node.outbound.is_object() {
-            &node.outbound
-        } else {
-            &serde_json::Value::Null
-        };
-        let protocol = outbound
-            .get("protocol")
-            .and_then(|value| value.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_lowercase();
-        if node.scheme.trim().to_lowercase() == "auto" || protocol == "xray_config" {
+        if node.auto_description {
             return tr("Автовыбор лучших серверов", &[]);
         }
         String::new()
     }
 
     pub fn transport_at(&self, row: usize) -> String {
-        self.node_at(row).map(node_transport).unwrap_or_default()
+        self.node_at(row)
+            .map(|node| node.transport.clone())
+            .unwrap_or_default()
     }
 
     pub fn server_at(&self, row: usize) -> String {
@@ -266,7 +307,7 @@ impl NodeListModel {
 
     pub fn protocol_at(&self, row: usize) -> String {
         self.node_at(row)
-            .map(node_protocol_label)
+            .map(|node| node.protocol.clone())
             .unwrap_or_default()
     }
 
@@ -359,7 +400,7 @@ impl NodeListModel {
 
     // ── Country detection (cached per node id) ─────────────────
 
-    fn country_for(&self, node: &Node) -> String {
+    fn country_for(&self, node: &ServerRow) -> String {
         let code = node.country_code.trim().to_uppercase();
         if !code.is_empty() {
             return code;
@@ -400,15 +441,15 @@ impl NodeListModel {
     // ── Bulk + incremental updates ─────────────────────────────
 
     /// Python `set_nodes`.
-    pub fn set_nodes(&mut self, nodes: Vec<Node>, selected_id: Option<&str>) {
-        let new_ids: Vec<&str> = nodes.iter().map(|node| node.id.as_str()).collect();
-        let structural = self
-            .nodes
-            .iter()
-            .map(|node| node.id.as_str())
-            .collect::<Vec<_>>()
-            != new_ids;
-        self.nodes = nodes;
+    pub fn set_nodes(
+        &mut self,
+        nodes: impl IntoIterator<Item = impl Borrow<Node>>,
+        selected_id: Option<&str>,
+    ) {
+        self.nodes = nodes
+            .into_iter()
+            .map(|node| ServerRow::from(node.borrow()))
+            .collect();
         self.selected_id = selected_id.map(str::to_string);
         self.index_by_id = self
             .nodes
@@ -424,7 +465,6 @@ impl NodeListModel {
         self.country_cache
             .lock()
             .retain(|key, _| live_ids.contains(key.as_str()));
-        let _ = structural; // Qt reset notifications are an egui no-op.
     }
 
     /// Python `set_selected`.
@@ -439,11 +479,15 @@ impl NodeListModel {
         }
     }
 
-    fn runtime_supported(&self, node: &Node) -> bool {
-        if !self.allow_native_singbox_only && is_native_singbox_only_node(Some(node)) {
+    fn runtime_supported(&self, node: &ServerRow) -> bool {
+        if !self.allow_native_singbox_only && node.singbox_only {
             return false;
         }
-        node_supported_by_core(Some(node), &self.core_preference)
+        match self.core_preference.as_str() {
+            "auto" => true,
+            "xray" => !node.singbox_only,
+            _ => node.singbox_supported,
+        }
     }
 
     /// Python `set_core_preference` — dim servers the chosen main core cannot
@@ -561,7 +605,7 @@ impl NodeListModel {
             },
             server: node.server.clone(),
             group: node.group.clone(),
-            transport: node_transport(node),
+            transport: node.transport.clone(),
             ping_kind: node.ping_kind.clone(),
         })
     }
@@ -707,7 +751,7 @@ impl DashboardNodeProxy {
             .filter(|row| self.filter_accepts_row(source, *row))
             .collect();
         if self.ping_sorted.unwrap_or(false) {
-            let nodes = source.nodes();
+            let nodes = &source.nodes;
             rows.sort_by(|a, b| {
                 let ping = |row: usize| -> i64 {
                     match nodes[row].ping_ms {
@@ -756,6 +800,24 @@ impl Casefold for str {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn row_snapshot_keeps_labels_and_core_support_from_a_borrowed_node() {
+        let mut node = node("id", "Example", "host.test");
+        node.scheme = "naive".into();
+        node.outbound = json!({"singbox": {"type": "naive", "quic": true}});
+        node.ping_history = vec![("old".into(), Some(25)); 50];
+        let mut model = NodeListModel::new();
+        model.set_nodes([&node], Some("id"));
+        assert_eq!(model.transport_at(0), "QUIC");
+        assert_eq!(model.protocol_at(0), "Naive");
+        assert!(model.selected_at(0));
+        assert!(!model.runtime_supported_at(0));
+        model.set_runtime_support(true);
+        assert!(model.runtime_supported_at(0));
+        model.set_core_preference("xray");
+        assert!(!model.runtime_supported_at(0));
+    }
 
     fn node(id: &str, name: &str, server: &str) -> Node {
         let mut node = Node::new();
