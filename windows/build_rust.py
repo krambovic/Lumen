@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -121,9 +122,12 @@ def main() -> int:
     parser.add_argument("--no-zip", action="store_true", help="skip portable archive creation")
     parser.add_argument("--no-installer", action="store_true", help="skip the Inno Setup installer")
     parser.add_argument("--stage-dir", type=Path, help="retain the staged application in an empty directory")
+    parser.add_argument("--version", help="override the package version with X.Y.Z or X.Y.Z-pre.N")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("the native Windows package must be built on Windows")
+    if args.version is not None and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-pre\.[0-9]+)?", args.version):
+        parser.error("--version must use X.Y.Z or X.Y.Z-pre.N")
 
     required_core_files = (
         "xray.exe",
@@ -135,7 +139,7 @@ def main() -> int:
         if not (packaging.CORE_DIR / relative).is_file():
             parser.error(f"missing bundled core file: {packaging.CORE_DIR / relative}")
 
-    version = read_rust_version()
+    version = args.version if args.version is not None else read_rust_version()
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="lumen-rust-", dir=DIST_DIR) as temporary:
         work = Path(temporary)

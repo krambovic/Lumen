@@ -896,10 +896,13 @@ client, core/resource updaters, zapret and discord proxy managers.
 ## Left to port (Python source -> target crate)
 
 All ten Windows pages and the onboarding flow are wired to the Rust shell.
-The Windows release and prerelease workflows package the Rust executable
-through `windows/build.py`. The portable archive and Inno Setup installer
+The manual **Windows Rust Pre-Release** and **Windows Rust Release** workflows
+test the Rust workspace and package it through `windows/build.py`. The stable
+tag uses the Cargo workspace version, and the prerelease adds `-pre.NN` to
+the tag and package versions. The portable archive and Inno Setup installer
 carry the same executable, bundled cores, assets and templates, with the
-`LumenKVN.exe` alias for updates from older installs.
+`LumenKVN.exe` alias for updates from older installs. The **Pre-Release** and
+**Build & Release** workflows package the Python/QML client.
 
 ## Known warnings to clean
 None — the lumen-core list was cleaned in the same pass as the direct-route

@@ -1,3 +1,11 @@
+## Desktop v3.0.0
+
+* Rebuilt the Windows client in Rust with an egui interface, including the dashboard, server editor, routing, logs, settings and onboarding.
+* Kept the Xray and sing-box extended engines and support for existing Windows profiles, including DPAPI and passphrase-protected profiles.
+* Added compatibility checks that compare Rust and Python link parsing, runtime configurations and server editor output.
+
+Full Changelog: https://github.com/krambovic/Lumen/compare/v2.1.4...v3.0.0
+
 ## Android v1.5.2
 
 * fix: preserve the selected ping method when subscriptions refresh instead of resetting it to TCPing

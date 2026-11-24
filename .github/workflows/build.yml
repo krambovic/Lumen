@@ -40,8 +40,11 @@ jobs:
           cache: pip
           cache-dependency-path: windows/requirements.txt
 
-      - name: Set up Rust
-        run: rustup default stable-x86_64-pc-windows-msvc
+      - name: Cache venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py312-${{ hashFiles('windows/requirements.txt') }}
 
       - name: Cache Inno Setup
         id: cache-inno
@@ -167,21 +170,21 @@ jobs:
           Write-Host "Core binaries ready:"
           Get-ChildItem windows/core/
 
-      - name: Build Rust app, installer and portable archive
+      - name: Build QML app, installer and portable archive
         shell: pwsh
         run: |
           cd windows
-          python build.py
+          python build_qml.py
 
       - name: List release assets
         shell: pwsh
-        run: Get-ChildItem rust/dist/Lumen-Setup-windows-x64.exe, rust/dist/Lumen-portable-windows-x64.zip | Format-Table Name, Length
+        run: Get-ChildItem windows/dist/Lumen-Setup-windows-x64.exe, windows/dist/Lumen-portable-windows-x64.zip | Format-Table Name, Length
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
           name: Lumen-portable
-          path: rust/dist/Lumen-portable-windows-x64.zip
+          path: windows/dist/Lumen-portable-windows-x64.zip
 
       - name: Create or update GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
@@ -194,5 +197,5 @@ jobs:
           make_latest: true
           overwrite_files: true
           files: |
-            rust/dist/Lumen-Setup-windows-x64.exe
-            rust/dist/Lumen-portable-windows-x64.zip
+            windows/dist/Lumen-Setup-windows-x64.exe
+            windows/dist/Lumen-portable-windows-x64.zip
