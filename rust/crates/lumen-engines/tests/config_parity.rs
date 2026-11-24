@@ -45,6 +45,7 @@ fn mask(mut text: String, secrets: &[&str]) -> String {
 struct Fixture {
     corpus: Value,
     document: lumen_engines::singbox::document::ParsedSingboxDocument,
+    escaped_root: String,
 }
 
 enum Outcome {
@@ -151,7 +152,11 @@ impl Fixture {
                             secrets.push(&sidecar.relay_username);
                             secrets.push(&sidecar.relay_password);
                         }
-                        Outcome::Value(mask(dumps_compact_sorted_ascii(payload), &secrets))
+                        let canonical = mask(dumps_compact_sorted_ascii(payload), &secrets);
+                        Outcome::Value(canonical.replace(
+                            &self.escaped_root,
+                            &json_path_prefix(Path::new("<parity-root>")),
+                        ))
                     }
                     Err(error) => Outcome::Error(error.to_string()),
                 }
@@ -182,27 +187,51 @@ fn check_case(fixture: &Fixture, index: usize, case: &Value) -> Option<Value> {
     })
 }
 
+fn json_path_prefix(path: &Path) -> String {
+    let prefix = format!("{}{}", path.display(), std::path::MAIN_SEPARATOR);
+    let quoted = dumps_compact_sorted_ascii(json!(prefix));
+    quoted[1..quoted.len() - 1].to_owned()
+}
+
 #[test]
-fn rust_runtime_configs_match_python_on_the_whole_corpus() {
+fn rust_runtime_configs_match_python_on_the_whole_corpus() -> anyhow::Result<()> {
     let corpus: Value =
         serde_json::from_str(include_str!("fixtures/config_parity.json")).expect("fixture");
-    // Generated configs embed data-directory paths; use the generator's.
+    let temp = tempfile::tempdir()?;
+    let root = plain_path(temp.path().canonicalize()?);
+    let core = root.join("core");
+    let rule_sets = core.join("rule-sets");
+    std::fs::create_dir_all(&rule_sets)?;
+    // The config builder checks for these paths but never opens the binaries.
+    std::fs::File::create(core.join("xray.exe"))?;
+    for name in corpus["binary_rule_sets"].as_array().expect("binary rule sets") {
+        std::fs::File::create(rule_sets.join(name.as_str().expect("rule-set filename")))?;
+    }
+    let windows_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../windows");
+    let zapret_lists = root.join("zapret/lists");
+    std::fs::create_dir_all(&zapret_lists)?;
+    for entry in std::fs::read_dir(windows_dir.join("zapret/lists"))? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            std::fs::copy(entry.path(), zapret_lists.join(entry.file_name()))?;
+        }
+    }
+
     // SAFETY: this integration-test binary runs a single test, so no other
     // thread reads the environment concurrently.
     unsafe {
-        std::env::set_var("LOCALAPPDATA", corpus["localappdata"].as_str().unwrap());
-        std::env::set_var("APPDATA", corpus["appdata"].as_str().unwrap());
+        std::env::set_var("LOCALAPPDATA", root.join("Local"));
+        std::env::set_var("APPDATA", root.join("Roaming"));
     }
-    // Python run from source resolves core/zapret/data under `windows/`.
-    let windows_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../windows");
+    let escaped_root = json_path_prefix(&root);
     assert!(
-        lumen_core::constants::set_base_dir(plain_path(windows_dir.canonicalize().expect("windows dir"))),
+        lumen_core::constants::set_base_dir(root),
         "base dir already fixed"
     );
     let template = template_path();
     let text = std::fs::read_to_string(&template).expect("default sing-box template");
     let document = parse_singbox_document(&template, &text).expect("template parses");
-    let fixture = Fixture { corpus, document };
+    let fixture = Fixture { corpus, document, escaped_root };
     let cases = fixture.corpus["cases"].as_array().unwrap();
     assert!(cases.len() > 10_000, "corpus too small: {}", cases.len());
 
@@ -231,7 +260,7 @@ fn rust_runtime_configs_match_python_on_the_whole_corpus() {
     });
     failures.sort_by_key(|failure| failure["index"].as_u64());
     if failures.is_empty() {
-        return;
+        return Ok(());
     }
     if let Ok(path) = std::env::var("LUMEN_PARITY_DUMP") {
         std::fs::write(path, serde_json::to_string(&failures).unwrap()).unwrap();

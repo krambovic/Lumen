@@ -30,17 +30,17 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-# Both sides must resolve the same data directory (cache paths end up in
-# the generated configs).
-PARITY_LOCALAPPDATA = r"C:\LumenParity\Local"
-PARITY_APPDATA = r"C:\LumenParity\Roaming"
-os.environ["LOCALAPPDATA"] = PARITY_LOCALAPPDATA
-os.environ["APPDATA"] = PARITY_APPDATA
+_TEMP = tempfile.TemporaryDirectory(prefix="lumen-config-parity-")
+PARITY_ROOT = Path(_TEMP.name).resolve()
+os.environ["LOCALAPPDATA"] = str(PARITY_ROOT / "Local")
+os.environ["APPDATA"] = str(PARITY_ROOT / "Roaming")
 sys.path.insert(0, str(ROOT / "windows"))
 
+from xray_fluent import geodata_resources  # noqa: E402
 from xray_fluent.engines.singbox import runtime_planner  # noqa: E402
 from xray_fluent.engines.singbox.config_builder import build_singbox_outbound  # noqa: E402
 from xray_fluent.engines.singbox.runtime_planner import (  # noqa: E402
@@ -54,6 +54,14 @@ from xray_fluent.routing_presets import BUILT_IN_ROUTING_PRESET_IDS, build_routi
 PARSER_FIXTURE = ROOT / "rust" / "crates" / "lumen-core" / "tests" / "fixtures" / "parser_parity.json"
 FIXTURE = ROOT / "rust" / "crates" / "lumen-engines" / "tests" / "fixtures" / "config_parity.json"
 TEMPLATE = ROOT / "windows" / "data" / "templates" / "sing-box" / "default.json"
+
+# The planner checks only whether the files exist. It never opens the SRS
+# payloads. The Russia bundle is present and other regional sets are absent.
+BINARY_RULE_SETS = sorted(Path(source).name for source in geodata_resources.SINGBOX_BINARY_RULE_SETS.values())
+geodata_resources.SINGBOX_RULE_SET_DIR = PARITY_ROOT / "core" / "rule-sets"
+geodata_resources.SINGBOX_RULE_SET_DIR.mkdir(parents=True)
+for filename in BINARY_RULE_SETS:
+    (geodata_resources.SINGBOX_RULE_SET_DIR / filename).touch()
 
 RELAY_PORT = 47001
 PROTECT_PORT = 47002
@@ -182,6 +190,11 @@ def canonical(value) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
+def normalize_paths(text: str) -> str:
+    escaped_root = canonical(str(PARITY_ROOT) + os.sep)[1:-1]
+    return text.replace(escaped_root, canonical("<parity-root>" + os.sep)[1:-1])
+
+
 def digest(value) -> str:
     return hashlib.sha256(canonical(value).encode("ascii")).hexdigest()
 
@@ -291,7 +304,7 @@ def run_plan(node: Node | None, routing: dict, settings: dict, *, tun_mode: bool
         "clash_api_node_signatures": [list(item) for item in plan.clash_api_node_signatures],
         "health_proxy_url": plan.health_proxy_url,
     }
-    return json.loads(mask(canonical(payload), secrets))
+    return json.loads(normalize_paths(mask(canonical(payload), secrets)))
 
 
 def build_cases() -> list[dict]:
@@ -373,8 +386,7 @@ def main() -> int:
         entry["settings"] = settings_ids[canonical(entry["settings"])]
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE.write_text(json.dumps({
-        "localappdata": PARITY_LOCALAPPDATA,
-        "appdata": PARITY_APPDATA,
+        "binary_rule_sets": BINARY_RULE_SETS,
         "relay_port": RELAY_PORT, "protect_port": PROTECT_PORT, "protect_password": PROTECT_PASSWORD,
         "nodes": node_table, "routings": list(routings.values()), "settings": list(settings.values()),
         "cases": output,
