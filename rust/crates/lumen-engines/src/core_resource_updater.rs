@@ -23,12 +23,13 @@ use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
-use uuid::Uuid;
 
 use lumen_core::component_compatibility::ensure_component_compatible;
 use lumen_core::constants::{singbox_path_default, xray_path_default};
+pub use lumen_core::geodata_resources::GEODATA_METADATA_NAME;
 use lumen_core::geodata_resources::{
-    SINGBOX_BINARY_RULE_SETS, regional_singbox_rule_sets, singbox_rule_set_dir,
+    SINGBOX_BINARY_RULE_SETS, active_user_geodata_dir, regional_singbox_rule_sets,
+    singbox_rule_set_dir, user_geodata_dir,
 };
 use lumen_core::http_utils::get_update_response;
 use lumen_core::models::{int_field, str_field};
@@ -57,7 +58,9 @@ pub const LOYALSOLDIER_LATEST_API: &str =
     "https://api.github.com/repos/Loyalsoldier/v2ray-rules-dat/releases/latest";
 pub const IRAN_RULES_LATEST_API: &str =
     "https://api.github.com/repos/Chocolate4U/Iran-v2ray-rules/releases/latest";
-pub const GEODATA_METADATA_NAME: &str = "lumen-geodata.json";
+const CHINA_GEODATA_CDN: &str = "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release";
+const CHINA_GEODATA_RELEASE: &str =
+    "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download";
 const MAX_RESOURCE_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_RULE_SET_MEMBER_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RULE_SET_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
@@ -136,6 +139,10 @@ pub fn core_dir() -> PathBuf {
     let mut dir = xray_path_default();
     dir.pop();
     dir
+}
+
+fn active_geodata_dir() -> PathBuf {
+    active_user_geodata_dir().unwrap_or_else(core_dir)
 }
 
 // ── Download helpers ────────────────────────────────────────────────────────
@@ -397,6 +404,62 @@ async fn resolve_geodata_release(
         region.trim().to_lowercase()
     };
     let (source_name, release_api, required_assets) = geodata_source(&region);
+    if region == "china" {
+        match china_cdn_release(proxy_url, cancellation).await {
+            Ok(release) => return Ok(release),
+            Err(error) if error.is::<UpdateCancelled>() => return Err(error),
+            Err(cdn_error) => {
+                return resolve_github_geodata_release(
+                    source_name, release_api, required_assets, proxy_url, cancellation,
+                )
+                .await
+                .with_context(|| format!("China geodata CDN unavailable: {cdn_error:#}"));
+            }
+        }
+    }
+    resolve_github_geodata_release(source_name, release_api, required_assets, proxy_url, cancellation)
+        .await
+}
+
+async fn china_cdn_release(
+    proxy_url: Option<&str>,
+    cancellation: &UpdateCancellation,
+) -> Result<(String, ReleaseAssets)> {
+    let geoip = format!("{CHINA_GEODATA_CDN}/geoip.dat");
+    let geosite = format!("{CHINA_GEODATA_CDN}/geosite.dat");
+    let geoip_hash_url = format!("{geoip}.sha256sum");
+    let geosite_hash_url = format!("{geosite}.sha256sum");
+    let (geoip_hash, geosite_hash) = tokio::time::timeout(
+        Duration::from_secs(15),
+        async {
+            tokio::try_join!(
+                fetch_dgst_hash(&geoip_hash_url, proxy_url, cancellation),
+                fetch_dgst_hash(&geosite_hash_url, proxy_url, cancellation),
+            )
+        },
+    )
+    .await
+    .context("timed out fetching China geodata checksums")??;
+    if geoip_hash.len() != 64 || geosite_hash.len() != 64 {
+        bail!("invalid China geodata checksums");
+    }
+    let version = format!("cdn-{}-{}", &geoip_hash[..8], &geosite_hash[..8]);
+    Ok((
+        version,
+        vec![
+            ("geoip.dat".into(), (geoip, geoip_hash)),
+            ("geosite.dat".into(), (geosite, geosite_hash)),
+        ],
+    ))
+}
+
+async fn resolve_github_geodata_release(
+    source_name: &str,
+    release_api: &str,
+    required_assets: &[&str],
+    proxy_url: Option<&str>,
+    cancellation: &UpdateCancellation,
+) -> Result<(String, ReleaseAssets)> {
     let release = request_json(release_api, proxy_url, cancellation).await?;
     if !release.is_object() {
         bail!("invalid {source_name} release response");
@@ -435,6 +498,37 @@ async fn resolve_geodata_release(
         assets.push((name.to_string(), (url, digest)));
     }
     Ok((version, assets))
+}
+
+fn china_rule_set_cdn_url(url: &str) -> Option<String> {
+    let path = url.strip_prefix("https://raw.githubusercontent.com/2dust/sing-box-rules/")?;
+    let (branch, file) = path.split_once('/')?;
+    Some(format!("https://cdn.jsdelivr.net/gh/2dust/sing-box-rules@{branch}/{file}"))
+}
+
+async fn download_china_geodata(
+    urls: [&str; 2],
+    destination: &Path,
+    progress: &mut (dyn FnMut(u64, u64) + Send),
+    proxy_url: Option<&str>,
+    cancellation: &UpdateCancellation,
+    validate: impl Fn(&Path) -> Result<()>,
+) -> Result<()> {
+    let mut errors = Vec::new();
+    for url in urls {
+        cancellation.check()?;
+        let attempt = async {
+            download_direct(url, destination, Some(progress), proxy_url, cancellation).await?;
+            validate(destination)
+        };
+        match tokio::time::timeout(Duration::from_secs(45), attempt).await {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(error)) if error.is::<UpdateCancelled>() => return Err(error),
+            Ok(Err(error)) => errors.push(format!("{url}: {error:#}")),
+            Err(_) => errors.push(format!("{url}: timed out")),
+        }
+    }
+    bail!("{}", errors.join("; "))
 }
 
 /// `_read_geodata_metadata`: `{}` on any read or parse failure.
@@ -480,10 +574,10 @@ pub fn regional_geodata_installed(
     }
     let target = target_dir
         .map(|path| path.to_path_buf())
-        .unwrap_or_else(core_dir);
+        .unwrap_or_else(active_geodata_dir);
     let rules_dir = rule_set_dir
         .map(|path| path.to_path_buf())
-        .unwrap_or_else(singbox_rule_set_dir);
+        .unwrap_or_else(|| target.join("rule-sets"));
     let metadata = read_geodata_metadata(&target);
     let schema = int_field(&metadata, "schema", 0);
     let installed_region = {
@@ -562,7 +656,7 @@ pub fn regional_geodata_installed(
 
 /// `_validate_geodata_with_xray`: run a minimal routing config through the
 /// installed Xray to prove the downloaded geodata files actually load.
-fn validate_geodata_with_xray(geoip: &Path, geosite: &Path, region: &str) -> Result<()> {
+fn validate_geodata_with_xray(staging: &Path, region: &str) -> Result<()> {
     let default_path = xray_path_default();
     let Some(exe) = resolve_configured_path("", Some(&default_path), true, true) else {
         return Ok(());
@@ -570,68 +664,51 @@ fn validate_geodata_with_xray(geoip: &Path, geosite: &Path, region: &str) -> Res
     if !exe.is_file() {
         return Ok(());
     }
-    let token = Uuid::new_v4().simple().to_string();
     let exe_dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
-    let staged_geoip = exe_dir.join(format!("lumen-geoip-check-{token}.dat"));
-    let staged_geosite = exe_dir.join(format!("lumen-geosite-check-{token}.dat"));
-    let config_path = exe_dir.join(format!("lumen-geodata-check-{token}.json"));
-    let run = (|| -> Result<()> {
-        let (geosite_codes, geoip_codes): (&[&str], &[&str]) = match region {
-            "china" => (
-                &["cn", "gfw", "greatfire", "google"][..],
-                &["cn", "google", "telegram"][..],
-            ),
-            "iran" => (&["ir"][..], &["ir"][..]),
-            _ => (
-                &["ru-available-only-inside", "ru-blocked"][..],
-                &["ru", "ru-blocked", "ru-blocked-community"][..],
-            ),
-        };
-        fs::copy(geoip, &staged_geoip)?;
-        fs::copy(geosite, &staged_geosite)?;
-        let geosite_name = staged_geosite
-            .file_name()
-            .map(|name| name.to_string_lossy())
-            .unwrap_or_default();
-        let geoip_name = staged_geoip
-            .file_name()
-            .map(|name| name.to_string_lossy())
-            .unwrap_or_default();
-        let geosite_refs: Vec<Value> = geosite_codes
-            .iter()
-            .map(|code| Value::String(format!("ext:{geosite_name}:{code}")))
-            .collect();
-        let geoip_refs: Vec<Value> = geoip_codes
-            .iter()
-            .map(|code| Value::String(format!("ext:{geoip_name}:{code}")))
-            .collect();
-        let config = json!({
-            "log": {"loglevel": "none"},
-            "outbounds": [{"protocol": "freedom", "tag": "direct"}],
-            "routing": {
-                "rules": [
-                    {"type": "field", "domain": geosite_refs, "outboundTag": "direct"},
-                    {"type": "field", "ip": geoip_refs, "outboundTag": "direct"},
-                ]
-            },
-        });
-        fs::write(&config_path, pyjson::dumps(&config, true, None))?;
-        let mut command = hidden_command(&exe);
-        command
-            .args(["run", "-test", "-c"])
-            .arg(&config_path)
-            .current_dir(&exe_dir);
-        let result = run_merged(command, 20.0)?;
-        if result.returncode != 0 {
-            let detail = result.output_text().trim().to_string();
-            bail!("Xray rejected downloaded geodata: {detail}");
-        }
-        Ok(())
-    })();
-    let _ = fs::remove_file(&staged_geoip);
-    let _ = fs::remove_file(&staged_geosite);
-    let _ = fs::remove_file(&config_path);
-    run
+    let work = tempfile::tempdir()?;
+    let config_path = work.path().join("xray-geodata-check.json");
+    let (geosite_codes, geoip_codes): (&[&str], &[&str]) = match region {
+        "china" => (
+            &["cn", "gfw", "greatfire", "google"][..],
+            &["cn", "google", "telegram"][..],
+        ),
+        "iran" => (&["ir"][..], &["ir"][..]),
+        _ => (
+            &["ru-available-only-inside", "ru-blocked"][..],
+            &["ru", "ru-blocked", "ru-blocked-community"][..],
+        ),
+    };
+    let geosite_refs: Vec<Value> = geosite_codes
+        .iter()
+        .map(|code| Value::String(format!("geosite:{code}")))
+        .collect();
+    let geoip_refs: Vec<Value> = geoip_codes
+        .iter()
+        .map(|code| Value::String(format!("geoip:{code}")))
+        .collect();
+    let config = json!({
+        "log": {"loglevel": "none"},
+        "outbounds": [{"protocol": "freedom", "tag": "direct"}],
+        "routing": {
+            "rules": [
+                {"type": "field", "domain": geosite_refs, "outboundTag": "direct"},
+                {"type": "field", "ip": geoip_refs, "outboundTag": "direct"},
+            ]
+        },
+    });
+    fs::write(&config_path, pyjson::dumps(&config, true, None))?;
+    let mut command = hidden_command(&exe);
+    command
+        .args(["run", "-test", "-c"])
+        .arg(&config_path)
+        .env("XRAY_LOCATION_ASSET", staging)
+        .current_dir(&exe_dir);
+    let result = run_merged(command, 20.0)?;
+    if result.returncode != 0 {
+        let detail = result.output_text().trim().to_string();
+        bail!("Xray rejected downloaded geodata: {detail}");
+    }
+    Ok(())
 }
 
 // ── Staged install ──────────────────────────────────────────────────────────
@@ -1517,7 +1594,7 @@ where
     if !regional.contains_key(&region) {
         region = "russia".to_string();
     }
-    let target_dir = core_dir();
+    let target_dir = user_geodata_dir();
     if let Err(error) = fs::create_dir_all(&target_dir) {
         return Ok(ResourceUpdateResult::with_versions(
             "geodata",
@@ -1527,7 +1604,9 @@ where
             "",
         ));
     }
-    let current_version = str_field(&read_geodata_metadata(&target_dir), "version");
+    let active_dir = active_geodata_dir();
+    let current_version = str_field(&read_geodata_metadata(&active_dir), "version");
+    let rules_dir = target_dir.join("rule-sets");
     let mut latest_version = String::new();
     let mut install_start = Some(on_install_start);
     let flow = async {
@@ -1535,11 +1614,11 @@ where
             resolve_geodata_release(&region, proxy_url, cancellation).await?;
         latest_version = version;
         if geodata_install_matches(
-            &target_dir,
+            &active_dir,
             &latest_version,
             &release_assets,
             &region,
-            &singbox_rule_set_dir(),
+            &active_dir.join("rule-sets"),
         ) {
             return Ok(ResourceUpdateResult::with_versions(
                 "geodata",
@@ -1555,43 +1634,38 @@ where
         let temp_dir = temp.path().to_path_buf();
         let geoip = temp_dir.join("geoip.dat");
         let geosite = temp_dir.join("geosite.dat");
-        {
-            let mut sink = scaled_sink(0, 25, &mut on_progress);
-            download_direct(
-                &release_asset(&release_assets, "geoip.dat")
-                    .context("missing geoip.dat")?
-                    .0,
-                &geoip,
-                Some(&mut sink),
-                proxy_url,
-                cancellation,
-            )
-            .await?;
-        }
-        {
-            let mut sink = scaled_sink(25, 25, &mut on_progress);
-            download_direct(
-                &release_asset(&release_assets, "geosite.dat")
-                    .context("missing geosite.dat")?
-                    .0,
-                &geosite,
-                Some(&mut sink),
-                proxy_url,
-                cancellation,
-            )
-            .await?;
-        }
-        for (name, path) in [("geoip.dat", &geoip), ("geosite.dat", &geosite)] {
-            let expected = release_asset(&release_assets, name)
-                .context("missing geodata asset")?
-                .1
-                .to_lowercase();
-            if sha256_file(path, cancellation)?.to_lowercase() != expected {
-                bail!("SHA-256 mismatch for {name}");
+        for (offset, name, path) in [(0, "geoip.dat", &geoip), (25, "geosite.dat", &geosite)] {
+            let (url, expected) =
+                release_asset(&release_assets, name).with_context(|| format!("missing {name}"))?;
+            let validate = |file: &Path| {
+                if !sha256_file(file, cancellation)?.eq_ignore_ascii_case(expected) {
+                    bail!("SHA-256 mismatch for {name}");
+                }
+                if fs::metadata(file)?.len() < 1024 {
+                    bail!("invalid geodata file: {name}");
+                }
+                Ok(())
+            };
+            let mut sink = scaled_sink(offset, 25, &mut on_progress);
+            if region == "china" {
+                let fallback = if url.starts_with(CHINA_GEODATA_CDN) {
+                    format!("{CHINA_GEODATA_RELEASE}/{name}")
+                } else {
+                    format!("{CHINA_GEODATA_CDN}/{name}")
+                };
+                download_china_geodata(
+                    [url, &fallback],
+                    path,
+                    &mut sink,
+                    proxy_url,
+                    cancellation,
+                    validate,
+                )
+                .await?;
+            } else {
+                download_direct(url, path, Some(&mut sink), proxy_url, cancellation).await?;
+                validate(path)?;
             }
-        }
-        if fs::metadata(&geoip)?.len() < 1024 || fs::metadata(&geosite)?.len() < 1024 {
-            bail!("скачанные geodata файлы выглядят поврежденными");
         }
         let mut rule_replacements: Vec<(PathBuf, PathBuf)> = Vec::new();
         if region == "russia" {
@@ -1620,7 +1694,7 @@ where
             rule_replacements = extract_singbox_rule_sets(
                 &singbox_rules,
                 &temp_dir.join("rule-sets"),
-                &singbox_rule_set_dir(),
+                &rules_dir,
             )?;
         } else {
             let sources: Vec<(String, String)> = regional
@@ -1638,12 +1712,22 @@ where
                 let offset = 50 + (index as i64 * 50 / count);
                 let span = (50 / count).max(1);
                 require_https(url, &format!("rule-set {key}"))?;
-                {
-                    let mut sink = scaled_sink(offset, span, &mut on_progress);
+                let mut sink = scaled_sink(offset, span, &mut on_progress);
+                if let Some(cdn) = china_rule_set_cdn_url(url) {
+                    download_china_geodata(
+                        [&cdn, url],
+                        &source,
+                        &mut sink,
+                        proxy_url,
+                        cancellation,
+                        |path| ensure_rule_set_file(path, key),
+                    )
+                    .await?;
+                } else {
                     download_direct(url, &source, Some(&mut sink), proxy_url, cancellation).await?;
+                    ensure_rule_set_file(&source, key)?;
                 }
-                ensure_rule_set_file(&source, key)?;
-                rule_replacements.push((source, singbox_rule_set_dir().join(&filename)));
+                rule_replacements.push((source, rules_dir.join(&filename)));
             }
         }
         let mut replacements: Vec<(PathBuf, PathBuf)> = vec![
@@ -1651,7 +1735,7 @@ where
             (geosite.clone(), target_dir.join("geosite.dat")),
         ];
         replacements.extend(rule_replacements.iter().cloned());
-        validate_geodata_with_xray(&geoip, &geosite, &region)?;
+        validate_geodata_with_xray(&temp_dir, &region)?;
         let mut sha_map = serde_json::Map::new();
         for (name, (_url, digest)) in &release_assets {
             sha_map.insert(name.clone(), Value::String(digest.clone()));
@@ -1713,6 +1797,61 @@ where
     }
 }
 
+fn bundled_geodata(region: &str) -> Option<PathBuf> {
+    let bundle = match region {
+        "china" => core_dir().join("geodata").join("china"),
+        "russia" => core_dir(),
+        _ => return None,
+    };
+    (int_field(&read_geodata_metadata(&bundle), "schema", 0) >= 3
+        && regional_geodata_installed(region, Some(&bundle), None))
+    .then_some(bundle)
+}
+
+async fn install_bundled_geodata(
+    bundle: &Path,
+    region: &str,
+    on_install_start: impl std::future::Future<Output = Result<()>>,
+    cancellation: &UpdateCancellation,
+) -> std::result::Result<ResourceUpdateResult, UpdateCancelled> {
+    let target = user_geodata_dir();
+    let version = str_field(&read_geodata_metadata(bundle), "version");
+    let current = str_field(&read_geodata_metadata(&active_geodata_dir()), "version");
+    let result: Result<()> = async {
+        cancellation.check()?;
+        let rules = regional_singbox_rule_sets();
+        let mut files: Vec<PathBuf> = rules[region]
+            .iter()
+            .map(|(key, source)| Path::new("rule-sets").join(rule_set_filename(key, source)))
+            .collect();
+        files.extend(["geoip.dat", "geosite.dat", GEODATA_METADATA_NAME].map(PathBuf::from));
+        let replacements: Vec<_> = files
+            .iter()
+            .map(|file| (bundle.join(file), target.join(file)))
+            .collect();
+        validate_geodata_with_xray(bundle, region)?;
+        on_install_start.await?;
+        cancellation.check()?;
+        let backups = [target.join("geoip.dat"), target.join("geosite.dat")];
+        atomic_replace_files(&replacements, &backups, None)
+    }
+    .await;
+    match result {
+        Ok(()) => Ok(ResourceUpdateResult::with_versions(
+            "geodata",
+            ResourceUpdateStatus::Updated,
+            format!("geoip.dat и geosite.dat обновлены до {version}"),
+            current,
+            version,
+        )),
+        Err(error) if error.is::<UpdateCancelled>() => Err(UpdateCancelled),
+        Err(error) => Ok(ResourceUpdateResult::error(
+            "geodata",
+            format!("Не удалось обновить geoip/geosite: {error:#}"),
+        )),
+    }
+}
+
 /// `check_geodata_update`: check the verified release identity without
 /// downloading payloads.
 pub async fn check_geodata_update(
@@ -1720,7 +1859,7 @@ pub async fn check_geodata_update(
     proxy_url: Option<&str>,
     cancellation: &UpdateCancellation,
 ) -> std::result::Result<ResourceUpdateResult, UpdateCancelled> {
-    check_geodata_release_identity(&core_dir(), region, proxy_url, cancellation).await
+    check_geodata_release_identity(&active_geodata_dir(), region, proxy_url, cancellation).await
 }
 
 async fn check_geodata_release_identity(
@@ -1740,7 +1879,7 @@ async fn check_geodata_release_identity(
             &latest_version,
             &release_assets,
             region,
-            &singbox_rule_set_dir(),
+            &target_dir.join("rule-sets"),
         );
         Ok((current_version, latest_version, changed))
     }
@@ -1799,7 +1938,8 @@ fn geodata_install_matches(
     if installed_region != expected_region {
         return false;
     }
-    if str_field(&metadata, "version") != latest_version {
+    // GitHub tags and CDN checksums identify the same China data independently.
+    if expected_region != "china" && str_field(&metadata, "version") != latest_version {
         return false;
     }
     let Some(recorded_hashes) = metadata.get("sha256").filter(|value| value.is_object()) else {
@@ -1915,6 +2055,7 @@ pub struct ResourceUpdateOptions {
     pub apply_update: bool,
     pub proxy_url: Option<String>,
     pub region: String,
+    pub prefer_bundled_geodata: bool,
 }
 
 impl Default for ResourceUpdateOptions {
@@ -1925,6 +2066,7 @@ impl Default for ResourceUpdateOptions {
             apply_update: true,
             proxy_url: None,
             region: "russia".to_string(),
+            prefer_bundled_geodata: false,
         }
     }
 }
@@ -1972,14 +2114,28 @@ impl ResourceUpdateWorker {
                         .await
                     }
                     "geodata" if options.apply_update => {
-                        update_geodata(
-                            Some(&mut progress),
-                            &options.region,
-                            || request_disconnect(&events, &cancellation),
-                            proxy,
-                            &cancellation,
-                        )
-                        .await
+                        if let Some(bundle) = options
+                            .prefer_bundled_geodata
+                            .then(|| bundled_geodata(&options.region))
+                            .flatten()
+                        {
+                            install_bundled_geodata(
+                                &bundle,
+                                &options.region,
+                                request_disconnect(&events, &cancellation),
+                                &cancellation,
+                            )
+                            .await
+                        } else {
+                            update_geodata(
+                                Some(&mut progress),
+                                &options.region,
+                                || request_disconnect(&events, &cancellation),
+                                proxy,
+                                &cancellation,
+                            )
+                            .await
+                        }
                     }
                     "geodata" => check_geodata_update(&options.region, proxy, &cancellation).await,
                     "droute" => {
@@ -2330,6 +2486,54 @@ mod tests {
         assert_eq!(geodata_source("iran").0, "Chocolate4U");
         assert_eq!(geodata_source("china").2.len(), 2);
         assert_eq!(geodata_source("russia").2.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn china_geodata_retries_other_source_after_invalid_download() -> Result<()> {
+        use tokio::io::AsyncBufReadExt;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+        let proxy = format!("http://{}", listener.local_addr()?);
+        let server = tokio::spawn(async move {
+            for body in ["wrong file", "correct file"] {
+                let (mut stream, _) = listener.accept().await?;
+                let mut reader = tokio::io::BufReader::new(&mut stream);
+                let mut line = String::new();
+                while reader.read_line(&mut line).await? != 0 && line != "\r\n" {
+                    line.clear();
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+        let directory = tempfile::tempdir()?;
+        let destination = directory.path().join("geoip.dat");
+        let cancellation = UpdateCancellation::default();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            download_china_geodata(
+                ["http://cdn.test/geoip.dat", "http://origin.test/geoip.dat"],
+                &destination,
+                &mut |_, _| {},
+                Some(&proxy),
+                &cancellation,
+                |path| {
+                    anyhow::ensure!(
+                        sha256_file(path, &cancellation)? == sha_of(b"correct file"),
+                        "incorrect checksum"
+                    );
+                    Ok(())
+                },
+            ),
+        )
+        .await??;
+        server.await??;
+        assert_eq!(fs::read(destination)?, b"correct file");
+        Ok(())
     }
 
     #[tokio::test]

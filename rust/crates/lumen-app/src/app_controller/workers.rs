@@ -242,6 +242,7 @@ impl AppController {
             apply_update,
             proxy_url,
             region: region.clone(),
+            prefer_bundled_geodata: kind == "geodata" && self.pending_regional_preset == region,
         };
         let worker = lumen_engines::core_resource_updater::ResourceUpdateWorker::start(options);
         self.resource_updates.push(ResourceUpdateEntry {

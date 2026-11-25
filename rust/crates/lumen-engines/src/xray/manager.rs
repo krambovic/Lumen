@@ -567,6 +567,9 @@ fn xray_command(exe: &Path) -> Command {
     if let Some(dir) = exe.parent() {
         command.current_dir(dir);
     }
+    if let Some(dir) = lumen_core::geodata_resources::active_user_geodata_dir() {
+        command.env("XRAY_LOCATION_ASSET", dir);
+    }
     command
 }
 

@@ -195,6 +195,9 @@ jobs:
 
           & ./windows/scripts/build_singbox_extended.ps1 -OutputPath windows/core/sing-box-extended/sing-box.exe -Ref $env:SINGBOX_TAG
 
+      - name: Prepare offline China geodata
+        run: python windows/scripts/bundle_china_geodata.py
+
       - name: Build Rust app, installer and portable archive
         working-directory: windows
         shell: pwsh

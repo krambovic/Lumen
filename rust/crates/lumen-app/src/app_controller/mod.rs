@@ -720,7 +720,15 @@ impl AppController {
                         done = Some(result);
                         break;
                     }
-                    Err(_) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        done = Some(ResourceUpdateResult::new(
+                            &entry.kind,
+                            lumen_engines::core_resource_updater::ResourceUpdateStatus::Error,
+                            "Обновление компонентов прервано",
+                        ));
+                        break;
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 }
             }
             if let Some(result) = done {

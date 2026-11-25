@@ -6,18 +6,28 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::constants::xray_path_default;
+use crate::constants::{data_dir, xray_path_default};
 
 pub const RUNETFREEDOM_RULES_BASE_URL: &str =
     "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download";
 pub const SINGBOX_RULES_ARCHIVE_URL: &str =
     "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/sing-box.zip";
+pub const GEODATA_METADATA_NAME: &str = "lumen-geodata.json";
 
 /// `SINGBOX_RULE_SET_DIR = XRAY_PATH_DEFAULT.parent / "rule-sets"`.
 pub fn singbox_rule_set_dir() -> PathBuf {
     let mut dir = xray_path_default();
     dir.pop();
     dir.join("rule-sets")
+}
+
+pub fn user_geodata_dir() -> PathBuf {
+    data_dir().join("geodata")
+}
+
+pub fn active_user_geodata_dir() -> Option<PathBuf> {
+    let dir = user_geodata_dir();
+    dir.join(GEODATA_METADATA_NAME).is_file().then_some(dir)
 }
 
 // Keys are the labels used by the common routing model. Values are paths in
@@ -107,7 +117,14 @@ pub fn singbox_rule_set_path(key: &str) -> Option<PathBuf> {
     let archive_path = all_singbox_binary_rule_sets()
         .get(key.trim().to_lowercase().as_str())?
         .clone();
-    Some(singbox_rule_set_dir().join(archive_path.rsplit('/').next().unwrap_or(&archive_path)))
+    let filename = archive_path.rsplit('/').next().unwrap_or(&archive_path);
+    if let Some(local_file) = active_user_geodata_dir()
+        .map(|dir| dir.join("rule-sets").join(filename))
+        .filter(|path| path.is_file())
+    {
+        return Some(local_file);
+    }
+    Some(singbox_rule_set_dir().join(filename))
 }
 
 #[cfg(test)]
