@@ -113,6 +113,12 @@ pub fn all_singbox_binary_rule_sets() -> BTreeMap<String, String> {
     all
 }
 
+pub(crate) fn is_singbox_binary_rule_set(key: &str) -> bool {
+    SINGBOX_BINARY_RULE_SETS.iter().any(|(label, _)| *label == key)
+        || CHINA_RULE_SET_SOURCES.iter().any(|(label, _, _)| *label == key)
+        || IRAN_RULE_SET_SOURCES.iter().any(|(label, _)| *label == key)
+}
+
 pub fn singbox_rule_set_path(key: &str) -> Option<PathBuf> {
     let archive_path = all_singbox_binary_rule_sets()
         .get(key.trim().to_lowercase().as_str())?

@@ -1799,7 +1799,7 @@ where
 
 fn bundled_geodata(region: &str) -> Option<PathBuf> {
     let bundle = match region {
-        "china" => core_dir().join("geodata").join("china"),
+        "china" | "iran" => core_dir().join("geodata").join(region),
         "russia" => core_dir(),
         _ => return None,
     };

@@ -3,7 +3,10 @@ use std::{fs, path::Path, time::Duration};
 use anyhow::Result;
 use lumen_core::{
     constants::set_base_dir,
-    geodata_resources::{GEODATA_METADATA_NAME, china_singbox_rule_sets, singbox_rule_set_path},
+    geodata_resources::{GEODATA_METADATA_NAME, china_singbox_rule_sets},
+    models::RoutingSettings,
+    routing_presets::{ROUTING_PRESET_BLOCKED_CN, build_routing_preset},
+    routing_runtime::apply_singbox_gui_routing,
 };
 use lumen_engines::core_resource_updater::{
     ResourceUpdateEvent, ResourceUpdateOptions, ResourceUpdateStatus, ResourceUpdateWorker,
@@ -65,7 +68,17 @@ async fn china_preset_uses_packaged_geodata_without_downloading() -> Result<()> 
     .await??;
     assert_eq!(result.status, ResourceUpdateStatus::Updated, "{}", result.message);
     assert!(regional_geodata_installed("china", None, None));
-    assert!(singbox_rule_set_path("geosite:cn").unwrap().is_file());
+    let routing = build_routing_preset(&RoutingSettings::default(), ROUTING_PRESET_BLOCKED_CN);
+    let mut config = json!({});
+    apply_singbox_gui_routing(&mut config, &routing.to_dict())?;
+    let rules = config["route"]["rule_set"].as_array().unwrap();
+    let facebook = rules.iter().find(|rule| rule["tag"] == "geoip-facebook").unwrap();
+    assert_eq!(facebook["format"], "binary");
+    assert_eq!(
+        Path::new(facebook["path"].as_str().unwrap()),
+        root.path().join("app/data/geodata/rule-sets/geoip-facebook.srs")
+    );
+    assert!(rules.iter().all(|rule| Path::new(rule["path"].as_str().unwrap()).is_file()));
     assert!(!root.path().join("core/geosite.dat").exists());
     Ok(())
 }

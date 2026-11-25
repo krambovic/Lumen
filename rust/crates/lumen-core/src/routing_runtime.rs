@@ -15,42 +15,18 @@ use parking_lot::Mutex;
 use serde_json::{json, Map, Value};
 
 use crate::constants::{
-    base_dir, data_dir, xray_path_default, ROUTING_DIRECT, ROUTING_GLOBAL,
+    base_dir, data_dir, ROUTING_DIRECT, ROUTING_GLOBAL,
     SUBSCRIPTION_FETCHER_EXE_NAME,
+};
+use crate::geodata_resources::is_singbox_binary_rule_set;
+pub use crate::geodata_resources::{
+    singbox_rule_set_dir as singbox_binary_rule_set_dir, singbox_rule_set_path,
 };
 use crate::models::{bool_field, obj_list, str_field, str_list, str_or};
 use crate::presets::{process_preset_by_id, service_preset_by_id};
 use crate::routing_presets::{
     custom_domain_rules, preset_domain_rules, ROUTING_PRESET_BLOCKED, ROUTING_PRESET_BLOCKED_CN,
 };
-
-/// `geodata_resources.ALL_SINGBOX_BINARY_RULE_SETS` keys: the managed
-/// `geosite:`/`geoip:` codes that ship as binary `.srs` rule-sets.
-const ALL_SINGBOX_BINARY_RULE_SETS: &[&str] = &[
-    // RuNetFreedom archive keys (kept for custom/legacy rules created before
-    // regional presets).
-    "geosite:category-ru",
-    "geosite:ru-available-only-inside",
-    "geosite:ru-blocked",
-    "geoip:ru",
-    "geoip:ru-blocked",
-    "geoip:ru-blocked-community",
-    // China sources.
-    "geosite:cn",
-    "geosite:gfw",
-    "geosite:greatfire",
-    "geosite:google",
-    "geoip:cn",
-    "geoip:facebook",
-    "geoip:fastly",
-    "geoip:google",
-    "geoip:netflix",
-    "geoip:telegram",
-    "geoip:twitter",
-    // Iran sources.
-    "geosite:ir",
-    "geoip:ir",
-];
 
 struct RuleSetSource {
     domains: &'static [&'static str],
@@ -169,7 +145,7 @@ const ACTIONS: [&str; 3] = ["direct", "proxy", "block"];
 
 fn is_known_rule_set_key(value: &str) -> bool {
     SINGBOX_RULE_SET_SOURCES.iter().any(|(key, _)| *key == value)
-        || ALL_SINGBOX_BINARY_RULE_SETS.contains(&value)
+        || is_singbox_binary_rule_set(value)
 }
 
 fn is_managed_rule_set_tag(tag: &str) -> bool {
@@ -200,24 +176,6 @@ fn rule_set_has_managed_tag(value: Option<&Value>) -> bool {
             .any(|item| is_managed_rule_set_tag(&value_str_or_empty(Some(item)))),
         _ => false,
     }
-}
-
-/// `geodata_resources.singbox_rule_set_path`: binary `.srs` next to the core.
-pub fn singbox_binary_rule_set_dir() -> PathBuf {
-    xray_path_default()
-        .parent()
-        .map(|parent| parent.join("rule-sets"))
-        .unwrap_or_else(|| PathBuf::from("rule-sets"))
-}
-
-/// Mirror of `geodata_resources.singbox_rule_set_path`: every known binary
-/// key resolves to `{tag}.srs` inside the core's `rule-sets` directory.
-pub fn singbox_rule_set_path(key: &str) -> Option<PathBuf> {
-    let key = key.trim().to_lowercase();
-    if !ALL_SINGBOX_BINARY_RULE_SETS.contains(&key.as_str()) {
-        return None;
-    }
-    Some(singbox_binary_rule_set_dir().join(format!("{}.srs", key.replace(':', "-"))))
 }
 
 fn singbox_local_rule_set_dir() -> PathBuf {
@@ -1361,7 +1319,7 @@ fn singbox_rule_set_tag(value: &str) -> String {
 
 /// `_singbox_dns_rule_set_tag`: only domain-based rule-sets apply to DNS.
 fn singbox_dns_rule_set_tag(value: &str) -> String {
-    if ALL_SINGBOX_BINARY_RULE_SETS.contains(&value) {
+    if is_singbox_binary_rule_set(value) {
         return if value.starts_with("geosite:") {
             value.replace(':', "-")
         } else {
