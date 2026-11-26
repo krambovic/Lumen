@@ -123,6 +123,11 @@ impl SingboxClashApiClient {
     }
 
     fn request(&self, method: &str, path: &str, body: Option<Value>, expect_json: bool) -> Result<Value, ClashApiError> {
+        // Called from the controller's async loop (connect, hot switch).
+        lumen_core::blocking::outside_runtime(|| self.request_blocking(method, path, body, expect_json))
+    }
+
+    fn request_blocking(&self, method: &str, path: &str, body: Option<Value>, expect_json: bool) -> Result<Value, ClashApiError> {
         if self.secret.is_empty() {
             return Err(ClashApiError::new("sing-box Clash API secret is not configured"));
         }
@@ -222,6 +227,17 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn requests_from_the_controller_loop_do_not_panic() {
+        // The controller connects from an async task; a blocking client built
+        // there panicked before the system proxy and Firefox were configured.
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let client = SingboxClashApiClient::with_options(port, "secret", 0.5, "127.0.0.1");
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let result = runtime.block_on(async { client.get_proxy("proxy") });
+        assert!(result.is_err());
+    }
 
     /// Minimal fake Clash API: GET returns the selector, PUT changes `now`.
     fn serve(now: &str, members: &[&str], confirm: bool) -> (u16, Arc<Mutex<Vec<String>>>) {

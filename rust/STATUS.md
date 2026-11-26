@@ -732,6 +732,20 @@ client, core/resource updaters, zapret and discord proxy managers.
   (`rust/vendor/egui`), so the server table (`egui_extras` table) and combo
   popup lists ease onto their end too (captured scroll handle 534, 553,
   563, 571, 575 ... 583 and 475, 483, 488 ... 496).
+- Firefox proxy override with sing-box (2026-11-26): every sing-box
+  connect, including TUN to system proxy and system proxy off to on,
+  panicked in `enforce_selector_default`: the Clash API built a
+  `reqwest::blocking` client on the controller's Tokio thread ("Cannot drop
+  a runtime in a context where blocking is not allowed"). The transition
+  caught the panic after sing-box had started, so the UI showed a
+  connection, but `proxy_enable` (WinINET and the Firefox prefs) never ran.
+  The Firefox code itself matches Python byte for byte. Clash API, DoH
+  lookup (zapret pre-connect) and HTTP ping now run through
+  `lumen_core::blocking::outside_runtime`, which moves the call to a plain
+  thread inside a runtime. Checked in an isolated client with a stand-in
+  WinINET: Local to System proxy while connected writes the Lumen block
+  into `user.js` and `prefs.js`; the regression test reproduces the panic
+  without the fix.
 - Open combo popups while the page scrolls (2026-11-22): the popup follows
   its button, so wheeling the page under an open combo carried the list
   past the window edge. The vendored `ComboBox` now closes its popup once

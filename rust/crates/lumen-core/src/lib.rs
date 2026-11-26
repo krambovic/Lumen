@@ -2,6 +2,7 @@
 #![recursion_limit = "1024"]
 
 pub mod active_profile_health;
+pub mod blocking;
 pub mod bootstrap_dns;
 pub mod bounded_logs;
 pub mod component_compatibility;

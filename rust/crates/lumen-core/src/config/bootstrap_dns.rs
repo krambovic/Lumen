@@ -172,6 +172,11 @@ fn value_str(value: &Value) -> String {
 
 /// A and AAAA over one TLS connection to one resolver.
 pub fn doh_lookup(server: &str, host: &str, timeout: f64) -> Result<BTreeSet<String>, BootstrapDnsError> {
+    // Zapret resolves the server from the controller's async loop.
+    crate::blocking::outside_runtime(|| doh_lookup_blocking(server, host, timeout))
+}
+
+fn doh_lookup_blocking(server: &str, host: &str, timeout: f64) -> Result<BTreeSet<String>, BootstrapDnsError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs_f64(timeout.max(0.1)))
         .build()

@@ -87,6 +87,10 @@ pub fn hysteria_ping(host: &str, port: i64, timeout: f64) -> Option<i64> {
 
 /// Direct HTTP(S) GET without a proxy core.
 pub fn http_get_ping(host: &str, port: i64, timeout: f64) -> Option<i64> {
+    crate::blocking::outside_runtime(|| http_get_ping_blocking(host, port, timeout))
+}
+
+fn http_get_ping_blocking(host: &str, port: i64, timeout: f64) -> Option<i64> {
     if host.is_empty() || port == 0 {
         return None;
     }
