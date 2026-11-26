@@ -85,7 +85,9 @@ pub fn strict_proxy_get(
             request = request.header(*name, *value);
         }
         let response = runtime
-            .block_on(request.send())
+            // send() creates reqwest's read-timeout timer synchronously.
+            // Construct it inside the runtime, not as an argument to block_on.
+            .block_on(async { request.send().await })
             .map_err(|e| anyhow!("HTTP request failed: {e}"))?;
         let status = response.status().as_u16();
         if (200..300).contains(&status) {
@@ -152,6 +154,76 @@ fn origin(url: &Url) -> (String, String, Option<u16>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_strict_proxy_get_body_stall_obeys_read_timeout() -> Result<()> {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let proxy_url = format!("http://{}", listener.local_addr()?);
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut socket, _) = listener.accept()?;
+            socket.set_read_timeout(Some(Duration::from_secs(2)))?;
+            let mut request = [0u8; 4096];
+            socket.read(&mut request)?;
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")?;
+            std::thread::sleep(Duration::from_millis(400));
+            Ok(())
+        });
+
+        let mut response =
+            strict_proxy_get(&proxy_url, 0.1, "http://speedtest.invalid/probe", &[])?;
+        let mut body = Vec::new();
+        assert!(response.read_to_end(&mut body).is_err());
+        assert!(body.is_empty());
+        server.join().expect("local proxy thread")?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_strict_proxy_get_streams_response_on_plain_thread() -> Result<()> {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let proxy_url = format!("http://{}", listener.local_addr()?);
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            // Bound the fixture too: a client panic must not leave a test server waiting.
+            listener.set_nonblocking(true)?;
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let mut socket = loop {
+                match listener.accept() {
+                    Ok((socket, _)) => break socket,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            return Ok(());
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            socket.set_read_timeout(Some(Duration::from_secs(2)))?;
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte)?;
+                request.push(byte[0]);
+            }
+            assert!(request.starts_with(b"GET http://speedtest.invalid/probe HTTP/1.1\r\n"));
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")?;
+            std::thread::sleep(Duration::from_millis(30));
+            socket.write_all(b"test")
+        });
+
+        let response = strict_proxy_get(&proxy_url, 1.0, "http://speedtest.invalid/probe", &[]);
+        let mut body = String::new();
+        response?.read_to_string(&mut body)?;
+        assert_eq!(body, "test");
+        server.join().expect("local proxy thread")?;
+        Ok(())
+    }
 
     #[test]
     fn empty_or_non_http_proxy_is_rejected() {

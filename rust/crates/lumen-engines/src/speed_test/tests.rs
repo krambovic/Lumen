@@ -25,6 +25,38 @@ fn test_node(id: &str, scheme: &str, outbound: Value) -> Node {
 }
 
 #[test]
+fn test_panicking_node_reports_failure_and_completes_progress() {
+    let node = test_node("panic-node", "vless", json!({}));
+    let worker = SpeedTestWorker::new(vec![node.clone()], "xray.exe");
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&events);
+    let emit: EmitFn = Arc::new(move |event| recorded.lock().unwrap().push(event));
+
+    let (node, speed, alive) = worker.catch_node_test(&node, &emit, || {
+        panic!("simulated transport panic with sensitive details")
+    });
+    assert_eq!(speed, None);
+    assert!(!alive);
+    assert!(worker.is_unavailable(&node.id));
+    worker.emit_node_result(&emit, &node, speed, alive, 1);
+
+    let events = events.lock().unwrap();
+    assert!(events.iter().any(|event| matches!(event,
+        SpeedTestEvent::Failure { node_id, reason }
+            if node_id == "panic-node"
+                && reason == "Внутренняя ошибка теста узла: профиль не проверен"
+    )));
+    assert!(events.contains(&SpeedTestEvent::NodeProgress {
+        node_id: "panic-node".into(),
+        percent: 100,
+    }));
+    assert!(events.contains(&SpeedTestEvent::Progress {
+        completed: 1,
+        total: 1
+    }));
+}
+
+#[test]
 fn exposes_temporary_core_ids_until_unregistered() -> std::io::Result<()> {
     let worker = SpeedTestWorker::new(Vec::new(), "xray.exe");
     let mut child = std::process::Command::new(std::env::current_exe()?)

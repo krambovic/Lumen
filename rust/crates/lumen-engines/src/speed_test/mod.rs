@@ -520,18 +520,16 @@ impl SpeedTestWorker {
         let mut reservation: Option<TcpListener> = None;
         let mut proc: Option<Arc<Mutex<Child>>> = None;
         let mut tmp_path: Option<PathBuf> = None;
-        let outcome = self.test_node_inner(
-            node,
-            emit,
-            &executable,
-            &mut reservation,
-            &mut proc,
-            &mut tmp_path,
-        );
-        let result = match outcome {
-            Ok(result) => result,
-            Err(reason) => self.unavailable(node, &reason, emit),
-        };
+        let result = self.catch_node_test(node, emit, || {
+            self.test_node_inner(
+                node,
+                emit,
+                &executable,
+                &mut reservation,
+                &mut proc,
+                &mut tmp_path,
+            )
+        });
         if let Some(listener) = reservation.take() {
             drop(listener);
         }
@@ -546,6 +544,23 @@ impl SpeedTestWorker {
             let _ = std::fs::remove_file(path);
         }
         result
+    }
+
+    /// Like Python's per-future exception handling, always produce a result
+    /// for the collector. Keep this inside the resource cleanup boundary:
+    /// a transport panic must not strand a core/config or leave progress at 20%.
+    fn catch_node_test(
+        &self,
+        node: &Node,
+        emit: &EmitFn,
+        test: impl FnOnce() -> Result<(Node, Option<f64>, bool), String>,
+    ) -> (Node, Option<f64>, bool) {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(test))
+            .unwrap_or_else(|_| Err("Внутренняя ошибка теста узла: профиль не проверен".into()));
+        match outcome {
+            Ok(result) => result,
+            Err(reason) => self.unavailable(node, &reason, emit),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
